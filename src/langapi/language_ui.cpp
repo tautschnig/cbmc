@@ -237,9 +237,6 @@ void language_uit::show_symbol_table(bool brief)
   case ui_message_handlert::XML_UI:
     show_symbol_table_xml_ui(brief);
     break;
-
-  default:
-    error() << "cannot show symbol table in this format" << eom;
   }
 }
 

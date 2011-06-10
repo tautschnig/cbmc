@@ -169,9 +169,7 @@ std::ostream &operator<<(std::ostream &out, const cpp_idt::id_classt &id_class)
    case cpp_idt::BLOCK_SCOPE:        out << "BLOCK_SCOPE"; break;
    case cpp_idt::TEMPLATE_SCOPE:     out << "TEMPLATE_SCOPE"; break;
    case cpp_idt::NAMESPACE:          out << "NAMESPACE"; break;
-
-   default:
-    out << "(OTHER)";
+   case cpp_idt::ENUM:               out << "ENUM"; break;
   }
 
   return out;

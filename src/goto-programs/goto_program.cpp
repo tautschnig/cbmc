@@ -193,9 +193,6 @@ std::ostream& goto_programt::output_instruction(
   case END_THREAD:
     out << "END THREAD" << std::endl;
     break;
-    
-  default:
-    throw "unknown statement";
   }
 
   return out;  
@@ -316,7 +313,20 @@ std::list<exprt> expressions_read(
     }
     break;
   
-  default:;
+  case OTHER:
+  case SKIP:
+  case START_THREAD:
+  case END_THREAD:
+  case LOCATION:
+  case END_FUNCTION:
+  case ATOMIC_BEGIN:
+  case ATOMIC_END:
+  case DECL:
+  case DEAD:
+  case THROW:
+  case CATCH:
+  case NO_INSTRUCTION_TYPE:
+    break;
   }
   
   return dest;
@@ -354,7 +364,24 @@ std::list<exprt> expressions_written(
     dest.push_back(to_code_assign(instruction.code).lhs());
     break;
   
-  default:;
+  case RETURN:
+  case ASSUME:
+  case ASSERT:
+  case GOTO:
+  case OTHER:
+  case SKIP:
+  case START_THREAD:
+  case END_THREAD:
+  case LOCATION:
+  case END_FUNCTION:
+  case ATOMIC_BEGIN:
+  case ATOMIC_END:
+  case DECL:
+  case DEAD:
+  case THROW:
+  case CATCH:
+  case NO_INSTRUCTION_TYPE:
+    break;
   }
   
   return dest;
@@ -568,9 +595,6 @@ std::string as_string(
     
   case END_THREAD:
     return "END THREAD";
-    
-  default:
-    throw "unknown statement";
   }
 
   return "";

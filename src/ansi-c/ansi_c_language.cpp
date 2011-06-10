@@ -153,9 +153,10 @@ bool ansi_c_languaget::parse(
   case configt::ansi_ct::flavourt::MODE_ARM_C_CPP:
     ansi_c_parser.mode=ansi_c_parsert::ARM;
     break;
-    
-  default:
+
+  case configt::ansi_ct::NO_MODE:
     assert(false);
+    break;
   }
 
   ansi_c_scanner_init();

@@ -492,8 +492,6 @@ void goto_symex_statet::set_ssa_indices(
     ssa_expr.set_level_2(level2.current_count(ssa_expr.get_identifier()));
     break;
     
-  default:
-    assert(false);
   }
 }
 

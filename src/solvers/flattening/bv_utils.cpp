@@ -754,9 +754,6 @@ bvt bv_utilst::shift(const bvt &src, const shiftt s, std::size_t dist)
     case LRIGHT:
       l=(i+dist<src.size()?src[i+dist]:const_literal(false));
       break;
-
-    default:
-      assert(false);
     }
 
     result[i]=l;
@@ -1230,8 +1227,9 @@ bvt bv_utilst::multiplier(
   {
   case SIGNED: return signed_multiplier(op0, op1);
   case UNSIGNED: return unsigned_multiplier(op0, op1);
-  default: assert(false);
   }
+
+  return bvt();
 }
 
 /*******************************************************************\
@@ -1255,8 +1253,9 @@ bvt bv_utilst::multiplier_no_overflow(
   {
   case SIGNED: return signed_multiplier_no_overflow(op0, op1);
   case UNSIGNED: return unsigned_multiplier_no_overflow(op0, op1);
-  default: assert(false);
   }
+
+  return bvt();
 }
 
 /*******************************************************************\
@@ -1330,7 +1329,6 @@ void bv_utilst::divider(
   {
   case SIGNED: signed_divider(op0, op1, result, remainer); break;
   case UNSIGNED: unsigned_divider(op0, op1, result, remainer); break;
-  default: assert(false);
   }
 }
 

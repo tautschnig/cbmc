@@ -1219,8 +1219,12 @@ bool Parser::rTemplateDecl(cpp_declarationt &decl)
     decl.swap(body);
     break;
 
-   default:
-    assert(0);
+  case tdk_unknown:
+    assert(false);
+    break;
+
+  case num_tdks:
+    assert(false);
     break;
   }
 
@@ -2259,7 +2263,6 @@ bool Parser::optMemberSpec(cpp_member_spect &member_spec)
     case TOK_VIRTUAL:  member_spec.set_virtual(true); break;
     case TOK_FRIEND:   member_spec.set_friend(true); break;
     case TOK_EXPLICIT: member_spec.set_explicit(true); break;
-    default: assert(false);
     }
 
     t=lex.LookAhead(0);
@@ -2307,7 +2310,6 @@ bool Parser::optStorageSpec(cpp_storage_spect &storage_spec)
     case TOK_MUTABLE: storage_spec.set_mutable(); break;
     case TOK_GCC_ASM: storage_spec.set_asm(); break;
     case TOK_THREAD_LOCAL: storage_spec.set_thread_local(); break;
-    default: assert(false);
     }
 
     set_location(storage_spec, tk);
@@ -4933,9 +4935,6 @@ bool Parser::rBaseSpecifiers(irept &bases)
        case TOK_PRIVATE:
         base.set(ID_protection, ID_private);
         break;
-
-       default:
-        assert(0);
       }
 
       t=lex.LookAhead(0);
@@ -5079,9 +5078,6 @@ bool Parser::rClassMember(cpp_itemt &member)
     case TOK_PRIVATE:
       member.id("cpp-private");
       break;
-
-    default:
-      assert(0);
     }
 
     set_location(member, tk1);
@@ -6345,9 +6341,6 @@ bool Parser::rUnaryExpr(exprt &exp)
       exp=exprt(ID_side_effect);
       exp.set(ID_statement, ID_predecrement);
       break;
-
-    default:
-      assert(0);
     }
 
     exp.move_to_operands(right);
@@ -7400,9 +7393,6 @@ bool Parser::rTypePredicate(exprt &expr)
     expr.add("type_arg1").swap(tname1);
     expr.add("type_arg2").swap(tname2);
     break;
-    
-  default:
-    assert(false);
   }
 
   return true;

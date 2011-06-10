@@ -194,7 +194,10 @@ bool boolbvt::type_conversion(
         dest=src;
         return false;
 
-      default:
+      case IS_FIXED:
+      case IS_VERILOGBV:
+      case IS_RANGE:
+      case IS_UNKNOWN:
         if(src_type.id()==ID_bool)
         {
           // bool to float
@@ -413,7 +416,10 @@ bool boolbvt::type_conversion(
       }
       break;
       
-    default:
+    case IS_BV:
+    case IS_VERILOGBV:
+    case IS_RANGE:
+    case IS_UNKNOWN:
       if(src_type.id()==ID_bool)
       {
         // bool to integer
@@ -505,7 +511,7 @@ bool boolbvt::type_conversion(
 
     return false;
     
-  default:
+  case IS_UNKNOWN:
     if(dest_type.id()==ID_array)
     {
       if(src_width==dest_width)

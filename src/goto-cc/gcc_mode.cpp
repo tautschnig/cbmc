@@ -225,7 +225,6 @@ bool gcc_modet::doit()
   case compilet::PREPROCESS_ONLY: debug() << "Preprocessing only" << eom; break;
   case compilet::COMPILE_LINK: debug() << "Compiling and linking a library" << eom; break;
   case compilet::COMPILE_LINK_EXECUTABLE: debug() << "Compiling and linking an executable" << eom; break;
-  default: assert(false);
   }
 
   if(cmdline.isset("i386-win32") ||

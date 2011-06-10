@@ -192,7 +192,24 @@ void output_vcd(
       }
       break;
       
-    default:;
+    case goto_trace_stept::ASSUME:
+    case goto_trace_stept::ASSERT:
+    case goto_trace_stept::LOCATION:
+    case goto_trace_stept::INPUT:
+    case goto_trace_stept::OUTPUT:
+    case goto_trace_stept::DECL:
+    case goto_trace_stept::DEAD:
+    case goto_trace_stept::FUNCTION_CALL:
+    case goto_trace_stept::FUNCTION_RETURN:
+    case goto_trace_stept::CONSTRAINT:
+    case goto_trace_stept::SHARED_READ:
+    case goto_trace_stept::SHARED_WRITE:
+    case goto_trace_stept::ATOMIC_BEGIN:
+    case goto_trace_stept::ATOMIC_END:
+    case goto_trace_stept::SPAWN:
+    case goto_trace_stept::MEMORY_BARRIER:
+    case goto_trace_stept::NONE:
+      break;
     }
   }
 }

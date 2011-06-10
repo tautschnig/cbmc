@@ -100,9 +100,6 @@ void boolbvt::convert_case(const exprt &expr, bvt &bv)
 
       what=COMPARE;
       break;
-
-    default:
-      assert(false);
     }
   }
 }

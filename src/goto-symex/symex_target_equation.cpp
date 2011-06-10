@@ -1168,7 +1168,8 @@ void symex_target_equationt::SSA_stept::output(
   case goto_trace_stept::MEMORY_BARRIER: out << "MEMORY_BARRIER" << std::endl; break;
   case goto_trace_stept::GOTO: out << "IF " << from_expr(ns, "", cond_expr) << " GOTO" << std::endl; break;
 
-  default: assert(false);
+  case goto_trace_stept::NONE:
+    assert(false);
   }
 
   if(is_assert() || is_assume() || is_assignment() || is_constraint())

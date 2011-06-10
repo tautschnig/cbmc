@@ -98,8 +98,6 @@ int main()
       f3/=f2;
       res=float_utils.div(b1, b2);
       break;
-
-    default:assert(0);
     }
 
     i3.from_float(f3);

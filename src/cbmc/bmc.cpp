@@ -86,9 +86,6 @@ void bmct::error_trace()
       std::cout << xml << "\n";
     }
     break;
-  
-  default:
-    assert(false);
   }
 
   const std::string graphml=options.get_option("graphml-cex");
@@ -223,9 +220,6 @@ void bmct::report_success()
       std::cout << "\n";
     }
     break;
-    
-  default:
-    assert(false);
   }
 }
 
@@ -258,9 +252,6 @@ void bmct::report_failure()
       std::cout << "\n";
     }
     break;
-    
-  default:
-    assert(false);
   }
 }
 

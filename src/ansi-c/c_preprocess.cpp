@@ -776,9 +776,6 @@ bool c_preprocess_gcc_clang(
   case configt::ansi_ct::ost::NO_OS:
     command+=" -nostdinc"; // make sure we don't mess with the system library
     break;
-    
-  default:
-    assert(false);
   }
   
   // Standard Defines, ANSI9899 6.10.8

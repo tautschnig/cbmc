@@ -120,8 +120,6 @@ void check_arithmetic(int i)
       f3/=f2;
       res/=i2;
       break;
-
-    default:assert(0);
   }
 
   i3.from_float(f3);
@@ -183,8 +181,6 @@ void check_comparison(int i)
       ires = (i1 >= i2);
       fres = (f1 >= f2);
       break;
-    default:
-      assert(0);
   }
 
   if(ires != fres)

@@ -100,8 +100,6 @@ void show_properties(
       std::cout << std::endl;
       break;
 
-    default:
-      assert(false);
     }
   }
 }

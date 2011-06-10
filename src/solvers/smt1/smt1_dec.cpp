@@ -179,9 +179,6 @@ decision_proceduret::resultt smt1_dect::dec_solve()
             + " > "
             + temp_result_filename;
     break;
-
-  default:
-    assert(false);
   }
 
   #if defined(__linux__) || defined(__APPLE__)
@@ -222,10 +219,11 @@ decision_proceduret::resultt smt1_dect::dec_solve()
     return read_result_z3(in);
 
   case GENERIC:
-  default:
     error() << "Generic solver can't solve" << eom;
     return decision_proceduret::D_ERROR;
   }
+
+  return decision_proceduret::D_ERROR;
 }
 
 /*******************************************************************\

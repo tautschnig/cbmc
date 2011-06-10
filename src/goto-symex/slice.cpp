@@ -160,9 +160,8 @@ void symex_slicet::slice(symex_target_equationt::SSA_stept &SSA_step)
   case goto_trace_stept::FUNCTION_RETURN:
     // ignore for now
     break;
-    
-  default:
-    assert(false);  
+  case goto_trace_stept::NONE:
+    assert(false);
   }
 }
 
@@ -284,9 +283,6 @@ void symex_slicet::collect_open_variables(
     case goto_trace_stept::MEMORY_BARRIER:
       // ignore for now
       break;
-
-    default:
-      assert(false);  
     }
   }
   

@@ -118,8 +118,8 @@ void prop_conv_storet::constraintt::replay(prop_convt &dest) const
   case CONVERT:
     //dest.prop.set_equal(dest.convert_rest(expr), literal);
     break;
-
-  default:
+  
+  case NONE:
     assert(false);
   }
 }
@@ -150,7 +150,7 @@ void prop_conv_storet::constraintt::print(std::ostream &out) const
     out << expr << "\n";
     break;
   
-  default:
+  case NONE:
     assert(false);
   }
 }

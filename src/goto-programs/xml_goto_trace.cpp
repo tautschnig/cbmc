@@ -214,7 +214,17 @@ void convert(
       }
       break;
       
-    default:
+    case goto_trace_stept::ASSUME:
+    case goto_trace_stept::LOCATION:
+    case goto_trace_stept::DEAD:
+    case goto_trace_stept::CONSTRAINT:
+    case goto_trace_stept::SHARED_READ:
+    case goto_trace_stept::SHARED_WRITE:
+    case goto_trace_stept::ATOMIC_BEGIN:
+    case goto_trace_stept::ATOMIC_END:
+    case goto_trace_stept::SPAWN:
+    case goto_trace_stept::MEMORY_BARRIER:
+    case goto_trace_stept::NONE:
       if(source_location!=previous_source_location)
       {
         // just the source location

@@ -64,9 +64,7 @@ void show_locations(
                 << it->location_number << " "
                 << it->source_location << std::endl;
       break;
-
-    default:
-      assert(false);
+    
     }
   }
 }

@@ -39,9 +39,6 @@ void bmct::show_vcc(std::ostream &out)
     
   case ui_message_handlert::PLAIN:
     break;
-    
-  default:
-    assert(false);
   }   
     
   out << "\n" << "VERIFICATION CONDITIONS:" << "\n" << "\n";

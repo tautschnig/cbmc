@@ -506,9 +506,6 @@ void cpp_typecheck_resolvet::filter(
     case BOTH:
       match=true;
       break;
-
-    default:
-      assert(false);
     }
 
     if(match)
@@ -1851,7 +1848,8 @@ exprt cpp_typecheck_resolvet::resolve(
     }
     break;
 
-  default:;
+  case BOTH:
+    break;
   }
   
   return result;

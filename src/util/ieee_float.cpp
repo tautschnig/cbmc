@@ -894,7 +894,8 @@ void ieee_floatt::divide_and_round(
         ++fraction;
       break;
 
-    default:
+    case NONDETERMINISTIC:
+    case UNKNOWN:
       assert(false);
     }
   }

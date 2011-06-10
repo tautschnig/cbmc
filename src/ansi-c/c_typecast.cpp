@@ -476,7 +476,10 @@ void c_typecastt::implicit_typecast_arithmetic(
   case REAL:       new_type=real_typet(); break;
   case INTEGER:    new_type=integer_typet(); break;
   case COMPLEX: return; // do nothing
-  default: return;
+  case LARGE_SIGNED_INT: return; // do nothing
+  case LARGE_UNSIGNED_INT: return; // do nothing
+  case VOIDPTR: return; // do nothing
+  case OTHER: return; // do nothing
   }
 
   if(new_type!=expr_type)

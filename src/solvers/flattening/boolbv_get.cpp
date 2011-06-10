@@ -110,7 +110,7 @@ exprt boolbvt::bv_get_rec(
       {
       case tvt::tv_enumt::TV_FALSE: return false_exprt();
       case tvt::tv_enumt::TV_TRUE:  return true_exprt();
-      default: return false_exprt(); // default
+      case tvt::tv_enumt::TV_UNKNOWN: return false_exprt(); // default
       }
     }
 
@@ -251,7 +251,6 @@ exprt boolbvt::bv_get_rec(
        case tvt::tv_enumt::TV_FALSE: ch='0'; break;
        case tvt::tv_enumt::TV_TRUE:  ch='1'; break;
        case tvt::tv_enumt::TV_UNKNOWN: ch='0'; break;
-       default: assert(false);
       }
 
     value=ch+value;
@@ -273,8 +272,13 @@ exprt boolbvt::bv_get_rec(
     }
     break;
     
-  default:
   case IS_C_ENUM:
+  case IS_BV:
+  case IS_SIGNED:
+  case IS_UNSIGNED:
+  case IS_FLOAT:
+  case IS_FIXED:
+  case IS_VERILOGBV:
     constant_exprt value_expr(type);
     value_expr.set_value(value);
     return value_expr;
@@ -488,7 +492,6 @@ mp_integer boolbvt::get_value(
      case tvt::tv_enumt::TV_FALSE:   break;
      case tvt::tv_enumt::TV_TRUE:    value+=weight; break;
      case tvt::tv_enumt::TV_UNKNOWN: break;
-     default: assert(false);
     }
 
     weight*=2;

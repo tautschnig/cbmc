@@ -75,7 +75,11 @@ void goto_trace_stept::output(
   case goto_trace_stept::SHARED_WRITE: out << "SHARED WRITE"; break;
   case goto_trace_stept::FUNCTION_CALL: out << "FUNCTION CALL"; break;
   case goto_trace_stept::FUNCTION_RETURN: out << "FUNCTION RETURN"; break;
-  default: assert(false);
+  case goto_trace_stept::CONSTRAINT: assert(false);
+  case goto_trace_stept::SPAWN: assert(false);
+  case goto_trace_stept::MEMORY_BARRIER: assert(false);
+  case goto_trace_stept::DEAD: assert(false);
+  case goto_trace_stept::NONE: assert(false);
   }
 
   if(type==ASSERT || type==ASSUME || type==GOTO)
@@ -451,8 +455,9 @@ void show_goto_trace(
     case goto_trace_stept::SHARED_WRITE:
       assert(false);
       break;
-      
-    default:
+    case goto_trace_stept::DEAD:
+      assert(false);
+    case goto_trace_stept::NONE:
       assert(false);
     }
   }

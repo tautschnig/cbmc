@@ -149,8 +149,9 @@ void cover_goalst::operator()()
       mark(); 
       break;
 
-    default:
-      error() << "decision procedure has failed" << eom;
+    case decision_proceduret::D_TAUTOLOGY:
+    case decision_proceduret::D_ERROR:
+      error("decision procedure has failed");
       return;
     }
   }

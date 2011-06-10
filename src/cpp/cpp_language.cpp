@@ -175,7 +175,7 @@ bool cpp_languaget::parse(
     cpp_parser.mode=ansi_c_parsert::ARM;
     break;
     
-  default:
+  case configt::ansi_ct::NO_MODE:
     assert(false);
   }
 

@@ -212,8 +212,14 @@ void interpretert::step()
   case DEAD:
     throw "DEAD not yet implemented";
   
-  default:
-    throw "encountered instruction with undefined instruction type";
+  case THROW:
+    throw "THROW not yet implemented";
+  
+  case CATCH:
+    throw "CATCH not yet implemented";
+  
+  case NO_INSTRUCTION_TYPE:
+    throw "invalid instruction";
   }
   
   PC=next_PC;

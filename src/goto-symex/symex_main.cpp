@@ -604,8 +604,5 @@ void goto_symext::symex_step(
     
   case NO_INSTRUCTION_TYPE:
     throw "symex got NO_INSTRUCTION";
-  
-  default:
-    throw "symex got unexpected instruction";
   }
 }

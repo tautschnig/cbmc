@@ -266,17 +266,8 @@ void string_instrumentationt::instrument(
   goto_programt &dest,
   goto_programt::targett it)
 {
-  switch(it->type)
-  {
-  case ASSIGN:
-    break;
-    
-  case FUNCTION_CALL:
+  if(it->type==FUNCTION_CALL)
     do_function_call(dest, it);
-    break;
-    
-  default:;  
-  }
 }
 
 /*******************************************************************\
@@ -701,7 +692,17 @@ void string_instrumentationt::do_format_string_write(
           // nothing
           break;
         }
-        default: // everything else
+        case format_tokent::SIGNED_DEC:
+        case format_tokent::UNSIGNED_DEC:
+        case format_tokent::UNSIGNED_OCT:
+        case format_tokent::UNSIGNED_HEX:
+        case format_tokent::DOUBLE_ENG:
+        case format_tokent::DOUBLE:
+        case format_tokent::DOUBLE_G:
+        case format_tokent::DOUBLE_HEX:
+        case format_tokent::CHAR:
+        case format_tokent::POINTER:
+        case format_tokent::PERCENT:
         {
           const exprt &argument=arguments[argument_start_inx+args];
           const typet &arg_type=ns.follow(argument.type());
