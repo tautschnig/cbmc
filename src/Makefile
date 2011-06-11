@@ -5,6 +5,14 @@ DIRS = ansi-c big-int cbmc cpp goto-cc goto-instrument goto-programs \
 
 all: cbmc.dir goto-cc.dir goto-instrument.dir path-symex.dir goto-analyzer.dir
 
+check: cbmc.dir
+
+maintainer-clean distclean: clean
+
+install install-strip uninstall check installcheck dist:
+
+.PHONY: install install-strip uninstall check installcheck dist distclean maintainer-clean
+
 ###############################################################################
 
 util.dir: big-int.dir
@@ -40,12 +48,12 @@ goto-cc.dir: languages pointer-analysis.dir goto-programs.dir linking.dir
 
 $(patsubst %, %.dir, $(DIRS)):
 	## Entering $(basename $@)
-	$(MAKE) $(MAKEARGS) -C $(basename $@)
+	$(MAKE) -C $(basename $@)
 
 # generate source files
 
 $(patsubst %, %_generated_files, $(DIRS)):
-	$(MAKE) $(MAKEARGS) -C $(patsubst %_generated_files, %, $@) generated_files
+	$(MAKE) -C $(patsubst %_generated_files, %, $@) generated_files
 	
 generated_files: $(patsubst %, %_generated_files, $(DIRS))
 
@@ -54,7 +62,7 @@ generated_files: $(patsubst %, %_generated_files, $(DIRS))
 clean: $(patsubst %, %_clean, $(DIRS))
 
 $(patsubst %, %_clean, $(DIRS)):
-	$(MAKE) $(MAKEARGS) -C $(patsubst %_clean, %, $@) clean ; \
+	$(MAKE) -C $(patsubst %_clean, %, $@) clean ; \
 
 # minisat 2 download, for your convenience
 
