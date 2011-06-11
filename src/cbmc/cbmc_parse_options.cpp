@@ -509,6 +509,7 @@ int cbmc_parse_optionst::doit()
 
   goto_functionst goto_functions;
 
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
   // get solver
   cbmc_solverst cbmc_solvers(options, symbol_table, ui_message_handler);
   cbmc_solvers.set_ui(get_ui());
@@ -536,6 +537,18 @@ int cbmc_parse_optionst::doit()
   if(get_goto_program_ret!=-1)
     return get_goto_program_ret;
 
+=======
+  rett r(get_goto_program(options, bmc, goto_functions));
+  switch (r) {
+    case ret_fail:
+      return 6;
+    case ret_ok:
+      break;
+    case ret_quit:
+      return 0;
+  }
+    
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   label_properties(goto_functions);
 
   if(cmdline.isset("show-claims") || // will go away
@@ -620,7 +633,11 @@ Function: cbmc_parse_optionst::get_goto_program
 
 \*******************************************************************/
   
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
 int cbmc_parse_optionst::get_goto_program(
+=======
+cbmc_parseoptionst::rett cbmc_parseoptionst::get_goto_program(
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   const optionst &options,
   bmct &bmc, // for get_modules
   goto_functionst &goto_functions)
@@ -628,18 +645,53 @@ int cbmc_parse_optionst::get_goto_program(
   if(cmdline.args.empty())
   {
     error() << "Please provide a program to verify" << eom;
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
     return 6;
+=======
+    return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   }
 
   try
   {
     if(cmdline.isset("show-parse-tree"))
     {
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
       if(cmdline.args.size()!=1 ||
          is_goto_binary(cmdline.args[0]))
       {
         error() << "Please give exactly one source file" << eom;
         return 6;
+=======
+      status() << "Reading GOTO program from file" << eom;
+
+      if(read_goto_binary(cmdline.args[0],
+           symbol_table, goto_functions, get_message_handler()))
+        return ret_fail;
+        
+      config.ansi_c.set_from_symbol_table(symbol_table);
+
+      if(cmdline.isset("show-symbol-table"))
+      {
+        show_symbol_table();
+        return ret_quit;
+      }
+      
+      irep_idt entry_point=goto_functions.entry_point();
+      
+      if(symbol_table.symbols.find(entry_point)==symbol_table.symbols.end())
+      {
+        error() << "The goto binary has no entry point; please complete linking" << eom;
+        return ret_fail;
+      }
+    }
+    else if(cmdline.isset("show-parse-tree"))
+    {
+      if(cmdline.args.size()!=1)
+      {
+        error() << "Please give one source file only" << eom;
+        return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
       }
       
       std::string filename=cmdline.args[0];
@@ -653,7 +705,11 @@ int cbmc_parse_optionst::get_goto_program(
       if(!infile)
       {
         error() << "failed to open input file `" << filename << "'" << eom;
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
         return 6;
+=======
+        return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
       }
                               
       languaget *language=get_language_from_filename(filename);
@@ -661,7 +717,11 @@ int cbmc_parse_optionst::get_goto_program(
       if(language==0)
       {
         error() << "failed to figure out type of file `" <<  filename << "'" << eom;
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
         return 6;
+=======
+        return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
       }
       
       language->set_message_handler(get_message_handler());
@@ -671,11 +731,19 @@ int cbmc_parse_optionst::get_goto_program(
       if(language->parse(infile, filename))
       {
         error() << "PARSING ERROR" << eom;
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
         return 6;
       }
       
       language->show_parse(std::cout);
       return 0;
+=======
+        return ret_fail;
+      }
+      
+      language->show_parse(std::cout);
+      return ret_quit;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
     }
 
     cmdlinet::argst binaries;
@@ -686,6 +754,7 @@ int cbmc_parse_optionst::get_goto_program(
         it!=cmdline.args.end();
         ) // no ++it
     {
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
       if(is_goto_binary(*it))
       {
         binaries.push_back(*it);
@@ -703,11 +772,19 @@ int cbmc_parse_optionst::get_goto_program(
       int get_modules_ret=get_modules(bmc);
       if(get_modules_ret!=-1) return get_modules_ret;
       if(binaries.empty() && final()) return 6;
+=======
+    
+      if(parse()) return ret_fail;
+      if(typecheck()) return ret_fail;
+      if(get_modules(bmc)) return ret_fail;
+      if(final()) return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
 
       // we no longer need any parse trees or language files
       clear_parse();
     }
 
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
     for(cmdlinet::argst::const_iterator
         it=binaries.begin();
         it!=binaries.end();
@@ -718,6 +795,21 @@ int cbmc_parse_optionst::get_goto_program(
       if(read_object_and_link(*it, symbol_table, goto_functions, *this))
         return 6;
     }
+=======
+      if(cmdline.isset("show-symbol-table"))
+      {
+        show_symbol_table();
+        return ret_quit;
+      }
+
+      irep_idt entry_point=goto_functions.entry_point();
+      
+      if(symbol_table.symbols.find(entry_point)==symbol_table.symbols.end())
+      {
+        error() << "No entry point; please provide a main function" << eom;
+        return ret_fail;
+      }
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
 
     if(!binaries.empty())
       config.set_from_symbol_table(symbol_table);
@@ -733,33 +825,58 @@ int cbmc_parse_optionst::get_goto_program(
     goto_convert(symbol_table, goto_functions, ui_message_handler);
 
     if(process_goto_program(options, goto_functions))
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
       return 6;
+=======
+      return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   }
 
   catch(const char *e)
   {
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
     error() << e << eom;
     return 6;
+=======
+    error(e);
+    return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   }
 
   catch(const std::string e)
   {
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
     error() << e << eom;
     return 6;
+=======
+    error(e);
+    return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   }
   
   catch(int)
   {
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
     return 6;
+=======
+    return ret_fail;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
   }
   
   catch(std::bad_alloc)
   {
     error() << "Out of memory" << eom;
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.cpp
     return 6;
   }
   
   return -1; // no error, continue
+=======
+    return ret_fail;
+  }
+  
+  return ret_ok;
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.cpp
 }
 
 /*******************************************************************\

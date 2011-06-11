@@ -76,7 +76,17 @@ protected:
   virtual void get_command_line_options(optionst &options);
   virtual int do_bmc(bmct &bmc, const goto_functionst &goto_functions);
 
+<<<<<<< HEAD:src/cbmc/cbmc_parse_options.h
   virtual int get_goto_program(
+=======
+  typedef enum {
+    ret_fail = 0,
+    ret_ok = 1,
+    ret_quit = 2
+  } rett;
+
+  virtual rett get_goto_program(
+>>>>>>> 2569582... Make cbmc return 0 instead of 6 when operation succeeds, even if no bmc was requested:src/cbmc/cbmc_parseoptions.h
     const optionst &options,
     bmct &bmc,
     goto_functionst &goto_functions);
