@@ -831,7 +831,8 @@ bool c_preprocess_gcc_clang(
   default:;
   }
 
-  #ifdef _WIN32
+  // popen isn't reliable on OS X either, returns empty string on small files
+  #if 1
   std::string tmpi=get_temporary_file("tmp.gcc", "");
   command+=" \""+file+"\"";
   command+=" -o \""+tmpi+"\"";
