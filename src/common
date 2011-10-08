@@ -151,6 +151,17 @@ else
 endif
 
 
+the_realpath = $(sort $(realpath $(1) $(abspath $(realpath $(CURDIR)/$(lastword $(MAKEFILE_LIST)))/$(1))))
+check_realpath = $(if $(value $(1)),$(or $(call the_realpath,$(value $(1))), $(error $(1) is non-empty but $(value $(1)) does not exist)))
+APRON := $(call check_realpath,APRON)
+CHAFF := $(call check_realpath,CHAFF)
+CUDD := $(call check_realpath,CUDD)
+MINISAT := $(call check_realpath,MINISAT)
+MINISAT2 := $(call check_realpath,MINISAT2)
+SMVSAT := $(call check_realpath,SMVSAT)
+SQUOLEM2 := $(call check_realpath,SQUOLEM2)
+
+
 first_target: all
 
 HOSTCXX ?= $(CXX)
