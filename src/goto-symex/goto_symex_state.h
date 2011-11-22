@@ -228,6 +228,11 @@ public:
         level2_current_names.find(identifier);
       return it==level2_current_names.end()?0:it->second.second;
     }
+
+    explicit goto_statet(unsigned _d):
+      depth(_d)
+    {
+    }
   };
 
   // gotos

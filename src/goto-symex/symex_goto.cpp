@@ -130,8 +130,12 @@ void goto_symext::symex_goto(statet &state)
   statet::goto_state_listt &goto_state_list=
     state.top().goto_state_map[new_state_pc];
 
-  goto_state_list.push_back(statet::goto_statet(state));
+  goto_state_list.push_back(statet::goto_statet(0));
   statet::goto_statet &new_state=goto_state_list.back();
+  new_state.depth=state.depth;
+  new_state.level2=state.level2;
+  new_state.value_set.make_union(state.value_set);
+  new_state.guard=state.guard;
   
   // adjust guards
   if(new_guard.is_true())
@@ -295,10 +299,7 @@ void goto_symext::merge_value_sets(
   statet &dest)
 {
   if(dest.guard.is_false())
-  {
-    dest.value_set=src.value_set;
-    return;
-  }
+    dest.value_set.clear();
   
   dest.value_set.make_union(src.value_set);
 }
