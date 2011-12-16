@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/i2string.h>
 #include <util/type_eq.h>
 #include <util/pointer_arithmetic.h>
+#include <util/type_util.h>
 
 #include <ansi-c/c_types.h>
 
@@ -609,7 +610,7 @@ symbol_exprt string_abstractiont::add_dummy_symbol_and_value(
   decl->code.location()=ref_instr->location;
 
   // set the value - may be nil
-  if(source_type.id()==ID_array && is_char_type(source_type.subtype()) &&
+  if(source_type.id()==ID_array && is_char_type(source_type.subtype(), ns) &&
       type_eq(type, string_struct, ns))
   {
     new_symbol.value=struct_exprt(string_struct);
@@ -729,7 +730,7 @@ goto_programt::targett string_abstractiont::abstract_assign(
   const typet &type=ns.follow(lhs.type());
   if(type.id()==ID_pointer || type.id()==ID_array)
     return abstract_pointer_assign(dest, target);
-  else if(is_char_type(type))
+  else if(is_char_type(type, ns))
     return abstract_char_assign(dest, target);
 
   return target;
@@ -1077,7 +1078,7 @@ const typet& string_abstractiont::build_abstraction_type_rec(const typet &type,
   if(eff_type.id()==ID_array || eff_type.id()==ID_pointer)
   {
     // char* or void* or char[]
-    if(is_char_type(eff_type.subtype()) ||
+    if(is_char_type(eff_type.subtype(), ns) ||
         eff_type.subtype().id() == ID_empty)
       map_entry.first->second=pointer_typet(string_struct);
     else
@@ -1160,7 +1161,7 @@ bool string_abstractiont::build(const exprt &object, exprt &dest, bool write)
     return build_symbol_constant(str_len, str_len+1, dest);
   }
 
-  if(object.id()==ID_array && is_char_type(object.type().subtype()))
+  if(object.id()==ID_array && is_char_type(object.type().subtype(), ns))
     return build_array(to_array_expr(object), dest, write);
 
   // other constants aren't useful
@@ -1255,7 +1256,7 @@ Function: string_abstractiont::build_array
 bool string_abstractiont::build_array(const array_exprt &object,
     exprt &dest, bool write)
 {
-  assert(is_char_type(object.type().subtype()));
+  assert(is_char_type(object.type().subtype(), ns));
 
   // writing is invalid
   if(write) return true;
@@ -1307,7 +1308,7 @@ bool string_abstractiont::build_pointer(const exprt &object,
     return false;
   }
   else if(ptr.pointer.id()==ID_symbol &&
-      is_char_type(object.type().subtype()))
+      is_char_type(object.type().subtype(), ns))
     // recursive call; offset will be handled by pointer_offset in SIZE/LENGTH
     // checks
     return build_wrap(ptr.pointer, dest, write);

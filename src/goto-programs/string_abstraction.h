@@ -55,18 +55,6 @@ protected:
 
   void move_lhs_arithmetic(exprt &lhs, exprt &rhs);
 
-  bool is_char_type(const typet &type) const
-  {
-    if(type.id()==ID_symbol)
-      return is_char_type(ns.follow(type));
-
-    if(type.id()!=ID_signedbv &&
-       type.id()!=ID_unsignedbv)
-      return false;
-
-    return to_bitvector_type(type).get_width()==config.ansi_c.char_width;
-  }
-
   inline bool is_ptr_string_struct(const typet &type) const;
 
   void make_type(exprt &dest, const typet &type)
