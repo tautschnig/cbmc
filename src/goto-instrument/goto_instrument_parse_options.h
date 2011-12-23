@@ -36,7 +36,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(cfg-kill)(no-dependencies)(force-loop-duplication)" \
   "(call-graph)" \
   "(no-po-rendering)(render-cluster-file)(render-cluster-function)" \
-  "(nondet-volatile)(isr):" \
+  "(nondet-volatile)(isr):(check-invariant):" \
   "(stack-depth):(nondet-static)" \
   "(function-enter):(function-exit):(branch):" \
   "(learn)(learn-functions):(learn-word-length)(fl):(cs):" \

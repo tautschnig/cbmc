@@ -4,7 +4,7 @@ SRC = goto_instrument_parse_options.cpp rw_set.cpp \
       object_id.cpp show_locations.cpp points_to.cpp \
       alignment_checks.cpp race_check.cpp \
       nondet_volatile.cpp interrupt.cpp function.cpp branch.cpp \
-      learn.cpp mmio.cpp stack_depth.cpp nondet_static.cpp \
+      learn.cpp mmio.cpp stack_depth.cpp nondet_static.cpp check_invariant.cpp \
       concurrency.cpp dump_c.cpp dot.cpp havoc_loops.cpp \
       call_sequences.cpp unwind.cpp function_modifies.cpp \
       accelerate/accelerate.cpp accelerate/polynomial.cpp \

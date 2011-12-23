@@ -85,6 +85,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "thread_instrumentation.h"
 #include "skip_loops.h"
 #include "code_contracts.h"
+#include "check_invariant.h"
 
 /*******************************************************************\
 
@@ -1058,7 +1059,8 @@ void goto_instrument_parse_optionst::instrument_goto_program()
      cmdline.isset("race-check") ||
      cmdline.isset("mm") ||
      cmdline.isset("isr") ||
-     cmdline.isset("concurrency"))
+     cmdline.isset("concurrency") ||
+     cmdline.isset("check-invariant"))
   {
     if(!cmdline.isset("inline"))
     {
@@ -1209,6 +1211,16 @@ void goto_instrument_parse_optionst::instrument_goto_program()
         value_set_analysis,
         symbol_table,
         goto_functions);
+    }
+
+    if(cmdline.isset("check-invariant"))
+    {
+      status("Instrumenting invariant check");
+      invariant(
+        value_set_analysis,
+        symbol_table,
+        goto_functions,
+        cmdline.getval("check-invariant"));
     }
   }  
 
