@@ -1276,7 +1276,1686 @@ bool simplify_exprt::simplify_if(if_exprt &expr)
         expr.swap(tmp);
         return false;
       }
+<<<<<<< HEAD
       else if(falsevalue.is_true())
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+=======
+>>>>>>> e9ee7fb... No useless erase in middle of vector
+=======
+        
+      new_expr.type()=bool_typet();
+      simplify_node(new_expr);
+
+      new_expr.make_typecast(expr.type());
+      simplify_node(new_expr);
+      
+      expr.swap(new_expr);
+      return false;
+    }
+  }
+
+  bool result=true;
+    
+  // try to merge constants
+  
+  unsigned width=to_bitvector_type(expr.type()).get_width();
+    
+  while(expr.operands().size()>=2)
+  {
+    const irep_idt &a_str=expr.op0().get(ID_value);
+    const irep_idt &b_str=expr.op1().get(ID_value);
+    
+    if(!expr.op0().is_constant())
+      break;
+      
+    if(!expr.op1().is_constant())
+      break;
+      
+    if(expr.op0().type()!=expr.type())
+      break;
+                
+    if(expr.op1().type()!=expr.type())
+      break;
+      
+    assert(a_str.size()==b_str.size());
+      
+    exprt new_op(ID_constant, expr.type());
+    std::string new_value;
+    new_value.resize(width);
+                
+    if(expr.id()==ID_bitand)
+    {
+      for(unsigned i=0; i<width; i++)
+        new_value[i]=(a_str[i]=='1' && b_str[i]=='1')?'1':'0';
+    }
+    else if(expr.id()==ID_bitor)
+    {
+      for(unsigned i=0; i<width; i++)
+        new_value[i]=(a_str[i]=='1' || b_str[i]=='1')?'1':'0';
+    }
+    else if(expr.id()==ID_bitxor)
+    {
+      for(unsigned i=0; i<width; i++)
+        new_value[i]=((a_str[i]=='1')!=(b_str[i]=='1'))?'1':'0';
+    }
+    else
+      break;
+      
+    new_op.set(ID_value, new_value);
+
+    // erase first operand
+    expr.operands().erase(expr.operands().begin());
+    expr.op0().swap(new_op);
+    
+    result=false;
+  }
+
+  // now erase zeros out of bitor, bitxor
+
+  if(expr.id()==ID_bitor || expr.id()==ID_bitxor)
+  {
+    for(exprt::operandst::iterator
+        it=expr.operands().begin();
+        it!=expr.operands().end();
+        ) // no it++
+    {
+      if(it->is_zero() && expr.operands().size()>1)
+      {
+        it=expr.operands().erase(it);
+        result=false;
+      }
+      else
+        it++;
+    }
+  }
+  
+  // two operands that are syntactically the same
+
+  if(expr.operands().size()==2 &&
+     expr.op0()==expr.op1())
+  {
+    if(expr.id()==ID_bitand || expr.id()==ID_bitor)
+    {
+      exprt tmp;
+      tmp.swap(expr.op0());
+      expr.swap(tmp);
+      return false;
+    }
+    else if(expr.id()==ID_bitxor)
+    {
+      constant_exprt new_op(expr.type());
+      new_op.set_value(integer2binary(0, width));
+      expr.swap(new_op);
+      return false;
+    }
+  }
+  
+  if(expr.operands().size()==1)
+  {
+    exprt tmp;
+    tmp.swap(expr.op0());
+    expr.swap(tmp);
+    return false;
+  }
+  
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_extractbit
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_extractbit(exprt &expr)
+{
+  const typet &op0_type=expr.op0().type();
+
+  if(!is_bitvector_type(op0_type))
+    return true;
+  
+  unsigned width=to_bitvector_type(op0_type).get_width();
+
+  assert(expr.operands().size()==2);
+
+  mp_integer i;
+
+  if(to_integer(expr.op1(), i))
+    return true;
+
+  if(!expr.op0().is_constant())
+    return true;
+
+  if(i<0 || i>=width)
+    return true;
+
+  const irep_idt &value=expr.op0().get(ID_value);
+
+  if(value.size()!=width)
+    return true;
+
+  bool bit=(id2string(value)[width-integer2long(i)-1]=='1');
+
+  expr.make_bool(bit);
+
+  return false;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_concatenation
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_concatenation(exprt &expr)
+{
+  bool result=true;
+
+  if(is_bitvector_type(expr.type()))
+  {
+    // first, turn bool into bvec[1]
+    for(unsigned i=0; i<expr.operands().size(); i++)
+    {
+      exprt &op=expr.operands()[i];
+      if(op.is_true() || op.is_false())
+      {
+        bool value=op.is_true();
+        op=exprt(ID_constant, typet(ID_unsignedbv));
+        op.type().set(ID_width, 1);
+        op.set(ID_value, value?ID_1:ID_0);
+      }
+    }
+    
+    // search for neighboring constants to merge
+    unsigned i=0;
+    
+    while(i<expr.operands().size()-1)
+    {
+      exprt &opi=expr.operands()[i];
+      exprt &opn=expr.operands()[i+1];
+    
+      if(opi.is_constant() &&
+         opn.is_constant() &&
+         is_bitvector_type(opi.type()) &&
+         is_bitvector_type(opn.type()))
+      {
+        // merge!
+        const std::string new_value=
+          opi.get_string(ID_value)+opn.get_string(ID_value);
+        opi.set(ID_value, new_value);
+        opi.type().set(ID_width, new_value.size());
+        // erase opn
+        expr.operands().erase(expr.operands().begin()+i+1);
+        result=true;
+      }
+      else
+        i++;
+    }
+  }
+
+  // { x } = x
+  if(expr.operands().size()==1)
+  {
+    exprt tmp;
+    tmp.swap(expr.op0());
+    expr.swap(tmp);
+    result=false;
+  }
+  
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_shifts
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_shifts(exprt &expr)
+{
+  if(!is_number(expr.type()))
+    return true;
+
+  if(expr.operands().size()!=2)
+    return true;
+
+  mp_integer distance;
+  
+  if(to_integer(expr.op1(), distance))
+    return true;
+    
+  if(distance==0)
+  {
+    exprt tmp;
+    tmp.swap(expr.op0());
+    expr.swap(tmp);
+    return false;
+  }
+
+  mp_integer value;
+  
+  if(to_integer(expr.op0(), value))
+    return true;
+
+  if(expr.op0().type().id()==ID_unsignedbv || 
+     expr.op0().type().id()==ID_signedbv)
+  { 
+    mp_integer width=
+      string2integer(id2string(expr.op0().type().get(ID_width)));
+      
+    if(expr.id()==ID_lshr)
+    {
+      // this is to guard against large values of distance
+      if(distance>=width)
+      {
+        expr=gen_zero(expr.type());
+        return false;
+      }
+      else if(distance>=0)
+      {
+        value/=power(2, distance);
+        expr=from_integer(value, expr.type());
+        return false;
+      }
+    }
+    else if(expr.id()==ID_ashr)
+    {
+      // this is to simulate an arithmetic right shift
+      if(distance>=0)
+      {
+        mp_integer new_value=(distance>=width)?0:value/power(2, distance);
+
+        if(value<0 && new_value==0) new_value=-1;
+  
+        expr=from_integer(new_value, expr.type());
+        return false;
+      }
+    }
+    else if(expr.id()==ID_shl)
+    {
+      // this is to guard against large values of distance
+      if(distance>=width)
+      {
+        expr=gen_zero(expr.type());
+        return false;
+      }
+      else if(distance>=0)
+      {
+        value*=power(2, distance);
+        expr=from_integer(value, expr.type());
+        return false;
+      }
+    }
+  }
+  else if(expr.op0().type().id()==ID_integer ||
+	  expr.op0().type().id()==ID_natural)
+  {
+    if(expr.id()==ID_lshr)
+    {
+      if(distance>=0)
+      {
+        value/=power(2, distance);
+        expr=from_integer(value, expr.type());
+        return false;
+      }
+    }
+    else if(expr.id()==ID_ashr)
+    {
+      // this is to simulate an arithmetic right shift
+      if(distance>=0)
+      {
+        mp_integer new_value=value/power(2, distance);
+        if(value<0 && new_value==0) new_value=-1;
+
+        expr=from_integer(new_value, expr.type());
+        return false;
+      }
+    }
+    else if(expr.id()==ID_shl)
+    {
+      if(distance>=0)
+      {
+        value*=power(2, distance);
+        expr=from_integer(value, expr.type());
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if_implies
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if_implies(
+  exprt &expr,
+  const exprt &cond,
+  bool truth,
+  bool &new_truth)
+{
+  if(expr == cond) {
+   new_truth = truth;
+   return false;
+  }
+
+  if(truth && cond.id()==ID_lt && expr.id()==ID_lt)
+  {
+    if(cond.op0() == expr.op0() &&
+	cond.op1().is_constant() &&
+	expr.op1().is_constant() &&
+	cond.op1().type() == expr.op1().type())
+    {
+      const irep_idt &type_id = cond.op1().type().id();
+      if(type_id==ID_integer || type_id==ID_natural)
+      {
+	if(string2integer(cond.op1().get_string(ID_value)) >=
+	  string2integer(expr.op1().get_string(ID_value)))
+	 {
+	  new_truth = true;
+	  return false;
+	 }
+      }
+      else if(type_id==ID_unsignedbv)
+      {
+	const mp_integer i1, i2;
+	if(binary2integer(cond.op1().get_string(ID_value), false) >=
+           binary2integer(expr.op1().get_string(ID_value), false))
+	 {
+	  new_truth = true;
+	  return false;
+	 }
+      }
+      else if(type_id==ID_signedbv)
+      {
+	const mp_integer i1, i2;
+	if(binary2integer(cond.op1().get_string(ID_value), true) >=
+           binary2integer(expr.op1().get_string(ID_value), true))
+	 {
+	  new_truth = true;
+	  return false;
+	 }
+      }
+    }
+    if(cond.op1() == expr.op1() &&
+	cond.op0().is_constant() &&
+	expr.op0().is_constant() &&
+	cond.op0().type() == expr.op0().type())
+    {
+      const irep_idt &type_id = cond.op1().type().id();
+      if(type_id==ID_integer || type_id==ID_natural)
+      {
+	if(string2integer(cond.op1().get_string(ID_value)) <=
+           string2integer(expr.op1().get_string(ID_value)))
+	 {
+	  new_truth = true;
+	  return false;
+	 }
+      }
+      else if(type_id==ID_unsignedbv)
+      {
+	const mp_integer i1, i2;
+	if(binary2integer(cond.op1().get_string(ID_value), false) <=
+           binary2integer(expr.op1().get_string(ID_value), false))
+	 {
+	  new_truth = true;
+	  return false;
+	 }
+      }
+      else if(type_id==ID_signedbv)
+      {
+	const mp_integer i1, i2;
+	if(binary2integer(cond.op1().get_string(ID_value), true) <=
+           binary2integer(expr.op1().get_string(ID_value), true))
+	 {
+	  new_truth = true;
+	  return false;
+	 }
+      }
+    }
+  }
+
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if_recursive
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if_recursive(
+  exprt &expr,
+  const exprt &cond,
+  bool truth)
+{
+  if(expr.type().id()==ID_bool)
+  {
+    bool new_truth;
+
+    if(!simplify_if_implies(expr, cond, truth, new_truth))
+    {
+      if(new_truth)
+      {
+	expr.make_true();
+	return false;
+      }
+      else
+      {
+	expr.make_false();
+	return false;
+      }
+    }
+  }
+
+  bool result = true;
+
+  Forall_operands(it, expr)
+    result = simplify_if_recursive(*it, cond, truth) && result;
+
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if_conj
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if_conj(
+  exprt &expr,
+  const exprt &cond)
+{
+  forall_operands(it, cond)
+  {
+    if(expr == *it)
+    {
+      expr.make_true();
+      return false;
+    }
+  }
+
+  bool result = true;
+
+  Forall_operands(it, expr)
+    result = simplify_if_conj(*it, cond) && result;
+
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if_disj
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if_disj(
+  exprt &expr,
+  const exprt &cond)
+{
+  forall_operands(it, cond)
+  {
+    if(expr == *it)
+    {
+      expr.make_false();
+      return false;
+    }
+  }
+
+  bool result = true;
+
+  Forall_operands(it, expr)
+    result = simplify_if_disj(*it, cond) && result;
+
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if_branch
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if_branch(
+  exprt &trueexpr,
+  exprt &falseexpr,
+  const exprt &cond)
+{
+  bool tresult = true;
+  bool fresult = true;
+
+  if(cond.id()==ID_and)
+  {
+    tresult = simplify_if_conj(trueexpr, cond) && tresult;
+    fresult = simplify_if_recursive(falseexpr, cond, false) && fresult;
+  }
+  else if(cond.id()==ID_or)
+  {
+    tresult = simplify_if_recursive(trueexpr, cond, true) && tresult;
+    fresult = simplify_if_disj(falseexpr, cond) && fresult;
+  }
+  else
+  {
+    tresult = simplify_if_recursive(trueexpr, cond, true) && tresult;
+    fresult = simplify_if_recursive(falseexpr, cond, false) && fresult;
+  }
+
+  if(!tresult) simplify_rec(trueexpr);
+  if(!fresult) simplify_rec(falseexpr);
+
+  return tresult && fresult;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if_cond
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if_cond(exprt &expr)
+{
+  bool result = true;
+  bool tmp = false;
+
+  while(!tmp)
+  {
+    tmp = true;
+
+    if(expr.id()==ID_and)
+    {
+      if(expr.has_operands())
+      {
+	exprt::operandst &operands = expr.operands();
+	for(exprt::operandst::iterator it1 = operands.begin();
+	    it1 != operands.end(); it1++)
+        {
+	  for(exprt::operandst::iterator it2 = operands.begin();
+	      it2 != operands.end(); it2++)
+          {
+	    if(it1 != it2)
+	      tmp = simplify_if_recursive(*it1, *it2, true) && tmp;
+          }
+        }
+      }
+    }
+
+    if(!tmp) simplify_rec(expr);
+
+    result = tmp && result;
+  }
+
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_if
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_if(exprt &expr)
+{
+  exprt::operandst &operands=expr.operands();
+  if(operands.size()!=3) return true;
+
+  exprt &cond=operands[0];
+  exprt &truevalue=operands[1];
+  exprt &falsevalue=operands[2];
+
+  if(truevalue==falsevalue)
+  {
+    exprt tmp;
+    tmp.swap(truevalue);
+    expr.swap(tmp);
+    return false;
+  }
+
+  bool result=true;
+
+  if(do_simplify_if)
+  {
+    if(cond.id()==ID_not)
+    {
+      exprt tmp;
+      tmp.swap(cond.op0());
+      cond.swap(tmp);
+      truevalue.swap(falsevalue);
+    }
+
+    #if 0
+    result = simplify_if_cond(cond) && result;
+    result = simplify_if_branch(truevalue, falsevalue, cond) && result;
+    #endif
+
+    if(expr.type()==bool_typet())
+    {
+      // a?b:c <-> (a && b) || (!a && c)
+    
+      if(truevalue.is_true() && falsevalue.is_false())
+      {
+        // a?1:0 <-> a
+        exprt tmp;
+        tmp.swap(cond);
+        expr.swap(tmp);
+        return false;
+      }
+      else if(truevalue.is_false() && falsevalue.is_true())
+      {
+        // a?0:1 <-> !a
+        exprt tmp;
+        tmp.swap(cond);
+        tmp.make_not();
+        simplify_node(tmp);
+        expr.swap(tmp);
+        return false;
+      }
+      else if(falsevalue.is_false())
+      {
+        // a?b:0 <-> a AND b
+        and_exprt tmp(cond, truevalue);
+        simplify_node(tmp);
+        expr.swap(tmp);
+        return false;
+      }
+      else if(falsevalue.is_true())
+      {
+        // a?b:1 <-> !a OR b
+        or_exprt tmp(cond, truevalue);
+        tmp.op0().make_not();
+        simplify_node(tmp.op0());
+        simplify_node(tmp);
+        expr.swap(tmp);
+        return false;
+      }
+      else if(truevalue.is_true())
+      {
+        // a?1:b <-> a||(!a && b) <-> a OR b
+        or_exprt tmp(cond, falsevalue);
+        simplify_node(tmp);
+        expr.swap(tmp);
+        return false;
+      }
+      else if(truevalue.is_false())
+      {
+        // a?0:b <-> !a && b
+        and_exprt tmp(cond, falsevalue);
+        tmp.op0().make_not();
+        simplify_node(tmp.op0());
+        simplify_node(tmp);
+        expr.swap(tmp);
+        return false;
+      }
+    }
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+
+    #if 1
+    // a ? b : c  --> a ? b[a/true] : c
+    if(!replace_expr(cond, true_exprt(), truevalue))
+    { simplify_rec(truevalue); result=false; }
+
+    // a ? b : c  --> a ? b : c[a/false]
+    if(!replace_expr(cond, false_exprt(), falsevalue))
+    { simplify_rec(falsevalue); result=false; }
+    #endif
+>>>>>>> a28e382... Efficient reverse expression expansion, enabling new dereferencing
+=======
+>>>>>>> e9ee7fb... No useless erase in middle of vector
+  }
+
+  if(cond.is_true())
+  {
+    exprt tmp;
+    tmp.swap(truevalue);
+    expr.swap(tmp);
+    return false;
+  }
+
+  if(cond.is_false())
+  {
+    exprt tmp;
+    tmp.swap(falsevalue);
+    expr.swap(tmp);
+    return false;
+  }
+
+  return result;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_switch
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_switch(exprt &expr)
+{
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_not
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_not(exprt &expr)
+{
+  if(expr.operands().size()!=1) return true;
+
+  exprt &op=expr.op0();
+
+  if(expr.type().id()!=ID_bool ||
+     op.type().id()!=ID_bool) return true;
+     
+  if(op.id()==ID_not) // (not not a) == a
+  {
+    if(op.operands().size()==1)
+    {
+      exprt tmp;
+      tmp.swap(op.op0());
+      expr.swap(tmp);
+      return false;
+    }
+  }
+  else if(op.is_false())
+  {
+    expr.make_true();
+    return false;
+  }
+  else if(op.is_true())
+  {
+    expr.make_false();
+    return false;
+  }
+  else if(op.id()==ID_and ||
+          op.id()==ID_or)
+  {
+    exprt tmp;
+    tmp.swap(op);
+    expr.swap(tmp);
+
+    Forall_operands(it, expr)
+    {
+      it->make_not();
+      simplify_node(*it);
+    }
+    
+    expr.id(expr.id()==ID_and?ID_or:ID_and);
+
+    return false;
+  }
+  else if(op.id()==ID_notequal) // !(a!=b) <-> a==b
+  {
+    exprt tmp;
+    tmp.swap(op);
+    expr.swap(tmp);
+    expr.id(ID_equal);
+    return false;
+  }
+  
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_boolean
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_boolean(exprt &expr)
+{
+  if(!expr.has_operands()) return true;
+
+  exprt::operandst &operands=expr.operands();
+
+  if(expr.type().id()!=ID_bool) return true;
+
+  if(expr.id()==ID_implies)
+  {
+    if(operands.size()!=2 ||
+       operands.front().type().id()!=ID_bool ||
+       operands.back().type().id()!=ID_bool)
+      return true;
+      
+    // turn a => b into !a || b
+
+    expr.id(ID_or);
+    expr.op0().make_not();
+    simplify_node(expr.op0());
+    simplify_node(expr);
+    return false;
+  }
+  else if(expr.id()=="<=>")
+  {
+    if(operands.size()!=2 ||
+       operands.front().type().id()!=ID_bool ||
+       operands.back().type().id()!=ID_bool)
+      return true;
+
+    if(operands.front().is_false())
+    {
+      expr.id(ID_not);
+      operands.front().swap(operands.back());
+      operands.erase(++operands.begin());
+      return false;
+    }
+    else if(operands.front().is_true())
+    {
+      exprt tmp(operands.back());
+      expr.swap(tmp);
+      return false;
+    }
+    else if(operands.back().is_false())
+    {
+      expr.id(ID_not);
+      operands.erase(++operands.begin());
+      return false;
+    }
+    else if(operands.back().is_true())
+    {
+      exprt tmp(operands.front());
+      expr.swap(tmp);
+      return false;
+    }    
+  }
+  else if(expr.id()==ID_or ||
+          expr.id()==ID_and ||
+          expr.id()==ID_xor)
+  {
+    if(operands.size()==0) return true;
+
+    bool result=true;
+
+    exprt::operandst::const_iterator last;
+    bool last_set=false;
+
+    bool negate=false;
+
+    for(exprt::operandst::iterator it=operands.begin();
+        it!=operands.end();)
+    {
+      if(it->type().id()!=ID_bool) return true;
+
+      bool is_true=it->is_true();
+      bool is_false=it->is_false();
+
+      if(expr.id()==ID_and && is_false)
+      {
+        expr.make_false();
+        return false;
+      }
+      else if(expr.id()==ID_or && is_true)
+      {
+        expr.make_true();
+        return false;
+      }
+
+      bool erase;
+
+      if(expr.id()==ID_and)
+        erase=is_true;
+      else if(is_true && expr.id()==ID_xor)
+      {
+        erase=true;
+        negate=!negate;
+      }
+      else
+        erase=is_false;
+
+      if(last_set && *it==*last &&
+         (expr.id()==ID_or || expr.id()==ID_and))
+        erase=true; // erase duplicate operands
+
+      if(erase)
+      {
+        exprt::operandst::iterator last_it=--operands.end();
+        if(it!=last_it)
+        {
+          it->swap(*last_it);
+          operands.erase(last_it);
+        }
+        else
+        {
+          it=operands.erase(last_it);
+        }
+        result=false;
+      }
+      else
+      {
+        last=it;
+        last_set=true;
+        it++;
+      }
+    }
+    
+    // search for a and !a
+    if(expr.id()==ID_and || expr.id()==ID_or)
+    {
+      // first gather all the a's with !a
+
+      std::set<exprt> expr_set;
+
+      forall_operands(it, expr)
+        if(it->id()==ID_not &&
+           it->operands().size()==1 &&
+           it->type().id()==ID_bool)
+          expr_set.insert(it->op0());
+
+      // now search for a
+
+      forall_operands(it, expr)
+        if(expr_set.find(*it)!=expr_set.end())
+        {
+          expr.make_bool(expr.id()==ID_or);
+          return false;
+        }
+    }
+
+    if(operands.size()==0)
+    {
+      if(expr.id()==ID_and || negate)
+        expr.make_true();
+      else
+        expr.make_false();
+
+      return false;
+    }
+    else if(operands.size()==1)
+    {
+      if(negate)
+        expr.op0().make_not();
+      exprt tmp(operands.front());
+      expr.swap(tmp);
+      return false;
+    }
+
+    return result;
+  }
+
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_bitnot
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_bitnot(exprt &expr)
+{
+  if(!expr.has_operands()) return true;
+
+  exprt::operandst &operands=expr.operands();
+
+  if(operands.size()!=1) return true;
+
+  exprt &op=operands.front();
+
+  if(expr.type().id()==ID_bv ||
+     expr.type().id()==ID_unsignedbv ||
+     expr.type().id()==ID_signedbv)
+  {
+    if(op.type()==expr.type())
+    {
+      if(op.id()==ID_constant)
+      {
+        std::string value=op.get_string(ID_value);
+
+        for(unsigned i=0; i<value.size(); i++)
+          value[i]=(value[i]=='0')?'1':'0';
+
+        exprt tmp(ID_constant, op.type());
+        tmp.set(ID_value, value);
+        expr.swap(tmp);
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::get_values
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::get_values(
+  const exprt &expr,
+  value_listt &value_list)
+{
+  if(expr.is_constant())
+  {
+    mp_integer int_value;
+    if(to_integer(expr, int_value))
+      return true;
+
+    value_list.insert(int_value);
+
+    return false;
+  }
+  else if(expr.id()==ID_if)
+  {
+    if(expr.operands().size()!=3)
+      return true;
+
+    return get_values(expr.op1(), value_list) ||
+           get_values(expr.operands().back(), value_list);
+  }
+
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_inequality_address_of
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_inequality_address_of(exprt &expr)
+{
+  assert(expr.type().id()==ID_bool);
+  assert(expr.operands().size()==2);
+  assert(expr.op0().id()==ID_address_of);
+  assert(expr.op1().id()==ID_address_of);
+  assert(expr.id()==ID_equal || expr.id()==ID_notequal);
+
+  if(expr.op0().operands().size()!=1) return true;
+  if(expr.op1().operands().size()!=1) return true;
+  
+  if(expr.op0().op0().id()==ID_symbol &&
+     expr.op1().op0().id()==ID_symbol)
+  {
+    bool equal=
+       expr.op0().op0().get(ID_identifier)==
+       expr.op1().op0().get(ID_identifier);
+       
+    expr.make_bool(expr.id()==ID_equal?equal:!equal);
+    
+    return false;
+  }
+  
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_inequality
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: simplifies inequalities !=, <=, <, >=, >, and also ==
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_inequality(exprt &expr)
+{
+  exprt::operandst &operands=expr.operands();
+
+  if(expr.type().id()!=ID_bool) return true;
+
+  if(operands.size()!=2) return true;
+  
+  // types must match
+  if(!base_type_eq(expr.op0().type(), expr.op1().type(), ns))
+    return true;
+    
+  // see if we are comparing pointers that are address_of
+  if(expr.op0().id()==ID_address_of &&
+     expr.op1().id()==ID_address_of &&
+     (expr.id()==ID_equal || expr.id()==ID_notequal))
+    return simplify_inequality_address_of(expr);
+
+  // first see if we compare to a constant
+  
+  bool op0_is_const=expr.op0().is_constant();
+  bool op1_is_const=expr.op1().is_constant();
+  
+  exprt tmp0=expr.op0();
+  exprt tmp1=expr.op1();
+  ns.follow_symbol(tmp0.type());
+  ns.follow_symbol(tmp1.type());
+
+  // are _both_ constant?  
+  if(op0_is_const && op1_is_const)
+  {
+    if(tmp0.id()==ID_bool)
+    {
+      bool v0=tmp0.is_true();
+      bool v1=tmp1.is_true();
+
+      if(expr.id()==ID_equal)
+      {
+        expr.make_bool(v0==v1);
+        return false;
+      }
+      else if(expr.id()==ID_notequal)
+      {
+        expr.make_bool(v0!=v1);
+        return false;
+      }
+    }
+    else if(tmp0.type().id()==ID_fixedbv)
+    {
+      fixedbvt f0(tmp0);
+      fixedbvt f1(tmp1);
+
+      if(expr.id()==ID_notequal)
+        expr.make_bool(f0!=f1);
+      else if(expr.id()==ID_equal)
+        expr.make_bool(f0==f1);
+      else if(expr.id()==ID_ge)
+        expr.make_bool(f0>=f1);
+      else if(expr.id()==ID_le)
+        expr.make_bool(f0<=f1);
+      else if(expr.id()==ID_gt)
+        expr.make_bool(f0>f1);
+      else if(expr.id()==ID_lt)
+        expr.make_bool(f0<f1);
+      else
+        assert(false);
+    
+      return false;
+    }
+    else if(tmp0.type().id()==ID_floatbv)
+    {
+      ieee_floatt f0(tmp0);
+      ieee_floatt f1(tmp1);
+
+      if(expr.id()==ID_notequal)
+        expr.make_bool(f0!=f1);
+      else if(expr.id()==ID_equal)
+        expr.make_bool(f0==f1);
+      else if(expr.id()==ID_ge)
+        expr.make_bool(f0>=f1);
+      else if(expr.id()==ID_le)
+        expr.make_bool(f0<=f1);
+      else if(expr.id()==ID_gt)
+        expr.make_bool(f0>f1);
+      else if(expr.id()==ID_lt)
+        expr.make_bool(f0<f1);
+      else
+        assert(false);
+    
+      return false;
+    }
+    else if(tmp0.type().id()==ID_rational)
+    {
+      rationalt r0, r1;
+
+      if(to_rational(tmp0, r0))
+        return true;
+
+      if(to_rational(tmp1, r1))
+        return true;
+
+      if(expr.id()==ID_notequal)
+        expr.make_bool(r0!=r1);
+      else if(expr.id()==ID_equal)
+        expr.make_bool(r0==r1);
+      else if(expr.id()==ID_ge)
+        expr.make_bool(r0>=r1);
+      else if(expr.id()==ID_le)
+        expr.make_bool(r0<=r1);
+      else if(expr.id()==ID_gt)
+        expr.make_bool(r0>r1);
+      else if(expr.id()==ID_lt)
+        expr.make_bool(r0<r1);
+      else
+        assert(false);
+
+      return false;
+    }
+    else
+    {
+      mp_integer v0, v1;
+      
+      if(to_integer(tmp0, v0))
+        return true;
+
+      if(to_integer(tmp1, v1))
+        return true;
+      
+      if(expr.id()==ID_notequal)
+        expr.make_bool(v0!=v1);
+      else if(expr.id()==ID_equal)
+        expr.make_bool(v0==v1);
+      else if(expr.id()==ID_ge)
+        expr.make_bool(v0>=v1);
+      else if(expr.id()==ID_le)
+        expr.make_bool(v0<=v1);
+      else if(expr.id()==ID_gt)
+        expr.make_bool(v0>v1);
+      else if(expr.id()==ID_lt)
+        expr.make_bool(v0<v1);
+      else
+        assert(false);
+
+      return false;
+    }
+  }
+  else if(op0_is_const)
+  {
+    // we want the constant on the RHS
+
+    if(expr.id()==ID_ge)
+      expr.id(ID_le);
+    else if(expr.id()==ID_le)
+      expr.id(ID_ge);
+    else if(expr.id()==ID_gt)
+      expr.id(ID_lt);
+    else if(expr.id()==ID_lt)
+      expr.id(ID_gt);
+    
+    expr.op0().swap(expr.op1());
+    
+    // one is constant
+    simplify_inequality_constant(expr);
+    return false;
+  }
+  else if(op1_is_const)
+  {
+    // one is constant
+    return simplify_inequality_constant(expr); 
+  }
+  else
+  {
+    // both are not constant
+    return simplify_inequality_not_constant(expr);
+  }
+    
+  assert(false);
+  return false;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::eliminate_common_addends
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::eliminate_common_addends(
+  exprt &op0,
+  exprt &op1)
+{
+  // we can't eliminate zeros
+  if(op0.is_zero() || op1.is_zero()) return true;
+  
+  if(op0.id()==ID_plus)
+  {
+    bool result=true;
+
+    Forall_operands(it, op0)
+      if(!eliminate_common_addends(*it, op1))
+        result=false;
+
+    return result;
+  }
+  else if(op1.id()==ID_plus)
+  {
+    bool result=true;
+
+    Forall_operands(it, op1)
+      if(!eliminate_common_addends(op0, *it))
+        result=false;
+      
+    return result;
+  }
+  else if(op0==op1)
+  {
+    // elimination!
+    op0=gen_zero(op0.type());
+    op1=gen_zero(op1.type());
+    return false;
+  }
+  
+  return true;
+}
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_inequality_not_constant
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_inequality_not_constant(exprt &expr)
+{
+  exprt::operandst &operands=expr.operands();
+  
+  // pretty much all of the simplifications below are unsound
+  // for IEEE float because of NaN!
+  
+  if(ns.follow(expr.op0().type()).id()==ID_floatbv)
+    return true;
+  
+  // eliminate strict inequalities
+  if(expr.id()==ID_notequal)
+  {
+    expr.id(ID_equal);
+    simplify_inequality_not_constant(expr);
+    expr.make_not();
+    simplify_not(expr);
+    return false;
+  }
+  else if(expr.id()==ID_gt)
+  {
+    expr.id(ID_ge);
+    // swap operands
+    expr.op0().swap(expr.op1());
+    simplify_inequality_not_constant(expr);
+    expr.make_not();
+    simplify_not(expr);
+    return false;
+  }
+  else if(expr.id()==ID_lt)
+  {
+    expr.id(ID_ge);
+    simplify_inequality_not_constant(expr);
+    expr.make_not();
+    simplify_not(expr);
+    return false;
+  }
+  else if(expr.id()==ID_le)
+  {
+    expr.id(ID_ge);
+    // swap operands
+    expr.op0().swap(expr.op1());
+    simplify_inequality_not_constant(expr);
+    return false;
+  }
+
+  // now we only have >=, =
+
+  assert(expr.id()==ID_ge || expr.id()==ID_equal);
+
+  // syntactically equal?
+
+  if(operands.front()==operands.back())
+  {
+    expr.make_true();
+    return false;
+  }
+
+  // try constants
+
+  value_listt values0, values1;
+
+  bool ok0=!get_values(expr.op0(), values0);
+  bool ok1=!get_values(expr.op1(), values1);
+
+  if(ok0 && ok1)
+  {
+    bool first=true;
+    bool result=false; // dummy initialization to prevent warning
+    bool ok=true;
+
+    // compare possible values
+
+    forall_value_list(it0, values0)
+      forall_value_list(it1, values1)
+      {
+        bool tmp;
+        const mp_integer &int_value0=*it0;
+        const mp_integer &int_value1=*it1;
+
+        if(expr.id()==ID_ge)
+          tmp=(int_value0 >= int_value1);
+        else if(expr.id()==ID_equal)
+          tmp=(int_value0 == int_value1);
+        else
+          assert(0);
+
+        if(first)
+        {
+          result=tmp;
+          first=false;
+        }
+        else if(result!=tmp)
+        {
+          ok=false;
+          break;
+        }
+      }
+
+    if(ok)
+    {
+      expr.make_bool(result);
+      return false;
+    }
+  }
+  
+  // see if we can eliminate common addends on both sides
+  // on bit-vectors, this is only sound on '='
+  if(expr.id()==ID_equal)
+    if(!eliminate_common_addends(expr.op0(), expr.op1()))
+    {
+      // remove zeros
+      simplify_node(expr.op0());
+      simplify_node(expr.op1());
+      simplify_inequality(expr);
+      return false;
+    }
+  
+  return true;
+}  
+
+/*******************************************************************\
+
+Function: simplify_exprt::simplify_inequality_constant
+
+  Inputs: an inequality with a constant on the RHS
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool simplify_exprt::simplify_inequality_constant(exprt &expr)
+{
+  // the constant is always on the RHS
+  assert(expr.op1().is_constant());
+
+  // do we deal with pointers?
+  if(expr.op1().type().id()==ID_pointer)
+  {
+    if(expr.id()==ID_notequal)
+    {
+      expr.id(ID_equal);
+      simplify_inequality_constant(expr);
+      expr.make_not();
+      simplify_not(expr);
+      return false;
+    }
+  
+    // very special case for pointers
+    if(expr.id()==ID_equal &&
+       expr.op1().is_constant() &&
+       expr.op1().get(ID_value)==ID_NULL)
+    {
+      // the address of an object is never NULL
+    
+      if(expr.op0().id()==ID_address_of && 
+         expr.op0().operands().size()==1)
+      {
+        if(expr.op0().op0().id()==ID_symbol ||
+           expr.op0().op0().id()==ID_member ||
+           expr.op0().op0().id()==ID_index)
+        {
+          expr.make_false();
+          return false;
+        }
+      }
+      else if(expr.op0().id()==ID_typecast &&
+              expr.op0().operands().size()==1 &&
+              expr.op0().type().id()==ID_pointer)
+      {
+        // (type)ptr == NULL -> ptr == NULL
+        // note that 'ptr' may be an integer
+        exprt op=expr.op0().op0();
+        expr.op0().swap(op);
+        expr.op1()=gen_zero(expr.op0().type());
+        simplify_inequality(expr); // do again!
+        return false;
+      }
+    }
+
+    // all we are doing with pointers
+    return true;
+  }
+  
+  // is it a separation predicate?
+  
+  if(expr.op0().id()==ID_plus)
+  {
+    // see if there is a constant in the sum
+    
+    if(expr.id()==ID_equal || expr.id()==ID_notequal)
+    {
+      mp_integer constant=0;
+      bool changed=false;
+      
+      Forall_operands(it, expr.op0())
+      {
+        if(it->is_constant())
+        {
+          mp_integer i;
+          if(!to_integer(*it, i))
+          {
+            constant+=i;
+            *it=gen_zero(it->type());
+            changed=true;
+          }
+        }
+      }
+      
+      if(changed)
+>>>>>>> f9c149f... No useless erase in middle of vector
+<<<<<<< HEAD
+>>>>>>> 16f8b11... Efficient reverse expression expansion, enabling new dereferencing
+=======
+>>>>>>> e9ee7fb... No useless erase in middle of vector
+>>>>>>> c732ba4... No useless erase in middle of vector
       {
         // a?b:1 <-> !a OR b
         or_exprt tmp(cond, truevalue);
