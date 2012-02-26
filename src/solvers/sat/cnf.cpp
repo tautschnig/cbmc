@@ -10,6 +10,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <cassert>
 #include <iostream>
 #include <set>
+#include <map>
 
 #include "cnf.h"
 //#define VERBOSE
@@ -613,6 +614,7 @@ void cnft::eliminate_duplicates(const bvt &bv, bvt &dest)
 {
   std::set<literalt> s;
 
+  dest.clear();
   dest.reserve(bv.size());
 
   forall_literals(it, bv)
@@ -639,77 +641,54 @@ bool cnft::process_clause(const bvt &bv, bvt &dest)
   // empty clause! this is UNSAT
   if(bv.empty()) return false;
 
-  // first check simple things
-  
-  for(bvt::const_iterator it=bv.begin();
-      it!=bv.end();
-      it++)
-  {
-    literalt l=*it;
-    
-    // we never use index 0
-    assert(l.var_no()!=0);
-    
-    // we never use 'unused_var_no'
-    assert(l.var_no()!=literalt::unused_var_no());
+  typedef std::map<unsigned, bvt::const_iterator> unique_lit_mapt;
+  unique_lit_mapt s;
 
-    if(l.is_true())
+  forall_literals(it, bv)
+  {
+    const unsigned var_no=it->var_no();
+    std::pair<unique_lit_mapt::iterator, bool> result=
+      s.insert(std::make_pair(var_no, it));
+    if(!result.second &&
+        *(result.first->second) != *it)
+       return true; // clause satisfied
+  }
+
+  // we never use index 0
+  assert(s.begin()->first!=0);
+
+  // we rely on literalt internals:
+  assert(_no_variables < literalt::unused_var_no());
+  assert(_no_variables < literalt::const_var_no());
+
+  unique_lit_mapt::iterator last=--s.end();
+  if(last->first==literalt::const_var_no())
+  {
+    if(last->second->sign())
       return true; // clause satisfied
 
-    if(l.is_false())
-      continue; // will remove later
+    s.erase(last);
+    // empty clause after simplification - this is UNSAT
+    if(s.empty()) return false;
 
-    if(l.var_no()>=_no_variables)
-      std::cout << "l.var_no()=" << l.var_no() << " _no_variables=" << _no_variables << std::endl;
-
-    assert(l.var_no()<_no_variables);
+    last=--s.end();
   }
-  
-  // now copy
-  dest.clear();
-  dest.reserve(bv.size());
-  
-  for(bvt::const_iterator it=bv.begin();
-      it!=bv.end();
-      it++)
+
+  // we never use 'unused_var_no'
+  assert(last->first!=literalt::unused_var_no());
+
+  if(last->first>=_no_variables)
   {
-    literalt l=*it;
-    
-    if(l.is_false())
-      continue; // remove
-
-    dest.push_back(l);
+    std::cout << "var_no()=" << last->first
+      << " _no_variables=" << _no_variables << std::endl;
+    assert(last->first<_no_variables);
   }
-  
-  // now sort
-  std::sort(dest.begin(), dest.end());
 
-  // eliminate duplicates and find occurrences of a variable
-  // and its negation
-  
-  if(dest.size()>=2)
-  {
-    bvt::iterator it=dest.begin();
-    literalt previous=*it;
-  
-    for(it++;
-        it!=dest.end();
-        ) // no it++
-    {
-      literalt l=*it;
-      
-      // prevent duplicate literals
-      if(l==previous)
-        it=dest.erase(it);
-      else if(previous==!l)
-        return true; // clause satisfied trivially
-      else
-      {
-        previous=l;
-        it++;
-      }
-    }
-  }
+  dest.reserve(s.size());
+  for(unique_lit_mapt::const_iterator it=s.begin();
+      it!=s.end();
+      ++it)
+    dest.push_back(*(it->second));
   
   return false;
 }
