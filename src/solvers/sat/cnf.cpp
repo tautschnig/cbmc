@@ -69,8 +69,8 @@ void cnft::gate_and(literalt a, literalt b, literalt o)
   lits[1]=neg(o);
   lcnf(lits);
 
+  // pos(b) neg(o)
   lits[0]=pos(b);
-  lits[1]=neg(o);
   lcnf(lits);
 
   lits.clear();
@@ -102,8 +102,8 @@ void cnft::gate_or(literalt a, literalt b, literalt o)
   lits[1]=pos(o);
   lcnf(lits);
 
+  // neg(b) pos(o)
   lits[0]=neg(b);
-  lits[1]=pos(o);
   lcnf(lits);
 
   lits.resize(3);
@@ -138,19 +138,19 @@ void cnft::gate_xor(literalt a, literalt b, literalt o)
   lits[2]=neg(o);
   lcnf(lits);
 
-  lits[0]=pos(a);
-  lits[1]=pos(b);
-  lits[2]=neg(o);
+  // pos(a) pos(b) neg(o)
+  lits[0].invert();
+  lits[1].invert();
   lcnf(lits);
 
-  lits[0]=neg(a);
-  lits[1]=pos(b);
-  lits[2]=pos(o);
+  // neg(a) pos(b) pos(o)
+  lits[0].invert();
+  lits[2].invert();
   lcnf(lits);
 
-  lits[0]=pos(a);
-  lits[1]=neg(b);
-  lits[2]=pos(o);
+  // pos(a) neg(b) pos(o)
+  lits[0].invert();
+  lits[1].invert();
   lcnf(lits);
 }
 
@@ -175,8 +175,8 @@ void cnft::gate_nand(literalt a, literalt b, literalt o)
   lits[1]=pos(o);
   lcnf(lits);
 
+  // pos(b) pos(o)
   lits[0]=pos(b);
-  lits[1]=pos(o);
   lcnf(lits);
 
   lits.resize(3);
@@ -207,8 +207,8 @@ void cnft::gate_nor(literalt a, literalt b, literalt o)
   lits[1]=neg(o);
   lcnf(lits);
 
+  // neg(b) neg(o)
   lits[0]=neg(b);
-  lits[1]=neg(o);
   lcnf(lits);
 
   lits.resize(3);
