@@ -24,7 +24,7 @@ literalt boolbvt::convert_reduction(const unary_exprt &expr)
 {
   const bvt &op_bv=convert_bv(expr.op());
 
-  if(op_bv.size()<1)
+  if(op_bv.empty())
     throw "reduction operators take one non-empty operand";
 
   enum { O_OR, O_AND, O_XOR } op;
