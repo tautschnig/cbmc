@@ -52,12 +52,31 @@ public:
   inline explicit exprt(const irep_idt &_id):irept(_id) { }
   inline exprt(const irep_idt &_id, const typet &_type):irept(_id) { add(ID_type, _type, true); }
  
+<<<<<<< HEAD
   // returns the type of the expression
   inline typet &type() { return static_cast<typet &>(add(ID_type, true)); }
   inline const typet &type() const { return static_cast<const typet &>(find(ID_type, true)); }
+=======
+  /// returns the type of the expression
+  inline typet &type()
+  {
+    named_subt &s=get_named_sub();
+    if(s.empty() || s.begin()->first!=ID_type)
+      return static_cast<typet &>(add(ID_type));
+    return static_cast<typet &>(s.begin()->second);
+  }
+  inline const typet &type() const
+  {
+    const named_subt &s=get_named_sub();
+    if(s.empty() || s.begin()->first!=ID_type)
+      return static_cast<const typet &>(find(ID_type));
+    return static_cast<const typet &>(s.begin()->second);
+  }
+>>>>>>> 6f7313c... Optimise calls to type() and operands()
 
   // returns true if there is at least one operand
   inline bool has_operands() const
+<<<<<<< HEAD
   { return !operands().empty(); }
 
   inline operandst &operands()
@@ -73,6 +92,30 @@ public:
   #else
   { return (const operandst &)(find(ID_operands).get_sub()); }
   #endif
+=======
+  {
+    const named_subt &s=get_named_sub();
+    if(s.size()<=1 || (++s.begin())->first!=ID_operands)
+      return !find(ID_operands).is_nil();
+    return !(++s.begin())->second.is_nil();
+  }
+
+  inline operandst &operands()
+  {
+    named_subt &s=get_named_sub();
+    if(s.size()<=1 || (++s.begin())->first!=ID_operands)
+      return (operandst &)(add(ID_operands).get_sub());
+    return (operandst &)((++s.begin())->second.get_sub());
+  }
+  
+  inline const operandst &operands() const
+  {
+    const named_subt &s=get_named_sub();
+    if(s.size()<=1 || (++s.begin())->first!=ID_operands)
+      return (const operandst &)(find(ID_operands).get_sub());
+    return (const operandst &)((++s.begin())->second.get_sub());
+  }
+>>>>>>> 6f7313c... Optimise calls to type() and operands()
    
   inline exprt &op0()
   { return operands().front(); }
