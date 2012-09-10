@@ -36,7 +36,7 @@ public:
     messaget(_message_handler),
     options(_options),
     ns(_context, new_context),
-    equation(ns),
+    equation(ns, *this),
     symex(ns, new_context, equation),
     ui(ui_message_handlert::PLAIN)
   {

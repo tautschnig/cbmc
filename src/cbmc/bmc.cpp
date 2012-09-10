@@ -374,6 +374,8 @@ bool bmct::run(const goto_functionst &goto_functions)
 
   try
   {
+    if(!equation.has_concurrency())
+    {
     if(options.get_option("slice-by-trace")!="")
     {
       symex_slice_by_tracet symex_slice_by_trace(ns);
@@ -393,6 +395,7 @@ bool bmct::run(const goto_functionst &goto_functions)
       simple_slice(equation);
       print(8, "simple slicing removed "+
         i2string(equation.count_ignored_SSA_steps())+" assignments");
+    }
     }
 
     if(options.get_bool_option("program-only"))
