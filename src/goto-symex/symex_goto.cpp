@@ -13,6 +13,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <i2string.h>
 
 #include "goto_symex.h"
+#include "abstract_event_structure.h"
 
 /*******************************************************************\
 
@@ -341,6 +342,14 @@ void goto_symext::phi_function(
     symbol_exprt lhs=symbol_expr(symbol);
     symbol_exprt new_lhs=symbol_exprt(l1_identifier, type);
     dest_state.assignment(new_lhs, rhs, ns, false);
+    if(is_global(symbol))
+    {
+      abstract_events_per_processort &a_e=
+        *dest_state.threads[dest_state.source.thread_nr].abstract_events;
+      assert(!a_e.abstract_events.empty());
+      assert(a_e.abstract_events.back().address==original_identifier);
+      a_e.abstract_events.pop_back();
+    }
     
     guardt true_guard;
 

@@ -488,4 +488,6 @@ void show_goto_trace(
       assert(false);
     }
   }
+
+  goto_trace.concrete_event_structure.output(ns, out);
 }

@@ -13,6 +13,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <prefix.h>
 
 #include "goto_symex_state.h"
+#include "abstract_event_structure.h"
 
 /*******************************************************************\
 
@@ -290,7 +291,16 @@ void goto_symex_statet::assignment(
   // do the l2 renaming 
   unsigned new_count=level2.current_count(l1_identifier)+1;
   level2.rename(l1_identifier, new_count);
-  lhs.set_identifier(level2.name(l1_identifier, new_count));
+  const irep_idt new_name=level2.name(l1_identifier, new_count);
+  lhs.set_identifier(new_name);
+
+  // in case we happen to be multi-threaded, record the memory access
+  irep_idt orig_identifier=get_original_name(l1_identifier);
+  if(orig_identifier!="goto_symex::\\guard" &&
+      is_global(ns.lookup(orig_identifier)))
+    threads[source.thread_nr].abstract_events->add_abstract_event(
+        *this, abstract_eventt::D_WRITE,
+        orig_identifier, symbol_exprt(new_name, lhs.type()));
 
   // for value propagation -- the RHS is L2
   
@@ -426,7 +436,22 @@ void goto_symex_statet::rename(
     }  
     else if(level==L2)
     {
-      if(!level2.is_renamed(identifier))
+      irep_idt orig_identifier=get_original_name(identifier);
+      if(threads.size()>1 &&
+          orig_identifier!="goto_symex::\\guard" &&
+          is_global(ns.lookup(orig_identifier)))
+      {
+        // take a fresh l2 name
+        const unsigned new_count=level2.current_count(orig_identifier)+1;
+        level2.rename(orig_identifier, new_count);
+        const irep_idt new_name=level2.name(orig_identifier, new_count);
+        to_symbol_expr(expr).set_identifier(new_name);
+
+        threads[source.thread_nr].abstract_events->add_abstract_event(
+            *this, abstract_eventt::D_READ,
+            orig_identifier, symbol_exprt(new_name, expr.type()));
+      }
+      else if(!level2.is_renamed(identifier))
       {
         identifier=rename(identifier, ns, L1);
 

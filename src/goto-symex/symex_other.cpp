@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <std_expr.h>
 
 #include "goto_symex.h"
+#include "abstract_event_structure.h"
 
 /*******************************************************************\
 
@@ -163,7 +164,18 @@ void goto_symext::symex_other(
   }
   else if(statement==ID_fence)
   {
-    // like skip
+    abstract_eventt::event_dirt d=abstract_eventt::D_SYNC;
+    if(!code.get_bool(ID_WRfence) &&
+        !code.get_bool(ID_RRfence) &&
+        !code.get_bool(ID_RWfence) &&
+        !code.get_bool(ID_WWfence))
+      d=abstract_eventt::D_ISYNC;
+    else if(!code.get_bool(ID_WRfence))
+      d=abstract_eventt::D_LWSYNC;
+
+    abstract_events_per_processort &a_e=
+      *state.threads[state.source.thread_nr].abstract_events;
+    a_e.add_abstract_event(state, d, "", nil_exprt());
   }
   else
     throw "unexpected statement: "+id2string(statement);

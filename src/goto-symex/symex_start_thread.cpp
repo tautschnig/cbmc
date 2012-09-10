@@ -38,10 +38,13 @@ void goto_symext::symex_start_thread(statet &state)
   // put into thread vector
   unsigned t=state.threads.size();
   state.threads.push_back(statet::threadt());
+  statet::threadt &cur_thread=state.threads[state.source.thread_nr];
   statet::threadt &new_thread=state.threads.back();
   new_thread.pc=thread_target;
   new_thread.guard=state.guard;
   new_thread.call_stack.push_back(state.top());
+  new_thread.abstract_events=&(target.new_thread(cur_thread.abstract_events));
+  new_thread.parent_thread=&cur_thread;
 
   // create a copy of the local variables for the new thread
   statet::framet &frame=state.top();
@@ -68,6 +71,19 @@ void goto_symext::symex_start_thread(statet &state)
     symbol_exprt rhs(*it, type);
 
     symex_assign_symbol(state, lhs, nil_exprt(), rhs, state.guard, HIDDEN);
+    /* MY CODE
+        l1_name=new_state.level0(l1_name, ns, next_thread);
+        l1_name=new_state.top().level1(l1_name);
+        symbol_exprt sl(l1_name, sym.type);
+        symbol_exprt sr(*itn, sym.type);
+        state.is_multi_threaded=false; // don't spoil constant propagation here
+        new_state.rename(sr, ns, goto_symex_statet::L2);
+        state.is_multi_threaded=true;
+        new_state.assignment(sl, sr, ns, constant_propagation);
+        target.assignment(guardt(),
+            sl, sl, sl, sl, sr,
+            new_state.source, symex_targett::STATE);
+            */
   }
 }
 

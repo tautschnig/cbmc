@@ -184,4 +184,7 @@ void build_goto_trace(
       assert(goto_trace_step.cond_value);
     }
   }
+
+  target.build_concrete_event_structure(
+      prop_conv, goto_trace.concrete_event_structure);
 }

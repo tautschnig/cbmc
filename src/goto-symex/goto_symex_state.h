@@ -321,6 +321,14 @@ public:
     guardt guard;
     call_stackt call_stack;
     std::map<irep_idt, unsigned> function_frame;
+    abstract_events_per_processort * abstract_events;
+    threadt * parent_thread;
+
+    threadt():
+      abstract_events(0),
+      parent_thread(0)
+    {
+    }
   };
 
   typedef std::vector<threadt> threadst;

@@ -335,6 +335,33 @@ void symex_target_equationt::assertion(
 
 /*******************************************************************\
 
+Function: symex_target_equationt::add_constraint
+
+  Inputs: 
+
+ Outputs:
+
+ Purpose: record an assumption
+
+\*******************************************************************/
+
+void symex_target_equationt::add_constraint(
+  const guardt &guard,
+  const exprt &cond,
+  const sourcet &source)
+{
+  // like assumption, but adds at the front
+  SSA_steps.push_front(SSA_stept());
+  SSA_stept &SSA_step=SSA_steps.front();
+  
+  SSA_step.guard_expr=guard.as_expr();
+  SSA_step.cond_expr=cond;
+  SSA_step.type=goto_trace_stept::ASSUME;
+  SSA_step.source=source;
+}
+
+/*******************************************************************\
+
 Function: symex_target_equationt::convert
 
   Inputs:
@@ -348,6 +375,8 @@ Function: symex_target_equationt::convert
 void symex_target_equationt::convert(
   prop_convt &prop_conv)
 {
+  aes.add_partial_order_constraints(ns);
+
   convert_guards(prop_conv);
   convert_assignments(prop_conv);
   convert_decls(prop_conv);

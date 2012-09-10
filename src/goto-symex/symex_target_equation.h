@@ -16,15 +16,22 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "symex_target.h"
 #include "goto_trace.h"
+#include "abstract_event_structure.h"
 
 class decision_proceduret;
 class namespacet;
 class prop_convt;
+class messaget;
 
 class symex_target_equationt:public symex_targett
 {
 public:
-  symex_target_equationt(const namespacet &_ns):ns(_ns) { }
+  symex_target_equationt(
+      const namespacet &_ns,
+      messaget &message):
+    ns(_ns),
+    aes(*this, message)
+  { }
 
   // assignment to a variable - lhs must be symbol
   virtual void assignment(
@@ -102,6 +109,32 @@ public:
     const exprt &cond,
     const std::string &msg,
     const sourcet &source);
+
+  // concurrency
+  virtual void set_memory_model(
+      const std::string &memory_model)
+  {
+    aes.set_memory_model(memory_model);
+  }
+  virtual abstract_events_per_processort &new_thread(
+      const abstract_events_per_processort * parent)
+  {
+    return aes.add_processor(parent);
+  }
+  void add_constraint(
+    const guardt &guard,
+    const exprt &cond,
+    const sourcet &source);
+  void build_concrete_event_structure(
+      const prop_convt &prop_conv,
+      concrete_event_structuret &ces) const
+  {
+    aes.build_concrete_event_structure(prop_conv, ces);
+  }
+  bool has_concurrency() const
+  {
+    return aes.n_processors()>1;
+  }
 
   void convert(prop_convt &prop_conv);
   void convert_assignments(decision_proceduret &decision_procedure) const;
@@ -215,6 +248,7 @@ public:
   
 protected:
   const namespacet &ns;
+  abstract_event_structuret aes;
 };
 
 extern inline bool operator<(

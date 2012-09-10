@@ -82,11 +82,16 @@ void goto_symext::operator()(
   const goto_functionst &goto_functions,
   const goto_programt &goto_program)
 {
+  target.set_memory_model(options.get_option("memory-model"));
+
   state.source=symex_targett::sourcet(goto_program);
   assert(!state.threads.empty());
   assert(!state.call_stack().empty());
   state.top().end_of_function=--goto_program.instructions.end();
   state.top().calling_location.pc=state.top().end_of_function;
+  if(!state.threads[state.source.thread_nr].abstract_events)
+    state.threads[state.source.thread_nr].abstract_events=
+      &(target.new_thread(0));
 
   while(!state.call_stack().empty())
   {
@@ -218,14 +223,16 @@ void goto_symext::symex_step(
 
       if(!tmp.is_true())
       {
-        exprt tmp2=tmp;
-        state.guard.guard_expr(tmp2);
-        target.assumption(state.guard, tmp2, state.source);
-
-        #if 0      
-        // we also add it to the state guard
-        state.guard.add(tmp);
-        #endif
+        if(state.source.thread_nr==0)
+        {
+          exprt tmp2=tmp;
+          state.guard.guard_expr(tmp2);
+          target.assumption(state.guard, tmp2, state.source);
+          if(state.threads.size()>1)
+            state.guard.add(tmp);
+        }
+        else
+          state.guard.add(tmp);
       }
     }
 
@@ -308,6 +315,7 @@ void goto_symext::symex_step(
     break;
 
   case START_THREAD:
+    assert(state.atomic_section_count==0);
     symex_start_thread(state);
     state.source.pc++;
     break;
@@ -315,19 +323,32 @@ void goto_symext::symex_step(
   case END_THREAD:
     // behaves like assume(0);
     if(!state.guard.is_false())
+    {
+      assert(state.threads.size()>1);
+      assert(state.threads[state.source.thread_nr].parent_thread);
       state.guard.add(false_exprt());
+    }
     state.source.pc++;
     break;
   
   case ATOMIC_BEGIN:
-    state.atomic_section_count++;
+    if(!state.guard.is_false())
+    {
+      assert(state.threads.size()>1);
+      assert(state.atomic_section_count==0);
+      state.atomic_section_count=++atomic_sect_counter;
+    }
     state.source.pc++;
     break;
     
   case ATOMIC_END:
-    if(state.atomic_section_count==0)
-      throw "ATOMIC_END unmatched";
-    state.atomic_section_count--;
+    if(!state.guard.is_false())
+    {
+      assert(state.threads.size()>1);
+      if(state.atomic_section_count==0)
+        throw "ATOMIC_END unmatched";
+      state.atomic_section_count=0;
+    }
     state.source.pc++;
     break;
     

@@ -37,7 +37,8 @@ public:
     constant_propagation(true),
     new_context(_new_context),
     ns(_ns),
-    target(_target)
+    target(_target),
+    atomic_sect_counter(0)
   {
     options.set_option("simplify", true);
   }
@@ -55,6 +56,7 @@ public:
 protected:
   const namespacet &ns;
   symex_targett &target;
+  unsigned atomic_sect_counter;
   
   virtual void do_simplify(exprt &expr);
   

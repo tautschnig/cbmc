@@ -13,6 +13,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 class guardt;
 class symbol_exprt;
+class abstract_events_per_processort;
 
 class symex_targett
 {
@@ -125,6 +126,12 @@ public:
     const exprt &cond,
     const std::string &msg,
     const sourcet &source)=0;
+
+  // concurrency
+  virtual void set_memory_model(
+      const std::string &memory_model)=0;
+  virtual abstract_events_per_processort &new_thread(
+      const abstract_events_per_processort * parent)=0;
 };
 
 bool operator < (

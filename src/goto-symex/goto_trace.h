@@ -24,6 +24,7 @@ Date: July 2005
 #include <std_expr.h>
 
 #include <goto-programs/goto_program.h>
+#include "concrete_event_structure.h"
 
 /*! \brief TO_BE_DOCUMENTED
  * \ingroup gr_goto_symex
@@ -136,6 +137,8 @@ public:
   {
     steps.push_back(step);
   }
+
+  concrete_event_structuret concrete_event_structure;
 };
 
 void show_goto_trace_gui(
