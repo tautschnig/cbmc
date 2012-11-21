@@ -25,12 +25,13 @@ public:
   }
 
   // this is safe for static objects
-  // the 2nd argument is to avoid accidental conversions
+  explicit
   #ifdef __GNUC__
   constexpr 
   #endif
-  dstring(unsigned _no, unsigned):no(_no)
+  dstring(unsigned _no):no(_no)
   {
+    string_container.inc_ref_count(no);
   }
 
   #if 0
@@ -42,11 +43,23 @@ public:
   // this one is not safe for static objects
   inline dstring(const char *s):no(string_container[s])
   {
+    string_container.inc_ref_count(no);
   }
 
   // this one is not safe for static objects
   inline dstring(const std::string &s):no(string_container[s])
   {
+    string_container.inc_ref_count(no);
+  }
+
+  inline dstring(const dstring &other):no(other.no)
+  {
+    string_container.inc_ref_count(no);
+  }
+
+  inline ~dstring()
+  {
+    string_container.dec_ref_count(no);
   }
 
   // access
@@ -110,13 +123,21 @@ public:
   // modifying
   
   inline void clear()
-  { no=0; }
+  {
+    string_container.dec_ref_count(no);
+    no=0;
+  }
    
   inline void swap(dstring &b)
   { unsigned t=no; no=b.no; b.no=t; }
 
   inline dstring &operator=(const dstring &b)
-  { no=b.no; return *this; }
+  {
+    string_container.dec_ref_count(no);
+    no=b.no;
+    string_container.inc_ref_count(no);
+    return *this;
+  }
   
   // friends
   
