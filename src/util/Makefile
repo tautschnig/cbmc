@@ -17,7 +17,8 @@ SRC = arith_tools.cpp base_type.cpp cmdline.cpp config.cpp symbol_table.cpp \
       ieee_float.cpp signal_catcher.cpp pointer_offset_size.cpp \
       bv_arithmetic.cpp tempdir.cpp tempfile.cpp timer.cpp unicode.cpp \
       irep_ids.cpp byte_operators.cpp string2int.cpp file_util.cpp \
-      memory_info.cpp pipe_stream.cpp irep_hash.cpp pointer_arithmetic.cpp type_util.cpp
+      memory_info.cpp pipe_stream.cpp irep_hash.cpp pointer_arithmetic.cpp type_util.cpp \
+      simplify_unparse.cpp simplify_parse.cpp y.tab.cpp
 
 INCLUDES= -I ..
 
@@ -29,9 +30,25 @@ include ../common
 CLEANFILES = util$(LIBEXT) \
              irep_ids.h irep_ids.inc \
              ieee_float_test$(EXEEXT) ieee_float_test$(OBJEXT) ieee_float_test.d \
-             irep_ids_convert$(EXEEXT) irep_ids_convert$(OBJEXT) irep_ids_convert.d
+             irep_ids_convert$(EXEEXT) irep_ids_convert$(OBJEXT) irep_ids_convert.d \
+						 y.tab.h y.tab.cpp y.tab.cpp.output y.output
 
-all: util$(LIBEXT) ieee_float_test$(EXEEXT)
+all: util$(LIBEXT)
+#ieee_float_test$(EXEEXT)
+
+
+###############################################################################
+
+y.tab.cpp: simplify_parser.y
+	$(YACC) $(YFLAGS) $$flags -pyysimplify -d $^ -o y.tab.cpp
+
+y.tab.h: y.tab.cpp
+	if [ -e y.tab.hpp ] ; then mv y.tab.hpp y.tab.h ; else \
+        mv y.tab.cpp.h y.tab.h ; fi
+
+# extra dependencies
+y.tab$(OBJEXT): y.tab.cpp
+simplify_unparse$(OBJEXT): y.tab.h
 
 ###############################################################################
 

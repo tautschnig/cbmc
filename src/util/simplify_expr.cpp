@@ -8,6 +8,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <cassert>
 #include <algorithm>
+#include <iostream>
 
 #include "simplify_expr_class.h"
 #include "simplify_expr.h"
@@ -32,13 +33,14 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "prefix.h"
 #include "byte_operators.h"
 #include "pointer_arithmetic.h"
+#include "simplify_parse.h"
 
 //#define DEBUGX
 
-#ifdef DEBUGX
+//#ifdef DEBUGX
 #include <langapi/language_util.h>
 #include <iostream>
-#endif
+//#endif
 
 //#define USE_CACHE
 
@@ -5613,6 +5615,24 @@ Function: simplify
 bool simplify(exprt &expr, const namespacet &ns)
 {
   return simplify_exprt(ns).simplify(expr);
+
+  /*
+  exprt expr_bak(expr);
+  std::cerr << "To simplify: " << from_expr(ns, "", expr) << std::endl;
+  simplify_parset p(ns);
+  bool new_ret=p.parse(expr_bak);
+  if(old_ret!=new_ret)
+  {
+    std::cerr << "Old simplify: " << old_ret << std::endl;
+    std::cerr << "New simplify: " << new_ret << std::endl;
+  }
+  else if(!old_ret && expr!=p.get_simplified())
+  {
+    std::cerr << "Simplified expressions differ" << std::endl;
+  }
+
+  return old_ret;
+  */
 }
 
 /*******************************************************************\
