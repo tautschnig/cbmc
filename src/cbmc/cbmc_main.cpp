@@ -52,7 +52,8 @@ int wmain(int argc, const wchar_t **argv_wide)
 #else
 int main(int argc, const char **argv)
 {
-#if defined(_WIN32)
+#if 1
+  /* defined(_WIN32) */
   cbmc_parseoptionst parseoptions(argc, argv);
   return parseoptions.main();
 #else
