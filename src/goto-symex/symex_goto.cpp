@@ -401,6 +401,9 @@ void goto_symext::phi_function(
       do_simplify(rhs);
     }
 
+    // TODO we really shouldn't need the assignments below unless
+    // rhs.id()==ID_if
+
     ssa_exprt new_lhs=*it;
     const bool record_events=dest_state.record_events;
     dest_state.record_events=false;
