@@ -316,9 +316,10 @@ void goto_symext::merge_goto(
   statet &state)
 {
   // check atomic section
-  if(state.atomic_section_id!=goto_state.atomic_section_id)
-    throw "atomic sections differ across branches";
-
+  if(state.atomic_section_id!=goto_state.atomic_section_id ||
+     state.atomic_section_nesting!=goto_state.atomic_section_nesting)
+    throw "Atomic sections differ across branches";
+  
   // do SSA phi functions
   phi_function(goto_state, state);
 
@@ -326,9 +327,6 @@ void goto_symext::merge_goto(
 
   // adjust guard
   state.guard|=goto_state.guard;
-
-  // adjust depth
-  state.depth=std::min(state.depth, goto_state.depth);
 }
 
 void goto_symext::merge_value_sets(

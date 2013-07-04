@@ -210,6 +210,7 @@ public:
     symex_targett::sourcet source;
     propagationt propagation;
     unsigned atomic_section_id;
+    unsigned atomic_section_nesting;
 
     explicit goto_statet(const goto_symex_statet &s):
       depth(s.depth),
@@ -218,7 +219,8 @@ public:
       guard(s.guard),
       source(s.source),
       propagation(s.propagation),
-      atomic_section_id(s.atomic_section_id)
+      atomic_section_id(s.atomic_section_id),
+      atomic_section_nesting(s.atomic_section_nesting)
     {
     }
 
@@ -335,6 +337,7 @@ public:
 
   // threads
   unsigned atomic_section_id;
+  unsigned atomic_section_nesting;
   typedef std::pair<unsigned, std::list<guardt> > a_s_r_entryt;
   typedef std::unordered_map<ssa_exprt, a_s_r_entryt, irep_hash>
     read_in_atomic_sectiont;
@@ -352,9 +355,11 @@ public:
     call_stackt call_stack;
     std::map<irep_idt, unsigned> function_frame;
     unsigned atomic_section_id;
+    unsigned atomic_section_nesting;
 
     threadt():
-      atomic_section_id(0)
+      atomic_section_id(0),
+      atomic_section_nesting(0)
     {
     }
   };

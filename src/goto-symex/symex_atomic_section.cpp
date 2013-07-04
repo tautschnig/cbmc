@@ -16,10 +16,11 @@ void goto_symext::symex_atomic_begin(statet &state)
   if(state.guard.is_false())
     return;
 
-  // we don't allow any nesting of atomic sections
   if(state.atomic_section_id!=0)
-    throw "nested atomic section detected at "+
-      state.source.pc->source_location.as_string();
+  {
+    ++state.atomic_section_nesting;
+    return;
+  }
 
   state.atomic_section_id=++atomic_section_counter;
   state.read_in_atomic_section.clear();
@@ -38,6 +39,12 @@ void goto_symext::symex_atomic_end(statet &state)
 
   if(state.atomic_section_id==0)
     throw "ATOMIC_END unmatched"; // NOLINT(readability/throw)
+
+  if(state.atomic_section_nesting>0)
+  {
+    --state.atomic_section_nesting;
+    return;
+  }
 
   const unsigned atomic_section_id=state.atomic_section_id;
   state.atomic_section_id=0;

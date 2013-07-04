@@ -25,8 +25,10 @@ goto_symex_statet::goto_symex_statet()
   : depth(0),
     symex_target(nullptr),
     atomic_section_id(0),
+    atomic_section_nesting(0),
     record_events(true),
     dirty()
+  record_events(true)
 {
   threads.resize(1);
   new_frame();
@@ -911,6 +913,7 @@ void goto_symex_statet::switch_to_thread(unsigned t)
   // save PC
   threads[source.thread_nr].pc=source.pc;
   threads[source.thread_nr].atomic_section_id=atomic_section_id;
+  threads[source.thread_nr].atomic_section_nesting=atomic_section_nesting;
 
   // get new PC
   source.thread_nr=t;
