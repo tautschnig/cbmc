@@ -125,7 +125,7 @@ void function_modifiest::get_modifies_function(
     if(f_it==goto_functions.function_map.end())
       return;
     
-    local_may_aliast local_may_alias(f_it->second);
+    local_may_aliast local_may_alias(f_it->second, ns);
     
     const goto_programt &goto_program=f_it->second.body;
     

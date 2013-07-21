@@ -20,6 +20,47 @@ Author: Daniel Kroening, kroening@kroening.com
 
 /*******************************************************************\
 
+Function: local_may_aliast::~local_may_aliast
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: 
+
+\*******************************************************************/
+
+local_may_aliast::~local_may_aliast()
+{
+}
+
+/*******************************************************************\
+
+Function: local_may_aliast::destt::merge
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: 
+
+\*******************************************************************/
+
+bool local_may_aliast::destt::merge(const destt &src)
+{
+  bool result=false;
+
+  std::size_t old_size=objects.size();
+  objects.insert(src.objects.begin(), src.objects.end());
+
+  if(objects.size()!=old_size)
+    result=true;
+
+  return result;
+}
+
+/*******************************************************************\
+
 Function: local_may_aliast::loc_infot::merge
 
   Inputs:
@@ -147,11 +188,9 @@ std::set<exprt> local_may_aliast::get(
   const goto_programt::const_targett t,
   const exprt &rhs) const
 {
-  local_cfgt::loc_mapt::const_iterator loc_it=cfg.loc_map.find(t);
-  
-  assert(loc_it!=cfg.loc_map.end());
-  
-  const loc_infot &loc_info_src=loc_infos[loc_it->second];
+  loc_infost::const_iterator entry=loc_infos.find(t);
+  assert(entry!=loc_infos.end());
+  const loc_infot &loc_info_src=entry->second;
   
   object_sett result_tmp;
   get_rec(result_tmp, rhs, loc_info_src);
@@ -185,11 +224,9 @@ bool local_may_aliast::aliases(
   const goto_programt::const_targett t,
   const exprt &src1, const exprt &src2) const
 {
-  local_cfgt::loc_mapt::const_iterator loc_it=cfg.loc_map.find(t);
-  
-  assert(loc_it!=cfg.loc_map.end());
-  
-  const loc_infot &loc_info_src=loc_infos[loc_it->second];
+  loc_infost::const_iterator entry=loc_infos.find(t);
+  assert(entry!=loc_infos.end());
+  const loc_infot &loc_info_src=entry->second;
   
   object_sett tmp1, tmp2;
   get_rec(tmp1, src1, loc_info_src);
@@ -383,7 +420,10 @@ void local_may_aliast::build(const goto_functiont &goto_function)
 {
   if(cfg.nodes.empty()) return;
 
+  assert(!goto_function.body.instructions.empty());
+  goto_programt::const_targett entry=goto_function.body.instructions.begin();
   work_queuet work_queue;
+<<<<<<< HEAD
 
   // put all nodes into work queue  
   for(local_cfgt::node_nrt n=0; n<cfg.nodes.size(); n++)
@@ -416,16 +456,27 @@ void local_may_aliast::build(const goto_functiont &goto_function)
       loc_infos[0].aliases.make_union(objects.number(l_it->second), unknown_object);
   }
   #endif
+=======
+  work_queue.push(entry);  
+  
+  unknown_object=objects.number(exprt(ID_unknown));
+  
+  // feed in sufficiently bad defaults
+  loc_infot &loc_info=loc_infos[entry];
+  forall_symbols(it, ns.get_symbol_table().symbols)
+    if(is_tracked(it->second.name))
+      loc_info.points_to[pointers.number(it->second.name)].objects.insert(unknown_object);
+>>>>>>> 1ed43de... Preparing local_may_aliast for extensibility
 
   while(!work_queue.empty())
   {
-    local_cfgt::node_nrt loc_nr=work_queue.top();
-    const local_cfgt::nodet &node=cfg.nodes[loc_nr];
-    const goto_programt::instructiont &instruction=*node.t;
+    goto_programt::const_targett t=work_queue.top();
+    const local_cfgt::loct &loc=cfg.locs[cfg.loc_map[t]];
+    const goto_programt::instructiont &instruction=*t;
     work_queue.pop();
     
-    const loc_infot &loc_info_src=loc_infos[loc_nr];
-    loc_infot loc_info_dest=loc_infos[loc_nr];
+    const loc_infot &loc_info_src=loc_infos[t];
+    loc_infot loc_info_dest=loc_infos[t];
     
     switch(instruction.type)
     {
@@ -484,8 +535,8 @@ void local_may_aliast::build(const goto_functiont &goto_function)
         it!=node.successors.end();
         it++)
     {
-      if(loc_infos[*it].merge(loc_info_dest))
-        work_queue.push(*it);
+      if(loc_infos[cfg.locs[*it].t].merge(loc_info_dest))
+        work_queue.push(cfg.locs[*it].t);
     }
   }
 }
@@ -504,18 +555,20 @@ Function: local_may_aliast::output
 
 void local_may_aliast::output(
   std::ostream &out,
-  const goto_functiont &goto_function,
-  const namespacet &ns) const
+  const goto_functiont &goto_function) const
 {
-  unsigned l=0;
-
   forall_goto_program_instructions(i_it, goto_function.body)
   {
     out << "**** " << i_it->source_location << "\n";
 
-    const loc_infot &loc_info=loc_infos[l];
-    
-    for(std::size_t i=0; i<loc_info.aliases.size(); i++)
+    loc_infost::const_iterator entry=loc_infos.find(i_it);
+    assert(entry!=loc_infos.end());
+    const loc_infot &loc_info=entry->second;
+
+    for(points_tot::const_iterator
+        p_it=loc_info.points_to.begin();
+        p_it!=loc_info.points_to.end();
+        p_it++)
     {
       if(loc_info.aliases.count(i)!=1 &&
          loc_info.aliases.find(i)==i) // root?
@@ -536,8 +589,6 @@ void local_may_aliast::output(
     out << "\n";
     goto_function.body.output_instruction(ns, "", out, i_it);
     out << "\n";
-    
-    l++;
   }
 }
 

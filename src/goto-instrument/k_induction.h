@@ -14,6 +14,6 @@ Author: Daniel Kroening, kroening@kroening.com
 void k_induction(
   goto_functionst &goto_functions,
   bool base_case, bool step_case,
-  unsigned k);
+  unsigned k, const namespacet &ns);
 
 #endif
