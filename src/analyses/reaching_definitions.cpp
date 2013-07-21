@@ -17,6 +17,8 @@ Date: February 2013
 #include "is_threaded.h"
 #include "dirty.h"
 
+#include "may_alias.h"
+
 #include "reaching_definitions.h"
 
 /*******************************************************************\
@@ -218,10 +220,17 @@ void rd_range_domaint::transform_function_call(
   locationt to,
   reaching_definitions_analysist &rd)
 {
+<<<<<<< HEAD
   const code_function_callt &code=to_code_function_call(from->code);
 
   goto_programt::const_targett next=from;
   ++next;
+=======
+  assert(may_alias);
+
+  const exprt &pointer=deref.pointer();
+  std::set<exprt> alias_set=may_alias->get(from, pointer);
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 
   // only if there is an actual call, i.e., we have a body
   if(next!=to)
@@ -830,7 +839,28 @@ bool rd_range_domaint::merge(
 
 /*******************************************************************\
 
+<<<<<<< HEAD
 Function: rd_range_domaint::merge_shared
+=======
+Function: reaching_definitions_analysist::~reaching_definitions_analysist
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+reaching_definitions_analysist::~reaching_definitions_analysist()
+{
+  if(may_alias) delete may_alias;
+}
+
+/*******************************************************************\
+
+Function: reaching_definitions_analysist::initialize
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 
   Inputs:
 
@@ -846,6 +876,7 @@ bool rd_range_domaint::merge_shared(
   goto_programt::const_targett to,
   const namespacet &ns)
 {
+<<<<<<< HEAD
   // TODO: dirty vars
 #if 0
   reaching_definitions_analysist *rd=
@@ -891,6 +922,9 @@ bool rd_range_domaint::merge_shared(
       std::make_pair(f_it->first, local_may_aliast(f_it->second, ns)));
 >>>>>>> 1ed43de... Preparing local_may_aliast for extensibility
   }
+=======
+  may_alias=new may_aliast(goto_functions, ns);
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 
   return more;
 }
@@ -914,12 +948,16 @@ const rd_range_domaint::ranges_at_loct& rd_range_domaint::get(
 
   static ranges_at_loct empty;
 
+<<<<<<< HEAD
   export_cachet::const_iterator entry=export_cache.find(identifier);
 
   if(entry==export_cache.end())
     return empty;
   else
     return entry->second;
+=======
+  state_map[l].set_may_alias(may_alias);
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 }
 
 /*******************************************************************\
