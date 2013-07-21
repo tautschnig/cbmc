@@ -9,11 +9,20 @@ Date: February 2013
 
 \*******************************************************************/
 
+<<<<<<< HEAD
 #ifndef CPROVER_REACHING_DEFINITIONS_H
 #define CPROVER_REACHING_DEFINITIONS_H
 
 #include "ai.h"
 #include "goto_rw.h"
+=======
+#include "static_analysis.h"
+
+class if_exprt;
+class byte_extract_exprt;
+class dereference_exprt;
+class may_aliast;
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 
 class rd_dereferencet;
 class is_threadedt;
@@ -82,8 +91,12 @@ class rd_range_domaint:public ai_domain_baset
 {
 public:
   rd_range_domaint():
+<<<<<<< HEAD
     ai_domain_baset(),
     bv_container(0)
+=======
+    may_alias(0)
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
   {
   }
 
@@ -118,6 +131,7 @@ public:
     locationt to,
     const namespacet &ns);
 
+<<<<<<< HEAD
   // each element x represents a range of bits [x.first, x.second)
   typedef std::multimap<range_spect, range_spect> rangest;
   typedef std::map<locationt, rangest> ranges_at_loct;
@@ -126,6 +140,11 @@ public:
   inline const void clear_cache(const irep_idt &identifier) const
   {
     export_cache[identifier].clear();
+=======
+  void set_may_alias(may_aliast *a)
+  {
+    may_alias=a;
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
   }
 
 protected:
@@ -139,6 +158,7 @@ protected:
   #endif
   valuest values;
 
+<<<<<<< HEAD
   #ifdef USE_DSTRING
   typedef std::map<irep_idt, ranges_at_loct> export_cachet;
   #else
@@ -148,6 +168,9 @@ protected:
   mutable export_cachet export_cache;
 
   void populate_cache(const irep_idt &identifier) const;
+=======
+  may_aliast * may_alias;
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 
   void transform_dead(
     const namespacet &ns,
@@ -198,11 +221,16 @@ class reaching_definitions_analysist :
 public:
   // constructor
   explicit reaching_definitions_analysist(const namespacet &_ns):
+<<<<<<< HEAD
     concurrency_aware_ait<rd_range_domaint>(),
     ns(_ns),
     rd_dereference(0),
     is_threaded(0),
     is_dirty(0)
+=======
+    static_analysist<rd_range_domaint>(_ns),
+    may_alias(0)
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
   {
   }
 
@@ -213,6 +241,7 @@ public:
 
   virtual statet &get_state(goto_programt::const_targett l)
   {
+<<<<<<< HEAD
     statet &s=concurrency_aware_ait<rd_range_domaint>::get_state(l);
 
     rd_range_domaint *rd_state=dynamic_cast<rd_range_domaint*>(&s);
@@ -221,6 +250,9 @@ public:
     rd_state->set_bitvector_container(*this);
 
     return s;
+=======
+    throw "reaching definitions uses may_aliast, cannot be used on goto_programt";
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
   }
 
   rd_dereferencet &get_rd_dereference() const
@@ -229,11 +261,16 @@ public:
     return *rd_dereference;
   }
 
+<<<<<<< HEAD
   const is_threadedt &get_is_threaded() const
   {
     assert(is_threaded);
     return *is_threaded;
   }
+=======
+protected:
+  may_aliast * may_alias;
+>>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 
   const dirtyt &get_is_dirty() const
   {

@@ -41,6 +41,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <analyses/natural_loops.h>
 #include <analyses/global_may_alias.h>
 #include <analyses/local_may_alias.h>
+#include <analyses/may_alias.h>
 #include <analyses/local_bitvector_analysis.h>
 #include <analyses/custom_bitvector_analysis.h>
 #include <analyses/escape_analysis.h>
@@ -174,15 +175,8 @@ int goto_instrument_parse_optionst::doit()
 
       namespacet ns(symbol_table);
     
-      forall_goto_functions(it, goto_functions)
-      {
-        local_may_aliast local_may_alias(it->second, ns);
-        std::cout << ">>>>" << std::endl;
-        std::cout << ">>>> " << it->first << std::endl;
-        std::cout << ">>>>" << std::endl;
-        local_may_alias.output(std::cout, it->second);
-        std::cout << std::endl;
-      }
+      may_aliast may_alias(goto_functions, ns);
+      may_alias.output(std::cout, goto_functions);
 
       return 0;
     }
