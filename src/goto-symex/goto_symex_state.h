@@ -21,6 +21,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "symex_target.h"
 
+class dirtyt;
+
 // central data structure: state
 class goto_symex_statet
 {
@@ -342,6 +344,7 @@ public:
 
   std::set<unsigned> cex_graph_nodes;
   bool cex_started;
+  const dirtyt * dirty;
 };
 
 #endif

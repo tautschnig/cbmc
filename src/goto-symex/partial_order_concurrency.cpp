@@ -72,13 +72,13 @@ void partial_order_concurrencyt::add_init_writes(
       e_it!=equation.SSA_steps.end();
       e_it++)
   {
-    if(is_spawn(e_it))
+    if(e_it->is_spawn())
     {
       spawn_seen=true;
       continue;
     }
-    else if(!is_shared_read(e_it) &&
-            !is_shared_write(e_it))
+    else if(!e_it->is_shared_read() &&
+            !e_it->is_shared_write())
       continue;
 
     const irep_idt &a=address(e_it);
@@ -86,7 +86,7 @@ void partial_order_concurrencyt::add_init_writes(
     if(init_done.find(a)!=init_done.end()) continue;
 
     if(spawn_seen ||
-       is_shared_read(e_it) ||
+       e_it->is_shared_read() ||
        !e_it->guard.is_true())
     {
       init_steps.push_back(symex_target_equationt::SSA_stept());
@@ -132,17 +132,17 @@ void partial_order_concurrencyt::build_event_lists(
       e_it!=equation.SSA_steps.end();
       e_it++)
   {
-    if(is_shared_read(e_it) ||
-       is_shared_write(e_it) ||
-       is_spawn(e_it))
+    if(e_it->is_shared_read() ||
+       e_it->is_shared_write() ||
+       e_it->is_spawn())
     {
       unsigned thread_nr=e_it->source.thread_nr;
 
-      if(!is_spawn(e_it))
+      if(!e_it->is_spawn())
       {
         a_rect &a_rec=address_map[address(e_it)];
 
-        if(is_shared_read(e_it))
+        if(e_it->is_shared_read())
           a_rec.reads.push_back(e_it);
         else // must be write
           a_rec.writes.push_back(e_it);
@@ -214,18 +214,11 @@ symbol_exprt partial_order_concurrencyt::clock(
   assert(!numbering.empty());
 
   if(event->is_shared_write())
-  {
-    assert(is_shared_write(event));
     identifier=rw_clock_id(event, axiom);
-  }
   else if(event->is_shared_read())
-  {
-    assert(is_shared_read(event));
     identifier=rw_clock_id(event, axiom);
-  }
   else if(event->is_spawn())
   {
-    assert(is_spawn(event));
     identifier=
       "t"+i2string(event->source.thread_nr+1)+"$"+
       i2string(numbering[event])+"$spwnclk$"+i2string(axiom);
@@ -234,50 +227,6 @@ symbol_exprt partial_order_concurrencyt::clock(
     assert(false);
 
   return symbol_exprt(identifier, clock_type);
-}
-
-/*******************************************************************\
-
-Function: partial_order_concurrencyt::is_shared_write
-
-  Inputs: 
-
- Outputs:
-
- Purpose:
-
-\*******************************************************************/
-
-bool partial_order_concurrencyt::is_shared_write(event_it event) const
-{
-  if(!event->is_shared_write()) return false;
-  const irep_idt obj_identifier=event->ssa_lhs.get_object_name();
-  if(obj_identifier=="goto_symex::\\guard") return false;
-
-  const symbolt &symbol=ns.lookup(obj_identifier);
-  return !symbol.is_thread_local;
-}
-
-/*******************************************************************\
-
-Function: partial_order_concurrencyt::is_shared_read
-
-  Inputs: 
-
- Outputs:
-
- Purpose:
-
-\*******************************************************************/
-
-bool partial_order_concurrencyt::is_shared_read(event_it event) const
-{
-  if(!event->is_shared_read()) return false;
-  const irep_idt obj_identifier=event->ssa_lhs.get_object_name();
-  if(obj_identifier=="goto_symex::\\guard") return false;
-
-  const symbolt &symbol=ns.lookup(obj_identifier);
-  return !symbol.is_thread_local;
 }
 
 /*******************************************************************\

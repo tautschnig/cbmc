@@ -14,6 +14,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/symbol_table.h>
 #include <util/replace_symbol.h>
 
+#include <analyses/dirty.h>
+
 #include "goto_symex.h"
 
 /*******************************************************************\
@@ -244,6 +246,7 @@ void goto_symext::operator()(
       }
     }
   }
+  state.dirty=new dirtyt(goto_functions);
 
   while(!state.call_stack().empty())
   {
@@ -258,6 +261,9 @@ void goto_symext::operator()(
       state.switch_to_thread(t);
     }
   }
+
+  delete state.dirty;
+  state.dirty=0;
 }
 
 /*******************************************************************\

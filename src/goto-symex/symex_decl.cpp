@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/message.h>
 
 #include <linking/zero_initializer.h>
+#include <analyses/dirty.h>
 
 #include "goto_symex.h"
 
@@ -121,12 +122,24 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
     state.propagation.remove(l1_identifier);
 
     state.level2.increase_counter(l1_identifier);
+    const bool record_events=state.record_events;
+    state.record_events=false;
     state.rename(ssa, ns);
+    state.record_events=record_events;
 
     target.decl(
       state.guard.as_expr(),
       ssa,
       state.source,
       hidden?symex_targett::HIDDEN:symex_targett::STATE);
+
+    assert(state.dirty);
+    if(state.dirty->is_dirty(ssa.get_object_name()) &&
+       state.atomic_section_id==0)
+      target.shared_write(
+        state.guard.as_expr(),
+        ssa,
+        state.atomic_section_id,
+        state.source);
   }
 }
