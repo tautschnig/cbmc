@@ -23,9 +23,10 @@ public:
   
   havoc_loopst(
     function_modifiest &_function_modifies,
-    goto_functiont &_goto_function):
+    goto_functiont &_goto_function,
+    const namespacet &ns):
     goto_function(_goto_function),
-    local_may_alias(_goto_function),
+    local_may_alias(_goto_function, ns),
     function_modifies(_function_modifies),
     natural_loops(_goto_function.body)
   {
@@ -254,10 +255,12 @@ Function: havoc_loops
 
 \*******************************************************************/
 
-void havoc_loops(goto_functionst &goto_functions)
+void havoc_loops(
+  goto_functionst &goto_functions,
+  const namespacet &ns)
 {
-  function_modifiest function_modifies(goto_functions);
+  function_modifiest function_modifies(goto_functions, ns);
 
   Forall_goto_functions(it, goto_functions)
-    havoc_loopst(function_modifies, it->second);
+    havoc_loopst(function_modifies, it->second, ns);
 }

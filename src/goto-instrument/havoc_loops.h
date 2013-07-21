@@ -11,6 +11,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <goto-programs/goto_functions.h>
 
-void havoc_loops(goto_functionst &goto_functions);
+void havoc_loops(
+  goto_functionst &goto_functions,
+  const namespacet &ns);
 
 #endif

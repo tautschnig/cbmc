@@ -30,24 +30,28 @@ class local_may_aliast
 {
 public:
   typedef goto_functionst::goto_functiont goto_functiont;
+
+  virtual ~local_may_aliast();
   
-  explicit local_may_aliast(
-    const goto_functiont &_goto_function):
+  local_may_aliast(
+    const goto_functiont &_goto_function,
+    const namespacet &_ns):
     dirty(_goto_function),
     locals(_goto_function),
-    cfg(_goto_function.body)
+    cfg(_goto_function.body),
+    ns(_ns)
   {
     build(_goto_function);
   }
 
   void output(
     std::ostream &out,
-    const goto_functiont &goto_function,
-    const namespacet &ns) const;
+    const goto_functiont &goto_function) const;
   
   dirtyt dirty;
   localst locals;
   local_cfgt cfg;
+  const namespacet &ns;
 
   // given a pointer, returns possible aliases
   std::set<exprt> get(
@@ -62,7 +66,7 @@ public:
 protected:
   void build(const goto_functiont &goto_function);
 
-  typedef std::stack<local_cfgt::node_nrt> work_queuet;
+  typedef std::stack<goto_programt::const_targett> work_queuet;
 
   mutable numbering<exprt> objects;
   
@@ -77,7 +81,7 @@ protected:
     bool merge(const loc_infot &src);
   };
 
-  typedef std::vector<loc_infot> loc_infost;
+  typedef std::map<goto_programt::const_targett, loc_infot> loc_infost;
   loc_infost loc_infos;
   
   void assign_lhs(

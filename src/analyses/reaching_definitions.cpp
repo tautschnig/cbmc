@@ -860,6 +860,7 @@ bool rd_range_domaint::merge_shared(
       ito!=other.values.end();
       ++ito)
   {
+<<<<<<< HEAD
     const irep_idt &identifier=ito->first;
 
     if(!ns.lookup(identifier).is_shared() /*&&
@@ -885,6 +886,10 @@ bool rd_range_domaint::merge_shared(
 
       ++it;
     }
+=======
+    local_may_aliases.insert(
+      std::make_pair(f_it->first, local_may_aliast(f_it->second, ns)));
+>>>>>>> 1ed43de... Preparing local_may_aliast for extensibility
   }
 
   return more;

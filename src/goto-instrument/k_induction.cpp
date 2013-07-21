@@ -25,9 +25,9 @@ public:
   k_inductiont(
     goto_functiont &_goto_function,
     bool _base_case, bool _step_case,
-    unsigned _k):
+    unsigned _k, const namespacet &ns):
     goto_function(_goto_function),
-    local_may_alias(_goto_function),
+    local_may_alias(_goto_function, ns),
     natural_loops(_goto_function.body),
     base_case(_base_case), step_case(_step_case), k(_k)
   {
@@ -172,8 +172,8 @@ Function: k_induction
 void k_induction(
   goto_functionst &goto_functions,
   bool base_case, bool step_case,
-  unsigned k)
+  unsigned k, const namespacet &ns)
 {
   Forall_goto_functions(it, goto_functions)
-    k_inductiont(it->second, base_case, step_case, k);
+    k_inductiont(it->second, base_case, step_case, k, ns);
 }

@@ -15,8 +15,11 @@ Author: Daniel Kroening, kroening@kroening.com
 class function_modifiest
 {
 public:
-  explicit function_modifiest(const goto_functionst &_goto_functions):
-    goto_functions(_goto_functions)
+  explicit function_modifiest(
+    const goto_functionst &_goto_functions,
+    const namespacet &_ns):
+    goto_functions(_goto_functions),
+    ns(_ns)
   {
   }
 
@@ -44,6 +47,7 @@ public:
 
 protected:
   const goto_functionst &goto_functions;
+  const namespacet &ns;
 
   typedef std::map<irep_idt, modifiest> function_mapt;
   function_mapt function_map;

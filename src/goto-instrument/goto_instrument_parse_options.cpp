@@ -176,11 +176,11 @@ int goto_instrument_parse_optionst::doit()
     
       forall_goto_functions(it, goto_functions)
       {
+        local_may_aliast local_may_alias(it->second, ns);
         std::cout << ">>>>" << std::endl;
         std::cout << ">>>> " << it->first << std::endl;
         std::cout << ">>>>" << std::endl;
-        local_may_aliast local_may_alias(it->second);
-        local_may_alias.output(std::cout, it->second, ns);
+        local_may_alias.output(std::cout, it->second);
         std::cout << std::endl;
       }
 
@@ -1233,7 +1233,7 @@ void goto_instrument_parse_optionst::instrument_goto_program()
   if(cmdline.isset("havoc-loops"))
   {
     status() << "Havocing loops" << eom;
-    havoc_loops(goto_functions);
+    havoc_loops(goto_functions, ns);
   }
 
   if (cmdline.isset("learn")) {
@@ -1274,7 +1274,7 @@ void goto_instrument_parse_optionst::instrument_goto_program()
     status() << "Instrumenting k-induction for k=" << k << ", "
              << (base_case?"base case":"step case") << eom;
     
-    k_induction(goto_functions, base_case, step_case, k);
+    k_induction(goto_functions, base_case, step_case, k, ns);
   }
 
   if(cmdline.isset("function-enter"))
