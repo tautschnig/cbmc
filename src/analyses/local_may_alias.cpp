@@ -112,6 +112,7 @@ void local_may_aliast::assign_lhs(
   {
     if(lhs.type().id()==ID_pointer)
     {
+<<<<<<< HEAD
       unsigned dest_pointer=objects.number(lhs);
 
       // isolate the lhs pointer
@@ -128,6 +129,13 @@ void local_may_aliast::assign_lhs(
       {
         loc_info_dest.aliases.make_union(dest_pointer, *p_it);
       }
+=======
+      unsigned dest_pointer=pointers.number(identifier);
+      destt &dest_set=loc_info_dest.points_to[dest_pointer];
+      if(kill_foreign || local_may_aliast::is_tracked(identifier))
+        dest_set.clear();
+      get_rec(dest_set, rhs, loc_info_src);
+>>>>>>> 5b69b63... Added may_alias analysis that extends local_may_aliast to global pointers
     }
   }
   else if(lhs.id()==ID_dereference)

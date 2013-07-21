@@ -39,7 +39,8 @@ public:
     dirty(_goto_function),
     locals(_goto_function),
     cfg(_goto_function.body),
-    ns(_ns)
+    ns(_ns),
+    kill_foreign(true)
   {
     build(_goto_function);
   }
@@ -52,6 +53,7 @@ public:
   localst locals;
   local_cfgt cfg;
   const namespacet &ns;
+  const bool kill_foreign;
 
   // given a pointer, returns possible aliases
   std::set<exprt> get(
@@ -64,6 +66,18 @@ public:
     const exprt &src1, const exprt &src2) const;
     
 protected:
+  local_may_aliast(
+    const goto_functiont &_goto_function,
+    const namespacet &_ns,
+    bool _kill_foreign):
+    dirty(_goto_function),
+    locals(_goto_function),
+    cfg(_goto_function.body),
+    ns(_ns),
+    kill_foreign(_kill_foreign)
+  {
+  }
+
   void build(const goto_functiont &goto_function);
 
   typedef std::stack<goto_programt::const_targett> work_queuet;
@@ -97,6 +111,8 @@ protected:
     const exprt &rhs,
     const loc_infot &loc_info_src) const;
     
+  virtual bool is_tracked(const irep_idt &identifier) const;
+  
   unsigned unknown_object;
 };
 
