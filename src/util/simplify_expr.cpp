@@ -358,9 +358,8 @@ Function: simplify_exprt::simplify_typecast
 
 bool simplify_exprt::simplify_typecast(exprt &expr)
 {
-  if(expr.operands().size()!=1) return true;
-  
   const typet &expr_type=ns.follow(expr.type());
+<<<<<<< HEAD
   const typet &op_type=ns.follow(expr.op0().type());
 
   // eliminate casts of infinity
@@ -400,43 +399,18 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
     simplify_typecast(expr); // rec. call
     return false;
   }
+=======
+  const exprt &op=to_typecast_expr(expr).op();
+  const typet &op_type=ns.follow(op.type());
+>>>>>>> Simplifier: cleanup of simplify_typecast
 
-  // eliminate redundant typecasts
-  if(base_type_eq(expr.type(), expr.op0().type(), ns))
-  {
-    exprt tmp;
-    tmp.swap(expr.op0());
-    expr.swap(tmp);
-    return false;
-  }
+  unsigned expr_width=bv_width(expr_type);
+  unsigned op_width=bv_width(op_type);
 
-  // elminiate casts to bool
-  if(expr_type==bool_typet())
-  {
-    // rewrite (_Bool)x to x!=0
-    equal_exprt equality;
-    equality.location()=expr.location();
-    equality.lhs()=expr.op0();
-    equality.rhs()=gen_zero(ns.follow(expr.op0().type()));
-    assert(equality.rhs().is_not_nil());
-    simplify_node(equality);
-    equality.make_not();
-    simplify_node(equality);
-    expr.swap(equality);
-    return false;
-  }
-  
-  // eliminate typecasts from NULL
-  if(expr_type.id()==ID_pointer &&
-     expr.op0().is_constant() &&
-     to_constant_expr(expr.op0()).get_value()==ID_NULL)
-  {
-    exprt tmp=expr.op0();
-    tmp.type()=expr.type();
-    expr.swap(tmp);
-    return false;
-  }
+  const irep_idt &expr_type_id=expr_type.id();
+  const irep_idt &op_type_id=op_type.id();
 
+<<<<<<< HEAD
   // eliminate duplicate pointer typecasts
   // (T1 *)(T2 *)x -> (T1 *)x
   if(expr_type.id()==ID_pointer &&
@@ -509,40 +483,73 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
       else if(op_id==ID_ashr || op_id==ID_lshr || op_id==ID_shl)
       {
       }
+=======
+  // eliminate casts of infinity
+  if(op.id()==ID_infinity)
+    return make_op0_keep_type(expr);
+  // eliminate duplicate typecasts
+  else if(op.id()==ID_typecast)
+  {
+    assert(op.operands().size()==1);
+
+    // casts from pointer to integer
+    // where width of integer >= width of pointer
+    // (void*)(intX)expr -> (void*)expr
+    if(expr_type_id==ID_pointer &&
+       (op_type_id==ID_signedbv || op_type_id==ID_unsignedbv) &&
+       to_bitvector_type(op_type).get_width() >= config.ansi_c.pointer_width)
+    {
+      make_op0(expr.op0());
+      simplify_typecast(expr); // rec. call
+      return false;
     }
-  }
 
-  #if 0
-  // (T)(a?b:c) --> a?(T)b:(T)c
-  if(expr.op0().id()==ID_if &&
-     expr.op0().operands().size()==3)
-  {
-    exprt tmp_op1=typecast_exprt(expr.op0().op1(), expr_type);
-    exprt tmp_op2=typecast_exprt(expr.op0().op2(), expr_type);
-    simplify_typecast(tmp_op1);
-    simplify_typecast(tmp_op2);
-    expr=if_exprt(expr.op0().op0(), tmp_op1, tmp_op2, expr_type);
-    simplify_if(expr);
-    return false;
+    // (T1 *)(T2 *)x -> (T1 *)x
+    if(expr_type_id==ID_pointer &&
+       op_type_id==ID_pointer)
+    {
+      make_op0(expr.op0());
+      simplify_typecast(expr); // rec. call
+      return false;
+    }
+
+    // casts from integer to pointer and back:
+    // (int)(void *)int -> (int)(size_t)int
+    if((expr_type_id==ID_signedbv || expr_type_id==ID_unsignedbv) &&
+       op_type_id==ID_pointer)
+    {
+      expr.op0().type()=unsignedbv_typet(config.ansi_c.pointer_width);
+      simplify_typecast(expr.op0()); // rec. call
+      simplify_typecast(expr); // rec. call
+      return false;
+>>>>>>> Simplifier: cleanup of simplify_typecast
+    }
+
+    if(op_type_id==expr_type_id &&
+       (expr_type_id==ID_unsignedbv || expr_type_id==ID_signedbv) &&
+       expr_width<=op_width)
+      return make_op0(expr.op0());
   }
-  #endif
+  // eliminate type casts of constants
+  else if(op.is_constant())
+  {
+    const irep_idt &value=to_constant_expr(op).get_value();
   
-  const irep_idt &expr_type_id=expr_type.id();
-  const exprt &operand=expr.op0();
-  const irep_idt &op_type_id=op_type.id();
+    // casts from NULL to any integer
+    if(op_type_id==ID_pointer &&
+       value==ID_NULL &&
+       (expr_type_id==ID_unsignedbv || expr_type_id==ID_signedbv))
+    {
+      expr=gen_zero(expr_type);
+      return false;
+    }
 
-  unsigned expr_width=bv_width(expr_type);
-  unsigned op_width=bv_width(operand.type());
-
-  if(operand.is_constant())
-  {
-    const irep_idt &value=to_constant_expr(operand).get_value();
+    // eliminate typecasts from NULL
+    if(expr_type_id==ID_pointer &&
+       value==ID_NULL)
+      return make_op0_keep_type(expr);
 
     constant_exprt new_expr(expr.type());
-
-    // preserve the sizeof type annotation
-    typet c_sizeof_type=
-      static_cast<const typet &>(operand.find(ID_C_c_sizeof_type));
       
     if(op_type_id==ID_integer ||
        op_type_id==ID_natural ||
@@ -599,13 +606,13 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
          expr_type_id==ID_natural ||
          expr_type_id==ID_rational)
       {
-        if(operand.is_true())
+        if(op.is_true())
         {
           expr=gen_one(expr_type);
           assert(expr.is_not_nil());
           return false;
         }
-        else if(operand.is_false())
+        else if(op.is_false())
         {
           expr=gen_zero(expr_type);
           assert(expr.is_not_nil());
@@ -628,7 +635,8 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
 
       if(expr_type_id==ID_integer)
       {
-        new_expr=from_integer(int_value, expr_type);
+        new_expr=to_constant_expr(
+            from_integer(int_value, expr_type));
         expr.swap(new_expr);
         return false;
       }
@@ -637,7 +645,8 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
       {
         if(int_value>=0)
         {
-          new_expr=from_integer(int_value, expr_type);
+          new_expr=to_constant_expr(
+              from_integer(int_value, expr_type));
           expr.swap(new_expr);
           return false;
         }
@@ -648,9 +657,12 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
          expr_type_id==ID_bv)
       {
         unsigned expr_width=to_bitvector_type(expr_type).get_width();
-        new_expr.set(ID_value, integer2binary(int_value, expr_width));
+        new_expr.set_value(integer2binary(int_value, expr_width));
         expr.swap(new_expr);
 
+        // preserve the sizeof type annotation
+        typet c_sizeof_type=
+          static_cast<const typet &>(op.find(ID_C_c_sizeof_type));
         if(c_sizeof_type.is_not_nil())
           expr.set(ID_C_c_sizeof_type, c_sizeof_type);
 
@@ -660,7 +672,7 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
       if(expr_type_id==ID_c_enum ||
          expr_type_id==ID_incomplete_c_enum)
       {
-        new_expr.set(ID_value, integer2string(int_value));
+        new_expr.set_value(integer2string(int_value));
         expr.swap(new_expr);
         return false;
       }
@@ -707,14 +719,14 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
          expr_type_id==ID_signedbv)
       {
         // cast from float to int
-        fixedbvt f(to_constant_expr(expr.op0()));
+        fixedbvt f(to_constant_expr(op));
         expr=from_integer(f.to_integer(), expr_type);
         return false;
       }
       else if(expr_type_id==ID_fixedbv)
       {
         // float to double or double to float
-        fixedbvt f(to_constant_expr(expr.op0()));
+        fixedbvt f(to_constant_expr(op));
         f.round(to_fixedbv_type(expr_type));
         expr=f.to_expr();
         return false;
@@ -726,14 +738,14 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
          expr_type_id==ID_signedbv)
       {
         // cast from float to int
-        ieee_floatt f(to_constant_expr(expr.op0()));
+        ieee_floatt f(to_constant_expr(op));
         expr=from_integer(f.to_integer(), expr_type);
         return false;
       }
       else if(expr_type_id==ID_floatbv)
       {
         // float to double or double to float
-        ieee_floatt f(to_constant_expr(expr.op0()));
+        ieee_floatt f(to_constant_expr(op));
         f.change_spec(to_floatbv_type(expr_type));
         expr=f.to_expr();
         return false;
@@ -748,27 +760,82 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
         unsigned expr_width=to_bitvector_type(expr_type).get_width();
         mp_integer int_value=binary2integer(
           id2string(value), false);
-        new_expr.set(ID_value, integer2binary(int_value, expr_width));
+        new_expr.set_value(integer2binary(int_value, expr_width));
         expr.swap(new_expr);
         return false;
       }
     }
   }
-  else if(operand.id()==ID_typecast) // typecast of typecast
+  #if 0
+  // (T)(a?b:c) --> a?(T)b:(T)c
+  else if(op.id()==ID_if &&
+          op.operands().size()==3)
   {
-    // (T1)(T2)x ---> (T1)
-    // where T1 has fewer bits than T2
-    if(operand.operands().size()==1 &&
-       op_type_id==expr_type_id &&
-       (expr_type_id==ID_unsignedbv || expr_type_id==ID_signedbv) &&
-       expr_width<=op_width)
+    exprt tmp_op1=typecast_exprt(expr.op0().op1(), expr_type);
+    exprt tmp_op2=typecast_exprt(expr.op0().op2(), expr_type);
+    simplify_typecast(tmp_op1);
+    simplify_typecast(tmp_op2);
+    expr=if_exprt(expr.op0().op0(), tmp_op1, tmp_op2, expr_type);
+    simplify_if(expr);
+    return false;
+  }
+  #endif
+
+  // eliminate casts to bool
+  if(expr_type==bool_typet())
+  {
+    // rewrite (_Bool)x to x!=0
+    equal_exprt equality;
+    equality.location()=expr.location();
+    equality.lhs()=op;
+    equality.rhs()=gen_zero(ns.follow(op_type));
+    assert(equality.rhs().is_not_nil());
+    simplify_node(equality);
+    equality.make_not();
+    simplify_node(equality);
+    expr.swap(equality);
+    return false;
+  }
+
+  // eliminate redundant typecasts
+  if(base_type_eq(expr_type, op_type, ns))
+    return make_op0(expr);
+
+  // Push a numerical typecast into various integer operations, i.e.,
+  // (T)(x OP y) ---> (T)x OP (T)y
+  //
+  // Doesn't work for many, e.g., pointer difference, floating-point,
+  // division, modulo.
+  //
+  if((expr_type.id()==ID_signedbv || expr_type.id()==ID_unsignedbv) &&
+     (op_type.id()==ID_signedbv || op_type.id()==ID_unsignedbv))
+  {
+    irep_idt op_id=expr.op0().id();
+
+    if(op_id==ID_plus || op_id==ID_minus || op_id==ID_mult ||
+       op_id==ID_unary_minus || 
+       op_id==ID_bitnot || op_id==ID_bitxor || op_id==ID_bitor || op_id==ID_bitand)
     {
-      exprt tmp;
-      tmp.swap(expr.op0().op0());
-      expr.op0().swap(tmp);
-      // might enable further simplification
-      simplify_typecast(expr); // recursive call
-      return false;
+      exprt result=expr.op0();
+      
+      if(result.operands().size()>=1 && 
+         base_type_eq(result.op0().type(), result.type(), ns))
+      {
+        result.type()=expr.type();
+
+        Forall_operands(it, result)
+        {
+          it->make_typecast(expr.type());
+          simplify_typecast(*it); // recursive call
+        }
+
+        simplify_node(result); // possibly recursive call
+        expr.swap(result);
+        return false;
+      }
+    }
+    else if(op_id==ID_ashr || op_id==ID_lshr || op_id==ID_shl)
+    {
     }
   }
 
