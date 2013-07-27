@@ -67,6 +67,21 @@ public:
 simplify_expr_cachet simplify_expr_cache;
 #endif
 
+static inline bool make_op0(exprt &expr)
+{
+  assert(!expr.operands().empty());
+  expr=expr.op0();
+  return false;
+}
+
+static inline bool make_op0_keep_type(exprt &expr)
+{
+  typet new_type=expr.type();
+  make_op0(expr);
+  expr.type().swap(new_type);
+  return false;
+}
+
 /*******************************************************************\
 
 Function: simplify_exprt::setup_jump_table
@@ -1073,8 +1088,7 @@ bool simplify_exprt::simplify_pointer_offset(exprt &expr)
     {
       // Cast from pointer to pointer.
       // This just passes through, remove typecast.
-      exprt tmp=ptr.op0();
-      ptr=tmp;
+      make_op0(ptr);
     
       // recursive call
       simplify_node(expr);
@@ -1353,21 +1367,11 @@ bool simplify_exprt::simplify_div(exprt &expr)
 
     // x/1?
     if(ok1 && int_value1==1)
-    {
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
-      return false;
-    }
+      return make_op0(expr);
 
     // 0/x?
     if(ok0 && int_value0==0)
-    {
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
-      return false;
-    }
+      return make_op0(expr);
 
     if(ok0 && ok1)
     {
@@ -1394,12 +1398,7 @@ bool simplify_exprt::simplify_div(exprt &expr)
 
     if((ok1 && rat_value1.is_one()) ||
        (ok0 && rat_value0.is_zero()))
-    {
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
-      return false;
-    }
+      return make_op0(expr);
 
     if(ok0 && ok1)
     {
@@ -1418,12 +1417,7 @@ bool simplify_exprt::simplify_div(exprt &expr)
     // division by one?
     if(expr.op1().is_constant() &&
        expr.op1().is_one())
-    {
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
-      return false;
-    }
+      return make_op0(expr);
 
     if(expr.op0().is_constant() &&
        expr.op1().is_constant())
@@ -1443,12 +1437,7 @@ bool simplify_exprt::simplify_div(exprt &expr)
     // division by one?
     if(expr.op1().is_constant() &&
        expr.op1().is_one())
-    {
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
-      return false;
-    }
+      return make_op0(expr);
 
     if(expr.op0().is_constant() &&
        expr.op1().is_constant())
@@ -1633,7 +1622,10 @@ bool simplify_exprt::simplify_plus(exprt &expr)
   else if(operands.size()==1)
   {
     exprt tmp(operands.front());
-    expr.swap(tmp);
+    if(!base_type_eq(tmp.type(), expr.type(), ns))
+      expr=typecast_exprt(tmp, expr.type());
+    else
+      expr=tmp;
     return false;
   }
 
@@ -1927,11 +1919,7 @@ bool simplify_exprt::simplify_bitwise(exprt &expr)
       Forall_operands(it, new_expr)
       {
         if(it->id()==ID_typecast)
-        {
-          exprt tmp;
-          tmp=it->op0();
-          it->swap(tmp);
-        }
+          make_op0(*it);
         else if(it->is_zero())
           *it=false_exprt();
         else if(it->is_one())
@@ -2030,28 +2018,16 @@ bool simplify_exprt::simplify_bitwise(exprt &expr)
      expr.op0()==expr.op1())
   {
     if(expr.id()==ID_bitand || expr.id()==ID_bitor)
-    {
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
-      return false;
-    }
+      return make_op0(expr);
     else if(expr.id()==ID_bitxor)
     {
-      constant_exprt new_op(expr.type());
-      new_op.set_value(integer2binary(0, width));
-      expr.swap(new_op);
+      expr=constant_exprt(integer2binary(0, width), expr.type());
       return false;
     }
   }
   
   if(expr.operands().size()==1)
-  {
-    exprt tmp;
-    tmp.swap(expr.op0());
-    expr.swap(tmp);
-    return false;
-  }
+    return make_op0(expr);
   
   return result;
 }
@@ -2189,12 +2165,7 @@ bool simplify_exprt::simplify_concatenation(exprt &expr)
 
   // { x } = x
   if(expr.operands().size()==1)
-  {
-    exprt tmp;
-    tmp.swap(expr.op0());
-    expr.swap(tmp);
-    result=false;
-  }
+    return make_op0(expr);
   
   return result;
 }
@@ -2225,12 +2196,7 @@ bool simplify_exprt::simplify_shifts(exprt &expr)
     return true;
     
   if(distance==0)
-  {
-    exprt tmp;
-    tmp.swap(expr.op0());
-    expr.swap(tmp);
-    return false;
-  }
+    return make_op0(expr);
 
   mp_integer value;
   
@@ -2659,9 +2625,7 @@ bool simplify_exprt::simplify_if(exprt &expr)
   {
     if(cond.id()==ID_not)
     {
-      exprt tmp;
-      tmp.swap(cond.op0());
-      cond.swap(tmp);
+      make_op0(cond);
       truevalue.swap(falsevalue);
     }
 
@@ -2677,20 +2641,14 @@ bool simplify_exprt::simplify_if(exprt &expr)
       if(truevalue.is_true() && falsevalue.is_false())
       {
         // a?1:0 <-> a
-        exprt tmp;
-        tmp.swap(cond);
-        expr.swap(tmp);
-        return false;
+        return make_op0(expr);
       }
       else if(truevalue.is_false() && falsevalue.is_true())
       {
         // a?0:1 <-> !a
-        exprt tmp;
-        tmp.swap(cond);
-        tmp.make_not();
-        simplify_node(tmp);
-        expr.swap(tmp);
-        return false;
+        cond.make_not();
+        simplify_node(cond);
+        return make_op0(expr);
       }
       else if(falsevalue.is_false())
       {
@@ -2808,9 +2766,7 @@ bool simplify_exprt::simplify_not(exprt &expr)
   else if(op.id()==ID_and ||
           op.id()==ID_or)
   {
-    exprt tmp;
-    tmp.swap(op);
-    expr.swap(tmp);
+    make_op0(expr);
 
     Forall_operands(it, expr)
     {
@@ -2824,9 +2780,7 @@ bool simplify_exprt::simplify_not(exprt &expr)
   }
   else if(op.id()==ID_notequal) // !(a!=b) <-> a==b
   {
-    exprt tmp;
-    tmp.swap(op);
-    expr.swap(tmp);
+    make_op0(expr);
     expr.id(ID_equal);
     return false;
   }
@@ -3589,9 +3543,8 @@ bool simplify_exprt::simplify_inequality_constant(exprt &expr)
       {
         // (type)ptr == NULL -> ptr == NULL
         // note that 'ptr' may be an integer
-        exprt op=expr.op0().op0();
-        expr.op0().swap(op);
-        expr.op1().type()=expr.op0().type();
+        make_op0(expr.op0());
+        expr.op1()=gen_zero(expr.op0().type());
         simplify_inequality(expr); // do again!
         return false;
       }
@@ -3686,10 +3639,7 @@ bool simplify_exprt::simplify_inequality_constant(exprt &expr)
       if(operand.id()==ID_unary_minus)
       {
         if(operand.operands().size()!=1) return true;
-        exprt tmp;
-        tmp.swap(operand.op0());
-        operand.swap(tmp);
-        return false;
+        return make_op0(operand);
       }
       else if(operand.id()==ID_plus)
       {
@@ -3907,12 +3857,7 @@ bool simplify_exprt::simplify_with(exprt &expr)
   }
 
   if(expr.operands().size()==1)
-  {
-    exprt tmp;
-    tmp.swap(expr.op0());
-    expr.swap(tmp);
-    result=false;
-  }
+    return make_op0(expr);
 
   return result;
 }
@@ -4057,8 +4002,7 @@ bool simplify_exprt::simplify_index(exprt &expr)
     if(with_expr.op1()==expr.op1())
     {
       // simplify (e with [i:=v])[i] to v
-      exprt tmp=with_expr.op2();
-      expr.swap(tmp);
+      expr=with_expr.op2();
       return false;
     }
     else
@@ -4107,8 +4051,7 @@ bool simplify_exprt::simplify_index(exprt &expr)
     else
     {
       // ok
-      exprt tmp=array.operands()[integer2long(i)];
-      expr.swap(tmp);
+      expr=array.operands()[integer2long(i)];
       return false;
     }
   }
@@ -4129,8 +4072,7 @@ bool simplify_exprt::simplify_index(exprt &expr)
     {
       // terminating zero?
       char v=(i==value.size())?0:value[integer2long(i)];
-      exprt tmp=from_integer(v, expr.type());
-      expr.swap(tmp);
+      expr=from_integer(v, expr.type());
       return false;
     }
   }
@@ -4138,8 +4080,7 @@ bool simplify_exprt::simplify_index(exprt &expr)
   {
     if(array.operands().size()==1)
     {
-      exprt tmp=array.op0();
-      expr.swap(tmp);
+      expr=array.op0();
       return false;
     }
   }
@@ -4153,8 +4094,7 @@ bool simplify_exprt::simplify_index(exprt &expr)
       simplify(tmp_index);
       if(tmp_index==index)
       {
-        exprt tmp=array.operands()[i*2+1];
-        expr.swap(tmp);
+        expr=array.operands()[i*2+1];
         return false;
       }
     }
@@ -4212,8 +4152,7 @@ bool simplify_exprt::simplify_object(exprt &expr)
       Forall_operands(it, expr)
         if(ns.follow(it->type()).id()==ID_pointer)
         {
-          exprt tmp=*it;
-          expr.swap(tmp);
+          expr=expr.operands()[i];
           simplify_object(expr);
           return false;
         }
@@ -4228,9 +4167,7 @@ bool simplify_exprt::simplify_object(exprt &expr)
     if(op_type.id()==ID_pointer)
     {
       // cast from pointer to pointer
-      exprt tmp;
-      tmp.swap(expr.op0());
-      expr.swap(tmp);
+      make_op0(expr);
       simplify_object(expr);
       return false;
     }
@@ -4268,16 +4205,14 @@ bool simplify_exprt::simplify_object(exprt &expr)
       if(expr.op0().id()==ID_index && expr.op0().operands().size()==2)
       {
         // &some[i] -> &some
-        address_of_exprt new_expr(expr.op0().op0());
-        expr.swap(new_expr);
+        expr=address_of_exprt(expr.op0().op0());
         simplify_object(expr); // recursion
         return false;
       }
       else if(expr.op0().id()==ID_member && expr.op0().operands().size()==1)
       {
         // &some.f -> &some
-        address_of_exprt new_expr(expr.op0().op0());
-        expr.swap(new_expr);
+        expr=address_of_exprt(expr.op0().op0());
         simplify_object(expr); // recursion
         return false;
       }
@@ -4595,9 +4530,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
         if(op1.get(ID_component_name)==component_name)
         {
           // found it!
-          exprt tmp;
-          tmp.swap(op2);
-          expr.swap(tmp);
+          expr=op2;
 
           // do this recursively
           simplify_rec(expr);
@@ -4610,9 +4543,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
       
       if(op.operands().size()==1)
       {
-        exprt tmp;
-        tmp.swap(op.op0());
-        op.swap(tmp);
+        make_op0(op);
         // do this recursively
         simplify_member(expr);
       }
@@ -4650,8 +4581,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
         if(designator.front().get(ID_component_name)==component_name)
         {
           // UPDATE(s, .m, v).m -> v
-          exprt tmp=update_expr.new_value();
-          expr.swap(tmp);
+          expr=update_expr.new_value();
 
           // do this recursively
           simplify_rec(expr);
@@ -4663,8 +4593,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
         else if(op_type.id()==ID_struct)
         {
           // UPDATE(s, .m1, v).m2 -> s.m2
-          exprt tmp=update_expr.old();
-          op.swap(tmp);
+          op=update_expr.old();
 
           // do this recursively
           simplify_rec(expr);
@@ -4684,9 +4613,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
       if(struct_type.has_component(component_name))
       {
         unsigned number=struct_type.component_number(component_name);
-        exprt tmp;
-        tmp.swap(op.operands()[number]);
-        expr.swap(tmp);
+        expr=op.operands()[number];
         return false;
       }
     }
@@ -4729,8 +4656,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
     // trivial?
     if(ns.follow(to_union_expr(op).op().type())==ns.follow(expr.type()))
     {
-      exprt tmp=to_union_expr(op).op();
-      expr.swap(tmp);
+      expr=to_union_expr(op).op();
       return false;
     }
     
@@ -5268,9 +5194,7 @@ bool simplify_exprt::simplify_extractbits(exprt &expr)
       svalue.substr(width-integer2long(start)-1,
                     integer2long(start-end+1));
     
-    exprt tmp(ID_constant, expr.type());
-    tmp.set(ID_value, extracted_value);
-    expr.swap(tmp);
+    expr=constant_exprt(extracted_value, expr.type());
 
     return false;
   }
@@ -5296,8 +5220,7 @@ bool simplify_exprt::simplify_unary_plus(exprt &expr)
     return true;
 
   // simply remove, this is always 'nop'
-  expr=expr.op0();
-  return false;
+  return make_op0(expr);
 }
 
 /*******************************************************************\
@@ -5334,9 +5257,7 @@ bool simplify_exprt::simplify_unary_minus(exprt &expr)
     if(!is_number(operand.op0().type()))
       return true;
 
-    exprt tmp;
-    tmp.swap(expr.op0().op0());
-    expr.swap(tmp);
+    expr=expr.op0().op0();
     return false;
   }
   else if(operand.id()==ID_constant)
