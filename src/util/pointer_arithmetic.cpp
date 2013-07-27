@@ -8,6 +8,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/std_expr.h>
 #include <util/expr_util.h>
+#include <util/arith_tools.h>
 
 #include "pointer_arithmetic.h"
 
@@ -103,6 +104,16 @@ void pointer_arithmetict::add_to_offset(const exprt &src)
 {
   if(offset.is_nil())
     offset=src;
+  else if(offset.is_constant() && src.is_constant())
+  {
+    mp_integer a, b;
+    bool err=to_integer(offset, a) || to_integer(src, b);
+    assert(!err);
+    a+=b;
+    exprt tmp;
+    tmp=from_integer(a, offset.type());
+    offset.swap(tmp);
+  }
   else if(offset.id()==ID_plus)
     offset.copy_to_operands(src);
   else

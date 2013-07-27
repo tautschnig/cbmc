@@ -19,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "threeval.h"
 #include "prefix.h"
 #include "pointer_predicates.h"
+#include "pointer_arithmetic.h"
 
 /*******************************************************************\
 
@@ -203,6 +204,20 @@ bool simplify_exprt::simplify_address_of(exprt &expr)
   if(expr.operands().size()!=1) return true;
 
   if(ns.follow(expr.type()).id()!=ID_pointer) return true;
+
+  pointer_arithmetict ptr(expr);
+  assert(!ptr.pointer.is_nil());
+  if(!ptr.offset.is_nil())
+  {
+    simplify_node(ptr.offset);
+    plus_exprt plus(ptr.pointer, ptr.offset);
+    if(expr!=plus)
+    {
+      expr.swap(plus);
+      simplify_rec(expr);
+      return false;
+    }
+  }
   
   exprt &object=expr.op0();
   
@@ -211,20 +226,8 @@ bool simplify_exprt::simplify_address_of(exprt &expr)
   if(object.id()==ID_index)
   {
     index_exprt &index_expr=to_index_expr(object);
-  
-    if(!index_expr.index().is_zero())
-    {
-      // we normalize &a[i] to (&a[0])+i
-      exprt offset;
-      offset.swap(index_expr.op1());
-      index_expr.op1()=gen_zero(offset.type());
-
-      exprt addition(ID_plus, expr.type());
-      addition.move_to_operands(expr, offset);
-      
-      expr.swap(addition);
-      return false;
-    }
+    // normalized &a[i] to (&a[0])+i above
+    assert(index_expr.index().is_zero());
   }
   else if(object.id()==ID_dereference)
   {

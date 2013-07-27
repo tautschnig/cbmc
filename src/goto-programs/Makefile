@@ -8,7 +8,7 @@ SRC = goto_convert.cpp goto_convert_function_call.cpp \
       string_abstraction.cpp destructor.cpp remove_asm.cpp \
       read_bin_goto_object.cpp goto_program_irep.cpp interpreter.cpp \
       interpreter_evaluate.cpp json_goto_trace.cpp \
-      format_strings.cpp loop_ids.cpp pointer_arithmetic.cpp \
+      format_strings.cpp loop_ids.cpp \
       goto_program_template.cpp write_goto_binary.cpp remove_unreachable.cpp \
       remove_unused_functions.cpp remove_vector.cpp \
       wp.cpp goto_clean_expr.cpp safety_checker.cpp parameter_assignments.cpp \

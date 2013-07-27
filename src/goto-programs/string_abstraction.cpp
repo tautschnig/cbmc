@@ -15,10 +15,10 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/arith_tools.h>
 #include <util/i2string.h>
 #include <util/type_eq.h>
+#include <util/pointer_arithmetic.h>
 
 #include <ansi-c/c_types.h>
 
-#include "pointer_arithmetic.h"
 #include "string_abstraction.h"
 
 /*******************************************************************\
