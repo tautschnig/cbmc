@@ -1363,27 +1363,14 @@ bool simplify_exprt::simplify_mult(exprt &expr)
   }
 
   if(operands.size()==1)
+    return make_op0(expr);
+  // if the constant is a one and there are other factors
+  else if(found && constant->is_one())
   {
-    exprt product(operands.front());
-    expr.swap(product);
-
-    result = false;
-  }
-  else
-  {
-    // if the constant is a one and there are other factors
-    if(found && constant->is_one())
-    {
-      // just delete it
-      operands.erase(constant);
-      result=false;
-
-      if(operands.size()==1)
-      {
-        exprt product(operands.front());
-        expr.swap(product);
-      }
-    }
+    // just delete it
+    operands.erase(constant);
+    result=false;
+    simplify_node(expr); // possibly simplify even more
   }
 
   return result;
@@ -1487,10 +1474,10 @@ bool simplify_exprt::simplify_div(exprt &expr)
     if(expr.op0().is_constant() &&
        expr.op1().is_constant())
     {
-      fixedbvt f0(to_constant_expr(expr.op0()));
       fixedbvt f1(to_constant_expr(expr.op1()));
       if(!f1.is_zero())
       {
+        fixedbvt f0(to_constant_expr(expr.op0()));
         f0/=f1;
         expr=f0.to_expr();
         return false;
@@ -1629,33 +1616,33 @@ bool simplify_exprt::simplify_plus(exprt &expr)
   else
   {
     // count the constants
+<<<<<<< HEAD
     size_t count=0;
     forall_operands(it, expr)
+=======
+    unsigned count=0;
+    forall_expr(it, operands)
+>>>>>>> Simplifier: the rest.
       if(is_number(it->type()) && it->is_constant())
         count++;
     
     // merge constants?
     if(count>=2)
     {
-      exprt::operandst::iterator const_sum;
-      bool const_sum_set=false;
+      exprt::operandst::iterator const_sum=operands.end();
 
-      Forall_operands(it, expr)
+      Forall_expr(it, operands)
       {
         if(is_number(it->type()) && it->is_constant())
         {
-          if(!const_sum_set)
+          if(operands.end()==const_sum)
           {
             const_sum=it;
-            const_sum_set=true;
           }
-          else
+          else if(!const_sum->sum(*it))
           {
-            if(!const_sum->sum(*it))
-            {
-              *it=gen_zero(it->type());
-              result=false;
-            }
+            *it=gen_zero(it->type());
+            result=false;
           }
         }
       }
@@ -2869,11 +2856,14 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
 {
   if(!expr.has_operands()) return true;
 
-  exprt::operandst &operands=expr.operands();
+  const exprt &c_expr=expr;
+  const irep_idt &id=c_expr.id();
+  const exprt::operandst &operands=c_expr.operands();
+  assert(!operands.empty());
 
-  if(expr.type().id()!=ID_bool) return true;
+  if(c_expr.type().id()!=ID_bool) return true;
 
-  if(expr.id()==ID_implies)
+  if(id==ID_implies)
   {
     if(operands.size()!=2 ||
        operands.front().type().id()!=ID_bool ||
@@ -2888,17 +2878,21 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
     simplify_node(expr);
     return false;
   }
-  else if(expr.id()=="<=>")
+  else if(id=="<=>")
   {
     if(operands.size()!=2 ||
        operands.front().type().id()!=ID_bool ||
-       operands.back().type().id()!=ID_bool)
+       operands.back().type().id()!=ID_bool ||
+       (!operands.front().is_constant() &&
+        !operands.back().is_constant()))
       return true;
 
     if(operands.front().is_false())
     {
+      exprt::operandst &m_operands=expr.operands();
       expr.id(ID_not);
-      operands.erase(operands.begin());
+      m_operands.front().swap(m_operands.back());
+      m_operands.erase(++m_operands.begin());
       return false;
     }
     else if(operands.front().is_true())
@@ -2909,44 +2903,65 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
     }
     else if(operands.back().is_false())
     {
+      exprt::operandst &m_operands=expr.operands();
       expr.id(ID_not);
-      operands.erase(++operands.begin());
+      m_operands.erase(++m_operands.begin());
       return false;
     }
     else if(operands.back().is_true())
-    {
-      exprt tmp(operands.front());
-      expr.swap(tmp);
-      return false;
-    }    
+      return make_op0(expr);
   }
-  else if(expr.id()==ID_or ||
-          expr.id()==ID_and ||
-          expr.id()==ID_xor)
+  else if(id==ID_or ||
+          id==ID_and ||
+          id==ID_xor)
   {
     if(operands.size()==0) return true;
+    
+    // search for a and !a
+    if(id==ID_and || id==ID_or)
+    {
+      // first gather all the a's with !a
 
-    bool result=true;
+      std::set<exprt> expr_set;
+
+      forall_expr(it, operands)
+        if(it->id()==ID_not &&
+           it->operands().size()==1 &&
+           it->type().id()==ID_bool)
+          expr_set.insert(it->op0());
+
+      // now search for a
+
+      forall_expr(it, operands)
+        if(expr_set.find(*it)!=expr_set.end())
+        {
+          expr.make_bool(id==ID_or);
+          return false;
+        }
+    }
 
     exprt::operandst::const_iterator last;
     bool last_set=false;
 
     bool negate=false;
 
-    for(exprt::operandst::iterator it=operands.begin();
-        it!=operands.end();)
+    exprt::operandst m_operands;
+    m_operands.reserve(operands.size());
+    for(exprt::operandst::const_iterator it=operands.begin();
+        it!=operands.end();
+        ++it)
     {
       if(it->type().id()!=ID_bool) return true;
 
       bool is_true=it->is_true();
       bool is_false=it->is_false();
 
-      if(expr.id()==ID_and && is_false)
+      if(id==ID_and && is_false)
       {
         expr=false_exprt();
         return false;
       }
-      else if(expr.id()==ID_or && is_true)
+      else if(id==ID_or && is_true)
       {
         expr=true_exprt();
         return false;
@@ -2954,9 +2969,9 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
 
       bool erase;
 
-      if(expr.id()==ID_and)
+      if(id==ID_and)
         erase=is_true;
-      else if(is_true && expr.id()==ID_xor)
+      else if(is_true && id==ID_xor)
       {
         erase=true;
         negate=!negate;
@@ -2965,64 +2980,36 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
         erase=is_false;
 
       if(last_set && *it==*last &&
-         (expr.id()==ID_or || expr.id()==ID_and))
+         (id==ID_or || id==ID_and))
         erase=true; // erase duplicate operands
 
-      if(erase)
+      if(!erase)
       {
-        it=operands.erase(it);
-        result=false;
-      }
-      else
-      {
+        m_operands.push_back(*it);
         last=it;
         last_set=true;
-        it++;
       }
     }
-    
-    // search for a and !a
-    if(expr.id()==ID_and || expr.id()==ID_or)
+
+    if(m_operands.size()==0)
     {
-      // first gather all the a's with !a
-
-      std::set<exprt> expr_set;
-
-      forall_operands(it, expr)
-        if(it->id()==ID_not &&
-           it->operands().size()==1 &&
-           it->type().id()==ID_bool)
-          expr_set.insert(it->op0());
-
-      // now search for a
-
-      forall_operands(it, expr)
-        if(expr_set.find(*it)!=expr_set.end())
-        {
-          expr.make_bool(expr.id()==ID_or);
-          return false;
-        }
-    }
-
-    if(operands.size()==0)
-    {
-      if(expr.id()==ID_and || negate)
-        expr=true_exprt();
-      else
-        expr=false_exprt();
-
+      expr.make_bool(id==ID_and || negate);
       return false;
     }
-    else if(operands.size()==1)
+    else if(m_operands.size()==1)
     {
+      expr.operands().swap(m_operands);
       if(negate)
         expr.op0().make_not();
-      exprt tmp(operands.front());
-      expr.swap(tmp);
+      return make_op0(expr);
+    }
+    else if(operands.size()!=m_operands.size())
+    {
+      expr.operands().swap(m_operands);
       return false;
     }
 
-    return result;
+    return true;
   }
 
   return true;
@@ -5163,24 +5150,34 @@ Function: sort_and_join
 bool simplify_exprt::sort_and_join(exprt &expr)
 {
   bool result=true;
+  const exprt &c_expr=expr;
+  const irep_idt &id=c_expr.id();
 
   if(!expr.has_operands()) return true;
 
-  if(!::sort_and_join(expr.id(), expr.type().id()))
+  if(!::sort_and_join(id, c_expr.type().id()))
     return true;
 
   // check operand types
 
-  forall_operands(it, expr)
-    if(!::sort_and_join(expr.id(), it->type().id()))
+  const exprt::operandst &operands=c_expr.operands();
+  forall_expr(it, operands)
+    if(!::sort_and_join(id, it->type().id()))
       return true;
 
   // join expressions
 
+<<<<<<< HEAD
   for(size_t i=0; i<expr.operands().size();)
+=======
+  exprt::operandst joined_ops;
+  joined_ops.reserve(operands.size());
+  forall_expr(it, operands)
+>>>>>>> Simplifier: the rest.
   {
-    if(expr.operands()[i].id()==expr.id())
+    if(it->id()==id)
     {
+<<<<<<< HEAD
       size_t no_joined=expr.operands()[i].operands().size();
 
       expr.operands().insert(expr.operands().begin()+i+1,
@@ -5191,15 +5188,21 @@ bool simplify_exprt::sort_and_join(exprt &expr)
 
       i+=no_joined;
 
+=======
+      joined_ops.insert(joined_ops.end(),
+          it->operands().begin(), it->operands().end());
+>>>>>>> Simplifier: the rest.
       result=false;
     }
     else
-      i++;
+      joined_ops.push_back(*it);
   }
 
   // sort it
 
-  result=sort_operands(expr.operands()) && result;
+  result &= sort_operands(joined_ops);
+  if(!result)
+    expr.operands().swap(joined_ops);
 
   return result;
 }
@@ -5392,9 +5395,7 @@ bool simplify_exprt::simplify_node(exprt &expr)
   exprt old(expr);
   #endif
 
-  bool result=true;
-
-  result=sort_and_join(expr) && result;
+  bool result=sort_and_join(expr);
 
   const exprt &c_expr=expr;
   if(ns.follow(c_expr.type()).id()==ID_pointer)
@@ -5573,18 +5574,13 @@ bool simplify_exprt::simplify_rec(exprt &expr)
   exprt tmp=expr;
   bool result=true;
   
-  if(tmp.has_operands())
+  if(tmp.has_operands() &&
+     // the argument of this expression would need special treatment
+     tmp.id()!=ID_address_of)
   {
-    if(tmp.id()==ID_address_of)
-    {
-      // the argument of this expression needs special treatment
-    }
-    else
-    {
-      Forall_operands(it, tmp)
-        if(!simplify_rec(*it)) // recursive call
-          result=false;
-    }
+    exprt::operandst &operands = tmp.operands();
+    Forall_expr(it, operands)
+      result &= simplify_rec(*it); // recursive call
   }
 
   result &= simplify_node(tmp);
