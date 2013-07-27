@@ -31,6 +31,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "pointer_predicates.h"
 #include "prefix.h"
 #include "byte_operators.h"
+#include "pointer_arithmetic.h"
 
 //#define DEBUGX
 
@@ -1001,10 +1002,12 @@ bool simplify_exprt::simplify_address_of(exprt &expr)
   if(object.id()==ID_index)
   {
     index_exprt &index_expr=to_index_expr(object);
+    // normalized &a[i] to (&a[0])+i in simplify_node already
+    assert(index_expr.index().is_zero());
   
+    /*
     if(!index_expr.index().is_zero())
     {
-      // we normalize &a[i] to (&a[0])+i
       exprt offset;
       offset.swap(index_expr.op1());
       index_expr.op1()=gen_zero(offset.type());
@@ -5411,6 +5414,24 @@ bool simplify_exprt::simplify_node(exprt &expr)
   bool result=true;
 
   result=sort_and_join(expr) && result;
+
+  const exprt &c_expr=expr;
+  if(ns.follow(c_expr.type()).id()==ID_pointer)
+  {
+    pointer_arithmetict ptr(expr);
+    assert(!ptr.pointer.is_nil());
+    if(!ptr.offset.is_nil())
+    {
+      simplify_node(ptr.offset);
+      plus_exprt plus(ptr.pointer, ptr.offset);
+      plus.location()=expr.location();
+      if(expr!=plus)
+      {
+        expr.swap(plus);
+        result=false;
+      }
+    }
+  }
 
   #if 1 // use jump table?
   if(expr.id()==ID_typecast)
