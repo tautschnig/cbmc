@@ -376,8 +376,18 @@ bool ai_baset::do_function_call(
     if(merge(*tmp_state, l_call, l_begin))
       new_data=true;
 
-    // do we need to do/re-do the fixedpoint of the body?
+    // do each function at least once
+    if(functions_done.find(f_it->first)==
+       functions_done.end())
+    {
+      new_data=true;
+      functions_done.insert(f_it->first);
+    }
+
+    // do we need to do the fixedpoint of the body?
     if(new_data)
+    {
+      // also do the fixedpoint of the body via a recursive call
       fixedpoint(goto_function.body, goto_functions, ns);
   }
 

@@ -199,6 +199,9 @@ protected:
     const goto_functionst &goto_functions,
     const namespacet &ns);
   
+  typedef std::set<irep_idt> functions_donet;
+  functions_donet functions_done;
+
   typedef std::set<irep_idt> recursion_sett;
   recursion_sett recursion_set;
     
