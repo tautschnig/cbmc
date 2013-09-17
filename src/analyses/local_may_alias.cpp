@@ -426,9 +426,9 @@ Function: local_may_aliast::build
 
 void local_may_aliast::build(const goto_functiont &goto_function)
 {
-  if(cfg.nodes.empty()) return;
+  if(cfg.entry_map.empty() ||
+     goto_function.body.instructions.empty()) return;
 
-  assert(!goto_function.body.instructions.empty());
   goto_programt::const_targett entry=goto_function.body.instructions.begin();
   work_queuet work_queue;
 <<<<<<< HEAD
@@ -479,7 +479,7 @@ void local_may_aliast::build(const goto_functiont &goto_function)
   while(!work_queue.empty())
   {
     goto_programt::const_targett t=work_queue.top();
-    const local_cfgt::loct &loc=cfg.locs[cfg.loc_map[t]];
+    const local_cfgt::nodet &loc=cfg[cfg.entry_map[t]];
     const goto_programt::instructiont &instruction=*t;
     work_queue.pop();
     
@@ -538,13 +538,13 @@ void local_may_aliast::build(const goto_functiont &goto_function)
     default:;
     }
 
-    for(local_cfgt::successorst::const_iterator
-        it=node.successors.begin();
-        it!=node.successors.end();
+    for(local_cfgt::edgest::const_iterator
+        it=loc.out.begin();
+        it!=loc.out.end();
         it++)
     {
-      if(loc_infos[cfg.locs[*it].t].merge(loc_info_dest))
-        work_queue.push(cfg.locs[*it].t);
+      if(loc_infos[cfg[it->first].PC].merge(loc_info_dest))
+        work_queue.push(cfg[it->first].PC);
     }
   }
 }

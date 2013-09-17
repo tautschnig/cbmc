@@ -14,9 +14,13 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/union_find.h>
 
-#include "locals.h"
+#include <util/numbering.h>
+
+#include <goto-programs/goto_functions.h>
+#include <goto-programs/cfg.h>
+
 #include "dirty.h"
-#include "local_cfg.h"
+#include "locals.h"
 
 /*******************************************************************\
 
@@ -38,16 +42,18 @@ public:
     const namespacet &_ns):
     dirty(_goto_function),
     locals(_goto_function),
-    cfg(_goto_function.body),
     ns(_ns),
     kill_foreign(true)
   {
+    cfg(_goto_function.body);
     build(_goto_function);
   }
 
   void output(
     std::ostream &out,
     const goto_functiont &goto_function) const;
+
+  typedef procedure_local_concurrent_cfg_baset<empty_cfg_nodet> local_cfgt;
   
   dirtyt dirty;
   localst locals;
@@ -72,10 +78,10 @@ protected:
     bool _kill_foreign):
     dirty(_goto_function),
     locals(_goto_function),
-    cfg(_goto_function.body),
     ns(_ns),
     kill_foreign(_kill_foreign)
   {
+    cfg(_goto_function.body);
   }
 
   void build(const goto_functiont &goto_function);
