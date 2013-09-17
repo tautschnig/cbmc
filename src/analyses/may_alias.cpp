@@ -30,10 +30,11 @@ may_aliast::may_aliast(
   assert(!goto_functions.function_map.empty());
 
   dirty=dirtyt(goto_functions);
+  cfg(goto_functions);
+
   forall_goto_functions(it, goto_functions)
   {
     locals=localst(it->second);
-    cfg=local_cfgt(it->second.body);
 
     build(it->second);
   }
