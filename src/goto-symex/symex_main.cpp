@@ -62,6 +62,7 @@ void goto_symext::vcc(
   rewrite_quantifiers(expr, state);
 
   // now rename, enables propagation    
+  target.set_mark();
   state.rename(expr, ns);
   
   // now try simplifier on it
@@ -71,6 +72,7 @@ void goto_symext::vcc(
   do_simplify(expr);
   //if(three_times<4)
   //std::cerr << "simplified_vcc: " << from_expr(ns, "", expr) << std::endl;
+  target.remove_unused_reads(expr);
 
   if(expr.is_true()) return;
   
@@ -493,8 +495,10 @@ void goto_symext::symex_step(
     {
       exprt tmp=instruction.guard;
       clean_expr(tmp, state, false);
+      target.set_mark();
       state.rename(tmp, ns);
       symex_assume(state, tmp);
+      target.remove_unused_reads(tmp);
     }
 
     state.source.pc++;

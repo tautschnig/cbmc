@@ -280,8 +280,11 @@ void goto_symext::symex_assign_symbol(
     tmp_ssa_rhs.swap(ssa_rhs);
   }
   
+  target.set_mark();
   state.rename(ssa_rhs, ns);
   do_simplify(ssa_rhs);
+  std::cerr << from_expr(ns, "", ssa_rhs) << std::endl;
+  target.remove_unused_reads(ssa_rhs);
   
   ssa_exprt ssa_lhs=lhs;
   bool required=
@@ -526,9 +529,11 @@ void goto_symext::symex_assign_if(
 
   guardt old_guard=guard;
   
+  target.set_mark();
   exprt renamed_guard=lhs.cond();
   state.rename(renamed_guard, ns);
   do_simplify(renamed_guard);
+  target.remove_unused_reads(renamed_guard);
 
   if(!renamed_guard.is_false())  
   {

@@ -159,6 +159,14 @@ public:
     unsigned atomic_section_id,
     const sourcet &source);
 
+  // cleanup unused shared memory reads
+  virtual void set_mark()
+  {
+    mark=SSA_steps.end();
+    if(!SSA_steps.empty()) --mark;
+  }
+  virtual void remove_unused_reads(const exprt &expr);
+
   void convert(prop_convt &prop_conv);
   void convert_assignments(decision_proceduret &decision_procedure) const;
   void convert_decls(prop_convt &prop_conv) const;
@@ -304,6 +312,7 @@ public:
   
 protected:
   const namespacet &ns;
+  SSA_stepst::iterator mark;
 
   // for enforcing sharing in the expressions stored
   merged_irepst merge_irep;

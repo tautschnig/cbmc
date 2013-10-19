@@ -39,6 +39,7 @@ void goto_symext::symex_goto(statet &state)
   exprt old_guard=instruction.guard;
   clean_expr(old_guard, state, false);
 
+  target.set_mark();
   exprt new_guard=old_guard;
   state.rename(new_guard, ns);
   ++four_times;
@@ -50,6 +51,7 @@ void goto_symext::symex_goto(statet &state)
   //if(four_times>LB && four_times<UB)
   //std::cerr << "simplified_new_guard: " << from_expr(ns, "", new_guard) << std::endl;
   //assert(four_times<UB);
+  target.remove_unused_reads(new_guard);
   
   if(new_guard.is_false() ||
      state.guard.is_false())
@@ -204,12 +206,14 @@ void goto_symext::symex_step_goto(statet &state, bool taken)
   
   exprt guard(instruction.guard);
   dereference(guard, state, false);
+  target.set_mark();
   state.rename(guard, ns);
   
   if(!taken) guard.make_not();
   
   state.guard.guard_expr(guard);
   do_simplify(guard);
+  target.remove_unused_reads(guard);
 
   target.assumption(state.guard.as_expr(), guard, state.source);  
 }
