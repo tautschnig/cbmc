@@ -37,8 +37,12 @@ protected:
     symex_target_equationt &equation,
     const per_thread_mapt &per_thread_map);
   void program_order(symex_target_equationt &equation);
-  void from_read(symex_target_equationt &equation);
+
   void write_serialization_external(symex_target_equationt &equation);
+
+#ifndef CPROVER_MEMORY_MODEL_SUP_CLOCK
+  void from_read(symex_target_equationt &equation);
+#endif
 };
 
 #endif // CPROVER_GOTO_SYMEX_MEMORY_MODEL_SC_H

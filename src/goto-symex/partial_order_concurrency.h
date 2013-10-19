@@ -16,6 +16,8 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include "symex_target_equation.h"
 
+#define CPROVER_MEMORY_MODEL_SUP_CLOCK 1
+
 class partial_order_concurrencyt:public messaget
 {
 public:
@@ -89,6 +91,29 @@ protected:
   // the partial order constraint for two events
   exprt before(event_it e1, event_it e2, unsigned axioms);
   virtual exprt before(event_it e1, event_it e2)=0;
+
+#ifdef CPROVER_MEMORY_MODEL_SUP_CLOCK
+  // clock symbol to find supremum of various clock values
+  symbol_exprt sup_clock(event_it event);
+#endif
+
+  // is it an assignment for a shared variable?
+  bool is_shared_write(event_it e) const;
+
+  // is it a read from a shared variable?
+  bool is_shared_read(event_it e) const;
+  
+  // is this a spawn?
+  static inline bool is_spawn(event_it e)
+  {
+    return e->is_spawn();
+  }
+
+  // is this a fence?
+  static inline bool is_memory_barrier(event_it e)
+  {
+    return e->is_memory_barrier();
+  }
 };
 
 #if 0

@@ -215,3 +215,15 @@ void partial_order_concurrencyt::add_constraint(
 
   equation.constraint(tmp, msg, source);
 }
+
+#ifdef CPROVER_MEMORY_MODEL_SUP_CLOCK
+symbol_exprt partial_order_concurrencyt::sup_clock(event_it event)
+{
+  irep_idt identifier;
+  assert(!numbering.empty());
+
+  assert(is_shared_read(event));
+  identifier = id2string(id(event))+"$supclk";
+  return symbol_exprt(identifier, clock_type);
+}
+#endif

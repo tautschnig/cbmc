@@ -63,6 +63,13 @@ void memory_model_baset::read_from(symex_target_equationt &equation)
     {
       const event_it r=*r_it;
 
+#ifdef CPROVER_MEMORY_MODEL_SUP_CLOCK
+      // To implement the quadratic-size partial order encoding, we 
+      // create a formula that finds the least upper bound (supremum)
+      // of certain clock values.
+      symbol_exprt sup_clock_symbol(sup_clock(r));
+#endif
+
       exprt::operandst rf_some_operands;
       rf_some_operands.reserve(a_rec.writes.size());
 
@@ -81,6 +88,20 @@ void memory_model_baset::read_from(symex_target_equationt &equation)
         bool is_rfi=
           w->source.thread_nr==r->source.thread_nr;
 
+#ifdef CPROVER_MEMORY_MODEL_SUP_CLOCK
+        implies_exprt ensure_supremum(
+          binary_relation_exprt(clock(w), ID_le, clock(r)),
+          or_exprt(
+            equal_exprt(clock(w), sup_clock_symbol),
+            binary_relation_exprt(clock(w), ID_lt, sup_clock_symbol)));
+        implies_exprt guarded_sup(
+          w->guard,
+          ensure_supremum);
+
+        equation.constraint(
+          guarded_sup, "sup-clock", r->source);
+#endif
+
         symbol_exprt s=nondet_bool_symbol("rf");
 
         // record the symbol
@@ -91,6 +112,9 @@ void memory_model_baset::read_from(symex_target_equationt &equation)
         // one write event that has guard 'true'.
         implies_exprt read_from(s,
             and_exprt(w->guard,
+#ifdef CPROVER_MEMORY_MODEL_SUP_CLOCK
+                      equal_exprt(clock(w), sup_clock_symbol),
+#endif
               equal_exprt(r->ssa_lhs, w->ssa_lhs)));
 
         // Uses only the write's guard as precondition, read's guard

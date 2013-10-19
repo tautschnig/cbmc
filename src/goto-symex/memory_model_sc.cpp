@@ -23,7 +23,9 @@ void memory_model_sct::operator()(symex_target_equationt &equation)
   read_from(equation);
   write_serialization_external(equation);
   program_order(equation);
+#ifndef CPROVER_MEMORY_MODEL_SUP_CLOCK
   from_read(equation);
+#endif
 }
 
 exprt memory_model_sct::before(event_it e1, event_it e2)
@@ -245,6 +247,7 @@ void memory_model_sct::write_serialization_external(
   }
 }
 
+#ifndef CPROVER_MEMORY_MODEL_SUP_CLOCK
 void memory_model_sct::from_read(symex_target_equationt &equation)
 {
   // from-read: (w', w) in ws and (w', r) in rf -> (r, w) in fr
@@ -333,3 +336,4 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
     }
   }
 }
+#endif
