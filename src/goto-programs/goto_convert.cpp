@@ -314,6 +314,7 @@ void goto_convertt::convert_gcc_local_label(
   goto_programt &dest)
 {
   // ignore for now
+  throw "GCC local label not yet implemented";
 }
 
 /*******************************************************************\
