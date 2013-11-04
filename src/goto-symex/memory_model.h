@@ -34,7 +34,7 @@ protected:
   // built by the method below.
   typedef std::map<
     std::pair<event_it, event_it>, symbol_exprt> choice_symbolst;
-  choice_symbolst choice_symbols;
+  choice_symbolst rf_choice_symbols;
 
   void read_from(symex_target_equationt &equation);
 

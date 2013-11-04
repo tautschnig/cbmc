@@ -227,8 +227,16 @@ void memory_model_sct::write_serialization_external(
 
         // ws is a total order, no two elements have the same rank
         // s -> w_evt1 before w_evt2; !s -> w_evt2 before w_evt1
+        // we could also use clock(w_evt1)!=clock(w_evt2), but this
+        // isn't necessarily faster
 
         symbol_exprt s=nondet_bool_symbol("ws-ext");
+
+#if 0
+        // record the symbol
+        ws_choice_symbols[
+          std::make_pair(*w_it1, *w_it2)]=s;
+#endif
 
         // write-to-write edge
         add_constraint(
@@ -288,14 +296,33 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
         }
         else
         {
+#if 0
+          choice_symbolst::const_iterator c_it=
+            ws_choice_symbols.find(std::make_pair(*w_prime, *w));
+
+          if(c_it!=ws_choice_symbols.end())
+          {
+            ws1=c_it->second;
+            ws2=not_exprt(c_it->second);
+          }
+          else
+          {
+            c_it=ws_choice_symbols.find(std::make_pair(*w, *w_prime));
+            assert(c_it!=ws_choice_symbols.end());
+
+            ws1=not_exprt(c_it->second);
+            ws2=c_it->second;
+          }
+#else
           ws1=before(*w_prime, *w);
           ws2=before(*w, *w_prime);
+#endif
         }
 
         // smells like cubic
         for(choice_symbolst::const_iterator
-            c_it=choice_symbols.begin();
-            c_it!=choice_symbols.end();
+            c_it=rf_choice_symbols.begin();
+            c_it!=rf_choice_symbols.end();
             c_it++)
         {
           event_it r=c_it->first.first;

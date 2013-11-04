@@ -105,7 +105,7 @@ void memory_model_baset::read_from(symex_target_equationt &equation)
         symbol_exprt s=nondet_bool_symbol("rf");
 
         // record the symbol
-        choice_symbols[
+        rf_choice_symbols[
           std::make_pair(r, w)]=s;
 
         // We rely on the fact that there is at least

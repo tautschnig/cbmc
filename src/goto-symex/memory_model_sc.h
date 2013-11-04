@@ -38,6 +38,12 @@ protected:
     const per_thread_mapt &per_thread_map);
   void program_order(symex_target_equationt &equation);
 
+#if 0
+  // This gives us the choice symbol for a W-W pair;
+  // built by the method below.
+  choice_symbolst ws_choice_symbols;
+#endif
+
   void write_serialization_external(symex_target_equationt &equation);
 
 #ifndef CPROVER_MEMORY_MODEL_SUP_CLOCK
