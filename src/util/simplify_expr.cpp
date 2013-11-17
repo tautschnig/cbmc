@@ -3011,6 +3011,81 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
       return false;
     }
 
+#if 0
+    // rewrite a || (!a && b) to a || (true && b) and
+    // a && (!a || b) to a && (false || b)
+    // this may be expensive
+    if(expr.id()==ID_and || expr.id()==ID_or)
+    {
+      // first gather all the top-level expressions
+
+      std::set<exprt> expr_set_pos, expr_set_neg;
+
+      forall_operands(it, expr)
+        if(it->id()==ID_not &&
+           it->operands().size()==1 &&
+           it->type().id()==ID_bool)
+          expr_set_neg.insert(it->op0());
+        else if(it->id()!=ID_not)
+          expr_set_pos.insert(*it);
+
+      // now search for and/or
+
+      bool changed=false;
+
+      Forall_operands(it, expr)
+        if((expr.id()==ID_or && it->id()==ID_and) ||
+           (expr.id()==ID_and && it->id()==ID_or))
+        {
+          bool changed2=false;
+
+          Forall_operands(it2, *it)
+          {
+            if(it2->id()==ID_not &&
+               it2->operands().size()==1 &&
+               it2->type().id()==ID_bool)
+            {
+              if(expr_set_pos.find(it2->op0())!=expr_set_pos.end())
+              {
+                if(expr.id()==ID_or)
+                  *it2=true_exprt();
+                else
+                  *it2=false_exprt();
+
+                changed2=true;
+              }
+            }
+            else if(it2->type().id()==ID_bool)
+            {
+              if(expr_set_neg.find(*it2)!=expr_set_neg.end())
+              {
+                if(expr.id()==ID_or)
+                  *it2=true_exprt();
+                else
+                  *it2=false_exprt();
+
+                changed2=true;
+              }
+            }
+          }
+
+          if(changed2)
+          {
+            simplify_node(*it);
+
+            changed=true;
+          }
+        }
+
+      if(changed)
+      {
+        simplify_node(expr);
+
+        result=false;
+      }
+    }
+#endif
+
     return true;
   }
 
