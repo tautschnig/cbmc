@@ -10,7 +10,6 @@ Date: February 2006
 
 #include <util/hash_cont.h>
 #include <util/std_expr.h>
-#include <util/guard.h>
 #include <util/symbol_table.h>
 #include <util/prefix.h>
 #include <util/cprover_prefix.h>
@@ -20,9 +19,9 @@ Date: February 2006
 
 #include <pointer-analysis/value_sets.h>
 #include <goto-programs/remove_skip.h>
+#include <analyses/goto_rw.h>
 
 #include "race_check.h"
-#include "rw_set.h"
 
 #ifdef LOCAL_MAY
 #include <analyses/local_may_alias.h>
@@ -44,14 +43,14 @@ public:
     return get_guard_symbol(object).symbol_expr();
   }
   
-  const exprt get_w_guard_expr(const rw_set_baset::entryt &entry)
+  const exprt get_w_guard_expr(const irep_idt& identifier)
   {
-    return get_guard_symbol_expr(entry.object);
+    return get_guard_symbol_expr(identifier);
   }
   
-  const exprt get_assertion(const rw_set_baset::entryt &entry)
+  const exprt get_assertion(const irep_idt& identifier)
   {
-    return not_exprt(get_guard_symbol_expr(entry.object));
+    return not_exprt(get_guard_symbol_expr(identifier));
   }
   
   void add_initialization(goto_programt &goto_program) const;
@@ -140,7 +139,7 @@ Function: comment
 
 \*******************************************************************/
 
-std::string comment(const rw_set_baset::entryt &entry, bool write)
+std::string comment(const irep_idt &identifier, bool write)
 {
   std::string result;
   if(write)
@@ -149,7 +148,7 @@ std::string comment(const rw_set_baset::entryt &entry, bool write)
     result="R/W";
 
   result+=" data race on ";
-  result+=id2string(entry.object);
+  result+=id2string(identifier);
   return result;
 }
 
@@ -167,10 +166,8 @@ Function: is_shared
 
 bool is_shared(
   const namespacet &ns,
-  const symbol_exprt &symbol_expr)
+  const irep_idt &identifier)
 {
-  const irep_idt &identifier=symbol_expr.get_identifier();
-
   if(identifier==CPROVER_PREFIX "alloc" ||
      identifier==CPROVER_PREFIX "alloc_size" ||
      identifier=="stdin" ||
@@ -199,20 +196,14 @@ Function: race_check
 
 bool has_shared_entries(
   const namespacet &ns,
-  const rw_set_baset &rw_set)
+  const rw_range_sett &rw_set)
 {
-  for(rw_set_baset::entriest::const_iterator
-      it=rw_set.r_entries.begin();
-      it!=rw_set.r_entries.end();
-      it++)
-    if(is_shared(ns, it->second.symbol_expr))
+  forall_rw_range_set_r_objects(it, rw_set)
+    if(is_shared(ns, it->first))
       return true;
 
-  for(rw_set_baset::entriest::const_iterator
-      it=rw_set.w_entries.begin();
-      it!=rw_set.w_entries.end();
-      it++)
-    if(is_shared(ns, it->second.symbol_expr))
+  forall_rw_range_set_w_objects(it, rw_set)
+    if(is_shared(ns, it->first))
       return true;
 
   return false;
@@ -251,11 +242,8 @@ void race_check(
     
     if(instruction.is_assign())
     {
-      rw_set_loct rw_set(ns, value_sets, i_it
-#ifdef LOCAL_MAY
-      , local_may
-#endif
-      );
+      rw_guarded_range_set_value_sett rw_set(ns, value_sets);
+      goto_rw(i_it, rw_set);
       
       if(!has_shared_entries(ns, rw_set))
         continue;
@@ -267,16 +255,25 @@ void race_check(
       i_it++;
 
       // now add assignments for what is written -- set
-      forall_rw_set_w_entries(e_it, rw_set)
+      forall_rw_range_set_w_objects(e_it, rw_set)
       {      
-        if(!is_shared(ns, e_it->second.symbol_expr)) continue;
+        if(!is_shared(ns, e_it->first)) continue;
+
+        const guarded_range_domaint &guards=rw_set.get_ranges(e_it);
+        exprt::operandst ops;
+        ops.reserve(guards.size());
+        for(guarded_range_domaint::const_iterator it=guards.begin();
+            it!=guards.end();
+            ++it)
+          ops.push_back(it->second.second);
+        exprt guard(disjunction(ops));
         
         goto_programt::targett t=goto_program.insert_before(i_it);
 
         t->type=ASSIGN;
         t->code=code_assignt(
-          w_guards.get_w_guard_expr(e_it->second),
-          e_it->second.guard);
+          w_guards.get_w_guard_expr(e_it->first),
+          guard);
 
         t->source_location=original_instruction.source_location;
         i_it=++t;
@@ -290,15 +287,15 @@ void race_check(
       }
 
       // now add assignments for what is written -- reset
-      forall_rw_set_w_entries(e_it, rw_set)
+      forall_rw_range_set_w_objects(e_it, rw_set)
       {      
-        if(!is_shared(ns, e_it->second.symbol_expr)) continue;
+        if(!is_shared(ns, e_it->first)) continue;
 
         goto_programt::targett t=goto_program.insert_before(i_it);
 
         t->type=ASSIGN;
         t->code=code_assignt(
-          w_guards.get_w_guard_expr(e_it->second),
+          w_guards.get_w_guard_expr(e_it->first),
           false_exprt());
 
         t->source_location=original_instruction.source_location;
@@ -306,27 +303,27 @@ void race_check(
       }
 
       // now add assertions for what is read and written
-      forall_rw_set_r_entries(e_it, rw_set)
+      forall_rw_range_set_r_objects(e_it, rw_set)
       {
-        if(!is_shared(ns, e_it->second.symbol_expr)) continue;
+        if(!is_shared(ns, e_it->first)) continue;
 
         goto_programt::targett t=goto_program.insert_before(i_it);
 
-        t->make_assertion(w_guards.get_assertion(e_it->second));
+        t->make_assertion(w_guards.get_assertion(e_it->first));
         t->source_location=original_instruction.source_location;
-        t->source_location.set_comment(comment(e_it->second, false));
+        t->source_location.set_comment(comment(e_it->first, false));
         i_it=++t;
       }
 
-      forall_rw_set_w_entries(e_it, rw_set)
+      forall_rw_range_set_w_objects(e_it, rw_set)
       {
-        if(!is_shared(ns, e_it->second.symbol_expr)) continue;
+        if(!is_shared(ns, e_it->first)) continue;
 
         goto_programt::targett t=goto_program.insert_before(i_it);
 
-        t->make_assertion(w_guards.get_assertion(e_it->second));
+        t->make_assertion(w_guards.get_assertion(e_it->first));
         t->source_location=original_instruction.source_location;
-        t->source_location.set_comment(comment(e_it->second, true));
+        t->source_location.set_comment(comment(e_it->first, true));
         i_it=++t;
       }
 

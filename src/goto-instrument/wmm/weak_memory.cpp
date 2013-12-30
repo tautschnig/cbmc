@@ -26,8 +26,7 @@ Date: September 2011
 #include <goto-programs/remove_skip.h>
 
 #include <analyses/may_alias.h>
-
-#include "../rw_set.h"
+#include <analyses/goto_rw.h>
 
 #include "weak_memory.h"
 #include "shared_buffers.h"
@@ -72,12 +71,11 @@ void introduce_temporaries(
        instruction.is_assert() ||
        instruction.is_assume())
     {
-      rw_set_loct rw_set(ns, value_sets, i_it
-#ifdef LOCAL_MAY
-      , local_may
-#endif
-      );
-      if(rw_set.empty()) continue;
+      rw_range_set_value_sett rw_set(ns, value_sets);
+      goto_rw(i_it, rw_set);
+
+      if(rw_set.get_r_set().empty() &&
+         rw_set.get_w_set().empty()) continue;
       
       symbolt new_symbol;
       new_symbol.base_name="$tmp_guard";

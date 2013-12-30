@@ -22,9 +22,9 @@ Date: September 2011
 
 #include <goto-programs/remove_skip.h>
 #endif
+#include <analyses/goto_rw.h>
 
 #include "interrupt.h"
-#include "rw_set.h"
 
 #ifdef LOCAL_MAY
 #include <analyses/local_may_alias.h>
@@ -62,13 +62,11 @@ void mmio(
     
     if(instruction.is_assign())
     {
-      rw_set_loct rw_set(ns, value_sets, i_it
-#ifdef LOCAL_MAY
-        , local_may
-#endif
-      );
+      rw_range_set_value_sett rw_set(ns, value_sets);
+      goto_rw(i_it, rw_set);
       
-      if(rw_set.empty()) continue;
+      if(rw_set.get_r_set().empty() &&
+         rw_set.get_w_set().empty()) continue;
   
       #if 0    
       goto_programt::instructiont original_instruction;

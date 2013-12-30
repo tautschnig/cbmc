@@ -52,6 +52,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <analyses/reaching_definitions.h>
 #include <analyses/dependence_graph.h>
 #include <analyses/constant_propagator.h>
+#include <analyses/goto_rw.h>
 
 #include <cbmc/version.h>
 
@@ -69,7 +70,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "mmio.h"
 #include "stack_depth.h"
 #include "nondet_static.h"
-#include "rw_set.h"
 #include "concurrency.h"
 #include "dump_c.h"
 #include "dot.h"
@@ -388,7 +388,9 @@ int goto_instrument_parse_optionst::doit()
       const symbolt &symbol=ns.lookup(ID_main);
       symbol_exprt main(symbol.name, symbol.type);
       
-      std::cout << rw_set_functiont(value_set_analysis, ns, goto_functions, main);
+      rw_range_set_value_sett rw_set(ns, value_set_analysis);
+      goto_rw(goto_functions, main.get_identifier(), rw_set);
+      std::cout << rw_set;
       return 0;
     }
 
