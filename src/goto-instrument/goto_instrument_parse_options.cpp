@@ -87,6 +87,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "skip_loops.h"
 #include "code_contracts.h"
 #include "check_invariant.h"
+#include "wmm/static_cycles.h"
 
 /*******************************************************************\
 
@@ -238,6 +239,7 @@ int goto_instrument_parse_optionst::doit()
         mutex_init_instrumentation(symbol_table, goto_functions);
       }
 
+<<<<<<< HEAD
       // recalculate numbers, etc.
       goto_functions.update();
       
@@ -245,11 +247,28 @@ int goto_instrument_parse_optionst::doit()
       custom_bitvector_analysist custom_bitvector_analysis;
       custom_bitvector_analysis(goto_functions, ns);
       custom_bitvector_analysis.output(ns, goto_functions, std::cout);
+=======
+    if(cmdline.isset("static-cycles"))
+    {
+      namespacet ns(symbol_table);
+
+      status() << "Function Pointer Removal" << eom;
+      remove_function_pointers(symbol_table, goto_functions, false);
+
+      status() << "Partial Inlining" << eom;
+      goto_partial_inline(goto_functions, ns, ui_message_handler);
+
+      static_cycles(symbol_table, goto_functions);
+>>>>>>> 8efba42... Collecting critical (weak memory) cycles without relying on the program being linked
 
       return 0;
     }
 
+<<<<<<< HEAD
     if(cmdline.isset("show-escape-analysis"))
+=======
+    if(cmdline.isset("show-points-to"))
+>>>>>>> 8efba42... Collecting critical (weak memory) cycles without relying on the program being linked
     {
       do_function_pointer_removal();
       do_partial_inlining();
@@ -877,7 +896,8 @@ void goto_instrument_parse_optionst::instrument_goto_program()
   // we add the library in some cases, as some analyses benefit
 
   if(cmdline.isset("add-library") ||
-     cmdline.isset("mm"))
+     cmdline.isset("mm") ||
+     cmdline.isset("static-cycles"))
   {
     if(cmdline.isset("show-custom-bitvector-analysis") ||
        cmdline.isset("custom-bitvector-analysis"))
@@ -1433,6 +1453,7 @@ void goto_instrument_parse_optionst::help()
     " --no-po-rendering            no representation of the threads in the dot\n"
     " --render-cluster-file        clusterises the dot by files\n"
     " --render-cluster-function    clusterises the dot by functions\n"
+    " --static-cycles              identify potentially critical cycles\n"
     "\n"
     "Slicing:\n"
     " --reachability-slice         slice away instructions that can't reach assertions\n"

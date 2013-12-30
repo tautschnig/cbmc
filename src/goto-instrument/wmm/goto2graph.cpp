@@ -22,7 +22,10 @@ Date: 2012
 #include <util/message.h>
 #include <util/i2string.h>
 
-#include "../rw_set.h"
+#include <goto-programs/goto_functions.h>
+
+#include <analyses/goto_rw.h>
+
 #include "fence.h"
 #include "goto2graph.h"
 

@@ -73,6 +73,9 @@ bool abstract_eventt::unsafe_pair_lwfence_param(const abstract_eventt& next,
       || (thread!=next.thread && operation==Write && next.operation==Read
         && variable==next.variable));
 
+  case Static_Weak:
+    return true;
+
   case Unknown:;
   }
   assert(false);
@@ -129,6 +132,9 @@ bool abstract_eventt::unsafe_pair_asm(const abstract_eventt& next,
       /* rfe */
       || (thread!=next.thread && operation==Write && next.operation==Read
         && variable==next.variable));
+
+  case Static_Weak:
+    return true;
 
   case Unknown:;
   }

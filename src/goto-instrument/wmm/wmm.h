@@ -16,7 +16,8 @@ typedef enum {
   TSO=0, 
   PSO=1, 
   RMO=2, 
-  Power=3
+  Power=3,
+  Static_Weak=4
 } memory_modelt;
 
 typedef enum {

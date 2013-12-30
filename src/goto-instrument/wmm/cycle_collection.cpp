@@ -84,6 +84,7 @@ void event_grapht::graph_explorert::collect_cycles(
     order=&egraph.po_order;
     break;
   case Power:
+  case Static_Weak:
     order=&egraph.poUrfe_order;
     break;
 
@@ -309,7 +310,8 @@ bool event_grapht::graph_explorert::backtrack(
        this means that we can have at most 2 consecutive events by po
        with the same variable, and two variables per thread (fences are
        not taken into account) */
-    if(!point_stack.empty() && egraph.are_po_ordered(point_stack.top(),vertex)
+    if(egraph.filter_uniproc &&
+       !point_stack.empty() && egraph.are_po_ordered(point_stack.top(),vertex)
       && this_vertex.operation!=abstract_eventt::Fence
       && this_vertex.operation!=abstract_eventt::Lwfence
       && this_vertex.operation!=abstract_eventt::ASMfence
@@ -398,7 +400,7 @@ bool event_grapht::graph_explorert::backtrack(
         w_it!=egraph.po_out(vertex).end(); w_it++)
       {
         const unsigned w = w_it->first;
-        if(w == source && point_stack.size()>=4
+        if(w == source && (point_stack.size()>=4 || model==Static_Weak)
           && (unsafe_met_updated
             || this_vertex.unsafe_pair(egraph[source],model)) )
         {
@@ -443,7 +445,7 @@ bool event_grapht::graph_explorert::backtrack(
       const unsigned w = w_it->first;
       if(w < source)
         egraph.remove_com_edge(vertex,w);
-      else if(w == source && point_stack.size()>=4
+      else if(w == source && (point_stack.size()>=4 || model==Static_Weak)
         && (unsafe_met_updated 
           || this_vertex.unsafe_pair(egraph[source],model)) )
       {
