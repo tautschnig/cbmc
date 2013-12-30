@@ -350,6 +350,23 @@ bool event_grapht::critical_cyclet::is_unsafe(memory_modelt model, bool fast)
   egraph.message.debug() << "cycle is safe?" << messaget::eom;
   bool unsafe_met=false;
 
+  bool has_memory_access=false;
+  for(const_iterator it=begin();
+      it!=end() && !has_memory_access;
+      ++it)
+  {
+    const abstract_eventt& it_evt=egraph[*it];
+
+    has_memory_access=
+      it_evt.operation==abstract_eventt::Read ||
+      it_evt.operation==abstract_eventt::Write;
+  }
+  if(!has_memory_access)
+    return false;
+
+  if(model==Static_Weak)
+    return size()>=2;
+
   /* critical cycles contain at least 4 events */
   if(size()<4)
     return false;
@@ -637,6 +654,23 @@ bool event_grapht::critical_cyclet::is_unsafe_asm(memory_modelt model,
   egraph.message.debug() << "cycle is safe?" << messaget::eom;
   bool unsafe_met = false;
   unsigned char fences_met = 0;
+
+  bool has_memory_access=false;
+  for(const_iterator it=begin();
+      it!=end() && !has_memory_access;
+      ++it)
+  {
+    const abstract_eventt& it_evt=egraph[*it];
+
+    has_memory_access=
+      it_evt.operation==abstract_eventt::Read ||
+      it_evt.operation==abstract_eventt::Write;
+  }
+  if(!has_memory_access)
+    return false;
+
+  if(model==Static_Weak)
+    return size()>=2;
 
   /* critical cycles contain at least 4 events */
   if(size()<4)
@@ -1475,7 +1509,7 @@ std::string event_grapht::critical_cyclet::print_name(
         const abstract_eventt& succ=egraph[*n_it];
         assert(succ.operation == abstract_eventt::Read ||
                succ.operation == abstract_eventt::Write);
-        name += (model==Power?" Sync":" MFence"); 
+        name += (model==Power||model==Static_Weak?" Sync":" MFence"); 
         name += (prev.variable==succ.variable?"s":"d")
           + prev.get_operation() + succ.get_operation();
       }
@@ -1504,7 +1538,7 @@ std::string event_grapht::critical_cyclet::print_name(
           else if(cand.operation == abstract_eventt::Fence ||
                   (cand.operation == abstract_eventt::ASMfence &&
                    cand.fence_value()&1))
-            cand_name = (model==Power?" Sync":" MFence"); 
+            cand_name = (model==Power||model==Static_Weak?" Sync":" MFence"); 
           if(!wraparound) ++cur_it;
           if(!wraparound) ++extra_fence_count;
         }
@@ -1520,7 +1554,7 @@ std::string event_grapht::critical_cyclet::print_name(
       {
         std::string cand_name;
         if(cur.fence_value()&1)
-          cand_name = (model==Power?" Sync":" MFence"); 
+          cand_name = (model==Power||model==Static_Weak?" Sync":" MFence"); 
         else
           cand_name = " LwSync";
         const_iterator n_it=cur_it;
@@ -1544,7 +1578,7 @@ std::string event_grapht::critical_cyclet::print_name(
           else if(cand.operation == abstract_eventt::Fence ||
                   (cand.operation == abstract_eventt::ASMfence &&
                    cand.fence_value()&1))
-            cand_name = (model==Power?" Sync":" MFence"); 
+            cand_name = (model==Power||model==Static_Weak?" Sync":" MFence"); 
           if(!wraparound) ++cur_it;
           if(!wraparound) ++extra_fence_count;
         }
@@ -1649,7 +1683,7 @@ std::string event_grapht::critical_cyclet::print_name(
       else if(cand.operation == abstract_eventt::Fence ||
               (cand.operation == abstract_eventt::ASMfence &&
                cand.fence_value()&1))
-        cand_name = (model==Power?" Sync":" MFence");
+        cand_name = (model==Power||model==Static_Weak?" Sync":" MFence");
     }
     assert(it!=reduced.begin() && it!=reduced.end());
     const abstract_eventt& succ=egraph[*it];
@@ -1775,7 +1809,7 @@ void event_grapht::critical_cyclet::print_dot(
         const abstract_eventt& succ=( n_it!=end() ?
           egraph[*n_it] : egraph[front()] );
         str << succ.id << "[label=\"";
-        str << (model==Power?"Sync":"MFence"); 
+        str << (model==Power||model==Static_Weak?"Sync":"MFence"); 
         str << (prev.variable==cur.variable?"s":"d");
         str << prev.get_operation() << succ.get_operation();
       }
@@ -1847,7 +1881,7 @@ void event_grapht::critical_cyclet::print_dot(
     ++next;
     const abstract_eventt& succ=egraph[*next];
     str << succ.id << "[label=\"";
-    str << (model==Power?"Sync":"MFence");
+    str << (model==Power||model==Static_Weak?"Sync":"MFence");
     str << (last.variable==first.variable?"s":"d");
     str << last.get_operation() << succ.get_operation();
   }

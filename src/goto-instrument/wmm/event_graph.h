@@ -74,7 +74,7 @@ public:
     bool is_cycle()
     {
       /* size check */
-      if(size()<4)
+      if(size()<2)
         return false;
 
       /* po order check */
@@ -199,6 +199,7 @@ public:
   };
 
 protected:
+public:
   /* graph contains po and com transitions */
   graph<abstract_eventt> po_graph;
   graph<abstract_eventt> com_graph;
