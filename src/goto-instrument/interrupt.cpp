@@ -14,10 +14,9 @@ Date: September 2011
 #include <util/prefix.h>
 #include <util/symbol_table.h>
 
-#include <goto-programs/goto_functions.h>
+#include <analyses/goto_rw.h>
 
 #include "interrupt.h"
-#include "rw_set.h"
 
 #ifdef LOCAL_MAY
 #include <analyses/local_may_alias.h>
@@ -36,13 +35,14 @@ Function: poential_race_on_read
 \*******************************************************************/
 
 bool potential_race_on_read(
-  const rw_set_baset &code_rw_set,
-  const rw_set_baset &isr_rw_set)
+  const rw_range_sett &code_rw_set,
+  const rw_range_sett &isr_rw_set)
 {
   // R/W race?
-  forall_rw_set_r_entries(e_it, code_rw_set)
+  forall_rw_range_set_r_objects(e_it, code_rw_set)
   {
-    if(isr_rw_set.has_w_entry(e_it->first))
+    if(isr_rw_set.get_w_set().find(e_it->first)!=
+       isr_rw_set.get_w_set().end())
       return true;
   }
   
@@ -62,16 +62,18 @@ Function: poential_race_on_write
 \*******************************************************************/
 
 bool potential_race_on_write(
-  const rw_set_baset &code_rw_set,
-  const rw_set_baset &isr_rw_set)
+  const rw_range_sett &code_rw_set,
+  const rw_range_sett &isr_rw_set)
 {
   // W/R or W/W?
-  forall_rw_set_w_entries(e_it, code_rw_set)
+  forall_rw_range_set_w_objects(e_it, code_rw_set)
   {
-    if(isr_rw_set.has_r_entry(e_it->first))
+    if(isr_rw_set.get_r_set().find(e_it->first)!=
+       isr_rw_set.get_r_set().end())
       return true;
 
-    if(isr_rw_set.has_w_entry(e_it->first))
+    if(isr_rw_set.get_w_set().find(e_it->first)!=
+       isr_rw_set.get_w_set().end())
       return true;
   }
   
@@ -98,7 +100,7 @@ void interrupt(
 #endif
   goto_programt &goto_program,
   const symbol_exprt &interrupt_handler,
-  const rw_set_baset &isr_rw_set)
+  const rw_range_sett &isr_rw_set)
 {
   namespacet ns(symbol_table);
   
@@ -106,14 +108,8 @@ void interrupt(
   {
     goto_programt::instructiont &instruction=*i_it;
 
-#ifdef LOCAL_MAY
-  local_may_aliast local_may(goto_function);
-#endif
-    rw_set_loct rw_set(ns, value_sets, i_it
-#ifdef LOCAL_MAY
-      , local_may
-#endif
-    );
+    rw_range_set_value_sett rw_set(ns, value_sets);
+    goto_rw(i_it, rw_set);
 
     // potential race?
     bool race_on_read=potential_race_on_read(rw_set, isr_rw_set);
@@ -253,8 +249,8 @@ void interrupt(
 
   // we first figure out which objects are read/written by the ISR
   const namespacet ns(symbol_table);
-  rw_set_functiont isr_rw_set(
-    value_sets, ns, goto_functions, isr);
+  rw_range_set_value_sett isr_rw_set(ns, value_sets);
+  goto_rw(goto_functions, isr.get_identifier(), isr_rw_set);
 
   // now instrument
 
