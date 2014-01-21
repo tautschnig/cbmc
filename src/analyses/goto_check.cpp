@@ -59,18 +59,49 @@ protected:
   local_bitvector_analysist *local_bitvector_analysis;
   goto_programt::const_targett t;
 
-  void check_rec(const exprt &expr, guardt &guard, bool address);
+  void check_rec(
+    const exprt &expr,
+    const locationt &location,
+    guardt &guard,
+    bool address);
   void check(const exprt &expr);
 
-  void bounds_check(const index_exprt &expr, const guardt &guard);
-  void div_by_zero_check(const div_exprt &expr, const guardt &guard);
-  void mod_by_zero_check(const mod_exprt &expr, const guardt &guard);
-  void undefined_shift_check(const shift_exprt &expr, const guardt &guard);
-  void pointer_rel_check(const exprt &expr, const guardt &guard);
-  void pointer_validity_check(const dereference_exprt &expr, const guardt &guard);
-  void integer_overflow_check(const exprt &expr, const guardt &guard);
-  void float_overflow_check(const exprt &expr, const guardt &guard);
-  void nan_check(const exprt &expr, const guardt &guard);
+  void bounds_check(
+    const index_exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void div_by_zero_check(
+    const div_exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void mod_by_zero_check(
+    const mod_exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void undefined_shift_check(
+    const shift_exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void pointer_rel_check(
+    const exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void pointer_validity_check(
+    const dereference_exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void integer_overflow_check(
+    const exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void float_overflow_check(
+    const exprt &expr,
+    const locationt &location,
+    const guardt &guard);
+  void nan_check(
+    const exprt &expr,
+    const locationt &location,
+    const guardt &guard);
 
   std::string array_name(const exprt &expr);
 
@@ -172,6 +203,7 @@ Function: goto_checkt::div_by_zero_check
 
 void goto_checkt::div_by_zero_check(
   const div_exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_div_by_zero_check)
@@ -191,7 +223,7 @@ void goto_checkt::div_by_zero_check(
     inequality,
     "division by zero",
     "division-by-zero",
-    expr.find_source_location(),
+    location,
     expr,
     guard);
 }
@@ -210,6 +242,7 @@ Function: goto_checkt::undefined_shift_check
 
 void goto_checkt::undefined_shift_check(
   const shift_exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_undefined_shift_check)
@@ -230,7 +263,7 @@ void goto_checkt::undefined_shift_check(
       inequality,
       "shift distance is negative",
       "undefined-shift",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
   }
@@ -253,7 +286,7 @@ void goto_checkt::undefined_shift_check(
       inequality,
       "shift distance too large",
       "undefined-shift",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
   }
@@ -273,6 +306,7 @@ Function: goto_checkt::mod_by_zero_check
 
 void goto_checkt::mod_by_zero_check(
   const mod_exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_div_by_zero_check)
@@ -292,7 +326,7 @@ void goto_checkt::mod_by_zero_check(
     inequality,
     "division by zero",
     "division-by-zero",
-    expr.find_source_location(),
+    location,
     expr,
     guard);
 }
@@ -311,6 +345,7 @@ Function: goto_checkt::integer_overflow_check
 
 void goto_checkt::integer_overflow_check(
   const exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_signed_overflow_check &&
@@ -358,7 +393,7 @@ void goto_checkt::integer_overflow_check(
           and_exprt(no_overflow_lower, no_overflow_upper),
           "arithmetic overflow on signed type conversion",
           "overflow",
-          expr.find_source_location(),
+          location,
           expr,
           guard);
       }
@@ -375,7 +410,7 @@ void goto_checkt::integer_overflow_check(
           no_overflow_upper,
           "arithmetic overflow on unsigned to signed type conversion",
           "overflow",
-          expr.find_source_location(),
+          location,
           expr,
           guard);
       }
@@ -398,7 +433,7 @@ void goto_checkt::integer_overflow_check(
           and_exprt(no_overflow_lower, no_overflow_upper),
           "arithmetic overflow on float to signed integer type conversion",
           "overflow",
-          expr.find_source_location(),
+          location,
           expr,
           guard);
       }
@@ -422,7 +457,7 @@ void goto_checkt::integer_overflow_check(
             no_overflow_lower,
             "arithmetic overflow on signed to unsigned type conversion",
             "overflow",
-            expr.find_source_location(),
+            location,
             expr,
             guard);
         }
@@ -441,7 +476,7 @@ void goto_checkt::integer_overflow_check(
             and_exprt(no_overflow_lower, no_overflow_upper),
             "arithmetic overflow on signed to unsigned type conversion",
             "overflow",
-            expr.find_source_location(),
+            location,
             expr,
             guard);
         }
@@ -459,7 +494,7 @@ void goto_checkt::integer_overflow_check(
           no_overflow_upper,
           "arithmetic overflow on unsigned to unsigned type conversion",
           "overflow",
-          expr.find_source_location(),
+          location,
           expr,
           guard);
       }
@@ -482,7 +517,7 @@ void goto_checkt::integer_overflow_check(
           and_exprt(no_overflow_lower, no_overflow_upper),
           "arithmetic overflow on float to unsigned integer type conversion",
           "overflow",
-          expr.find_source_location(),
+          location,
           expr,
           guard);
       }
@@ -507,7 +542,7 @@ void goto_checkt::integer_overflow_check(
         not_exprt(and_exprt(int_min_eq, minus_one_eq)),
         "arithmetic overflow on signed division",
         "overflow",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -533,7 +568,7 @@ void goto_checkt::integer_overflow_check(
         not_exprt(int_min_eq),
         "arithmetic overflow on signed unary minus",
         "overflow",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -572,7 +607,7 @@ void goto_checkt::integer_overflow_check(
         not_exprt(overflow),
         "arithmetic overflow on "+kind+" "+expr.id_string(),
         "overflow",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -586,7 +621,7 @@ void goto_checkt::integer_overflow_check(
       not_exprt(overflow),
       "arithmetic overflow on "+kind+" "+expr.id_string(),
       "overflow",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
   }
@@ -606,6 +641,7 @@ Function: goto_checkt::float_overflow_check
 
 void goto_checkt::float_overflow_check(
   const exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_float_overflow_check)
@@ -637,7 +673,7 @@ void goto_checkt::float_overflow_check(
         overflow_check,
         "arithmetic overflow on floating-point typecast",
         "overflow",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -650,7 +686,7 @@ void goto_checkt::float_overflow_check(
         not_exprt(new_inf),
         "arithmetic overflow on floating-point typecast",
         "overflow",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -671,7 +707,7 @@ void goto_checkt::float_overflow_check(
       overflow_check,
       "arithmetic overflow on floating-point division",
       "overflow",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
 
@@ -708,7 +744,7 @@ void goto_checkt::float_overflow_check(
         overflow_check,
         "arithmetic overflow on floating-point "+kind,
         "overflow",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
 
@@ -720,7 +756,7 @@ void goto_checkt::float_overflow_check(
       
       // break up
       exprt tmp=make_binary(expr);
-      float_overflow_check(tmp, guard);
+      float_overflow_check(tmp, location, guard);
       return;
     }
   }
@@ -740,6 +776,7 @@ Function: goto_checkt::nan_check
 
 void goto_checkt::nan_check(
   const exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_nan_check)
@@ -777,7 +814,7 @@ void goto_checkt::nan_check(
   else if(expr.id()==ID_mult)
   {
     if(expr.operands().size()>=3)
-      return nan_check(make_binary(expr), guard);
+      return nan_check(make_binary(expr), location, guard);
 
     assert(expr.operands().size()==2);
 
@@ -795,7 +832,7 @@ void goto_checkt::nan_check(
   else if(expr.id()==ID_plus)
   {
     if(expr.operands().size()>=3)
-      return nan_check(make_binary(expr), guard);
+      return nan_check(make_binary(expr), location, guard);
 
     assert(expr.operands().size()==2);
 
@@ -832,7 +869,7 @@ void goto_checkt::nan_check(
     isnan,
     "NaN on "+expr.id_string(),
     "NaN",
-    expr.find_source_location(),
+    location,
     expr,
     guard);
 }
@@ -851,6 +888,7 @@ Function: goto_checkt::pointer_rel_check
 
 void goto_checkt::pointer_rel_check(
   const exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(expr.operands().size()!=2)
@@ -869,7 +907,7 @@ void goto_checkt::pointer_rel_check(
         same_object,
         "same object violation",
         "pointer",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -890,6 +928,7 @@ Function: goto_checkt::pointer_validity_check
 
 void goto_checkt::pointer_validity_check(
   const dereference_exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_pointer_check)
@@ -905,7 +944,7 @@ void goto_checkt::pointer_validity_check(
     good_pointer(expr.pointer()),
     "dereference failure: pointer not valid",
     "pointer dereference",
-    expr.find_source_location(),
+    location,
     expr,
     guard);    
   #else
@@ -921,7 +960,7 @@ void goto_checkt::pointer_validity_check(
       not_exprt(null_pointer(pointer)),
       "dereference failure: pointer NULL",
       "pointer dereference",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
   }
@@ -931,7 +970,7 @@ void goto_checkt::pointer_validity_check(
       not_exprt(invalid_pointer(pointer)),
       "dereference failure: pointer invalid",
       "pointer dereference",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
 
@@ -940,7 +979,7 @@ void goto_checkt::pointer_validity_check(
       not_exprt(invalid_pointer(pointer)),
       "dereference failure: pointer uninitialized",
       "pointer dereference",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
 
@@ -949,7 +988,7 @@ void goto_checkt::pointer_validity_check(
       not_exprt(deallocated(pointer, ns)),
       "dereference failure: deallocated dynamic object",
       "pointer dereference",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
 
@@ -958,7 +997,7 @@ void goto_checkt::pointer_validity_check(
       not_exprt(dead_object(pointer, ns)),
       "dereference failure: dead object",
       "pointer dereference",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
 
@@ -974,7 +1013,7 @@ void goto_checkt::pointer_validity_check(
         implies_exprt(malloc_object(pointer, ns), not_exprt(dynamic_bounds)),
         "dereference failure: dynamic object bounds",
         "pointer dereference",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -994,7 +1033,7 @@ void goto_checkt::pointer_validity_check(
         or_exprt(dynamic_object(pointer), not_exprt(object_bounds)),
         "dereference failure: object bounds",
         "pointer dereference",
-        expr.find_source_location(),
+        location,
         expr,
         guard);
     }
@@ -1034,6 +1073,7 @@ Function: goto_checkt::bounds_check
 
 void goto_checkt::bounds_check(
   const index_exprt &expr,
+  const locationt &location,
   const guardt &guard)
 {
   if(!enable_bounds_check)
@@ -1099,7 +1139,7 @@ void goto_checkt::bounds_check(
           inequality,
           name+" lower bound",
           "array bounds",
-          expr.find_source_location(),
+          location,
           expr,
           guard);
       }
@@ -1133,7 +1173,7 @@ void goto_checkt::bounds_check(
       precond,
       name+" upper bound",
       "array bounds",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
 
@@ -1173,7 +1213,7 @@ void goto_checkt::bounds_check(
       inequality,
       name+" upper bound",
       "array bounds",
-      expr.find_source_location(),
+      location,
       expr,
       guard);
   }
@@ -1252,9 +1292,15 @@ Function: goto_checkt::check_rec
 
 void goto_checkt::check_rec(
   const exprt &expr,
+  const locationt &location,
   guardt &guard,
   bool address)
 {
+  const locationt &loc=
+    expr.location().is_nil() ?
+    location : expr.location();
+  assert(loc.is_nil() || !loc.as_string().empty());
+
   // we don't look into quantifiers
   if(expr.id()==ID_exists || expr.id()==ID_forall)
     return;
@@ -1264,18 +1310,18 @@ void goto_checkt::check_rec(
     if(expr.id()==ID_dereference)
     {
       assert(expr.operands().size()==1);
-      check_rec(expr.op0(), guard, false);
+      check_rec(expr.op0(), loc, guard, false);
     }
     else if(expr.id()==ID_index)
     {
       assert(expr.operands().size()==2);
-      check_rec(expr.op0(), guard, true);
-      check_rec(expr.op1(), guard, false);
+      check_rec(expr.op0(), loc, guard, true);
+      check_rec(expr.op1(), loc, guard, false);
     }
     else
     {
       forall_operands(it, expr)
-        check_rec(*it, guard, true);
+        check_rec(*it, loc, guard, true);
     }
     return;
   }
@@ -1283,7 +1329,7 @@ void goto_checkt::check_rec(
   if(expr.id()==ID_address_of)
   {
     assert(expr.operands().size()==1);
-    check_rec(expr.op0(), guard, true);
+    check_rec(expr.op0(), loc, guard, true);
     return;
   }
   else if(expr.id()==ID_and || expr.id()==ID_or)
@@ -1302,7 +1348,7 @@ void goto_checkt::check_rec(
         throw "`"+expr.id_string()+"' takes Boolean operands only, but got "+
               op.pretty();
 
-      check_rec(op, guard, false);
+      check_rec(op, loc, guard, false);
 
       if(expr.id()==ID_or)
         guard.add(not_exprt(op));
@@ -1327,19 +1373,19 @@ void goto_checkt::check_rec(
       throw msg;
     }
 
-    check_rec(expr.op0(), guard, false);
+    check_rec(expr.op0(), loc, guard, false);
 
     {
       guardt old_guard=guard;
       guard.add(expr.op0());
-      check_rec(expr.op1(), guard, false);
+      check_rec(expr.op1(), loc, guard, false);
       guard.swap(old_guard);
     }
 
     {
       guardt old_guard=guard;
       guard.add(not_exprt(expr.op0()));
-      check_rec(expr.op2(), guard, false);
+      check_rec(expr.op2(), loc, guard, false);
       guard.swap(old_guard);
     }
 
@@ -1347,31 +1393,31 @@ void goto_checkt::check_rec(
   }
 
   forall_operands(it, expr)
-    check_rec(*it, guard, false);
+    check_rec(*it, loc, guard, false);
 
   if(expr.id()==ID_index)
   {
-    bounds_check(to_index_expr(expr), guard);
+    bounds_check(to_index_expr(expr), loc, guard);
   }
   else if(expr.id()==ID_div)
   {
-    div_by_zero_check(to_div_expr(expr), guard);
+    div_by_zero_check(to_div_expr(expr), loc, guard);
     
     if(expr.type().id()==ID_signedbv)
-      integer_overflow_check(expr, guard);
+      integer_overflow_check(expr, loc, guard);
     else if(expr.type().id()==ID_floatbv)
     {
-      nan_check(expr, guard);
-      float_overflow_check(expr, guard);
+      nan_check(expr, loc, guard);
+      float_overflow_check(expr, loc, guard);
     }
   }
   else if(expr.id()==ID_shl || expr.id()==ID_ashr || expr.id()==ID_lshr)
   {
-    undefined_shift_check(to_shift_expr(expr), guard);
+    undefined_shift_check(to_shift_expr(expr), loc, guard);
   }
   else if(expr.id()==ID_mod)
   {
-    mod_by_zero_check(to_mod_expr(expr), guard);
+    mod_by_zero_check(to_mod_expr(expr), loc, guard);
   }
   else if(expr.id()==ID_plus || expr.id()==ID_minus ||
           expr.id()==ID_mult ||
@@ -1381,19 +1427,19 @@ void goto_checkt::check_rec(
     if(expr.type().id()==ID_signedbv ||
        expr.type().id()==ID_unsignedbv)
     {
-      integer_overflow_check(expr, guard);
+      integer_overflow_check(expr, loc, guard);
     }
     else if(expr.type().id()==ID_floatbv)
     {
-      nan_check(expr, guard);
-      float_overflow_check(expr, guard);
+      nan_check(expr, loc, guard);
+      float_overflow_check(expr, loc, guard);
     }
   }
   else if(expr.id()==ID_le || expr.id()==ID_lt ||
           expr.id()==ID_ge || expr.id()==ID_gt)
-    pointer_rel_check(expr, guard);
+    pointer_rel_check(expr, loc, guard);
   else if(expr.id()==ID_dereference)
-    pointer_validity_check(to_dereference_expr(expr), guard);
+    pointer_validity_check(to_dereference_expr(expr), loc, guard);
 }
 
 /*******************************************************************\
@@ -1411,7 +1457,7 @@ Function: goto_checkt::check
 void goto_checkt::check(const exprt &expr)
 {
   guardt guard;
-  check_rec(expr, guard, false);
+  check_rec(expr, expr.location(), guard, false);
 }
 
 /*******************************************************************\
