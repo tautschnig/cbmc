@@ -36,7 +36,7 @@ Function: inv_object_storet::output
 
 void inv_object_storet::output(std::ostream &out) const
 {
-  for(unsigned i=0; i<entries.size(); i++)
+  for(size_t i=0; i<entries.size(); i++)
     out << "STORE " << i << ": " << to_string(i, "") << std::endl;
 }
 
@@ -52,7 +52,7 @@ Function: inv_object_storet::get
 
 \*******************************************************************/
 
-bool inv_object_storet::get(const exprt &expr, unsigned &n)
+bool inv_object_storet::get(const exprt &expr, size_t &n)
 {
   std::string s=build_string(expr);
   if(s=="") return true;
@@ -87,13 +87,13 @@ Function: inv_object_storet::add
 
 \*******************************************************************/
 
-unsigned inv_object_storet::add(const exprt &expr)
+size_t inv_object_storet::add(const exprt &expr)
 {
   std::string s=build_string(expr);
   
   assert(s!="");
 
-  unsigned n=map.number(s);
+  size_t n=map.number(s);
   
   if(n>=entries.size())
   {
@@ -117,7 +117,7 @@ Function: inv_object_storet::is_constant
 
 \*******************************************************************/
 
-bool inv_object_storet::is_constant(unsigned n) const
+bool inv_object_storet::is_constant(size_t n) const
 {
   assert(n<entries.size());
   return entries[n].is_constant;
@@ -223,7 +223,7 @@ Function: invariant_sett::get_object
 
 bool invariant_sett::get_object(
   const exprt &expr,
-  unsigned &n) const
+  size_t &n) const
 {
   assert(object_store!=0);
   return object_store->get(expr, n);
@@ -294,21 +294,21 @@ Function: invariant_sett::add
 \*******************************************************************/
 
 void invariant_sett::add(
-  const std::pair<unsigned, unsigned> &p,
+  const std::pair<size_t, size_t> &p,
   ineq_sett &dest)
 {
   eq_set.check_index(p.first);
   eq_set.check_index(p.second);
 
   // add all. Quadratic.
-  unsigned f_r=eq_set.find(p.first);
-  unsigned s_r=eq_set.find(p.second);
+  size_t f_r=eq_set.find(p.first);
+  size_t s_r=eq_set.find(p.second);
   
-  for(unsigned f=0; f<eq_set.size(); f++)
+  for(size_t f=0; f<eq_set.size(); f++)
     if(eq_set.find(f)==f_r)
-      for(unsigned s=0; s<eq_set.size(); s++)
+      for(size_t s=0; s<eq_set.size(); s++)
         if(eq_set.find(s)==s_r)
-          dest.insert(std::pair<unsigned, unsigned>(f, s));
+          dest.insert(std::make_pair(f, s));
 }
 
 /*******************************************************************\
@@ -323,17 +323,17 @@ Function: invariant_sett::add_eq
 
 \*******************************************************************/
 
-void invariant_sett::add_eq(const std::pair<unsigned, unsigned> &p)
+void invariant_sett::add_eq(const std::pair<size_t, size_t> &p)
 {
   eq_set.make_union(p.first, p.second);
 
   // check if there is a contradiction with two constants
-  unsigned r=eq_set.find(p.first);
+  size_t r=eq_set.find(p.first);
   
   bool constant_seen=false;
   mp_integer c;
   
-  for(unsigned i=0; i<eq_set.size(); i++)
+  for(size_t i=0; i<eq_set.size(); i++)
     if(eq_set.find(i)==r)
       if(object_store->is_constant(i))
       {
@@ -374,10 +374,10 @@ Function: invariant_sett::add_eq
 
 void invariant_sett::add_eq(
   ineq_sett &dest,
-  const std::pair<unsigned, unsigned> &eq,
-  const std::pair<unsigned, unsigned> &ineq)
+  const std::pair<size_t, size_t> &eq,
+  const std::pair<size_t, size_t> &ineq)
 {
-  std::pair<unsigned, unsigned> n;
+  std::pair<size_t, size_t> n;
 
   // uhuh. Need to try all pairs
 
@@ -422,9 +422,9 @@ Function: invariant_sett::is_eq
 
 \*******************************************************************/
 
-tvt invariant_sett::is_eq(std::pair<unsigned, unsigned> p) const
+tvt invariant_sett::is_eq(std::pair<size_t, size_t> p) const
 {
-  std::pair<unsigned, unsigned> s=p;
+  std::pair<size_t, size_t> s=p;
   std::swap(s.first, s.second);
   
   if(has_eq(p))
@@ -448,9 +448,9 @@ Function: invariant_sett::is_le
 
 \*******************************************************************/
 
-tvt invariant_sett::is_le(std::pair<unsigned, unsigned> p) const
+tvt invariant_sett::is_le(std::pair<size_t, size_t> p) const
 {
-  std::pair<unsigned, unsigned> s=p;
+  std::pair<size_t, size_t> s=p;
   std::swap(s.first, s.second);
   
   if(has_eq(p))
@@ -490,12 +490,12 @@ void invariant_sett::output(
 
   assert(object_store!=0);
 
-  for(unsigned i=0; i<eq_set.size(); i++)
+  for(size_t i=0; i<eq_set.size(); i++)
     if(eq_set.is_root(i) &&
        eq_set.count(i)>=2)
     {
       bool first=true;
-      for(unsigned j=0; j<eq_set.size(); j++)
+      for(size_t j=0; j<eq_set.size(); j++)
         if(eq_set.find(j)==i)
         {
           if(first)
@@ -559,7 +559,7 @@ void invariant_sett::add_type_bounds(const exprt &expr, const typet &type)
 
     if(op_width<=8)
     {
-      unsigned a;
+      size_t a;
       if(get_object(expr, a)) return;
       
       add_bounds(a, boundst(0, power(2, op_width)-1));
@@ -653,7 +653,7 @@ void invariant_sett::strengthen_rec(const exprt &expr)
       return;
     }
 
-    std::pair<unsigned, unsigned> p;
+    std::pair<size_t, size_t> p;
     
     if(get_object(expr.op0(), p.first) ||
        get_object(expr.op1(), p.second))
@@ -764,7 +764,7 @@ void invariant_sett::strengthen_rec(const exprt &expr)
       add_type_bounds(expr.op1(), expr.op0().op0().type());
     }
     
-    std::pair<unsigned, unsigned> p, s;
+    std::pair<size_t, size_t> p, s;
     
     if(get_object(expr.op0(), p.first) ||
        get_object(expr.op1(), p.second))
@@ -790,7 +790,7 @@ void invariant_sett::strengthen_rec(const exprt &expr)
   {
     assert(expr.operands().size()==2);
     
-    std::pair<unsigned, unsigned> p;
+    std::pair<size_t, size_t> p;
     
     if(get_object(expr.op0(), p.first) ||
        get_object(expr.op1(), p.second))
@@ -874,7 +874,7 @@ tvt invariant_sett::implies_rec(const exprt &expr) const
   {
     assert(expr.operands().size()==2);
 
-    std::pair<unsigned, unsigned> p;
+    std::pair<size_t, size_t> p;
     
     bool ob0=get_object(expr.op0(), p.first);
     bool ob1=get_object(expr.op1(), p.second);
@@ -928,7 +928,7 @@ Function: invariant_sett::get_bounds
 
 \*******************************************************************/
 
-void invariant_sett::get_bounds(unsigned a, boundst &bounds) const
+void invariant_sett::get_bounds(size_t a, boundst &bounds) const
 {
   // unbounded
   bounds=boundst();
@@ -1113,7 +1113,7 @@ Function: invariant_sett::get_constant
 
 exprt invariant_sett::get_constant(const exprt &expr) const
 {
-  unsigned a;
+  size_t a;
 
   if(!get_object(expr, a))
   {  
@@ -1126,10 +1126,10 @@ exprt invariant_sett::get_constant(const exprt &expr) const
         return from_integer(it->second.get_lower(), expr.type());
     }
 
-    unsigned r=eq_set.find(a);
+    size_t r=eq_set.find(a);
 
     // is it a constant?
-    for(unsigned i=0; i<eq_set.size(); i++)
+    for(size_t i=0; i<eq_set.size(); i++)
       if(eq_set.find(i)==r)
       {
         const exprt &e=object_store->get_expr(i);
@@ -1179,7 +1179,7 @@ Function: inv_object_storet::to_string
 \*******************************************************************/
 
 std::string inv_object_storet::to_string(
-  unsigned a,
+  size_t a,
   const irep_idt &identifier) const
 {
   //return from_expr(ns, "", get_expr(a));
@@ -1199,7 +1199,7 @@ Function: invariant_sett::to_string
 \*******************************************************************/
 
 std::string invariant_sett::to_string(
-  unsigned a,
+  size_t a,
   const irep_idt &identifier) const
 {
   assert(object_store!=0);
@@ -1246,13 +1246,13 @@ bool invariant_sett::make_union(const invariant_sett &other)
   }
   
   // equalities first
-  unsigned old_eq_roots=eq_set.count_roots();
+  size_t old_eq_roots=eq_set.count_roots();
   
   eq_set.intersection(other.eq_set);
 
   // inequalities
-  unsigned old_ne_set=ne_set.size();
-  unsigned old_le_set=le_set.size();
+  size_t old_ne_set=ne_set.size();
+  size_t old_le_set=le_set.size();
   
   intersection(ne_set, other.ne_set);
   intersection(le_set, other.le_set);
@@ -1323,7 +1323,7 @@ Function: invariant_sett::modifies
 
 \*******************************************************************/
 
-void invariant_sett::modifies(unsigned a)
+void invariant_sett::modifies(size_t a)
 {
   eq_set.isolate(a);
   remove(ne_set, a);
@@ -1348,7 +1348,7 @@ void invariant_sett::modifies(const exprt &lhs)
   if(lhs.id()==ID_symbol ||
      lhs.id()==ID_member)
   {
-    unsigned a;
+    size_t a;
     if(!get_object(lhs, a)) modifies(a);
   }
   else if(lhs.id()==ID_index)

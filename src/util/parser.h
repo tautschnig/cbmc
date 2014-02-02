@@ -125,7 +125,7 @@ protected:
   unsigned column;
 };
  
-exprt &_newstack(parsert &parser, unsigned &x);
+exprt &_newstack(parsert &parser, size_t &x);
 
 #define newstack(x) _newstack(PARSER, (x))
 

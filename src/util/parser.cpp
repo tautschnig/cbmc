@@ -28,7 +28,7 @@ Function: _newstack
 
 \*******************************************************************/
 
-exprt &_newstack(parsert &parser, unsigned &x)
+exprt &_newstack(parsert &parser, size_t &x)
 {
   x=(unsigned)parser.stack.size();
 

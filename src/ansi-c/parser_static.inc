@@ -7,7 +7,7 @@
 
 #include "c_types.h"
 
-#define YYSTYPE unsigned
+#define YYSTYPE size_t
 #define YYSTYPE_IS_TRIVIAL 1
 
 #define mto(x, y) stack(x).move_to_operands(stack(y))

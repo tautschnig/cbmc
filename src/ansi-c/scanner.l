@@ -28,7 +28,7 @@ static int isatty(int) { return 0; }
 #include "literals/convert_string_literal.h"
 
 #define PARSER ansi_c_parser
-#define YYSTYPE unsigned
+#define YYSTYPE size_t
 #undef  ECHO
 #define ECHO
 

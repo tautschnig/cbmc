@@ -20,7 +20,7 @@ class irept;
 class irep_hash_container_baset
 {
 public:
-  unsigned number(const irept &irep);
+  size_t number(const irept &irep);
   
   irep_hash_container_baset(bool _full):full(_full)
   {
@@ -45,19 +45,19 @@ protected:
     }
   };
 
-  typedef hash_map_cont<const void *, unsigned, pointer_hash> ptr_hasht;
+  typedef hash_map_cont<const void *, size_t, pointer_hash> ptr_hasht;
   ptr_hasht ptr_hash;
 
   // this is the second level: content
       
-  typedef std::vector<unsigned> packedt;
+  typedef std::vector<size_t> packedt;
   
   struct vector_hash
   {
     inline size_t operator()(const packedt &p) const
     {
       size_t result=p.size();
-      for(unsigned i=0; i<p.size(); i++)
+      for(size_t i=0; i<p.size(); i++)
         result^=p[i]<<i;
       return result;
     }

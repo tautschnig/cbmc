@@ -32,9 +32,9 @@ void initialize_string_container()
 {
   // this is called by the constructor of string_containert
   
-  for(unsigned i=0; irep_ids_table[i]!=0; i++)
+  for(size_t i=0; irep_ids_table[i]!=0; i++)
   {
-    unsigned x;
+    size_t x=0;
     x=string_container[irep_ids_table[i]];
     assert(x==i); // sanity check
   }

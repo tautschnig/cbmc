@@ -107,7 +107,7 @@ Function: string_containert::get
 
 \*******************************************************************/
 
-unsigned string_containert::get(const char *s)
+size_t string_containert::get(const char *s)
 {
   string_ptrt string_ptr(s);
 
@@ -161,7 +161,7 @@ Function: string_containert::get
 
 \*******************************************************************/
 
-unsigned string_containert::get(const std::string &s)
+size_t string_containert::get(const std::string &s)
 {
   string_ptrt string_ptr(s);
 

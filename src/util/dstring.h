@@ -29,7 +29,7 @@ public:
   #ifdef __GNUC__
   constexpr 
   #endif
-  dstring(unsigned _no):no(_no)
+  dstring(size_t _no):no(_no)
   {
     string_container.inc_ref_count(no);
   }
@@ -129,7 +129,7 @@ public:
   }
    
   inline void swap(dstring &b)
-  { unsigned t=no; no=b.no; b.no=t; }
+  { size_t t=no; no=b.no; b.no=t; }
 
   inline dstring &operator=(const dstring &b)
   {
@@ -153,13 +153,13 @@ public:
   
   // non-standard
 
-  inline unsigned get_no() const
+  inline size_t get_no() const
   {
     return no;
   }
   
 protected:
-  unsigned no;
+  size_t no;
 
   // the reference returned is guaranteed to be stable
   inline const std::string &as_string() const

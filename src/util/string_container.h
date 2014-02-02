@@ -47,12 +47,12 @@ public:
 class string_containert
 {
 public:
-  inline unsigned operator[](const char *s)
+  inline size_t operator[](const char *s)
   {
     return get(s);
   }
   
-  inline unsigned operator[](const std::string &s)
+  inline size_t operator[](const std::string &s)
   {
     return get(s);
   }
@@ -102,14 +102,13 @@ public:
 #endif
 
 protected:
-  // the 'unsigned' ought to be size_t
-  unsigned n_static_strings;
+  size_t n_static_strings;
 
-  typedef hash_map_cont<string_ptrt, unsigned, string_ptr_hash> hash_tablet;
+  typedef hash_map_cont<string_ptrt, size_t, string_ptr_hash> hash_tablet;
   hash_tablet hash_table;
   
-  unsigned get(const char *s);
-  unsigned get(const std::string &s);
+  size_t get(const char *s);
+  size_t get(const std::string &s);
   
   typedef std::list<std::string> string_listt;
   string_listt string_list;
