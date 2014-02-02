@@ -542,7 +542,7 @@ void cpp_typecheck_resolvet::exact_match_functions(
       it!=old_identifiers.end();
       it++)
   {
-    unsigned distance;
+    size_t distance;
     if(disambiguate_functions(*it, distance, fargs))
       if(distance<=0)
         identifiers.push_back(*it);
@@ -576,7 +576,7 @@ void cpp_typecheck_resolvet::disambiguate_functions(
       it!=old_identifiers.end();
       it++)
   {
-    unsigned args_distance;
+    size_t args_distance;
     
     if(disambiguate_functions(*it, args_distance, fargs))
     {
@@ -2334,7 +2334,7 @@ Purpose:
 
 bool cpp_typecheck_resolvet::disambiguate_functions(
   const exprt &expr,
-  unsigned &args_distance,
+  size_t &args_distance,
   const cpp_typecheck_fargst &fargs)
 {
   args_distance=0;

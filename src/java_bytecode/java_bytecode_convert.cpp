@@ -83,7 +83,7 @@ protected:
   symbol_tablet &symbol_table;
 
   irep_idt current_method;
-  unsigned number_of_parameters;
+  size_t number_of_parameters;
 
   // JVM local variables
   symbol_exprt &variable(
@@ -138,14 +138,14 @@ protected:
   typedef std::vector<exprt> stackt;
   stackt stack;
 
-  exprt::operandst pop(unsigned n)
+  exprt::operandst pop(size_t n)
   {
     if(stack.size()<n)
       throw "malformed bytecode (pop too high)";
 
     exprt::operandst operands;
     operands.resize(n);
-    for(unsigned i=0; i<n; i++)
+    for(size_t i=0; i<n; i++)
       operands[i]=stack[stack.size()-n+i];
 
     stack.resize(stack.size()-n);
@@ -156,7 +156,7 @@ protected:
   {
     stack.resize(stack.size()+o.size());
 
-    for(unsigned i=0; i<o.size(); i++)
+    for(size_t i=0; i<o.size(); i++)
       stack[stack.size()-o.size()+i]=o[i];
   }
 

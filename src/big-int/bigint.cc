@@ -633,7 +633,7 @@ BigInt::dump (unsigned char *p, unsigned n)
   onedig_t d = *--t;
   unsigned i = sizeof (onedig_t);
   while (--i && (d >> i * CHAR_BIT) == 0);
-  unsigned m = ++i + (t - digit) * sizeof (onedig_t);
+  size_t m = ++i + (t - digit) * sizeof (onedig_t);
   // Fill in leading zeroes.
   if (m > n)
     {

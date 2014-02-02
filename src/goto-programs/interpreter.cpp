@@ -472,9 +472,9 @@ void interpretert::execute_function_call()
       {
         frame.local_map[id]=stack_pointer;
 
-        for(unsigned i=0; i<stack_pointer; i++)
+        for(size_t i=0; i<stack_pointer; i++)
         {
-          unsigned address=stack_pointer+i;
+          size_t address=stack_pointer+i;
           if(address>=memory.size()) memory.resize(address+1);
           memory[address].value=0;
           memory[address].identifier=id;

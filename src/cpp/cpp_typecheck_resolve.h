@@ -111,7 +111,7 @@ protected:
     
   bool disambiguate_functions(
     const exprt &expr,
-    unsigned &args_distance,
+    size_t &args_distance,
     const cpp_typecheck_fargst &fargs);
 
   exprt do_builtin(
@@ -133,7 +133,7 @@ protected:
 
   struct matcht
   {
-    unsigned cost;
+    size_t cost;
     cpp_template_args_tct specialization_args;
     cpp_template_args_tct full_args;
     irep_idt id;

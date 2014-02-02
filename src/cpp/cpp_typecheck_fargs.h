@@ -39,7 +39,7 @@ public:
 
   bool match(
     const code_typet &code_type,
-    unsigned &distance,
+    size_t &distance,
     cpp_typecheckt &cpp_typecheck) const;
 
   void add_object(const exprt &expr)

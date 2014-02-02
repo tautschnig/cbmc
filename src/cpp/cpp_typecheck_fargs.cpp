@@ -57,11 +57,7 @@ void cpp_typecheck_fargst::build(
 {
   in_use=true;
 
-  operands.clear();
-  operands.reserve(function_call.op1().operands().size());
-
-  for(std::size_t i=0; i<function_call.op1().operands().size(); i++)
-    operands.push_back(function_call.op1().operands()[i]);
+  operands=function_call.op1().operands();
 }
 
 /*******************************************************************\
@@ -78,7 +74,7 @@ Function: cpp_typecheck_fargst::exact_match
 
 bool cpp_typecheck_fargst::match(
   const code_typet &code_type,
-  unsigned &distance,
+  size_t &distance,
   cpp_typecheckt &cpp_typecheck) const
 {
   distance=0;
