@@ -134,9 +134,8 @@ bool boolbvt::type_conversion(
       if(dest_from==0)
       {
         // do zero extension
-        dest.resize(dest_width);
-        for(std::size_t i=0; i<dest.size(); i++)
-          dest[i]=(i<src.size()?src[i]:const_literal(false));
+        dest=src;
+        dest.resize(dest_width, const_literal(false));
 
         return false;
       }
@@ -425,14 +424,8 @@ bool boolbvt::type_conversion(
         // bool to integer
 
         assert(src_width==1);
-
-        for(std::size_t i=0; i<dest_width; i++)
-        {
-          if(i==0)
-            dest.push_back(src[0]);
-          else
-            dest.push_back(const_literal(false));
-        }
+        dest[0]=src[0];
+        dest.resize(dest_width, const_literal(false));
 
         return false;
       }

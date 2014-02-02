@@ -33,9 +33,9 @@ public:
   }
 
 protected:
-  typedef hash_map_cont<const exprt, unsigned, irep_hash> elementst;
-  typedef std::map<std::pair<unsigned, unsigned>, literalt> equalitiest;
-  typedef std::map<unsigned, exprt> elements_revt;
+  typedef hash_map_cont<const exprt, size_t, irep_hash> elementst;
+  typedef std::map<std::pair<size_t, size_t>, literalt> equalitiest;
+  typedef std::map<size_t, exprt> elements_revt;
 
   struct typestructt
   {

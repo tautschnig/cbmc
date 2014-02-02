@@ -158,9 +158,7 @@ public:
 
   bvt zeros(std::size_t new_size) const
   {
-    bvt result;
-    result.resize(new_size, const_literal(false));
-    return result;
+    return bvt(new_size, const_literal(false));
   }
   
   void set_equal(const bvt &a, const bvt &b);

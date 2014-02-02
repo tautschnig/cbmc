@@ -211,7 +211,7 @@ Function: bv_refinementt::get_values
 
 void bv_refinementt::get_values(approximationt &a)
 {
-  unsigned o=a.expr.operands().size();
+  size_t o=a.expr.operands().size();
 
   if(o==1)
     a.op0_value=get_value(a.op0_bv);

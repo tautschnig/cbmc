@@ -688,7 +688,7 @@ void cvc_convt::convert_expr(const exprt &expr)
          value.size()==32 ||
          value.size()==64)
       {
-        unsigned w=value.size()/4;
+        size_t w=value.size()/4;
       
         mp_integer i=binary2integer(id2string(value), false);
         std::string hex=integer2string(i, 16);

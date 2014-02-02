@@ -37,13 +37,15 @@ std::string boolbv_mapt::map_entryt::get_value(const propt &prop) const
   
   result.reserve(literal_map.size());
 
-  for(std::size_t i=0; i<literal_map.size(); i++)
+  for(literal_mapt::const_iterator it=literal_map.begin();
+      it!=literal_map.end();
+      ++it)
   {
     char ch='*';
 
-    if(literal_map[i].is_set)
+    if(it->is_set)
     {
-      tvt value=prop.l_get(literal_map[i].l);
+      tvt value=prop.l_get(it->l);
 
       if(value.is_true())
         ch='1';

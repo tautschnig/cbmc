@@ -967,8 +967,7 @@ bvt bv_utilst::unsigned_multiplier(const bvt &_op0, const bvt &_op1)
   if(is_constant(op1))
     std::swap(op0, op1);
 
-  bvt product;
-  product.resize(op0.size());
+  bvt product(op0.size(), const_literal(false));
 
   for(std::size_t i=0; i<product.size(); i++)
     product[i]=const_literal(false);
@@ -979,6 +978,7 @@ bvt bv_utilst::unsigned_multiplier(const bvt &_op0, const bvt &_op1)
       bvt tmpop;
 
       tmpop.reserve(op0.size());
+      tmpop.resize(sum, const_literal(false));
 
       for(std::size_t idx=0; idx<sum; idx++)
         tmpop.push_back(const_literal(false));
@@ -1010,10 +1010,8 @@ bvt bv_utilst::unsigned_multiplier(const bvt &_op0, const bvt &_op1)
       bvt pp;
 
       pp.reserve(op0.size());
-
       // zeros according to weight
-      for(std::size_t idx=0; idx<bit; idx++)
-        pp.push_back(const_literal(false));
+      pp.resize(bit, const_literal(false));
 
       for(std::size_t idx=bit; idx<op0.size(); idx++)
         pp.push_back(prop.land(op1[idx-bit], op0[bit]));
@@ -1052,8 +1050,7 @@ bvt bv_utilst::unsigned_multiplier_no_overflow(
 
   assert(_op0.size()==_op1.size());
 
-  bvt product;
-  product.resize(_op0.size());
+  bvt product(_op0.size(), const_literal(false));
 
   for(std::size_t i=0; i<product.size(); i++)
     product[i]=const_literal(false);
@@ -1064,6 +1061,7 @@ bvt bv_utilst::unsigned_multiplier_no_overflow(
       bvt tmpop;
 
       tmpop.reserve(product.size());
+      tmpop.resize(sum, const_literal(false));
 
       for(std::size_t idx=0; idx<sum; idx++)
         tmpop.push_back(const_literal(false));
