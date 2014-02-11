@@ -69,7 +69,7 @@ languaget *get_language_from_mode(const irep_idt &mode)
     if(mode==it->mode)
       return it->factory();
   
-  return NULL;
+  return 0;
 }
 
 /*******************************************************************\
@@ -88,12 +88,12 @@ languaget *get_language_from_filename(const std::string &filename)
 {
   std::size_t ext_pos=filename.rfind('.');
 
-  if(ext_pos==std::string::npos) return NULL;
+  if(ext_pos==std::string::npos) return 0;
 
   std::string extension=
     std::string(filename, ext_pos+1, std::string::npos);
 
-  if(extension=="") return NULL;
+  if(extension=="") return 0;
   
   for(languagest::const_iterator
       l_it=languages.begin();
@@ -113,7 +113,7 @@ languaget *get_language_from_filename(const std::string &filename)
     #endif
   }
 
-  return NULL;
+  return 0;
 }
 
 /*******************************************************************\

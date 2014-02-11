@@ -217,9 +217,9 @@ Function: parse_events
 void symex_slice_by_tracet::parse_events(std::string read_line) {
   if (read_line == "")
     return;
-  bool parity = strstr(read_line.c_str(),"!")==NULL;
-  bool universe = strstr(read_line.c_str(),"?")!=NULL;
-  bool has_values = strstr(read_line.c_str()," ")!=NULL;
+  bool parity = strstr(read_line.c_str(),"!")==0;
+  bool universe = strstr(read_line.c_str(),"?")!=0;
+  bool has_values = strstr(read_line.c_str()," ")!=0;
   std::cout << "Trace: " << read_line << std::endl;
   std::vector<irep_idt> value_v;
   if (has_values) {
@@ -612,7 +612,7 @@ std::set<exprt> symex_slice_by_tracet::implied_guards(exprt e)
   if (e.id() == ID_symbol)
   { // Guard or merge
     const char* merge_loc = strstr(e.get(ID_identifier).c_str(),"merge#");
-    if(merge_loc == NULL)
+    if(merge_loc == 0)
     {
       exprt e_copy (e);
       simplify(e_copy, ns);

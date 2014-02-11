@@ -99,9 +99,9 @@ void console_message_handlert::print(
 
     WriteConsoleW(
       out_handle, wide_message.c_str(),
-      (DWORD)wide_message.size(), &number_written, NULL);
+      (DWORD)wide_message.size(), &number_written, 0);
 
-    WriteConsoleW(out_handle, L"\r\n", 2, &number_written, NULL);
+    WriteConsoleW(out_handle, L"\r\n", 2, &number_written, 0);
   }
   else
   {

@@ -19,7 +19,7 @@ protected:
 
 public:
   // constructors
-  bformulat():prop(NULL)
+  bformulat():prop(0)
   {
   }
 
@@ -72,7 +72,7 @@ public:
   void clear()
   {
     l.clear();
-    prop=NULL;
+    prop=0;
   }
   
   inline void swap(bformulat &x)

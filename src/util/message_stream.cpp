@@ -137,7 +137,7 @@ void message_streamt::error_parse_line(
     }
   }
 
-  if(message_handler!=NULL)
+  if(message_handler!=0)
     message_handler->print(
       level, error_msg, sequence_number++, saved_error_location);
 }

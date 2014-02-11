@@ -1850,7 +1850,7 @@ void* collect_cycles_in_thread(void* arg)
 
   this_instrumenter.egraph.collect_cycles(cycles, model, filter);
 
-  return NULL;
+  return 0;
 }
 
 void instrumentert::collect_cycles_by_SCCs(memory_modelt model)
@@ -1871,7 +1871,7 @@ void instrumentert::collect_cycles_by_SCCs(memory_modelt model)
       interesting_SCCs.insert(scc);
       pthread_argumentt arg(*this,model,*it,set_of_cycles_per_SCC[scc]);
 
-      unsigned rc = pthread_create(&threads[scc++], NULL,
+      unsigned rc = pthread_create(&threads[scc++], 0,
         collect_cycles_in_thread, (void*) &arg);
 
       message.status()<<(rc!=0?"Failure ":"Success ")
@@ -1881,7 +1881,7 @@ void instrumentert::collect_cycles_by_SCCs(memory_modelt model)
   for(unsigned i=0; i<number_of_sccs; i++)
     if(interesting_SCCs.find(i)!=interesting_SCCs.end())
     {
-      unsigned rc = pthread_join(threads[i],NULL);
+      unsigned rc = pthread_join(threads[i], 0);
       message.status()<<(rc!=0?"Failure ":"Success ")
         <<"in joining thread for SCC #"<<i<<messaget::eom;
     }

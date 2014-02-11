@@ -92,7 +92,7 @@ bool pbs_dimacs_cnft::pbs_solve()
 
   //std::cout << "PBS COMMAND IS: " << command << "\n";
   /*
-    if (!(getenv("PBS_PATH") == NULL)) 
+    if (!(getenv("PBS_PATH") == 0)) 
     {
     command = getenv("PBS_PATH");
     }
@@ -146,49 +146,49 @@ bool pbs_dimacs_cnft::pbs_solve()
     {
       std::getline(file,line);
       if(strstr(line.c_str(),
-                "Variable Assignments Satisfying CNF Formula:")!=NULL)
+                "Variable Assignments Satisfying CNF Formula:")!=0)
+      {
+        //print ("Reading assignments...\n");
+        //std::cout << "No literals: " << no_variables() << "\n";
+        satisfied = true;
+        assigned.clear ();
+        for (size_t i = 0; (file && (i < no_variables())); ++i)
         {
-          //print ("Reading assignments...\n");
-          //std::cout << "No literals: " << no_variables() << "\n";
-          satisfied = true;
-          assigned.clear ();
-          for (size_t i = 0; (file && (i < no_variables())); ++i)
-            {
-              file >> v;
-              if (v > 0)
-                {
-                  //std::cout << v << " ";
-                  assigned.insert(v);
-                }
-            }
-          //std::cout << "\n";
-          //print ("Finished reading assignments.\n");
+          file >> v;
+          if (v > 0)
+          {
+            //std::cout << v << " ";
+            assigned.insert(v);
+          }
         }
-      else if (strstr(line.c_str(),"SAT... SUM") != NULL)
+        //std::cout << "\n";
+        //print ("Finished reading assignments.\n");
+      }
+      else if (strstr(line.c_str(),"SAT... SUM") != 0)
+      {
+        //print (line);
+        sscanf(line.c_str(),"%*s %*s %*s %d", &opt_sum);
+      }
+      else if (strstr(line.c_str(),"SAT - All implied") != 0)
+      {
+        //print (line);
+        sscanf(line.c_str(),"%*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %d", &opt_sum);
+      }
+      else if (strstr(line.c_str(),"SAT... Solution") != 0)
+      {
+        //print(line);
+        sscanf(line.c_str(),"%*s %*s %*s %d", &opt_sum);
+      }
+      else if (strstr(line.c_str(),"Optimal Soln") != 0)
+      {
+        //print(line);
+        if (strstr(line.c_str(),"time out") != 0)
         {
-          //print (line);
-          sscanf(line.c_str(),"%*s %*s %*s %d", &opt_sum);
+          print (6, "WARNING:  TIMED OUT.  SOLUTION MAY BE INCORRECT.\n");
+          return satisfied;
         }
-      else if (strstr(line.c_str(),"SAT - All implied") != NULL)
-        {
-          //print (line);
-          sscanf(line.c_str(),"%*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %*s %d", &opt_sum);
-        }
-      else if (strstr(line.c_str(),"SAT... Solution") != NULL)
-        {
-          //print(line);
-          sscanf(line.c_str(),"%*s %*s %*s %d", &opt_sum);
-        }
-      else if (strstr(line.c_str(),"Optimal Soln") != NULL)
-        {
-          //print(line);
-          if (strstr(line.c_str(),"time out") != NULL)
-            {
-              print (6, "WARNING:  TIMED OUT.  SOLUTION MAY BE INCORRECT.\n");
-              return satisfied;
-            }
-          sscanf(line.c_str(),"%*s %*s %*s %d", &opt_sum);
-        }
+        sscanf(line.c_str(),"%*s %*s %*s %d", &opt_sum);
+      }
     }
   
   return satisfied;

@@ -17,7 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 class satcheck_minisat1_baset:public cnf_solvert
 {
 public:
-  satcheck_minisat1_baset():solver(NULL)
+  satcheck_minisat1_baset():solver(0)
   {
   }
   

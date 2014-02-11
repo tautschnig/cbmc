@@ -31,7 +31,7 @@ Function: goto_symex_statet::goto_symex_statet
 
 goto_symex_statet::goto_symex_statet():
   depth(0),
-  symex_target(NULL),
+  symex_target(0),
   atomic_section_id(0),
   record_events(true),
   cex_started(false),
@@ -765,7 +765,7 @@ bool goto_symex_statet::l2_thread_read_encoding(
   expr=ssa_l1;
 
   // and record that
-  assert(symex_target!=NULL);
+  assert(symex_target!=0);
   symex_target->shared_read(
     guard.as_expr(),
     expr,

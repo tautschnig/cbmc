@@ -32,7 +32,7 @@ cpp_idt::cpp_idt():
   id_class(UNKNOWN),
   this_expr(static_cast<const exprt &>(get_nil_irep())),
   compound_counter(0),
-  parent(NULL)
+  parent(0)
 {
 }
 

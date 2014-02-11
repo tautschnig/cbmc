@@ -149,7 +149,7 @@ propt::resultt satcheck_zcoret::prop_solve()
           // next one
           const char *q=strchr(p, ' ');
           while(*q==' ') q++;
-          if(q==NULL) break;
+          if(q==0) break;
           p=q;
         }
       }

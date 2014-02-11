@@ -98,7 +98,7 @@ class collection_set
 public:
   typedef T collectiont;
   
-  collection_set():collection(NULL)
+  collection_set():collection(0)
   {
   }
   
@@ -129,7 +129,7 @@ public:
   {
     set_collection(_collection);
 
-    if(x.collection==NULL) return;
+    if(x.collection==0) return;
     
     for(unsigned i=0; i<x.members.size(); i++)
     {
@@ -141,7 +141,7 @@ public:
   bool is_member(
     const typename collectiont::valuet &x) const
   {
-    if(collection==NULL) return false;
+    if(collection==0) return false;
     return is_member((*collection)[x].get_nr());
   }
   
@@ -155,7 +155,7 @@ public:
   
   void clear()
   {
-    collection=NULL;
+    collection=0;
     members.clear();
   }
   
@@ -177,7 +177,7 @@ protected:
   
   void set_collection(collectiont &_collection)
   {
-    if(collection==NULL)
+    if(collection==0)
       collection=&_collection;
     else
       assert(collection==&_collection);

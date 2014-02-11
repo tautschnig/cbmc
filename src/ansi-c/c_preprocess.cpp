@@ -241,7 +241,7 @@ Function: is_dot_i_file
 static bool is_dot_i_file(const std::string &path)
 {
   const char *ext=strrchr(path.c_str(), '.');
-  if(ext==NULL) return false;
+  if(ext==0) return false;
   if(std::string(ext)==".i" ||
      std::string(ext)==".ii") return true;
   return false;
@@ -391,7 +391,7 @@ bool c_preprocess_visual_studio(
 
   FILE *stream=fopen(tmpi.c_str(), "r");
 
-  if(stream==NULL)
+  if(stream==0)
   {
     unlink(tmpi.c_str());
     unlink(stderr_file.c_str());
@@ -856,7 +856,7 @@ bool c_preprocess_gcc_clang(
 
   unlink(stderr_file.c_str());
 
-  if(stream!=NULL)
+  if(stream!=0)
   {
     int ch;
     while((ch=fgetc(stream))!=EOF)
@@ -877,7 +877,7 @@ bool c_preprocess_gcc_clang(
 
   FILE *stream=popen(command.c_str(), "r");
 
-  if(stream!=NULL)
+  if(stream!=0)
   {
     int ch;
     while((ch=fgetc(stream))!=EOF)
@@ -1002,7 +1002,7 @@ bool c_preprocess_arm(
 
   FILE *stream=fopen(tmpi.c_str(), "r");
 
-  if(stream!=NULL)
+  if(stream!=0)
   {
     int ch;
     while((ch=fgetc(stream))!=EOF)
@@ -1025,7 +1025,7 @@ bool c_preprocess_arm(
 
   FILE *stream=popen(command.c_str(), "r");
 
-  if(stream!=NULL)
+  if(stream!=0)
   {
     int ch;
     while((ch=fgetc(stream))!=EOF)

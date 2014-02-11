@@ -26,7 +26,7 @@ Function: language_filet::language_filet
 
 language_filet::language_filet(const language_filet &rhs):
   modules(rhs.modules),
-  language(rhs.language==NULL?NULL:rhs.language->new_language()),
+  language(rhs.language==0?0:rhs.language->new_language()),
   filename(rhs.filename)
 {
 }
@@ -45,7 +45,7 @@ Function: language_filet::~language_filet
 
 language_filet::~language_filet()
 {
-  if(language!=NULL) delete language;
+  if(language!=0) delete language;
 }
 
 /*******************************************************************\

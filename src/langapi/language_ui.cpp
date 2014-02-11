@@ -134,7 +134,7 @@ bool language_uit::parse(const std::string &filename)
   lf.filename=filename;
   lf.language=get_language_from_filename(filename);
 
-  if(lf.language==NULL)
+  if(lf.language==0)
   {
     error("failed to figure out type of file", filename);
     return true;
@@ -298,7 +298,7 @@ void language_uit::show_symbol_table_plain(
     else
     {
       ptr=get_language_from_mode(symbol.mode);
-      if(ptr==NULL) throw "symbol "+id2string(symbol.name)+" has unknown mode";
+      if(ptr==0) throw "symbol "+id2string(symbol.name)+" has unknown mode";
     }
 
     std::unique_ptr<languaget> p(ptr);

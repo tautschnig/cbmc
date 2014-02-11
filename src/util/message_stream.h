@@ -122,7 +122,7 @@ protected:
     if(message=="") return;
     if(level<=1) error_found=true;
 
-    if(message_handler!=NULL)
+    if(message_handler!=0)
       message_handler->print(
         level,
         message,

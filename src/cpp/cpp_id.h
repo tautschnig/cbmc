@@ -72,7 +72,7 @@ public:
   
   inline cpp_idt &get_parent() const
   {
-    assert(parent!=NULL);
+    assert(parent!=0);
     return *parent;
   }
 

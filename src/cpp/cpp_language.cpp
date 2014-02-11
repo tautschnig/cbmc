@@ -99,7 +99,7 @@ bool cpp_languaget::preprocess(
   // check extension
 
   const char *ext=strrchr(path.c_str(), '.');
-  if(ext!=NULL && std::string(ext)==".ipp")
+  if(ext!=0 && std::string(ext)==".ipp")
   {
     std::ifstream infile(path.c_str());
 

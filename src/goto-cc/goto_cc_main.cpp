@@ -66,7 +66,7 @@ int main(int argc, const char **argv)
   const char **argv=narrow_argv(argc, argv_wide);
   #endif
 
-  if(argv==NULL || argc<1)
+  if(argv==0 || argc<1)
   {
     std::cerr << "failed to determine base name" << std::endl;
     return 1;

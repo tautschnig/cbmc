@@ -32,7 +32,7 @@ Function: satcheck_limmatt::satcheck_limmatt
 
 satcheck_limmatt::satcheck_limmatt()
 {
-  solver=new_Limmat(NULL);
+  solver=new_Limmat(0);
 }
 
 /*******************************************************************\
@@ -49,7 +49,7 @@ Function: satcheck_limmatt::~satcheck_limmatt
 
 satcheck_limmatt::~satcheck_limmatt()
 {
-  if(solver!=NULL) delete_Limmat(solver);
+  if(solver!=0) delete_Limmat(solver);
 }
 
 /*******************************************************************\

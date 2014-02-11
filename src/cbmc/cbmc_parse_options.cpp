@@ -658,7 +658,7 @@ int cbmc_parse_optionst::get_goto_program(
                               
       languaget *language=get_language_from_filename(filename);
       
-      if(language==NULL)
+      if(language==0)
       {
         error() << "failed to figure out type of file `" <<  filename << "'" << eom;
         return 6;
@@ -796,7 +796,7 @@ void cbmc_parse_optionst::preprocessing()
 
     languaget *ptr=get_language_from_filename(filename);
 
-    if(ptr==NULL)
+    if(ptr==0)
     {
       error() << "failed to figure out type of file" << eom;
       return;

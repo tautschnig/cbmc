@@ -66,12 +66,12 @@ qbf_bdd_certificatet::~qbf_bdd_certificatet(void)
       it!=model_bdds.end();
       it++)
   {
-    if(*it!=NULL) { delete(*it); *it=NULL; }
+    if(*it!=0) { delete(*it); *it=0; }
   }
   model_bdds.clear();
 
   delete(bdd_manager);
-  bdd_manager=NULL;
+  bdd_manager=0;
 }
 
 /*******************************************************************\
@@ -132,12 +132,12 @@ qbf_bdd_coret::~qbf_bdd_coret()
       it!=bdd_variable_map.end();
       it++)
   {
-    if (*it) { delete(*it); *it=NULL; }
+    if (*it) { delete(*it); *it=0; }
   }
   bdd_variable_map.clear();
 
   if(matrix) delete(matrix);
-  matrix=NULL;
+  matrix=0;
 }
 
 /*******************************************************************\
@@ -197,7 +197,7 @@ propt::resultt qbf_bdd_coret::prop_solve()
     messaget::status() << msg << messaget::eom;
   }
 
-  model_bdds.resize(no_variables()+1, NULL);
+  model_bdds.resize(no_variables()+1, 0);
 
   // Eliminate variables
   for(quantifierst::const_reverse_iterator it=quantifiers.rbegin();
@@ -298,7 +298,7 @@ literalt qbf_bdd_coret::new_variable()
 {
   literalt res=qbf_bdd_certificatet::new_variable();
 
-  bdd_variable_map.resize(res.var_no()+1, NULL);
+  bdd_variable_map.resize(res.var_no()+1, 0);
   BDD &var=*(new BDD());
   var = bdd_manager->bddVar();
   bdd_variable_map[res.var_no()]=&var;
@@ -510,7 +510,7 @@ const exprt qbf_bdd_certificatet::f_get(literalt l)
 
     // no cached function, so construct one
 
-    assert(model_bdds[l.var_no()]!=NULL);
+    assert(model_bdds[l.var_no()]!=0);
     BDD &model=*model_bdds[l.var_no()];
 
     #if 0
@@ -560,7 +560,7 @@ const exprt qbf_bdd_certificatet::f_get(literalt l)
         result.move_to_operands(prime);
     }
 
-    cube=NULL; // cube is free'd by nextCube
+    cube=0; // cube is free'd by nextCube
 
     exprt final;
 

@@ -44,7 +44,7 @@ public:
 
   language_filet(const language_filet &rhs);
 
-  language_filet():language(NULL)
+  language_filet():language(0)
   {
   }
 

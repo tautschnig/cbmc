@@ -341,16 +341,16 @@ bool qbf_skizzo_coret::get_certificate(void)
 
     int nroots =
     Dddmp_cuddBddArrayLoad(bdd_manager->getManager(),
-                           DDDMP_ROOT_MATCHLIST, NULL,
-                           DDDMP_VAR_MATCHIDS, NULL, NULL, NULL,
+                           DDDMP_ROOT_MATCHLIST, 0,
+                           DDDMP_VAR_MATCHIDS, 0, 0, 0,
                            DDDMP_MODE_DEFAULT,
                            filename,
-                           NULL,
+                           0,
                            &bdds);
 
     assert(nroots=2*n_e); // ozziKs documentation guarantees that.
 
-    model_bdds.resize(e_max+1, NULL);
+    model_bdds.resize(e_max+1, 0);
 
     for(unsigned i=0; i<e_list.size(); i++)
     {
@@ -369,7 +369,7 @@ bool qbf_skizzo_coret::get_certificate(void)
       Cudd_Deref(bdds[i]);
 
     free(bdds);
-    bdds=NULL;
+    bdds=0;
     remove(bdd_file.c_str());
     remove((qbf_tmp_file+".qbm").c_str());
   }

@@ -255,7 +255,7 @@ bool compilet::add_input_file(const std::string &file_name)
 
     stream=popen(cmd.str().c_str(), "r");
 
-    if(stream!=NULL)
+    if(stream!=0)
     {
       std::string line;
       int ch; // fgetc returns an int, not char
@@ -521,7 +521,7 @@ bool compilet::parse(const std::string &file_name)
   else
     languagep=get_language_from_filename(file_name);
 
-  if(languagep==NULL)
+  if(languagep==0)
   {
     error() << "failed to figure out type of file `" << file_name << "'" << eom;
     return true;

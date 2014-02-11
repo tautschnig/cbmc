@@ -99,9 +99,9 @@ public:
   invariant_sett():
     threaded(false),
     is_false(false),
-    value_sets(NULL),
-    object_store(NULL),
-    ns(NULL)
+    value_sets(0),
+    object_store(0),
+    ns(0)
   {
   }
   

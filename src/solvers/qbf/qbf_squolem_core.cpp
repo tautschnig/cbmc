@@ -28,7 +28,7 @@ Function: qbf_squolem_coret::qbf_squolem_coret
 
 \*******************************************************************/
 
-qbf_squolem_coret::qbf_squolem_coret() : squolem(NULL)
+qbf_squolem_coret::qbf_squolem_coret() : squolem(0)
 {
   setup();
 }
@@ -82,7 +82,7 @@ void qbf_squolem_coret::reset(void)
 {
   squolem->reset();
   delete(squolem);
-  squolem=NULL;
+  squolem=0;
   setup();
 }
 
@@ -102,7 +102,7 @@ qbf_squolem_coret::~qbf_squolem_coret()
 {
   squolem->reset();
   delete(squolem);
-  squolem=NULL;
+  squolem=0;
 }
 
 /*******************************************************************\
@@ -414,7 +414,7 @@ const exprt qbf_squolem_coret::f_get(literalt l)
     WitnessStack *wsp = squolem->getModelFunction(Literal(l.dimacs()));
     exprt res;
 
-    if(wsp==NULL || wsp->empty())
+    if(wsp==0 || wsp->empty())
     {
 //      res=exprt(ID_nondet_bool, typet(ID_bool));
       res=false_exprt(); // just set it to zero
@@ -453,7 +453,7 @@ const exprt qbf_squolem_coret::f_get_cnf(WitnessStack *wsp)
 
   exprt::operandst operands;
 
-  while(p!=NULL)
+  while(p!=0)
   {
     exprt clause=or_exprt();
 
@@ -506,7 +506,7 @@ const exprt qbf_squolem_coret::f_get_dnf(WitnessStack *wsp)
 
   exprt::operandst operands;
 
-  while(p!=NULL)
+  while(p!=0)
   {
     exprt cube=and_exprt();
 

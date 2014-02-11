@@ -59,7 +59,7 @@ Function: messaget::print
 
 void messaget::print(unsigned level, const std::string &message)
 {
-  if(message_handler!=NULL)
+  if(message_handler!=0)
     message_handler->print(level, message);
 }
   
@@ -81,7 +81,7 @@ void messaget::print(
   int sequence_number,
   const source_locationt &location)
 {
-  if(message_handler!=NULL)
+  if(message_handler!=0)
     message_handler->print(level, message, sequence_number,
                            location);
 }

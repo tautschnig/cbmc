@@ -98,7 +98,7 @@ const char *ld_options_with_argument[]=
   "--ios_version_min", // Apple only
   "--macosx_version_min", // Apple only
   "--install_name", // Apple only
-  NULL
+  0
 };
 
 const char *ld_options_without_argument[]=
@@ -232,7 +232,7 @@ const char *ld_options_without_argument[]=
   "--dylib", // Apple only
   "--dylinker", // Apple only
   "--bundle", // Apple only
-  NULL
+  0
 };
 
 bool ld_cmdlinet::parse(int argc, const char **argv)
@@ -265,7 +265,7 @@ bool ld_cmdlinet::parse(int argc, const char **argv)
 
     bool found=false;
 
-    for(const char **o=ld_options_without_argument; *o!=NULL && !found; o++)
+    for(const char **o=ld_options_without_argument; *o!=0 && !found; o++)
     {
       std::string os(*o);
       // ld accepts all long options also as short option
@@ -282,7 +282,7 @@ bool ld_cmdlinet::parse(int argc, const char **argv)
     // 2) concatenated with '=' for long options
     // 3) separate
 
-    for(const char **o=ld_options_with_argument; *o!=NULL && !found; o++)
+    for(const char **o=ld_options_with_argument; *o!=0 && !found; o++)
     {
       std::string os(*o);
     

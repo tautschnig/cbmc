@@ -95,7 +95,7 @@ public:
 
   virtual void set_message_handler(message_handlert &_message_handler);
 
-  inline message_clientt():message_handler(NULL)
+  inline message_clientt():message_handler(0)
   {
   }
    

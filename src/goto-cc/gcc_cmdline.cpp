@@ -44,7 +44,7 @@ const char *gcc_options_with_argument[]=
   "-MF",
   "-u", // goes to linker
   "-T", // goes to linker
-  NULL
+  0
 };
 
 const char *gcc_options_with_separated_argument[]=
@@ -74,7 +74,7 @@ const char *gcc_options_with_separated_argument[]=
   "--include", // undocumented
   "-current_version", // on the Mac
   "-compatibility_version",  // on the Mac
-  NULL
+  0
 };
 
 const char *gcc_options_with_concatenated_argument[]=
@@ -84,7 +84,7 @@ const char *gcc_options_with_concatenated_argument[]=
   "-A",
   "-U",
   "-l",
-  NULL
+  0
 };
 
 const char *gcc_options_without_argument[]=
@@ -192,7 +192,7 @@ const char *gcc_options_without_argument[]=
   "-EB",
   "-EL",
   "-fast", // Apple only
-  NULL
+  0
 };
 
 bool gcc_cmdlinet::parse(int argc, const char **argv)
@@ -252,7 +252,7 @@ bool gcc_cmdlinet::parse(int argc, const char **argv)
       bool found=false;
 
       // separated only, and also allow concatenation with "="
-      for(const char **o=gcc_options_with_separated_argument; *o!=NULL && !found; o++)
+      for(const char **o=gcc_options_with_separated_argument; *o!=0 && !found; o++)
       {
         if(argv_i==*o) // separated
         {
@@ -274,7 +274,7 @@ bool gcc_cmdlinet::parse(int argc, const char **argv)
       }
 
       // concatenated _or_ separated, e.g., -I
-      for(const char **o=gcc_options_with_argument; *o!=NULL && !found; o++)
+      for(const char **o=gcc_options_with_argument; *o!=0 && !found; o++)
       {
         if(argv_i==*o) // separated
         {
@@ -296,7 +296,7 @@ bool gcc_cmdlinet::parse(int argc, const char **argv)
       }
 
       // concatenated only
-      for(const char **o=gcc_options_with_concatenated_argument; *o!=NULL && !found; o++)
+      for(const char **o=gcc_options_with_concatenated_argument; *o!=0 && !found; o++)
       {
         if(has_prefix(argv_i, *o)) // concatenated
         {

@@ -406,7 +406,7 @@ bool symex_parseoptionst::get_goto_program(
                               
       languaget *language=get_language_from_filename(filename);
                                                 
-      if(language==NULL)
+      if(language==0)
       {
         error() << "failed to figure out type of file `" <<  filename << "'" << eom;
         return true;

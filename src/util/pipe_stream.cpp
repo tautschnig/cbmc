@@ -72,7 +72,7 @@ int pipe_stream::run()
   SECURITY_ATTRIBUTES sa;
 
   sa.nLength=sizeof(SECURITY_ATTRIBUTES);
-  sa.lpSecurityDescriptor=NULL;
+  sa.lpSecurityDescriptor=0;
   sa.bInheritHandle=TRUE;
   
   // Create the child output pipe
@@ -125,8 +125,8 @@ int pipe_stream::run()
   LPSTR lpCommandLine = new char[command.length()+1];
   strcpy(lpCommandLine, command.c_str());
 
-  BOOL ret=CreateProcess(NULL, lpCommandLine, NULL, NULL, TRUE,
-                         CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+  BOOL ret=CreateProcess(0, lpCommandLine, 0, 0, TRUE,
+                         CREATE_NO_WINDOW, 0, 0, &si, &pi);
 
   delete lpCommandLine; // clean up
 
@@ -170,7 +170,7 @@ int pipe_stream::run()
         a_it++, i++)
        _argv[i]=strdup(a_it->c_str());
      
-    _argv[args.size()+1]=NULL;
+    _argv[args.size()+1]=0;
 
     int result=execvp(executable.c_str(), _argv);
 
@@ -316,7 +316,7 @@ std::streambuf::int_type filedescriptor_streambuf::overflow(
     char buf=character;
 #ifdef _WIN32
     DWORD len;
-    WriteFile(proc_in, &buf, 1, &len, NULL);
+    WriteFile(proc_in, &buf, 1, &len, 0);
 #else
     int len=write(proc_in, &buf, 1);
 #endif
@@ -345,7 +345,7 @@ std::streamsize filedescriptor_streambuf::xsputn(
 {
 #ifdef _WIN32
   DWORD len;
-  WriteFile(proc_in, str, (DWORD)count, &len, NULL);
+  WriteFile(proc_in, str, (DWORD)count, &len, 0);
   return len;
 #else
   return write(proc_in, str, count);
@@ -374,7 +374,7 @@ std::streambuf::int_type filedescriptor_streambuf::underflow()
   
   #ifdef _WIN32
   DWORD len;
-  if(!ReadFile(proc_out, eback(), READ_BUFFER_SIZE, &len, NULL))
+  if(!ReadFile(proc_out, eback(), READ_BUFFER_SIZE, &len, 0))
     return traits_type::eof();
   #else
   ssize_t len=read(proc_out, eback(), READ_BUFFER_SIZE);

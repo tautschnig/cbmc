@@ -57,7 +57,7 @@ int run(
   for(std::size_t i=0; i<wargv.size(); i++)
     _argv[i]=wargv[i].c_str();
   
-  _argv[argv.size()]=NULL;
+  _argv[argv.size()]=0;
 
   // warning: the arguments may still need escaping
 
@@ -83,7 +83,7 @@ int run(
       for(std::size_t i=0; i<argv.size(); i++)
         _argv[i]=strdup(argv[i].c_str());
 
-      _argv[argv.size()]=NULL;
+      _argv[argv.size()]=0;
       
       execvp(what.c_str(), _argv);
       /* usually no return */

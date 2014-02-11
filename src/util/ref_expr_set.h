@@ -33,7 +33,7 @@ public:
 
   bool empty() const
   {
-    if(d==NULL) return true;
+    if(d==0) return true;
     return d->expr_set.empty();
   }
 
@@ -49,11 +49,11 @@ public:
   
   bool make_union(const ref_expr_sett &s2)
   {
-    if(s2.d==NULL) return false;
+    if(s2.d==0) return false;
     
     if(s2.d==d) return false;
   
-    if(d==NULL)
+    if(d==0)
     {
       copy_from(s2);
       return true;

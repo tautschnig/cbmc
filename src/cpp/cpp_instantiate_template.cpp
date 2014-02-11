@@ -158,7 +158,7 @@ const symbolt &cpp_typecheckt::class_template_symbol(
   cpp_scopet *template_scope=
     static_cast<cpp_scopet *>(cpp_scopes.id_map[template_symbol.name]);
 
-  assert(template_scope!=NULL);
+  assert(template_scope!=0);
   
   irep_idt identifier=
     id2string(template_scope->prefix)+
@@ -319,14 +319,14 @@ const symbolt &cpp_typecheckt::instantiate_template(
   cpp_scopet *template_scope=
     static_cast<cpp_scopet *>(cpp_scopes.id_map[template_symbol.name]);
 
-  if(template_scope==NULL)
+  if(template_scope==0)
   {
     err_location(source_location);
     str << "identifier: " << template_symbol.name << '\n';
     throw "template instantiation error: scope not found";
   }
   
-  assert(template_scope!=NULL);
+  assert(template_scope!=0);
 
   // produce new declaration
   cpp_declarationt new_decl=to_cpp_declaration(template_symbol.type);
