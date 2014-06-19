@@ -154,6 +154,10 @@ void c_typecheck_baset::typecheck_symbol(symbolt &symbol)
     move_symbol(symbol, new_symbol);
     
     typecheck_new_symbol(*new_symbol);
+
+    merge_full_irep(new_symbol->location);
+    merge_full_irep(new_symbol->type);
+    merge_full_irep(new_symbol->value);
   }    
   else
   {
@@ -169,6 +173,10 @@ void c_typecheck_baset::typecheck_symbol(symbolt &symbol)
       typecheck_redefinition_type(old_it->second, symbol);
     else
       typecheck_redefinition_non_type(old_it->second, symbol);
+
+    merge_full_irep(old_it->second.location);
+    merge_full_irep(old_it->second.type);
+    merge_full_irep(old_it->second.value);
   }
 }
 

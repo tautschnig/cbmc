@@ -2723,6 +2723,9 @@ function_definition:
             
           assert(ansi_c_declaration.declarators().size()==1);
           ansi_c_declaration.add_initializer(stack($4));
+
+          // reduce memory footprint
+          PARSER.merge_full_irep(ansi_c_declaration);
           
           // Kill the scope that 'function_head' creates.
           PARSER.pop_scope();

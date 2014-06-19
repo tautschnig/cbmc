@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/string_hash.h>
 #include <util/i2string.h>
 #include <util/mp_arith.h>
+#include <util/merge_irep.h>
 
 #include "ansi_c_parse_tree.h"
 #include "ansi_c_scope.h"
@@ -43,6 +44,7 @@ public:
   {
     parsert::clear();
     parse_tree.clear();
+    merge_full_irep.clear();
     
     // scanner state
     tag_following=false;
@@ -154,6 +156,9 @@ public:
     else
       return id;
   }
+
+  // save memory by eliminating copies
+  merge_full_irept merge_full_irep;
 };
 
 extern ansi_c_parsert ansi_c_parser;

@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
+#include <util/merge_irep.h>
 
 #include "ansi_c_declaration.h"
 #include "designator.h"
@@ -62,6 +63,8 @@ protected:
 
   typedef hash_map_cont<irep_idt, typet, irep_id_hash> id_type_mapt;
   id_type_mapt parameter_map;
+
+  merge_full_irept merge_full_irep;
   
   // overload to use language specific syntax
   virtual std::string to_string(const exprt &expr);

@@ -128,6 +128,8 @@ class merge_irept
 public:
   void operator()(irept &);
 
+  void clear() { irep_store.clear(); }
+
 protected:
   typedef hash_set_cont<irept, irep_hash> irep_storet;
   irep_storet irep_store;     
@@ -139,6 +141,8 @@ class merge_full_irept
 {
 public:
   void operator()(irept &);
+
+  void clear() { irep_store.clear(); }
 
 protected:
   typedef hash_set_cont<irept, irep_full_hash, irep_full_eq> irep_storet;
