@@ -22,6 +22,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <pointer-analysis/value_set_dereference.h>
 
+#include "field_sensitivity.h"
 #include "symex_dereference_state.h"
 
 /// Transforms an lvalue expression by replacing any dereference operations it
@@ -225,7 +226,8 @@ void goto_symext::dereference_rec(exprt &expr, statet &state)
     dereference_rec(tmp1, state);
 
     // we need to set up some elaborate call-backs
-    symex_dereference_statet symex_dereference_state(*this, state);
+    symex_dereference_statet symex_dereference_state(
+      *this, state, field_sensitivity);
 
     value_set_dereferencet dereference(
       ns,
@@ -358,13 +360,14 @@ void goto_symext::dereference(exprt &expr, statet &state)
   // from different frames. Would be enough to rename
   // symbols whose address is taken.
   PRECONDITION(!state.call_stack().empty());
-  state.rename(expr, ns, goto_symex_statet::L1);
+  state.rename(expr, ns, field_sensitivity, goto_symex_statet::L1);
+  field_sensitivity.apply(expr, write);
 
   // start the recursion!
   dereference_rec(expr, state);
   // dereferencing may introduce new symbol_exprt
   // (like __CPROVER_memory)
-  state.rename(expr, ns, goto_symex_statet::L1);
+  state.rename(expr, ns, field_sensitivity, goto_symex_statet::L1);
 
   // dereferencing is likely to introduce new member-of-if constructs --
   // for example, "x->field" may have become "(x == &o1 ? o1 : o2).field"
@@ -384,4 +387,6 @@ void goto_symext::dereference(exprt &expr, statet &state)
   // had previously been cleaned away
   INVARIANT(
     !has_subexpr(expr, ID_dereference), "simplify re-introduced dereferencing");
+
+  field_sensitivity.apply(expr, write);
 }

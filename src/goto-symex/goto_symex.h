@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <goto-programs/abstract_goto_model.h>
 
+#include "field_sensitivity.h"
 #include "goto_symex_state.h"
 #include "path_storage.h"
 #include "symex_target_equation.h"
@@ -83,6 +84,7 @@ public:
       ns(outer_symbol_table),
       target(_target),
       atomic_section_counter(0),
+      field_sensitivity(ns, target),
       log(mh),
       path_storage(path_storage),
       path_segment_vccs(0),
@@ -192,6 +194,7 @@ protected:
   namespacet ns;
   symex_target_equationt &target;
   unsigned atomic_section_counter;
+  field_sensitivityt field_sensitivity;
 
   mutable messaget log;
 

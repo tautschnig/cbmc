@@ -1,4 +1,4 @@
-CORE broken-smt-backend
+THOROUGH broken-smt-backend
 main.c
 
 ^EXIT=10$
@@ -6,3 +6,7 @@ main.c
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
+--
+Field-sensitive encoding of array accesses for an array of 2^16 elements is very
+expensive. We might consider some bounds up to which we actually do field
+expansion.

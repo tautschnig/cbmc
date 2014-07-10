@@ -71,7 +71,8 @@ exprt scratch_programt::eval(const exprt &e)
 {
   exprt ssa=e;
 
-  symex_state->rename(ssa, ns);
+  field_sensitivityt field_sensitivity(ns, equation);
+  symex_state->rename(ssa, ns, field_sensitivity);
 
   return checker->get(ssa);
 }

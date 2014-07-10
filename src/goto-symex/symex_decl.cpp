@@ -38,11 +38,11 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   // We also prevent propagation of old values.
 
   ssa_exprt ssa(expr);
-  state.rename(ssa, ns, goto_symex_statet::L1);
+  state.rename(ssa, ns, field_sensitivity, goto_symex_statet::L1);
   const irep_idt &l1_identifier=ssa.get_identifier();
 
   // rename type to L2
-  state.rename(ssa.type(), l1_identifier, ns);
+  state.rename(ssa.type(), l1_identifier, ns, field_sensitivity);
   ssa.update_type();
 
   // in case of pointers, put something into the value set
@@ -58,7 +58,7 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
     else
       rhs=exprt(ID_invalid);
 
-    state.rename(rhs, ns, goto_symex_statet::L1);
+    state.rename(rhs, ns, field_sensitivity, goto_symex_statet::L1);
     state.value_set.assign(ssa, rhs, ns, true, false);
   }
 
@@ -74,7 +74,7 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   symex_renaming_levelt::increase_counter(level2_it);
   const bool record_events=state.record_events;
   state.record_events=false;
-  state.rename(ssa, ns);
+  state.rename(ssa, ns, field_sensitivity);
   state.record_events=record_events;
 
   // we hide the declaration of auxiliary variables

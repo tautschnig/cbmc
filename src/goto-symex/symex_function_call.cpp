@@ -22,7 +22,8 @@ static void locality(
   const irep_idt &function_identifier,
   goto_symext::statet &state,
   const goto_functionst::goto_functiont &goto_function,
-  const namespacet &ns);
+  const namespacet &ns,
+  const field_sensitivityt &field_sensitivity);
 
 bool goto_symext::get_unwind_recursion(const irep_idt &, unsigned, unsigned)
 {
@@ -272,7 +273,7 @@ void goto_symext::symex_function_call_code(
   // read the arguments -- before the locality renaming
   exprt::operandst arguments = call.arguments();
   for(auto &a : arguments)
-    state.rename(a, ns);
+    state.rename(a, ns, field_sensitivity);
 
   // we hide the call if the caller and callee are both hidden
   const bool hidden = state.top().hidden_function && goto_function.is_hidden();
@@ -305,7 +306,7 @@ void goto_symext::symex_function_call_code(
   framet &frame = state.new_frame();
 
   // preserve locality of local variables
-  locality(identifier, state, goto_function, ns);
+  locality(identifier, state, goto_function, ns, field_sensitivity);
 
   // assign actuals to formal parameters
   parameter_assignments(identifier, goto_function, state, arguments);
@@ -386,7 +387,8 @@ static void locality(
   const irep_idt &function_identifier,
   goto_symext::statet &state,
   const goto_functionst::goto_functiont &goto_function,
-  const namespacet &ns)
+  const namespacet &ns,
+  const field_sensitivityt &field_sensitivity)
 {
   unsigned &frame_nr=
     state.threads[state.source.thread_nr].function_frame[function_identifier];
@@ -405,7 +407,7 @@ static void locality(
   {
     // get L0 name
     ssa_exprt ssa(ns.lookup(*it).symbol_expr());
-    state.rename(ssa, ns, goto_symex_statet::L0);
+    state.rename(ssa, ns, field_sensitivity, goto_symex_statet::L0);
     const irep_idt l0_name=ssa.get_identifier();
 
     // save old L1 name for popping the frame
@@ -427,7 +429,7 @@ static void locality(
     // identifiers may be shared among functions
     // (e.g., due to inlining or other code restructuring)
 
-    state.rename(ssa, ns, goto_symex_statet::L1);
+    state.rename(ssa, ns, field_sensitivity, goto_symex_statet::L1);
 
     irep_idt l1_name=ssa.get_identifier();
     unsigned offset=0;

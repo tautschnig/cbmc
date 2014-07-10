@@ -27,14 +27,18 @@ class symex_dereference_statet:
 public:
   symex_dereference_statet(
     const goto_symext &_goto_symex,
-    goto_symext::statet &_state)
-    : goto_symex(_goto_symex), state(_state)
+    goto_symext::statet &_state,
+    const field_sensitivityt &field_sensitivity)
+    : goto_symex(_goto_symex),
+      state(_state),
+      field_sensitivity(field_sensitivity)
   {
   }
 
 protected:
   const goto_symext &goto_symex;
   goto_symext::statet &state;
+  const field_sensitivityt &field_sensitivity;
 
   void get_value_set(const exprt &expr, value_setst::valuest &value_set)
     const override;

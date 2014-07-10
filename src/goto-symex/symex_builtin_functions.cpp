@@ -70,7 +70,7 @@ void goto_symext::symex_allocate(
   else
   {
     exprt tmp_size=size;
-    state.rename(tmp_size, ns); // to allow constant propagation
+    state.rename(tmp_size, ns, field_sensitivity); // do constant propagation
     simplify(tmp_size, ns);
 
     // special treatment for sizeof(T)*x
@@ -162,7 +162,7 @@ void goto_symext::symex_allocate(
   state.symbol_table.add(value_symbol);
 
   exprt zero_init=code.op1();
-  state.rename(zero_init, ns); // to allow constant propagation
+  state.rename(zero_init, ns, field_sensitivity); // do constant propagation
   simplify(zero_init, ns);
 
   INVARIANT(
@@ -231,7 +231,7 @@ void goto_symext::symex_gcc_builtin_va_arg_next(
     return; // ignore
 
   exprt tmp=code.op0();
-  state.rename(tmp, ns); // to allow constant propagation
+  state.rename(tmp, ns, field_sensitivity); // do constant propagation
   do_simplify(tmp);
   irep_idt id=get_symbol(tmp);
 
@@ -309,7 +309,7 @@ void goto_symext::symex_printf(
   PRECONDITION(!rhs.operands().empty());
 
   exprt tmp_rhs=rhs;
-  state.rename(tmp_rhs, ns);
+  state.rename(tmp_rhs, ns, field_sensitivity);
   do_simplify(tmp_rhs);
 
   const exprt::operandst &operands=tmp_rhs.operands();
@@ -335,14 +335,14 @@ void goto_symext::symex_input(
 
   exprt id_arg=code.op0();
 
-  state.rename(id_arg, ns);
+  state.rename(id_arg, ns, field_sensitivity);
 
   std::list<exprt> args;
 
   for(std::size_t i=1; i<code.operands().size(); i++)
   {
     args.push_back(code.operands()[i]);
-    state.rename(args.back(), ns);
+    state.rename(args.back(), ns, field_sensitivity);
     do_simplify(args.back());
   }
 
@@ -359,14 +359,14 @@ void goto_symext::symex_output(
 
   exprt id_arg=code.op0();
 
-  state.rename(id_arg, ns);
+  state.rename(id_arg, ns, field_sensitivity);
 
   std::list<exprt> args;
 
   for(std::size_t i=1; i<code.operands().size(); i++)
   {
     args.push_back(code.operands()[i]);
-    state.rename(args.back(), ns);
+    state.rename(args.back(), ns, field_sensitivity);
     do_simplify(args.back());
   }
 
@@ -480,7 +480,7 @@ void goto_symext::symex_trace(
     for(std::size_t j=2; j<code.arguments().size(); j++)
     {
       exprt var(code.arguments()[j]);
-      state.rename(var, ns);
+      state.rename(var, ns, field_sensitivity);
       vars.push_back(var);
     }
 

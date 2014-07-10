@@ -22,6 +22,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <analyses/dirty.h>
 #include <util/simplify_expr.h>
 
+#include "field_sensitivity.h"
+
 void goto_symext::symex_goto(statet &state)
 {
   const goto_programt::instructiont &instruction=*state.source.pc;
@@ -38,7 +40,7 @@ void goto_symext::symex_goto(statet &state)
   clean_expr(old_guard, state, false);
 
   exprt new_guard=old_guard;
-  state.rename(new_guard, ns);
+  state.rename(new_guard, ns, field_sensitivity);
   do_simplify(new_guard);
 
   if(new_guard.is_false())
@@ -249,8 +251,8 @@ void goto_symext::symex_goto(statet &state)
       exprt new_rhs = boolean_negate(new_guard);
 
       ssa_exprt new_lhs(guard_symbol_expr);
-      state.rename(new_lhs, ns, goto_symex_statet::L1);
-      state.assignment(new_lhs, new_rhs, ns, true, false);
+      state.rename(new_lhs, ns, field_sensitivity, goto_symex_statet::L1);
+      state.assignment(new_lhs, new_rhs, ns, field_sensitivity, true, false);
 
       guardt guard{true_exprt{}};
 
@@ -270,7 +272,7 @@ void goto_symext::symex_goto(statet &state)
         symex_targett::assignment_typet::GUARD);
 
       guard_expr = boolean_negate(guard_symbol_expr);
-      state.rename(guard_expr, ns);
+      state.rename(guard_expr, ns, field_sensitivity);
     }
 
     if(state.has_saved_jump_target)
@@ -387,6 +389,7 @@ static void for_each2(
 /// \param goto_state: first state
 /// \param [in, out] dest_state: second state
 /// \param ns: namespace
+/// \param field_sensitivity: field sensitive SSA renaming
 /// \param diff_guard: difference between the guards of the two states
 /// \param [out] log: logger for debug messages
 /// \param do_simplify: should the right-hand-side of the assignment that is
@@ -400,6 +403,7 @@ static void merge_names(
   const goto_statet &goto_state,
   goto_symext::statet &dest_state,
   const namespacet &ns,
+  const field_sensitivityt &field_sensitivity,
   const guardt &diff_guard,
   messaget &log,
   const bool do_simplify,
@@ -425,6 +429,10 @@ static void merge_names(
   {
     return;
   }
+
+  // field sensitivity: only merge on individual fields
+  if(field_sensitivityt::is_divisible(ns, ssa))
+    return;
 
   // shared variables are renamed on every access anyway, we don't need to
   // merge anything
@@ -494,7 +502,7 @@ static void merge_names(
   ssa_exprt new_lhs = ssa;
   const bool record_events = dest_state.record_events;
   dest_state.record_events = false;
-  dest_state.assignment(new_lhs, rhs, ns, true, true);
+  dest_state.assignment(new_lhs, rhs, ns, field_sensitivity, true, true);
   dest_state.record_events = record_events;
 
   log.conditional_output(
@@ -535,6 +543,7 @@ void goto_symext::phi_function(
         goto_state,
         dest_state,
         ns,
+        field_sensitivity,
         diff_guard,
         log,
         symex_config.simplify_opt,
