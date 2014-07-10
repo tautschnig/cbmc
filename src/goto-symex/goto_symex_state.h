@@ -20,6 +20,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/goto_functions.h>
 
 #include "symex_target.h"
+#include "field_sensitivity.h"
 
 class dirtyt;
 
@@ -345,6 +346,7 @@ public:
   std::set<unsigned> cex_graph_nodes;
   bool cex_started;
   const dirtyt * dirty;
+  field_sensitivityt field_sensitivity;
 };
 
 #endif

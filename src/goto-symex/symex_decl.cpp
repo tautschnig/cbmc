@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/rename.h>
 #include <util/std_expr.h>
 #include <util/message.h>
+#include <util/find_symbols.h>
 
 #include <linking/zero_initializer.h>
 #include <analyses/dirty.h>
@@ -67,10 +68,9 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   
   ssa_exprt ssa(expr);
   state.rename(ssa, ns, goto_symex_statet::L1);
-  const irep_idt &l1_identifier=ssa.get_identifier();
 
   // rename type to L2
-  state.rename(ssa.type(), l1_identifier, ns);
+  state.rename(ssa.type(), ssa.get_identifier(), ns);
   ssa.update_type();
 
   // L2 renaming
@@ -118,28 +118,53 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   }
   catch(int)
   {
-    // prevent propagation
-    state.propagation.remove(l1_identifier);
+    exprt l2_fields;
+    state.field_sensitivity.get_fields(ns, ssa, l2_fields);
+    std::set<exprt> l2_fields_set;
+    find_symbols(l2_fields, l2_fields_set);
 
-    state.level2.increase_counter(l1_identifier);
-    const bool record_events=state.record_events;
-    state.record_events=false;
-    state.rename(ssa, ns);
-    state.record_events=record_events;
+    for(std::set<exprt>::const_iterator it=l2_fields_set.begin();
+        it!=l2_fields_set.end();
+        ++it)
+    {
+      ssa_exprt ssa_lhs=to_ssa_expr(*it);
+      const irep_idt &l1_identifier=ssa_lhs.get_identifier();
 
-    target.decl(
-      state.guard.as_expr(),
-      ssa,
-      state.source,
-      hidden?symex_targett::HIDDEN:symex_targett::STATE);
+      // prevent propagation
+      state.propagation.remove(l1_identifier);
 
-    assert(state.dirty);
-    if(state.dirty->is_dirty(ssa.get_object_name()) &&
-       state.atomic_section_id==0)
-      target.shared_write(
+      // L2 renaming
+      // inlining may yield multiple declarations of the same identifier
+      // within the same L1 context
+      if(state.level2.current_names.find(l1_identifier)==
+         state.level2.current_names.end())
+        state.level2.current_names[l1_identifier]=std::make_pair(ssa_lhs, 0);
+      state.level2.increase_counter(l1_identifier);
+      const bool record_events=state.record_events;
+      state.record_events=false;
+      state.rename(ssa_lhs, ns);
+      state.record_events=record_events;
+
+      // record the declaration
+      // we hide the declaration of auxiliary variables
+      bool hidden=
+        ns.lookup(expr.get_identifier()).is_auxiliary ||
+        state.top().hidden_function ||
+        state.source.pc->source_location.get_hide();
+      target.decl(
         state.guard.as_expr(),
-        ssa,
-        state.atomic_section_id,
-        state.source);
+        ssa_lhs,
+        state.source,
+        hidden?symex_targett::HIDDEN:symex_targett::STATE);
+
+      assert(state.dirty);
+      if(state.dirty->is_dirty(ssa_lhs.get_object_name()) &&
+         state.atomic_section_id==0)
+        target.shared_write(
+          state.guard.as_expr(),
+          ssa_lhs,
+          state.atomic_section_id,
+          state.source);
+    }
   }
 }

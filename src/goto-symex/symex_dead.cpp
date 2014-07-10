@@ -11,8 +11,10 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/expr_util.h>
 #include <util/rename.h>
 #include <util/std_expr.h>
+#include <util/find_symbols.h>
 
 #include <pointer-analysis/add_failed_symbols.h>
+#include <analyses/dirty.h>
 
 #include "goto_symex.h"
 
@@ -68,14 +70,37 @@ void goto_symext::symex_dead(statet &state)
     state.value_set.assign(ssa, rhs, ns, true, false);
   }
 
-  ssa_exprt ssa_lhs=to_ssa_expr(ssa);
-  const irep_idt &l1_identifier=ssa_lhs.get_identifier();
+  exprt l2_fields;
+  state.field_sensitivity.get_fields(ns, ssa, l2_fields);
+  std::set<exprt> l2_fields_set;
+  find_symbols(l2_fields, l2_fields_set);
 
-  // prevent propagation
-  state.propagation.remove(l1_identifier);
+  for(std::set<exprt>::const_iterator it=l2_fields_set.begin();
+      it!=l2_fields_set.end();
+      ++it)
+  {
+    ssa_exprt ssa_lhs=to_ssa_expr(*it);
+    const irep_idt &l1_identifier=ssa_lhs.get_identifier();
 
-  // L2 renaming
-  if(state.level2.current_names.find(l1_identifier)!=
-     state.level2.current_names.end())
-    state.level2.increase_counter(l1_identifier);
+    // prevent propagation
+    state.propagation.remove(l1_identifier);
+
+    // L2 renaming
+    if(state.level2.current_names.find(l1_identifier)!=
+       state.level2.current_names.end())
+      state.level2.increase_counter(l1_identifier);
+    const bool record_events=state.record_events;
+    state.record_events=false;
+    state.rename(ssa_lhs, ns);
+    state.record_events=record_events;
+
+    assert(state.dirty);
+    if(state.dirty->is_dirty(ssa_lhs.get_object_name()) &&
+       state.atomic_section_id==0)
+      target.shared_write(
+        state.guard.as_expr(),
+        ssa_lhs,
+        state.atomic_section_id,
+        state.source);
+  }
 }

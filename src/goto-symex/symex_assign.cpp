@@ -306,6 +306,7 @@ void goto_symext::symex_assign_symbol(
   
 
   if(/*true ||*/ required || !constant_propagation)
+  {
     target.assignment(
       tmp_guard.as_expr(),
       ssa_lhs,
@@ -313,6 +314,10 @@ void goto_symext::symex_assign_symbol(
       ssa_rhs, 
       state.source,
       assignment_type);
+
+    state.field_sensitivity.field_assignments(
+      ns, state, target, lhs);
+  }
   else
     target.location(tmp_guard.as_expr(), state.source);
 }

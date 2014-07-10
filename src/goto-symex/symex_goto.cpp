@@ -341,6 +341,8 @@ void goto_symext::phi_function(
       continue; // not at all changed
 
     // changed!
+    if(!dest_state.field_sensitivity.is_indivisible(ns, *it))
+      continue; // not a canonical field
 
     // shared variables are renamed on every access anyway, we don't need to
     // merge anything

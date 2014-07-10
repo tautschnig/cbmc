@@ -639,6 +639,10 @@ bool goto_symex_statet::l2_thread_read_encoding(
       !dirty->is_dirty(obj_identifier)))
     return false;
 
+  // is it an indivisible object being accessed?
+  if(!field_sensitivity.is_indivisible(ns, expr))
+    return false;
+
   ssa_exprt ssa_l1=expr;
   ssa_l1.remove_level_2();
   const irep_idt &l1_identifier=ssa_l1.get_identifier();
@@ -793,6 +797,10 @@ bool goto_symex_statet::l2_thread_write_encoding(
      (!ns.lookup(obj_identifier).is_shared() &&
       !dirty->is_dirty(obj_identifier)))
     return false; // not shared
+
+  // is it an indivisible object being accessed?
+  if(!field_sensitivity.is_indivisible(ns, expr))
+    return false;
     
   // see whether we are within an atomic section
   if(atomic_section_id!=0)

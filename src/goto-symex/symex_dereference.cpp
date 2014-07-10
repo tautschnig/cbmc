@@ -360,6 +360,7 @@ void goto_symext::dereference(
   // symbols whose address is taken.
   assert(!state.call_stack().empty());
   state.rename(expr, ns, goto_symex_statet::L1);
+  state.field_sensitivity(ns, expr, write);
   rename_l1_reads_l2(expr, state, ns, write);
   // really, we need to use another dereferencing implementation,
   // such as dereferencet, with L2 renaming on demand
@@ -375,4 +376,5 @@ void goto_symext::dereference(
   std::cerr << "Before deref: " << from_expr(ns, "", expr) << std::endl;
   dereference_rec(expr, state, write);
 #endif
+  state.field_sensitivity(ns, expr, write);
 }
