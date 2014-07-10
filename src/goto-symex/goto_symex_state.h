@@ -30,6 +30,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "renaming_level.h"
 #include "symex_target_equation.h"
 
+class field_sensitivityt;
+
 /// Container for data that varies per program point, e.g. the constant
 /// propagator state, when state needs to branch. This is copied out of
 /// goto_symex_statet at a control-flow fork and then back into it at a
@@ -180,23 +182,33 @@ public:
   ///
   /// A full explanation of SSA (which is why we do this renaming) is in
   /// the SSA section of background-concepts.md.
-  void rename(exprt &expr, const namespacet &ns, levelt level=L2);
+  void rename(
+    exprt &expr,
+    const namespacet &ns,
+    const field_sensitivityt &field_sensitivity,
+    levelt level = L2);
   void rename(
     typet &type,
     const irep_idt &l1_identifier,
     const namespacet &ns,
-    levelt level=L2);
+    const field_sensitivityt &field_sensitivity,
+    levelt level = L2);
 
   void assignment(
-    ssa_exprt &lhs, // L0/L1
-    const exprt &rhs,  // L2
+    ssa_exprt &lhs,   // L0/L1
+    const exprt &rhs, // L2
     const namespacet &ns,
+    const field_sensitivityt &field_sensitivity,
     bool rhs_is_simplified,
     bool record_value,
-    bool allow_pointer_unsoundness=false);
+    bool allow_pointer_unsoundness = false);
 
 protected:
-  void rename_address(exprt &expr, const namespacet &ns, levelt level);
+  void rename_address(
+    exprt &expr,
+    const namespacet &ns,
+    const field_sensitivityt &field_sensitivity,
+    levelt level);
 
   /// Update level 0 values.
   void set_l0_indices(ssa_exprt &expr, const namespacet &ns);
@@ -278,7 +290,10 @@ public:
 
   std::vector<threadt> threads;
 
-  bool l2_thread_read_encoding(ssa_exprt &expr, const namespacet &ns);
+  bool l2_thread_read_encoding(
+    ssa_exprt &expr,
+    const namespacet &ns,
+    const field_sensitivityt &field_sensitivity);
   bool l2_thread_write_encoding(const ssa_exprt &expr, const namespacet &ns);
 
   bool record_events;

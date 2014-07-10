@@ -51,7 +51,7 @@ symex_dereference_statet::get_or_create_failed_symbol(const exprt &expr)
       symbolt sym=*symbol;
       symbolt *sym_ptr=nullptr;
       symbol_exprt sym_expr=sym.symbol_expr();
-      state.rename(sym_expr, ns, goto_symex_statet::L1);
+      state.rename(sym_expr, ns, field_sensitivity, goto_symex_statet::L1);
       sym.name=to_ssa_expr(sym_expr).get_identifier();
       state.symbol_table.move(sym, sym_ptr);
       return sym_ptr;
@@ -71,7 +71,7 @@ symex_dereference_statet::get_or_create_failed_symbol(const exprt &expr)
       symbolt sym=*symbol;
       symbolt *sym_ptr=nullptr;
       symbol_exprt sym_expr=sym.symbol_expr();
-      state.rename(sym_expr, ns, goto_symex_statet::L1);
+      state.rename(sym_expr, ns, field_sensitivity, goto_symex_statet::L1);
       sym.name=to_ssa_expr(sym_expr).get_identifier();
       state.symbol_table.move(sym, sym_ptr);
       return sym_ptr;

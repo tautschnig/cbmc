@@ -95,7 +95,7 @@ void goto_symext::vcc(
   }
 
   // now rename, enables propagation
-  state.rename(expr, ns);
+  state.rename(expr, ns, field_sensitivity);
 
   // now try simplifier on it
   do_simplify(expr);
@@ -410,7 +410,7 @@ void goto_symext::symex_step(
     {
       exprt tmp = instruction.get_condition();
       clean_expr(tmp, state, false);
-      state.rename(tmp, ns);
+      state.rename(tmp, ns, field_sensitivity);
       symex_assume(state, tmp);
     }
 

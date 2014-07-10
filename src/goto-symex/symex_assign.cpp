@@ -16,9 +16,13 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/cprover_prefix.h>
 #include <util/exception_utils.h>
 #include <util/pointer_offset_size.h>
+#include <util/simplify_expr.h>
 
 #include "goto_symex_state.h"
 
+// We can either use with_exprt or update_exprt when building expressions that
+// modify components of an array or a struct. Set USE_UPDATE to use
+// update_exprt.
 // #define USE_UPDATE
 
 void goto_symext::symex_assign(
@@ -195,6 +199,120 @@ void goto_symext::symex_assign_rec(
       "assignment to `" + lhs.id_string() + "' not handled");
 }
 
+static void rewrite_with_to_field_symbols(
+  exprt &ssa_rhs,
+  ssa_exprt &lhs_mod,
+  const field_sensitivityt &field_sensitivity)
+{
+#ifdef USE_UPDATE
+  while(ssa_rhs.id() == ID_update &&
+        (lhs_mod.type().id() == ID_array || lhs_mod.type().id() == ID_struct ||
+         lhs_mod.type().id() == ID_struct_tag))
+  {
+    exprt field_sensitive_lhs;
+    const update_exprt &update = to_update_expr(ssa_rhs);
+    PRECONDITION(update.designator().size() == 1);
+    const exprt &designator = update.designator().front();
+
+    if(lhs_mod.type().id() == ID_array)
+      field_sensitive_lhs =
+        index_exprt(lhs_mod, to_index_designator(designator).index());
+    else
+      field_sensitive_lhs = member_exprt(
+        lhs_mod,
+        to_member_designator(designator).get_component_name(),
+        update.new_value().type());
+
+    field_sensitivity.apply(field_sensitive_lhs, true);
+
+    if(field_sensitive_lhs.id() != ID_symbol)
+      break;
+
+    ssa_rhs = update.new_value();
+    lhs_mod = to_ssa_expr(field_sensitive_lhs);
+  }
+#else
+  while(ssa_rhs.id() == ID_with &&
+        (lhs_mod.type().id() == ID_array || lhs_mod.type().id() == ID_struct ||
+         lhs_mod.type().id() == ID_struct_tag))
+  {
+    exprt field_sensitive_lhs;
+    const with_exprt &with_expr = to_with_expr(ssa_rhs);
+
+    if(lhs_mod.type().id() == ID_array)
+      field_sensitive_lhs = index_exprt(lhs_mod, with_expr.where());
+    else
+      field_sensitive_lhs = member_exprt(
+        lhs_mod,
+        with_expr.where().get(ID_component_name),
+        with_expr.new_value().type());
+
+    field_sensitivity.apply(field_sensitive_lhs, true);
+
+    if(field_sensitive_lhs.id() != ID_symbol)
+      break;
+
+    ssa_rhs = with_expr.new_value();
+    lhs_mod = to_ssa_expr(field_sensitive_lhs);
+  }
+#endif
+}
+
+static void shift_indexed_access_to_lhs(
+  exprt &ssa_rhs,
+  ssa_exprt &lhs_mod,
+  const namespacet &ns,
+  const field_sensitivityt &field_sensitivity,
+  bool do_simplify)
+{
+  if(
+    ssa_rhs.id() == ID_byte_update_little_endian ||
+    ssa_rhs.id() == ID_byte_update_big_endian)
+  {
+    byte_update_exprt &byte_update = to_byte_update_expr(ssa_rhs);
+    exprt byte_extract = byte_extract_exprt(
+      byte_update.id() == ID_byte_update_big_endian
+        ? ID_byte_extract_big_endian
+        : ID_byte_extract_little_endian,
+      lhs_mod,
+      byte_update.offset(),
+      byte_update.value().type());
+    if(do_simplify)
+      simplify(byte_extract, ns);
+
+    if(byte_extract.id() == ID_symbol)
+    {
+      ssa_rhs = byte_update.value();
+      lhs_mod = to_ssa_expr(byte_extract);
+    }
+    else if(byte_extract.id() == ID_index)
+    {
+      ssa_rhs = byte_update.value();
+
+      while(byte_extract.id() == ID_index)
+      {
+        index_exprt &idx = to_index_expr(byte_extract);
+
+#ifdef USE_UPDATE
+        update_exprt new_rhs(idx.array().type());
+        new_rhs.old() = idx.array();
+        new_rhs.designator().push_back(index_designatort(idx.index()));
+        new_rhs.new_value() = ssa_rhs;
+#else
+        with_exprt new_rhs(idx.array(), idx.index(), ssa_rhs);
+#endif
+
+        ssa_rhs = new_rhs;
+        byte_extract = idx.array();
+      }
+
+      lhs_mod = to_ssa_expr(byte_extract);
+    }
+  }
+
+  rewrite_with_to_field_symbols(ssa_rhs, lhs_mod, field_sensitivity);
+}
+
 void goto_symext::symex_assign_symbol(
   statet &state,
   const ssa_exprt &lhs, // L1
@@ -212,14 +330,21 @@ void goto_symext::symex_assign_symbol(
     tmp_ssa_rhs.swap(ssa_rhs);
   }
 
-  state.rename(ssa_rhs, ns);
+  state.rename(ssa_rhs, ns, field_sensitivity);
+
+  ssa_exprt lhs_mod = lhs;
+
+  shift_indexed_access_to_lhs(
+    ssa_rhs, lhs_mod, ns, field_sensitivity, symex_config.simplify_opt);
+
   do_simplify(ssa_rhs);
 
-  ssa_exprt ssa_lhs=lhs;
+  ssa_exprt ssa_lhs = lhs_mod;
   state.assignment(
     ssa_lhs,
     ssa_rhs,
     ns,
+    field_sensitivity,
     symex_config.simplify_opt,
     symex_config.constant_propagation,
     symex_config.allow_pointer_unsoundness);
@@ -228,15 +353,14 @@ void goto_symext::symex_assign_symbol(
   ssa_full_lhs=add_to_lhs(ssa_full_lhs, ssa_lhs);
   const bool record_events=state.record_events;
   state.record_events=false;
-  state.rename(ssa_full_lhs, ns);
+  state.rename(ssa_full_lhs, ns, field_sensitivity);
   state.record_events=record_events;
 
   guardt tmp_guard(state.guard);
   tmp_guard.append(guard);
 
   // do the assignment
-  const symbolt &symbol =
-    ns.lookup(to_symbol_expr(ssa_lhs.get_original_expr()));
+  const symbolt &symbol = ns.lookup(ssa_lhs.get_object_name());
 
   if(symbol.is_auxiliary)
     assignment_type=symex_targett::assignment_typet::HIDDEN;
@@ -258,6 +382,8 @@ void goto_symext::symex_assign_symbol(
     ssa_rhs,
     state.source,
     assignment_type);
+
+  field_sensitivity.field_assignments(state, lhs_mod);
 }
 
 void goto_symext::symex_assign_typecast(
@@ -407,7 +533,7 @@ void goto_symext::symex_assign_if(
   guardt old_guard=guard;
 
   exprt renamed_guard=lhs.cond();
-  state.rename(renamed_guard, ns);
+  state.rename(renamed_guard, ns, field_sensitivity);
   do_simplify(renamed_guard);
 
   if(!renamed_guard.is_false())
