@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/exception_utils.h>
 #include <util/pointer_offset_size.h>
 
+#include "field_sensitivity.h"
 #include "goto_symex_state.h"
 
 // #define USE_UPDATE
@@ -231,10 +232,108 @@ void goto_symext::symex_assign_symbol(
     tmp_ssa_rhs.swap(ssa_rhs);
   }
 
+  // TODO: done via rename
+  // field_sensitivityt::apply(ns, ssa_rhs, false);
+
   state.rename(ssa_rhs, ns);
+
+  ssa_exprt lhs_mod = lhs;
+
+  if(
+    ssa_rhs.id() == ID_byte_update_little_endian ||
+    ssa_rhs.id() == ID_byte_update_big_endian)
+  {
+    byte_update_exprt &bu = to_byte_update_expr(ssa_rhs);
+    exprt be = byte_extract_exprt(
+      bu.id() == ID_byte_update_big_endian ? ID_byte_extract_big_endian
+                                           : ID_byte_extract_little_endian,
+      lhs_mod,
+      bu.offset(),
+      bu.value().type());
+    do_simplify(be);
+
+    if(be.id() == ID_symbol)
+    {
+      ssa_rhs = bu.value();
+      lhs_mod = to_ssa_expr(be);
+    }
+    else if(be.id() == ID_index)
+    {
+      ssa_rhs = bu.value();
+
+      while(be.id() == ID_index)
+      {
+        index_exprt &idx = to_index_expr(be);
+
+#ifdef USE_UPDATE
+        update_exprt new_rhs(idx.array().type());
+        new_rhs.old() = idx.array();
+        new_rhs.designator().push_back(index_designatort(idx.index()));
+        new_rhs.new_value() = ssa_rhs;
+#else
+        exprt new_rhs(ID_with, idx.array().type());
+        new_rhs.copy_to_operands(idx.array(), idx.index(), ssa_rhs);
+#endif
+
+        ssa_rhs = new_rhs;
+        be = idx.array();
+      }
+
+      lhs_mod = to_ssa_expr(be);
+    }
+  }
+
+#ifdef USE_UPDATE
+  while(ssa_rhs.id() == ID_update &&
+        (lhs_mod.type().id() == ID_array || lhs_mod.type().id() == ID_struct))
+  {
+    exprt fs_lhs;
+    const update_exprt &u = to_update_expr(ssa_rhs);
+    assert(u.designator().size() == 1);
+    const exprt &d = u.designator().front();
+
+    if(lhs_mod.type().id() == ID_array)
+      fs_lhs = index_exprt(lhs_mod, to_index_designator(d).index());
+    else
+      fs_lhs = member_exprt(
+        lhs_mod,
+        to_member_designator(d).get_component_name(),
+        u.new_value().type());
+
+    field_sensitivityt::apply(ns, fs_lhs, true);
+
+    if(fs_lhs.id() != ID_symbol)
+      break;
+
+    ssa_rhs = u.new_value();
+    lhs_mod = to_ssa_expr(fs_lhs);
+  }
+#else
+  while(ssa_rhs.id() == ID_with &&
+        (lhs_mod.type().id() == ID_array || lhs_mod.type().id() == ID_struct))
+  {
+    exprt fs_lhs;
+    const with_exprt &w = to_with_expr(ssa_rhs);
+
+    if(lhs_mod.type().id() == ID_array)
+      fs_lhs = index_exprt(lhs_mod, w.where());
+    else
+      fs_lhs = member_exprt(
+        lhs_mod, w.where().get(ID_component_name), w.new_value().type());
+
+    field_sensitivityt::apply(ns, fs_lhs, true);
+
+    if(fs_lhs.id() != ID_symbol)
+      break;
+
+    ssa_rhs = w.new_value();
+    lhs_mod = to_ssa_expr(fs_lhs);
+  }
+#endif
+
   do_simplify(ssa_rhs);
 
-  ssa_exprt ssa_lhs=lhs;
+  ssa_exprt ssa_lhs = lhs_mod;
   state.assignment(
     ssa_lhs,
     ssa_rhs,
@@ -254,8 +353,7 @@ void goto_symext::symex_assign_symbol(
   tmp_guard.append(guard);
 
   // do the assignment
-  const symbolt &symbol =
-    ns.lookup(to_symbol_expr(ssa_lhs.get_original_expr()));
+  const symbolt &symbol = ns.lookup(ssa_lhs.get_object_name());
 
   if(symbol.is_auxiliary)
     assignment_type=symex_targett::assignment_typet::HIDDEN;
@@ -277,6 +375,8 @@ void goto_symext::symex_assign_symbol(
     ssa_rhs,
     state.source,
     assignment_type);
+
+  field_sensitivityt::field_assignments(ns, state, target, lhs_mod);
 }
 
 void goto_symext::symex_assign_typecast(

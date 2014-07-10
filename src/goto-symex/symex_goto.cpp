@@ -22,6 +22,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <analyses/dirty.h>
 #include <util/simplify_expr.h>
 
+#include "field_sensitivity.h"
+
 void goto_symext::symex_goto(statet &state)
 {
   const goto_programt::instructiont &instruction=*state.source.pc;
@@ -431,6 +433,10 @@ static void merge_names(
   {
     return;
   }
+
+  // field sensitivity: only merge on individual fields
+  if(!field_sensitivityt::is_indivisible(ns, *it))
+    continue;
 
   // shared variables are renamed on every access anyway, we don't need to
   // merge anything

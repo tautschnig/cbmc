@@ -25,6 +25,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <analyses/dirty.h>
 
+#include "field_sensitivity.h"
+
 static void get_l1_name(exprt &expr);
 
 goto_symex_statet::goto_symex_statet()
@@ -365,6 +367,9 @@ void goto_symex_statet::rename(
         "as false case");
       expr.type()=to_if_expr(expr).true_case().type();
     }
+
+    if(level == L2)
+      field_sensitivityt::apply(ns, expr, false);
   }
 }
 
@@ -382,6 +387,10 @@ bool goto_symex_statet::l2_thread_read_encoding(
   if(
     obj_identifier == "goto_symex::\\guard" ||
     (!ns.lookup(obj_identifier).is_shared() && !(dirty)(obj_identifier)))
+    return false;
+
+  // is it an indivisible object being accessed?
+  if(!field_sensitivityt::is_indivisible(ns, expr))
     return false;
 
   ssa_exprt ssa_l1=expr;
@@ -526,6 +535,10 @@ bool goto_symex_statet::l2_thread_write_encoding(
     obj_identifier == "goto_symex::\\guard" ||
     (!ns.lookup(obj_identifier).is_shared() && !(dirty)(obj_identifier)))
     return false; // not shared
+
+  // is it an indivisible object being accessed?
+  if(!field_sensitivityt::is_indivisible(ns, expr))
+    return false;
 
   // see whether we are within an atomic section
   if(atomic_section_id!=0)

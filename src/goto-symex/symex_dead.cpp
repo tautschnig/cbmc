@@ -11,11 +11,12 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "goto_symex.h"
 
-#include <cassert>
-
+#include <util/find_symbols.h>
 #include <util/std_expr.h>
 
 #include <pointer-analysis/add_failed_symbols.h>
+
+#include "field_sensitivity.h"
 
 void goto_symext::symex_dead(statet &state)
 {
@@ -45,14 +46,34 @@ void goto_symext::symex_dead(statet &state)
     state.value_set.assign(ssa, rhs, ns, true, false);
   }
 
-  ssa_exprt ssa_lhs=to_ssa_expr(ssa);
-  const irep_idt &l1_identifier=ssa_lhs.get_identifier();
+  const exprt l2_fields = field_sensitivityt::get_fields(ns, ssa);
+  std::set<exprt> l2_fields_set;
+  find_symbols(l2_fields, l2_fields_set);
 
-  // prevent propagation
-  state.propagation.erase(l1_identifier);
+  for(const exprt &l2_field_set : l2_fields_set)
+  {
+    ssa_exprt ssa_lhs = to_ssa_expr(l2_field_set);
+    const irep_idt &l1_identifier = ssa_lhs.get_identifier();
 
-  // L2 renaming
-  auto level2_it = state.level2.current_names.find(l1_identifier);
-  if(level2_it != state.level2.current_names.end())
-    symex_renaming_levelt::increase_counter(level2_it);
+    // prevent propagation
+    state.propagation.remove(l1_identifier);
+
+    // TODO: not sure why the rest below is necessary
+    // L2 renaming
+    auto level2_it = state.level2.current_names.find(l1_identifier);
+    if(level2_it != state.level2.current_names.end())
+      symex_renaming_levelt::increase_counter(level2_it);
+
+    const bool record_events = state.record_events;
+    state.record_events = false;
+    state.rename(ssa_lhs, ns);
+    state.record_events = record_events;
+
+    if(
+      state.dirty(ssa_lhs.get_object_name()) && state.atomic_section_id == 0)
+    {
+      target.shared_write(
+        state.guard.as_expr(), ssa_lhs, state.atomic_section_id, state.source);
+    }
+  }
 }
