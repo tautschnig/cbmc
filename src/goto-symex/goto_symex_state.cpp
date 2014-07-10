@@ -643,6 +643,10 @@ bool goto_symex_statet::l2_thread_read_encoding(
   if(!field_sensitivity.is_indivisible(ns, expr))
     return false;
 
+  // is it an indivisible object being accessed?
+  if(!field_sensitivity.is_indivisible(ns, expr))
+    return false;
+
   ssa_exprt ssa_l1=expr;
   ssa_l1.remove_level_2();
   const irep_idt &l1_identifier=ssa_l1.get_identifier();
