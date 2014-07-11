@@ -8,6 +8,9 @@ Author: Michael Tautschnig, mt@eecs.qmul.ac.uk
 
 #include <util/simplify_expr.h>
 #include <util/std_expr.h>
+#include <util/arith_tools.h>
+
+#include <ansi-c/c_types.h>
 
 #include "symex_target.h"
 #include "goto_symex_state.h"
@@ -49,6 +52,12 @@ void field_sensitivityt::operator()(
   {
     simplify(expr, ns);
   }
+  else if(!write &&
+          expr.id()==ID_index &&
+          to_index_expr(expr).array().id()==ID_array)
+  {
+    simplify(expr, ns);
+  }
   else if(write && expr.id()==ID_member)
   {
     member_exprt &member=to_member_expr(expr);
@@ -63,6 +72,29 @@ void field_sensitivityt::operator()(
 
       tmp.type()=member.type();
       tmp.set(ID_expression, member);
+      tmp.update_identifier();
+
+      expr.swap(tmp);
+    }
+  }
+  else if(write && expr.id()==ID_index)
+  {
+    index_exprt &index=to_index_expr(expr);
+    simplify(index.index(), ns);
+
+    if(index.array().id()==ID_symbol &&
+       index.array().get_bool(ID_C_SSA_symbol) &&
+       ns.follow(index.array().type()).id()==ID_array &&
+       index.index().id()==ID_constant &&
+       to_array_type(ns.follow(index.array().type())).size().id()==ID_constant &&
+       !to_array_type(ns.follow(index.array().type())).size().is_zero())
+    {
+      ssa_exprt tmp=to_ssa_expr(index.array());
+
+      index.array()=tmp.get_original_expr();
+
+      tmp.type()=index.type();
+      tmp.set(ID_expression, index);
       tmp.update_identifier();
 
       expr.swap(tmp);
@@ -89,12 +121,13 @@ void field_sensitivityt::get_fields(
   exprt &dest) const
 {
 #if 1
-  if(ns.follow(ssa_expr.type()).id()==ID_struct)
+  const typet &followed_type=ns.follow(ssa_expr.type());
+
+  if(followed_type.id()==ID_struct)
   {
     const exprt &struct_op=ssa_expr.get_original_expr();
 
-    const struct_typet &type=
-      to_struct_type(ns.follow(ssa_expr.type()));
+    const struct_typet &type=to_struct_type(followed_type);
 
     const struct_union_typet::componentst &components=
       type.components();
@@ -113,6 +146,40 @@ void field_sensitivityt::get_fields(
 
       tmp.type()=member.type();
       tmp.set(ID_expression, member);
+      tmp.update_identifier();
+
+      exprt tmp_dest;
+      get_fields(ns, tmp, tmp_dest);
+      dest.copy_to_operands(tmp_dest);
+    }
+  }
+  else if(followed_type.id()==ID_array &&
+          to_array_type(followed_type).size().id()==ID_constant &&
+          !to_array_type(followed_type).size().is_zero())
+  {
+    const exprt &array=ssa_expr.get_original_expr();
+
+    const array_typet &type=to_array_type(followed_type);
+
+    mp_integer array_size;
+    if(to_integer(type.size(), array_size))
+      assert(false);
+    unsigned array_size_u=integer2unsigned(array_size);
+
+    dest=array_exprt(type);
+    dest.reserve_operands(array_size_u);
+    index_exprt index;
+    index.array()=array;
+    index.type()=type.subtype();
+
+    for(unsigned i=0; i<array_size_u; ++i)
+    {
+      index.index()=from_integer(i, index_type());
+
+      ssa_exprt tmp=ssa_expr;
+
+      tmp.type()=index.type();
+      tmp.set(ID_expression, index);
       tmp.update_identifier();
 
       exprt tmp_dest;
@@ -168,6 +235,8 @@ void field_sensitivityt::field_assignments_rec(
   const exprt &lhs_fs,
   const exprt &lhs) const
 {
+  const typet &followed_type=ns.follow(lhs.type());
+
   if(lhs==lhs_fs)
     return;
   else if(lhs_fs.id()==ID_symbol &&
@@ -190,10 +259,9 @@ void field_sensitivityt::field_assignments_rec(
       state.source,
       symex_targett::STATE);
   }
-  else if(ns.follow(lhs.type()).id()==ID_struct)
+  else if(followed_type.id()==ID_struct)
   {
-    const struct_typet &type=
-      to_struct_type(ns.follow(lhs.type()));
+    const struct_typet &type=to_struct_type(followed_type);
 
     const struct_union_typet::componentst &components=
       type.components();
@@ -212,6 +280,30 @@ void field_sensitivityt::field_assignments_rec(
       exprt member_lhs=lhs_fs.operands()[number];
 
       field_assignments_rec(ns, state, target, member_lhs, member_rhs);
+    }
+  }
+  else if(followed_type.id()==ID_array)
+  {
+    const array_typet &type=to_array_type(followed_type);
+
+    mp_integer array_size;
+    if(to_integer(type.size(), array_size))
+      assert(false);
+    unsigned array_size_u=integer2unsigned(array_size);
+
+    assert(lhs_fs.has_operands() &&
+           lhs_fs.operands().size()==array_size_u);
+
+    index_exprt index_rhs;
+    index_rhs.array()=lhs;
+    index_rhs.type()=type.subtype();
+
+    for(unsigned i=0; i<array_size_u; ++i)
+    {
+      index_rhs.index()=from_integer(i, index_type());
+      exprt index_lhs=lhs_fs.operands()[i];
+
+      field_assignments_rec(ns, state, target, index_lhs, index_rhs);
     }
   }
   else if(lhs_fs.has_operands())

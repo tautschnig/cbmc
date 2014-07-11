@@ -280,13 +280,72 @@ void goto_symext::symex_assign_symbol(
     tmp_ssa_rhs.swap(ssa_rhs);
   }
   
+  state.field_sensitivity(ns, ssa_rhs, false);
+
   target.set_mark();
   state.rename(ssa_rhs, ns);
+
+  ssa_exprt lhs_mod=lhs;
+
+  #ifdef USE_UPDATE
+  while(ssa_rhs.id()==ID_update &&
+        (lhs_mod.type().id()==ID_array ||
+         lhs_mod.type().id()==ID_struct))
+  {
+    exprt fs_lhs;
+    const update_exprt &u=to_update_expr(ssa_rhs);
+    assert(u.designator().size()==1);
+    const exprt &d=u.designator().front();
+
+    if(lhs_mod.type().id()==ID_array)
+      fs_lhs=index_exprt(lhs_mod, to_index_designator(d).index());
+    else
+      fs_lhs=
+        member_exprt(
+          lhs_mod,
+          to_member_designator(d).get_component_name(),
+          u.new_value().type());
+
+    state.field_sensitivity(ns, fs_lhs, true);
+
+    if(fs_lhs.id()!=ID_symbol) break;
+
+    ssa_rhs=u.new_value();
+    lhs_mod=to_ssa_expr(fs_lhs);
+  }
+  #else
+  while(ssa_rhs.id()==ID_with &&
+        (lhs_mod.type().id()==ID_array ||
+         lhs_mod.type().id()==ID_struct))
+  {
+    exprt fs_lhs;
+    const with_exprt &w=to_with_expr(ssa_rhs);
+
+    if(lhs_mod.type().id()==ID_array)
+      fs_lhs=index_exprt(lhs_mod, w.where());
+    else
+      fs_lhs=
+        member_exprt(
+          lhs_mod,
+          w.where().get(ID_component_name),
+          w.new_value().type());
+
+    state.field_sensitivity(ns, fs_lhs, true);
+
+    if(fs_lhs.id()!=ID_symbol) break;
+
+    ssa_rhs=w.new_value();
+    lhs_mod=to_ssa_expr(fs_lhs);
+  }
+  #endif
+
+  std::cerr << from_expr(ns, "", ssa_rhs) << std::endl;
+  std::cerr << "^^^^^^^ ORIG EXPR" << std::endl;
   do_simplify(ssa_rhs);
   std::cerr << from_expr(ns, "", ssa_rhs) << std::endl;
   target.remove_unused_reads(ssa_rhs);
   
-  ssa_exprt ssa_lhs=lhs;
+  ssa_exprt ssa_lhs=lhs_mod;
   bool required=
     state.assignment(ssa_lhs, ssa_rhs, ns, options.get_bool_option("simplify"), constant_propagation);
   
@@ -316,7 +375,7 @@ void goto_symext::symex_assign_symbol(
       assignment_type);
 
     state.field_sensitivity.field_assignments(
-      ns, state, target, lhs);
+      ns, state, target, lhs_mod);
   }
   else
     target.location(tmp_guard.as_expr(), state.source);
