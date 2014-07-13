@@ -42,6 +42,8 @@ void interpretert::operator()()
   function=main_it;
 
   done=false;
+  run_upto_main = false;
+  main_called = false;
 
   while(!done)
   {
@@ -72,6 +74,9 @@ void interpretert::command()
 {
   #define BUFSIZE 100
 
+  if (run_upto_main && !main_called)
+	  return;
+
   std::cout << std::endl << "command (h for help): ";
 
   char command[BUFSIZE];
@@ -86,15 +91,19 @@ void interpretert::command()
   if(ch=='h' || ch=='?')
 	  show_help();
 
+  if (ch == 'm')
+    run_upto_main = true;
+
   if(ch=='q')
     done=true;
 }
 
 void interpretert::show_help()
 {
-      std::cout << "q - quit" << std::endl
-                << "h - help" << std::endl
-                << "ENTER - next line" << std::endl;
+      std::cout << "\tq - quit" << std::endl
+                << "\th - help" << std::endl
+                << "\tm - run up to the main" << std::endl
+                << "\tENTER - next line" << std::endl;
 }
 
 void interpretert::step()
@@ -294,6 +303,9 @@ void interpretert::execute_function_call()
 
   if(f_it==goto_functions.function_map.end())
     throw "failed to find function "+id2string(identifier);
+
+  if (!main_called && (id2string(identifier) == "c::main"))
+	  main_called = true;
 
   // return value
   mp_integer return_value_address;

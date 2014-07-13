@@ -95,6 +95,8 @@ protected:
   goto_functionst::function_mapt::const_iterator function;
   goto_programt::const_targett PC, next_PC;
   bool done;
+  bool run_upto_main;
+  bool main_called;
 
   bool evaluate_boolean(const exprt &expr) const
   {
