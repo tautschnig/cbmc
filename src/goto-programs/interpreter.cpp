@@ -69,6 +69,9 @@ void interpretert::show_state()
 void interpretert::command()
 {
   #define BUFSIZE 100
+
+  std::cout << std::endl << "command (h for help): ";
+
   char command[BUFSIZE];
   if(fgets(command, BUFSIZE-1, stdin)==nullptr)
   {
@@ -78,8 +81,18 @@ void interpretert::command()
 
   char ch=tolower(command[0]);
 
+  if(ch=='h' || ch=='?')
+	  show_help();
+
   if(ch=='q')
     done=true;
+}
+
+void interpretert::show_help()
+{
+      std::cout << "q - quit" << std::endl
+                << "h - help" << std::endl
+                << "ENTER - next line" << std::endl;
 }
 
 void interpretert::step()
