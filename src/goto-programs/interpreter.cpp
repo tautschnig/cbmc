@@ -25,6 +25,8 @@ void interpretert::operator()()
 {
   build_memory_map();
 
+  fix_argc();
+
   const goto_functionst::function_mapt::const_iterator
     main_it=goto_functions.function_map.find(goto_functionst::entry_point());
 
@@ -415,6 +417,19 @@ void interpretert::build_memory_map(const symbolt &symbol)
       cell.value=0;
     }
   }
+}
+
+void interpretert::fix_argc()
+{
+  const symbolt *symbol;
+  if (ns.lookup("c::argc'", symbol))
+    return;
+
+  // argc appears in the main(), set value to 1; otherwise assume will fail
+  unsigned address = memory_map[symbol->name];
+  unsigned size = get_size(symbol->type);
+  memory_cellt &cell=memory[address];
+  cell.value = 1;
 }
 
 unsigned interpretert::get_size(const typet &type) const

@@ -58,6 +58,9 @@ protected:
   unsigned get_size(const typet &type) const;
   void step();
 
+  void show_help();
+  void fix_argc();
+  
   void execute_assert();
   void execute_assume();
   void execute_assign();
