@@ -97,6 +97,7 @@ protected:
   bool done;
   bool run_upto_main;
   bool main_called;
+  bool run_current_stmt;
 
   bool evaluate_boolean(const exprt &expr) const
   {

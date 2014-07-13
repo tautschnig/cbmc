@@ -48,8 +48,9 @@ void interpretert::operator()()
   while(!done)
   {
     show_state();
+    run_current_stmt = false;
     command();
-    if(!done)
+    if(!done && run_current_stmt)
       step();
   }
 }
@@ -77,7 +78,7 @@ void interpretert::command()
   if (run_upto_main && !main_called)
 	  return;
 
-  std::cout << std::endl << "command (h for help): ";
+  std::cout << std::endl << "command (q to quit; h for help): ";
 
   char command[BUFSIZE];
   if(fgets(command, BUFSIZE-1, stdin)==nullptr)
@@ -89,20 +90,26 @@ void interpretert::command()
   char ch=tolower(command[0]);
 
   if(ch=='h' || ch=='?')
+  {
 	  show_help();
+    run_current_stmt = false;
+  }
 
   if (ch == 'm')
     run_upto_main = true;
 
   if(ch=='q')
+  {
     done=true;
+    run_current_stmt = false;
+  }
 }
 
 void interpretert::show_help()
 {
       std::cout << "\tq - quit" << std::endl
                 << "\th - help" << std::endl
-                << "\tm - run up to the main" << std::endl
+              << "\tm - run until the main" << std::endl
                 << "\tENTER - next line" << std::endl;
 }
 
