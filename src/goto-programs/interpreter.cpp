@@ -337,7 +337,7 @@ void interpretert::execute_function_call()
       {
         frame.local_map[id]=stack_pointer;
 
-        for(unsigned i=0; i<stack_pointer; i++)
+        for(unsigned i=0; i<size; i++)
         {
           unsigned address=stack_pointer+i;
           if(address>=memory.size())
