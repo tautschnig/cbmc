@@ -399,6 +399,20 @@ void interpretert::evaluate(
 
     return;
   }
+  else if(expr.id()==ID_array)
+  {
+    forall_operands(it, expr)
+    {
+      std::vector<mp_integer> tmp;
+      evaluate(*it, tmp);
+      if(tmp.size()==1)
+      {
+	      dest.push_back(tmp.front());
+      }
+    }
+
+	  return;
+  }
 
   std::cout << "!! failed to evaluate expression: "
             << from_expr(ns, function->first, expr)
