@@ -23,6 +23,13 @@ Author: Daniel Kroening, kroening@kroening.com
 
 void interpretert::operator()()
 {
+  done=false;
+  while (!done)
+  {
+    run_upto_main = false;
+    main_called = false;
+    restart = false;
+
   build_memory_map();
 
   fix_argc();
@@ -41,17 +48,14 @@ void interpretert::operator()()
   PC=goto_function.body.instructions.begin();
   function=main_it;
 
-  done=false;
-  run_upto_main = false;
-  main_called = false;
-
-  while(!done)
+    while(!done && !restart)
   {
     show_state();
     run_current_stmt = true;
     command();
-    if(!done && run_current_stmt)
+    if(!done && !restart && run_current_stmt)
       step();
+  }
   }
 }
 
@@ -78,7 +82,7 @@ void interpretert::command()
   if (run_upto_main && !main_called)
 	  return;
 
-  std::cout << std::endl << "command (q to quit; h for help): ";
+  std::cout << std::endl << "\tCommand (q to quit; h for help): ";
 
   char command[BUFSIZE];
   if(fgets(command, BUFSIZE-1, stdin)==nullptr)
@@ -86,6 +90,8 @@ void interpretert::command()
     done=true;
     return;
   }
+
+  std::cout << std::endl;
 
   char ch=tolower(command[0]);
 
@@ -98,6 +104,9 @@ void interpretert::command()
   if (ch == 'm')
     run_upto_main = true;
 
+  if (ch == 'r')
+    restart = true;
+
   if(ch=='q')
   {
     done=true;
@@ -109,6 +118,7 @@ void interpretert::show_help()
 {
       std::cout << "\tq - quit" << std::endl
                 << "\th - help" << std::endl
+              << "\tr - restart" << std::endl
               << "\tm - run until the main" << std::endl
                 << "\tENTER - next line" << std::endl;
 }
@@ -396,6 +406,8 @@ void interpretert::execute_function_call()
 
 void interpretert::build_memory_map()
 {
+  memory_map.clear();
+
   // put in a dummy for NULL
   memory.resize(1);
   memory[0].offset=0;
