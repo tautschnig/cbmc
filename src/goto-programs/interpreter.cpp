@@ -48,7 +48,7 @@ void interpretert::operator()()
   while(!done)
   {
     show_state();
-    run_current_stmt = false;
+    run_current_stmt = true;
     command();
     if(!done && run_current_stmt)
       step();
