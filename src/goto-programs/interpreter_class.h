@@ -100,6 +100,9 @@ protected:
   bool run_upto_main;
   bool main_called;
   bool run_current_stmt;
+  std::vector<std::string> cmd_tokens;
+
+  void parse_cmd_tokens(const char* cmdline);
 
   bool evaluate_boolean(const exprt &expr) const
   {

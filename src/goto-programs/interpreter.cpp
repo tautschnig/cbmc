@@ -82,10 +82,13 @@ void interpretert::command()
   if (run_upto_main && !main_called)
 	  return;
 
+  char command[BUFSIZE];  
+  bool cmd_ok = false;
+  while (!cmd_ok)
+  {
   std::cout << std::endl << "\tCommand (q to quit; h for help): ";
 
-  char command[BUFSIZE];
-  if(fgets(command, BUFSIZE-1, stdin)==nullptr)
+    if(fgets(command, BUFSIZE-1, stdin)==nullptr)
   {
     done=true;
     return;
@@ -93,24 +96,72 @@ void interpretert::command()
 
   std::cout << std::endl;
 
-  char ch=tolower(command[0]);
+    parse_cmd_tokens(command);
 
-  if(ch=='h' || ch=='?')
+    cmd_ok = true;
+    if (cmd_tokens.size() == 0)
+    {
+      // press ENTER - next
+    }
+    else if (cmd_tokens.front() == "quit" || cmd_tokens.front() == "q")
+    {
+      done=true;
+      run_current_stmt = false;
+    }
+    else if (cmd_tokens.front() == "help" || cmd_tokens.front() == "h" || cmd_tokens.front() == "?")
   {
 	  show_help();
     run_current_stmt = false;
   }
-
-  if (ch == 'm')
+    else if (cmd_tokens.front() == "main" || cmd_tokens.front() == "m")
+    {
     run_upto_main = true;
-
-  if (ch == 'r')
+    }
+    else if (cmd_tokens.front() == "restart" || cmd_tokens.front() == "r")
+    {
     restart = true;
+    }
+    else
+    {
+      cmd_ok = false;
+    }
+  }
+}
 
-  if(ch=='q')
+void interpretert::parse_cmd_tokens(const char* cmdline)
   {
-    done=true;
-    run_current_stmt = false;
+  #define SPACE ' '
+
+  cmd_tokens.clear();
+
+  std::string line(cmdline);
+
+  size_t pos;
+
+  // remove LF if any
+  pos = line.find_last_of('\n');
+  if (pos != std::string::npos)
+  {
+    line.resize(line.size() - 1);
+  }
+
+  // remove CR if any
+  pos = line.find_last_of('\r');
+  if (pos != std::string::npos)
+  {
+    line.resize(line.size() - 1);
+  }
+
+  pos = line.find_first_not_of(SPACE);
+  while (pos != std::string::npos)
+  {
+    size_t sp_pos = line.find_first_of(SPACE, pos);
+    if (sp_pos == std::string::npos)
+      cmd_tokens.push_back(line.substr(pos));
+    else
+      cmd_tokens.push_back(line.substr(pos, sp_pos - pos));
+
+    pos = sp_pos;
   }
 }
 
