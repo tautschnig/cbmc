@@ -1912,6 +1912,12 @@ std::string expr2ct::convert_symbol(
     }
 
     dest=id2string(entry->second);
+    if(has_prefix(id2string(id), "symex_dynamic::dynamic_object"))
+    {
+      if(sizeof_nesting++ == 0)
+        dest+=" /*"+convert(src.type());
+      if(--sizeof_nesting == 0) dest+="*/";
+    }
   }
 
   if(src.id()==ID_next_symbol)
