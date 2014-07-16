@@ -103,6 +103,7 @@ protected:
   std::vector<std::string> cmd_tokens;
 
   void parse_cmd_tokens(const char* cmdline);
+  void interpretert::print_variable_value(const std::string variable) const;
 
   bool evaluate_boolean(const exprt &expr) const
   {

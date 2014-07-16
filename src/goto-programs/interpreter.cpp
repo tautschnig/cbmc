@@ -121,10 +121,62 @@ void interpretert::command()
     {
     restart = true;
     }
+    else if (cmd_tokens.front() == "print" || cmd_tokens.front() == "p")
+    {
+      run_current_stmt = false;
+      if (cmd_tokens.size() == 1)
+      {
+        //std::cout << std::endl << "\tNo variable name provided after the 'print' command";
+        //cmd_ok = false;
+        print_variable_value("");
+      }
+      else
+      {
+        for(int i = 1; i < cmd_tokens.size(); i++){
+          print_variable_value(cmd_tokens[i]);
+        }
+      }
+    }
     else
     {
       cmd_ok = false;
     }
+  }
+}
+
+void interpretert::print_variable_value(const std::string variable) const
+{
+  // 1. check local variable
+  const stack_framet &frame = call_stack.top();
+  std::set<irep_idt> locals;
+  get_local_identifiers(function->second, locals);
+  for(std::set<irep_idt>::const_iterator
+      it = locals.begin();
+      it != locals.end();
+      it++)
+  {
+    const irep_idt &id = *it;      
+    const symbolt &symbol = ns.lookup(id);
+    unsigned size = get_size(symbol.type);
+
+    if (frame.local_map.find(id) != frame.local_map.end())
+    {
+      unsigned address = frame.local_map.find(id)->second;
+      std::vector<mp_integer> tmp;
+      tmp.resize(size);
+      read(address, tmp);
+      if (size == 1)
+      {
+        std::cout << symbol.base_name <<":" << tmp[0] << std::endl;
+      }
+      else
+      {
+        std::cout << symbol.base_name <<":" << "<not implemented>" << std::endl;
+      }
+    }
+
+    //symbol.base_name
+    //std::cout << id2string(id) << std::endl;
   }
 }
 
@@ -157,11 +209,15 @@ void interpretert::parse_cmd_tokens(const char* cmdline)
   {
     size_t sp_pos = line.find_first_of(SPACE, pos);
     if (sp_pos == std::string::npos)
+    {
       cmd_tokens.push_back(line.substr(pos));
+      pos = sp_pos;
+    }
     else
+    {
       cmd_tokens.push_back(line.substr(pos, sp_pos - pos));
-
-    pos = sp_pos;
+      pos = line.find_first_not_of(SPACE, sp_pos + 1);
+    }
   }
 }
 
