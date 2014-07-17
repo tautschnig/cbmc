@@ -53,17 +53,16 @@ void interpretert::operator()()
 
     next_stop_PC = (initial_function->second).body.instructions.end();
     next_stop_PC_set = false;
+    step_out = false;
     completed = false;
 
     while(!done && !restart)
   {
     show_state();
+
     run_current_stmt = true;
 
-      if (!next_stop_PC_set)
-      {
     command();
-      }
     if(!done && !restart && run_current_stmt && !completed)
       step();
   }
@@ -97,7 +96,10 @@ void interpretert::show_state()
 
 void interpretert::command()
 {
-  next_instruction = false;
+  if (next_stop_PC_set) return;
+
+  step_out = false;
+  next_line = false;
 
   #define BUFSIZE 100
 
@@ -145,6 +147,8 @@ void interpretert::command()
     }
     else if (cmd_tokens.front() == "print" || cmd_tokens.front() == "p")
     {
+      if (completed) continue;
+
       run_current_stmt = false;
       if (cmd_tokens.size() == 1)
       {
@@ -161,7 +165,15 @@ void interpretert::command()
     }
     else if (cmd_tokens.front() == "next" || cmd_tokens.front() == "n")
     {
-      next_instruction = true;
+      next_line = true;
+    }
+    else if ((cmd_tokens.size() > 1 && cmd_tokens[0] == "step" && cmd_tokens[1] == "into") || cmd_tokens.front() == "si") //step into
+    {
+      // ok  
+    }
+    else if ((cmd_tokens.size() > 1 && cmd_tokens[0] == "step" && cmd_tokens[1] == "over") || cmd_tokens.front() == "so") //step out
+    {
+      step_out = true;
     }
     else
     {
@@ -263,6 +275,14 @@ void interpretert::show_help()
 
 void interpretert::step()
 {
+  if (step_out && !next_stop_PC_set && !call_stack.empty())
+  {
+    stack_framet &frame = call_stack.top();
+    next_stop_PC = frame.return_PC;
+    next_stop_function = frame.return_function;
+    next_stop_PC_set = true;
+  }
+
   if(PC==function->second.body.instructions.end())
   {
     if(call_stack.empty())
@@ -367,6 +387,9 @@ void interpretert::reset_next_PC()
   {
     next_stop_PC_set = false;
     next_stop_PC = (initial_function->second).body.instructions.end();
+    
+    step_out = false;
+    next_line = false;
   }
 }
 
@@ -550,7 +573,7 @@ void interpretert::execute_function_call()
       assign(evaluate_address(symbol_expr), argument_values[i]);
     }
 
-    if (next_instruction && !next_stop_PC_set)
+    if (next_line && !next_stop_PC_set)
     {
       next_stop_PC = next_PC;
       next_stop_function = function;

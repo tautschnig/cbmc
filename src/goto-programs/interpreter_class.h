@@ -101,7 +101,8 @@ protected:
   bool run_upto_main;
   bool main_called;
   bool run_current_stmt;
-  bool next_instruction;
+  bool next_line;
+  bool step_out;
   bool next_stop_PC_set;
   std::vector<std::string> cmd_tokens;
 
