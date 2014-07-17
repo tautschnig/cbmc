@@ -92,19 +92,23 @@ protected:
   typedef std::stack<stack_framet> call_stackt;
   call_stackt call_stack;
 
-  goto_functionst::function_mapt::const_iterator function, initial_function;
+  goto_functionst::function_mapt::const_iterator function, initial_function, next_stop_function;
   goto_programt::const_targett PC, next_PC, next_stop_PC;
   
   bool done;
+  bool completed;
   bool restart;
   bool run_upto_main;
   bool main_called;
   bool run_current_stmt;
   bool next_instruction;
+  bool next_stop_PC_set;
   std::vector<std::string> cmd_tokens;
 
   void parse_cmd_tokens(const char* cmdline);
   void interpretert::print_variable_value(const std::string variable) const;
+  void reset_next_PC();
+  void interpretert::show_function_start_msg() const;
 
   bool evaluate_boolean(const exprt &expr) const
   {

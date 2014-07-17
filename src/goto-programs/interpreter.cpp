@@ -49,18 +49,22 @@ void interpretert::operator()()
   function=main_it;
     initial_function = function;
 
+    show_function_start_msg();
+
     next_stop_PC = (initial_function->second).body.instructions.end();
-    next_instruction = false;
+    next_stop_PC_set = false;
+    completed = false;
 
     while(!done && !restart)
   {
     show_state();
     run_current_stmt = true;
-      if (!next_instruction && next_stop_PC == (initial_function->second).body.instructions.end())
+
+      if (!next_stop_PC_set)
       {
     command();
       }
-    if(!done && !restart && run_current_stmt)
+    if(!done && !restart && run_current_stmt && !completed)
       step();
   }
   }
@@ -68,6 +72,15 @@ void interpretert::operator()()
 
 void interpretert::show_state()
 {
+  if (completed)
+  {
+    std::cout << std::endl;
+    std::cout << std::endl;
+    std::cout << "=============== That is the end ===================="
+              << std::endl;
+    return;
+  }
+
   std::cout << "\n----------------------------------------------------\n";
 
   if(PC==function->second.body.instructions.end())
@@ -95,7 +108,7 @@ void interpretert::command()
   bool cmd_ok = false;
   while (!cmd_ok)
   {
-  std::cout << std::endl << "\tCommand (q to quit; h for help): ";
+    std::cout << std::endl << "Command (q to quit; h for help): ";
 
     if(fgets(command, BUFSIZE-1, stdin)==nullptr)
   {
@@ -238,9 +251,14 @@ void interpretert::show_help()
 {
       std::cout << "\tq - quit" << std::endl
                 << "\th - help" << std::endl
-              << "\tr - restart" << std::endl
-              << "\tm - run until the main" << std::endl
-                << "\tENTER - next line" << std::endl;
+            << "\tr - restart" << std::endl;
+  
+  if (completed) return;
+
+  std::cout << "\tm - run until the main" << std::endl
+            << "\tn - next line" << std::endl
+            << "\tsi (ENTER) - step into" << std::endl
+            << "\tso - step out" << std::endl;
 }
 
 void interpretert::step()
@@ -248,7 +266,10 @@ void interpretert::step()
   if(PC==function->second.body.instructions.end())
   {
     if(call_stack.empty())
-      done=true;
+    {
+      completed = true;
+      //done=true;
+    }
     else
     {
       PC=call_stack.top().return_PC;
@@ -257,13 +278,9 @@ void interpretert::step()
       call_stack.pop();
     }
 
-    return;
-  }
+    reset_next_PC();
 
-  if (PC == next_stop_PC)
-  {
-    next_stop_PC = (initial_function->second).body.instructions.end();
-    next_instruction = false;
+    return;
   }
 
   next_PC=PC;
@@ -340,6 +357,17 @@ void interpretert::step()
   }
 
   PC=next_PC;
+
+  reset_next_PC();
+}
+
+void interpretert::reset_next_PC()
+{
+  if (next_stop_PC_set && (function == next_stop_function) && (PC == next_stop_PC))
+  {
+    next_stop_PC_set = false;
+    next_stop_PC = (initial_function->second).body.instructions.end();
+  }
 }
 
 void interpretert::execute_goto()
@@ -522,22 +550,30 @@ void interpretert::execute_function_call()
       assign(evaluate_address(symbol_expr), argument_values[i]);
     }
 
-    if (next_instruction && (next_stop_PC == (initial_function->second).body.instructions.end()))
+    if (next_instruction && !next_stop_PC_set)
     {
       next_stop_PC = next_PC;
-    }
-    else
-    {
-      // reset to 'null'
-      next_stop_PC = (initial_function->second).body.instructions.end();
+      next_stop_function = function;
+      next_stop_PC_set = true;
     }
 
     // set up new PC
     function=f_it;
     next_PC=f_it->second.body.instructions.begin();
+    
+    show_function_start_msg();
   }
   else
     throw "no body for "+id2string(identifier);
+}
+
+void interpretert::show_function_start_msg() const
+{
+    std::cout << std::endl;
+    std::cout << "----------------------------------------------------"
+              << std::endl;
+    std::cout << "Start of function `"
+              << function->first << "'" << std::endl;
 }
 
 void interpretert::build_memory_map()
