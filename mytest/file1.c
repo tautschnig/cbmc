@@ -1,4 +1,8 @@
 void main()
 {
-   return 0;
+	int a, b;
+	a = 1;
+	b = 2;
+	a = b;
+    return a;
 }

@@ -47,12 +47,19 @@ void interpretert::operator()()
 
   PC=goto_function.body.instructions.begin();
   function=main_it;
+    initial_function = function;
+
+    next_stop_PC = (initial_function->second).body.instructions.end();
+    next_instruction = false;
 
     while(!done && !restart)
   {
     show_state();
     run_current_stmt = true;
+      if (!next_instruction && next_stop_PC == (initial_function->second).body.instructions.end())
+      {
     command();
+      }
     if(!done && !restart && run_current_stmt)
       step();
   }
@@ -77,6 +84,8 @@ void interpretert::show_state()
 
 void interpretert::command()
 {
+  next_instruction = false;
+
   #define BUFSIZE 100
 
   if (run_upto_main && !main_called)
@@ -136,6 +145,10 @@ void interpretert::command()
           print_variable_value(cmd_tokens[i]);
         }
       }
+    }
+    else if (cmd_tokens.front() == "next" || cmd_tokens.front() == "n")
+    {
+      next_instruction = true;
     }
     else
     {
@@ -245,6 +258,12 @@ void interpretert::step()
     }
 
     return;
+  }
+
+  if (PC == next_stop_PC)
+  {
+    next_stop_PC = (initial_function->second).body.instructions.end();
+    next_instruction = false;
   }
 
   next_PC=PC;
@@ -501,6 +520,16 @@ void interpretert::execute_function_call()
       symbol_expr.set(ID_identifier, a.get_identifier());
       assert(i<argument_values.size());
       assign(evaluate_address(symbol_expr), argument_values[i]);
+    }
+
+    if (next_instruction && (next_stop_PC == (initial_function->second).body.instructions.end()))
+    {
+      next_stop_PC = next_PC;
+    }
+    else
+    {
+      // reset to 'null'
+      next_stop_PC = (initial_function->second).body.instructions.end();
     }
 
     // set up new PC
