@@ -60,10 +60,8 @@ void interpretert::operator()()
   {
     show_state();
 
-    run_current_stmt = true;
-
     command();
-    if(!done && !restart && run_current_stmt && !completed)
+    if(!done && !restart && !completed)
       step();
   }
   }
@@ -101,85 +99,85 @@ void interpretert::command()
   step_out = false;
   next_line = false;
 
-  #define BUFSIZE 100
-
   if (run_upto_main && !main_called)
 	  return;
 
-  char command[BUFSIZE];  
-  bool cmd_ok = false;
-  while (!cmd_ok)
+  bool keep_asking = true;
+  while (keep_asking)
   {
-    std::cout << std::endl << "Command (q to quit; h for help): ";
+		cmd.ask();
 
-    if(fgets(command, BUFSIZE-1, stdin)==nullptr)
-  {
-    done=true;
-    return;
-  }
+		keep_asking = false;
 
-  std::cout << std::endl;
-
-    parse_cmd_tokens(command);
-
-    cmd_ok = true;
-    if (cmd_tokens.size() == 0)
+		if (cmd.is_next_line())
     {
-      // press ENTER - next
     }
-    else if (cmd_tokens.front() == "quit" || cmd_tokens.front() == "q")
+		else if (cmd.is_quit())
     {
       done=true;
-      run_current_stmt = false;
     }
-    else if (cmd_tokens.front() == "help" || cmd_tokens.front() == "h" || cmd_tokens.front() == "?")
+		else if (cmd.is_help())
   {
-	  show_help();
-    run_current_stmt = false;
+			cmd.print_help();
+			keep_asking = true; 
   }
-    else if (cmd_tokens.front() == "main" || cmd_tokens.front() == "m")
+		else if (cmd.is_run_until_main())
     {
     run_upto_main = true;
     }
-    else if (cmd_tokens.front() == "restart" || cmd_tokens.front() == "r")
+		else if (cmd.is_restart())
     {
     restart = true;
     }
-    else if (cmd_tokens.front() == "print" || cmd_tokens.front() == "p")
+		else if (cmd.is_print())
     {
-      if (completed) continue;
-
-      run_current_stmt = false;
-      if (cmd_tokens.size() == 1)
+			keep_asking = true; 
+      if (!completed)
       {
-        //std::cout << std::endl << "\tNo variable name provided after the 'print' command";
-        //cmd_ok = false;
-        print_variable_value("");
-      }
-      else
-      {
-        for(int i = 1; i < cmd_tokens.size(); i++){
-          print_variable_value(cmd_tokens[i]);
+				print();
         }
       }
-    }
-    else if (cmd_tokens.front() == "next" || cmd_tokens.front() == "n")
-    {
-      next_line = true;
-    }
-    else if ((cmd_tokens.size() > 1 && cmd_tokens[0] == "step" && cmd_tokens[1] == "into") || cmd_tokens.front() == "si") //step into
+		else if (cmd.is_step_into()) //step into
     {
       // ok  
     }
-    else if ((cmd_tokens.size() > 1 && cmd_tokens[0] == "step" && cmd_tokens[1] == "over") || cmd_tokens.front() == "so") //step out
+		else if (cmd.is_step_over()) //step out
     {
       step_out = true;
     }
     else
     {
-      cmd_ok = false;
+			keep_asking = true; 
     }
   }
+}
+
+void interpretert::print()
+    {
+	std::vector<std::string> cmd_parameters;
+	cmd.get_parameters(cmd_parameters);
+
+	std::vector<std::string> cmd_options;
+	cmd.get_options(cmd_options);
+
+	// TODO: if option is output to file, redirect to fie.
+
+	if (cmd_parameters.size() == 0)
+	{
+		print_local_variables();
+    }
+    else
+    {
+		for(int i = 1; i < cmd_parameters.size(); i++)
+		{
+			print_variable_value(cmd_parameters[i]);
+		}
+    }
+  }
+
+void interpretert::print_local_variables() const
+{
+	print_variable_value(""); //TODO
 }
 
 void interpretert::print_variable_value(const std::string variable) const
@@ -194,6 +192,7 @@ void interpretert::print_variable_value(const std::string variable) const
       it++)
   {
     const irep_idt &id = *it;      
+
     const symbolt &symbol = ns.lookup(id);
     unsigned size = get_size(symbol.type);
 
@@ -218,60 +217,6 @@ void interpretert::print_variable_value(const std::string variable) const
   }
 }
 
-void interpretert::parse_cmd_tokens(const char* cmdline)
-  {
-  #define SPACE ' '
-
-  cmd_tokens.clear();
-
-  std::string line(cmdline);
-
-  size_t pos;
-
-  // remove LF if any
-  pos = line.find_last_of('\n');
-  if (pos != std::string::npos)
-  {
-    line.resize(line.size() - 1);
-  }
-
-  // remove CR if any
-  pos = line.find_last_of('\r');
-  if (pos != std::string::npos)
-  {
-    line.resize(line.size() - 1);
-  }
-
-  pos = line.find_first_not_of(SPACE);
-  while (pos != std::string::npos)
-  {
-    size_t sp_pos = line.find_first_of(SPACE, pos);
-    if (sp_pos == std::string::npos)
-    {
-      cmd_tokens.push_back(line.substr(pos));
-      pos = sp_pos;
-    }
-    else
-    {
-      cmd_tokens.push_back(line.substr(pos, sp_pos - pos));
-      pos = line.find_first_not_of(SPACE, sp_pos + 1);
-    }
-  }
-}
-
-void interpretert::show_help()
-{
-      std::cout << "\tq - quit" << std::endl
-                << "\th - help" << std::endl
-            << "\tr - restart" << std::endl;
-  
-  if (completed) return;
-
-  std::cout << "\tm - run until the main" << std::endl
-            << "\tn - next line" << std::endl
-            << "\tsi (ENTER) - step into" << std::endl
-            << "\tso - step out" << std::endl;
-}
 
 void interpretert::step()
 {

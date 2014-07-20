@@ -12,6 +12,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_GOTO_PROGRAMS_INTERPRETER_CLASS_H
 #define CPROVER_GOTO_PROGRAMS_INTERPRETER_CLASS_H
 
+#include "interpreter_command.h"
+
 #include <stack>
 
 #include <util/arith_tools.h>
@@ -77,6 +79,7 @@ protected:
     mp_integer address,
     std::vector<mp_integer> &dest) const;
 
+	interpretert_command cmd;
   void command();
 
   class stack_framet
@@ -100,16 +103,16 @@ protected:
   bool restart;
   bool run_upto_main;
   bool main_called;
-  bool run_current_stmt;
   bool next_line;
   bool step_out;
   bool next_stop_PC_set;
-  std::vector<std::string> cmd_tokens;
 
-  void parse_cmd_tokens(const char* cmdline);
-  void interpretert::print_variable_value(const std::string variable) const;
+  void print_variable_value(const std::string variable) const;
+	void print_local_variables() const;
+
   void reset_next_PC();
   void interpretert::show_function_start_msg() const;
+	void print();
 
   bool evaluate_boolean(const exprt &expr) const
   {
