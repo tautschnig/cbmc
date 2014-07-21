@@ -10,6 +10,8 @@
 #define GOTO_INTERPRET_COMMAND_H
 
 #include <vector>
+#include <string>
+#include <unordered_map>
 
 class interpretert_command
 {
@@ -40,9 +42,11 @@ protected:
 
 	// --blah or --blah=blah is an option.
 	// all options are stored in options vector
-	std::vector<std::string> options;
+	std::unordered_map<std::string, std::string> options;
 
 	void parse(const char* cmdline);
+
+	std::string normalise_command(const std::string cmd);
 };
 
 #endif /* GOTO_INTERPRET_COMMAND_H */

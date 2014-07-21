@@ -7,8 +7,12 @@ Author: Siqing Tang, jtang707@gmail.com
 \*******************************************************************/
 
 #include <cctype>
-#include <cstdio>
+//#include <cstdio>
 #include <iostream>
+#include <algorithm>
+#include <string>
+#include <unordered_map>
+//#include <utility>
 #include <util/std_types.h>
 
 #include "interpreter_command.h"
@@ -139,7 +143,7 @@ void interpretert_command::get_options(std::vector<std::string> &dest) const
 	dest.clear();
 	for(unsigned i = 0; i < options.size(); i++)
 	{
-		dest.push_back(options[i]);
+		//dest.push_back(options[i]);
 	}
 }
 
@@ -186,11 +190,38 @@ void interpretert_command::parse(const char* cmdline)
 
 		if (s.length() >= 2 && s.substr(0, 2) == "--")
 		{
-			options.push_back(s);
+			std::string option = s.substr(2);
+			if (option.length() > 0)
+			{
+				size_t posEq = option.find_first_of("=");
+				std::string value("");
+		    if (posEq != std::string::npos)
+				{
+					value = option.substr(posEq + 1);
+				}
+
+				// convert option into lower case
+				std::transform(option.begin(), option.end(), option.begin(), ::tolower);
+				options[option] = value;
+			}
 		}
 		else 
 		{
+			if (tokens.empty())
+			{
+				// the first word, it is a command key word, convert into lower case
+				std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+				s = normalise_command(s);
+			}
 			tokens.push_back(s);
 		}
   }
+}
+
+
+std::string interpretert_command::normalise_command(const std::string cmd)
+{
+	std::string result(cmd);
+
+	return result;
 }
