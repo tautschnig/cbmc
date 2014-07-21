@@ -324,6 +324,16 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
   {
     std::cout << display_name <<": " << tmp[0] << std::endl;
   }
+  else if (tmp.size() > 1)
+  {
+    std::cout << display_name <<": {" << tmp[0];
+    for(unsigned i = 1; i < tmp.size(); i++)
+    {
+      std::cout << ", " << tmp[i];
+    }
+
+    std::cout << "}" << std::endl;
+  }
   else
   {
     std::cout << display_name <<": " << "<not implemented>" << std::endl;
