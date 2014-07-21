@@ -106,6 +106,7 @@ protected:
   bool next_line;
   bool step_out;
   bool next_stop_PC_set;
+	bool running;
 
   void print_local_variables(bool include_args, bool include_real_locals) const;
   void print_global_varialbes() const;
@@ -118,7 +119,8 @@ protected:
   bool is_internal_global_varialbe(const std::string name) const;
 
   void reset_next_PC();
-  void interpretert::show_function_start_msg() const;
+  void show_function_start_msg() const;
+	void show_require_running_msg() const;
 	void print();
 
   bool evaluate_boolean(const exprt &expr) const

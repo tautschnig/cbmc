@@ -23,7 +23,9 @@ void interpretert_command::ask()
 
 	char command[BUFSIZE];  
 
-	std::cout << std::endl << "Command (q to quit; h for help): ";
+	//std::cout << std::endl << "Command (q to quit; h for help): ";
+	
+	std::cout << std::endl << ":";
 	if (fgets(command, BUFSIZE - 1, stdin) == NULL)
   {
     cmd = "";
@@ -77,7 +79,7 @@ bool interpretert_command::is_run_until_main() const
 
 bool interpretert_command::is_next_line() const
 {
-	return cmd == "next";
+	return cmd == "next" || cmd == "";
 }
 
 bool interpretert_command::is_print() const

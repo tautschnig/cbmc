@@ -30,6 +30,7 @@ void interpretert::operator()()
     run_upto_main = false;
     main_called = false;
     restart = false;
+    running = false;
 
   build_memory_map();
 
@@ -60,7 +61,6 @@ void interpretert::operator()()
     while(!done && !restart)
   {
     show_state();
-
     command();
     if(!done && !restart && !completed)
       step();
@@ -133,10 +133,14 @@ void interpretert::command()
 		else if (cmd.is_print())
     {
 			keep_asking = true; 
-      if (!completed)
+			if (running)
       {
 				print();
         }
+			else
+			{
+				show_require_running_msg();
+			}
       }
 		else if (cmd.is_step_into()) //step into
     {
@@ -173,7 +177,7 @@ void interpretert::print()
     print_global_varialbes();
     }
 
-  for(int i = 0; i < parameters.size(); i++)
+  for(unsigned i = 0; i < parameters.size(); i++)
 	{
 	  print_variable(parameters[i]);
 	}
@@ -333,6 +337,7 @@ void interpretert::step()
     if(call_stack.empty())
     {
       completed = true;
+      running = false;
       //done=true;
     }
     else
@@ -630,6 +635,8 @@ void interpretert::execute_function_call()
     next_PC=f_it->second.body.instructions.begin();
     
     show_function_start_msg();
+
+    running = true;
   }
   else
     throw "no body for "+id2string(identifier);
@@ -642,6 +649,13 @@ void interpretert::show_function_start_msg() const
               << std::endl;
     std::cout << "Start of function `"
               << function->first << "'" << std::endl;
+}
+
+void interpretert::show_require_running_msg() const
+{
+	std::cout << std::endl;
+  std::cout << "This command is unavailable as the goto binary is not running";
+	std::cout << std::endl;
 }
 
 void interpretert::build_memory_map()
