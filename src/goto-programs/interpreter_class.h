@@ -121,7 +121,8 @@ protected:
   void reset_next_PC();
   void show_function_start_msg() const;
 	void show_require_running_msg() const;
-	void print();
+	void print() const;
+  void list_src(int before_lines, int after_lines) const;
 
   bool evaluate_boolean(const exprt &expr) const
   {

@@ -17,11 +17,13 @@ Author: Siqing Tang, jtang707@gmail.com
 
 #include "interpreter_command.h"
 
+#define DEFAULT_LIST_LINES 5
+
 void interpretert_command::ask()
 {
 	#define BUFSIZE 100
 
-	char command[BUFSIZE];  
+  char command[BUFSIZE];  
 
 	//std::cout << std::endl << "Command (q to quit; h for help): ";
 	
@@ -184,6 +186,7 @@ void interpretert_command::parse(const char* cmdline)
 		      if (posEq != std::string::npos)
 				  {
 					  value = option.substr(posEq + 1);
+            option = option.substr(0, posEq);
 				  }
 
 				  // convert option into lower case
@@ -238,6 +241,11 @@ void interpretert_command::normalise_command(std::string &cmd)
   else if (cmd == "l")
   {
     cmd = "list";
+  }
+  else if (cmd == "la")
+  {
+    cmd = "list";
+    options["all"] = "";
   }
   else if (cmd == "m")
   {
@@ -349,3 +357,43 @@ bool interpretert_command::has_print_globals() const
   return options.find("globals") != options.end();
 }
 
+bool interpretert_command::has_list_all() const
+{
+  return options.find("all") != options.end();
+}
+
+int interpretert_command::list_before_lines() const
+{
+  if (has_list_all())
+  {
+    return UINT_MAX;
+  }
+  else if (options.find("before") != options.end())
+  {
+    std::string before = options.find("before")->second;
+    int value = atoi(before.c_str());
+    return (value < 0) ? 0 : value;
+  }
+  else
+  {
+    return 0;
+  }
+}
+
+int interpretert_command::list_after_lines() const
+{
+  if (has_list_all())
+  {
+    return UINT_MAX;
+  }
+  else if (options.find("after") != options.end())
+  {
+    std::string after = options.find("after")->second;
+    int value = atoi(after.c_str());
+    return (value < 0) ? 0 : value;
+  }
+  else
+  {
+    return DEFAULT_LIST_LINES;
+  }
+}

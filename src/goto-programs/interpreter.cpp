@@ -150,6 +150,15 @@ void interpretert::command()
     {
       step_out = true;
     }
+    else if (cmd.is_list())
+    {
+			keep_asking = true;
+      int before_lines = cmd.list_before_lines();
+      int after_lines = cmd.list_after_lines();
+
+      list_src(before_lines, after_lines);
+    }
+
     else
     {
 			keep_asking = true; 
@@ -157,7 +166,7 @@ void interpretert::command()
   }
 }
 
-void interpretert::print()
+void interpretert::print() const
     {
 	std::vector<std::string> parameters;
 	cmd.get_parameters(parameters);
@@ -321,6 +330,36 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
   }
 }
 
+void interpretert::list_src(int before_lines, int after_lines) const
+{
+  goto_programt::const_targett cur_PC = PC;
+  goto_programt::const_targett start_PC = (function->second).body.instructions.begin();
+  goto_programt::const_targett end_PC = (function->second).body.instructions.end();
+
+  int before = 0;
+  while (before_lines > 0 && cur_PC != start_PC)
+  {
+    cur_PC--;
+    before++;
+  }
+
+  for(unsigned i = 0; i < before && cur_PC != PC && cur_PC != end_PC; i++)
+  {
+    function->second.body.output_instruction(ns, function->first, std::cout, cur_PC);
+    std::cout << std::endl;
+
+    cur_PC++;
+  }
+  
+  cur_PC = PC;
+  for(unsigned i = 0; i < after_lines && cur_PC != end_PC; i++)
+  {
+    function->second.body.output_instruction(ns, function->first, std::cout, cur_PC);
+    std::cout << std::endl;
+
+    cur_PC++;
+  }
+}
 
 void interpretert::step()
 {

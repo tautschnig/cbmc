@@ -45,6 +45,9 @@ public:
 	bool has_print_locals() const;
 	bool has_print_parameters() const;
 	bool has_print_globals() const;
+  bool has_list_all() const;
+  int list_before_lines() const;
+  int list_after_lines() const;
 
   void get_parameters(std::vector<std::string> &dest) const;
 protected:
