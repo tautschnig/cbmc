@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <iostream>
 #include <algorithm>
 
+#include <util/cprover_prefix.h>
 #include <util/std_types.h>
 #include <util/symbol_table.h>
 
@@ -154,66 +155,165 @@ void interpretert::command()
 
 void interpretert::print()
     {
-	std::vector<std::string> cmd_parameters;
-	cmd.get_parameters(cmd_parameters);
+	std::vector<std::string> parameters;
+	cmd.get_parameters(parameters);
 
-	std::vector<std::string> cmd_options;
-	cmd.get_options(cmd_options);
+  if (cmd.has_print_locals() || (!cmd.has_options() && parameters.empty()))
+  {
+    print_local_variables(false, true);
+  }
 
-	// TODO: if option is output to file, redirect to fie.
+  if (cmd.has_print_parameters())
+  {
+    print_local_variables(true, false);
+  }
 
-	if (cmd_parameters.size() == 0)
+  if (cmd.has_print_globals())
 	{
-		print_local_variables();
+    print_global_varialbes();
     }
-    else
+
+  for(int i = 0; i < parameters.size(); i++)
+	{
+	  print_variable(parameters[i]);
+	}
+}
+
+void interpretert::print_local_variables(bool include_args, bool include_real_locals) const
+{
+  const code_typet::argumentst &arguments=
+      to_code_type(function->second.type).arguments();
+
+  std::set<irep_idt> arg_ids;
+  for(unsigned i=0; i<arguments.size(); i++)
+  {
+    const code_typet::argumentt &a=arguments[i];
+    const irep_idt &id = a.get_identifier();
+    arg_ids.insert(id);
+  }
+
+  std::set<irep_idt> locals;
+  get_local_identifiers(function->second, locals);
+
+  const stack_framet &frame = call_stack.top();
+
+  // 'locals' contains arguments + local
+  for(std::set<irep_idt>::const_iterator
+      it = locals.begin();
+      it != locals.end();
+      it++)
     {
-		for(int i = 1; i < cmd_parameters.size(); i++)
+    const irep_idt &id = *it; 
+    bool is_arg = arg_ids.find(id) != arg_ids.end();
+    if ((include_args && is_arg) || (include_real_locals && !is_arg))
+    {
+      if (frame.local_map.find(id) != frame.local_map.end())
 		{
-			print_variable_value(cmd_parameters[i]);
+        const symbolt &symbol = ns.lookup(id);
+        print_variable(id2string(symbol.base_name), symbol);
+      }
 		}
     }
   }
 
-void interpretert::print_local_variables() const
+bool interpretert::is_internal_global_varialbe(const std::string name) const
 {
-	print_variable_value(""); //TODO
+  return (name.find(CPROVER_PREFIX) == 0) || (name == "c::argc'") || (name == "c::argv'");
 }
 
-void interpretert::print_variable_value(const std::string variable) const
+void interpretert::print_global_varialbes() const
 {
-  // 1. check local variable
-  const stack_framet &frame = call_stack.top();
+  for(symbol_tablet::symbolst::const_iterator
+    it = symbol_table.symbols.begin();
+    it != symbol_table.symbols.end();
+    it++)
+  {
+    const symbolt &symbol = it->second;
+    std::string var = id2string(symbol.name);
+    if (symbol.is_static_lifetime && 
+        !is_internal_global_varialbe(var))
+	  {
+      remove_global_varialbe_prefix(var);
+      print_variable(var, symbol);
+	  }
+  }
+}
+
+void interpretert::remove_global_varialbe_prefix(std::string &name) const
+{
+  if (name.find("c::") == 0)
+  {
+     name = name.substr(3);
+  }
+}
+
+void interpretert::print_variable(const std::string variable) const
+{
+  // 'locals' contains arguments + local
   std::set<irep_idt> locals;
   get_local_identifiers(function->second, locals);
+
+  const stack_framet &frame = call_stack.top();
+
+  // 'locals' contains arguments + local
   for(std::set<irep_idt>::const_iterator
       it = locals.begin();
       it != locals.end();
       it++)
   {
     const irep_idt &id = *it;      
-
-    const symbolt &symbol = ns.lookup(id);
-    unsigned size = get_size(symbol.type);
-
     if (frame.local_map.find(id) != frame.local_map.end())
     {
-      unsigned address = frame.local_map.find(id)->second;
-      std::vector<mp_integer> tmp;
-      tmp.resize(size);
-      read(address, tmp);
-      if (size == 1)
+      const symbolt &symbol = ns.lookup(id);
+      std::string name = id2string(symbol.base_name);
+      if (name == variable)
       {
-        std::cout << symbol.base_name <<":" << tmp[0] << std::endl;
+        print_variable(name, symbol);
+
+        return;
       }
-      else
+    }
+  }
+
+  //global
+  for(symbol_tablet::symbolst::const_iterator
+    it = symbol_table.symbols.begin();
+    it != symbol_table.symbols.end();
+    it++)
       {
-        std::cout << symbol.base_name <<":" << "<not implemented>" << std::endl;
+    const symbolt &symbol = it->second;
+    std::string cur_var = id2string(symbol.name);
+    if (symbol.is_static_lifetime && 
+        !is_internal_global_varialbe(cur_var))
+	  {
+      remove_global_varialbe_prefix(cur_var);
+      if (cur_var == variable)
+      {
+        print_variable(cur_var, symbol);
+
+        return;
+      }
       }
     }
 
-    //symbol.base_name
-    //std::cout << id2string(id) << std::endl;
+  std::cout << variable <<" - " << "<not found>" << std::endl;
+}
+
+void interpretert::print_variable(const std::string display_name, const symbolt &symbol) const
+{
+  exprt symbol_expr(ID_symbol, symbol.type);
+  symbol_expr.set(ID_identifier, symbol.name);
+      
+  std::vector<mp_integer> tmp;
+  evaluate(symbol_expr, tmp);
+
+  if (tmp.size() == 1)
+  {
+    std::cout << display_name <<": " << tmp[0] << std::endl;
+  }
+  else
+  {
+    std::cout << display_name <<": " << "<not implemented>" << std::endl;
   }
 }
 

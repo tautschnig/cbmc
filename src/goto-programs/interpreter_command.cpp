@@ -26,7 +26,8 @@ void interpretert_command::ask()
 	std::cout << std::endl << "Command (q to quit; h for help): ";
 	if (fgets(command, BUFSIZE - 1, stdin) == NULL)
   {
-		tokens.clear();
+    cmd = "";
+		parameters.clear();
 		options.clear();
   }
 	else
@@ -49,101 +50,77 @@ void interpretert_command::print_help() const
             << "\tso - step out" << std::endl;
 }
 
-bool interpretert_command::is_quit() const
+bool interpretert_command::is_break() const
 {
-	return !tokens.empty() && (
-		tokens.front() == "quit" ||
-		tokens.front() == "q");
+	return cmd == "break";
+}
+
+bool interpretert_command::is_callstack() const
+{
+	return cmd == "callstack";
 }
 
 bool interpretert_command::is_help() const
 {
-	return !tokens.empty() && (
-		tokens.front() == "help" ||
-		tokens.front() == "h"    ||
-		tokens.front() == "?");
-}
-
-bool interpretert_command::is_restart() const
-{
-	return !tokens.empty() && (
-		tokens.front() == "restart" ||
-		tokens.front() == "r");
-}
-
-bool interpretert_command::is_run_until_main() const
-{
-	return !tokens.empty() && (
-		tokens.front() == "main" ||
-		tokens.front() == "m");
-}
-
-bool interpretert_command::is_next_line() const
-{
-	return tokens.empty() ||
-		tokens.front() == "next" ||
-		tokens.front() == "n";
-}
-
-bool interpretert_command::is_step_into() const
-{
-	return !tokens.empty() && (
-		(tokens.size() == 1 && tokens.front() == "si") ||
-		(tokens.size() == 2 && 
-		 tokens.front() == "step" && 
-		 tokens[1] == "into"));
-}
-
-bool interpretert_command::is_step_over() const
-{
-	return !tokens.empty() && (
-		(tokens.size() == 1 && tokens.front() == "so") ||
-		(tokens.size() == 2 && 
-		 tokens.front() == "step" && 
-		 tokens[1] == "over"));
-}
-
-bool interpretert_command::is_print() const
-{
-	return !tokens.empty() &&
-		(tokens.front() == "print" ||
-		 tokens.front() == "p");
+	return cmd == "help";
 }
 
 bool interpretert_command::is_list() const
 {
-	return !tokens.empty() &&
-		(tokens.front() == "list" ||
-		 tokens.front() == "l");
+	return cmd == "list";
+}
+
+bool interpretert_command::is_run_until_main() const
+{
+	return cmd == "main";
+}
+
+bool interpretert_command::is_next_line() const
+{
+	return cmd == "next";
+}
+
+bool interpretert_command::is_print() const
+{
+	return cmd == "print";
+}
+
+bool interpretert_command::is_quit() const
+{
+	return cmd == "quit";
+}
+
+bool interpretert_command::is_restart() const
+{
+	return cmd == "restart";
+}
+
+bool interpretert_command::is_silent() const
+{
+	return cmd == "silent";
+}
+
+bool interpretert_command::is_step_into() const
+{
+	return cmd == "step" && options.find("into") != options.end();
+}
+
+bool interpretert_command::is_step_over() const
+{
+	return cmd == "step" && options.find("over") != options.end();
+}
+
+bool interpretert_command::is_watch() const
+{
+	return cmd == "watch";
 }
 
 void interpretert_command::get_parameters(std::vector<std::string> &dest) const
 {
 	dest.clear();
-
-	unsigned skip = 1;
-
-	// more logics here. for now just skip 1
-	// for example
-	// if (is_print())
-	//    skip = 1
-	// else if (...)
-	//
-	if (skip >= tokens.size()) return;
-
-	dest.resize(tokens.size() - skip);
-	for(unsigned i = skip; i < tokens.size(); i++)
+  for(unsigned i = 0; i < parameters.size(); i++)
 	{
-		dest.push_back(tokens[i]);
-	}
-}
-
-void interpretert_command::get_options(std::vector<std::string> &dest) const
-{
-	dest.clear();
-	for(unsigned i = 0; i < options.size(); i++)
-	{
-		//dest.push_back(options[i]);
+		dest.push_back(parameters[i]);
 	}
 }
 
@@ -151,8 +128,9 @@ void interpretert_command::parse(const char* cmdline)
 {
   #define SPACE ' '
 
-  tokens.clear();
+  parameters.clear();
 	options.clear();
+  cmd = "";
 
   std::string line(cmdline);
 
@@ -193,35 +171,179 @@ void interpretert_command::parse(const char* cmdline)
 			std::string option = s.substr(2);
 			if (option.length() > 0)
 			{
-				size_t posEq = option.find_first_of("=");
-				std::string value("");
-		    if (posEq != std::string::npos)
-				{
-					value = option.substr(posEq + 1);
-				}
+        if (cmd.empty())
+        {
+          // any option before a command will be ignored
+        }
+        else
+        {
+				  size_t posEq = option.find_first_of("=");
+				  std::string value("");
+		      if (posEq != std::string::npos)
+				  {
+					  value = option.substr(posEq + 1);
+				  }
 
-				// convert option into lower case
-				std::transform(option.begin(), option.end(), option.begin(), ::tolower);
-				options[option] = value;
+				  // convert option into lower case
+				  std::transform(option.begin(), option.end(), option.begin(), ::tolower);
+				  options[option] = value;
+        }
 			}
 		}
 		else 
 		{
-			if (tokens.empty())
+			if (cmd.empty())
 			{
 				// the first word, it is a command key word, convert into lower case
 				std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-				s = normalise_command(s);
+        
+        // then normalise it
+				normalise_command(s);
+        cmd = s;
 			}
-			tokens.push_back(s);
+      else
+      {
+			  parameters.push_back(s);
+      }
 		}
   }
 }
 
-
-std::string interpretert_command::normalise_command(const std::string cmd)
+void interpretert_command::normalise_command(std::string &cmd)
 {
-	std::string result(cmd);
-
-	return result;
+  if (cmd == "b")
+  {
+    cmd = "break";
+  }
+  else if (cmd == "bon")
+  {
+    cmd = "break";
+    options["on"] = "";
+  }
+  else if (cmd == "boff")
+  {
+    cmd = "break";
+    options["off"] = "";
+  }
+  else if (cmd == "cs")
+  {
+    cmd = "callstack";
+  }
+  else if (cmd == "h" || cmd == "?")
+  {
+    cmd = "help";
+  }
+  else if (cmd == "l")
+  {
+    cmd = "list";
+  }
+  else if (cmd == "m")
+  {
+    cmd = "main";
+  }
+  //else if (cmd == "modify")
+  //{
+  //  cmd = "modify";
+  //}
+  else if (cmd == "n")
+  {
+    cmd = "next";
+  }
+  else if (cmd == "p") //print
+  {
+    cmd = "print";
+  }
+  else if (cmd == "pl") // print --locals
+  {
+    cmd = "print";
+    options["locals"] = "";
+  }
+  else if (cmd == "pp") // print --parameters
+  {
+    cmd = "print";
+    options["parameters"] = "";
+  }
+  else if (cmd == "pg") // print --globals
+  {
+    cmd = "print";
+    options["globals"] = "";
+  }
+  else if (cmd == "plp" || cmd == "ppl") // print --locals --parameters
+  {
+    cmd = "print";
+    options["locals"] = "";
+    options["parameters"] = "";
+  }
+  else if (cmd == "plg" || cmd == "pgl") // print --locals --globals
+  {
+    cmd = "print";
+    options["locals"] = "";
+    options["globals"] = "";
+  }
+  else if (cmd == "ppg" || cmd == "pgp") // print --parameters --globals
+  {
+    cmd = "print";
+    options["parameters"] = "";
+    options["globals"] = "";
+  }
+  else if (cmd == "pa") // (all) print --locals --parameters --globals
+  {
+    cmd = "print";
+    options["locals"] = "";
+    options["parameters"] = "";
+    options["globals"] = "";
+  }
+  else if (cmd == "q")
+  {
+    cmd = "quit";
+  }
+  else if (cmd == "r")
+  {
+    cmd = "restart";
+  }
+  else if (cmd == "si")
+  {
+    cmd = "step";
+    options["into"] = "";
+  }
+  else if (cmd == "so")
+  {
+    cmd = "step";
+    options["over"] = "";
+  }
+  else if (cmd == "son")
+  {
+    cmd = "silent";
+    options["on"] = "";
+  }
+  else if (cmd == "soff")
+  {
+    cmd = "silent";
+    options["off"] = "";
+  }
+  else if (cmd == "w")
+  {
+    cmd = "watch";
+  }
 }
+
+bool interpretert_command::has_options() const
+{
+  return !options.empty();
+}
+
+bool interpretert_command::has_print_locals() const
+{
+  return options.find("locals") != options.end();
+}
+
+bool interpretert_command::has_print_parameters() const
+{
+  return options.find("parameters") != options.end();
+}
+
+bool interpretert_command::has_print_globals() const
+{
+  return options.find("globals") != options.end();
+}
+
