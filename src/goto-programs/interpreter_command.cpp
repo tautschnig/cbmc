@@ -11,6 +11,7 @@ Author: Siqing Tang, jtang707@gmail.com
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <limits.h>
 #include <util/std_types.h>
 
 #include "interpreter_command.h"
