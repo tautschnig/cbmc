@@ -9,9 +9,10 @@
 #ifndef GOTO_INTERPRET_COMMAND_H
 #define GOTO_INTERPRET_COMMAND_H
 
+//#include <vector>
+//#include <string>
 #include <vector>
-#include <string>
-#include <unordered_map>
+#include <util/hash_cont.h>
 
 class interpretert_command
 {
@@ -45,18 +46,17 @@ public:
 	bool has_print_locals() const;
 	bool has_print_parameters() const;
 	bool has_print_globals() const;
-  bool has_list_all() const;
-  int list_before_lines() const;
-  int list_after_lines() const;
 
   void get_parameters(std::vector<std::string> &dest) const;
 protected:
   std::string cmd;
 	std::vector<std::string> parameters;
 
+  typedef hash_map_cont<std::string, std::string, string_hash> option_mapt;
+
 	// --blah or --blah=blah is an option.
 	// all options are stored in options map
-	std::unordered_map<std::string, std::string> options;
+	option_mapt options;
 
 	void parse(const char* cmdline);
 
