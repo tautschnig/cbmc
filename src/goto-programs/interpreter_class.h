@@ -123,6 +123,7 @@ protected:
 	void show_require_running_msg() const;
 	void print() const;
   void list_src(int before_lines, int after_lines) const;
+  void show_callstack() const;
 
   bool evaluate_boolean(const exprt &expr) const
   {

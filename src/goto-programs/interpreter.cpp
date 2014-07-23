@@ -110,8 +110,14 @@ void interpretert::command()
 
 		keep_asking = false;
 
-		if (cmd.is_next_line())
+    if (cmd.is_callstack())
     {
+      show_callstack();
+      keep_asking = true;
+    }
+		else if (cmd.is_next_line())
+    {
+      next_line = true;
     }
 		else if (cmd.is_quit())
     {
@@ -368,6 +374,32 @@ void interpretert::list_src(int before_lines, int after_lines) const
     std::cout << std::endl;
 
     cur_PC++;
+  }
+}
+
+void interpretert::show_callstack() const
+{
+  if (call_stack.empty()) 
+  {
+    std::cout << "Empty Callstack" << std::endl;
+    return;
+  }
+
+  std::cout << std::endl << function->first << "'" << std::endl;
+  function->second.body.output_instruction(ns, function->first, std::cout, PC);
+
+  call_stackt tmp_call_stack(call_stack);
+
+  while (!tmp_call_stack.empty())
+  {
+    const goto_functionst::function_mapt::const_iterator 
+      caller_function = tmp_call_stack.top().return_function;
+    const goto_programt::const_targett caller_PC = (tmp_call_stack.top().return_PC)--;
+
+    std::cout << std::endl << caller_function->first << "'" << std::endl;
+    caller_function->second.body.output_instruction(ns, caller_function->first, std::cout, caller_PC);
+
+    tmp_call_stack.pop();
   }
 }
 
