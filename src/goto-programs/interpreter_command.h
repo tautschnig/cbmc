@@ -22,7 +22,7 @@ public:
 	{
   }
   
-  void ask();
+	void parse(const char* cmdline);
 
 	void print_help() const;
 
@@ -60,8 +60,6 @@ protected:
 	// --blah or --blah=blah is an option.
 	// all options are stored in options map
 	option_mapt options;
-
-	void parse(const char* cmdline);
 
 	void normalise_command(std::string &cmd);
 };

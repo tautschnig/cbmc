@@ -106,9 +106,19 @@ void interpretert::command()
   bool keep_asking = true;
   while (keep_asking)
   {
-		cmd.ask();
+	  #define BUFSIZE 100
+
+	  char command[BUFSIZE];  
+	  std::cout << std::endl << ":";
+	  if (fgets(command, BUFSIZE - 1, stdin) == NULL)
+    {
+      done = true;
+      return;
+    }
 
 		keep_asking = false;
+
+    cmd.parse(command);
 
     if (cmd.is_callstack())
     {

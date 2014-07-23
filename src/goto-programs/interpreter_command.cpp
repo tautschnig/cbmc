@@ -18,27 +18,6 @@ Author: Siqing Tang, jtang707@gmail.com
 
 #define DEFAULT_LIST_LINES 5
 
-void interpretert_command::ask()
-{
-	#define BUFSIZE 100
-
-	char command[BUFSIZE];  
-
-	//std::cout << std::endl << "Command (q to quit; h for help): ";
-	
-	std::cout << std::endl << ":";
-	if (fgets(command, BUFSIZE - 1, stdin) == NULL)
-  {
-    cmd = "";
-		parameters.clear();
-		options.clear();
-  }
-	else
-	{
-		parse(command);
-	}
-}
-
 void interpretert_command::print_help() const
 {
   std::cout << "\tq - quit" << std::endl
@@ -129,6 +108,14 @@ void interpretert_command::get_parameters(std::vector<std::string> &dest) const
 
 void interpretert_command::parse(const char* cmdline)
 {
+	if (cmdline == NULL)
+  {
+    cmd = "";
+		parameters.clear();
+		options.clear();
+    return;
+  }
+
   #define SPACE ' '
 
   parameters.clear();
