@@ -31,12 +31,12 @@ public:
 	bool is_help() const;
 	bool is_list() const;
 	bool is_run_until_main() const;
-	bool is_next_line() const;
+	bool is_next_line() const; //step over = ENTER
 	bool is_print() const;
 	bool is_quit() const;
 	bool is_restart() const;
 	bool is_step_into() const;
-	bool is_step_over() const;
+	bool is_step_out() const;
 	bool is_silent() const;
 	bool is_watch() const;
 

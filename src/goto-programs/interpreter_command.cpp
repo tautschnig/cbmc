@@ -80,7 +80,7 @@ bool interpretert_command::is_run_until_main() const
 
 bool interpretert_command::is_next_line() const
 {
-	return cmd == "next" || cmd == "";
+	return cmd == "next";
 }
 
 bool interpretert_command::is_print() const
@@ -105,12 +105,12 @@ bool interpretert_command::is_silent() const
 
 bool interpretert_command::is_step_into() const
 {
-	return cmd == "step" && options.find("into") != options.end();
+	return (cmd == "step" && options.find("into") != options.end()) || (cmd == "");
 }
 
-bool interpretert_command::is_step_over() const
+bool interpretert_command::is_step_out() const
 {
-	return cmd == "step" && options.find("over") != options.end();
+	return cmd == "step" && options.find("out") != options.end();
 }
 
 bool interpretert_command::is_watch() const
@@ -310,15 +310,15 @@ void interpretert_command::normalise_command(std::string &cmd)
   {
     cmd = "restart";
   }
-  else if (cmd == "si")
+  else if (cmd == "si" || cmd == "in" || cmd == "into")
   {
     cmd = "step";
     options["into"] = "";
   }
-  else if (cmd == "so")
+  else if (cmd == "so" || cmd == "out" )
   {
     cmd = "step";
-    options["over"] = "";
+    options["out"] = "";
   }
   else if (cmd == "son")
   {
