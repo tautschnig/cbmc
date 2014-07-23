@@ -1,32 +1,22 @@
 #!/bin/bash
-# This script is used to test the quit command
+# This script is used to test the quit command (quit and q)
 #
 
 echo TESTING the quit command
 
-cat << EOF > test.c
-int main()
-{
-	return 0;
-}
-EOF
-
-goto-cc -o test.bin test.c
+# compile
+goto-cc -o quit.o quit_src.c
 
 if [ $? -ne 0 ]
 then
     echo 
-    echo "Compile failed, please fix the script and re-run it."
+    echo "Compile failed, please fix the source file and re-run this script."
     exit 1
 fi
 
-# 
-# generate command file to test_input
-echo q > test_input
-
 # now run the interpreter. It reads input from test_input
 # 
-output=$( goto-instrument test.bin --interpreter < test_input \
+output=$( goto-instrument quit.o --interpreter < quit_input_q \
     | sed -n "/Starting interpreter/p;/__CPROVER_initialize();/p" \
     | wc -l )
 
@@ -34,13 +24,7 @@ output=$( goto-instrument test.bin --interpreter < test_input \
 [[ "$output" = "2" ]] && echo "q - PASSED" || echo "q - NOT PASSED"
 
 # test quit
-echo quit > test_input
-output=$( goto-instrument test.bin --interpreter < test_input \
+output=$( goto-instrument quit.o --interpreter < quit_input_quit \
     | sed -n "/Starting interpreter/p;/__CPROVER_initialize();/p" \
     | wc -l )
 [[ "$output" = "2" ]] && echo "quit - PASSED" || echo "quit - NOT PASSED"
-
-# clean up
-rm test.c
-rm test.bin
-rm test_input
