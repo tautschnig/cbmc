@@ -405,7 +405,7 @@ void interpretert::show_callstack() const
 
 void interpretert::step()
 {
-  if (step_out && !call_stack.empty())
+  if (step_out && !next_stop_PC_set && !call_stack.empty())
   {
     stack_framet &frame = call_stack.top();
     next_stop_PC = frame.return_PC;
