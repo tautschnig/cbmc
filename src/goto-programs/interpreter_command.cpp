@@ -388,3 +388,8 @@ int interpretert_command::list_after_lines() const
     return DEFAULT_LIST_LINES;
   }
 }
+
+bool interpretert_command::has_silent_on() const
+{
+  return is_silent() && (options.find("off") == options.end());
+}

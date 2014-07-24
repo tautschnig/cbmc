@@ -118,7 +118,8 @@ void interpretert::command()
 	  #define BUFSIZE 100
 
 	  char command[BUFSIZE];  
-	  std::cout << std::endl << ":";
+	  //std::cout << std::endl << ":";
+	  std::cout << ":";
 	  if (fgets(command, BUFSIZE - 1, stdin) == NULL)
     {
       done = true;
@@ -186,6 +187,16 @@ void interpretert::command()
     else if (cmd.is_where())
     {
       show_state(true);
+			keep_asking = true; 
+    }
+    else if (cmd.is_silent())
+    {
+      bool new_silent = cmd.has_silent_on();
+      if (silent && !new_silent)
+      {
+        show_state(true);
+      }
+      silent = new_silent;
 			keep_asking = true; 
     }
     else
@@ -611,8 +622,11 @@ void interpretert::assign(
     if(address<memory.size())
     {
       memory_cellt &cell=memory[integer2unsigned(address)];
-      std::cout << "** assigning " << cell.identifier
-                << "[" << cell.offset << "]:=" << rhs[i] << '\n';
+      if (!silent)
+      {
+        std::cout << "** assigning " << cell.identifier
+                  << "[" << cell.offset << "]:=" << rhs[i] << '\n';
+      }
       cell.value=rhs[i];
     }
   }
@@ -748,6 +762,8 @@ void interpretert::execute_function_call()
 
 void interpretert::show_function_start_msg() const
 {
+  if (silent) return;
+
     std::cout << std::endl;
     std::cout << "----------------------------------------------------"
               << std::endl;

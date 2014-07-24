@@ -50,6 +50,7 @@ public:
   bool has_list_all() const;
   int list_before_lines() const;
   int list_after_lines() const;
+	bool has_silent_on() const;
 
   void get_parameters(std::vector<std::string> &dest) const;
 protected:
