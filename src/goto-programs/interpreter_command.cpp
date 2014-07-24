@@ -42,6 +42,11 @@ bool interpretert_command::is_callstack() const
 	return cmd == "callstack";
 }
 
+bool interpretert_command::is_function() const
+{
+	return cmd == "function";
+}
+
 bool interpretert_command::is_help() const
 {
 	return cmd == "help";
@@ -109,6 +114,11 @@ void interpretert_command::get_parameters(std::vector<std::string> &dest) const
 	{
 		dest.push_back(parameters[i]);
 	}
+}
+
+std::string interpretert_command::get_first_parameter() const
+{
+  return parameters.size() >= 1 ? parameters[0] : "";
 }
 
 void interpretert_command::parse(const char* cmdline)
@@ -224,6 +234,10 @@ void interpretert_command::normalise_command(std::string &cmd)
   else if (cmd == "cs")
   {
     cmd = "callstack";
+  }
+  else if (cmd == "f")
+  {
+    cmd = "function";
   }
   else if (cmd == "h" || cmd == "?")
   {

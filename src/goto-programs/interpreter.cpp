@@ -135,6 +135,12 @@ void interpretert::command()
       show_callstack();
       keep_asking = true;
     }
+    else if (cmd.is_function())
+    {
+      set_entry_function(cmd.get_first_parameter());
+      keep_asking = true;
+
+    }
 		else if (cmd.is_next_line())
     {
       next_line = true;
@@ -204,6 +210,53 @@ void interpretert::command()
 			keep_asking = true; 
     }
   }
+}
+
+void interpretert::set_entry_function(std::string new_entry_function)
+{
+  if (new_entry_function.size() == 0)
+  {
+    std::cout << "funciton name not specified" << std::endl;
+    return;
+  }
+  else if (find_function(new_entry_function) != goto_functions.function_map.end())
+  {
+    if (new_entry_function.find("main") == 0 || new_entry_function.find(CPROVER_PREFIX) == 0)
+    {
+      std::cout << new_entry_function 
+        << " is an internal function and can't be specified as an entry function." 
+        << std::endl;
+    }
+    else
+    {
+      entry_function = new_entry_function;
+      std::cout << "The entry function has been set to " << entry_function
+        << ". Next time when the main function is to be called, this function will be called instead."
+        << std::endl;
+    }
+  }
+  else
+  {
+    std::cout << new_entry_function << " is not a function." << std::endl;
+  }
+}
+
+goto_functionst::function_mapt::const_iterator interpretert::find_function(std::string func_name) const
+{
+  std::string fname = "c::" + func_name;
+  for(goto_functionst::function_mapt::const_iterator 
+    it = goto_functions.function_map.begin();
+    it != goto_functions.function_map.end();
+  it++)
+  {
+    std::string cur_fname = id2string(it->first);
+    if (fname == cur_fname) 
+    {
+      return it;
+    }
+  }
+
+  return goto_functions.function_map.end();
 }
 
 void interpretert::print() const
@@ -659,14 +712,33 @@ void interpretert::execute_function_call()
 
   const memory_cellt &cell=memory[integer2size_t(a)];
   const irep_idt &identifier=cell.identifier;
+  bool calling_main = id2string(identifier) == "c::main";
+  bool replacing_main = false;
 
-  const goto_functionst::function_mapt::const_iterator f_it=
-    goto_functions.function_map.find(identifier);
+  goto_functionst::function_mapt::const_iterator f_it = 
+    goto_functions.function_map.end();
+
+  if (entry_function != "" && calling_main)
+  {
+    f_it = find_function(entry_function);
+    if (f_it == goto_functions.function_map.end())
+    {
+      f_it = goto_functions.function_map.find(identifier);
+    }
+    else
+    {
+      replacing_main = true;
+    }
+  }
+  else
+  {
+    f_it = goto_functions.function_map.find(identifier);
+  }
 
   if(f_it==goto_functions.function_map.end())
     throw "failed to find function "+id2string(identifier);
 
-  if (!main_called && (id2string(identifier) == "c::main"))
+  if (!main_called && calling_main)
 	  main_called = true;
 
   // return value
@@ -680,11 +752,13 @@ void interpretert::execute_function_call()
 
   // values of the arguments
   std::vector<std::vector<mp_integer> > argument_values;
-
+  if (!replacing_main)
+  {
   argument_values.resize(function_call.arguments().size());
 
   for(std::size_t i=0; i<function_call.arguments().size(); i++)
     evaluate(function_call.arguments()[i], argument_values[i]);
+  }
 
   // do the call
 
@@ -729,7 +803,13 @@ void interpretert::execute_function_call()
     const code_typet::parameterst &parameters=
       to_code_type(f_it->second.type).parameters();
 
-    if(argument_values.size()<parameters.size())
+    if (replacing_main)
+    {
+      // so arguments are not initialised.
+    }
+    else
+    {
+      if(argument_values.size()<parameters.size())
       throw "not enough arguments";
 
     for(unsigned i=0; i<parameters.size(); i++)
@@ -739,6 +819,7 @@ void interpretert::execute_function_call()
       symbol_expr.set(ID_identifier, a.get_identifier());
       assert(i<argument_values.size());
       assign(evaluate_address(symbol_expr), argument_values[i]);
+    }
     }
 
     if (next_line && !next_stop_PC_set)

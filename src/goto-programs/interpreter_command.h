@@ -28,6 +28,7 @@ public:
 
 	bool is_break() const;
 	bool is_callstack() const;
+	bool is_function() const;
 	bool is_help() const;
 	bool is_list() const;
 	bool is_run_until_main() const;
@@ -53,6 +54,7 @@ public:
 	bool has_silent_on() const;
 
   void get_parameters(std::vector<std::string> &dest) const;
+  std::string get_first_parameter() const;
 protected:
   std::string cmd;
 	std::vector<std::string> parameters;

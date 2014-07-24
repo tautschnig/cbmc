@@ -30,6 +30,8 @@ public:
     ns(_symbol_table),
     goto_functions(_goto_functions)
   {
+    entry_function = "";
+    silent = false;
   }
 
   void operator()();
@@ -108,6 +110,7 @@ protected:
   bool next_stop_PC_set;
 	bool running;
   bool silent;
+  std::string entry_function;
 
   void print_local_variables(bool include_args, bool include_real_locals) const;
   void print_global_varialbes() const;
@@ -125,6 +128,10 @@ protected:
 	void print() const;
   void list_src(int before_lines, int after_lines) const;
   void show_callstack() const;
+  void set_entry_function(std::string);
+
+  // helper
+  goto_functionst::function_mapt::const_iterator find_function(std::string function_name) const;
 
   bool evaluate_boolean(const exprt &expr) const
   {
