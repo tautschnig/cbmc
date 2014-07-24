@@ -39,6 +39,7 @@ public:
 	bool is_step_out() const;
 	bool is_silent() const;
 	bool is_watch() const;
+	bool is_where() const;
 
 	bool has_options() const;
 

@@ -107,6 +107,7 @@ protected:
   bool step_out;
   bool next_stop_PC_set;
 	bool running;
+  bool silent;
 
   void print_local_variables(bool include_args, bool include_real_locals) const;
   void print_global_varialbes() const;
@@ -140,7 +141,8 @@ protected:
 
   mp_integer evaluate_address(const exprt &expr) const;
 
-  void show_state();
+  void show_state() const;
+  void show_state(bool force) const;
 };
 
 #endif // CPROVER_GOTO_PROGRAMS_INTERPRETER_CLASS_H

@@ -25,6 +25,8 @@ Author: Daniel Kroening, kroening@kroening.com
 void interpretert::operator()()
 {
   done=false;
+  silent = false;
+
   while (!done)
   {
     run_upto_main = false;
@@ -68,8 +70,15 @@ void interpretert::operator()()
   }
 }
 
-void interpretert::show_state()
+void interpretert::show_state() const
 {
+  show_state(false);
+}
+
+void interpretert::show_state(bool force) const
+{
+  if (!force && silent) return;
+
   if (completed)
   {
     std::cout << std::endl;
@@ -174,7 +183,11 @@ void interpretert::command()
 
       list_src(before_lines, after_lines);
     }
-
+    else if (cmd.is_where())
+    {
+      show_state(true);
+			keep_asking = true; 
+    }
     else
     {
 			keep_asking = true; 

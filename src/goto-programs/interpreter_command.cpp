@@ -97,6 +97,11 @@ bool interpretert_command::is_watch() const
 	return cmd == "watch";
 }
 
+bool interpretert_command::is_where() const
+{
+	return cmd == "where";
+}
+
 void interpretert_command::get_parameters(std::vector<std::string> &dest) const
 {
 	dest.clear();
