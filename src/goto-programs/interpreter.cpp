@@ -19,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/cprover_prefix.h>
 #include <util/std_types.h>
 #include <util/symbol_table.h>
+#include <ansi-c/expr2c_class.h> //siqing
 
 #include "interpreter_class.h"
 
@@ -353,7 +354,7 @@ void interpretert::remove_global_varialbe_prefix(std::string &name) const
   }
 }
 
-void interpretert::print_variable(const std::string variable) const
+const symbolt &interpretert::get_variable_symbol(const std::string variable) const
 {
   // 'locals' contains arguments + local
   std::set<irep_idt> locals;
@@ -374,9 +375,7 @@ void interpretert::print_variable(const std::string variable) const
       std::string name = id2string(symbol.base_name);
       if (name == variable)
       {
-        print_variable(name, symbol);
-
-        return;
+        return symbol;
       }
     }
   }
@@ -395,14 +394,25 @@ void interpretert::print_variable(const std::string variable) const
       remove_global_varialbe_prefix(cur_var);
       if (cur_var == variable)
       {
-        print_variable(cur_var, symbol);
-
-        return;
+        return symbol;
       }
       }
     }
 
+ return null_symbol;
+}
+
+void interpretert::print_variable(const std::string variable) const
+{
+  const symbolt &symbol  = get_variable_symbol(variable);
+  if (&symbol != &null_symbol)
+  {
+    print_variable(variable, symbol);
+  }
+  else
+  {
   std::cout << variable <<" - " << "<not found>" << std::endl;
+}
 }
 
 void interpretert::print_variable(const std::string display_name, const symbolt &symbol) const
@@ -635,8 +645,81 @@ void interpretert::execute_other()
     std::vector<mp_integer> rhs;
     evaluate(PC->code.op0(), rhs);
   }
+  else if(statement==ID_printf)
+  {
+    execute_printf();
+  }
   else
     throw "unexpected OTHER statement: "+id2string(statement);
+}
+
+/// execute printf() - very limited
+void interpretert::execute_printf() const
+{
+  codet src = PC->code;
+
+  int param_count = 0;
+  forall_operands(it, src)
+  {
+    param_count++;
+  }
+
+  if (param_count == 0)
+  {
+    return;
+  }
+  else if (param_count > 2)
+  {
+    std::cout << "fprintf currently doesn't support more than two parameters" << std::endl;
+    return;
+  }
+  else
+  {
+    // param_count = 1 or 2
+    std::string first;
+    std::string second;
+    unsigned p = 0;
+    forall_operands(it, src)
+    {
+      p++;
+      expr2ct expr2c(ns);
+      expr2c.get_shorthands(*it);
+      if (p==1)
+      {
+        first = expr2c.convert(*it);
+      }
+      else
+      {
+        second = expr2c.convert(*it);
+      }
+    }
+
+    // the first parameter is assumed to be a string constant
+    if (param_count == 1)
+    {
+      std::cout << first;
+    }
+    else if (param_count == 2)
+    {
+      const symbolt &symbol  = get_variable_symbol(second);
+      if (&symbol != &null_symbol)
+      {
+        symbol.show(std::cout);
+
+        exprt symbol_expr(ID_symbol, symbol.type);
+        symbol_expr.set(ID_identifier, symbol.name);
+        std::vector<mp_integer> tmp;
+        evaluate(symbol_expr, tmp);
+
+        if (tmp.size() == 1)
+        {
+          std::cout << second <<": " << tmp[0] << std::endl;
+        }
+      }
+
+      printf(first.c_str());
+    }
+  }
 }
 
 void interpretert::execute_decl()

@@ -71,6 +71,7 @@ protected:
   void execute_goto();
   void execute_function_call();
   void execute_other();
+  void execute_printf() const;
   void execute_decl();
 
   void assign(
@@ -112,9 +113,13 @@ protected:
   bool silent;
   std::string entry_function;
 
+  const symbolt null_symbol;
+
   void print_local_variables(bool include_args, bool include_real_locals) const;
   void print_global_varialbes() const;
   void remove_global_varialbe_prefix(std::string &name) const;
+  const symbolt &get_variable_symbol(const std::string variable) const;
+  //const symbolt &get_variable_symbol(const std::string variable);
 
   void print_variable(const std::string variable) const;
   //void print_variable_value(const std::string variable, const typet &_type, const irep_idt &id) const;
