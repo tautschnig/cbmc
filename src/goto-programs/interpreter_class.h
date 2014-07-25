@@ -76,6 +76,8 @@ protected:
 
   bool interpretert::is_string_constant( const exprt &expr) const;
 
+  void print_arg(const std::string str_format, const exprt &expr) const;
+
   void assign(
     mp_integer address,
     const std::vector<mp_integer> &rhs);

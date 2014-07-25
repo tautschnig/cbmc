@@ -1,18 +1,15 @@
 #include<stdio.h>
 
-//int abc[] = {10, 20, 30};
-//char abc[] = "abc"; ==> [97, 98, 99, 0]
-//char *p = "abc";
-
-
 int main()
 {
-  char h[] = "hello\n";
-  //char *p = "Hello World %d\n";
+  //char msg[] = "vow";
+  //int x = 10;
+	
+  //printf("Hello World, msg=%s\n", "what"); //not working because of the casting. fixed now.
 
-  printf(h);
-  
-  //printf("Hello World\n");
+  printf("Hello World, msg=%s\n", "abc"); //not working because of the casting. fixed now.
+
+  //printf("Hello World, msg=%f\n", 10.23);
   
   return 0;
 }

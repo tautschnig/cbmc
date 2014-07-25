@@ -17,6 +17,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <algorithm>
 
 #include <util/cprover_prefix.h>
+#include <util/fixedbv.h>
+#include <util/ieee_float.h>
 #include <util/std_types.h>
 #include <util/symbol_table.h>
 #include <ansi-c/expr2c_class.h> //siqing
@@ -653,120 +655,117 @@ void interpretert::execute_other()
     throw "unexpected OTHER statement: "+id2string(statement);
 }
 
-/// execute printf() - very limited
+/// execute printf() - work for integer/float/double/string/char
 void interpretert::execute_printf() const
 {
   codet src = PC->code;
 
   if (!src.has_operands()) return;
 
-  std::string first;
+  std::string first_arg;
 
   exprt::operandst::const_iterator it=src.operands().begin();
   const exprt &expr = *it;
 
-  if(expr.id() == ID_address_of && 
-      expr.operands().size() == 1 &&
-      expr.op0().id() == ID_index &&
-      expr.op0().op0().id() == ID_string_constant) //siqing
+        std::vector<mp_integer> tmp;
+  evaluate(expr, tmp);
+
+  // The first argument is expected to be a string. see printf doc.
+  first_arg = read_string(tmp);
+
+  if (first_arg.size() == 0) return;
+
+  size_t p = 0;
+  const size_t len = first_arg.size();
+  while (p < len)
   {
-    first = expr.op0().op0().get_string(ID_value);
+    size_t p1 = first_arg.find_first_of("%", p);
+    if (p1 == std::string::npos)
+  {
+      // no '%' any more
+      std::cout << first_arg.substr(p);
+      break;
+  }
+
+    if (p1 + 1 < len && first_arg[p1 + 1] == '%')
+  {
+      std::cout << first_arg.substr(p, p1 + 1);
+      p = p1 + 2;
+      continue;
+  }
+
+    // % found, and there is no % immediately after i
+    if (it != src.operands().end()) it++; 
+
+    if (it == src.operands().end()) 
+      throw "Invalid printf format string found - argument count doesn't match %";
+
+    // trying to find next %
+    size_t p2 = first_arg.find_first_of("%", p1 + 1);
+    if (p2 == std::string::npos)
+  {
+      std::string s = first_arg.substr(p);
+      print_arg(s, *it);
+      break;
   }
   else
   {
-    expr2ct expr2c(ns);
-    expr2c.get_shorthands(expr);
-    first = expr2c.convert(expr);
-    const symbolt &symbol  = get_variable_symbol(first);
-    if (&symbol != &null_symbol)
-    {
-        // get the variable's value - must be in string
-        exprt symbol_expr(ID_symbol, symbol.type);
-        symbol_expr.set(ID_identifier, symbol.name);
-        std::vector<mp_integer> tmp;
-        evaluate(symbol_expr, tmp);
-        first = "";
-        for(int i = 0; i < tmp.size() - 1; i++)
-        {
-            int x = (int)(tmp[i].to_long());
-            first += char(x);
-        }
+      std::string s = first_arg.substr(p, p2 - p - 1);
+      p = p2;
+      print_arg(s, *it);
+      }
+      }
     }
 
+void interpretert::print_arg(const std::string str_format, const exprt &expr) const
+    {
+  std::vector<mp_integer> tmp;
+  evaluate(expr, tmp);
 
-    //std::string first_str = integer2string(); // not right
-  }
+  if (tmp.size() == 0) return;
 
-  std::cout << first;
+  if (expr.type().id() == ID_signedbv) //this also includes char
+    {
+    signed x = tmp[0].to_long();
+    printf(str_format.c_str(), x);
 
-  return;
-
-  it++;
-  while (it < expr.operands().end())
-  {
-    it++;
-  }
-
-  int param_count = 0;
-  forall_operands(it, src)
-  {
-    param_count++;
-  }
-
-  if (param_count == 0)
-  {
     return;
   }
-  else if (param_count > 2)
-  {
-    std::cout << "fprintf currently doesn't support more than two parameters" << std::endl;
+  else if (expr.type().id() == ID_unsignedbv)
+      {
+    unsigned x = tmp[0].to_ulong();
+    printf(str_format.c_str(), x);
+
     return;
   }
+  else if (expr.type().id() == ID_floatbv)
+  {
+    ieee_floatt f;
+    f.spec = to_floatbv_type(expr.type());
+    f.unpack(tmp[0]);
+    //f.from_expr(to_constant_expr(expr));
+
+    //std::cout << f.to_string_decimal(10) << std::endl; //work
+    // float x = f.to_float(); //working when printf("Hello World, msg=%f\n", 10.23f);
+    // must check is_float() or is_double()
+    if (f.is_float())
+        {
+      float x = f.to_float(); //not working when printf("Hello World, msg=%f\n", 10.23); //working for 10.23f
+      printf(str_format.c_str(), x);
+        }
+    else if (f.is_double())
+    {
+      double x = f.to_double();
+      printf(str_format.c_str(), x);
+      }
+
+    return;
+    }
   else
   {
-    // param_count = 1 or 2
-    std::string second;
-    unsigned p = 0;
-    forall_operands(it, src)
-    {
-      p++;
-      expr2ct expr2c(ns);
-      expr2c.get_shorthands(*it);
-      if (p==1)
-      {
-        first = expr2c.convert(*it);
-      }
-      else
-      {
-        second = expr2c.convert(*it);
-      }
-    }
-
-    // the first parameter is assumed to be a string constant
-    if (param_count == 1)
-    {
-      std::cout << first;
-    }
-    else if (param_count == 2)
-    {
-      const symbolt &symbol  = get_variable_symbol(second);
-      if (&symbol != &null_symbol)
-      {
-        symbol.show(std::cout);
-
-        exprt symbol_expr(ID_symbol, symbol.type);
-        symbol_expr.set(ID_identifier, symbol.name);
-        std::vector<mp_integer> tmp;
-        evaluate(symbol_expr, tmp);
-
-        if (tmp.size() == 1)
-        {
-          std::cout << second <<": " << tmp[0] << std::endl;
-        }
-      }
-
-      printf(first.c_str());
-    }
+    // assume string now.
+    std::string arg_value = read_string(tmp);
+    printf(str_format.c_str(), arg_value.c_str());
   }
 }
 
@@ -1023,12 +1022,14 @@ void interpretert::build_memory_map(const symbolt &symbol)
   if(size!=0)
   {
      std::string s = id2string(symbol.name);
-     if (s.find(CPROVER_PREFIX) != 0)
-     {
-         std::cout << s << std::endl;
-     }
 
     unsigned address=memory.size();
+
+     if (s.find(CPROVER_PREFIX) != 0)
+     {
+      std::cout << s << ", address=" << address << ", size: " << size << std::endl;
+     }
+
     memory.resize(address+size);
     memory_map[symbol.name]=address;
 
