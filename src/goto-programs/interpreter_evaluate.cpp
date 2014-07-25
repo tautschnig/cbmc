@@ -18,6 +18,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/fixedbv.h>
 #include <util/std_expr.h>
 
+#include <ansi-c/literals/convert_string_literal.h> //siqing
+
 void interpretert::read(
   mp_integer address,
   std::vector<mp_integer> &dest) const
@@ -336,6 +338,52 @@ void interpretert::evaluate(
 
     dest.push_back(evaluate_address(expr.op0()));
     return;
+
+
+    // Siqing, not very convinced with the following additions myself.
+    if (expr.op0().id() == ID_index && 
+        expr.op0().op0().id() == ID_string_constant) //siqing
+    {
+        // NOT QUIT working!
+        const irep_idt value = expr.op0().op0().get(ID_value);
+        std::string get_value = expr.op0().op0().get_string(ID_value); //ok
+        std::string s = "\"" + id2string(value) + "\""; //ok
+        exprt e = convert_string_literal(s); //ok
+
+        mp_integer tmp2;
+        to_integer(e, tmp2); //not working
+
+        evaluate(e, dest);
+
+        if (dest.size() == 1)
+        {
+            std::cout << "getting back: "
+                << dest[0]
+                << std::endl;
+            dest.push_back(dest[0]);
+
+            return;
+        }
+
+        //expr e = expr.op0().op0();
+
+        //mp_integer tmp2;
+        //to_integer(expr.op0().op0(), tmp2); //not working
+
+        // not right
+        //mp_integer tmp0(s.c_str());
+
+        //std::cout << "getting back: "
+        //    << tmp2
+        //    << std::endl;
+
+        //dest.push_back(tmp2);
+    }
+    else
+    {
+        dest.push_back(evaluate_address(expr.op0()));
+    }
+    return;
   }
   else if(expr.id()==ID_dereference ||
           expr.id()==ID_index ||
@@ -460,7 +508,9 @@ mp_integer interpretert::evaluate_address(const exprt &expr) const
     evaluate(expr.op1(), tmp1);
 
     if(tmp1.size()==1)
+    {
       return evaluate_address(expr.op0())+tmp1.front();
+  }
   }
   else if(expr.id()==ID_member)
   {

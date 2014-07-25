@@ -658,6 +658,55 @@ void interpretert::execute_printf() const
 {
   codet src = PC->code;
 
+  if (!src.has_operands()) return;
+
+  std::string first;
+
+  exprt::operandst::const_iterator it=src.operands().begin();
+  const exprt &expr = *it;
+
+  if(expr.id() == ID_address_of && 
+      expr.operands().size() == 1 &&
+      expr.op0().id() == ID_index &&
+      expr.op0().op0().id() == ID_string_constant) //siqing
+  {
+    first = expr.op0().op0().get_string(ID_value);
+  }
+  else
+  {
+    expr2ct expr2c(ns);
+    expr2c.get_shorthands(expr);
+    first = expr2c.convert(expr);
+    const symbolt &symbol  = get_variable_symbol(first);
+    if (&symbol != &null_symbol)
+    {
+        // get the variable's value - must be in string
+        exprt symbol_expr(ID_symbol, symbol.type);
+        symbol_expr.set(ID_identifier, symbol.name);
+        std::vector<mp_integer> tmp;
+        evaluate(symbol_expr, tmp);
+        first = "";
+        for(int i = 0; i < tmp.size() - 1; i++)
+        {
+            int x = (int)(tmp[i].to_long());
+            first += char(x);
+        }
+    }
+
+
+    //std::string first_str = integer2string(); // not right
+  }
+
+  std::cout << first;
+
+  return;
+
+  it++;
+  while (it < expr.operands().end())
+  {
+    it++;
+  }
+
   int param_count = 0;
   forall_operands(it, src)
   {
@@ -676,7 +725,6 @@ void interpretert::execute_printf() const
   else
   {
     // param_count = 1 or 2
-    std::string first;
     std::string second;
     unsigned p = 0;
     forall_operands(it, src)
@@ -974,6 +1022,12 @@ void interpretert::build_memory_map(const symbolt &symbol)
 
   if(size!=0)
   {
+     std::string s = id2string(symbol.name);
+     if (s.find(CPROVER_PREFIX) != 0)
+     {
+         std::cout << s << std::endl;
+     }
+
     unsigned address=memory.size();
     memory.resize(address+size);
     memory_map[symbol.name]=address;
