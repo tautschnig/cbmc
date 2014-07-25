@@ -74,6 +74,8 @@ protected:
   void execute_printf() const;
   void execute_decl();
 
+  bool interpretert::is_string_constant( const exprt &expr) const;
+
   void assign(
     mp_integer address,
     const std::vector<mp_integer> &rhs);
@@ -81,6 +83,8 @@ protected:
   void read(
     mp_integer address,
     std::vector<mp_integer> &dest) const;
+
+  std::string read_string(const std::vector<mp_integer> from) const;
 
 	interpretert_command cmd;
   void command();

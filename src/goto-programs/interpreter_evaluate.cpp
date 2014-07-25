@@ -40,6 +40,27 @@ void interpretert::read(
   }
 }
 
+std::string interpretert::read_string(const std::vector<mp_integer> from) const
+{
+  std::string result;
+  result.resize(from.size());
+
+  for(int i = 0; i < from.size(); i++)
+  {
+    int x = (int)(from[i].to_long());
+    result[i] += char(x);
+  }
+
+  return result;
+}
+
+bool interpretert::is_string_constant( const exprt &expr) const //siqing
+{
+  return expr.op0().id() == ID_index && 
+        expr.op0().operands().size() == 2 &&
+        expr.op0().op0().id() == ID_string_constant;
+}
+
 void interpretert::evaluate(
   const exprt &expr,
   std::vector<mp_integer> &dest) const
@@ -336,53 +357,17 @@ void interpretert::evaluate(
     if(expr.operands().size()!=1)
       throw "address_of expects one operand";
 
-    dest.push_back(evaluate_address(expr.op0()));
-    return;
-
-
-    // Siqing, not very convinced with the following additions myself.
-    if (expr.op0().id() == ID_index && 
-        expr.op0().op0().id() == ID_string_constant) //siqing
+    if (is_string_constant(expr)) //siqing
     {
-        // NOT QUIT working!
-        const irep_idt value = expr.op0().op0().get(ID_value);
-        std::string get_value = expr.op0().op0().get_string(ID_value); //ok
-        std::string s = "\"" + id2string(value) + "\""; //ok
-        exprt e = convert_string_literal(s); //ok
+      // to support printf("hello, world"); // where the first string parameter is not read out.
 
-        mp_integer tmp2;
-        to_integer(e, tmp2); //not working
-
-        evaluate(e, dest);
-
-        if (dest.size() == 1)
-        {
-            std::cout << "getting back: "
-                << dest[0]
-                << std::endl;
-            dest.push_back(dest[0]);
-
-            return;
-        }
-
-        //expr e = expr.op0().op0();
-
-        //mp_integer tmp2;
-        //to_integer(expr.op0().op0(), tmp2); //not working
-
-        // not right
-        //mp_integer tmp0(s.c_str());
-
-        //std::cout << "getting back: "
-        //    << tmp2
-        //    << std::endl;
-
-        //dest.push_back(tmp2);
+      evaluate(expr.op0().op0(), dest);
     }
     else
     {
         dest.push_back(evaluate_address(expr.op0()));
     }
+
     return;
   }
   else if(expr.id()==ID_dereference ||
@@ -399,6 +384,13 @@ void interpretert::evaluate(
   {
     if(expr.operands().size()!=1)
       throw "typecast expects one operand";
+
+    if (expr.op0().id() == ID_address_of && is_string_constant(expr.op0())) //siqing
+    {
+      // to support printf("hello, %s", "john");
+      evaluate(expr.op0(), dest);
+      return;
+    }
 
     std::vector<mp_integer> tmp;
     evaluate(expr.op0(), tmp);
@@ -447,7 +439,7 @@ void interpretert::evaluate(
 
     return;
   }
-  else if(expr.id()==ID_array)
+  else if(expr.id()==ID_array) //siqing
   {
     forall_operands(it, expr)
     {
@@ -460,6 +452,18 @@ void interpretert::evaluate(
     }
 
 	  return;
+  }
+  else if(expr.id()==ID_string_constant) //siqing
+  {
+    std::string str = expr.get_string(ID_value); //ok
+    for(unsigned i = 0; i < str.size(); i++)
+    {
+      mp_integer ch;
+      ch = (int)(str[i]);
+      dest.push_back(ch);
+    }
+
+    return;
   }
 
   std::cout << "!! failed to evaluate expression: "
