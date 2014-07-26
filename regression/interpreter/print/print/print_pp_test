@@ -1,0 +1,24 @@
+#!/bin/bash
+# This script is used to test the print command (print and q)
+#
+
+echo TESTING the print pp command
+
+# compile
+goto-cc -o print_pp.o print_pp_src.c
+
+if [ $? -ne 0 ]
+then
+    echo 
+    echo "Compile failed, please fix the source file and re-run this script."
+    exit 1
+fi
+
+# now run the interpreter. It reads input from print_pp_inp
+# 
+output=$( goto-instrument print_pp.o --interpreter < print_pp_inp \
+    | sed -n "/mypara: 123456789/p" \
+    | wc -l )
+
+# display passed info    
+[[ "$output" = "1" ]] && echo "q - PASSED" || echo "q - NOT PASSED"
