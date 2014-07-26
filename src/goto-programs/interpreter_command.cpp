@@ -57,9 +57,14 @@ bool interpretert_command::is_list() const
 	return cmd == "list";
 }
 
-bool interpretert_command::is_run_until_main() const
+bool interpretert_command::is_main() const
 {
 	return cmd == "main";
+}
+
+bool interpretert_command::is_modify() const
+{
+	return cmd == "modify";
 }
 
 bool interpretert_command::is_next_line() const
@@ -252,9 +257,13 @@ void interpretert_command::normalise_command(std::string &cmd)
     cmd = "list";
     options["all"] = "";
   }
+  //else if (cmd == "main")
+  //{
+  //  cmd = "main";
+  //}
   else if (cmd == "m")
   {
-    cmd = "main";
+    cmd = "modify";
   }
   //else if (cmd == "modify")
   //{

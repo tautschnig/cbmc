@@ -21,7 +21,11 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/ieee_float.h>
 #include <util/std_types.h>
 #include <util/symbol_table.h>
-#include <ansi-c/expr2c_class.h> //siqing
+
+#include <ansi-c/expr2c_class.h>
+#include <ansi-c/literals/convert_float_literal.h>
+#include <ansi-c/literals/convert_integer_literal.h>
+#include <ansi-c/literals/convert_string_literal.h>
 
 #include "interpreter_class.h"
 
@@ -157,9 +161,14 @@ void interpretert::command()
 			cmd.print_help();
 			keep_asking = true; 
   }
-		else if (cmd.is_run_until_main())
+    else if (cmd.is_main())
     {
     run_upto_main = true;
+    }
+    else if (cmd.is_modify())
+    {
+      keep_asking = true;
+      modify_variable();
     }
 		else if (cmd.is_restart())
     {
@@ -241,6 +250,109 @@ void interpretert::set_entry_function(std::string new_entry_function)
   else
   {
     std::cout << new_entry_function << " is not a function." << std::endl;
+  }
+}
+
+void interpretert::modify_variable()
+{
+  std::vector<std::string> params;
+  cmd.get_parameters(params);
+  if (params.size() != 2)
+  {
+    std::cout << "Invalid argument." << std::endl;
+    std::cout << "Usage: modify variable_name new_value" << std::endl;
+    return;
+  }
+
+  std::string var_name = params[0];
+  std::string var_value = params[1];
+
+  const symbolt &symbol = get_variable_symbol(var_name);
+
+  if (&symbol == &null_symbol)
+  {
+    std::cout << "Variable \"" << var_name <<"\" not found" <<  std::endl;
+    return;
+  }
+
+  if (is_internal_global_varialbe(var_name))
+  {
+    std::cout << "\"" << var_name <<"\" can't be modified as it is an internal vairable" <<  std::endl;
+    return;
+  }
+  
+  if (!symbol.is_lvalue)
+  {
+    std::cout << "\"" << var_name <<"\" can't be modified" <<  std::endl;
+    return;
+  }
+
+  //std::string type = symbol.type.pretty();
+  //std::cout << type;
+
+  //irept::named_subt::const_iterator c_type = symbol.type.get_comments().find(ID_C_c_type);
+  //if (c_type == symbol.type.get_comments().end())
+  //{
+  //  std::cout << "\"" << var_name <<"\" is not of c type. Currently only c type variable is supported" <<  std::endl;
+  //  return;
+  //}
+  //irept i = c_type->second;
+  //std::cout << "c type: " << c_type->second.id() << std::endl;
+  //
+  // c type example
+  // ID_signed_int
+
+  //irept::named_subt::const_iterator const_id = symbol.type.get_comments().find(ID_C_constant);
+  //if (const_id != symbol.type.get_comments().end())
+  //{
+  //  if (const_id->second.id_string() == "1") //if (id2string(const_id->second.id()) == "1")
+  //  {
+  //    std::cout << "\"" << var_name <<"\" can't be modified as it is a constant vairable" <<  std::endl;
+  //    return;
+  //  }
+  //}
+
+  if (symbol.type.get_bool(ID_C_constant))
+  {
+    std::cout << "\"" << var_name <<"\" can't be modified as it is a constant vairable" <<  std::endl;
+  }
+  else if (symbol.type.id() == ID_signedbv || symbol.type.id() == ID_unsignedbv) //also include char
+  {
+    exprt expr = convert_integer_literal(var_value);
+    modify_variable(symbol, expr);
+  }
+  else if (symbol.type.id() == ID_floatbv)
+  {
+    exprt expr = convert_float_literal(var_value);
+    modify_variable(symbol, expr);
+  }
+  else
+  {
+    std::cout << "\"" << var_name <<"\" is a data type upon which modification is currently not supported" <<  std::endl;
+    //std::cout << symbol <<  std::endl; //testing. ID_floatbv
+  }
+}
+
+void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
+{
+  std::vector<mp_integer> values;
+  evaluate(expr, values);
+
+  if (values.size() > 0)
+  {
+    exprt symbol_expr(ID_symbol, symbol.type);
+    symbol_expr.set(ID_identifier, symbol.name);
+    
+    unsigned size = get_size(symbol_expr.type());
+    if (size == values.size())
+    {
+      mp_integer address = evaluate_address(symbol_expr);
+      assign(address, values);
+    }
+    else
+    {
+      std::cout << "!! failed to modify" << std::endl;
+    }
   }
 }
 

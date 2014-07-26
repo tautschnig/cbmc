@@ -31,7 +31,8 @@ public:
 	bool is_function() const;
 	bool is_help() const;
 	bool is_list() const;
-	bool is_run_until_main() const;
+	bool is_main() const; //run up to the main (could be another function specified by the 'function' command
+  bool is_modify() const;
 	bool is_next_line() const; //step over = ENTER
 	bool is_print() const;
 	bool is_quit() const;

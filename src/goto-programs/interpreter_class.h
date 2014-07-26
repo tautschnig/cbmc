@@ -74,7 +74,7 @@ protected:
   void execute_printf() const;
   void execute_decl();
 
-  bool interpretert::is_string_constant( const exprt &expr) const;
+  bool is_string_constant( const exprt &expr) const;
 
   void print_arg(const std::string str_format, const exprt &expr) const;
 
@@ -140,6 +140,8 @@ protected:
   void list_src(int before_lines, int after_lines) const;
   void show_callstack() const;
   void set_entry_function(std::string);
+  void modify_variable();
+  void modify_variable(const symbolt &symbol, const exprt &expr);
 
   // helper
   goto_functionst::function_mapt::const_iterator find_function(std::string function_name) const;
