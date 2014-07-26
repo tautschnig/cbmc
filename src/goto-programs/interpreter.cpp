@@ -328,7 +328,7 @@ void interpretert::modify_variable()
   }
   else
   {
-    std::cout << "\"" << var_name <<"\" is a data type upon which modification is currently not supported" <<  std::endl;
+    std::cout << "\"" << var_name <<"\" has a data type currently not supported" <<  std::endl;
     //std::cout << symbol <<  std::endl; //testing. ID_floatbv
   }
 }
@@ -539,9 +539,33 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
 
   if (tmp.size() == 1)
   {
+    const irep_idt id = symbol.type.get(ID_C_c_type);
+    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
+    {
+      int c = int(tmp[0].to_long());
+      if (isprint(c))
+      {
+        std::cout << display_name <<": '" << char(c) << "'" << std::endl;
+      }
+      else
+      {
+        std::cout << display_name <<": " << tmp[0] << std::endl;
+      }
+    }
+    else
+    {
     std::cout << display_name <<": " << tmp[0] << std::endl;
   }
-  else if (tmp.size() > 1)
+  }
+  else if (tmp.size() > 1 && symbol.type.id() == ID_array)
+  {
+    const irep_idt id = symbol.type.subtype().get(ID_C_c_type);
+    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
+    {
+      std::string s = read_string(tmp);
+      std::cout << display_name <<": \"" << s << "\"" << std::endl;
+    }
+    else
   {
     std::cout << display_name <<": {" << tmp[0];
     for(unsigned i = 1; i < tmp.size(); i++)
@@ -550,6 +574,7 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
     }
 
     std::cout << "}" << std::endl;
+  }
   }
   else
   {

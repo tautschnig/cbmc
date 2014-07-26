@@ -47,7 +47,12 @@ std::string interpretert::read_string(const std::vector<mp_integer> from) const
 
   for(int i = 0; i < from.size(); i++)
   {
-    int x = (int)(from[i].to_long());
+    int x = int((from[i].to_long()));
+    if (x == 0)
+    {
+      result.resize(i);
+      break;
+    }
     result[i] += char(x);
   }
 
@@ -455,13 +460,14 @@ void interpretert::evaluate(
   }
   else if(expr.id()==ID_string_constant) //siqing
   {
-    std::string str = expr.get_string(ID_value); //ok
+    std::string str = expr.get_string(ID_value);
     for(unsigned i = 0; i < str.size(); i++)
     {
       mp_integer ch;
       ch = (int)(str[i]);
       dest.push_back(ch);
     }
+    dest.push_back(0);
 
     return;
   }

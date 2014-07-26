@@ -2,6 +2,9 @@ int main()
 {
 	const int i_cons = 34;
   
+  int a[] = {10, 20, 30};
+ 
+  
   char c = 'd'; //ID_signedbv
   signed char cs = 's'; //ID_signedbv
   unsigned char cu = 'o'; //ID_unsignedbv
@@ -25,6 +28,8 @@ int main()
   float f = 17.12f;           // ID_floatbv
   double d = 17.12;           // ID_floatbv
   
+  int *int_ptr;
+ 
   
   return 0;
 }
