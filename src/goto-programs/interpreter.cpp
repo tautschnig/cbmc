@@ -344,10 +344,12 @@ void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
     symbol_expr.set(ID_identifier, symbol.name);
     
     unsigned size = get_size(symbol_expr.type());
-    if (size == values.size())
+    if (size == values.size()) //TODO: less than should be ok
     {
       mp_integer address = evaluate_address(symbol_expr);
       assign(address, values);
+
+      // todo
     }
     else
     {
@@ -793,22 +795,65 @@ void interpretert::execute_other()
 }
 
 /// execute printf() - work for integer/float/double/string/char
+/// TODO: move this to interpreter_util.cpp
+bool is_c_pointer_of_char(typet type)
+{
+  if (type.id() == ID_pointer)
+  {
+    const irep_idt id = type.subtype().get(ID_C_c_type);
+    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
+    {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+>>>>>>> 27ad2cb0c... fixed that "char msg[] = "hello"; printf(msg);" was not working. Now works - a lot of experiments!
 void interpretert::execute_printf() const
 {
   codet src = PC->code;
-
   if (!src.has_operands()) return;
-
-  std::string first_arg;
 
   exprt::operandst::const_iterator it=src.operands().begin();
   const exprt &expr = *it;
 
+  // The first argument is always a string (see printf doc),
+  // and the safiest way to get the string value is to call expr..
+  std::string first_arg = "";
+
+  if (expr.id() == ID_address_of && is_c_pointer_of_char(expr.type()))
+  {
+    if (expr.has_operands() && 
+      expr.operands().size() == 1 && 
+      expr.op0().id() == ID_index && 
+      expr.op0().operands().size() ==2)
+    {
+      const index_exprt index_expr = static_cast<const index_exprt &>(expr.op0()); 
+      const exprt arr_expr = index_expr.op0();
+      if (arr_expr.type().id() == ID_array)
+      {
+        if (arr_expr.id() == ID_symbol || arr_expr.id() == ID_string_constant)
+        {
+          //This address the following scenarios: 
+          //      char msg[] = "Hello"; 
+          //      printf(msg);      // arr_expr.id() == ID_symbol
+          //      printf("Hello");  // arr_expr.id() == ID_string_constant
+          std::vector<mp_integer> dest;
+          evaluate(arr_expr, dest);
+          first_arg = read_string(dest);
+        }
+      }
+    }
+  }
+
+  if (first_arg.size() == 0)
+  {
         std::vector<mp_integer> tmp;
   evaluate(expr, tmp);
-
-  // The first argument is expected to be a string. see printf doc.
   first_arg = read_string(tmp);
+  }
 
   if (first_arg.size() == 0) return;
 
@@ -1045,12 +1090,16 @@ void interpretert::execute_function_call()
 
     for(const auto &id : locals)
     {
+      std::string local_var = id2string(id);
+
       const symbolt &symbol=ns.lookup(id);
       unsigned size=get_size(symbol.type);
 
       if(size!=0)
       {
         frame.local_map[id]=stack_pointer;
+
+        std::cout << "local variable: " <<  local_var << ", address: " << stack_pointer << std::endl; //debugging
 
         for(unsigned i=0; i<size; i++)
         {
