@@ -581,16 +581,19 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
   else if (symbol_expr.id() == ID_symbol && ns.follow(symbol.type).id() == ID_struct)
   {
     std::cout << display_name <<": ";
-    print_struct(ns.follow(symbol.type), tmp, 0);
+    unsigned offset = 0;
+    print_struct(ns.follow(symbol.type), tmp, offset);
     std::cout << std::endl;
   }
 }
 
-void interpretert::print_struct(const typet &type, const std::vector<mp_integer> values, int offset) const
+void interpretert::print_struct(const typet &type, const std::vector<mp_integer> values, unsigned &offset) const
 {
   if (type.id() == ID_struct)
   {
     std::cout << "{";
+
+    bool first = true;
 
     const irept::subt &components=
       type.find(ID_components).get_sub();
@@ -599,30 +602,80 @@ void interpretert::print_struct(const typet &type, const std::vector<mp_integer>
     {
       const typet &sub_type=static_cast<const typet &>(it->find(ID_type));
 
-      if (offset != 0) std::cout <<", ";
-
-      std::string field_name = it->get_string(ID_name);
-      std::cout << field_name << std::endl << ", bangbang, ";
-
       if(sub_type.id() != ID_code)
       {
-        std::cout << sub_type; //*it;
+        std::string field_name = it->get_string(ID_name);
 
-        unsigned size = get_size(sub_type);
-        if (sub_type.id() == ID_struct)
+        if (!first) 
         {
+          std::cout <<", ";
+        }
+        else
+        {
+          first = false;
+        }
+        std::cout << field_name << ": ";
           print_struct(sub_type, values, offset);
         }
-  else
+    }
+
+    std::cout << "}";
+  }
+  else if(type.id() == ID_array)
   {
-        }
-        offset += size;
+    const exprt &size_expr = static_cast<const exprt &>(type.find(ID_size));
+
+    mp_integer i;
+
+    unsigned subtype_count;
+    if (!to_integer(size_expr, i))
+      subtype_count = integer2long(i);
+  else
+      subtype_count = 1;
+
+    const irep_idt id = type.subtype().get(ID_C_c_type);
+    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
+  {
+      std::vector<mp_integer> tmp;
+      for (unsigned i = 0; i < subtype_count; i++)
+      {
+        tmp.push_back(values[i + offset]);
       }
+
+      std::string s = read_string(tmp);
+      std::cout << "\"" << s << "\"";
+
+      offset += subtype_count;
+        }
+    else
+    {
+      std::cout << "{";
+
+      const typet sub_type = type.subtype();
+      for (unsigned i = 0; i < subtype_count; i++)
+      {
+        if (i != 0)
+        {
+          std::cout <<", ";
+      }
+
+        print_struct(sub_type, values, offset);
     }
 
     std::cout << "}";
   }
 }
+  else if(type.id() == ID_symbol)
+  {
+    print_struct(ns.follow(type), values, offset);
+  }
+  else
+  {
+    std::cout << values[offset];
+    offset++;
+  }
+}
+
 
 void interpretert::list_src(int before_lines, int after_lines) const
 {

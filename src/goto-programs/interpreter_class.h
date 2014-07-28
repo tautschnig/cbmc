@@ -130,7 +130,7 @@ protected:
   void print_variable(const std::string variable) const;
   //void print_variable_value(const std::string variable, const typet &_type, const irep_idt &id) const;
   void print_variable(const std::string display_name, const symbolt &symbol) const;
-  void print_struct(const typet &type, const std::vector<mp_integer> values, int offset) const;
+  void print_struct(const typet &type, const std::vector<mp_integer> values, unsigned &offset) const;
 
   bool is_internal_global_varialbe(const std::string name) const;
 
