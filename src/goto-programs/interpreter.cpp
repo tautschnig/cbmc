@@ -578,9 +578,49 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
     std::cout << "}" << std::endl;
   }
   }
+  else if (symbol_expr.id() == ID_symbol && ns.follow(symbol.type).id() == ID_struct)
+  {
+    std::cout << display_name <<": ";
+    print_struct(ns.follow(symbol.type), tmp, 0);
+    std::cout << std::endl;
+  }
+}
+
+void interpretert::print_struct(const typet &type, const std::vector<mp_integer> values, int offset) const
+{
+  if (type.id() == ID_struct)
+  {
+    std::cout << "{";
+
+    const irept::subt &components=
+      type.find(ID_components).get_sub();
+
+    forall_irep(it, components)
+    {
+      const typet &sub_type=static_cast<const typet &>(it->find(ID_type));
+
+      if (offset != 0) std::cout <<", ";
+
+      std::string field_name = it->get_string(ID_name);
+      std::cout << field_name << std::endl << ", bangbang, ";
+
+      if(sub_type.id() != ID_code)
+      {
+        std::cout << sub_type; //*it;
+
+        unsigned size = get_size(sub_type);
+        if (sub_type.id() == ID_struct)
+        {
+          print_struct(sub_type, values, offset);
+        }
   else
   {
-    std::cout << display_name <<": " << "<not implemented>" << std::endl;
+        }
+        offset += size;
+      }
+    }
+
+    std::cout << "}";
   }
 }
 
