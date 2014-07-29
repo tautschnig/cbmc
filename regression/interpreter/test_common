@@ -1,0 +1,67 @@
+#!/bin/bash
+# This script is used to test CBMC Interpreter commands
+#
+#  parameter 1 - a C source file
+#  parameter 2 - a file containing command(s)
+#  parameter 3 - an array *name* that contains a list of EXPECTED key words. Must use array name!
+#  parameter 4 - debug flag. when passing "yes", binary and output files will not be removed.
+# 
+
+function test_it() 
+{
+  local src_file=$1
+  local cmd_file=$2
+  local name=$3[@]
+  local expected=("${!name}")
+  local debug_flag=$4
+  
+  local csrc_file="${src_file}.c"
+  local bin_file="${src_file}.o"
+  local out_file="${src_file}.out"
+
+  # local expected=$3 #not working
+  # http://stackoverflow.com/questions/16461656/bash-how-to-pass-array-as-an-argument-to-a-function
+  
+  # 0 - check file existence
+  if [ ! -f $csrc_file ]; then
+    echo "s File '$csrc_file' not found!"
+    exit 1	
+  fi  
+  if [ ! -f $cmd_file ]; then
+    echo "c File '$cmd_file' not found!"
+    exit 1	
+  fi  
+
+  # 1 - compile
+  goto-cc -o $bin_file $csrc_file
+  if [ $? -ne 0 ]
+  then
+    echo 
+    echo "Compile failed, please fix '$csrc_file' and re-run this script."
+    exit 1
+  fi
+  
+  # 2 - run the interpreter and redirect input and output
+  # 
+  goto-instrument $bin_file --interpreter < $cmd_file > $out_file
+
+  local pass_count=0
+  # 3 - search for expected key words
+  for keyword in "${expected[@]}"
+  do
+	local output=$( cat $out_file | sed -n "/$keyword/p" | wc -l )
+	# test match
+	[[ "$output" = "1" ]] && pass_count=$[pass_count+1] || echo "    FAILED - '$keyword' not found"
+  done
+  
+  [[ "$pass_count" = ${#expected[@]} ]] && echo "  == PASSED ===" || echo "  === FAILED ==="
+  echo
+  
+  # clean up
+  
+  # when debug_flag
+  [[ "$debug_flag" = "yes" ]] && exit 0 #keep the binary and output files
+  
+  rm $bin_file
+  rm $out_file
+}  
