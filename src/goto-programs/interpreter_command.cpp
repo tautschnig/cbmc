@@ -20,16 +20,32 @@ Author: Siqing Tang, jtang707@gmail.com
 
 void interpretert_command::print_help() const
 {
-  std::cout << "\tq - quit" << std::endl
-            << "\th - help" << std::endl
-            << "\tr - restart" << std::endl;
-  
-  //if (completed) return;
-
-  std::cout << "\tm - run until the main" << std::endl
-            << "\tn - next line [ENTER]" << std::endl
-            << "\tsi - step into" << std::endl
-            << "\tso - step out" << std::endl;
+  std::cout << "=== General  ===" << std::endl
+            << "\thelp - show this help or the usage of a command" << std::endl
+            << "\tquit - quit the interpreter" << std::endl
+            << std::endl
+            << "=== Code Execution ===" << std::endl
+            << "\tfunction           - specify an entry function" << std::endl
+            << "\tgo                 - run in batch mode" << std::endl
+            << "\tmain               - run until the main" << std::endl
+            << "\tnext [ENTER]       - run the next line(step over)" << std::endl
+            << "\trestart            - restart the goto program" << std::endl
+            << "\tstep --into (into) - step into a function" << std::endl
+            << "\tstep --over (out)  - step out the current function" << std::endl
+            << std::endl
+            << "=== Debugging ===" << std::endl
+            << "\tbreak     - set/remove breakpoints" << std::endl
+            << "\tcallstack - show call stack" << std::endl
+            << "\tlist      - list goto-function source code" << std::endl
+            << "\tmodify    - modify variable value" << std::endl
+            << "\tprint     - print variable value" << std::endl
+            << "\tsilent    - turn silent mode on/off" << std::endl
+            << "\twatch     - set/remove watch variables" << std::endl
+            << "\twhere     - tell the code about to run" << std::endl
+            << std::endl
+            << "=== File ===" << std::endl
+            << "\tsave - save command into a file" << std::endl
+            << "\t@    - load commands from a file and run" << std::endl;
 }
 
 bool interpretert_command::is_break() const
