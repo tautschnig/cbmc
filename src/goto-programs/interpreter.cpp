@@ -1192,8 +1192,6 @@ void interpretert::execute_function_call()
       {
         frame.local_map[id]=stack_pointer;
 
-        std::cout << "local variable: " <<  local_var << ", address: " << stack_pointer << std::endl; //debugging
-
         for(unsigned i=0; i<size; i++)
         {
           unsigned address=stack_pointer+i;
@@ -1257,7 +1255,7 @@ void interpretert::show_function_start_msg() const
     std::cout << std::endl;
     std::cout << "----------------------------------------------------"
               << std::endl;
-    std::cout << "Start of function `"
+  std::cout << "Start of function '"
               << function->first << "'" << std::endl;
 }
 
@@ -1300,14 +1298,7 @@ void interpretert::build_memory_map(const symbolt &symbol)
 
   if(size!=0)
   {
-     std::string s = id2string(symbol.name);
-
     unsigned address=memory.size();
-
-     if (s.find(CPROVER_PREFIX) != 0)
-     {
-      std::cout << s << ", address=" << address << ", size: " << size << std::endl;
-     }
 
     memory.resize(address+size);
     memory_map[symbol.name]=address;
