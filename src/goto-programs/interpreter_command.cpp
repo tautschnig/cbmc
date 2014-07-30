@@ -63,6 +63,11 @@ bool interpretert_command::is_function() const
 	return cmd == "function";
 }
 
+bool interpretert_command::is_go() const
+{
+	return cmd == "go";
+}
+
 bool interpretert_command::is_help() const
 {
 	return cmd == "help";
@@ -260,6 +265,10 @@ void interpretert_command::normalise_command(std::string &cmd)
   {
     cmd = "function";
   }
+  //else if (cmd == "go")
+  //{
+  //  cmd = "go";
+  //}
   else if (cmd == "h" || cmd == "?")
   {
     cmd = "help";

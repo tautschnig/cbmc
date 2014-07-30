@@ -29,6 +29,7 @@ public:
 	bool is_break() const;
 	bool is_callstack() const;
 	bool is_function() const;
+  bool is_go() const;
 	bool is_help() const;
 	bool is_list() const;
 	bool is_main() const; //run up to the main (could be another function specified by the 'function' command

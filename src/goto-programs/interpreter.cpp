@@ -112,8 +112,23 @@ void interpretert::show_state(bool force) const
 
 void interpretert::command()
 {
-  if (batch_mode) return;
+  if (batch_mode) 
+  {
+    if (!completed)
+    {
+      if (!break_point.has_breakpoint_at(PC))
+      {
+        return;
+      }
+      else
+        batch_mode = false;
+    }
+    else
+      return;
+  }
+
   if (next_stop_PC_set) return;
+
 
   step_out = false;
   next_line = false;
