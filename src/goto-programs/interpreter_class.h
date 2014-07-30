@@ -12,7 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_GOTO_PROGRAMS_INTERPRETER_CLASS_H
 #define CPROVER_GOTO_PROGRAMS_INTERPRETER_CLASS_H
 
-#include "interpreter_command.h"
+#include "interpreter_command_parser.h"
 #include "interpreter_breakpoint.h"
 
 #include <stack>
@@ -29,12 +29,17 @@ public:
     const goto_functionst &_goto_functions):
     symbol_table(_symbol_table),
     ns(_symbol_table),
-    goto_functions(_goto_functions),
-    break_point(interpretert_breakpoint(_symbol_table, _goto_functions))
+    goto_functions(_goto_functions)
   {
     entry_function = "";
     silent = false;
     batch_mode = false;
+    break_point = new interpreter_breakpoint(_symbol_table, _goto_functions);
+  }
+
+  ~interpretert()
+  {
+    delete break_point;
   }
 
   void operator()();
@@ -44,7 +49,6 @@ protected:
   const namespacet ns;
   const goto_functionst &goto_functions;
 
-  interpretert_breakpoint &break_point;
   typedef std::unordered_map<irep_idt, unsigned, irep_id_hash> memory_mapt;
   memory_mapt memory_map;
 
@@ -92,7 +96,9 @@ protected:
 
   std::string read_string(const std::vector<mp_integer> from) const;
 
-	interpretert_command cmd;
+	interpretert_command_parser cmd;
+  interpreter_breakpoint *break_point;
+
   void command();
 
   class stack_framet

@@ -14,11 +14,11 @@ Author: Siqing Tang, jtang707@gmail.com
 #include <limits.h>
 #include <util/std_types.h>
 
-#include "interpreter_command.h"
+#include "interpreter_command_parser.h"
 
 #define DEFAULT_LIST_LINES 5
 
-void interpretert_command::print_help() const
+void interpretert_command_parser::print_help() const
 {
   std::cout << "=== General  ===" << std::endl
             << "\thelp - show this help or the usage of a command" << std::endl
@@ -48,92 +48,92 @@ void interpretert_command::print_help() const
             << "\t@    - load commands from a file and run" << std::endl;
 }
 
-bool interpretert_command::is_break() const
+bool interpretert_command_parser::is_break() const
 {
 	return cmd == "break";
 }
 
-bool interpretert_command::is_callstack() const
+bool interpretert_command_parser::is_callstack() const
 {
 	return cmd == "callstack";
 }
 
-bool interpretert_command::is_function() const
+bool interpretert_command_parser::is_function() const
 {
 	return cmd == "function";
 }
 
-bool interpretert_command::is_go() const
+bool interpretert_command_parser::is_go() const
 {
 	return cmd == "go";
 }
 
-bool interpretert_command::is_help() const
+bool interpretert_command_parser::is_help() const
 {
 	return cmd == "help";
 }
 
-bool interpretert_command::is_list() const
+bool interpretert_command_parser::is_list() const
 {
 	return cmd == "list";
 }
 
-bool interpretert_command::is_main() const
+bool interpretert_command_parser::is_main() const
 {
 	return cmd == "main";
 }
 
-bool interpretert_command::is_modify() const
+bool interpretert_command_parser::is_modify() const
 {
 	return cmd == "modify";
 }
 
-bool interpretert_command::is_next_line() const
+bool interpretert_command_parser::is_next_line() const
 {
 	return cmd == "next";
 }
 
-bool interpretert_command::is_print() const
+bool interpretert_command_parser::is_print() const
 {
 	return cmd == "print";
 }
 
-bool interpretert_command::is_quit() const
+bool interpretert_command_parser::is_quit() const
 {
 	return cmd == "quit";
 }
 
-bool interpretert_command::is_restart() const
+bool interpretert_command_parser::is_restart() const
 {
 	return cmd == "restart";
 }
 
-bool interpretert_command::is_silent() const
+bool interpretert_command_parser::is_silent() const
 {
 	return cmd == "silent";
 }
 
-bool interpretert_command::is_step_into() const
+bool interpretert_command_parser::is_step_into() const
 {
 	return (cmd == "step" && options.find("into") != options.end()) || (cmd == "");
 }
 
-bool interpretert_command::is_step_out() const
+bool interpretert_command_parser::is_step_out() const
 {
 	return cmd == "step" && options.find("out") != options.end();
 }
 
-bool interpretert_command::is_watch() const
+bool interpretert_command_parser::is_watch() const
 {
 	return cmd == "watch";
 }
 
-bool interpretert_command::is_where() const
+bool interpretert_command_parser::is_where() const
 {
 	return cmd == "where";
 }
 
-void interpretert_command::get_parameters(std::vector<std::string> &dest) const
+void interpretert_command_parser::get_parameters(std::vector<std::string> &dest) const
 {
 	dest.clear();
   for(unsigned i = 0; i < parameters.size(); i++)
@@ -142,12 +142,12 @@ void interpretert_command::get_parameters(std::vector<std::string> &dest) const
 	}
 }
 
-std::string interpretert_command::get_first_parameter() const
+std::string interpretert_command_parser::get_first_parameter() const
 {
   return parameters.size() >= 1 ? parameters[0] : "";
 }
 
-void interpretert_command::parse(const char* cmdline)
+void interpretert_command_parser::parse(const char* cmdline)
 {
 	if (cmdline == NULL)
   {
@@ -241,7 +241,7 @@ void interpretert_command::parse(const char* cmdline)
   }
 }
 
-void interpretert_command::normalise_command(std::string &cmd)
+void interpretert_command_parser::normalise_command(std::string &cmd)
 {
   if (cmd == "b")
   {
@@ -376,32 +376,32 @@ void interpretert_command::normalise_command(std::string &cmd)
   }
 }
 
-bool interpretert_command::has_options() const
+bool interpretert_command_parser::has_options() const
 {
   return !options.empty();
 }
 
-bool interpretert_command::has_print_locals() const
+bool interpretert_command_parser::has_print_locals() const
 {
   return options.find("locals") != options.end();
 }
 
-bool interpretert_command::has_print_parameters() const
+bool interpretert_command_parser::has_print_parameters() const
 {
   return options.find("parameters") != options.end();
 }
 
-bool interpretert_command::has_print_globals() const
+bool interpretert_command_parser::has_print_globals() const
 {
   return options.find("globals") != options.end();
 }
 
-bool interpretert_command::has_list_all() const
+bool interpretert_command_parser::has_list_all() const
 {
   return options.find("all") != options.end();
 }
 
-int interpretert_command::list_before_lines() const
+int interpretert_command_parser::list_before_lines() const
 {
   if (has_list_all())
   {
@@ -419,7 +419,7 @@ int interpretert_command::list_before_lines() const
   }
 }
 
-int interpretert_command::list_after_lines() const
+int interpretert_command_parser::list_after_lines() const
 {
   if (has_list_all())
   {
@@ -437,7 +437,7 @@ int interpretert_command::list_after_lines() const
   }
 }
 
-bool interpretert_command::has_silent_on() const
+bool interpretert_command_parser::has_silent_on() const
 {
   return is_silent() && (options.find("off") == options.end());
 }

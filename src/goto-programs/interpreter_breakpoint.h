@@ -1,3 +1,6 @@
+#ifndef GOTO_INTERPRET_BREAKPOINT_H
+#define GOTO_INTERPRET_BREAKPOINT_H
+
 #include <set>
 #include <stack>
 #include <string>
@@ -13,10 +16,10 @@
 
 \*******************************************************************/
 
-class interpretert_breakpoint
+class interpreter_breakpoint
 {
 public:
-  interpretert_breakpoint(
+  interpreter_breakpoint(
     const symbol_tablet &_symbol_table,
     const goto_functionst &_goto_functions):
     symbol_table(_symbol_table),
@@ -27,7 +30,6 @@ public:
 
   bool add_breakpoint(unsigned line_no, goto_programt::const_targett PC);
   bool add_breakpoint(goto_programt::const_targett PC);
-
   void remove_all_breakpoints();
 
   bool has_breakpoint_at(goto_programt::const_targett PC);
@@ -41,3 +43,5 @@ protected:
 
   module_linest modules;
 };
+
+#endif

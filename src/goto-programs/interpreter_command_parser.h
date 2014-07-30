@@ -6,19 +6,16 @@
 
 \*******************************************************************/
 
-#ifndef GOTO_INTERPRET_COMMAND_H
-#define GOTO_INTERPRET_COMMAND_H
+#ifndef GOTO_INTERPRETER_COMMAND_PARSER_H
+#define GOTO_INTERPRETER_COMMAND_PARSER_H
 
-//#include <vector>
-//#include <string>
 #include <vector>
 #include <util/hash_cont.h>
 
-class interpretert_command
+class interpretert_command_parser
 {
-
 public:
-  interpretert_command()
+  interpretert_command_parser()
 	{
   }
   
@@ -70,4 +67,4 @@ protected:
 	void normalise_command(std::string &cmd);
 };
 
-#endif /* GOTO_INTERPRET_COMMAND_H */
+#endif /* GOTO_INTERPRETER_COMMAND_PARSER_H */
