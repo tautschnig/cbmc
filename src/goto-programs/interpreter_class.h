@@ -32,6 +32,7 @@ public:
   {
     entry_function = "";
     silent = false;
+    batch_mode = false;
   }
 
   void operator()();
@@ -117,6 +118,7 @@ protected:
   bool next_stop_PC_set;
 	bool running;
   bool silent;
+  bool batch_mode;
   std::string entry_function;
 
   const symbolt null_symbol;

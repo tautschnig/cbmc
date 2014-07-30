@@ -40,6 +40,7 @@ void interpretert::operator()()
     main_called = false;
     restart = false;
     running = false;
+    batch_mode = false;
 
   build_memory_map();
 
@@ -111,6 +112,7 @@ void interpretert::show_state(bool force) const
 
 void interpretert::command()
 {
+  if (batch_mode) return;
   if (next_stop_PC_set) return;
 
   step_out = false;
@@ -148,9 +150,17 @@ void interpretert::command()
       keep_asking = true;
 
     }
+    else if (cmd.is_go())
+    {
+      if (!completed)
+      {
+        batch_mode = true;
+      }
+    }
 		else if (cmd.is_next_line())
     {
       next_line = true;
+      batch_mode = false;
     }
 		else if (cmd.is_quit())
     {
@@ -188,10 +198,12 @@ void interpretert::command()
       }
 		else if (cmd.is_step_into()) //step into
     {
+      batch_mode = false;
       // ok  
     }
 		else if (cmd.is_step_out()) //step out
     {
+      batch_mode = false;
       step_out = true;
     }
     else if (cmd.is_list())
@@ -749,6 +761,7 @@ void interpretert::step()
     if(call_stack.empty())
     {
       completed = true;
+      batch_mode = false;
       running = false;
       //done=true;
     }
