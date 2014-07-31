@@ -114,7 +114,7 @@ protected:
   typedef std::stack<stack_framet> call_stackt;
   call_stackt call_stack;
 
-  goto_functionst::function_mapt::const_iterator function, initial_function, next_stop_function;
+  goto_functionst::function_mapt::const_iterator function, initial_function;
   goto_programt::const_targett PC, next_PC, next_stop_PC;
   
   bool done;

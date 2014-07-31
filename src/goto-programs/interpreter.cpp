@@ -102,8 +102,6 @@ void interpretert::show_state(bool force) const
   {
     std::cout << "End of function `"
               << function->first << "'\n";
-    std::cout << "second type '"
-      << function->second.type << "'" << std::endl;
   }
   else
     function->second.body.output_instruction(
@@ -765,7 +763,6 @@ void interpretert::step()
   {
     stack_framet &frame = call_stack.top();
     next_stop_PC = frame.return_PC;
-    next_stop_function = frame.return_function;
     next_stop_PC_set = true;
   }
 
@@ -871,7 +868,7 @@ void interpretert::step()
 
 void interpretert::reset_next_PC()
 {
-  if (next_stop_PC_set && (function == next_stop_function) && (PC == next_stop_PC))
+  if (next_stop_PC_set && (PC->function == next_stop_PC->function) && (PC == next_stop_PC))
   {
     next_stop_PC_set = false;
     next_stop_PC = (initial_function->second).body.instructions.end();
@@ -1258,7 +1255,6 @@ void interpretert::execute_function_call()
     if (next_line && !next_stop_PC_set)
     {
       next_stop_PC = next_PC;
-      next_stop_function = function;
       next_stop_PC_set = true;
     }
 
