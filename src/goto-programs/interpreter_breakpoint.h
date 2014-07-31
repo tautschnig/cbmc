@@ -38,8 +38,8 @@ protected:
   const namespacet ns;
   const goto_functionst &goto_functions;
   
-  typedef std::set<unsigned> line_sett;
-  typedef hash_map_cont<std::string, line_sett, string_hash> module_linest;
+  typedef std::set<irep_idt> line_sett;
+  typedef hash_map_cont<irep_idt, line_sett, irep_id_hash> module_linest;
 
   module_linest modules;
 };

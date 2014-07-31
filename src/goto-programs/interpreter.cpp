@@ -112,11 +112,11 @@ void interpretert::show_state(bool force) const
 
 void interpretert::command()
 {
-  if (batch_mode && !completed && !break_point->has_breakpoint_at(PC)) 
-      return;
-
-  if (next_stop_PC_set) return;
-
+  if (!completed && (batch_mode || next_stop_PC_set))
+  {
+    if (PC == function->second.body.instructions.end()) return; //can't call break_point->has_breakpoint_at!
+    if (!break_point->has_breakpoint_at(PC)) return;
+  }
 
   step_out = false;
   next_line = false;
@@ -144,10 +144,12 @@ void interpretert::command()
 
     if (cmd.is_break())
     {
-      if (!completed)
+      if (!completed && PC != function->second.body.instructions.end())
       {
         break_point->add_breakpoint(PC);
       }
+
+      keep_asking = true;
     }
     else if (cmd.is_callstack())
     {
