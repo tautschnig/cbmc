@@ -18,65 +18,59 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "interpreter_breakpoint.h"
 
-bool interpreter_breakpoint::add_breakpoint(unsigned line_no, goto_programt::const_targett PC)
+bool interpreter_breakpoint::add_breakpoint(unsigned line_no, std::string module)
 {
-  if (PC->location.is_nil()) return false;
-
-  std::cout << id2string(PC->location.get_line()) << std::endl;
-
   return false;
 }
 
 bool interpreter_breakpoint::add_breakpoint(goto_programt::const_targett PC)
 {
-  if (PC->location.is_nil()) return false;
-  
+  unsigned location_number = PC->location_number;
+  function_linest::iterator f_it = function_lines.find(PC->function);
 
-  const irep_idt &file = PC->location.get_file();
-
-  line_sett *lines;
-
-  module_linest::iterator m_it = modules.find(file);
-
-  if (m_it == modules.end())
+  if (f_it == function_lines.end())
   {
-    modules[file] = line_sett();
-    lines = &modules[file];
+    function_lines[PC->function] = line_listt();
+    line_listt *lines = &(function_lines[PC->function]);
+    lines->push_back(location_number);
+    return true;
   }
   else
   {
-    lines = &m_it->second;
+    line_listt *lines = &(f_it->second);
+    for(unsigned i=0; i < lines->size(); i++)
+    {
+      if ((*lines)[i] == location_number)
+      {
+        lines->erase(lines->begin() + i);
+        return true;
+      }
+    }
+
+    lines->push_back(location_number);
+    return true;
   }
-
-  lines->emplace(PC->location.get_line());
-
-  std::cout << id2string(PC->location.get_line()) << std::endl;
-  std::cout << "added breakpoint at " << PC->location.get_line() << std::endl;
 
   return false;
 }
 
 void interpreter_breakpoint::remove_all_breakpoints()
 {
-  modules.clear();
+  function_lines.clear();
 }
 
 bool interpreter_breakpoint::has_breakpoint_at(goto_programt::const_targett PC)
 {
-  if (PC->location.is_nil()) return false;
+  unsigned location_number = PC->location_number;
+  function_linest::const_iterator f_it = function_lines.find(PC->function);
 
-  const irep_idt &file = PC->location.get_file();
-  module_linest::const_iterator m_it = modules.find(file);
-
-  if (m_it != modules.end())
+  if (f_it != function_lines.end())
   {
-    const line_sett *lines = &m_it->second;
-    if ((lines->find(PC->location.get_line())) != lines->end())
+    const line_listt *lines = &(f_it->second);
+    for(unsigned i=0; i < lines->size(); i++)
     {
-      //const std::string s = id2string(PC->location.get_line());
-      //std::cout << "has breakpoint at " << PC->location.get_line() << std::endl;
-
-      return true;
+      if ((*lines)[i] == location_number)
+        return true;
     }
   }
 

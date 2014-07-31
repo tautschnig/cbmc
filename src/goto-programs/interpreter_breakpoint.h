@@ -1,7 +1,7 @@
 #ifndef GOTO_INTERPRET_BREAKPOINT_H
 #define GOTO_INTERPRET_BREAKPOINT_H
 
-#include <set>
+#include <vector>
 #include <stack>
 #include <string>
 
@@ -28,7 +28,7 @@ public:
   {
   }
 
-  bool add_breakpoint(unsigned line_no, goto_programt::const_targett PC);
+  bool add_breakpoint(unsigned line_no, std::string module = "");
   bool add_breakpoint(goto_programt::const_targett PC);
   void remove_all_breakpoints();
 
@@ -38,10 +38,10 @@ protected:
   const namespacet ns;
   const goto_functionst &goto_functions;
   
-  typedef std::set<irep_idt> line_sett;
-  typedef hash_map_cont<irep_idt, line_sett, irep_id_hash> module_linest;
+  typedef std::vector<unsigned> line_listt;
+  typedef hash_map_cont<irep_idt, line_listt, irep_id_hash> function_linest;
 
-  module_linest modules;
+  function_linest function_lines;
 };
 
 #endif

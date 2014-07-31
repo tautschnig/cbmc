@@ -102,6 +102,8 @@ void interpretert::show_state(bool force) const
   {
     std::cout << "End of function `"
               << function->first << "'\n";
+    std::cout << "second type '"
+      << function->second.type << "'" << std::endl;
   }
   else
     function->second.body.output_instruction(
@@ -114,7 +116,6 @@ void interpretert::command()
 {
   if (!completed && (batch_mode || next_stop_PC_set))
   {
-    if (PC == function->second.body.instructions.end()) return; //can't call break_point->has_breakpoint_at!
     if (!break_point->has_breakpoint_at(PC)) return;
   }
 
