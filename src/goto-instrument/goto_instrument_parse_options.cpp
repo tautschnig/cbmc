@@ -987,6 +987,54 @@ void goto_instrument_parse_optionst::instrument_goto_program()
         unsafe_string2unsigned(cmdline.get_value("stack-depth")));
   }
 
+  // check for information leaks
+  if(cmdline.isset("information-leak-check"))
+  {
+    /*
+    status() << "Function Pointer Removal" << eom;
+    remove_function_pointers(
+      symbol_table, goto_functions, cmdline.isset("pointer-check"));
+    */
+
+    class openssl_criteriont:public slicing_criteriont
+    {
+      public:
+        virtual bool operator()(goto_programt::const_targett target)
+        {
+          if(!target->is_function_call()) return false;
+
+          const code_function_callt &call=
+            to_code_function_call(target->code);
+
+#if 0
+          if(call.function().id()!=ID_dereference) return false;
+
+          const dereference_exprt &deref=
+            to_dereference_expr(call.function());
+
+          if(deref.pointer().id()!=ID_member ||
+             to_member_expr(deref.pointer()).get_component_name()!="msg_callback" ||
+             call.arguments().size()!=7)
+            return false;
+
+          if(call.arguments()[4].id()!=ID_constant)
+            std::cerr << target->location << std::endl;
+
+          return call.arguments()[4].id()!=ID_constant;
+#endif
+          if(call.function().id()==ID_symbol &&
+             to_symbol_expr(call.function()).get_identifier()=="c::memcpy")
+            return true;
+
+          return false;
+        }
+    };
+
+    status() << "Performing an information-flow slice" << eom;
+    openssl_criteriont o;
+    full_slicer(goto_functions, ns, o);
+  }
+
   // ignore default/user-specified initialization of variables with static
   // lifetime
   if(cmdline.isset("nondet-static"))
@@ -997,6 +1045,8 @@ void goto_instrument_parse_optionst::instrument_goto_program()
 
   if(cmdline.isset("string-abstraction"))
   {
+    status() << "Adding CPROVER library" << eom;
+    link_to_library(symbol_table, goto_functions, ui_message_handler);
     status() << "String Abstraction" << eom;
     string_abstraction(symbol_table,
       get_message_handler(), goto_functions);
@@ -1347,6 +1397,7 @@ void goto_instrument_parse_optionst::help()
     " --error-label label          check that label is unreachable\n"
     " --stack-depth n              add check that call stack size of non-inlined functions never exceeds n\n"
     " --race-check                 add floating-point data race checks\n"
+    " --information-leak-check     add check that no secret bits become observable\n"
     "\n"
     "Semantic transformations:\n"
     " --nondet-volatile            makes reads from volatile variables non-deterministic\n"

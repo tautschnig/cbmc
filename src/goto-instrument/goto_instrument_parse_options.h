@@ -61,7 +61,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(show-call-sequences)(check-call-sequence):(call-sequence-bound):" \
   "(interpreter)(show-reaching-definitions)(count-eloc)" \
   "(list-symbols)(list-undefined-functions)" \
-  "(z3)(add-library)(show-dependence-graph)" \
+  "(z3)(add-library)(show-dependence-graph)(information-leak-check)" \
   "(horn)(skip-loops):(apply-code-contracts)"
 
 class goto_instrument_parse_optionst:
