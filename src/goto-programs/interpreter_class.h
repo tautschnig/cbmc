@@ -154,6 +154,7 @@ protected:
   void set_entry_function(std::string);
   void modify_variable();
   void modify_variable(const symbolt &symbol, const exprt &expr);
+  void manage_breakpoint();
 
   // helper
   goto_functionst::function_mapt::const_iterator find_function(std::string function_name) const;

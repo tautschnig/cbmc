@@ -143,11 +143,7 @@ void interpretert::command()
 
     if (cmd.is_break())
     {
-      if (!completed && PC != function->second.body.instructions.end())
-      {
-        break_point->add_breakpoint(PC);
-      }
-
+      manage_breakpoint();
       keep_asking = true;
     }
     else if (cmd.is_callstack())
@@ -754,6 +750,32 @@ void interpretert::show_callstack() const
     caller_function->second.body.output_instruction(ns, caller_function->first, std::cout, caller_PC);
 
     tmp_call_stack.pop();
+  }
+}
+
+void interpretert::manage_breakpoint()
+{
+  if (completed) return;
+  
+  if (cmd.has_breakpoint_remove_all())
+  {
+    break_point->remove_all();
+  }
+  else if (cmd.has_breakpoint_toggle())
+  {
+    break_point->toggle_breakpoint(PC);
+  }
+  else if (cmd.has_breakpoint_remove())
+  {
+    std::string line_no = cmd.get_breakpoint_lineno();
+  }
+  else if (cmd.has_breakpoint_add())
+  {
+    std::string line_no = cmd.get_breakpoint_lineno();
+    std::string module = cmd.get_breakpoint_module();
+  }
+//  else if (cmd.break.has_breakpoint_add())
+  {
   }
 }
 

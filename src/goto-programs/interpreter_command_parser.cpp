@@ -441,3 +441,43 @@ bool interpretert_command_parser::has_silent_on() const
 {
   return is_silent() && (options.find("off") == options.end());
 }
+
+bool interpretert_command_parser::has_breakpoint_remove_all() const
+{
+  return options.find("remove-all") != options.end();
+}
+
+bool interpretert_command_parser::has_breakpoint_remove() const
+{
+  return options.find("remove") != options.end();
+}
+
+bool interpretert_command_parser::has_breakpoint_add() const
+{
+  return (options.size() == 0 || 
+          options.find("add") != options.end());
+}
+
+bool interpretert_command_parser::has_breakpoint_toggle() const
+{
+  return (options.size() == 0 || 
+          options.find("toggle") != options.end()) && 
+         parameters.size() == 0;
+}
+
+std::string interpretert_command_parser::get_breakpoint_module() const
+{
+  option_mapt::const_iterator it = options.find("module");
+  return it == options.end() ? "" : it->second;
+}
+
+std::string interpretert_command_parser::get_breakpoint_lineno() const
+{
+  option_mapt::const_iterator it = options.find("line-no");
+  if (it != options.end())
+    return it->second;
+  else if (parameters.size() > 0)
+    return parameters[0];
+  else
+    return "";
+}

@@ -28,12 +28,26 @@ public:
   {
   }
 
-  bool add_breakpoint(unsigned line_no, std::string module = "");
-  bool add_breakpoint(goto_programt::const_targett PC);
-  void remove_all_breakpoints();
+  bool add_breakpoint(std::string line_no, std::string module);
 
-  bool has_breakpoint_at(goto_programt::const_targett PC);
+  bool add_breakpoint(goto_programt::const_targett PC) 
+  {
+    return add_breakpoint(PC, false);
+  };
+
+  bool toggle_breakpoint(goto_programt::const_targett PC) 
+  {
+    return add_breakpoint(PC, true);
+  };
+
+  bool remove_breakpoint(goto_programt::const_targett PC); 
+  bool remove_breakpoint(std::string line_no, std::string module);
+  void remove_all();
+
+  bool has_breakpoint_at(goto_programt::const_targett PC) const;
+  void list() const;
 protected:
+  bool add_breakpoint(goto_programt::const_targett PC, bool toggle);
   const symbol_tablet &symbol_table;
   const namespacet ns;
   const goto_functionst &goto_functions;
@@ -42,6 +56,7 @@ protected:
   typedef hash_map_cont<irep_idt, line_listt, irep_id_hash> function_linest;
 
   function_linest function_lines;
+  bool has_breakpoint_at(const line_listt &lines, unsigned location_number) const;
 };
 
 #endif
