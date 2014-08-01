@@ -73,6 +73,11 @@ bool interpretert_command_parser::is_help() const
 	return cmd == "help";
 }
 
+bool interpretert_command_parser::is_load() const
+{
+	return cmd == "load";
+}
+
 bool interpretert_command_parser::is_list() const
 {
 	return cmd == "list";
@@ -106,6 +111,11 @@ bool interpretert_command_parser::is_quit() const
 bool interpretert_command_parser::is_restart() const
 {
 	return cmd == "restart";
+}
+
+bool interpretert_command_parser::is_save() const
+{
+	return cmd == "save";
 }
 
 bool interpretert_command_parser::is_silent() const
@@ -163,7 +173,10 @@ void interpretert_command_parser::parse(const char* cmdline)
 	options.clear();
   cmd = "";
 
-  std::string line(cmdline);
+  line.clear();
+  line.append(cmdline);
+
+  line = std::string(cmdline);
 
   size_t pos;
 
@@ -184,6 +197,15 @@ void interpretert_command_parser::parse(const char* cmdline)
   pos = line.find_first_not_of(SPACE);
   while (pos != std::string::npos)
   {
+    if (cmd.empty() && line[pos] == '@')
+    {
+      // special calse
+      cmd = "@";
+      normalise_command(cmd);
+      pos = line.find_first_not_of(SPACE, pos + 1);
+      continue;
+    }
+
     size_t sp_pos = line.find_first_of(SPACE, pos);
 		std::string s;
     if (sp_pos == std::string::npos)
@@ -243,7 +265,11 @@ void interpretert_command_parser::parse(const char* cmdline)
 
 void interpretert_command_parser::normalise_command(std::string &cmd)
 {
-  if (cmd == "b")
+  if (cmd == "@")
+  {
+    cmd = "load";
+  }
+  else if (cmd == "b")
   {
     cmd = "break";
   }
@@ -350,6 +376,7 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
   {
     cmd = "restart";
   }
+  // save
   else if (cmd == "si" || cmd == "in" || cmd == "into")
   {
     cmd = "step";
@@ -490,4 +517,9 @@ bool interpretert_command_parser::option_has_value(std::string option) const
 {
   option_mapt::const_iterator it = options.find(option);
   return it != options.end() || it->first != "";
+}
+
+bool interpretert_command_parser::has_save_overwrite() const
+{
+  return options.find("overwrite") != options.end();
 }

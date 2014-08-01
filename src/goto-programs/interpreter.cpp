@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <cstdio>
 #include <iostream>
 #include <algorithm>
+#include <fstream>
 
 #include <util/cprover_prefix.h>
 #include <util/fixedbv.h>
@@ -29,6 +30,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "interpreter_class.h"
 
+#define BUFSIZE 100
+
 void interpretert::operator()()
 {
   done=false;
@@ -41,6 +44,7 @@ void interpretert::operator()()
     restart = false;
     running = false;
     batch_mode = false;
+    commands.clear();
 
   build_memory_map();
 
@@ -112,9 +116,18 @@ void interpretert::show_state(bool force) const
 
 void interpretert::command()
 {
-  if (!completed && (batch_mode || next_stop_PC_set))
+  if (!completed && (batch_mode || next_stop_PC_set || reading_from_queue))
   {
-    if (!break_point->has_breakpoint_at(PC)) return;
+    bool has_breakpoint = break_point->has_breakpoint_at(PC);
+    if (!has_breakpoint) return;
+    if (reading_from_queue)
+  {
+      reading_from_queue = false;
+      while (!queued_commands.empty())
+      {
+        queued_commands.pop();
+      }
+    }
   }
 
   step_out = false;
@@ -126,20 +139,29 @@ void interpretert::command()
   bool keep_asking = true;
   while (keep_asking)
   {
-	  #define BUFSIZE 100
-
 	  char command[BUFSIZE];  
 	  //std::cout << std::endl << ":";
 	  std::cout << ":";
+
+    keep_asking = false;
+    bool bad_command = false;
+
+    if (reading_from_queue && !queued_commands.empty())
+    {
+      std::string cmd_line = queued_commands.front();
+      queued_commands.pop();
+      if (queued_commands.empty()) reading_from_queue = false;
+      cmd.parse(cmd_line.c_str());
+    }
+    else
+    {
 	  if (fgets(command, BUFSIZE - 1, stdin) == NULL)
     {
       done = true;
       return;
     }
-
-		keep_asking = false;
-
     cmd.parse(command);
+    }
 
     if (cmd.is_break())
     {
@@ -178,6 +200,14 @@ void interpretert::command()
 			cmd.print_help();
 			keep_asking = true; 
   }
+    else if (cmd.is_load())
+    {
+      if (!reading_from_queue)
+      {
+        keep_asking = true;
+        load_commands_from_file();
+      }
+    }
     else if (cmd.is_main())
     {
     run_upto_main = true;
@@ -203,6 +233,11 @@ void interpretert::command()
 				show_require_running_msg();
 			}
       }
+    else if (cmd.is_save())
+    {
+      keep_asking = true;
+      save_commands();
+    }
 		else if (cmd.is_step_into()) //step into
     {
       batch_mode = false;
@@ -238,7 +273,14 @@ void interpretert::command()
     }
     else
     {
+      bad_command = true;
+      std::cout << "bad command '" << cmd.get_command() << "'" << std::endl;
 			keep_asking = true; 
+    }
+
+    if (!bad_command && !cmd.is_save())
+    {
+      commands.push_back(std::string(cmd.get_command()));
     }
   }
 }
@@ -809,6 +851,77 @@ std::string interpretert::get_current_module() const
   return begin_PC->location.is_nil() ? "" : id2string(begin_PC->location.get_file());
 }
 
+void interpretert::save_commands() const
+{
+  std::string file = cmd.get_first_parameter();
+  if (file.empty())
+  {
+    std::cout << "file name must be specified for the save command" << std::endl;
+    return;
+  }
+
+  if (!cmd.has_save_overwrite())
+  {
+    std::ifstream inp_file(file);
+    bool file_exists = inp_file;
+    inp_file.close();
+    if (file_exists)
+    {
+      std::cout << "failed to save to '" << file << "'" << " as it already exists." << std::endl;
+      std::cout << "if you want to overwrite the file, use the --overwrite option" << std::endl;
+      return;
+    }
+  }
+
+  std::ofstream cmd_file(file.c_str());
+  if (cmd_file.is_open())
+  {
+    for(unsigned i = 0; i < commands.size(); i++)
+      cmd_file << commands[i] << std::endl;
+
+    cmd_file.close();
+    std::cout << "saved to '" << file << "'" << std::endl;
+  }
+  else
+  {
+    std::cout << "unable to save to '" << file << "'" << std::endl;
+  }
+}
+
+void interpretert::load_commands_from_file()
+{
+  std::string file = cmd.get_first_parameter();
+  if (file.empty())
+  {
+    std::cout << "file name must be specified for the load command" << std::endl;
+    return;
+  }
+
+  FILE *f = fopen(file.c_str(), "r");
+  if(f != NULL)
+  {
+    while (!queued_commands.empty())
+    {
+        queued_commands.pop();
+    }
+
+    char command[BUFSIZE];  
+    while (fgets(command, BUFSIZE - 1, f) != NULL)
+    {
+      std::string line(command);
+      queued_commands.push(line);
+    }
+    fclose(f);
+
+    reading_from_queue = !queued_commands.empty();
+  }
+  else
+  {
+    std::cout << "failed to open '" << file << "'" << "." << std::endl;
+    return;
+  }
+}
+
 void interpretert::step()
 {
   if (step_out && !next_stop_PC_set && !call_stack.empty())
@@ -825,7 +938,11 @@ void interpretert::step()
       completed = true;
       batch_mode = false;
       running = false;
-      //done=true;
+      reading_from_queue = false;
+      while (!queued_commands.empty())
+      {
+        queued_commands.pop();
+      }
     }
     else
     {

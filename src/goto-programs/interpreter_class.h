@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "interpreter_breakpoint.h"
 
 #include <stack>
+#include <queue>
 
 #include <util/arith_tools.h>
 
@@ -34,6 +35,7 @@ public:
     entry_function = "";
     silent = false;
     batch_mode = false;
+    reading_from_queue = false;
     break_point = new interpreter_breakpoint(_symbol_table, _goto_functions);
   }
 
@@ -98,6 +100,9 @@ protected:
 
 	interpretert_command_parser cmd;
   interpreter_breakpoint *break_point;
+  std::vector<std::string> commands;
+  std::queue<std::string> queued_commands;
+  bool reading_from_queue;
 
   void command();
 
@@ -155,6 +160,9 @@ protected:
   void modify_variable();
   void modify_variable(const symbolt &symbol, const exprt &expr);
   void manage_breakpoint();
+  void save_commands() const;
+  void load_commands_from_file();
+
   std::string get_current_module() const;
 
   // helper

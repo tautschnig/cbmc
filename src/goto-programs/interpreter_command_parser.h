@@ -28,6 +28,7 @@ public:
 	bool is_function() const;
   bool is_go() const;
 	bool is_help() const;
+	bool is_load() const;
 	bool is_list() const;
 	bool is_main() const; //run up to the main (could be another function specified by the 'function' command
   bool is_modify() const;
@@ -35,6 +36,7 @@ public:
 	bool is_print() const;
 	bool is_quit() const;
 	bool is_restart() const;
+	bool is_save() const;
 	bool is_step_into() const;
 	bool is_step_out() const;
 	bool is_silent() const;
@@ -60,12 +62,17 @@ public:
 	std::string get_breakpoint_module() const;
 	std::string get_breakpoint_lineno() const;
 
+  bool has_save_overwrite() const;
+
   void get_parameters(std::vector<std::string> &dest) const;
   std::string get_first_parameter() const;
   bool option_has_value(std::string option) const;
+  const std::string &get_command() const { return line; };
 protected:
   std::string cmd;
 	std::vector<std::string> parameters;
+
+  std::string line;
 
   typedef hash_map_cont<std::string, std::string, string_hash> option_mapt;
 
