@@ -454,15 +454,19 @@ bool interpretert_command_parser::has_breakpoint_remove() const
 
 bool interpretert_command_parser::has_breakpoint_add() const
 {
-  return (options.size() == 0 || 
-          options.find("add") != options.end());
+  return options.find("add") != options.end();
 }
 
 bool interpretert_command_parser::has_breakpoint_toggle() const
 {
   return (options.size() == 0 || 
-          options.find("toggle") != options.end()) && 
+          options.size() == 1 && options.find("toggle") != options.end()) && 
          parameters.size() == 0;
+}
+
+bool interpretert_command_parser::has_breakpoint_list() const
+{
+  return options.find("list") != options.end();
 }
 
 std::string interpretert_command_parser::get_breakpoint_module() const
@@ -480,4 +484,10 @@ std::string interpretert_command_parser::get_breakpoint_lineno() const
     return parameters[0];
   else
     return "";
+}
+
+bool interpretert_command_parser::option_has_value(std::string option) const
+{
+  option_mapt::const_iterator it = options.find(option);
+  return it != options.end() || it->first != "";
 }

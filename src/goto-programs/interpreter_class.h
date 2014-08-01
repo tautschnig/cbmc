@@ -155,6 +155,7 @@ protected:
   void modify_variable();
   void modify_variable(const symbolt &symbol, const exprt &expr);
   void manage_breakpoint();
+  std::string get_current_module() const;
 
   // helper
   goto_functionst::function_mapt::const_iterator find_function(std::string function_name) const;

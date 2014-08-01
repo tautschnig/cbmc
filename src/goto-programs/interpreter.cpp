@@ -695,7 +695,6 @@ void interpretert::print_struct(const typet &type, const std::vector<mp_integer>
   }
 }
 
-
 void interpretert::list_src(int before_lines, int after_lines) const
 {
   goto_programt::const_targett cur_PC = PC;
@@ -768,15 +767,46 @@ void interpretert::manage_breakpoint()
   else if (cmd.has_breakpoint_remove())
   {
     std::string line_no = cmd.get_breakpoint_lineno();
+    if (line_no == "")
+    {
+      break_point->remove_breakpoint(PC);
+    }
+    else
+    {
+      std::string module = cmd.get_breakpoint_module();
+      if (module == "") module = get_current_module();
+
+      if (module != "")
+        break_point->remove_breakpoint(line_no, module);
+    }
   }
   else if (cmd.has_breakpoint_add())
   {
     std::string line_no = cmd.get_breakpoint_lineno();
+    if (line_no == "")
+    {
+      if (cmd.has_breakpoint_add()) 
+        break_point->add_breakpoint(PC);
+    }
+    else
+    {
     std::string module = cmd.get_breakpoint_module();
+      if (module == "") module = get_current_module();
+
+      if (module != "")
+        break_point->add_breakpoint(line_no, module);
   }
-//  else if (cmd.break.has_breakpoint_add())
+  }
+  else if (cmd.has_breakpoint_list())
   {
+    break_point->list();
   }
+  }
+
+std::string interpretert::get_current_module() const
+{
+  goto_programt::const_targett begin_PC = (function->second).body.instructions.begin();
+  return begin_PC->location.is_nil() ? "" : id2string(begin_PC->location.get_file());
 }
 
 void interpretert::step()

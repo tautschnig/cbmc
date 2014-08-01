@@ -56,11 +56,13 @@ public:
 	bool has_breakpoint_remove() const;
 	bool has_breakpoint_add() const;
 	bool has_breakpoint_toggle() const;
+	bool has_breakpoint_list() const;
 	std::string get_breakpoint_module() const;
 	std::string get_breakpoint_lineno() const;
 
   void get_parameters(std::vector<std::string> &dest) const;
   std::string get_first_parameter() const;
+  bool option_has_value(std::string option) const;
 protected:
   std::string cmd;
 	std::vector<std::string> parameters;

@@ -54,23 +54,23 @@ bool interpreter_breakpoint::add_breakpoint(
   if (f_it == function_lines.end())
   {
     function_lines[PC->function] = line_listt();
-    line_listt *lines = &(function_lines[PC->function]);
-    lines->push_back(location_number);
+    line_listt &lines = function_lines[PC->function];
+    lines.push_back(location_number);
     return true;
   }
   else
   {
-    line_listt *lines = &(f_it->second);
-    for(unsigned i=0; i < lines->size(); i++)
+    line_listt &lines = f_it->second;
+    for(unsigned i=0; i < lines.size(); i++)
     {
-      if ((*lines)[i] == location_number)
+      if (lines[i] == location_number)
       {
-        if (toggle) lines->erase(lines->begin() + i);
+        if (toggle) lines.erase(lines.begin() + i);
         return false;
       }
     }
 
-    lines->push_back(location_number);
+    lines.push_back(location_number);
     return true;
   }
 
@@ -84,12 +84,12 @@ bool interpreter_breakpoint::remove_breakpoint(goto_programt::const_targett PC)
 
   if (f_it != function_lines.end())
   {
-    line_listt *lines = &(f_it->second);
-    for(unsigned i=0; i < lines->size(); i++)
+    line_listt &lines = f_it->second;
+    for(unsigned i=0; i < lines.size(); i++)
     {
-      if ((*lines)[i] == location_number)
+      if (lines[i] == location_number)
       {
-        lines->erase(lines->begin() + i);
+        lines.erase(lines.begin() + i);
         return true;
       }
     }
@@ -162,12 +162,25 @@ void interpreter_breakpoint::list() const
       it++)
   {
     const line_listt &lines = it->second;
+    if (lines.size() == 0) continue;
+
     goto_functionst::function_mapt::const_iterator f_it = 
       goto_functions.function_map.find(it->first);
+
+    if (f_it == goto_functions.function_map.end()) continue;
+
     const goto_functionst::goto_functiont &function = f_it->second;
-  
+
+    std::string function_name = id2string(f_it->first);
+    if (function_name.find("c::") == 0)
+    {
+      function_name = function_name.substr(3);
+    }
+
+    std::cout << "Breakpoint(s) set in function '" << function_name << "' " << std::endl;
+
     for(goto_programt::const_targett PC = function.body.instructions.begin();
-        PC < function.body.instructions.end();
+        PC != function.body.instructions.end();
         PC++)
     {
       if (has_breakpoint_at(lines, PC->location_number))
