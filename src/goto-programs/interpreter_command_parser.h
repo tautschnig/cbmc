@@ -62,6 +62,13 @@ public:
 	std::string get_breakpoint_module() const;
 	std::string get_breakpoint_lineno() const;
 
+  bool has_watch_remove_all() const;
+	bool has_watch_remove() const;
+	bool has_watch_add() const;
+	bool has_watch_list() const;
+	std::string get_watch_module() const;
+	std::string get_watch_lineno() const;
+
   bool has_save_overwrite() const;
 
   void get_parameters(std::vector<std::string> &dest) const;

@@ -112,6 +112,8 @@ void interpretert::show_state(bool force) const
       ns, function->first, std::cout, PC);
 
   std::cout << '\n';
+
+  show_watches();
 }
 
 void interpretert::command()
@@ -255,6 +257,11 @@ void interpretert::command()
       int after_lines = cmd.list_after_lines();
 
       list_src(before_lines, after_lines);
+    }
+    else if (cmd.is_watch())
+    {
+      keep_asking = true;
+      manage_watch();
     }
     else if (cmd.is_where())
     {
@@ -804,14 +811,14 @@ void interpretert::manage_breakpoint()
   }
   else if (cmd.has_breakpoint_toggle())
   {
-    break_point->toggle_breakpoint(PC);
+    break_point->toggle(PC);
   }
   else if (cmd.has_breakpoint_remove())
   {
     std::string line_no = cmd.get_breakpoint_lineno();
     if (line_no == "")
     {
-      break_point->remove_breakpoint(PC);
+      break_point->remove(PC);
     }
     else
     {
@@ -819,7 +826,7 @@ void interpretert::manage_breakpoint()
       if (module == "") module = get_current_module();
 
       if (module != "")
-        break_point->remove_breakpoint(line_no, module);
+        break_point->remove(line_no, module);
     }
   }
   else if (cmd.has_breakpoint_add())
@@ -828,7 +835,7 @@ void interpretert::manage_breakpoint()
     if (line_no == "")
     {
       if (cmd.has_breakpoint_add()) 
-        break_point->add_breakpoint(PC);
+        break_point->add(PC);
     }
     else
     {
@@ -836,7 +843,7 @@ void interpretert::manage_breakpoint()
       if (module == "") module = get_current_module();
 
       if (module != "")
-        break_point->add_breakpoint(line_no, module);
+        break_point->add(line_no, module);
   }
   }
   else if (cmd.has_breakpoint_list())
@@ -844,6 +851,75 @@ void interpretert::manage_breakpoint()
     break_point->list();
   }
   }
+
+void interpretert::manage_watch()
+{
+  if (completed) return;
+
+  if (cmd.has_watch_remove_all())
+  {
+    watch->remove_all();
+  }
+  else if (cmd.has_watch_remove())
+  {
+    std::vector<std::string> params;
+    cmd.get_parameters(params);
+    if (!validate_watch_variables(params)) return;
+    
+    std::string line_no = cmd.get_breakpoint_lineno();
+    std::string module = cmd.get_watch_module();
+    if (module == "") module = get_current_module();
+
+    if (line_no == "")
+    {
+      if (params.size() == 0)
+        watch->remove(PC);
+      else
+        watch->remove(PC, params);
+    }
+    else
+    {
+      watch->remove(line_no, module, params);
+    }
+  }
+  else if (cmd.has_watch_add())
+  {
+    std::vector<std::string> params;
+    cmd.get_parameters(params);
+    if (!validate_watch_variables(params)) return;
+
+    std::string line_no = cmd.get_breakpoint_lineno();
+    if (line_no == "")
+    {
+      watch->add(PC, params);
+    }
+    else
+    {
+      std::string module = cmd.get_breakpoint_module();
+      if (module == "") module = get_current_module();
+
+      watch->add(line_no, module, params);
+    }
+  }
+  else if (cmd.has_watch_list())
+  {
+    watch->list();
+  }
+}
+
+//TODO - NOT QUITE RIGHT. Need to take function name into account!
+bool interpretert::validate_watch_variables(std::vector<std::string> variables) const
+{
+  for(unsigned i = 0; i < variables.size(); i++)
+  {
+  }
+
+  return true;
+}
+
+void interpretert::show_watches() const
+{
+}
 
 std::string interpretert::get_current_module() const
 {

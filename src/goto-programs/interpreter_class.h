@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "interpreter_command_parser.h"
 #include "interpreter_breakpoint.h"
+#include "interpreter_watch.h"
 
 #include <stack>
 #include <queue>
@@ -37,11 +38,13 @@ public:
     batch_mode = false;
     reading_from_queue = false;
     break_point = new interpreter_breakpoint(_symbol_table, _goto_functions);
+    watch = new interpreter_watch(_symbol_table, _goto_functions);
   }
 
   ~interpretert()
   {
     delete break_point;
+    delete watch;
   }
 
   void operator()();
@@ -100,6 +103,8 @@ protected:
 
 	interpretert_command_parser cmd;
   interpreter_breakpoint *break_point;
+  interpreter_watch *watch;
+
   std::vector<std::string> commands;
   std::queue<std::string> queued_commands;
   bool reading_from_queue;
@@ -160,8 +165,12 @@ protected:
   void modify_variable();
   void modify_variable(const symbolt &symbol, const exprt &expr);
   void manage_breakpoint();
+  void manage_watch();
   void save_commands() const;
   void load_commands_from_file();
+
+  bool validate_watch_variables(std::vector<std::string> variables) const;
+  void show_watches() const;
 
   std::string get_current_module() const;
 

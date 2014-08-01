@@ -26,6 +26,7 @@ SRC = basic_blocks.cpp \
       interpreter_command.cpp \
       interpreter_command_parser.cpp \
       interpreter_evaluate.cpp \
+      interpreter_watch.cpp \
       json_goto_trace.cpp \
       link_to_library.cpp \
       loop_ids.cpp \

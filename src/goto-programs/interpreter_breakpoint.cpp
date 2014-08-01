@@ -18,7 +18,7 @@ Author: Siqing Tang, jtang707@gmail.com
 
 #include "interpreter_breakpoint.h"
 
-bool interpreter_breakpoint::add_breakpoint(std::string line_no, std::string module)
+bool interpreter_breakpoint::add(std::string line_no, std::string module)
 {
   for(goto_functionst::function_mapt::const_iterator 
     it = goto_functions.function_map.begin();
@@ -36,7 +36,7 @@ bool interpreter_breakpoint::add_breakpoint(std::string line_no, std::string mod
       while (PC != goto_function.body.instructions.end())
       {
         std::string line = id2string(PC->location.get_line());
-        if (line == line_no) add_breakpoint(PC, false);
+        if (line == line_no) add(PC, false);
         PC++;
       }
     }
@@ -45,7 +45,7 @@ bool interpreter_breakpoint::add_breakpoint(std::string line_no, std::string mod
   return false;
 }
 
-bool interpreter_breakpoint::add_breakpoint(
+bool interpreter_breakpoint::add(
   goto_programt::const_targett PC, bool toggle)
 {
   unsigned location_number = PC->location_number;
@@ -77,7 +77,7 @@ bool interpreter_breakpoint::add_breakpoint(
   return false;
 }
 
-bool interpreter_breakpoint::remove_breakpoint(goto_programt::const_targett PC)
+bool interpreter_breakpoint::remove(goto_programt::const_targett PC)
 {
   unsigned location_number = PC->location_number;
   function_linest::iterator f_it = function_lines.find(PC->function);
@@ -98,7 +98,7 @@ bool interpreter_breakpoint::remove_breakpoint(goto_programt::const_targett PC)
   return false;
 }
 
-bool interpreter_breakpoint::remove_breakpoint(std::string line_no, std::string module)
+bool interpreter_breakpoint::remove(std::string line_no, std::string module)
 {
   bool removed = false;
   for(goto_functionst::function_mapt::const_iterator 
@@ -119,7 +119,7 @@ bool interpreter_breakpoint::remove_breakpoint(std::string line_no, std::string 
         std::string line = id2string(PC->location.get_line());
         if (line == line_no) 
         {
-          if (remove_breakpoint(PC)) removed = true;
+          if (remove(PC)) removed = true;
         }
         PC++;
       }

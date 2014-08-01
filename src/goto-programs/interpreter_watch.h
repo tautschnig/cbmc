@@ -1,5 +1,5 @@
-#ifndef GOTO_INTERPRET_BREAKPOINT_H
-#define GOTO_INTERPRET_BREAKPOINT_H
+#ifndef GOTO_INTERPRET_WATCH_H
+#define GOTO_INTERPRET_WATCH_H
 
 #include <vector>
 #include <stack>
@@ -10,16 +10,16 @@
 
 /*******************************************************************\
 
-   Class: interpretert_breakpoint
+   Class: interpretert_watch
 
- Purpose: breakpoint management for GOTO interpreter
+ Purpose: watch management for GOTO interpreter
 
 \*******************************************************************/
 
-class interpreter_breakpoint
+class interpreter_watch
 {
 public:
-  interpreter_breakpoint(
+  interpreter_watch(
     const symbol_tablet &_symbol_table,
     const goto_functionst &_goto_functions):
     symbol_table(_symbol_table),
@@ -28,35 +28,28 @@ public:
   {
   }
 
-  bool add(std::string line_no, std::string module);
-
-  bool add(goto_programt::const_targett PC) 
-  {
-    return add(PC, false);
-  };
-
-  bool toggle(goto_programt::const_targett PC) 
-  {
-    return add(PC, true);
-  };
+  bool add(goto_programt::const_targett PC, std::vector<std::string> variables); 
+  bool add(std::string line_no, std::string module, std::vector<std::string> variables);
 
   bool remove(goto_programt::const_targett PC); 
-  bool remove(std::string line_no, std::string module);
+  bool remove(goto_programt::const_targett PC, std::vector<std::string> variables); 
+  bool remove(std::string line_no, std::string module, std::vector<std::string> variables);
+
   void remove_all();
 
-  bool has_breakpoint_at(goto_programt::const_targett PC) const;
+  void get_watch_variables(goto_programt::const_targett PC, std::vector<mp_integer> &dest) const;
+
   void list() const;
 protected:
-  bool add(goto_programt::const_targett PC, bool toggle);
   const symbol_tablet &symbol_table;
   const namespacet ns;
   const goto_functionst &goto_functions;
   
-  typedef std::vector<unsigned> line_listt;
+  typedef std::set<unsigned> line_watchest;
+  typedef hash_map_cont<unsigned, line_watchest> line_listt;
   typedef hash_map_cont<irep_idt, line_listt, irep_id_hash> function_linest;
 
   function_linest function_lines;
-  bool has_breakpoint_at(const line_listt &lines, unsigned location_number) const;
 };
 
 #endif
