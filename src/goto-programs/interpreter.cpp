@@ -211,7 +211,12 @@ void interpretert::command()
     }
 		else if (cmd.is_help())
   {
-			cmd.print_help();
+      std::string help_cmd = cmd.get_first_parameter();
+      if (help_cmd == "")
+        cmd.help();
+      else
+        cmd.help(help_cmd);
+
 			keep_asking = true; 
   }
     else if (cmd.is_load())

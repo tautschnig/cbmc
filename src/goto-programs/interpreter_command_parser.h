@@ -21,7 +21,8 @@ public:
   
 	void parse(const char* cmdline);
 
-	void print_help() const;
+	void help() const; //help for general - list of commands
+        void help(std::string cmd) const; //for a specific command
 
 	bool is_break() const;
 	bool is_callstack() const;
