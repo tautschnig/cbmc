@@ -1207,7 +1207,7 @@ void interpretert::save_commands() const
 
   if (!cmd.has_save_overwrite())
   {
-    std::ifstream inp_file(file);
+    std::ifstream inp_file(file.c_str());
     bool file_exists = inp_file;
     inp_file.close();
     if (file_exists)
