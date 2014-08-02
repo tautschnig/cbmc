@@ -82,6 +82,18 @@ void interpretert::operator()()
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::show_state
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::show_state() const
 {
   show_state(false);
@@ -292,6 +304,18 @@ void interpretert::command()
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::set_entry_function
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::set_entry_function(std::string new_entry_function)
 {
   if (new_entry_function.size() == 0)
@@ -320,6 +344,18 @@ void interpretert::set_entry_function(std::string new_entry_function)
     std::cout << new_entry_function << " is not a function." << std::endl;
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert::modify_variable
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::modify_variable()
 {
@@ -401,6 +437,18 @@ void interpretert::modify_variable()
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::modify_variable
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
 {
   std::vector<mp_integer> values;
@@ -426,6 +474,18 @@ void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::find_function
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 goto_functionst::function_mapt::const_iterator interpretert::find_function(std::string func_name) const
 {
   std::string fname = "c::" + func_name;
@@ -443,6 +503,18 @@ goto_functionst::function_mapt::const_iterator interpretert::find_function(std::
 
   return goto_functions.function_map.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert::print
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::print() const
     {
@@ -469,6 +541,18 @@ void interpretert::print() const
 	  print_variable(parameters[i]);
 	}
 }
+
+/*******************************************************************\
+
+Function: interpretert::print_local_variables()
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::print_local_variables(bool include_args, bool include_real_locals) const
 {
@@ -507,10 +591,34 @@ void interpretert::print_local_variables(bool include_args, bool include_real_lo
     }
   }
 
+/*******************************************************************\
+
+Function: interpretert::is_internal_global_varialbe
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert::is_internal_global_varialbe(const std::string name) const
 {
   return (name.find(CPROVER_PREFIX) == 0) || (name == "c::argc'") || (name == "c::argv'");
 }
+
+/*******************************************************************\
+
+Function: interpretert::print_global_varialbes
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::print_global_varialbes() const
 {
@@ -530,6 +638,18 @@ void interpretert::print_global_varialbes() const
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::remove_global_varialbe_prefix
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::remove_global_varialbe_prefix(std::string &name) const
 {
   if (name.find("c::") == 0)
@@ -537,6 +657,18 @@ void interpretert::remove_global_varialbe_prefix(std::string &name) const
      name = name.substr(3);
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert::get_variable_symbol
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 const symbolt &interpretert::get_variable_symbol(const std::string variable) const
 {
@@ -586,6 +718,18 @@ const symbolt &interpretert::get_variable_symbol(const std::string variable) con
  return null_symbol;
 }
 
+/*******************************************************************\
+
+Function: interpretert::print_variable
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::print_variable(const std::string variable) const
 {
   const symbolt &symbol  = get_variable_symbol(variable);
@@ -598,6 +742,18 @@ void interpretert::print_variable(const std::string variable) const
   std::cout << variable <<" - " << "<not found>" << std::endl;
 }
 }
+
+/*******************************************************************\
+
+Function: interpretert::print_variable
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::print_variable(const std::string display_name, const symbolt &symbol) const
 {
@@ -654,6 +810,18 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
     std::cout << std::endl;
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert::print_struct
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::print_struct(const typet &type, const std::vector<mp_integer> values, unsigned &offset) const
 {
@@ -744,6 +912,18 @@ void interpretert::print_struct(const typet &type, const std::vector<mp_integer>
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::list_src
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::list_src(int before_lines, int after_lines) const
 {
   goto_programt::const_targett cur_PC = PC;
@@ -775,6 +955,18 @@ void interpretert::list_src(int before_lines, int after_lines) const
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::show_callstack
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::show_callstack() const
 {
   if (call_stack.empty()) 
@@ -800,6 +992,18 @@ void interpretert::show_callstack() const
     tmp_call_stack.pop();
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert::manage_breakpoint
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::manage_breakpoint()
 {
@@ -851,6 +1055,18 @@ void interpretert::manage_breakpoint()
     break_point->list();
   }
   }
+
+/*******************************************************************\
+
+Function: interpretert::manage_watch
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::manage_watch()
 {
@@ -907,6 +1123,18 @@ void interpretert::manage_watch()
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert::validate_watch_variables
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 //TODO - NOT QUITE RIGHT. Need to take function name into account!
 bool interpretert::validate_watch_variables(std::vector<std::string> variables) const
 {
@@ -917,15 +1145,51 @@ bool interpretert::validate_watch_variables(std::vector<std::string> variables) 
   return true;
 }
 
+/*******************************************************************\
+
+Function: interpretert::show_watches
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::show_watches() const
 {
 }
+
+/*******************************************************************\
+
+Function: interpretert::get_current_module
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 std::string interpretert::get_current_module() const
 {
   goto_programt::const_targett begin_PC = (function->second).body.instructions.begin();
   return begin_PC->location.is_nil() ? "" : id2string(begin_PC->location.get_file());
 }
+
+/*******************************************************************\
+
+Function: interpretert::save_commands
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::save_commands() const
 {
@@ -963,6 +1227,18 @@ void interpretert::save_commands() const
     std::cout << "unable to save to '" << file << "'" << std::endl;
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert::load_commands_from_file
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::load_commands_from_file()
 {
@@ -1111,6 +1387,18 @@ void interpretert::step()
   reset_next_PC();
 }
 
+/*******************************************************************\
+
+Function: interpretert::reset_next_PC
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::reset_next_PC()
 {
   if (next_stop_PC_set && (PC->function == next_stop_PC->function) && (PC == next_stop_PC))
@@ -1155,7 +1443,6 @@ void interpretert::execute_other()
     throw "unexpected OTHER statement: "+id2string(statement);
 }
 
-/// execute printf() - work for integer/float/double/string/char
 /// TODO: move this to interpreter_util.cpp
 bool is_c_pointer_of_char(typet type)
 {
@@ -1171,7 +1458,7 @@ bool is_c_pointer_of_char(typet type)
   return false;
 }
 
->>>>>>> 27ad2cb0c... fixed that "char msg[] = "hello"; printf(msg);" was not working. Now works - a lot of experiments!
+/// execute printf() - work for integer/float/double/string/char
 void interpretert::execute_printf() const
 {
   codet src = PC->code;
@@ -1259,6 +1546,18 @@ void interpretert::execute_printf() const
       }
       }
     }
+
+/*******************************************************************\
+
+Function: interpretert::print_arg()
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::print_arg(const std::string str_format, const exprt &expr) const
     {
@@ -1515,6 +1814,18 @@ void interpretert::execute_function_call()
     throw "no body for "+id2string(identifier);
 }
 
+/*******************************************************************\
+
+Function: interpretert::show_function_start_msg
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert::show_function_start_msg() const
 {
   if (silent) return;
@@ -1525,6 +1836,18 @@ void interpretert::show_function_start_msg() const
   std::cout << "Start of function '"
               << function->first << "'" << std::endl;
 }
+
+/*******************************************************************\
+
+Function: interpretert::show_require_running_msg
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::show_require_running_msg() const
 {
@@ -1579,6 +1902,18 @@ void interpretert::build_memory_map(const symbolt &symbol)
     }
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert::fix_argc
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert::fix_argc()
 {

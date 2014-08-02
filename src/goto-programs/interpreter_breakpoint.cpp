@@ -18,6 +18,18 @@ Author: Siqing Tang, jtang707@gmail.com
 
 #include "interpreter_breakpoint.h"
 
+/*******************************************************************\
+
+Function: interpreter_breakpoint::add
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpreter_breakpoint::add(std::string line_no, std::string module)
 {
   for(goto_functionst::function_mapt::const_iterator 
@@ -44,6 +56,18 @@ bool interpreter_breakpoint::add(std::string line_no, std::string module)
 
   return false;
 }
+
+/*******************************************************************\
+
+Function: interpreter_breakpoint::add
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpreter_breakpoint::add(
   goto_programt::const_targett PC, bool toggle)
@@ -77,6 +101,19 @@ bool interpreter_breakpoint::add(
   return false;
 }
 
+
+/*******************************************************************\
+
+Function: interpreter_breakpoint::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpreter_breakpoint::remove(goto_programt::const_targett PC)
 {
   unsigned location_number = PC->location_number;
@@ -97,6 +134,18 @@ bool interpreter_breakpoint::remove(goto_programt::const_targett PC)
 
   return false;
 }
+
+/*******************************************************************\
+
+Function: interpreter_breakpoint::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpreter_breakpoint::remove(std::string line_no, std::string module)
 {
@@ -129,10 +178,34 @@ bool interpreter_breakpoint::remove(std::string line_no, std::string module)
   return removed;
 }
 
+/*******************************************************************\
+
+Function: interpreter_breakpoint::remove_all
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpreter_breakpoint::remove_all()
 {
   function_lines.clear();
 }
+
+/*******************************************************************\
+
+Function: interpreter_breakpoint::has_breakpoint_at
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpreter_breakpoint::has_breakpoint_at(goto_programt::const_targett PC) const
 {
@@ -140,6 +213,18 @@ bool interpreter_breakpoint::has_breakpoint_at(goto_programt::const_targett PC) 
   return f_it != function_lines.end() && 
          has_breakpoint_at(f_it->second, PC->location_number);
 }
+
+/*******************************************************************\
+
+Function: interpreter_breakpoint::has_breakpoint_at
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpreter_breakpoint::has_breakpoint_at(
   const line_listt &lines, 
@@ -153,6 +238,18 @@ bool interpreter_breakpoint::has_breakpoint_at(
 
   return false;
 }
+
+/*******************************************************************\
+
+Function: interpreter_breakpoint::list
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpreter_breakpoint::list() const
 {

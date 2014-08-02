@@ -18,6 +18,18 @@ Author: Siqing Tang, jtang707@gmail.com
 
 #define DEFAULT_LIST_LINES 5
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::print_help
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 void interpretert_command_parser::print_help() const
 {
   std::cout << "=== General  ===" << std::endl
@@ -48,100 +60,340 @@ void interpretert_command_parser::print_help() const
             << "\t@    - load commands from a file and run" << std::endl;
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_break
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_break() const
 {
 	return cmd == "break";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_callstack
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_callstack() const
 {
 	return cmd == "callstack";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_function
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_function() const
 {
 	return cmd == "function";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_go
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_go() const
 {
 	return cmd == "go";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_help
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_help() const
 {
 	return cmd == "help";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_load
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_load() const
 {
 	return cmd == "load";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_list
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_list() const
 {
 	return cmd == "list";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_main
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_main() const
 {
 	return cmd == "main";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_modify
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_modify() const
 {
 	return cmd == "modify";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_next_line
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_next_line() const
 {
 	return cmd == "next";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_print
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_print() const
 {
 	return cmd == "print";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_quit
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_quit() const
 {
 	return cmd == "quit";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_restart
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_restart() const
 {
 	return cmd == "restart";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_save
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_save() const
 {
 	return cmd == "save";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_silent
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_silent() const
 {
 	return cmd == "silent";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_step_into
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_step_into() const
 {
 	return (cmd == "step" && options.find("into") != options.end()) || (cmd == "");
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_step_out
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_step_out() const
 {
 	return cmd == "step" && options.find("out") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_watch
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::is_watch() const
 {
 	return cmd == "watch";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::is_where
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::is_where() const
 {
 	return cmd == "where";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_parameters
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert_command_parser::get_parameters(std::vector<std::string> &dest) const
 {
@@ -152,10 +404,34 @@ void interpretert_command_parser::get_parameters(std::vector<std::string> &dest)
 	}
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_first_parameter
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 std::string interpretert_command_parser::get_first_parameter() const
 {
   return parameters.size() >= 1 ? parameters[0] : "";
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::parse
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert_command_parser::parse(const char* cmdline)
 {
@@ -262,6 +538,18 @@ void interpretert_command_parser::parse(const char* cmdline)
 		}
   }
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::normalise_command
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 void interpretert_command_parser::normalise_command(std::string &cmd)
 {
@@ -403,30 +691,102 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_options
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_options() const
 {
   return !options.empty();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_print_locals
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::has_print_locals() const
 {
   return options.find("locals") != options.end();
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_print_parameters
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_print_parameters() const
 {
   return options.find("parameters") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_print_globals
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::has_print_globals() const
 {
   return options.find("globals") != options.end();
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_list_all
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_list_all() const
 {
   return options.find("all") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::list_before_lines
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 int interpretert_command_parser::list_before_lines() const
 {
@@ -446,6 +806,18 @@ int interpretert_command_parser::list_before_lines() const
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::list_after_lines
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 int interpretert_command_parser::list_after_lines() const
 {
   if (has_list_all())
@@ -464,25 +836,85 @@ int interpretert_command_parser::list_after_lines() const
   }
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_silent_on
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_silent_on() const
 {
   return is_silent() && (options.find("off") == options.end());
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_breakpoint_remove_all
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::has_breakpoint_remove_all() const
 {
   return options.find("remove-all") != options.end();
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_breakpoint_remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_breakpoint_remove() const
 {
   return options.find("remove") != options.end();
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_breakpoint_add
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_breakpoint_add() const
 {
   return options.find("add") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_breakpoint_toggle
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::has_breakpoint_toggle() const
 {
@@ -491,16 +923,52 @@ bool interpretert_command_parser::has_breakpoint_toggle() const
          parameters.size() == 0;
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_breakpoint_list
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_breakpoint_list() const
 {
   return options.find("list") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_breakpoint_module
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 std::string interpretert_command_parser::get_breakpoint_module() const
 {
   option_mapt::const_iterator it = options.find("module");
   return it == options.end() ? "" : it->second;
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_breakpoint_lineno
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 std::string interpretert_command_parser::get_breakpoint_lineno() const
 {
@@ -513,42 +981,138 @@ std::string interpretert_command_parser::get_breakpoint_lineno() const
     return "";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::option_has_value
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::option_has_value(std::string option) const
 {
   option_mapt::const_iterator it = options.find(option);
   return it != options.end() || it->first != "";
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_save_overwrite
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_save_overwrite() const
 {
   return options.find("overwrite") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_watch_remove_all
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::has_watch_remove_all() const
 {
   return options.find("remove-all") != options.end();
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_watch_remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_watch_remove() const
 {
   return options.find("remove") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_watch_add
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 bool interpretert_command_parser::has_watch_add() const
 {
   return options.size() == 0 || options.find("add") != options.end();
 }
 
+/*******************************************************************\
+
+Function: interpretert_command_parser::has_watch_list
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool interpretert_command_parser::has_watch_list() const
 {
   return options.find("list") != options.end();
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_watch_module
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 std::string interpretert_command_parser::get_watch_module() const
 {
   option_mapt::const_iterator it = options.find("module");
   return it == options.end() ? "" : it->second;
 }
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_watch_lineno
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
 
 std::string interpretert_command_parser::get_watch_lineno() const
 {
