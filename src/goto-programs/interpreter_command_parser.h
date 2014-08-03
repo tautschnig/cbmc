@@ -89,6 +89,7 @@ protected:
 	option_mapt options;
 
 	void normalise_command(std::string &cmd);
+	std::string get_option(const std::string option) const;
 };
 
 #endif /* GOTO_INTERPRETER_COMMAND_PARSER_H */

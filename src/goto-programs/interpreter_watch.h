@@ -28,16 +28,16 @@ public:
   {
   }
 
-  bool add(goto_programt::const_targett PC, std::vector<std::string> variables); 
-  bool add(std::string line_no, std::string module, std::vector<std::string> variables);
+  bool add(goto_programt::const_targett PC, const std::vector<std::string> variables); 
+  bool add(std::string line_no, std::string module, const std::vector<std::string> variables);
 
   bool remove(goto_programt::const_targett PC); 
-  bool remove(goto_programt::const_targett PC, std::vector<std::string> variables); 
-  bool remove(std::string line_no, std::string module, std::vector<std::string> variables);
+  bool remove(goto_programt::const_targett PC, const std::vector<std::string> variables); 
+  bool remove(std::string line_no, std::string module, const std::vector<std::string> variables);
 
   void remove_all();
 
-  void get_watch_variables(goto_programt::const_targett PC, std::vector<mp_integer> &dest) const;
+  void get_watch_variables(goto_programt::const_targett PC, std::vector<std::string> &dest) const;
 
   void list() const;
 protected:
@@ -45,11 +45,14 @@ protected:
   const namespacet ns;
   const goto_functionst &goto_functions;
   
-  typedef std::set<unsigned> line_watchest;
+  typedef std::set<std::string> line_watchest;
   typedef hash_map_cont<unsigned, line_watchest> line_listt;
   typedef hash_map_cont<irep_idt, line_listt, irep_id_hash> function_linest;
 
   function_linest function_lines;
+
+  void add(line_watchest &watches, const std::vector<std::string> variables);
+
 };
 
 #endif

@@ -75,10 +75,17 @@ void interpretert::operator()()
     while(!done && !restart)
   {
     show_state();
+      try
+      {
     command();
     if(!done && !restart && !completed)
       step();
   }
+      catch(const std::string &e)
+      {
+        std::cout << "EXCEPTION ENCOUNTERED:" << e << std::endl;
+      }
+    }
   }
 }
 
@@ -1087,7 +1094,7 @@ void interpretert::manage_watch()
     cmd.get_parameters(params);
     if (!validate_watch_variables(params)) return;
     
-    std::string line_no = cmd.get_breakpoint_lineno();
+    std::string line_no = cmd.get_watch_lineno();
     std::string module = cmd.get_watch_module();
     if (module == "") module = get_current_module();
 
@@ -1109,14 +1116,14 @@ void interpretert::manage_watch()
     cmd.get_parameters(params);
     if (!validate_watch_variables(params)) return;
 
-    std::string line_no = cmd.get_breakpoint_lineno();
+    std::string line_no = cmd.get_watch_lineno();
     if (line_no == "")
     {
       watch->add(PC, params);
     }
     else
     {
-      std::string module = cmd.get_breakpoint_module();
+      std::string module = cmd.get_watch_module();
       if (module == "") module = get_current_module();
 
       watch->add(line_no, module, params);
@@ -1132,22 +1139,63 @@ void interpretert::manage_watch()
 
 Function: interpretert::validate_watch_variables
 
-Inputs:
+Inputs: a list of variables
 
-Outputs:
+Outputs: true/false indicating whether variable names are valid.
 
-Purpose:
+Purpose: validate variable names.
 
 \*******************************************************************/
 
-//TODO - NOT QUITE RIGHT. Need to take function name into account!
 bool interpretert::validate_watch_variables(std::vector<std::string> variables) const
 {
-  for(unsigned i = 0; i < variables.size(); i++)
+  if (variables.size() == 0) return true;
+
+  std::set<std::string> accept_vars;
+
+  // 'locals' contains arguments + local
+  std::set<irep_idt> locals;
+  get_local_identifiers(function->second, locals);
+
+  for (std::set<irep_idt>::const_iterator l_it = locals.begin();
+       l_it != locals.end();
+       l_it++)
   {
+    const symbolt &symbol = ns.lookup(*l_it);
+    std::string name = id2string(symbol.base_name);
+    accept_vars.insert(name);
   }
 
-  return true;
+  //global
+  for(symbol_tablet::symbolst::const_iterator
+    it = symbol_table.symbols.begin();
+    it != symbol_table.symbols.end();
+    it++)
+  {
+    const symbolt &symbol = it->second;
+    std::string name = id2string(symbol.name);
+    if (symbol.is_static_lifetime && 
+      !is_internal_global_varialbe(name))
+    {
+      remove_global_varialbe_prefix(name);
+      accept_vars.insert(name);
+    }
+  }
+
+  bool result = true;
+
+  for(unsigned i = 0; i < variables.size(); i++)
+  {
+    if (accept_vars.find(variables[i]) == accept_vars.end())
+    {
+      std::cout << variables[i] << " is not a valid variable" << std::endl;
+      result = false;
+    }
+  }
+
+  if (!result) std::cout << "no variable added to watch list" << std::endl;
+
+  return result;
 }
 
 /*******************************************************************\
@@ -1164,6 +1212,12 @@ Purpose:
 
 void interpretert::show_watches() const
 {
+  std::vector<std::string> watch_vars;
+  watch->get_watch_variables(PC, watch_vars);
+  for(unsigned i = 0; i < watch_vars.size(); i++)
+  {
+    print_variable(watch_vars[i]);
+  }
 }
 
 /*******************************************************************\
@@ -1575,15 +1629,11 @@ void interpretert::print_arg(const std::string str_format, const exprt &expr) co
     {
     signed x = tmp[0].to_long();
     printf(str_format.c_str(), x);
-
-    return;
   }
   else if (expr.type().id() == ID_unsignedbv)
       {
     unsigned x = tmp[0].to_ulong();
     printf(str_format.c_str(), x);
-
-    return;
   }
   else if (expr.type().id() == ID_floatbv)
   {
@@ -1605,8 +1655,6 @@ void interpretert::print_arg(const std::string str_format, const exprt &expr) co
       double x = f.to_double();
       printf(str_format.c_str(), x);
       }
-
-    return;
     }
   else
   {

@@ -1095,8 +1095,7 @@ Purpose:
 
 std::string interpretert_command_parser::get_breakpoint_module() const
 {
-  option_mapt::const_iterator it = options.find("module");
-  return it == options.end() ? "" : it->second;
+  return std::string(get_option("module"));
 }
 
 /*******************************************************************\
@@ -1113,9 +1112,9 @@ Purpose:
 
 std::string interpretert_command_parser::get_breakpoint_lineno() const
 {
-  option_mapt::const_iterator it = options.find("line-no");
-  if (it != options.end())
-    return it->second;
+  std::string line_no = std::string(get_option("line-no"));
+  if (line_no != "")
+    return line_no;
   else if (parameters.size() > 0)
     return parameters[0];
   else
@@ -1136,8 +1135,7 @@ Purpose:
 
 bool interpretert_command_parser::option_has_value(std::string option) const
 {
-  option_mapt::const_iterator it = options.find(option);
-  return it != options.end() || it->first != "";
+  return get_option(option) != "";
 }
 
 /*******************************************************************\
@@ -1239,8 +1237,7 @@ Purpose:
 
 std::string interpretert_command_parser::get_watch_module() const
 {
-  option_mapt::const_iterator it = options.find("module");
-  return it == options.end() ? "" : it->second;
+  return std::string(get_option("module"));
 }
 
 /*******************************************************************\
@@ -1257,6 +1254,23 @@ Purpose:
 
 std::string interpretert_command_parser::get_watch_lineno() const
 {
-  option_mapt::const_iterator it = options.find("line-no");
+  return std::string(get_option("line-no"));
+}
+
+/*******************************************************************\
+
+Function: interpretert_command_parser::get_option
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+std::string interpretert_command_parser::get_option(const std::string option) const
+{
+  option_mapt::const_iterator it = options.find(option);
   return it == options.end() ? "" : it->second;
 }
