@@ -233,7 +233,7 @@ void interpreter_watch::get_watch_variables(
   function_linest::const_iterator f_it = function_lines.find(PC->function);
   if (f_it == function_lines.end()) return;
   const line_listt &lines = f_it->second;
-  line_listt::const_iterator &watches_it = lines.find(PC->location_number);
+  line_listt::const_iterator watches_it = lines.find(PC->location_number);
   if (watches_it != lines.end())
   {
     const line_watchest &watches = watches_it->second;
