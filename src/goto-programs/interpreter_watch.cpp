@@ -57,7 +57,7 @@ bool interpreter_watch::add(goto_programt::const_targett PC, const std::vector<s
 }
 
 bool interpreter_watch::add(
-  std::string line_no, std::string module, 
+  std::string line_no, std::string file, 
   const std::vector<std::string> variables)
 {
   if (variables.size() == 0) return false;
@@ -73,7 +73,7 @@ bool interpreter_watch::add(
     goto_programt::const_targett PC = goto_function.body.instructions.begin();
     if (PC != goto_function.body.instructions.end() && 
         PC->location.is_not_nil() &&
-        id2string(PC->location.get_file()) == module)
+        id2string(PC->location.get_file()) == file)
     {
       while (PC != goto_function.body.instructions.end())
       {
@@ -131,7 +131,7 @@ bool interpreter_watch::remove(
 
 bool interpreter_watch::remove(
   std::string line_no, 
-  std::string module, 
+  std::string file, 
   const std::vector<std::string> variables)
 {
   bool removed = false;
@@ -147,7 +147,7 @@ bool interpreter_watch::remove(
     goto_programt::const_targett PC = goto_function.body.instructions.begin();
     if (PC != goto_function.body.instructions.end() && 
         PC->location.is_not_nil() &&
-        id2string(PC->location.get_file()) == module)
+        id2string(PC->location.get_file()) == file)
     {
       while (PC != goto_function.body.instructions.end())
       {

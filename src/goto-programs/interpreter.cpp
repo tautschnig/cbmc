@@ -1038,11 +1038,11 @@ void interpretert::manage_breakpoint()
     }
     else
     {
-      std::string module = cmd.get_breakpoint_module();
-      if (module == "") module = get_current_module();
+      std::string file = cmd.get_breakpoint_file();
+      if (file == "") file = get_current_file();
 
-      if (module != "")
-        break_point->remove(line_no, module);
+      if (file != "")
+        break_point->remove(line_no, file);
     }
   }
   else if (cmd.has_breakpoint_add())
@@ -1055,8 +1055,8 @@ void interpretert::manage_breakpoint()
     }
     else
     {
-    std::string module = cmd.get_breakpoint_module();
-      if (module == "") module = get_current_module();
+      std::string module = cmd.get_breakpoint_file();
+      if (module == "") module = get_current_file();
 
       if (module != "")
         break_point->add(line_no, module);
@@ -1092,47 +1092,107 @@ void interpretert::manage_watch()
   {
     std::vector<std::string> params;
     cmd.get_parameters(params);
-    if (!validate_watch_variables(params)) return;
     
     std::string line_no = cmd.get_watch_lineno();
-    std::string module = cmd.get_watch_module();
-    if (module == "") module = get_current_module();
+    std::string file = cmd.get_watch_file();
+    if (file == "") file = get_current_file();
 
     if (line_no == "")
     {
       if (params.size() == 0)
         watch->remove(PC);
       else
+      {
+        if (!validate_watch_variables(file, line_no, params)) return;
         watch->remove(PC, params);
     }
-    else
-    {
-      watch->remove(line_no, module, params);
-    }
-  }
-  else if (cmd.has_watch_add())
-  {
-    std::vector<std::string> params;
-    cmd.get_parameters(params);
-    if (!validate_watch_variables(params)) return;
-
-    std::string line_no = cmd.get_watch_lineno();
-    if (line_no == "")
-    {
-      watch->add(PC, params);
     }
     else
     {
-      std::string module = cmd.get_watch_module();
-      if (module == "") module = get_current_module();
-
-      watch->add(line_no, module, params);
+      if (!validate_watch_variables(function->second, params)) return;
+      watch->remove(line_no, file, params);
     }
   }
   else if (cmd.has_watch_list())
   {
     watch->list();
   }
+  else if (cmd.has_watch_add())
+  {
+    std::vector<std::string> params;
+    cmd.get_parameters(params);
+    if (params.size() == 0)
+    {
+      std::cout << "no watch variable specified" << std::endl;
+      return;
+    }
+
+    std::string line_no = cmd.get_watch_lineno();
+    if (line_no == "")
+    {
+      if (!validate_watch_variables(function->second, params)) return;
+
+      watch->add(PC, params);
+    }
+    else
+    {
+      std::string file = cmd.get_watch_file();
+      if (file == "") file = get_current_file();
+
+      if (!validate_watch_variables(file, line_no, params)) return;
+
+      watch->add(line_no, file, params);
+    }
+  }
+}
+
+/*******************************************************************\
+
+Function: interpretert::validate_watch_variables
+
+Inputs: 
+
+Outputs: 
+
+Purpose: validate file/line-no
+
+\*******************************************************************/
+
+bool interpretert::validate_watch_variables(
+  std::string file,
+  std::string line_no,
+  const std::vector<std::string> variables) const
+  {
+  if (variables.size() == 0) return true;
+
+  for(goto_functionst::function_mapt::const_iterator 
+    it = goto_functions.function_map.begin();
+    it != goto_functions.function_map.end();
+    it++)
+  {
+    const goto_functionst::goto_functiont &goto_function=it->second;
+    if (!goto_function.body_available) continue;
+
+    goto_programt::const_targett PC = goto_function.body.instructions.begin();
+    if (PC != goto_function.body.instructions.end() && 
+        PC->location.is_not_nil() &&
+        id2string(PC->location.get_file()) == file)
+    {
+      while (PC != goto_function.body.instructions.end())
+      {
+        std::string line = id2string(PC->location.get_line());
+        if (line == line_no) 
+        {
+          return validate_watch_variables(goto_function, variables);
+  }
+        PC++;
+      }
+    }
+  }
+
+  std::cout << "failed to locate a function at the line-no/file specified" << std::endl;
+
+  return false;
 }
 
 /*******************************************************************\
@@ -1147,7 +1207,9 @@ Purpose: validate variable names.
 
 \*******************************************************************/
 
-bool interpretert::validate_watch_variables(std::vector<std::string> variables) const
+bool interpretert::validate_watch_variables(
+  const goto_function_templatet<goto_programt> &goto_function,
+  const std::vector<std::string> variables) const
 {
   if (variables.size() == 0) return true;
 
@@ -1155,7 +1217,7 @@ bool interpretert::validate_watch_variables(std::vector<std::string> variables) 
 
   // 'locals' contains arguments + local
   std::set<irep_idt> locals;
-  get_local_identifiers(function->second, locals);
+  get_local_identifiers(goto_function, locals);
 
   for (std::set<irep_idt>::const_iterator l_it = locals.begin();
        l_it != locals.end();
@@ -1193,8 +1255,6 @@ bool interpretert::validate_watch_variables(std::vector<std::string> variables) 
     }
   }
 
-  if (!result) std::cout << "no variable added to watch list" << std::endl;
-
   return result;
 }
 
@@ -1222,7 +1282,7 @@ void interpretert::show_watches() const
 
 /*******************************************************************\
 
-Function: interpretert::get_current_module
+Function: interpretert::get_current_file
 
 Inputs:
 
@@ -1232,7 +1292,7 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert::get_current_module() const
+std::string interpretert::get_current_file() const
 {
   goto_programt::const_targett begin_PC = (function->second).body.instructions.begin();
   return begin_PC->location.is_nil() ? "" : id2string(begin_PC->location.get_file());

@@ -169,10 +169,17 @@ protected:
   void save_commands() const;
   void load_commands_from_file();
 
-  bool validate_watch_variables(std::vector<std::string> variables) const;
+  bool validate_watch_variables(
+    std::string file,
+    std::string line_no,
+    const std::vector<std::string> variables) const;
+  bool validate_watch_variables(
+    const goto_function_templatet<goto_programt> &goto_function,
+    const std::vector<std::string> variables) const;
+
   void show_watches() const;
 
-  std::string get_current_module() const;
+  std::string get_current_file() const;
 
   // helper
   goto_functionst::function_mapt::const_iterator find_function(std::string function_name) const;

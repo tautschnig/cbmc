@@ -29,11 +29,11 @@ public:
   }
 
   bool add(goto_programt::const_targett PC, const std::vector<std::string> variables); 
-  bool add(std::string line_no, std::string module, const std::vector<std::string> variables);
+  bool add(std::string line_no, std::string file, const std::vector<std::string> variables);
 
   bool remove(goto_programt::const_targett PC); 
   bool remove(goto_programt::const_targett PC, const std::vector<std::string> variables); 
-  bool remove(std::string line_no, std::string module, const std::vector<std::string> variables);
+  bool remove(std::string line_no, std::string file, const std::vector<std::string> variables);
 
   void remove_all();
 

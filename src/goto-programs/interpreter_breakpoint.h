@@ -28,7 +28,7 @@ public:
   {
   }
 
-  bool add(std::string line_no, std::string module);
+  bool add(std::string line_no, std::string file);
 
   bool add(goto_programt::const_targett PC) 
   {
@@ -41,7 +41,7 @@ public:
   };
 
   bool remove(goto_programt::const_targett PC); 
-  bool remove(std::string line_no, std::string module);
+  bool remove(std::string line_no, std::string file);
   void remove_all();
 
   bool has_breakpoint_at(goto_programt::const_targett PC) const;

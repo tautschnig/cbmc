@@ -125,9 +125,9 @@ void interpretert_command_parser::help(std::string cmd) const
     std::cout << "Command: break | b" << std::endl
               << "Description: set/remove breakpoints" << std::endl
               << "Usage:" << std::endl
-              << "   break [--add] ][--line-no=#] [--module=file1] - set breakpoint at a location" << std::endl
+              << "   break [--add] ][--line-no=#] [--file=file1] - set breakpoint at a location" << std::endl
               << "   break --remove-all - remove all breakpoints" << std::endl
-              << "   break --remove [--line-no=#] [--module=file1] - remove breakpoint at a location" << std::endl;
+              << "   break --remove [--line-no=#] [--file=file1] - remove breakpoint at a location" << std::endl;
   }
   else if (cmd == "callstack")
   {
@@ -173,11 +173,10 @@ void interpretert_command_parser::help(std::string cmd) const
     std::cout << "Command: watch | w" << std::endl
               << "Description: set/remove watch variables" << std::endl
               << "Usage:" << std::endl
-              << "   watch [--add] ][--line-no=#] [--module=file1] [v1] [v2] [v3] - add watches" << std::endl
+              << "   watch [--add] ][--line-no=#] [--file=file1] [v1] [v2] [v3] - add watches" << std::endl
               << "   watch --remove-all - remove all watches" << std::endl
-              << "   watch --remove [--line-no=#] [--module=file1] [v1] [v2] [v3] - remove watches" << std::endl;
- 
-  }
+              << "   watch --remove [--line-no=#] [--file=file1] [v1] [v2] [v3] - remove watches" << std::endl;
+   }
   else if (cmd == "where")
   {
     std::cout << "Command: where" << std::endl
@@ -1083,7 +1082,7 @@ bool interpretert_command_parser::has_breakpoint_list() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_breakpoint_module
+Function: interpretert_command_parser::get_breakpoint_file
 
 Inputs:
 
@@ -1093,9 +1092,9 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_breakpoint_module() const
+std::string interpretert_command_parser::get_breakpoint_file() const
 {
-  return std::string(get_option("module"));
+  return std::string(get_option("file"));
 }
 
 /*******************************************************************\
@@ -1203,7 +1202,10 @@ Purpose:
 
 bool interpretert_command_parser::has_watch_add() const
 {
-  return options.size() == 0 || options.find("add") != options.end();
+  return
+    !has_watch_remove_all() &&
+    !has_watch_remove() &&
+    !has_watch_list();
 }
 
 /*******************************************************************\
@@ -1225,7 +1227,7 @@ bool interpretert_command_parser::has_watch_list() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_watch_module
+Function: interpretert_command_parser::get_watch_file
 
 Inputs:
 
@@ -1235,9 +1237,9 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_watch_module() const
+std::string interpretert_command_parser::get_watch_file() const
 {
-  return std::string(get_option("module"));
+  return std::string(get_option("file"));
 }
 
 /*******************************************************************\

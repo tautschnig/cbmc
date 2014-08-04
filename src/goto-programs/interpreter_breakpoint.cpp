@@ -30,7 +30,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::add(std::string line_no, std::string module)
+bool interpreter_breakpoint::add(std::string line_no, std::string file)
 {
   for(goto_functionst::function_mapt::const_iterator 
     it = goto_functions.function_map.begin();
@@ -43,7 +43,7 @@ bool interpreter_breakpoint::add(std::string line_no, std::string module)
     goto_programt::const_targett PC = goto_function.body.instructions.begin();
     if (PC != goto_function.body.instructions.end() && 
         PC->location.is_not_nil() &&
-        id2string(PC->location.get_file()) == module)
+        id2string(PC->location.get_file()) == file)
     {
       while (PC != goto_function.body.instructions.end())
       {
@@ -147,7 +147,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::remove(std::string line_no, std::string module)
+bool interpreter_breakpoint::remove(std::string line_no, std::string file)
 {
   bool removed = false;
   for(goto_functionst::function_mapt::const_iterator 
@@ -161,7 +161,7 @@ bool interpreter_breakpoint::remove(std::string line_no, std::string module)
     goto_programt::const_targett PC = goto_function.body.instructions.begin();
     if (PC != goto_function.body.instructions.end() && 
         PC->location.is_not_nil() &&
-        id2string(PC->location.get_file()) == module)
+        id2string(PC->location.get_file()) == file)
     {
       while (PC != goto_function.body.instructions.end())
       {
