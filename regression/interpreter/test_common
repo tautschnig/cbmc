@@ -3,17 +3,20 @@
 #
 #  parameter 1 - a C source file
 #  parameter 2 - a file containing command(s)
-#  parameter 3 - an array *name* that contains a list of EXPECTED key words. Must use array name!
-#  parameter 4 - debug flag. when passing "yes", binary and output files will not be removed.
+#  parameter 3 - debug flag. when passing "yes", binary and output files will not be removed.
+#  parameter 4 - an array *name* that contains a list of EXPECTED key words. Must use array name!
+#  parameter 5 - an array *name* that contains a list of NOT EXPECTED key words. Must use array name!
 # 
 
 function test_it() 
 {
   local src_file=$1
   local cmd_file=$2
-  local name=$3[@]
-  local expected=("${!name}")
-  local debug_flag=$4
+  local debug_flag=$3
+  local exp_name=$4[@]
+  local expected=("${!exp_name}")
+  local unexp_name=$5[@]
+  local unexpected=("${!unexp_name}")
   
   local csrc_file="${src_file}.c"
   local bin_file="${src_file}.o"
@@ -46,22 +49,36 @@ function test_it()
   goto-instrument $bin_file --interpreter < $cmd_file > $out_file
 
   local pass_count=0
+
   # 3 - search for expected key words
   for keyword in "${expected[@]}"
   do
-	local output=$( cat $out_file | sed -n "/$keyword/p" | wc -l )
-	# test match
-	[[ "$output" = "1" ]] && pass_count=$[pass_count+1] || echo "    FAILED - '$keyword' not found"
+	   local output=$( cat $out_file | sed -n "/$keyword/p" | wc -l )
+	   # test match
+	   [[ "$output" = "1" ]] && pass_count=$[pass_count+1] || echo "    FAILED - '$keyword' not found"
   done
   
-  [[ "$pass_count" = ${#expected[@]} ]] && echo "  == PASSED ===" || echo "  === FAILED ==="
+  # 3 - search for expected key words
+  for keyword in "${unexpected[@]}"
+  do
+	   local output=$( cat $out_file | sed -n "/$keyword/p" | wc -l )
+	   # test match
+	   [[ "$output" = "0" ]] && pass_count=$[pass_count+1] || echo "    FAILED - '$keyword' was unexpected"
+  done
+  
+  local pass_count_exp=${#expected[@]}
+  local pass_count_unexp=${#unexpected[@]}
+  local expected_pass_count=$[pass_count_exp+pass_count_unexp]
+  
+  [[ "$pass_count" = "$expected_pass_count" ]] && echo "  == PASSED ===" || echo "  === FAILED ==="
   echo
   
   # clean up
   
   # when debug_flag
-  [[ "$debug_flag" = "yes" ]] && exit 0 #keep the binary and output files
+  # [[ "$debug_flag" = "yes" ]] && cat $out_file
   
+  [[ "$debug_flag" = "yes" ]] && return #keep the binary and output files
   rm $bin_file
   rm $out_file
 }  

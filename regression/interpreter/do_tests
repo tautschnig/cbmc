@@ -1,3 +1,7 @@
 sh quit/quit_test
 sh main/main_test
+sh go/go_test
+sh next/next_test
+sh step_into/step_into_test
+
 

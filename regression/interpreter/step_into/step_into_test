@@ -1,5 +1,5 @@
 #!/bin/bash
-# This script is used to test the quit command (quit and q)
+# This script is used to test the next command (next and n)
 #
 # 
 # ================================================================
@@ -20,27 +20,35 @@ source "${comm_file_dir}/test_common"
 # 
 # ================================================
 #
-# test case 1 - quit
+# test case 1 - step --into
 #
-test_title="Testing command - quit"
-src_file="${mydir}/quit_src"
-cmd_file="${mydir}/quit_cmd_quit"
+test_title="Testing command - step --into"
+src_file="${mydir}/step_into_src"
+cmd_file="${mydir}/step_into_cmd"
 debug_flag="no"  # set this to yes to preserve compiled files
-expected=("Starting interpreter" "__CPROVER_initialize();")
-unexpected=()
+expected=(" __CPROVER_pipe_count = (unsigned int)0")
+unexpected=("main();")
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
 
 #
-# test case 2 - q
+# test case 2 - into
 #
-test_title="Testing command - q"
-# src_file="${mydir}/quit_src"
-cmd_file="${mydir}/quit_cmd_q"
-# expected=("Starting interpreter" "__CPROVER_initialize();")
+test_title="Testing command - into"
+cmd_file="${mydir}/step_into_cmd_into"
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+
+#
+# test case 3 - si
+#
+test_title="Testing command - si"
+cmd_file="${mydir}/step_into_cmd_si"
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+
 
 exit
