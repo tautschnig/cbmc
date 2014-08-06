@@ -43,7 +43,7 @@ void interpretert_command_parser::help() const
             << "\tnext [ENTER]       - run the next line(step over)" << std::endl
             << "\trestart            - restart the goto program" << std::endl
             << "\tstep --into (into) - step into a function" << std::endl
-            << "\tstep --over (out)  - step out the current function" << std::endl
+            << "\tstep --out  (out)  - step out the current function" << std::endl
             << std::endl
             << "=== Debugging ===" << std::endl
             << "\tbreak     - set/remove breakpoints" << std::endl
@@ -118,7 +118,7 @@ void interpretert_command_parser::help(std::string cmd) const
               << "Usage:" << std::endl
               << "   step variable_name    " << std::endl
               << "   step --into [ïnto | si] step into a function" << std::endl
-              << "   step --over [out  | so]  step out the current function"  << std::endl;
+              << "   step --out  [out  | so] step out the current function"  << std::endl;
   }
   else if (cmd == "break")
   {
