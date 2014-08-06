@@ -1,0 +1,44 @@
+#!/bin/bash
+# This script is used to test the function command (run directly to the function function)
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the function "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - function
+#
+test_title="Testing the function command"
+src_file="${mydir}/function_src"
+cmd_file="${mydir}/function_cmd_function"
+expected=("The entry function has been set to testf. Next time when the main function is to be called, this function will be called instead." "return 321;")
+unexpected=("return 123;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+#
+# test case 2 - f
+#
+test_title="Testing the function command"
+src_file="${mydir}/function_src"
+cmd_file="${mydir}/function_cmd_f"
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+exit
