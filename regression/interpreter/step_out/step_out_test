@@ -26,8 +26,8 @@ test_title="Testing command - step --out"
 src_file="${mydir}/step_out_src"
 cmd_file="${mydir}/step_out_cmd"
 debug_flag="no"  # set this to yes to preserve compiled files
-expected=(" __CPROVER_pipe_count = (unsigned int)0")
-unexpected=("main();")
+expected=(" __CPROVER_pipe_count = (unsigned int)0" "main();")
+unexpected=("i = 1234;")
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
