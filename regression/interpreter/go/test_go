@@ -1,5 +1,5 @@
 #!/bin/bash
-# This script is used to test the next command (next and n)
+# This script is used to test the go command
 #
 # 
 # ================================================================
@@ -20,26 +20,15 @@ source "${comm_file_dir}/test_common"
 # 
 # ================================================
 #
-# test case 1 - next
+# test case 1 - go
 #
-test_title="Testing command - next"
-src_file="${mydir}/next_src"
-cmd_file="${mydir}/next_cmd_next"
-debug_flag="no"  # set this to yes to preserve compiled files
-expected=("main();")
+test_title="Testing command - go"
+src_file="${mydir}/go_src"
+cmd_file="${mydir}/go_cmd_go"
+expected=("return 123;" "That is the end")
 unexpected=()
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
-
-#
-# test case 2 - n
-#
-test_title="Testing command - n"
-# src_file="${mydir}/next_src"
-cmd_file="${mydir}/next_cmd_n"
-
-echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 exit

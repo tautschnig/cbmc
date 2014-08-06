@@ -25,12 +25,11 @@ source "${comm_file_dir}/test_common"
 test_title="Testing command - step --out"
 src_file="${mydir}/step_out_src"
 cmd_file="${mydir}/step_out_cmd"
-debug_flag="no"  # set this to yes to preserve compiled files
 expected=(" __CPROVER_pipe_count = (unsigned int)0" "main();")
 unexpected=("i = 1234;")
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 #
 # test case 2 - out
@@ -39,7 +38,7 @@ test_title="Testing command - out"
 cmd_file="${mydir}/step_out_cmd_out"
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 #
 # test case 3 - so
@@ -48,7 +47,7 @@ test_title="Testing command - so"
 cmd_file="${mydir}/step_out_cmd_so"
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 
 exit

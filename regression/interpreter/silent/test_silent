@@ -25,12 +25,11 @@ source "${comm_file_dir}/test_common"
 test_title="Testing command - silent"
 src_file="${mydir}/silent_src"
 cmd_file="${mydir}/silent_cmd_silent"
-debug_flag="no"  # set this to yes to preserve compiled files
 expected=("int i;")
 unexpected=("i = 123;")
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 #
 # test case 2 - silent --on
@@ -38,12 +37,11 @@ test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
 test_title="Testing command - silent --on"
 src_file="${mydir}/silent_src"
 cmd_file="${mydir}/silent_cmd_silent_on"
-debug_flag="no"  # set this to yes to preserve compiled files
 expected=("int i;")
 unexpected=("i = 123;")
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 #
 # test case 3 - son
@@ -51,12 +49,11 @@ test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
 test_title="Testing command - son"
 src_file="${mydir}/silent_src"
 cmd_file="${mydir}/silent_cmd_son"
-debug_flag="no"  # set this to yes to preserve compiled files
 expected=("int i;")
 unexpected=("i = 123;")
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 #
 # test case 4 - silent --off
@@ -64,9 +61,8 @@ test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
 test_title="Testing command - silent --off"
 src_file="${mydir}/silent_src"
 cmd_file="${mydir}/silent_cmd_silent_off"
-debug_flag="no"  # set this to yes to preserve compiled files
-expected=("int i;" "i = 456")
-unexpected=("bad command" "i = 123;")
+expected=("int i;" "i = 123;" "i = 456;")
+unexpected=("bad command" )
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected

@@ -25,22 +25,19 @@ source "${comm_file_dir}/test_common"
 test_title="Testing command - quit"
 src_file="${mydir}/quit_src"
 cmd_file="${mydir}/quit_cmd_quit"
-debug_flag="no"  # set this to yes to preserve compiled files
 expected=("Starting interpreter" "__CPROVER_initialize();")
 unexpected=()
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 #
 # test case 2 - q
 #
 test_title="Testing command - q"
-# src_file="${mydir}/quit_src"
 cmd_file="${mydir}/quit_cmd_q"
-# expected=("Starting interpreter" "__CPROVER_initialize();")
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" "$debug_flag" expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 exit

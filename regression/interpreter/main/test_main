@@ -25,11 +25,10 @@ source "${comm_file_dir}/test_common"
 test_title="Testing command - main"
 src_file="${mydir}/main_src"
 cmd_file="${mydir}/main_cmd_main"
-debug_flag="no"
 expected=("return 12345;")
 unexpected=()
 
 echo "$test_title"
-test_it "$src_file" "$cmd_file" $debug_flag expected unexpected
+test_it "$src_file" "$cmd_file" expected unexpected
 
 exit

@@ -3,21 +3,19 @@
 #
 #  parameter 1 - a C source file
 #  parameter 2 - a file containing command(s)
-#  parameter 3 - debug flag. when passing "yes", binary and output files will not be removed.
-#  parameter 4 - an array *name* that contains a list of EXPECTED key words. Must use array name!
-#  parameter 5 - an array *name* that contains a list of NOT EXPECTED key words. Must use array name!
+#  parameter 3 - an array *name* that contains a list of EXPECTED key words. Must use array name!
+#  parameter 4 - an array *name* that contains a list of NOT EXPECTED key words. Must use array name!
 # 
 
 function test_it() 
 {
   local src_file=$1
   local cmd_file=$2
-  local debug_flag=$3
-  local exp_name=$4[@]
+  local exp_name=$3[@]
   local expected=("${!exp_name}")
-  local unexp_name=$5[@]
+  local unexp_name=$4[@]
   local unexpected=("${!unexp_name}")
-  
+
   local csrc_file="${src_file}.c"
   local bin_file="${src_file}.o"
   local out_file="${src_file}.out"
@@ -73,12 +71,11 @@ function test_it()
   [[ "$pass_count" = "$expected_pass_count" ]] && echo "  == PASSED ===" || echo "  === FAILED ==="
   echo
   
-  # clean up
-  
   # when debug_flag
-  # [[ "$debug_flag" = "yes" ]] && cat $out_file
+  # cat $out_file
+  # return #keep the binary and output files
   
-  [[ "$debug_flag" = "yes" ]] && return #keep the binary and output files
+  # clean up
   rm $bin_file
   rm $out_file
 }  

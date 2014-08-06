@@ -1,7 +1,9 @@
-sh quit/quit_test
-sh main/main_test
-sh go/go_test
-sh next/next_test
-sh step_into/step_into_test
+sh quit/test_quit
+sh main/test_main
+sh go/test_go
+sh next/test_next
+sh step_into/test_step_into
+sh step_out/test_step_out
+sh silent/test_silent
 
 
