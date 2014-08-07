@@ -1,6 +1,0 @@
-main
-next
-next
-print x
-quit
-

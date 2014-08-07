@@ -1,8 +1,0 @@
-	char c = 'u';
-	char msg[] = "hello";
-	int x = 3;
-	float y1 = 15.25f;
-	double y2 = 30.05; 
-	
-	foo(10, 20);
-	

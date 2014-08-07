@@ -1,0 +1,34 @@
+#!/bin/bash
+# This script is used to test the print command
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the function "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - print
+#
+test_title="Testing command - print"
+src_file="${mydir}/print_src"
+cmd_file="${mydir}/print_cmd"
+expected=("int i;" "return 123;" "i: 10" "c: 'x'" "d: 20.51" "f: 31.27" "iarr: {10, 20, 30, 40, 50, 60}")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+exit
