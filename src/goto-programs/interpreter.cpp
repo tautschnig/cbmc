@@ -790,6 +790,23 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
         std::cout << display_name <<": " << tmp[0] << std::endl;
       }
     }
+    else if (id == ID_float || id == ID_double)
+    {
+      ieee_floatt f;
+      f.spec = to_floatbv_type(symbol_expr.type());
+      f.unpack(tmp[0]);
+
+      if (f.is_float())
+      {
+        float x = f.to_float(); //working when float = 10f; not working when float x = 10;
+        std::cout << display_name <<": " << x << std::endl;
+      }
+      else if (f.is_double())
+      {
+        double x = f.to_double();
+        std::cout << display_name <<": " << x << std::endl;
+      }
+    }
     else
     {
     std::cout << display_name <<": " << tmp[0] << std::endl;
