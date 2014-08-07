@@ -428,6 +428,30 @@ void interpretert::evaluate(
         dest.push_back(value!=0);
         return;
       }
+      else if(expr.type().id() == ID_floatbv) //siqing
+      {
+        const irep_idt id = expr.type().get(ID_C_c_type);
+        if (id == ID_float)
+        {
+          ieee_floatt f;
+          f.spec = to_floatbv_type(expr.op0().type());
+          f.unpack(value);
+          if (f.is_double())
+          {
+            // value is double but the expr is float. re-pack into float
+            // this fixes "float f = 10.23;" (without f suffix)
+            // "float f = 10.23f;" works out of the box.
+            double d = f.to_double();
+            float f_val = (float)d;
+            f.from_float(f_val);
+            dest.push_back(f.pack());
+            return;
+          }
+        }
+
+        dest.push_back(value);
+        return;
+      }
     }
   }
   else if(expr.id()==ID_ashr)
