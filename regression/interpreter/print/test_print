@@ -17,18 +17,97 @@ comm_file_dir="$(dirname "$mydir")"
 # load the common file so that we could call the function "test_it"
 source "${comm_file_dir}/test_common"
 
-# 
 # ================================================
 #
-# test case 1 - print
+# test case 1 - print int
 #
-test_title="Testing command - print"
-src_file="${mydir}/print_src"
-cmd_file="${mydir}/print_cmd"
-expected=("int i;" "return 123;" "i: 10" "c: 'x'" "d: 20.51" "f: 31.27" "iarr: {10, 20, 30, 40, 50, 60}")
+test_title="Testing command - print int"
+src_file="${mydir}/print_src_int"
+cmd_file="${mydir}/print_cmd_int"
+expected=("int i;" "return 123;" "i: 10")
 unexpected=()
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected
+
+# ================================================
+#
+# test case 2 - print char
+#
+test_title="Testing command - print char"
+src_file="${mydir}/print_src_char"
+cmd_file="${mydir}/print_cmd_char"
+expected=("char c;" "return 123;" "c: 'x'")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# ================================================
+#
+# test case 3 - print string
+#
+test_title="Testing command - print string"
+src_file="${mydir}/print_src_string"
+cmd_file="${mydir}/print_cmd_string"
+expected=("char msg\[9\];" "return 123;" "msg: \"test msg\"")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# ================================================
+#
+# test case 4 - print float
+#
+test_title="Testing command - print float"
+src_file="${mydir}/print_src_float"
+cmd_file="${mydir}/print_cmd_float"
+expected=("float f;" "return 123;" "f: 31.27")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# ================================================
+#
+# test case 5 - print double
+#
+test_title="Testing command - print double"
+src_file="${mydir}/print_src_double"
+cmd_file="${mydir}/print_cmd_double"
+expected=("double d;" "return 123;" "d: 20.51")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# ================================================
+#
+# test case 6 - print array
+#
+test_title="Testing command - print array"
+src_file="${mydir}/print_src_array"
+cmd_file="${mydir}/print_cmd_array"
+expected=("return 123;" "iarr: {10, 20, 30, 40, 50, 60}")
+unexpected=()                                     
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# ================================================
+#
+# test case 7 - print struct
+#
+test_title="Testing command - print struct"
+src_file="${mydir}/print_src_struct"
+cmd_file="${mydir}/print_cmd_struct"
+expected=("struct Coordinate loc;" "return 123;" "loc: {x: 101, y: 102}")
+unexpected=()                                     
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+
 
 exit

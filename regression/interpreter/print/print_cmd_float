@@ -1,5 +1,4 @@
 main
 next
 next
-next
-print i
+print f
