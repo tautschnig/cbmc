@@ -2,4 +2,6 @@ main
 next
 next
 next
-print i
+next
+next
+print pts

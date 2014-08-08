@@ -1,12 +1,12 @@
-struct Coordinate 
+struct Point
 {
   int x;
   int y;
 };
 
-int main()
+int main(int argc, char **argv)
 {
-  struct Coordinate loc;
+  struct Point loc;
   loc.x = 101;
   loc.y = 102;
 
