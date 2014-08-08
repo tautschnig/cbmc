@@ -543,7 +543,32 @@ mp_integer interpretert::evaluate_address(const exprt &expr) const
 
     if(tmp1.size()==1)
     {
-      return evaluate_address(expr.op0())+tmp1.front();
+      // Orginal code:
+      //return evaluate_address(expr.op0()) + tmp1.front(); //original code
+
+      // Siqing Tang's change -->
+      // -------------------------------------------------------------------
+      // The change fixes scenarios where an element in an array takes
+      // more than one mp_integer. Consider the following scenario:
+      //    struct Point
+      //    {
+      //       int x;
+      //       int y;
+      //    };
+      //
+      //    struct Point pts[2];
+      //
+      // The original code does not work for any index greather than 0. 
+      // Therefore an assignment like the below doesn't work:
+      //  pts[1].x = 3;
+      //
+      // Because the address of pts[1].x is the same as that of pts[0].y
+      // calculated from the original code. This is wrong, obviously!
+      // 
+      unsigned index = integer2long(tmp1.front());                          
+      unsigned offset = index == 0 ? index : index * get_size(expr.type());
+      return evaluate_address(expr.op0()) + offset;
+      // <-- End of Siqing Tang's change
   }
   }
   else if(expr.id()==ID_member)
