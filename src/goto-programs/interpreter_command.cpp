@@ -698,74 +698,25 @@ void interpretert::print_variable(const std::string display_name, const symbolt 
   std::vector<mp_integer> tmp;
   evaluate(symbol_expr, tmp);
 
-  if (tmp.size() == 1)
+  if (tmp.size() == 1 || symbol.type.id() == ID_array)
   {
-    const irep_idt id = symbol.type.get(ID_C_c_type);
-    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
-    {
-      int c = int(tmp[0].to_long());
-      if (isprint(c))
-      {
-        std::cout << display_name <<": '" << char(c) << "'" << std::endl;
-      }
-      else
-      {
-        std::cout << display_name <<": " << tmp[0] << std::endl;
-      }
-    }
-    else if (id == ID_float || id == ID_double)
-    {
-      ieee_floatt f;
-      f.spec = to_floatbv_type(symbol_expr.type());
-      f.unpack(tmp[0]);
-
-      if (f.is_float())
-      {
-        float x = f.to_float(); //working when float = 10f; not working when float x = 10;
-        std::cout << display_name <<": " << x << std::endl;
-      }
-      else if (f.is_double())
-      {
-        double x = f.to_double();
-        std::cout << display_name <<": " << x << std::endl;
-      }
-    }
-    else
-    {
-      std::cout << display_name <<": " << tmp[0] << std::endl;
-    }
-  }
-  else if (tmp.size() > 1 && symbol.type.id() == ID_array)
-  {
-    const irep_idt id = symbol.type.subtype().get(ID_C_c_type);
-    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
-    {
-      std::string s = read_string(tmp);
-      std::cout << display_name <<": \"" << s << "\"" << std::endl;
-    }
-    else
-    {
-      std::cout << display_name <<": {" << tmp[0];
-      for(unsigned i = 1; i < tmp.size(); i++)
-      {
-        std::cout << ", " << tmp[i];
-      }
-
-      std::cout << "}" << std::endl;
-    }
+    std::cout << display_name <<": ";
+    unsigned offset = 0;
+    print_values(symbol.type, tmp, offset);
+    std::cout << std::endl;
   }
   else if (symbol_expr.id() == ID_symbol && ns.follow(symbol.type).id() == ID_struct)
   {
     std::cout << display_name <<": ";
     unsigned offset = 0;
-    print_struct(ns.follow(symbol.type), tmp, offset);
+    print_values(ns.follow(symbol.type), tmp, offset);
     std::cout << std::endl;
   }
 }
 
 /*******************************************************************\
 
-Function: interpretert::print_struct
+Function: interpretert::print_values
 
 Inputs:
 
@@ -775,7 +726,10 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert::print_struct(const typet &type, const std::vector<mp_integer> values, unsigned &offset) const
+void interpretert::print_values(
+  const typet &type, 
+  const std::vector<mp_integer> values, 
+  unsigned &offset) const
 {
   if(type.id() == ID_struct)
   {
@@ -803,7 +757,7 @@ void interpretert::print_struct(const typet &type, const std::vector<mp_integer>
           first = false;
         }
         std::cout << field_name << ": ";
-        print_struct(sub_type, values, offset);
+        print_values(sub_type, values, offset);
       }
     }
 
@@ -847,7 +801,7 @@ void interpretert::print_struct(const typet &type, const std::vector<mp_integer>
           std::cout <<", ";
         }
 
-        print_struct(sub_type, values, offset);
+        print_values(sub_type, values, offset);
       }
 
       std::cout << "}";
@@ -855,12 +809,47 @@ void interpretert::print_struct(const typet &type, const std::vector<mp_integer>
   }
   else if(type.id() == ID_symbol)
   {
-    print_struct(ns.follow(type), values, offset);
+    print_values(ns.follow(type), values, offset);
   }
   else
   {
-    std::cout << values[offset];
+    const mp_integer value = values[offset];
     offset++;
+
+    const irep_idt id = type.get(ID_C_c_type);
+    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
+    {
+      int c = int(value.to_long());
+      if (isprint(c))
+      {
+        std::cout << "'" << char(c) << "'";
+      }
+      else
+      {
+        std::cout << value;
+      }
+    }
+    else if (id == ID_float || id == ID_double)
+    {
+      ieee_floatt f;
+      f.spec = to_floatbv_type(type);
+      f.unpack(value);
+
+      if (f.is_float())
+      {
+        float x = f.to_float();
+        std::cout << x;
+      }
+      else if (f.is_double())
+      {
+        double x = f.to_double();
+        std::cout << x;
+      }
+    }
+    else
+    {
+      std::cout << value;
+    }
   }
 }
 
