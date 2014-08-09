@@ -1,0 +1,46 @@
+#!/bin/bash
+# This script is used to test the modify command (modify and m)
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the function "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - modify
+#
+test_title="Testing command - modify"
+src_file="${mydir}/modify"
+cmd_file="${mydir}/modify.cmd"
+expected=("x: 5" "c: 'y'" "f: 111.23" "d: 121.45")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 2 - m
+#
+test_title="Testing command - m"
+src_file="${mydir}/modify"
+cmd_file="${mydir}/m.cmd"
+expected=("x: 5" "c: 'y'" "f: 111.23" "d: 121.45")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected

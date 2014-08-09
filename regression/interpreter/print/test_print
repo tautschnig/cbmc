@@ -22,8 +22,8 @@ source "${comm_file_dir}/test_common"
 # test case 1 - print int
 #
 test_title="Testing command - print int"
-src_file="${mydir}/print_print_int"
-cmd_file="${mydir}/print_print_int.cmd"
+src_file="${mydir}/print_int"
+cmd_file="${mydir}/print_int.cmd"
 expected=("i: 10")
 unexpected=()
 
@@ -35,8 +35,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 2 - print char
 #
 test_title="Testing command - print char"
-src_file="${mydir}/print_print_char"
-cmd_file="${mydir}/print_print_char.cmd"
+src_file="${mydir}/print_char"
+cmd_file="${mydir}/print_char.cmd"
 expected=("c: 'x'")
 unexpected=()
 
@@ -48,8 +48,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 3 - print string
 #
 test_title="Testing command - print string"
-src_file="${mydir}/print_print_string"
-cmd_file="${mydir}/print_print_string.cmd"
+src_file="${mydir}/print_string"
+cmd_file="${mydir}/print_string.cmd"
 expected=("msg: \"test msg\"")
 unexpected=()
 
@@ -61,8 +61,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 4 - print float
 #
 test_title="Testing command - print float"
-src_file="${mydir}/print_print_float"
-cmd_file="${mydir}/print_print_float.cmd"
+src_file="${mydir}/print_float"
+cmd_file="${mydir}/print_float.cmd"
 expected=("f: 31.27")
 unexpected=()
 
@@ -74,8 +74,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 5 - print double
 #
 test_title="Testing command - print double"
-src_file="${mydir}/print_print_double"
-cmd_file="${mydir}/print_print_double.cmd"
+src_file="${mydir}/print_double"
+cmd_file="${mydir}/print_double.cmd"
 expected=("d: 20.51")
 unexpected=()
 
@@ -87,8 +87,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 6 - print array
 #
 test_title="Testing command - print array"
-src_file="${mydir}/print_print_array"
-cmd_file="${mydir}/print_print_array.cmd"
+src_file="${mydir}/print_array"
+cmd_file="${mydir}/print_array.cmd"
 expected=("iarr: {10, 20, 30, 40, 50, 60}")
 unexpected=()                                     
 
@@ -100,8 +100,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 7 - print struct
 #
 test_title="Testing command - print struct"
-src_file="${mydir}/print_print_struct"
-cmd_file="${mydir}/print_print_struct.cmd"
+src_file="${mydir}/print_struct"
+cmd_file="${mydir}/print_struct.cmd"
 expected=("loc: {x: 101, y: 102}")
 unexpected=()                                     
 
@@ -113,8 +113,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 8 - print struct (complex)
 #
 test_title="Testing command - print struct (complex)"
-src_file="${mydir}/print_print_struct_complex"
-cmd_file="${mydir}/print_print_struct_complex.cmd"
+src_file="${mydir}/print_struct_complex"
+cmd_file="${mydir}/print_struct_complex.cmd"
 expected=("pts: {{x: 1, y: 2}, {x: 3, y: 4}}")
 unexpected=()                                     
 
@@ -126,8 +126,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 9 - p
 #
 test_title="Testing command - p"
-src_file="${mydir}/print_print_int"
-cmd_file="${mydir}/print_p_int.cmd"
+src_file="${mydir}/print_int"
+cmd_file="${mydir}/p_int.cmd"
 expected=("i: 10")
 unexpected=()
 
@@ -139,8 +139,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 10 - print --locals
 #
 test_title="Testing command - print --locals"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_local.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_local.cmd"
 expected=("a: 1" "b: 2")
 unexpected=()                                     
 
@@ -152,8 +152,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 10a - pl
 #
 test_title="Testing command - pl"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_pl.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_pl.cmd"
 expected=("a: 1" "b: 2")
 unexpected=()                                     
 
@@ -165,8 +165,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 11 - print --parameters
 #
 test_title="Testing command - print --parameters"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_parameter.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_parameter.cmd"
 expected=("x: 5" "y: 6")
 unexpected=()                                     
 
@@ -178,8 +178,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 11a - pp
 #
 test_title="Testing command - pp"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_pp.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_pp.cmd"
 expected=("x: 5" "y: 6")
 unexpected=()                                     
 
@@ -191,8 +191,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 12 - print --globals
 #
 test_title="Testing command - print --globals"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_global.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_global.cmd"
 expected=("g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -204,8 +204,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 12a - pg
 #
 test_title="Testing command - pg"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_pg.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_pg.cmd"
 expected=("g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -218,8 +218,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 13 - print --locals --parameters
 #
 test_title="Testing command - print --locals --parameters"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_local_parameter.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_local_parameter.cmd"
 expected=("a: 1" "b: 2" "x: 5" "y: 6")
 unexpected=()                                     
 
@@ -231,8 +231,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 13a - plp
 #
 test_title="Testing command - plp"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_plp.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_plp.cmd"
 expected=("a: 1" "b: 2" "x: 5" "y: 6")
 unexpected=()                                     
 
@@ -244,8 +244,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 14 - print --locals --globals
 #
 test_title="Testing command - print --locals --globals"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_local_global.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_local_global.cmd"
 expected=("a: 1" "b: 2" "g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -257,8 +257,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 14a - plg
 #
 test_title="Testing command - plg"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_local_global.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_local_global.cmd"
 expected=("a: 1" "b: 2" "g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -270,8 +270,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 15 - print --parameters --globals
 #
 test_title="Testing command - print --parameters --globals"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_parameter_global.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_parameter_global.cmd"
 expected=("x: 5" "y: 6" "g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -283,8 +283,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 15a - ppg
 #
 test_title="Testing command - ppg"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_parameter_global.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_parameter_global.cmd"
 expected=("x: 5" "y: 6" "g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -296,8 +296,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 16 - print --locals --parameters --globals
 #
 test_title="Testing command - print --locals --parameters --globals"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_all.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_all.cmd"
 expected=("a: 1" "b: 2" "x: 5" "y: 6" "g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -309,8 +309,8 @@ unexpected=()
 # test case 16a - plpg
 #
 test_title="Testing command - plpg"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_plpg.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_plpg.cmd"
 expected=("a: 1" "b: 2" "x: 5" "y: 6" "g1: 100" "g2: 200")
 unexpected=()                                     
 
@@ -322,8 +322,8 @@ unexpected=()
 # test case 16b - pa
 #
 test_title="Testing command - pa"
-src_file="${mydir}/print_print_scope"
-cmd_file="${mydir}/print_print_scope_pa.cmd"
+src_file="${mydir}/print_scope"
+cmd_file="${mydir}/print_scope_pa.cmd"
 expected=("a: 1" "b: 2" "x: 5" "y: 6" "g1: 100" "g2: 200")
 unexpected=()                                     
 

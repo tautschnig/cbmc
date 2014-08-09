@@ -6,3 +6,5 @@ sh step_into/test_step_into
 sh step_out/test_step_out
 sh silent/test_silent
 sh function/test_function
+sh print/test_print
+sh modify/test_modify

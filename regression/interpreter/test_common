@@ -68,7 +68,7 @@ function test_it()
   local pass_count_unexp=${#unexpected[@]}
   local expected_pass_count=$[pass_count_exp+pass_count_unexp]
   
-  [[ "$pass_count" = "$expected_pass_count" ]] && echo "  == PASSED ===" || echo "  === FAILED ==="
+  [[ "$pass_count" = "$expected_pass_count" ]] && echo "  == PASSED ===" || (echo "  === FAILED ===")  #&& cat $out_file)
   echo
   
   # when debug_flag
