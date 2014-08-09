@@ -10,6 +10,8 @@ sh silent/test_silent
 sh step_into/test_step_into
 sh step_out/test_step_out
 sh where/test_where
+sh restart/test_restart
+sh save/test_save
 
 
 
