@@ -1,0 +1,46 @@
+#!/bin/bash
+# This script is used to test the restart command (run directly to the restart function)
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the restart "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - restart
+#
+test_title="Testing the restart command"
+src_file="${mydir}/restart"
+cmd_file="${mydir}/restart.cmd"
+expected=("main")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 2 - r
+#
+test_title="Testing the r command"
+src_file="${mydir}/restart"
+cmd_file="${mydir}/r.cmd"
+expected=("main")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
