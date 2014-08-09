@@ -86,7 +86,7 @@ void interpretert_command_parser::help(std::string cmd) const
   }
   else if (cmd == "function")
   {
-    std::cout << "Command: function|f" << std::endl
+    std::cout << "Command: function | f" << std::endl
               << "Description: set entry function" << std::endl
               << "Usage: function name" << std::endl
               << "       where name is a function name to be run instead of the main" << std::endl;
@@ -94,7 +94,7 @@ void interpretert_command_parser::help(std::string cmd) const
   else if (cmd == "go")
   {
     std::cout << "Command: go | g" << std::endl
-              << "Description: run in batch mode" << std::endl;
+              << "Description: run to the end or until a break is found" << std::endl;
   }
   else if (cmd == "main")
   {
@@ -103,8 +103,8 @@ void interpretert_command_parser::help(std::string cmd) const
   }
   else if (cmd == "next")
   {
-    std::cout << "Command: next [ENTER]" << std::endl
-              << "Description: run the next line(step over)" << std::endl;
+    std::cout << "Command: next | [ENTER]" << std::endl
+              << "Description: run to the next line(step over)" << std::endl;
   }
   else if (cmd == "restart")
   {
@@ -116,18 +116,17 @@ void interpretert_command_parser::help(std::string cmd) const
     std::cout << "Command: step" << std::endl
               << "Description: step into/out a function" << std::endl
               << "Usage:" << std::endl
-              << "   step variable_name    " << std::endl
-              << "   step --into [ïnto | si] step into a function" << std::endl
+              << "   step --into [into | si] step into a function" << std::endl
               << "   step --out  [out  | so] step out the current function"  << std::endl;
   }
   else if (cmd == "break")
   {
     std::cout << "Command: break | b" << std::endl
-              << "Description: set/remove breakpoints" << std::endl
+              << "Description: add/remove breakpoints" << std::endl
               << "Usage:" << std::endl
-              << "   break [--add] ][--line-no=#] [--file=file1] - set breakpoint at a location" << std::endl
+              << "   break [--add] ][--line-no=#] [--file=file] - set breakpoint at a location" << std::endl
               << "   break --remove-all - remove all breakpoints" << std::endl
-              << "   break --remove [--line-no=#] [--file=file1] - remove breakpoint at a location" << std::endl;
+              << "   break --remove [--line-no=#] [--file=file] - remove breakpoint at a location" << std::endl;
   }
   else if (cmd == "callstack")
   {
@@ -145,20 +144,20 @@ void interpretert_command_parser::help(std::string cmd) const
   else if (cmd == "modify")
   {
     std::cout << "Command: modify | m" << std::endl
-              << "Description: modify variable value" << std::endl
+              << "Description: modify a variable's value" << std::endl
               << "Usage:" << std::endl
-              << "   modify variable value - modify the variable's value" << std::endl;
+              << "   modify variable value" << std::endl;
   }
   else if (cmd == "print")
   {
-    std::cout << "Command: print|p" << std::endl
+    std::cout << "Command: print | p" << std::endl
               << "Description: print varaible value" << std::endl
               << "Usage:" << std::endl
               << "   print variable_name    " << std::endl
-              << "   print --all-locals     [pl]  print all local varialbes' value" << std::endl
-              << "   print --all-parameters [pp]  print all parameters' value" << std::endl
-              << "   print --all-globals    [pg]  print all globals' value" << std::endl
-              << "   print --all            [pa]  print locals, parameters and globals" << std::endl;
+              << "   print --locals     [pl]  print all local varialbes' value" << std::endl
+              << "   print --parameters [pp]  print all parameters' value" << std::endl
+              << "   print --globals    [pg]  print all globals' value" << std::endl
+              << "   print --all        [pa]  print locals, parameters and globals" << std::endl;
   }
   else if (cmd == "silent")
   {
@@ -171,28 +170,31 @@ void interpretert_command_parser::help(std::string cmd) const
   else if (cmd == "watch")
   {
     std::cout << "Command: watch | w" << std::endl
-              << "Description: set/remove watch variables" << std::endl
+              << "Description: add/remove watch variables" << std::endl
               << "Usage:" << std::endl
-              << "   watch [--add] ][--line-no=#] [--file=file1] [v1] [v2] [v3] - add watches" << std::endl
+              << "   watch [--add] ][--line-no=#] [--file=file] [v1] [v2] [v3] - add watches" << std::endl
               << "   watch --remove-all - remove all watches" << std::endl
-              << "   watch --remove [--line-no=#] [--file=file1] [v1] [v2] [v3] - remove watches" << std::endl;
+              << "   watch --remove [--line-no=#] [--file=file] [v1] [v2] [v3] - remove watches" << std::endl
+              << "   watch --list - list watches added" << std::endl;
    }
   else if (cmd == "where")
   {
     std::cout << "Command: where" << std::endl
-              << "Description: tell the code that is about to run" << std::endl;
+              << "Description: tell the next line of code that is about to run" << std::endl;
   }
   else if (cmd == "save")
   {
     std::cout << "Command: save" << std::endl
-              << "Description: save commands a file" << std::endl;
+              << "Description: save commands to a file." << std::endl
+              << "Usage:" << std::endl
+              << "   save [--overwrite] file_name" << std::endl;
   }
   else if (cmd == "@")
   {
     std::cout << "Command: @ | load" << std::endl
-              << "Description: commands from a file and run" << std::endl
+              << "Description: load commands from a file and run them" << std::endl
               << "Usage:" << std::endl
-              << "   @ file   - load commands from a file and run them" << std::endl;
+              << "   @ | load file" << std::endl;
   }
   else
   {
@@ -719,10 +721,10 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
   {
     cmd = "function";
   }
-  //else if (cmd == "go")
-  //{
-  //  cmd = "go";
-  //}
+  else if (cmd == "g")
+  {
+    cmd = "go";
+  }
   else if (cmd == "h" || cmd == "?")
   {
     cmd = "help";
@@ -811,7 +813,7 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
     cmd = "restart";
   }
   // save
-  else if (cmd == "si" || cmd == "in" || cmd == "into")
+  else if (cmd == "si" || cmd == "into")
   {
     cmd = "step";
     options["into"] = "";
