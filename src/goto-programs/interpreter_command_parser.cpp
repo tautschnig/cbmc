@@ -624,19 +624,34 @@ void interpretert_command_parser::parse(const char* cmdline)
       continue;
     }
 
+    if (cmd == "modify" && parameters.size() == 1)
+    {
+      // special case for the modify command
+      // when we encounter "modify variable" (where "modify" is stored in cmd 
+      // and "variable" in parameters), we take the rest as the second parameter
+      // by doing this, we allow a flexisble syntax like "modify v what ever as", 
+      // where "what ever as" is a string (but we don't require it be quoted)
+      parameters.push_back(line.substr(pos));
+      break; //we'are done
+    }
+
+    // already found non-space character, try to find next space
     size_t sp_pos = line.find_first_of(SPACE, pos);
 		std::string s;
     if (sp_pos == std::string::npos)
     {
+      // if no space, take the current to the end
       s = line.substr(pos);
       pos = sp_pos;
     }
     else
     {
+      // if there is a space, take fron the non-space up to before the space
       s = line.substr(pos, sp_pos - pos);
       pos = line.find_first_not_of(SPACE, sp_pos + 1);
     }
 
+    // so now s contains a token 
 		if (s.length() >= 2 && s.substr(0, 2) == "--")
 		{
 			std::string option = s.substr(2);

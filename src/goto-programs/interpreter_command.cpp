@@ -313,8 +313,10 @@ void interpretert::modify_variable()
   if (symbol.type.get_bool(ID_C_constant))
   {
     std::cout << "\"" << var_name <<"\" can't be modified as it is a constant vairable" <<  std::endl;
+    return;
   }
-  else if (symbol.type.id() == ID_signedbv || symbol.type.id() == ID_unsignedbv) //also include char
+  
+  if (symbol.type.id() == ID_signedbv || symbol.type.id() == ID_unsignedbv) //also include char
   {
     const irep_idt id = symbol.type.get(ID_C_c_type);
     if (id == ID_char)
@@ -342,17 +344,33 @@ void interpretert::modify_variable()
       exprt expr = convert_integer_literal(var_value);
       modify_variable(symbol, expr);
     }
+     return;
   }
-  else if (symbol.type.id() == ID_floatbv)
+
+  if (symbol.type.id() == ID_floatbv)
   {
     exprt expr = convert_float_literal(var_value);
     modify_variable(symbol, expr);
+    return;
   }
-  else
+
+  if (symbol.type.id() == ID_array)
   {
-    std::cout << "\"" << var_name <<"\" has a data type currently not supported" <<  std::endl;
-    //std::cout << symbol <<  std::endl; //testing. ID_floatbv
+    if (symbol.type.subtype().get(ID_C_c_type) == ID_char)
+    {
+      int len = var_value.size();
+      if (len < 2 || (var_value[0] != '"' || var_value[len - 1] == '"'))
+      {
+        var_value = "\"" + var_value + "\"";
+      }
+    
+      exprt expr = convert_string_literal(var_value);
+      modify_variable(symbol, expr);
+      return;
+    }
   }
+
+  std::cout << "\"" << var_name <<"\" has a data type currently not supported" <<  std::endl;
 }
 
 /*******************************************************************\
@@ -378,7 +396,7 @@ void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
     symbol_expr.set(ID_identifier, symbol.name);
 
     unsigned size = get_size(symbol_expr.type());
-    if (size == values.size()) //TODO: less than should be ok for string
+    if (size == values.size())
     {
       mp_integer address = evaluate_address(symbol_expr);
 
@@ -399,8 +417,13 @@ void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
       }
 
       assign(address, values);
-
-      // todo
+    }
+    else if (symbol_expr.type().id() == ID_array)
+    {
+      mp_integer address = evaluate_address(symbol_expr);
+      assign(address, values);
+      if (values.size() > size)
+        std::cout << "WARNING: more items than array length are discarded" << std::endl;
     }
     else
     {
