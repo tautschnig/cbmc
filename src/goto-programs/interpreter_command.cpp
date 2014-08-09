@@ -979,8 +979,7 @@ void interpretert::manage_breakpoint()
     std::string line_no = cmd.get_breakpoint_lineno();
     if (line_no == "")
     {
-      if (cmd.has_breakpoint_add()) 
-        break_point->add(PC);
+      break_point->add(PC);
     }
     else
     {
@@ -1224,7 +1223,19 @@ Purpose:
 std::string interpretert::get_current_file() const
 {
   goto_programt::const_targett begin_PC = (function->second).body.instructions.begin();
-  return begin_PC->location.is_nil() ? "" : id2string(begin_PC->location.get_file());
+  std::string file = begin_PC->location.is_nil() ? "" : id2string(begin_PC->location.get_file());
+  if (file == "")
+  {
+    // this is the case at the beginning where nothing is executed. find the main
+    goto_functionst::function_mapt::const_iterator f_it = find_function("main");
+    if (f_it != goto_functions.function_map.end())
+    {
+      goto_programt::const_targett main_PC = (f_it->second).body.instructions.begin();
+      file = main_PC->location.is_nil() ? "" : id2string(main_PC->location.get_file());
+    }
+  }
+
+  return file;
 }
 
 /*******************************************************************\

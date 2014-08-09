@@ -697,7 +697,7 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
   {
     cmd = "load";
   }
-  else if (cmd == "b")
+  else if (cmd == "b" || cmd == "breakpoint")
   {
     cmd = "break";
   }
@@ -789,7 +789,13 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
     options["parameters"] = "";
     options["globals"] = "";
   }
-  else if (cmd == "pa") // (all) print --locals --parameters --globals
+  else if (cmd == "pa" || 
+    cmd == "plpg" ||
+    cmd == "plgp" ||
+    cmd == "pglp" ||
+    cmd == "pgpl" ||
+    cmd == "pplg" ||
+    cmd == "ppgl")
   {
     cmd = "print";
     options["locals"] = "";
@@ -862,7 +868,8 @@ Purpose:
 
 bool interpretert_command_parser::has_print_locals() const
 {
-  return options.find("locals") != options.end();
+  return options.find("locals") != options.end() ||
+         options.find("all") != options.end();
 }
 
 /*******************************************************************\
@@ -879,7 +886,8 @@ Purpose:
 
 bool interpretert_command_parser::has_print_parameters() const
 {
-  return options.find("parameters") != options.end();
+  return options.find("parameters") != options.end() ||
+         options.find("all") != options.end();
 }
 
 /*******************************************************************\
@@ -896,7 +904,8 @@ Purpose:
 
 bool interpretert_command_parser::has_print_globals() const
 {
-  return options.find("globals") != options.end();
+  return options.find("globals") != options.end() ||
+         options.find("all") != options.end();
 }
 
 /*******************************************************************\
@@ -1041,7 +1050,11 @@ Purpose:
 
 bool interpretert_command_parser::has_breakpoint_add() const
 {
-  return options.find("add") != options.end();
+  return options.find("add") != options.end() || 
+    (!has_breakpoint_remove_all() && 
+     !has_breakpoint_remove() && 
+     !has_breakpoint_list() &&
+     !has_breakpoint_toggle());
 }
 
 /*******************************************************************\
