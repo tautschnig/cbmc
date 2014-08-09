@@ -22,6 +22,7 @@ Author: Siqing Tang, jtang707@gmail.com
 #include <ansi-c/expr2c_class.h>
 #include <ansi-c/literals/convert_float_literal.h>
 #include <ansi-c/literals/convert_integer_literal.h>
+#include <ansi-c/literals/convert_character_literal.h>
 #include <ansi-c/literals/convert_string_literal.h>
 
 #include "interpreter.h"
@@ -309,39 +310,38 @@ void interpretert::modify_variable()
     return;
   }
 
-  //std::string type = symbol.type.pretty();
-  //std::cout << type;
-
-  //irept::named_subt::const_iterator c_type = symbol.type.get_comments().find(ID_C_c_type);
-  //if (c_type == symbol.type.get_comments().end())
-  //{
-  //  std::cout << "\"" << var_name <<"\" is not of c type. Currently only c type variable is supported" <<  std::endl;
-  //  return;
-  //}
-  //irept i = c_type->second;
-  //std::cout << "c type: " << c_type->second.id() << std::endl;
-  //
-  // c type example
-  // ID_signed_int
-
-  //irept::named_subt::const_iterator const_id = symbol.type.get_comments().find(ID_C_constant);
-  //if (const_id != symbol.type.get_comments().end())
-  //{
-  //  if (const_id->second.id_string() == "1") //if (id2string(const_id->second.id()) == "1")
-  //  {
-  //    std::cout << "\"" << var_name <<"\" can't be modified as it is a constant vairable" <<  std::endl;
-  //    return;
-  //  }
-  //}
-
   if (symbol.type.get_bool(ID_C_constant))
   {
     std::cout << "\"" << var_name <<"\" can't be modified as it is a constant vairable" <<  std::endl;
   }
   else if (symbol.type.id() == ID_signedbv || symbol.type.id() == ID_unsignedbv) //also include char
   {
-    exprt expr = convert_integer_literal(var_value);
-    modify_variable(symbol, expr);
+    const irep_idt id = symbol.type.get(ID_C_c_type);
+    if (id == ID_char)
+    {
+      int len = var_value.size();
+      if (len >= 2 && var_value[0] == '\'' && var_value[len - 1] == '\'') 
+      {
+        var_value = var_value.substr(1, len - 2);
+      }
+
+      if (var_value == "")
+      {
+        var_value = "'\0'";
+      }
+      else
+      {
+        var_value = "'" + var_value.substr(0, 1) + "'";
+      }
+
+      exprt expr = convert_character_literal(var_value, false);
+      modify_variable(symbol, expr);
+    }
+    else
+    {
+      exprt expr = convert_integer_literal(var_value);
+      modify_variable(symbol, expr);
+    }
   }
   else if (symbol.type.id() == ID_floatbv)
   {
