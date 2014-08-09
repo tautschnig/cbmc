@@ -1,11 +1,16 @@
-sh quit/test_quit
-sh main/test_main
+sh breakpoint/test_breakpoint
+sh function/test_function
 sh go/test_go
+sh main/test_main
+sh modify/test_modify
 sh next/test_next
+sh print/test_print
+sh quit/test_quit
+sh silent/test_silent
 sh step_into/test_step_into
 sh step_out/test_step_out
-sh silent/test_silent
-sh function/test_function
-sh print/test_print
-sh modify/test_modify
 sh where/test_where
+
+
+
+
