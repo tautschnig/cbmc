@@ -1,0 +1,130 @@
+#!/bin/bash
+# This script is used to test the break command (break and b)
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the function "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - break
+#
+test_title="Testing command - break --line-no=#"
+src_file="${mydir}/break"
+cmd_file="${mydir}/break.cmd"
+expected=("x = 1;")
+unexpected=("y = 2;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 2 - b
+#
+test_title="Testing command - b --line-no=#"
+src_file="${mydir}/break"
+cmd_file="${mydir}/b.cmd"
+expected=("x = 1;")
+unexpected=("y = 2;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 3 - break --remove --line-no=#
+#
+test_title="Testing command - break --remove --line-no=#"
+src_file="${mydir}/break"
+cmd_file="${mydir}/break_remove.cmd"
+expected=("return 0")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 4 - b --remove --line-no=#
+#
+test_title="Testing command - b --remove --line-no=#"
+src_file="${mydir}/break"
+cmd_file="${mydir}/b_remove.cmd"
+expected=("return 0")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 5 - break --remove-all
+#
+test_title="Testing command - break --remove-all"
+src_file="${mydir}/break"
+cmd_file="${mydir}/break_remove_all.cmd"
+expected=("return 0")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 6 - b --remove-all
+#
+test_title="Testing command - b --remove-all"
+src_file="${mydir}/break"
+cmd_file="${mydir}/b_remove_all.cmd"
+expected=("return 0")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 7 - break --list
+#
+test_title="Testing command -  break --list"
+src_file="${mydir}/break"
+cmd_file="${mydir}/break_list.cmd"
+expected=("x = 1;")
+unexpected=("y = 2;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 8 - b --list
+#
+test_title="Testing command - b --list"
+src_file="${mydir}/break"
+cmd_file="${mydir}/b_list.cmd"
+expected=("x = 1;")
+unexpected=("y = 2;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
