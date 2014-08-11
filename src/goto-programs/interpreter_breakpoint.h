@@ -16,10 +16,10 @@
 
 \*******************************************************************/
 
-class interpreter_breakpoint
+class interpreter_breakpointt
 {
 public:
-  interpreter_breakpoint(
+  interpreter_breakpointt(
     const symbol_tablet &_symbol_table,
     const goto_functionst &_goto_functions):
     symbol_table(_symbol_table),

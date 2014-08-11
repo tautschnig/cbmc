@@ -20,7 +20,7 @@ Author: Siqing Tang, jtang707@gmail.com
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::add
+Function: interpreter_breakpointt::add
 
 Inputs:
 
@@ -30,7 +30,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::add(std::string line_no, std::string file)
+bool interpreter_breakpointt::add(std::string line_no, std::string file)
 {
   for(goto_functionst::function_mapt::const_iterator 
     it = goto_functions.function_map.begin();
@@ -59,7 +59,7 @@ bool interpreter_breakpoint::add(std::string line_no, std::string file)
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::add
+Function: interpreter_breakpointt::add
 
 Inputs:
 
@@ -69,7 +69,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::add(
+bool interpreter_breakpointt::add(
   goto_programt::const_targett PC, bool toggle)
 {
   unsigned location_number = PC->location_number;
@@ -104,7 +104,7 @@ bool interpreter_breakpoint::add(
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::remove
+Function: interpreter_breakpointt::remove
 
 Inputs:
 
@@ -114,7 +114,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::remove(goto_programt::const_targett PC)
+bool interpreter_breakpointt::remove(goto_programt::const_targett PC)
 {
   unsigned location_number = PC->location_number;
   function_linest::iterator f_it = function_lines.find(PC->function);
@@ -137,7 +137,7 @@ bool interpreter_breakpoint::remove(goto_programt::const_targett PC)
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::remove
+Function: interpreter_breakpointt::remove
 
 Inputs:
 
@@ -147,7 +147,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::remove(std::string line_no, std::string file)
+bool interpreter_breakpointt::remove(std::string line_no, std::string file)
 {
   bool removed = false;
   for(goto_functionst::function_mapt::const_iterator 
@@ -180,7 +180,7 @@ bool interpreter_breakpoint::remove(std::string line_no, std::string file)
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::remove_all
+Function: interpreter_breakpointt::remove_all
 
 Inputs:
 
@@ -190,14 +190,14 @@ Purpose:
 
 \*******************************************************************/
 
-void interpreter_breakpoint::remove_all()
+void interpreter_breakpointt::remove_all()
 {
   function_lines.clear();
 }
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::has_breakpoint_at
+Function: interpreter_breakpointt::has_breakpoint_at
 
 Inputs:
 
@@ -207,7 +207,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::has_breakpoint_at(goto_programt::const_targett PC) const
+bool interpreter_breakpointt::has_breakpoint_at(goto_programt::const_targett PC) const
 {
   function_linest::const_iterator f_it = function_lines.find(PC->function);
   return f_it != function_lines.end() && 
@@ -216,7 +216,7 @@ bool interpreter_breakpoint::has_breakpoint_at(goto_programt::const_targett PC) 
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::has_breakpoint_at
+Function: interpreter_breakpointt::has_breakpoint_at
 
 Inputs:
 
@@ -226,7 +226,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpreter_breakpoint::has_breakpoint_at(
+bool interpreter_breakpointt::has_breakpoint_at(
   const line_listt &lines, 
   unsigned location_number) const
 {
@@ -241,7 +241,7 @@ bool interpreter_breakpoint::has_breakpoint_at(
 
 /*******************************************************************\
 
-Function: interpreter_breakpoint::list
+Function: interpreter_breakpointt::list
 
 Inputs:
 
@@ -251,7 +251,7 @@ Purpose:
 
 \*******************************************************************/
 
-void interpreter_breakpoint::list() const
+void interpreter_breakpointt::list() const
 {
   for(function_linest::const_iterator 
       it = function_lines.begin();

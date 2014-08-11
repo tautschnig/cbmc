@@ -37,8 +37,8 @@ public:
     silent = false;
     batch_mode = false;
     reading_from_queue = false;
-    break_point = new interpreter_breakpoint(_symbol_table, _goto_functions);
-    watch = new interpreter_watch(_symbol_table, _goto_functions);
+    break_point = new interpreter_breakpointt(_symbol_table, _goto_functions);
+    watch = new interpreter_watcht(_symbol_table, _goto_functions);
   }
 
   ~interpretert()
@@ -87,8 +87,6 @@ protected:
   void execute_printf() const;
   void execute_decl();
 
-  bool is_string_constant( const exprt &expr) const;
-
   void print_arg(const std::string str_format, const exprt &expr) const;
 
   void assign(
@@ -101,9 +99,9 @@ protected:
 
   std::string read_string(const std::vector<mp_integer> from) const;
 
-	interpretert_command_parser cmd;
-  interpreter_breakpoint *break_point;
-  interpreter_watch *watch;
+	interpretert_command_parsert cmd;
+  interpreter_breakpointt *break_point;
+  interpreter_watcht *watch;
 
   std::vector<std::string> commands;
   std::queue<std::string> queued_commands;
@@ -156,8 +154,7 @@ protected:
   exprt parse_expression(
     const exprt &op0,
     const std::string prefix, 
-    const std::string suffix,
-    std::string &error_msg) const;
+    const std::string suffix) const;
 
   void reset_next_PC();
   void show_function_start_msg() const;

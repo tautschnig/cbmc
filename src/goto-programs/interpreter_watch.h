@@ -10,16 +10,16 @@
 
 /*******************************************************************\
 
-   Class: interpretert_watch
+   Class: interpretert_watcht
 
  Purpose: watch management for GOTO interpreter
 
 \*******************************************************************/
 
-class interpreter_watch
+class interpreter_watcht
 {
 public:
-  interpreter_watch(
+  interpreter_watcht(
     const symbol_tablet &_symbol_table,
     const goto_functionst &_goto_functions):
     symbol_table(_symbol_table),

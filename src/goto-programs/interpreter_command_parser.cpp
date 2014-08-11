@@ -1,6 +1,6 @@
 /*******************************************************************\
 
-Module: Interpreter command for GOTO Instrument Programs
+Module: Interpreter command parser for GOTO Instrument Interpreter
 
 Author: Siqing Tang, jtang707@gmail.com
 
@@ -20,7 +20,7 @@ Author: Siqing Tang, jtang707@gmail.com
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::help
+Function: interpretert_command_parsert::help
 
 Inputs: none
 
@@ -30,7 +30,7 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert_command_parser::help() const
+void interpretert_command_parsert::help() const
 {
   std::cout << "=== General  ===" << std::endl
             << "\thelp - show this help or the usage of a command" << std::endl
@@ -62,7 +62,7 @@ void interpretert_command_parser::help() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::help
+Function: interpretert_command_parsert::help
 
 Inputs: cmd - command name to help
 
@@ -72,7 +72,7 @@ Purpose: display help for a specified command
 
 \*******************************************************************/
 
-void interpretert_command_parser::help(std::string cmd) const
+void interpretert_command_parsert::help(std::string cmd) const
 {
   if (cmd == "help")
   {
@@ -205,7 +205,7 @@ void interpretert_command_parser::help(std::string cmd) const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_break
+Function: interpretert_command_parsert::is_break
 
 Inputs:
 
@@ -215,14 +215,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_break() const
+bool interpretert_command_parsert::is_break() const
 {
 	return cmd == "break";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_callstack
+Function: interpretert_command_parsert::is_callstack
 
 Inputs:
 
@@ -232,14 +232,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_callstack() const
+bool interpretert_command_parsert::is_callstack() const
 {
 	return cmd == "callstack";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_function
+Function: interpretert_command_parsert::is_function
 
 Inputs:
 
@@ -249,14 +249,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_function() const
+bool interpretert_command_parsert::is_function() const
 {
 	return cmd == "function";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_go
+Function: interpretert_command_parsert::is_go
 
 Inputs:
 
@@ -266,14 +266,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_go() const
+bool interpretert_command_parsert::is_go() const
 {
 	return cmd == "go";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_help
+Function: interpretert_command_parsert::is_help
 
 Inputs:
 
@@ -283,14 +283,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_help() const
+bool interpretert_command_parsert::is_help() const
 {
 	return cmd == "help";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_load
+Function: interpretert_command_parsert::is_load
 
 Inputs:
 
@@ -300,14 +300,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_load() const
+bool interpretert_command_parsert::is_load() const
 {
 	return cmd == "load";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_list
+Function: interpretert_command_parsert::is_list
 
 Inputs:
 
@@ -317,14 +317,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_list() const
+bool interpretert_command_parsert::is_list() const
 {
 	return cmd == "list";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_main
+Function: interpretert_command_parsert::is_main
 
 Inputs:
 
@@ -334,14 +334,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_main() const
+bool interpretert_command_parsert::is_main() const
 {
 	return cmd == "main";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_modify
+Function: interpretert_command_parsert::is_modify
 
 Inputs:
 
@@ -351,14 +351,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_modify() const
+bool interpretert_command_parsert::is_modify() const
 {
 	return cmd == "modify";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_next_line
+Function: interpretert_command_parsert::is_next_line
 
 Inputs:
 
@@ -368,14 +368,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_next_line() const
+bool interpretert_command_parsert::is_next_line() const
 {
 	return cmd == "next";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_print
+Function: interpretert_command_parsert::is_print
 
 Inputs:
 
@@ -385,14 +385,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_print() const
+bool interpretert_command_parsert::is_print() const
 {
 	return cmd == "print";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_quit
+Function: interpretert_command_parsert::is_quit
 
 Inputs:
 
@@ -402,14 +402,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_quit() const
+bool interpretert_command_parsert::is_quit() const
 {
 	return cmd == "quit";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_restart
+Function: interpretert_command_parsert::is_restart
 
 Inputs:
 
@@ -419,14 +419,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_restart() const
+bool interpretert_command_parsert::is_restart() const
 {
 	return cmd == "restart";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_save
+Function: interpretert_command_parsert::is_save
 
 Inputs:
 
@@ -436,14 +436,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_save() const
+bool interpretert_command_parsert::is_save() const
 {
 	return cmd == "save";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_silent
+Function: interpretert_command_parsert::is_silent
 
 Inputs:
 
@@ -453,14 +453,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_silent() const
+bool interpretert_command_parsert::is_silent() const
 {
 	return cmd == "silent";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_step_into
+Function: interpretert_command_parsert::is_step_into
 
 Inputs:
 
@@ -470,14 +470,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_step_into() const
+bool interpretert_command_parsert::is_step_into() const
 {
 	return (cmd == "step" && options.find("into") != options.end()) || (cmd == "");
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_step_out
+Function: interpretert_command_parsert::is_step_out
 
 Inputs:
 
@@ -487,14 +487,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_step_out() const
+bool interpretert_command_parsert::is_step_out() const
 {
 	return cmd == "step" && options.find("out") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_watch
+Function: interpretert_command_parsert::is_watch
 
 Inputs:
 
@@ -504,14 +504,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_watch() const
+bool interpretert_command_parsert::is_watch() const
 {
 	return cmd == "watch";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::is_where
+Function: interpretert_command_parsert::is_where
 
 Inputs:
 
@@ -521,14 +521,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::is_where() const
+bool interpretert_command_parsert::is_where() const
 {
 	return cmd == "where";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_parameters
+Function: interpretert_command_parsert::get_parameters
 
 Inputs:
 
@@ -538,7 +538,7 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert_command_parser::get_parameters(std::vector<std::string> &dest) const
+void interpretert_command_parsert::get_parameters(std::vector<std::string> &dest) const
 {
 	dest.clear();
   for(unsigned i = 0; i < parameters.size(); i++)
@@ -549,7 +549,7 @@ void interpretert_command_parser::get_parameters(std::vector<std::string> &dest)
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_first_parameter
+Function: interpretert_command_parsert::get_first_parameter
 
 Inputs:
 
@@ -559,14 +559,14 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_first_parameter() const
+std::string interpretert_command_parsert::get_first_parameter() const
 {
   return parameters.size() >= 1 ? parameters[0] : "";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::parse
+Function: interpretert_command_parsert::parse
 
 Inputs:
 
@@ -576,7 +576,7 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert_command_parser::parse(const char* cmdline)
+void interpretert_command_parsert::parse(const char* cmdline)
 {
 	if (cmdline == NULL)
   {
@@ -699,7 +699,7 @@ void interpretert_command_parser::parse(const char* cmdline)
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::normalise_command
+Function: interpretert_command_parsert::normalise_command
 
 Inputs:
 
@@ -709,7 +709,7 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert_command_parser::normalise_command(std::string &cmd)
+void interpretert_command_parsert::normalise_command(std::string &cmd)
 {
   if (cmd == "@")
   {
@@ -857,7 +857,7 @@ void interpretert_command_parser::normalise_command(std::string &cmd)
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_options
+Function: interpretert_command_parsert::has_options
 
 Inputs:
 
@@ -867,14 +867,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_options() const
+bool interpretert_command_parsert::has_options() const
 {
   return !options.empty();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_print_locals
+Function: interpretert_command_parsert::has_print_locals
 
 Inputs:
 
@@ -884,7 +884,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_print_locals() const
+bool interpretert_command_parsert::has_print_locals() const
 {
   return options.find("locals") != options.end() ||
          options.find("all") != options.end();
@@ -892,7 +892,7 @@ bool interpretert_command_parser::has_print_locals() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_print_parameters
+Function: interpretert_command_parsert::has_print_parameters
 
 Inputs:
 
@@ -902,7 +902,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_print_parameters() const
+bool interpretert_command_parsert::has_print_parameters() const
 {
   return options.find("parameters") != options.end() ||
          options.find("all") != options.end();
@@ -910,7 +910,7 @@ bool interpretert_command_parser::has_print_parameters() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_print_globals
+Function: interpretert_command_parsert::has_print_globals
 
 Inputs:
 
@@ -920,7 +920,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_print_globals() const
+bool interpretert_command_parsert::has_print_globals() const
 {
   return options.find("globals") != options.end() ||
          options.find("all") != options.end();
@@ -928,7 +928,7 @@ bool interpretert_command_parser::has_print_globals() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_list_all
+Function: interpretert_command_parsert::has_list_all
 
 Inputs:
 
@@ -938,14 +938,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_list_all() const
+bool interpretert_command_parsert::has_list_all() const
 {
   return options.find("all") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::list_before_lines
+Function: interpretert_command_parsert::list_before_lines
 
 Inputs:
 
@@ -955,7 +955,7 @@ Purpose:
 
 \*******************************************************************/
 
-int interpretert_command_parser::list_before_lines() const
+int interpretert_command_parsert::list_before_lines() const
 {
   if (has_list_all())
   {
@@ -975,7 +975,7 @@ int interpretert_command_parser::list_before_lines() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::list_after_lines
+Function: interpretert_command_parsert::list_after_lines
 
 Inputs:
 
@@ -985,7 +985,7 @@ Purpose:
 
 \*******************************************************************/
 
-int interpretert_command_parser::list_after_lines() const
+int interpretert_command_parsert::list_after_lines() const
 {
   if (has_list_all())
   {
@@ -1005,7 +1005,7 @@ int interpretert_command_parser::list_after_lines() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_silent_on
+Function: interpretert_command_parsert::has_silent_on
 
 Inputs:
 
@@ -1015,14 +1015,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_silent_on() const
+bool interpretert_command_parsert::has_silent_on() const
 {
   return is_silent() && (options.find("off") == options.end());
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_breakpoint_remove_all
+Function: interpretert_command_parsert::has_breakpoint_remove_all
 
 Inputs:
 
@@ -1032,14 +1032,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_breakpoint_remove_all() const
+bool interpretert_command_parsert::has_breakpoint_remove_all() const
 {
   return options.find("remove-all") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_breakpoint_remove
+Function: interpretert_command_parsert::has_breakpoint_remove
 
 Inputs:
 
@@ -1049,14 +1049,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_breakpoint_remove() const
+bool interpretert_command_parsert::has_breakpoint_remove() const
 {
   return options.find("remove") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_breakpoint_add
+Function: interpretert_command_parsert::has_breakpoint_add
 
 Inputs:
 
@@ -1066,7 +1066,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_breakpoint_add() const
+bool interpretert_command_parsert::has_breakpoint_add() const
 {
   return options.find("add") != options.end() || 
     (!has_breakpoint_remove_all() && 
@@ -1077,7 +1077,7 @@ bool interpretert_command_parser::has_breakpoint_add() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_breakpoint_toggle
+Function: interpretert_command_parsert::has_breakpoint_toggle
 
 Inputs:
 
@@ -1087,7 +1087,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_breakpoint_toggle() const
+bool interpretert_command_parsert::has_breakpoint_toggle() const
 {
   return (options.size() == 0 || 
           options.size() == 1 && options.find("toggle") != options.end()) && 
@@ -1096,7 +1096,7 @@ bool interpretert_command_parser::has_breakpoint_toggle() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_breakpoint_list
+Function: interpretert_command_parsert::has_breakpoint_list
 
 Inputs:
 
@@ -1106,14 +1106,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_breakpoint_list() const
+bool interpretert_command_parsert::has_breakpoint_list() const
 {
   return options.find("list") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_breakpoint_file
+Function: interpretert_command_parsert::get_breakpoint_file
 
 Inputs:
 
@@ -1123,14 +1123,14 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_breakpoint_file() const
+std::string interpretert_command_parsert::get_breakpoint_file() const
 {
   return std::string(get_option("file"));
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_breakpoint_lineno
+Function: interpretert_command_parsert::get_breakpoint_lineno
 
 Inputs:
 
@@ -1140,7 +1140,7 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_breakpoint_lineno() const
+std::string interpretert_command_parsert::get_breakpoint_lineno() const
 {
   std::string line_no = std::string(get_option("line-no"));
   if (line_no != "")
@@ -1153,7 +1153,7 @@ std::string interpretert_command_parser::get_breakpoint_lineno() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::option_has_value
+Function: interpretert_command_parsert::option_has_value
 
 Inputs:
 
@@ -1163,14 +1163,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::option_has_value(std::string option) const
+bool interpretert_command_parsert::option_has_value(std::string option) const
 {
   return get_option(option) != "";
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_save_overwrite
+Function: interpretert_command_parsert::has_save_overwrite
 
 Inputs:
 
@@ -1180,14 +1180,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_save_overwrite() const
+bool interpretert_command_parsert::has_save_overwrite() const
 {
   return options.find("overwrite") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_watch_remove_all
+Function: interpretert_command_parsert::has_watch_remove_all
 
 Inputs:
 
@@ -1197,14 +1197,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_watch_remove_all() const
+bool interpretert_command_parsert::has_watch_remove_all() const
 {
   return options.find("remove-all") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_watch_remove
+Function: interpretert_command_parsert::has_watch_remove
 
 Inputs:
 
@@ -1214,14 +1214,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_watch_remove() const
+bool interpretert_command_parsert::has_watch_remove() const
 {
   return options.find("remove") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_watch_add
+Function: interpretert_command_parsert::has_watch_add
 
 Inputs:
 
@@ -1231,7 +1231,7 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_watch_add() const
+bool interpretert_command_parsert::has_watch_add() const
 {
   return
     !has_watch_remove_all() &&
@@ -1241,7 +1241,7 @@ bool interpretert_command_parser::has_watch_add() const
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::has_watch_list
+Function: interpretert_command_parsert::has_watch_list
 
 Inputs:
 
@@ -1251,14 +1251,14 @@ Purpose:
 
 \*******************************************************************/
 
-bool interpretert_command_parser::has_watch_list() const
+bool interpretert_command_parsert::has_watch_list() const
 {
   return options.find("list") != options.end();
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_watch_file
+Function: interpretert_command_parsert::get_watch_file
 
 Inputs:
 
@@ -1268,14 +1268,14 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_watch_file() const
+std::string interpretert_command_parsert::get_watch_file() const
 {
   return std::string(get_option("file"));
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_watch_lineno
+Function: interpretert_command_parsert::get_watch_lineno
 
 Inputs:
 
@@ -1285,14 +1285,14 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_watch_lineno() const
+std::string interpretert_command_parsert::get_watch_lineno() const
 {
   return std::string(get_option("line-no"));
 }
 
 /*******************************************************************\
 
-Function: interpretert_command_parser::get_option
+Function: interpretert_command_parsert::get_option
 
 Inputs:
 
@@ -1302,7 +1302,7 @@ Purpose:
 
 \*******************************************************************/
 
-std::string interpretert_command_parser::get_option(const std::string option) const
+std::string interpretert_command_parsert::get_option(const std::string option) const
 {
   option_mapt::const_iterator it = options.find(option);
   return it == options.end() ? "" : it->second;

@@ -27,6 +27,7 @@ Author: Siqing Tang, jtang707@gmail.com
 
 #include "interpreter.h"
 #include "interpreter_class.h"
+#include "interpreter_util.h"
 
 #define BUFSIZE 100
 
@@ -272,44 +273,6 @@ Inputs:
 
 Outputs:
 
-Purpose: find next '.' or '[', whichever comes firsts.
-
-TODO: move this to interpreter_command_utils.cpp
-
-\*******************************************************************/
-
-size_t find_next_exp_sep(std::string str, size_t start)
-{
-  size_t left_sq_bracket_p  = str.find_first_of("[", start);
-  size_t dot_p  = str.find_first_of(".", start);
-  if (left_sq_bracket_p != std::string::npos && dot_p != std::string::npos)
-  {
-    // e.g. pts[0].x where pts is defined as "struct Point pts[3]" and Point as "struct Point {int x; int y;}"
-    size_t min_p = left_sq_bracket_p < dot_p ? left_sq_bracket_p : dot_p;
-    return min_p;
-  }
-  else if (left_sq_bracket_p != std::string::npos)
-  {
-    // e.g. a[0] where a is defined as "int a[3]"
-    return left_sq_bracket_p;
-  }
-  else if (dot_p != std::string::npos)
-  {
-    // e.g. pt.x where pt is defined as "struct Point {int x; int y;}"
-    return dot_p;
-  }
-
-  return std::string::npos;
-}
-
-/*******************************************************************\
-
-Function: interpretert::modify_variable
-
-Inputs:
-
-Outputs:
-
 Purpose:
 
 \*******************************************************************/
@@ -368,8 +331,7 @@ void interpretert::modify_variable()
 
   if (var_name_suffix != "")
   {
-    std::string error_msg = "";
-    to_expr = parse_expression(to_expr, var_name, var_name_suffix, error_msg);
+    to_expr = parse_expression(to_expr, var_name, var_name_suffix);
   }
 
   typet type = to_expr.type().id() == ID_symbol ? ns.follow(to_expr.type()) : to_expr.type();
@@ -448,8 +410,7 @@ TODO: change error message to throw exceptions.
 exprt interpretert::parse_expression(
   const exprt &op0,
   const std::string prefix, 
-  const std::string suffix,
-  std::string &error_msg) const
+  const std::string suffix) const
 {
   if (suffix == "")
   {
@@ -458,15 +419,12 @@ exprt interpretert::parse_expression(
   else if (suffix.substr(0, 1) == "[")
   {
     if (op0.type().id() != ID_array)
-    {
-      error_msg = " is expected to be an array but not";
-      return op0;
-    }
+      throw "array expected (" + suffix + ") but not found";
 
+    const exprt &size_expr = static_cast<const exprt &>(op0.type().find(ID_size));
+   
     if (op0.type().subtype().id() == ID_symbol)
-    {
       typet type = ns.follow(op0.type().subtype());
-    }
 
     size_t pos = suffix.find_first_of(']', 1);
     std::string index_str;
@@ -483,21 +441,29 @@ exprt interpretert::parse_expression(
       index_str = suffix.substr(1, pos - 1);
     }
 
+    if (index_str == "")
+      throw "missing index for array ('" + suffix + "')";
+
     std::string new_prefix = prefix + "[" + index_str + "]"; 
 
     const exprt index_expr = convert_integer_literal(index_str);
- 
-    // the following is ok
-    //exprt dest_expr(ID_index);
-    //dest_expr.copy_to_operands(op0, index_expr);
-    //dest_expr.type() = op0.type().subtype();
+
+    unsigned size = 1;
+    unsigned idx = 1;
+    mp_integer i;
+    if(!to_integer(size_expr, i))
+      size = integer2long(i);
+    if(!to_integer(index_expr, i))
+      idx = integer2long(i);
+    if (idx >= size)
+      throw "index out of boundary.";
 
     index_exprt dest_expr;
     dest_expr.array() = op0;
     dest_expr.index() = index_expr;
     dest_expr.type() = op0.type().subtype();
     
-    return parse_expression(dest_expr, new_prefix, new_suffix, error_msg);
+    return parse_expression(dest_expr, new_prefix, new_suffix);
   }
   else if (suffix.substr(0, 1) == ".")
   {
@@ -510,9 +476,7 @@ exprt interpretert::parse_expression(
     {
       type = op0.op0().type().subtype();
       if (type.id() == ID_symbol)
-      {
         type = ns.follow(type);
-      }
     }
     else
     {
@@ -536,6 +500,9 @@ exprt interpretert::parse_expression(
         new_suffix = "";
       }
 
+      if (member_name == "")
+        throw "member name expected but not found.";
+
       std::string new_prefix = prefix + "." + member_name;
 
       const struct_union_typet &stru_type = to_struct_union_type(type);
@@ -550,17 +517,19 @@ exprt interpretert::parse_expression(
         if (component_name == member_name)
         {
           member_exprt member(op0, it->get_name(), it->type());
-          return parse_expression(member, new_prefix, new_suffix, error_msg);
+          return parse_expression(member, new_prefix, new_suffix);
         }
       }
 
-      error_msg = "invalid member '" + member_name + "'";
-      return op0;
+      throw "invalid member name '" + member_name + "'";
+    }
+    else
+    {
+      throw "member (.) supported only for struct/union";
     }
   }
 
-  error_msg = "invalid expression";
-  return op0;
+  throw "unsupported expression for modification command";
 }
 
 /*******************************************************************\
@@ -637,13 +606,11 @@ goto_functionst::function_mapt::const_iterator interpretert::find_function(std::
   for(goto_functionst::function_mapt::const_iterator 
     it = goto_functions.function_map.begin();
     it != goto_functions.function_map.end();
-  it++)
+    it++)
   {
     std::string cur_fname = id2string(it->first);
     if (fname == cur_fname) 
-    {
       return it;
-    }
   }
 
   return goto_functions.function_map.end();
@@ -667,24 +634,16 @@ void interpretert::print() const
   cmd.get_parameters(parameters);
 
   if (cmd.has_print_locals() || (!cmd.has_options() && parameters.empty()))
-  {
     print_local_variables(false, true);
-  }
 
   if (cmd.has_print_parameters())
-  {
     print_local_variables(true, false);
-  }
 
   if (cmd.has_print_globals())
-  {
     print_global_varialbes();
-  }
 
   for(unsigned i = 0; i < parameters.size(); i++)
-  {
     print_variable(parameters[i]);
-  }
 }
 
 /*******************************************************************\
@@ -770,7 +729,7 @@ void interpretert::print_global_varialbes() const
   for(symbol_tablet::symbolst::const_iterator
     it = symbol_table.symbols.begin();
     it != symbol_table.symbols.end();
-  it++)
+    it++)
   {
     const symbolt &symbol = it->second;
     std::string var = id2string(symbol.name);
@@ -798,9 +757,7 @@ Purpose:
 void interpretert::remove_global_varialbe_prefix(std::string &name) const
 {
   if (name.find("c::") == 0)
-  {
     name = name.substr(3);
-  }
 }
 
 /*******************************************************************\
@@ -835,9 +792,7 @@ const symbolt &interpretert::get_variable_symbol(const std::string variable) con
       const symbolt &symbol = ns.lookup(id);
       std::string name = id2string(symbol.base_name);
       if (name == variable)
-      {
         return symbol;
-      }
     }
   }
 
@@ -854,9 +809,7 @@ const symbolt &interpretert::get_variable_symbol(const std::string variable) con
     {
       remove_global_varialbe_prefix(cur_var);
       if (cur_var == variable)
-      {
         return symbol;
-      }
     }
   }
 
@@ -1006,11 +959,7 @@ void interpretert::print_values(
       const typet sub_type = type.subtype();
       for (unsigned i = 0; i < subtype_count; i++)
       {
-        if (i != 0)
-        {
-          std::cout <<", ";
-        }
-
+        if (i != 0) std::cout <<", ";
         print_values(sub_type, values, offset);
       }
 
@@ -1569,33 +1518,6 @@ void interpretert::reset_next_PC()
 
 /*******************************************************************\
 
-Function: interpretert::is_c_pointer_of_char
-
-Inputs:
-
-Outputs:
-
-Purpose: execute printf() - work for integer/float/double/string/char
-
-\*******************************************************************/
-
-//TODO: move this to interpreter_util.cpp
-bool is_c_pointer_of_char(typet type)
-{
-  if (type.id() == ID_pointer)
-  {
-    const irep_idt id = type.subtype().get(ID_C_c_type);
-    if (id == ID_char || id == ID_signed_char || id == ID_unsigned_char)
-    {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/*******************************************************************\
-
 Function: interpretert::execute_printf
 
 Inputs:
@@ -1793,8 +1715,6 @@ void interpretert::show_require_running_msg() const
   std::cout << "This command is unavailable as the goto binary is not running";
   std::cout << std::endl;
 }
-
-
 
 /*******************************************************************\
 

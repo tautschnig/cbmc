@@ -10,7 +10,19 @@ Author: Siqing Tang, jtang707@gmail.com
 #include <util/std_types.h>
 #include "interpreter_watch.h"
 
-void interpreter_watch::add(line_watchest &watches, const std::vector<std::string> variables)
+/*******************************************************************\
+
+Function: interpreter_watcht::add
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+void interpreter_watcht::add(line_watchest &watches, const std::vector<std::string> variables)
 {
   for(unsigned i = 0; i < variables.size(); i++)
   {
@@ -19,7 +31,19 @@ void interpreter_watch::add(line_watchest &watches, const std::vector<std::strin
   }
 }
 
-bool interpreter_watch::add(goto_programt::const_targett PC, const std::vector<std::string> variables)
+/*******************************************************************\
+
+Function: interpreter_watcht::add
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+bool interpreter_watcht::add(goto_programt::const_targett PC, const std::vector<std::string> variables)
 {
   if (variables.size() == 0) return false;
 
@@ -56,7 +80,7 @@ bool interpreter_watch::add(goto_programt::const_targett PC, const std::vector<s
   return true; 
 }
 
-bool interpreter_watch::add(
+bool interpreter_watcht::add(
   std::string line_no, std::string file, 
   const std::vector<std::string> variables)
 {
@@ -87,7 +111,19 @@ bool interpreter_watch::add(
   return true;
 }
 
-bool interpreter_watch::remove(goto_programt::const_targett PC)
+/*******************************************************************\
+
+Function: interpreter_watcht::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+bool interpreter_watcht::remove(goto_programt::const_targett PC)
 {
   function_linest::iterator f_it = function_lines.find(PC->function);
 
@@ -102,7 +138,19 @@ bool interpreter_watch::remove(goto_programt::const_targett PC)
   return false;
 }
 
-bool interpreter_watch::remove(
+/*******************************************************************\
+
+Function: interpreter_watcht::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+bool interpreter_watcht::remove(
   goto_programt::const_targett PC, 
   const std::vector<std::string> variables)
 {
@@ -129,7 +177,19 @@ bool interpreter_watch::remove(
   return true;
 }
 
-bool interpreter_watch::remove(
+/*******************************************************************\
+
+Function: interpreter_watcht::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+bool interpreter_watcht::remove(
   std::string line_no, 
   std::string file, 
   const std::vector<std::string> variables)
@@ -164,12 +224,36 @@ bool interpreter_watch::remove(
   return removed;
 }
 
-void interpreter_watch::remove_all()
+/*******************************************************************\
+
+Function: interpreter_watcht::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+void interpreter_watcht::remove_all()
 {
   function_lines.clear();
 }
 
-void interpreter_watch::list() const
+/*******************************************************************\
+
+Function: interpreter_watcht::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+void interpreter_watcht::list() const
 {
   for(function_linest::const_iterator 
       it = function_lines.begin();
@@ -226,7 +310,19 @@ void interpreter_watch::list() const
   }
 }
 
-void interpreter_watch::get_watch_variables(
+/*******************************************************************\
+
+Function: interpreter_watcht::remove
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+void interpreter_watcht::get_watch_variables(
   goto_programt::const_targett PC, 
   std::vector<std::string> &dest) const
 {

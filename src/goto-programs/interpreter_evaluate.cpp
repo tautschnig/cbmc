@@ -20,6 +20,9 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <ansi-c/literals/convert_string_literal.h> //siqing
 
+#include "interpreter_class.h"
+#include "interpreter_util.h"
+
 void interpretert::read(
   mp_integer address,
   std::vector<mp_integer> &dest) const
@@ -57,13 +60,6 @@ std::string interpretert::read_string(const std::vector<mp_integer> from) const
   }
 
   return result;
-}
-
-bool interpretert::is_string_constant( const exprt &expr) const //siqing
-{
-  return expr.op0().id() == ID_index && 
-        expr.op0().operands().size() == 2 &&
-        expr.op0().op0().id() == ID_string_constant;
 }
 
 void interpretert::evaluate(

@@ -12,10 +12,10 @@
 #include <vector>
 #include <util/hash_cont.h>
 
-class interpretert_command_parser
+class interpretert_command_parsert
 {
 public:
-  interpretert_command_parser()
+  interpretert_command_parsert()
 	{
   }
   
