@@ -25,7 +25,7 @@ source "${comm_file_dir}/test_common"
 test_title="Testing command - modify"
 src_file="${mydir}/modify"
 cmd_file="${mydir}/modify.cmd"
-expected=("x: 5" "c: 'y'" "f: 111.23" "d: 121.45")
+expected=("x: 5" "c: 'y'" "f: 111.23" "d: 121.45" "msg: \"you\"" "msg: \"longer me\"")
 unexpected=()
 
 echo "$test_title"
@@ -40,6 +40,20 @@ test_title="Testing command - m"
 src_file="${mydir}/modify"
 cmd_file="${mydir}/m.cmd"
 expected=("x: 5" "c: 'y'" "f: 111.23" "d: 121.45")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 3 - modify member
+#
+test_title="Testing command - member"
+src_file="${mydir}/modify_member"
+cmd_file="${mydir}/modify_member.cmd"
+expected=("return 123;" "a: {1011, 1022}" "pt: {x: 301, y: 401}" "e: {id: 10012, addresses: {{first_line: \"47 Wid\"}, {first_line: \"efgh\"}}}" "emps: {{id: 5001, addresses: {{first_line: \"5A\"}, {first_line: \"5A789\"}}}, {id: 70021, addresses: {{first_line: \"ABCD\"}, {first_line: \"EFGH\"}}}}")
 unexpected=()
 
 echo "$test_title"

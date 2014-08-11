@@ -72,7 +72,7 @@ function test_it()
   echo
   
   # when debug_flag
-  # cat $out_file
+  #cat $out_file
   # return #keep the binary and output files
   
   # clean up
