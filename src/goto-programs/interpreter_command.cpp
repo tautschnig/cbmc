@@ -272,6 +272,44 @@ Inputs:
 
 Outputs:
 
+Purpose: find next '.' or '[', whichever comes firsts.
+
+TODO: move this to interpreter_command_utils.cpp
+
+\*******************************************************************/
+
+size_t find_next_exp_sep(std::string str, size_t start)
+{
+  size_t left_sq_bracket_p  = str.find_first_of("[", start);
+  size_t dot_p  = str.find_first_of(".", start);
+  if (left_sq_bracket_p != std::string::npos && dot_p != std::string::npos)
+  {
+    // e.g. pts[0].x where pts is defined as "struct Point pts[3]" and Point as "struct Point {int x; int y;}"
+    size_t min_p = left_sq_bracket_p < dot_p ? left_sq_bracket_p : dot_p;
+    return min_p;
+  }
+  else if (left_sq_bracket_p != std::string::npos)
+  {
+    // e.g. a[0] where a is defined as "int a[3]"
+    return left_sq_bracket_p;
+  }
+  else if (dot_p != std::string::npos)
+  {
+    // e.g. pt.x where pt is defined as "struct Point {int x; int y;}"
+    return dot_p;
+  }
+
+  return std::string::npos;
+}
+
+/*******************************************************************\
+
+Function: interpretert::modify_variable
+
+Inputs:
+
+Outputs:
+
 Purpose:
 
 \*******************************************************************/
@@ -287,8 +325,17 @@ void interpretert::modify_variable()
     return;
   }
 
+  std::string var_name_full = params[0];
   std::string var_name = params[0];
   std::string var_value = params[1];
+  std::string var_name_suffix = "";
+  
+  size_t p  = find_next_exp_sep(var_name, 0);
+  if (p != std::string::npos)
+  {
+    var_name_suffix = var_name.substr(p);
+    var_name = var_name.substr(0, p);
+  }
 
   const symbolt &symbol = get_variable_symbol(var_name);
 
@@ -315,10 +362,21 @@ void interpretert::modify_variable()
     std::cout << "\"" << var_name <<"\" can't be modified as it is a constant vairable" <<  std::endl;
     return;
   }
-  
-  if (symbol.type.id() == ID_signedbv || symbol.type.id() == ID_unsignedbv) //also include char
+
+  exprt to_expr(ID_symbol, symbol.type);
+  to_expr.set(ID_identifier, symbol.name);
+
+  if (var_name_suffix != "")
   {
-    const irep_idt id = symbol.type.get(ID_C_c_type);
+    std::string error_msg = "";
+    to_expr = parse_expression(to_expr, var_name, var_name_suffix, error_msg);
+  }
+
+  typet type = to_expr.type().id() == ID_symbol ? ns.follow(to_expr.type()) : to_expr.type();
+
+  if (type.id() == ID_signedbv || type.id() == ID_unsignedbv) //also include char
+  {
+    const irep_idt id = type.get(ID_C_c_type);
     if (id == ID_char)
     {
       int len = var_value.size();
@@ -337,40 +395,172 @@ void interpretert::modify_variable()
       }
 
       exprt expr = convert_character_literal(var_value, false);
-      modify_variable(symbol, expr);
+      modify_variable(to_expr, expr);
     }
     else
     {
       exprt expr = convert_integer_literal(var_value);
-      modify_variable(symbol, expr);
+      modify_variable(to_expr, expr);
     }
      return;
   }
 
-  if (symbol.type.id() == ID_floatbv)
+  if (type.id() == ID_floatbv)
   {
     exprt expr = convert_float_literal(var_value);
-    modify_variable(symbol, expr);
+    modify_variable(to_expr, expr);
     return;
   }
 
-  if (symbol.type.id() == ID_array)
+  if (type.id() == ID_array)
   {
-    if (symbol.type.subtype().get(ID_C_c_type) == ID_char)
+    if (type.subtype().get(ID_C_c_type) == ID_char)
     {
       int len = var_value.size();
-      if (len < 2 || (var_value[0] != '"' || var_value[len - 1] == '"'))
+      if (len < 2 || (var_value[0] != '"' || var_value[len - 1] != '"'))
       {
         var_value = "\"" + var_value + "\"";
       }
     
       exprt expr = convert_string_literal(var_value);
-      modify_variable(symbol, expr);
+      modify_variable(to_expr, expr);
       return;
     }
   }
 
   std::cout << "\"" << var_name <<"\" has a data type currently not supported" <<  std::endl;
+}
+
+/*******************************************************************\
+
+Function: interpretert::parse_expression
+
+Inputs: a string expression
+
+Outputs:
+
+Purpose: parse an expression
+
+TODO: change error message to throw exceptions.
+
+\*******************************************************************/
+
+exprt interpretert::parse_expression(
+  const exprt &op0,
+  const std::string prefix, 
+  const std::string suffix,
+  std::string &error_msg) const
+{
+  if (suffix == "")
+  {
+    return op0;
+  }
+  else if (suffix.substr(0, 1) == "[")
+  {
+    if (op0.type().id() != ID_array)
+    {
+      error_msg = " is expected to be an array but not";
+      return op0;
+    }
+
+    if (op0.type().subtype().id() == ID_symbol)
+    {
+      typet type = ns.follow(op0.type().subtype());
+    }
+
+    size_t pos = suffix.find_first_of(']', 1);
+    std::string index_str;
+    std::string new_suffix;
+    
+    if (pos == std::string::npos)
+    {
+      new_suffix = "";
+      index_str = suffix.substr(1);
+    }
+    else
+    {
+      new_suffix = suffix.substr(pos + 1);
+      index_str = suffix.substr(1, pos - 1);
+    }
+
+    std::string new_prefix = prefix + "[" + index_str + "]"; 
+
+    const exprt index_expr = convert_integer_literal(index_str);
+ 
+    // the following is ok
+    //exprt dest_expr(ID_index);
+    //dest_expr.copy_to_operands(op0, index_expr);
+    //dest_expr.type() = op0.type().subtype();
+
+    index_exprt dest_expr;
+    dest_expr.array() = op0;
+    dest_expr.index() = index_expr;
+    dest_expr.type() = op0.type().subtype();
+    
+    return parse_expression(dest_expr, new_prefix, new_suffix, error_msg);
+  }
+  else if (suffix.substr(0, 1) == ".")
+  {
+    typet type;
+    if (op0.type().id() == ID_symbol)
+    {
+      type = ns.follow(op0.type());
+    }
+    else if (op0.id() == ID_index)
+    {
+      type = op0.op0().type().subtype();
+      if (type.id() == ID_symbol)
+      {
+        type = ns.follow(type);
+      }
+    }
+    else
+    {
+      type = op0.type();
+    }
+
+    if (type.id() == ID_struct)
+    {
+      std::string member_name;
+      std::string new_suffix;
+
+      size_t p  = find_next_exp_sep(suffix, 1);
+      if (p != std::string::npos)
+      {
+        member_name = suffix.substr(1, p - 1);
+        new_suffix = suffix.substr(p);
+      }
+      else
+      {
+        member_name = suffix.substr(1);
+        new_suffix = "";
+      }
+
+      std::string new_prefix = prefix + "." + member_name;
+
+      const struct_union_typet &stru_type = to_struct_union_type(type);
+      const struct_union_typet::componentst &components = stru_type.components();
+
+      for(struct_union_typet::componentst::const_iterator
+        it=components.begin();
+        it!=components.end();
+        ++it)
+      {
+        std::string component_name = id2string(it->get_name());
+        if (component_name == member_name)
+        {
+          member_exprt member(op0, it->get_name(), it->type());
+          return parse_expression(member, new_prefix, new_suffix, error_msg);
+        }
+      }
+
+      error_msg = "invalid member '" + member_name + "'";
+      return op0;
+    }
+  }
+
+  error_msg = "invalid expression";
+  return op0;
 }
 
 /*******************************************************************\
@@ -385,27 +575,24 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
+void interpretert::modify_variable(const exprt &to_expr, const exprt &from_expr)
 {
   std::vector<mp_integer> values;
-  evaluate(expr, values);
+  evaluate(from_expr, values);
 
   if (values.size() > 0)
   {
-    exprt symbol_expr(ID_symbol, symbol.type);
-    symbol_expr.set(ID_identifier, symbol.name);
-
-    unsigned size = get_size(symbol_expr.type());
+    unsigned size = get_size(to_expr.type());
     if (size == values.size())
     {
-      mp_integer address = evaluate_address(symbol_expr);
+      mp_integer address = evaluate_address(to_expr);
 
       if (values.size() == 1 &&
-          symbol_expr.type().id() == ID_floatbv && 
-          symbol_expr.type().get(ID_C_c_type) == ID_float)
+          to_expr.type().id() == ID_floatbv && 
+          to_expr.type().get(ID_C_c_type) == ID_float)
       {
         ieee_floatt f;
-        f.spec = to_floatbv_type(expr.type());
+        f.spec = to_floatbv_type(from_expr.type());
         f.unpack(values[0]);
         if (f.is_double())
         {
@@ -418,9 +605,9 @@ void interpretert::modify_variable(const symbolt &symbol, const exprt &expr)
 
       assign(address, values);
     }
-    else if (symbol_expr.type().id() == ID_array)
+    else if (to_expr.type().id() == ID_array)
     {
-      mp_integer address = evaluate_address(symbol_expr);
+      mp_integer address = evaluate_address(to_expr);
       assign(address, values);
       if (values.size() > size)
         std::cout << "WARNING: more items than array length are discarded" << std::endl;

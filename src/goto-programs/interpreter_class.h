@@ -146,14 +146,18 @@ protected:
   void print_global_varialbes() const;
   void remove_global_varialbe_prefix(std::string &name) const;
   const symbolt &get_variable_symbol(const std::string variable) const;
-  //const symbolt &get_variable_symbol(const std::string variable);
 
   void print_variable(const std::string variable) const;
-  //void print_variable_value(const std::string variable, const typet &_type, const irep_idt &id) const;
   void print_variable(const std::string display_name, const symbolt &symbol) const;
   void print_values(const typet &type, const std::vector<mp_integer> values, unsigned &offset) const;
 
   bool is_internal_global_varialbe(const std::string name) const;
+
+  exprt parse_expression(
+    const exprt &op0,
+    const std::string prefix, 
+    const std::string suffix,
+    std::string &error_msg) const;
 
   void reset_next_PC();
   void show_function_start_msg() const;
@@ -163,7 +167,8 @@ protected:
   void show_callstack() const;
   void set_entry_function(std::string);
   void modify_variable();
-  void modify_variable(const symbolt &symbol, const exprt &expr);
+  void modify_variable(const exprt &symbol_expr, const exprt &expr);
+
   void manage_breakpoint();
   void manage_watch();
   void save_commands() const;

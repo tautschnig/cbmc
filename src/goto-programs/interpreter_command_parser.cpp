@@ -126,7 +126,8 @@ void interpretert_command_parser::help(std::string cmd) const
               << "Usage:" << std::endl
               << "   break [--add] ][--line-no=#] [--file=file] - set breakpoint at a location" << std::endl
               << "   break --remove-all - remove all breakpoints" << std::endl
-              << "   break --remove [--line-no=#] [--file=file] - remove breakpoint at a location" << std::endl;
+              << "   break --remove [--line-no=#] [--file=file] - remove breakpoint at a location" << std::endl
+              << "   break --list       - list breakpoints" << std::endl;
   }
   else if (cmd == "callstack")
   {
