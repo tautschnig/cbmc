@@ -1866,7 +1866,6 @@ void interpretert::fix_argc()
 
   // argc appears in the main(), set value to 1; otherwise assume will fail
   unsigned address = memory_map[symbol->name];
-  unsigned size = get_size(symbol->type);
   memory_cellt &cell=memory[address];
   cell.value = 1;
 }

@@ -48,7 +48,7 @@ std::string interpretert::read_string(const std::vector<mp_integer> from) const
   std::string result;
   result.resize(from.size());
 
-  for(int i = 0; i < from.size(); i++)
+  for(unsigned i = 0; i < from.size(); i++)
   {
     int x = int((from[i].to_long()));
     if (x == 0)
