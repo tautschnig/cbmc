@@ -1050,7 +1050,7 @@ void interpretert::print_values(
         new_values.resize(size + 1);
         new_values[size] = memory[integer2long(adr)].value;
         size++;
-        adr++;
+        ++adr;
       }
 
       unsigned new_offset = 0;
