@@ -45,18 +45,10 @@ Purpose:
 
 void interpretert::command()
 {
-  if (!completed && (batch_mode || next_stop_PC_set || reading_from_queue))
+  if (!completed && (batch_mode || next_stop_PC_set))
   {
     bool has_breakpoint = break_point->has_breakpoint_at(PC);
     if (!has_breakpoint) return;
-    if (reading_from_queue)
-    {
-      reading_from_queue = false;
-      while (!queued_commands.empty())
-      {
-        queued_commands.pop();
-      }
-    }
   }
 
   step_out = false;
@@ -1572,6 +1564,17 @@ void interpretert::load_commands_from_file()
     while (fgets(command, BUFSIZE - 1, f) != NULL)
     {
       std::string line(command);
+
+      // remove LF if any
+      size_t pos = line.find_last_of('\n');
+      if (pos != std::string::npos)
+        line.resize(line.size() - 1);
+
+      // remove CR if any
+      pos = line.find_last_of('\r');
+      if (pos != std::string::npos)
+        line.resize(line.size() - 1);
+
       queued_commands.push(line);
     }
     fclose(f);
