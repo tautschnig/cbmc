@@ -23,12 +23,25 @@ source "${comm_file_dir}/test_common"
 # test case 1 - go
 #
 test_title="Testing command - go"
-src_file="${mydir}/go_src"
-cmd_file="${mydir}/go_cmd_go"
+src_file="${mydir}/go"
+cmd_file="${mydir}/go.cmd"
 expected=("return 123;" "That is the end")
 unexpected=()
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected
 
+# 
+# ================================================
+#
+# test case 2 - g
+#
+test_title="Testing command - g"
+src_file="${mydir}/go"
+cmd_file="${mydir}/g.cmd"
+expected=("return 123;" "That is the end")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
 exit

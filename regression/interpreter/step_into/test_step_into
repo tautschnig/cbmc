@@ -23,8 +23,8 @@ source "${comm_file_dir}/test_common"
 # test case 1 - step --into
 #
 test_title="Testing command - step --into"
-src_file="${mydir}/step_into_src"
-cmd_file="${mydir}/step_into_cmd"
+src_file="${mydir}/step_into"
+cmd_file="${mydir}/step_into.cmd"
 expected=(" __CPROVER_pipe_count = (unsigned int)0")
 unexpected=("main();")
 
@@ -35,7 +35,7 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 2 - into
 #
 test_title="Testing command - into"
-cmd_file="${mydir}/step_into_cmd_into"
+cmd_file="${mydir}/into.cmd"
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected
@@ -44,7 +44,7 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 3 - si
 #
 test_title="Testing command - si"
-cmd_file="${mydir}/step_into_cmd_si"
+cmd_file="${mydir}/si.cmd"
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected

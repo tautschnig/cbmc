@@ -22,7 +22,7 @@ source "${comm_file_dir}/test_common"
 #
 # test case 1 - save
 #
-test_title="Testing the save command"
+test_title="Testing the save command - save [--overwrite] file_name"
 src_file="${mydir}/save"
 cmd_file="${mydir}/save.cmd"
 expected=("saved to 'savef.tmp'")

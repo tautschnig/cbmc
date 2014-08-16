@@ -22,9 +22,9 @@ source "${comm_file_dir}/test_common"
 #
 # test case 1 - function
 #
-test_title="Testing command - function"
-src_file="${mydir}/function_src"
-cmd_file="${mydir}/function_cmd_function"
+test_title="Testing command - function name"
+src_file="${mydir}/function"
+cmd_file="${mydir}/function.cmd"
 expected=("The entry function has been set to testf. Next time when the main function is to be called, this function will be called instead." "return 321;")
 unexpected=("return 123;")
 
@@ -34,9 +34,9 @@ test_it "$src_file" "$cmd_file" expected unexpected
 #
 # test case 2 - f
 #
-test_title="Testing command - f"
-src_file="${mydir}/function_src"
-cmd_file="${mydir}/function_cmd_f"
+test_title="Testing command - f name"
+src_file="${mydir}/function"
+cmd_file="${mydir}/f.cmd"
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected

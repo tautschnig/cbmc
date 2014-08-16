@@ -22,7 +22,7 @@ source "${comm_file_dir}/test_common"
 #
 # test case 1 - restart
 #
-test_title="Testing the restart command"
+test_title="Testing the restart command - restart"
 src_file="${mydir}/restart"
 cmd_file="${mydir}/restart.cmd"
 expected=("main")
@@ -36,7 +36,7 @@ test_it "$src_file" "$cmd_file" expected unexpected
 #
 # test case 2 - r
 #
-test_title="Testing the r command"
+test_title="Testing the r command - r"
 src_file="${mydir}/restart"
 cmd_file="${mydir}/r.cmd"
 expected=("main")

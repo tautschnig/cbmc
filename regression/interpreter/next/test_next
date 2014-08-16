@@ -22,9 +22,9 @@ source "${comm_file_dir}/test_common"
 #
 # test case 1 - next
 #
-test_title="Testing command - next"
-src_file="${mydir}/next_src"
-cmd_file="${mydir}/next_cmd_next"
+test_title="Testing command - next | [NETER]"
+src_file="${mydir}/next"
+cmd_file="${mydir}/next.cmd"
 expected=("main();")
 unexpected=()
 
@@ -35,8 +35,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 2 - n
 #
 test_title="Testing command - n"
-# src_file="${mydir}/next_src"
-cmd_file="${mydir}/next_cmd_n"
+# src_file="${mydir}/next"
+cmd_file="${mydir}/n.cmd"
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected

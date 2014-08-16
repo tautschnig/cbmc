@@ -1,5 +1,5 @@
 #!/bin/bash
-# This script is used to test the main command (run directly to the main function)
+# This script is used to test the printf command (printf and q)
 #
 # 
 # ================================================================
@@ -20,12 +20,12 @@ source "${comm_file_dir}/test_common"
 # 
 # ================================================
 #
-# test case 1 - main
+# test case 1 - printf
 #
-test_title="Testing command - main"
-src_file="${mydir}/main"
-cmd_file="${mydir}/main.cmd"
-expected=("return 12345;")
+test_title="Testing C printf()"
+src_file="${mydir}/printf"
+cmd_file="${mydir}/printf.cmd"
+expected=("i: 100" "j: 200" "f: 12.34" "d: 45.67" "c: x" "msg: Hello" "i==100, j==200, f==12.34, d==45.67, c==x, msg==Hello")
 unexpected=()
 
 echo "$test_title"

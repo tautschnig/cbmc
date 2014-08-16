@@ -1,0 +1,61 @@
+#!/bin/bash
+# This script is used to test the load command (run directly to the load function)
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the load "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - load
+#
+
+
+test_title="Testing the load command - load  file_name"
+src_file="${mydir}/load"
+cmd_file="${mydir}/load.cmd"
+
+echo load $mydir/loadf.txt> $cmd_file
+
+expected=("int i;" "int j;");
+unexpected=("return 123;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+rm $cmd_file # because it is dynamically generated
+
+# 
+# ================================================
+#
+# test case @ - @
+#
+
+
+test_title="Testing the @ command - @  file_name"
+src_file="${mydir}/load"
+cmd_file="${mydir}/@.cmd"
+
+echo @ $mydir/loadf.txt> $cmd_file
+
+expected=("int i;" "int j;");
+unexpected=("return 123;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+rm $cmd_file # because it is dynamically generated
+

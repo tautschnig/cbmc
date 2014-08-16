@@ -23,8 +23,8 @@ source "${comm_file_dir}/test_common"
 # test case 1 - quit
 #
 test_title="Testing command - quit"
-src_file="${mydir}/quit_src"
-cmd_file="${mydir}/quit_cmd_quit"
+src_file="${mydir}/quit"
+cmd_file="${mydir}/quit.cmd"
 expected=("Starting interpreter" "__CPROVER_initialize();")
 unexpected=()
 
@@ -35,7 +35,10 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 2 - q
 #
 test_title="Testing command - q"
-cmd_file="${mydir}/quit_cmd_q"
+src_file="${mydir}/quit"
+cmd_file="${mydir}/q.cmd"
+expected=("Starting interpreter" "__CPROVER_initialize();")
+unexpected=()
 
 echo "$test_title"
 test_it "$src_file" "$cmd_file" expected unexpected

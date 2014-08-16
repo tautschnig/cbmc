@@ -23,8 +23,8 @@ source "${comm_file_dir}/test_common"
 # test case 1 - silent
 # 
 test_title="Testing command - silent"
-src_file="${mydir}/silent_src"
-cmd_file="${mydir}/silent_cmd_silent"
+src_file="${mydir}/silent"
+cmd_file="${mydir}/silent.cmd"
 expected=("int i;")
 unexpected=("i = 123;")
 
@@ -35,8 +35,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 2 - silent --on
 #
 test_title="Testing command - silent --on"
-src_file="${mydir}/silent_src"
-cmd_file="${mydir}/silent_cmd_silent_on"
+src_file="${mydir}/silent"
+cmd_file="${mydir}/silent_on.cmd"
 expected=("int i;")
 unexpected=("i = 123;")
 
@@ -47,8 +47,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 3 - son
 # 
 test_title="Testing command - son"
-src_file="${mydir}/silent_src"
-cmd_file="${mydir}/silent_cmd_son"
+src_file="${mydir}/silent"
+cmd_file="${mydir}/son.cmd"
 expected=("int i;")
 unexpected=("i = 123;")
 
@@ -59,8 +59,8 @@ test_it "$src_file" "$cmd_file" expected unexpected
 # test case 4 - silent --off
 # 
 test_title="Testing command - silent --off"
-src_file="${mydir}/silent_src"
-cmd_file="${mydir}/silent_cmd_silent_off"
+src_file="${mydir}/silent"
+cmd_file="${mydir}/silent_off.cmd"
 expected=("int i;" "i = 123;" "i = 456;")
 unexpected=("bad command" )
 
