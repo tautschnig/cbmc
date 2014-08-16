@@ -1702,7 +1702,7 @@ void interpretert::execute_printf() const
     }
     else
     {
-      std::string s = first_arg.substr(p, p2 - p - 1);
+      std::string s = first_arg.substr(p, p2 - p);
       p = p2;
       print_arg(s, *it);
     }
