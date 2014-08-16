@@ -177,8 +177,8 @@ void interpretert::command()
     else if (cmd.is_list())
     {
       keep_asking = true;
-      int before_lines = cmd.list_before_lines();
-      int after_lines = cmd.list_after_lines();
+      unsigned before_lines = cmd.list_before_lines();
+      unsigned after_lines = cmd.list_after_lines();
 
       list_src(before_lines, after_lines);
     }
@@ -1143,14 +1143,14 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert::list_src(int before_lines, int after_lines) const
+void interpretert::list_src(unsigned before_lines, unsigned after_lines) const
 {
   goto_programt::const_targett cur_PC = PC;
   goto_programt::const_targett start_PC = (function->second).body.instructions.begin();
   goto_programt::const_targett end_PC = (function->second).body.instructions.end();
 
-  int before = 0;
-  while (before_lines > 0 && cur_PC != start_PC)
+  unsigned before = 0;
+  while (before != before_lines && cur_PC != start_PC)
   {
     cur_PC--;
     before++;

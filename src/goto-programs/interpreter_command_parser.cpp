@@ -955,7 +955,7 @@ Purpose:
 
 \*******************************************************************/
 
-int interpretert_command_parsert::list_before_lines() const
+unsigned interpretert_command_parsert::list_before_lines() const
 {
   if (has_list_all())
   {
@@ -985,7 +985,7 @@ Purpose:
 
 \*******************************************************************/
 
-int interpretert_command_parsert::list_after_lines() const
+unsigned interpretert_command_parsert::list_after_lines() const
 {
   if (has_list_all())
   {

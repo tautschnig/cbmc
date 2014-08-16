@@ -51,8 +51,8 @@ public:
 	bool has_print_parameters() const;
 	bool has_print_globals() const;
   bool has_list_all() const;
-  int list_before_lines() const;
-  int list_after_lines() const;
+  unsigned list_before_lines() const;
+  unsigned list_after_lines() const;
 	bool has_silent_on() const;
 
   bool has_breakpoint_remove_all() const;

@@ -161,7 +161,7 @@ protected:
   void show_function_start_msg() const;
 	void show_require_running_msg() const;
 	void print() const;
-  void list_src(int before_lines, int after_lines) const;
+  void list_src(unsigned before_lines, unsigned after_lines) const;
   void show_callstack() const;
   void set_entry_function(std::string);
   void modify_variable();
