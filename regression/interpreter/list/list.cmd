@@ -1,0 +1,3 @@
+silent --on
+main
+list

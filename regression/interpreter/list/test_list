@@ -1,0 +1,93 @@
+#!/bin/bash
+# This script is used to test the list command (list and l)
+#
+# 
+# ================================================================
+# THIS SECTION IS SAME FOR EACH TEST SCRIPT - DO NOT CHANGE IT
+#
+# get the script folder
+pushd `dirname $0` > /dev/null
+mydir=`pwd`
+popd > /dev/null
+
+# get the parent folder of the script. The common script is supposed to be there.
+# script folder
+comm_file_dir="$(dirname "$mydir")"
+
+# load the common file so that we could call the function "test_it"
+source "${comm_file_dir}/test_common"
+
+# 
+# ================================================
+#
+# test case 1 - list
+#
+test_title="Testing command - list"
+src_file="${mydir}/list"
+cmd_file="${mydir}/list.cmd"
+expected=("int i;" "int j;" "int k;" "i = 1;" "j = 2;")
+unexpected=("k = 3;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 1a - l
+#
+test_title="Testing command - l"
+src_file="${mydir}/list"
+cmd_file="${mydir}/l.cmd"
+expected=("int i;" "int j;" "int k;" "i = 1;" "j = 2;")
+unexpected=("k = 3;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 2 - list --before
+#
+test_title="Testing command - list --before=#"
+src_file="${mydir}/list"
+cmd_file="${mydir}/list_before.cmd"
+expected=("int j;" "int k;" "i = 1;" "j = 2;" "k = 3;")
+unexpected=("int i;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 3 - list --after
+#
+test_title="Testing command - list --after=#"
+src_file="${mydir}/list"
+cmd_file="${mydir}/list_after.cmd"
+# default show 5 lines
+expected=("int i;" "int j;" "int k;")
+unexpected=("i = 1;")
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+# 
+# ================================================
+#
+# test case 4 - list --all
+#
+test_title="Testing command - list --all"
+src_file="${mydir}/list"
+cmd_file="${mydir}/list_all.cmd"
+# default show 5 lines
+expected=("int i;" "int j;" "int k;" "i = 1;" "j = 2;" "k = 3;" "return 123;")
+unexpected=()
+
+echo "$test_title"
+test_it "$src_file" "$cmd_file" expected unexpected
+
+
+exit

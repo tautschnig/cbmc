@@ -1,18 +1,20 @@
-sh break/test_break
-sh function/test_function
+# from simple to complex. DO NOT change order
+sh quit/test_quit
+sh step_into/test_step_into
+sh next/test_next
+sh step_out/test_step_out
 sh go/test_go
 sh main/test_main
-sh modify/test_modify
-sh next/test_next
-sh print/test_print
-sh quit/test_quit
-sh silent/test_silent
-sh step_into/test_step_into
-sh step_out/test_step_out
-sh where/test_where
 sh restart/test_restart
-sh save/test_save
+sh function/test_function
+sh silent/test_silent
+sh where/test_where
+sh list/test_list
+sh print/test_print
+sh modify/test_modify
+sh break/test_break
 sh watch/test_watch
+sh save/test_save
 sh load/test_load
 
 
