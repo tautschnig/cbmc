@@ -146,8 +146,9 @@ protected:
   const symbolt &get_variable_symbol(const std::string variable) const;
 
   void print_variable(const std::string variable) const;
-  void print_variable(const std::string display_name, const symbolt &symbol) const;
+  void print_variable(const std::string display_name, const exprt &expr) const;
   void print_values(const typet &type, const std::vector<mp_integer> values, unsigned &offset) const;
+  void feature_not_implemented(const std::string what) const;
 
   bool is_internal_global_varialbe(const std::string name) const;
 

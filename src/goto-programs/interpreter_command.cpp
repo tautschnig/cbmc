@@ -747,7 +747,7 @@ void interpretert::print_local_variables(bool include_args, bool include_real_lo
       if (frame.local_map.find(id) != frame.local_map.end())
       {
         const symbolt &symbol = ns.lookup(id);
-        print_variable(id2string(symbol.base_name), symbol);
+        print_variable(id2string(symbol.base_name), symbol.symbol_expr());
       }
     }
   }
@@ -795,7 +795,7 @@ void interpretert::print_global_varialbes() const
       !is_internal_global_varialbe(var))
     {
       remove_global_varialbe_prefix(var);
-      print_variable(var, symbol);
+      print_variable(var, symbol.symbol_expr());
     }
   }
 }
@@ -888,15 +888,31 @@ Purpose:
 
 void interpretert::print_variable(const std::string variable) const
 {
-  const symbolt &symbol  = get_variable_symbol(variable);
+  std::string var_prefix = variable;
+  std::string var_suffix = "";
+
+  size_t p  = find_next_exp_sep(variable, 0);
+  if (p != std::string::npos)
+  {
+    var_suffix = variable.substr(p);
+    var_prefix = variable.substr(0, p);
+  }
+
+  const symbolt &symbol  = get_variable_symbol(var_prefix);
+
   if (&symbol != &null_symbol)
   {
-    print_variable(variable, symbol);
+    const exprt exp = var_suffix == "" ? 
+      symbol.symbol_expr():
+      parse_expression(symbol.symbol_expr(), var_prefix, var_suffix);
+    print_variable(variable, exp);
+
+    return;
   }
-  else
-  {
-    std::cout << variable <<" - " << "<not found>" << std::endl;
-  }
+
+  std::cout << variable 
+            <<" is not a valid variable or expression the print command supports" 
+            << std::endl;
 }
 
 /*******************************************************************\
@@ -911,28 +927,46 @@ Purpose:
 
 \*******************************************************************/
 
-void interpretert::print_variable(const std::string display_name, const symbolt &symbol) const
+void interpretert::print_variable(const std::string display_name, 
+                                  const exprt &expr) const
 {
-  exprt symbol_expr(ID_symbol, symbol.type);
-  symbol_expr.set(ID_identifier, symbol.name);
+  std::vector<mp_integer> data;
+  evaluate(expr, data);
 
-  std::vector<mp_integer> tmp;
-  evaluate(symbol_expr, tmp);
-
-  if (tmp.size() == 1 || symbol.type.id() == ID_array)
+  if (data.size() == 1 || expr.type().id() == ID_array)
   {
     std::cout << display_name <<": ";
     unsigned offset = 0;
-    print_values(symbol.type, tmp, offset);
+    print_values(expr.type(), data, offset);
     std::cout << std::endl;
   }
-  else if (symbol_expr.id() == ID_symbol && ns.follow(symbol.type).id() == ID_struct)
+  else if (expr.id() == ID_symbol && ns.follow(expr.type()).id() == ID_struct)
   {
     std::cout << display_name <<": ";
     unsigned offset = 0;
-    print_values(ns.follow(symbol.type), tmp, offset);
+    print_values(ns.follow(expr.type()), data, offset);
     std::cout << std::endl;
   }
+  else
+  {
+    feature_not_implemented("print");
+  }
+}
+
+/*******************************************************************\
+
+Function: interpretert::print_values
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+void interpretert::feature_not_implemented(const std::string what) const
+{
+  std::cout << "not implemented for " << what << std::endl;
 }
 
 /*******************************************************************\
