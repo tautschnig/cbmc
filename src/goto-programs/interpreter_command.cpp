@@ -334,7 +334,19 @@ void interpretert::modify_variable()
     to_expr = parse_expression(to_expr, var_name, var_name_suffix);
   }
 
-  typet type = to_expr.type().id() == ID_symbol ? ns.follow(to_expr.type()) : to_expr.type();
+  typet type;
+  if (to_expr.type().id() == ID_symbol)
+  {
+    type = ns.follow(to_expr.type());
+  }
+  else if (symbol.type.id() == ID_pointer)
+  {
+    type = symbol.type.subtype();
+  }
+  else
+  {
+    type = to_expr.type();
+  }
 
   if (type.id() == ID_signedbv || type.id() == ID_unsignedbv) //also include char
   {
@@ -403,8 +415,6 @@ Outputs:
 
 Purpose: parse an expression
 
-TODO: change error message to throw exceptions.
-
 \*******************************************************************/
 
 exprt interpretert::parse_expression(
@@ -418,14 +428,7 @@ exprt interpretert::parse_expression(
   }
   else if (suffix.substr(0, 1) == "[")
   {
-    if (op0.type().id() != ID_array)
-      throw "array expected (" + suffix + ") but not found";
-
-    const exprt &size_expr = static_cast<const exprt &>(op0.type().find(ID_size));
-   
-    if (op0.type().subtype().id() == ID_symbol)
-      typet type = ns.follow(op0.type().subtype());
-
+    // get array index -> index_expr
     size_t pos = suffix.find_first_of(']', 1);
     std::string index_str;
     std::string new_suffix;
@@ -441,29 +444,55 @@ exprt interpretert::parse_expression(
       index_str = suffix.substr(1, pos - 1);
     }
 
-    if (index_str == "")
-      throw "missing index for array ('" + suffix + "')";
+    const exprt index_expr = get_array_index(index_str);
+    
+    unsigned idx;
+
+    std::vector<mp_integer> values;
+    evaluate(index_expr, values);
+    if (values.size() == 1)
+      idx = integer2long(values[0]);
+    else
+      throw "invalid index";
 
     std::string new_prefix = prefix + "[" + index_str + "]"; 
 
-    const exprt index_expr = convert_integer_literal(index_str);
+    if (op0.type().id() == ID_array)
+    {
+      // get array size
+      const exprt &size_expr = static_cast<const exprt &>(op0.type().find(ID_size));
+      unsigned size = 1;
+      mp_integer i;
 
-    unsigned size = 1;
-    unsigned idx = 1;
-    mp_integer i;
-    if(!to_integer(size_expr, i))
-      size = integer2long(i);
-    if(!to_integer(index_expr, i))
-      idx = integer2long(i);
-    if (idx >= size)
-      throw "index out of boundary.";
+      if(!to_integer(size_expr, i))
+        size = integer2long(i);
 
-    index_exprt dest_expr;
-    dest_expr.array() = op0;
-    dest_expr.index() = index_expr;
-    dest_expr.type() = op0.type().subtype();
+      // check if index is in range
+      if (idx >= size)
+        throw "index out of boundary.";
+
+      index_exprt dest_expr;
+      dest_expr.array() = op0;
+      dest_expr.index() = index_expr;
+      dest_expr.type() = op0.type().subtype();
     
-    return parse_expression(dest_expr, new_prefix, new_suffix);
+      return parse_expression(dest_expr, new_prefix, new_suffix);
+    }
+    else if (op0.type().id() == ID_pointer)
+    {
+      if (op0.id() == ID_symbol)
+      {
+        exprt exp_plus(ID_plus);
+        exp_plus.copy_to_operands(op0, index_expr);
+
+        exprt exp(ID_dereference);
+        exp.copy_to_operands(exp_plus);
+
+        return parse_expression(exp, new_prefix, new_suffix);
+      }
+    }
+    
+    throw "array expected (" + suffix + ") but not found";
   }
   else if (suffix.substr(0, 1) == ".")
   {
@@ -529,7 +558,44 @@ exprt interpretert::parse_expression(
     }
   }
 
-  throw "unsupported expression for modification command";
+  throw "unsupported expression";
+}
+
+/*******************************************************************\
+
+Function: interpretert::get_array_index
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+exprt interpretert::get_array_index(const std::string index_str) const
+{
+  if (index_str == "")
+    throw "missing index for array";
+
+  if (index_str.find("[") != std::string::npos)
+    throw "index must be a variable or an integer constant";
+
+  const symbolt &symbol = get_variable_symbol(index_str);
+
+  if (&symbol == &null_symbol)
+  {
+    return convert_integer_literal(index_str);
+  }
+  else if (symbol.type.id() == ID_signedbv || 
+           symbol.type.id() == ID_unsignedbv)
+  {
+    return symbol.symbol_expr();
+  }
+  else
+  {
+    throw "variable " + index_str + 
+          " is not of an integral type and can't be used as an index";
+  }
 }
 
 /*******************************************************************\
@@ -966,12 +1032,39 @@ void interpretert::print_values(
       std::cout << "}";
     }
   }
+  else if (type.id() == ID_pointer)
+  {
+    const mp_integer address = values[offset];
+    offset++;
+
+    if (address == 0) return;
+    
+    if( address < memory.size())
+    {
+      const irep_idt id = memory[integer2long(address)].identifier;
+      mp_integer adr = address;
+      std::vector<mp_integer> new_values;
+      unsigned size = 0;
+      while (adr < memory.size() && id == memory[integer2long(adr)].identifier)
+      {
+        new_values.resize(size + 1);
+        new_values[size] = memory[integer2long(adr)].value;
+        size++;
+        adr++;
+      }
+
+      unsigned new_offset = 0;
+      const symbolt &symbol = ns.lookup(id);
+      print_values(symbol.type, new_values, new_offset);
+    }
+  }
   else if(type.id() == ID_symbol)
   {
     print_values(ns.follow(type), values, offset);
   }
   else
   {
+    if (offset >= values.size()) return;
     const mp_integer value = values[offset];
     offset++;
 

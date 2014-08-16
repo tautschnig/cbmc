@@ -165,6 +165,7 @@ protected:
   void set_entry_function(std::string);
   void modify_variable();
   void modify_variable(const exprt &symbol_expr, const exprt &expr);
+  exprt get_array_index(const std::string index_str) const;
 
   void manage_breakpoint();
   void manage_watch();
