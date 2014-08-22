@@ -546,10 +546,6 @@ void goto_symext::symex_step(
         clean_expr(*it, state, false);
     
       symex_function_call(goto_functions, state, deref_code);
-
-      if(deref_code.lhs().is_not_nil())
-        state.field_sensitivity.field_assignments(
-          ns, state, target, deref_code.lhs());
     }
     else
       state.source.pc++;
