@@ -248,7 +248,7 @@ void field_sensitivityt::field_assignments_rec(
     simplify(ssa_rhs, ns);
 
     ssa_exprt ssa_lhs=to_ssa_expr(lhs_fs);
-    state.assignment(ssa_lhs, ssa_rhs, ns, true);
+    state.assignment(ssa_lhs, ssa_rhs, ns, true, true);
 
     // do the assignment
     target.assignment(

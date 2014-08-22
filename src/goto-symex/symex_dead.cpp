@@ -95,7 +95,7 @@ void goto_symext::symex_dead(statet &state)
     state.record_events=record_events;
 
     assert(state.dirty);
-    if(state.dirty->is_dirty(ssa_lhs.get_object_name()) &&
+    if((*state.dirty)(ssa_lhs.get_object_name()) &&
        state.atomic_section_id==0)
       target.shared_write(
         state.guard.as_expr(),

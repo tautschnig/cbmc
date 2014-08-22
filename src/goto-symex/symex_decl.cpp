@@ -68,6 +68,7 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   
   ssa_exprt ssa(expr);
   state.rename(ssa, ns, goto_symex_statet::L1);
+  irep_idt l1_identifier=ssa.get_identifier();
 
   // rename type to L2
   state.rename(ssa.type(), ssa.get_identifier(), ns);
@@ -152,6 +153,11 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
         state.top().hidden_function ||
         state.source.pc->source_location.get_hide();
       target.decl(
+
+    assert(state.dirty);
+    if((*state.dirty)(ssa_lhs.get_object_name()) &&
+       state.atomic_section_id==0)
+      target.shared_write(
         state.guard.as_expr(),
         ssa_lhs,
         state.source,
