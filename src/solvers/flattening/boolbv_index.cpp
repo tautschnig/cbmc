@@ -41,7 +41,8 @@ void boolbvt::convert_index(const index_exprt &expr, bvt &bv)
   
   const typet &array_op_type=ns.follow(array.type());
   
-  if(array_op_type.id()==ID_array)
+  if(array_op_type.id()==ID_array ||
+     array_op_type.id()==ID_vector)
   {
     const array_typet &array_type=
       to_array_type(array_op_type);
@@ -53,7 +54,8 @@ void boolbvt::convert_index(const index_exprt &expr, bvt &bv)
     
     // see if the array size is constant
 
-    if(is_unbounded_array(array_type))
+    if(array_op_type.id()==ID_array &&
+       is_unbounded_array(array_op_type))
     {
       // use array decision procedure
     
@@ -69,7 +71,7 @@ void boolbvt::convert_index(const index_exprt &expr, bvt &bv)
 
       if(array.id()==ID_symbol)
         map.get_map_entry(
-          to_symbol_expr(array).get_identifier(), array_type);
+          to_symbol_expr(array).get_identifier(), array_op_type);
 
       // make sure we have the index in the cache
       convert_bv(index);
@@ -79,7 +81,15 @@ void boolbvt::convert_index(const index_exprt &expr, bvt &bv)
 
     // Must have a finite size
     mp_integer array_size;
-    if(to_integer(array_type.size(), array_size))
+    if(array_op_type.id()==ID_vector)
+    {
+      if(to_integer(to_vector_type(array_op_type).size(), array_size))
+      {
+        std::cout << to_vector_type(array.type()).size().pretty() << std::endl;
+        throw "failed to convert vector size";
+      }
+    }
+    else if(to_integer(to_array_type(array_op_type).size(), array_size))
       throw "failed to convert array size";
     
     // see if the index address is constant
@@ -313,8 +323,8 @@ void boolbvt::convert_index(
   const mp_integer &index,
   bvt &bv)
 {
-  const array_typet &array_type=
-    to_array_type(ns.follow(array.type()));
+  const typet &type=ns.follow(array.type());
+  assert(type.id()==ID_array || type.id()==ID_vector);
 
   std::size_t width=boolbv_width(array_type.subtype());
 

@@ -378,7 +378,8 @@ void goto_symext::symex_assign_array(
   const exprt &lhs_index=lhs.index();
   const typet &lhs_type=ns.follow(lhs_array.type());
 
-  if(lhs_type.id()!=ID_array)
+  if(lhs_type.id()!=ID_array &&
+     lhs_type.id()!=ID_vector)
     throw "index must take array type operand, but got `"+
           lhs_type.id_string()+"'";
 

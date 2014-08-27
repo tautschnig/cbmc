@@ -189,6 +189,20 @@ protected:
     const bvt &prev_bv,
     bvt &next_bv);
 
+  void convert_with_vector(
+    const vector_typet &type,
+    const exprt &op1,
+    const exprt &op2,
+    const bvt &prev_bv,
+    bvt &next_bv);
+
+  void convert_with_array_vector(
+    const mp_integer &size,
+    const exprt &op1,
+    const exprt &op2,
+    const bvt &prev_bv,
+    bvt &next_bv);
+
   void convert_with_union(
     const union_typet &type,
     const exprt &op1,

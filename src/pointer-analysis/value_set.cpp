@@ -500,7 +500,8 @@ void value_sett::get_value_set_rec(
     const typet &type=ns.follow(expr.op0().type());
 
     assert(type.id()==ID_array ||
-           type.id()==ID_incomplete_array);
+           type.id()==ID_incomplete_array ||
+           type.id()==ID_vector);
            
     get_value_set_rec(expr.op0(), dest, "[]"+suffix, original_type, ns);
   }

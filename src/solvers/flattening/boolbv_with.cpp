@@ -88,6 +88,8 @@ void boolbvt::convert_with(
 
   if(type.id()==ID_array)
     return convert_with_array(to_array_type(type), op1, op2, prev_bv, next_bv);
+  else if(type.id()==ID_vector)
+    return convert_with_vector(to_vector_type(type), op1, op2, prev_bv, next_bv);
   else if(type.id()==ID_bv ||
           type.id()==ID_unsignedbv ||
           type.id()==ID_signedbv)
@@ -133,11 +135,62 @@ void boolbvt::convert_with_array(
 
   if(to_integer(array_size, size))
     throw "convert_with_array expects constant array size";
-    
+
+  convert_with_array_vector(size, op1, op2, prev_bv, next_bv);
+}
+
+/*******************************************************************\
+
+Function: boolbvt::convert_with_vector
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+void boolbvt::convert_with_vector(
+  const vector_typet &type,
+  const exprt &op1,
+  const exprt &op2,
+  const bvt &prev_bv,
+  bvt &next_bv)
+{
+  const exprt &vector_size=type.size();
+
+  mp_integer size;
+
+  if(to_integer(vector_size, size))
+    assert(false);
+
+  convert_with_array_vector(size, op1, op2, prev_bv, next_bv);
+}
+
+/*******************************************************************\
+
+Function: boolbvt::convert_with_array_vector
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+void boolbvt::convert_with_array_vector(
+  const mp_integer &size,
+  const exprt &op1,
+  const exprt &op2,
+  const bvt &prev_bv,
+  bvt &next_bv)
+{
   const bvt &op2_bv=convert_bv(op2);
 
   if(size*op2_bv.size()!=prev_bv.size())
-    throw "convert_with_array: unexpected operand 2 width";
+    throw "convert_with_array_vector: unexpected operand 2 width";
 
   // Is the index a constant?
   mp_integer op1_value;
