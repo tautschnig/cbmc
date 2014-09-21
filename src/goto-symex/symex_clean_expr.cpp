@@ -257,6 +257,7 @@ void goto_symext::clean_expr(
   if(write)
     adjust_byte_extract_rec(expr, ns);
 
+  replace_nondet(expr);
   replace_array_equal(expr);
   adjust_float_expressions(expr, ns);
 }

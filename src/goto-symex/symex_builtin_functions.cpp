@@ -196,6 +196,10 @@ void goto_symext::symex_malloc(
   if(rhs.type()!=lhs.type())
     rhs.make_typecast(lhs.type());
 
+  ssa_exprt value_symbol_l1(value_symbol.symbol_expr());
+  state.rename(value_symbol_l1, ns, goto_symex_statet::L1);
+  object_zoo.record_malloc(value_symbol_l1, state.source, state.guard);
+
   symex_assign_rec(state, code_assignt(lhs, rhs));
 }
 

@@ -18,6 +18,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/goto_functions.h>
 
 #include <xmllang/graphml.h>
+#include "object_zoo.h"
 
 #include "substitute.h"
 #include "goto_symex_state.h"
@@ -57,7 +58,8 @@ public:
     target(_target),
     atomic_section_counter(0),
     expand_deref(_ns, _target, true),
-    guard_identifier("goto_symex::\\guard")
+    guard_identifier("goto_symex::\\guard"),
+    object_zoo(ns, target)
   {
     options.set_option("simplify", true);
     options.set_option("assertions", true);
@@ -151,6 +153,9 @@ protected:
   // guards
   
   irep_idt guard_identifier;
+
+  // dereferencing
+  object_zoot object_zoo;
   
   // symex
 

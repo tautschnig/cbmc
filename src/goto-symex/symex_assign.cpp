@@ -243,6 +243,10 @@ void goto_symext::symex_assign_rec(
     
     symex_assign_rec(state, lhs.op0(), full_lhs, new_rhs, guard, assignment_type);
   }
+  else if(lhs.id()==ID_nondet_symbol)
+  {
+    // dereferencing may produce these -- ignore
+  }
   else
     throw "assignment to `"+lhs.id_string()+"' not handled";
 }
@@ -423,6 +427,8 @@ void goto_symext::symex_assign_symbol(
   }
   else
     target.location(tmp_guard.as_expr(), state.source);
+
+  object_zoo.get_address_taken(ssa_rhs);
 }
 
 /*******************************************************************\

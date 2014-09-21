@@ -70,10 +70,17 @@ void goto_symext::symex_dead(statet &state)
     state.value_set.assign(ssa, rhs, ns, true, false);
   }
 
+<<<<<<< HEAD
   exprt l2_fields;
   state.field_sensitivity.get_fields(ns, ssa, l2_fields);
   std::set<exprt> l2_fields_set;
   find_symbols(l2_fields, l2_fields_set);
+=======
+  object_zoo.record_dead(ssa, state.source, state.guard);
+
+  ssa_exprt ssa_lhs=to_ssa_expr(ssa);
+  const irep_idt &l1_identifier=ssa_lhs.get_identifier();
+>>>>>>> 6374633... More object zoo
 
   for(std::set<exprt>::const_iterator it=l2_fields_set.begin();
       it!=l2_fields_set.end();

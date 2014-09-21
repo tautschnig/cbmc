@@ -74,6 +74,36 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   state.rename(ssa.type(), ssa.get_identifier(), ns);
   ssa.update_type();
 
+<<<<<<< HEAD
+=======
+  // in case of pointers, put something into the value set
+  if(ns.follow(expr.type()).id()==ID_pointer)
+  {
+    exprt failed=
+      get_failed_symbol(expr, ns);
+    
+    exprt rhs;
+    
+    if(failed.is_not_nil())
+    {
+      address_of_exprt address_of_expr;
+      address_of_expr.object()=failed;
+      address_of_expr.type()=expr.type();
+      rhs=address_of_expr;
+    }
+    else
+      rhs=exprt(ID_invalid);
+    
+    state.rename(rhs, ns, goto_symex_statet::L1);
+    state.value_set.assign(ssa, rhs, ns);
+  }
+  
+  object_zoo.record_decl(ssa, state.source, state.guard);
+
+  // prevent propagation
+  state.propagation.remove(l1_identifier);
+
+>>>>>>> 6374633... More object zoo
   // L2 renaming
   // inlining may yield multiple declarations of the same identifier
   // within the same L1 context

@@ -175,6 +175,7 @@ bool goto_symext::dereference_rec(
     // first make sure there are no dereferences in there
     dereference_rec(tmp1, state, guard, false);
 
+#if 0
     // we need to set up some elaborate call-backs
     symex_dereference_statet symex_dereference_state(*this, state);
 
@@ -193,11 +194,28 @@ bool goto_symext::dereference_rec(
     
     // this may yield a new auto-object
     trigger_auto_object(expr, state);
+<<<<<<< HEAD
 #else
     // Compute *expr, resulting in (partial) renaming down to L2
     expr=to_dereference_expr(expr).pointer();
 
     // first make sure there are no dereferences in there
+=======
+<<<<<<< HEAD
+
+    result=true;
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
+=======
+>>>>>>> 92cee80... More object zoo
+=======
+#else
+    expr.op0()=tmp1;
+    expr=object_zoo.dereference(to_dereference_expr(expr), state.guard);
+<<<<<<< HEAD
+=======
+>>>>>>> 60f643a... More object zoo
     dereference_rec(expr, state, false);
 
     // now rename, enables propagation; we record reads of shared
@@ -247,8 +265,49 @@ bool goto_symext::dereference_rec(
     }
 #if 1
     std::cerr << "final: " << from_expr(ns, "", expr) << std::endl;
+<<<<<<< HEAD
 #endif
 #endif
+=======
+>>>>>>> a28e382... Efficient reverse expression expansion, enabling new dereferencing
+=======
+>>>>>>> 92cee80... More object zoo
+#endif
+  }
+  else if(expr.id()=="implicit_dereference")
+  {
+    // old stuff, should be gone
+    assert(false);
+>>>>>>> 6374633... More object zoo
+<<<<<<< HEAD
+>>>>>>> 16f8b11... Efficient reverse expression expansion, enabling new dereferencing
+=======
+>>>>>>> 92cee80... More object zoo
+  }
+  else if(expr.id()==ID_index &&
+          to_index_expr(expr).array().id()==ID_member &&
+          to_array_type(ns.follow(to_index_expr(expr).array().type())).
+            size().is_zero())
+  {
+    // This is an expression of the form x.a[i],
+    // where a is a zero-sized array. This gets
+    // re-written into *(&x.a+i)
+    
+    index_exprt index_expr=to_index_expr(expr);
+    
+    address_of_exprt address_of_expr(index_expr.array());
+    address_of_expr.type()=pointer_typet(expr.type());
+
+    dereference_exprt tmp;
+    tmp.pointer()=plus_exprt(address_of_expr, index_expr.index());
+    tmp.type()=expr.type();
+    tmp.add_source_location()=expr.source_location();
+
+    // recursive call
+    dereference_rec(tmp, state, write);
+
+    expr.swap(tmp);
+>>>>>>> 60f643a... More object zoo
 
     result=true;
   }
