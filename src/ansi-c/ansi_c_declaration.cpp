@@ -172,7 +172,7 @@ void ansi_c_declarationt::to_symbol(
   
   // is it a function?
   
-  if(symbol.type.id()==ID_code && !symbol.is_type)
+  if(symbol.type.id()==ID_code && !symbol.is_type && !symbol.is_macro)
   {
     symbol.is_static_lifetime=false;
     symbol.is_thread_local=false;

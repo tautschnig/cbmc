@@ -193,7 +193,8 @@ void c_typecheck_baset::typecheck_new_symbol(symbolt &symbol)
 
   if(symbol.type.id()==ID_code)
   {
-    if(symbol.value.is_not_nil())
+    if(symbol.value.is_not_nil() &&
+       !symbol.is_macro)
       typecheck_function_body(symbol);
     else
     {
@@ -413,7 +414,8 @@ void c_typecheck_baset::typecheck_redefinition_non_type(
 
     // do body
     
-    if(new_symbol.value.is_not_nil())
+    if(new_symbol.value.is_not_nil() &&
+       !new_symbol.is_macro)
     {  
       if(old_symbol.value.is_not_nil())
       {

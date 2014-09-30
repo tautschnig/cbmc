@@ -3073,8 +3073,9 @@ postfixing_abstract_declarator:
           {
             // Use last declarator (i.e., function name) to name
             // the scope.
-            PARSER.new_scope(
-              id2string(PARSER.current_scope().last_declarator)+"::");
+            const irep_idt &fn=PARSER.get_effective_function_name(
+              PARSER.current_scope().last_declarator);
+            PARSER.new_scope(id2string(fn)+"::");
           }
           KnR_parameter_list
           ')'
@@ -3104,8 +3105,9 @@ parameter_postfixing_abstract_declarator:
           {
             // Use last declarator (i.e., function name) to name
             // the scope.
-            PARSER.new_scope(
-              id2string(PARSER.current_scope().last_declarator)+"::");
+            const irep_idt &fn=PARSER.get_effective_function_name(
+              PARSER.current_scope().last_declarator);
+            PARSER.new_scope(id2string(fn)+"::");
           }
           parameter_type_list
           ')'

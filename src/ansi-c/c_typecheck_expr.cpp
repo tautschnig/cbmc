@@ -833,6 +833,8 @@ void c_typecheck_baset::typecheck_expr_symbol(exprt &expr)
     if(expr.id()==ID_constant &&
        !base_name.empty())
       expr.set(ID_C_cformat, base_name);
+    else if(expr.id()==ID_symbol)
+      typecheck_expr_symbol(expr);
 
     // preserve location
     expr.add_source_location()=source_location;

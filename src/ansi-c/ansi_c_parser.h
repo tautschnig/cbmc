@@ -54,6 +54,8 @@ public:
     // setup global scope
     scopes.clear();
     scopes.push_back(scopet());
+
+    eff_function_names.clear();
   }
 
   // internal state of the scanner
@@ -138,6 +140,19 @@ public:
     std::string name=id2string(id);
     lookup(name, false, true);
     return name;
+  }
+
+  hash_map_cont<irep_idt, irep_idt, irep_id_hash> eff_function_names;
+
+  const irep_idt &get_effective_function_name(const irep_idt &id)
+  {
+    hash_map_cont<irep_idt, irep_idt, irep_id_hash>::const_iterator
+      it=eff_function_names.find(id);
+
+    if(it!=eff_function_names.end())
+      return it->second;
+    else
+      return id;
   }
 };
 

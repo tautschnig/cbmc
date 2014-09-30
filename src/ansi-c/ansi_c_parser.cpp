@@ -6,8 +6,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
-#include <iostream>
-
 #include "ansi_c_parser.h"
 #include "c_storage_spec.h"
 
@@ -152,6 +150,28 @@ void ansi_c_parsert::add_declarator(
   // abstract?
   if(!base_name.empty())
   {
+    // check for renaming via __asm (GCC extension)
+    irep_idt effective_name;
+    if(new_declarator.type().id()==ID_merged_type)
+    {
+      Forall_subtypes(it, new_declarator.type())
+      {
+        if(it->id()==ID_asm &&
+           it->get(ID_flavor)==ID_gcc &&
+           it->get_sub().size()==1 &&
+           it->get_sub().front().id()==ID_string_constant)
+        {
+          effective_name=it->get_sub().front().get(ID_value);
+
+          new_declarator.type().subtypes().erase(it);
+          break;
+        }
+      }
+
+      if(new_declarator.type().subtypes().size()==1)
+        new_declarator.type()=new_declarator.type().subtypes().front();
+    }
+
     c_storage_spect c_storage_spec(ansi_c_declaration.type());
     bool is_typedef=c_storage_spec.is_typedef;
     bool is_extern=c_storage_spec.is_extern;
@@ -163,7 +183,14 @@ void ansi_c_parsert::add_declarator(
     if(new_declarator.type().id()==ID_code &&
        !is_parameter &&
        !is_typedef)
+    {
       force_root_scope=true;
+
+      // may need __asm renaming
+      base_name=get_effective_function_name(base_name);
+      if(base_name!=new_declarator.get_base_name())
+        new_declarator.set_base_name(base_name);
+    }
     
     // variables marked as 'extern' always go into global scope
     if(is_extern)
@@ -183,9 +210,39 @@ void ansi_c_parsert::add_declarator(
              base_name:
              current_scope().prefix+id2string(base_name);
     new_declarator.set_name(name);
+
+    ansi_c_declaration.declarators().push_back(new_declarator);
+
+    if(!effective_name.empty())
+    {
+      eff_function_names[base_name]=effective_name;
+
+      ansi_c_declaratort eff_declarator=new_declarator;
+
+      eff_declarator.set_base_name(effective_name);
+      scope.name_map[effective_name].id_class=id_class;
+      name=force_root_scope?
+        effective_name:
+        current_scope().prefix+id2string(effective_name);
+      eff_declarator.set_name(name);
+
+      ansi_c_declaration.declarators().back().swap(eff_declarator);
+
+      eff_declarator.value()=exprt(ID_symbol);
+      eff_declarator.value().set(ID_identifier, name);
+
+      ansi_c_declarationt macro_decl;
+      if(current_scope().prefix=="")
+        macro_decl.set_is_global(true);
+
+      macro_decl.declarators().push_back(eff_declarator);
+      macro_decl.set_is_enum_constant(true);
+
+      copy_item(macro_decl);
+    }
   }
-  
-  ansi_c_declaration.declarators().push_back(new_declarator);
+  else
+    ansi_c_declaration.declarators().push_back(new_declarator);
 }
 
 /*******************************************************************\
