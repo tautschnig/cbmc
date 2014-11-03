@@ -1,0 +1,33 @@
+[
+  {
+    "spawned_function" : "main",
+    "called_functions" : [
+      "call1", "call2", "call3"
+    ]
+  },
+  {
+    "spawned_function" : "spawn1",
+    "called_functions" : [
+      "call3", "call4", "call5"
+    ]
+  }
+  {
+    "spawned_function" : "spawn2",
+    "called_functions" : [
+      "call6", "call7"
+    ]
+  }
+]
+  {
+    "spawned_function" : "spawn3",
+    "called_functions" : [
+      "call8", "call9"
+    ]
+  }
+  {
+    "spawned_function" : "spawn4",
+    "called_functions" : [
+      "call10"
+    ]
+  }
+]

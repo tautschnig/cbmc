@@ -1,0 +1,12 @@
+[
+  {
+    "spawned_function" : "main",
+    "called_functions" : [
+    ]
+  },
+  {
+    "spawned_function" : "bar",
+    "called_functions" : [
+    ]
+  }
+]
