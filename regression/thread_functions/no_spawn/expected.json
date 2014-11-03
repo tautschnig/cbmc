@@ -1,0 +1,8 @@
+[
+  {
+    "spawned_function" : "main",
+    "called_functions" : [
+      "foo", "bar", "baz"
+    ]
+  }
+]

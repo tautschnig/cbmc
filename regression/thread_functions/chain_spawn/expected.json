@@ -1,0 +1,19 @@
+[
+  {
+    "spawned_function" : "main",
+    "called_functions" : [
+      "foo", "baz"
+    ]
+  },
+  {
+    "spawned_function" : "bar",
+    "called_functions" : [
+      "bump"
+    ]
+  }
+  {
+    "spawned_function" : "biff",
+    "called_functions" : [
+    ]
+  }
+]
