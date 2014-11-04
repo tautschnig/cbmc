@@ -1,18 +1,18 @@
 [
   {
-    "spawned_function" : "main",
+    "function_name" : "main",
     "called_functions" : [
-      "foo", "baz"
+      "foo", "baz", "pthread_create"
     ]
   },
   {
-    "spawned_function" : "bar",
+    "function_name" : "bar",
     "called_functions" : [
-      "bump"
+      "bump", "pthread_create"
     ]
-  }
+  },
   {
-    "spawned_function" : "biff",
+    "function_name" : "biff",
     "called_functions" : [
     ]
   }

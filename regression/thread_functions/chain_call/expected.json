@@ -8,7 +8,8 @@
   {
     "function_name" : "spawn1",
     "called_functions" : [
-      "call3", "call4", "call5", "pthread_create"
+      "call3", "call4", "call5", "pthread_create",
+      "call1", "call2"
     ]
   },
   {

@@ -74,6 +74,12 @@ class transitive_callst
     typedef goto_programt::instructionst instructionst;
     typedef goto_programt::instructiont instructiont;
 
+    /**@brief Are we interested in fun_name?
+     *
+     * We are interested in all non-builtin functions.
+     */
+    bool interested_in(std::string fun_name);
+
     ///@{ \name printing
     //
     const int indent_width; // int (not unsigned) so that we detect

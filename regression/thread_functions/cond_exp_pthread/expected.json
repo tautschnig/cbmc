@@ -1,11 +1,12 @@
 [
   {
-    "spawned_function" : "main",
+    "function_name" : "main",
     "called_functions" : [
+      "pthread_create"
     ]
   },
   {
-    "spawned_function" : "bar",
+    "function_name" : "bar",
     "called_functions" : [
     ]
   }
