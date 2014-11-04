@@ -1,6 +1,6 @@
 [
   {
-    "spawned_function" : "main",
+    "function_name" : "main",
     "called_functions" : [
       "foo", "bar", "baz"
     ]

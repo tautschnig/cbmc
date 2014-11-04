@@ -10,27 +10,32 @@ TEST_GOTO=test.goto
 
 STDERR=2>/dev/null
 
+DIRS=$(shell find . -type d | grep -v "^.$$")
+
 # Each dir will get a results.json
-JSON_RESULTS=$(patsubst %,\
-%/result.json,\
-$(shell find . -type d | grep -v "^.$$"))
+JSON_RESULTS=$(patsubst %,%/result.json,$(DIRS))
 
 # Each dir will get a $(TEST_GOTO)
-GOTOS=$(patsubst %,\
-%/$(TEST_GOTO),\
-$(shell find . -type d | grep -v "^.$$"))
+GOTOS=$(patsubst %,%/$(TEST_GOTO),$(DIRS))
 
-default: $(JSON_RESULTS)
+default: test
 
 %/result.json: %/$(TEST_GOTO) %/expected.json $(GOTO_IN)
 	@echo thread-functions for $(patsubst %/,%,$(dir $<))
-	@$(GOTO_IN) --thread-functions $< $(STDERR)
+	@$(GOTO_IN) --thread-functions $< > $@
 #@$(GOTO_IN) --thread-functions $< $(STDERR) > $@
 
 
 %/$(TEST_GOTO): %/main.c
 	@echo compiling $(patsubst %/,%,$(dir $<))
 	@$(GOTO_CC) -o $@ -pthread $<
+
+test: $(patsubst ./%,test_%,$(DIRS))
+
+test_%: %/result.json %/expected.json
+	@./result_checker.rb $(patsubst test_%,%,$@) $?
+
+
 
 .SECONDAY: $(GOTOS)
 

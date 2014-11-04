@@ -33,7 +33,8 @@ transitive_callst::transitive_callst(
     std::set<std::string> bucket =
       make_call_bucket_for(fun_name);
 
-    call_map.insert(std::make_pair(fun_name, bucket));
+    if(interested_in(fun_name))
+      call_map.insert(std::make_pair(fun_name, bucket));
   }
 }
 
@@ -90,8 +91,9 @@ std::set<std::string> transitive_callst::make_call_bucket_for(
     const std::string &call_name =
       as_string(to_symbol_expr(function).get_identifier());
 
-    if(accumulator.find(call_name) == accumulator.end())
-    {
+    if(accumulator.find(call_name) == accumulator.end()
+    && interested_in(call_name)
+    ){
       worklist.insert(call_name);
     }
   }
@@ -129,4 +131,14 @@ std::string transitive_callst::to_json()
   }
   ret << und() << "]";
   return ret.str();
+}
+
+bool transitive_callst::interested_in(std::string fun_name)
+{
+  return
+    // Functions that are not part of the original program
+    (   fun_name.compare("c::__actual_thread_spawn")
+    &&  fun_name.compare("main")
+    &&  fun_name.compare("c::__CPROVER_initialize")
+    );
 }
