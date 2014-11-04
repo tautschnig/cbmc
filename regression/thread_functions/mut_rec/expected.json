@@ -1,0 +1,20 @@
+[
+  {
+    "function_name" : "main",
+    "called_functions" : [
+      "foo", "bar"
+    ]
+  },
+  {
+    "function_name" : "foo",
+    "called_functions" : [
+      "foo", "bar"
+    ]
+  },
+  {
+    "function_name" : "bar",
+    "called_functions" : [
+      "bar", "foo"
+    ]
+  }
+]
