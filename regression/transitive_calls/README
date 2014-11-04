@@ -1,0 +1,15 @@
+Transitive Calls Regression Tests
+=================================
+
+These tests exercise the transitive calls code in
+goto-programs/transitive_calls.{h,cpp}.
+
+To run the tests:
+- Make sure you have a copy of Ruby installed
+- Change the CPROVER_ROOT variable in the Makefile to point to your
+  cprover directory
+- Run `make`.
+
+All tests should pass. If you make changes to the code, please re-run
+the tests; if you find a bug in the code, please add a regression test
+that fails due to the bug.

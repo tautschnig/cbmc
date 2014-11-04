@@ -2,6 +2,12 @@
  *  @author Kareem Khazem <karkhaz@karkhaz.com>
  *  @date   2014
  *  @brief  Calculating transitive call chains
+ *
+ *  If making changes to this file, please run the regression tests at
+ *  regression/transitive_calls. The tests should all pass.
+ *
+ *  If you discover a bug, please add a regression that fails due to
+ *  the bug.
  */
 #ifndef CPROVER_TRANSITIVE_CALLS_H
 #define CPROVER_TRANSITIVE_CALLS_H
