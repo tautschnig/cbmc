@@ -1,0 +1,65 @@
+[
+  {
+    "function_name" : "main",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "a",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "b",
+    "called_functions" : [
+      "a", "b", "c", "d", 
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "c",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "d",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "_1",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "_2",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "_3",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  },
+  {
+    "function_name" : "_4",
+    "called_functions" : [
+      "a", "b", "c", "d",
+      "_1", "_2", "_3", "_4"
+    ]
+  }
+]
