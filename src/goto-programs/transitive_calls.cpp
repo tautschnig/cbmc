@@ -3,6 +3,7 @@
  *  @date   2014
  */
 #include <util/dstring.h>
+#include <util/json_utils.h>
 #include <langapi/language_util.h>
 
 #include "transitive_calls.h"
@@ -15,8 +16,6 @@ transitive_callst::transitive_callst(
 ) : goto_functions(_gf)
   , ns(_ns)
   , call_map()
-  , indent_width(2)
-  , indent_level(0)
 {
   function_mapt fun_map = goto_functions.function_map;
 
@@ -104,14 +103,15 @@ std::set<std::string> transitive_callst::make_call_bucket_for(
 std::string transitive_callst::to_json()
 {
   std::stringstream ret;
-  ret << "[" << ind();
+  json_utilt fmt(2);
+  ret << "[" << fmt.ind();
   call_mapt::iterator it;
   for(it = call_map.begin(); it != call_map.end(); it++)
   {
-    ret << "{" << ind();
+    ret << "{" << fmt.ind();
     ret << "\"function_name\" : \"" << it->first << "\",";
-    ret << nl() << "\"called_functions\" : [";
-    ret << ind();
+    ret << fmt.nl() << "\"called_functions\" : [";
+    ret << fmt.ind();
 
     std::set<std::string>::iterator call_it;
     for(call_it  = it->second.begin();
@@ -120,16 +120,16 @@ std::string transitive_callst::to_json()
     {
       ret << "\"" << *call_it << "\"";
       if(call_it != it->second.end() && (call_it != --it->second.end()))
-        ret << "," << nl();
+        ret << "," << fmt.nl();
     }
   
-    ret << und() << "]";
-    ret << und() << "}";
+    ret << fmt.und() << "]";
+    ret << fmt.und() << "}";
     if(it != call_map.end() && (it != --call_map.end())){
-      ret << "," << nl();
+      ret << "," << fmt.nl();
     }
   }
-  ret << und() << "]";
+  ret << fmt.und() << "]";
   return ret.str();
 }
 
