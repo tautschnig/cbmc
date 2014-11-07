@@ -85,68 +85,6 @@ class transitive_callst
      * We are interested in all non-builtin functions.
      */
     bool interested_in(std::string fun_name);
-
-    ///@{ \name printing
-    //
-    const int indent_width; // int (not unsigned) so that we detect
-    int indent_level;       // negatives.
-
-    /**@brief newline, plus increase indentation
-     *
-     *  Style note: put the ind() just after where you want the line
-     *  to be broken, like ss << "end of line here" << ind();
-     */
-    std::string ind()
-    {
-      assert(indent_level >= 0);
-      std::stringstream ss;
-      indent_level += 1;
-      ss << "\n";
-      for(int i = 0;
-          i < (indent_level * indent_width);
-          i++)
-        ss << " ";
-
-      return ss.str();
-    }
-
-    /**@brief newline, plus decrease indentation
-     *
-     *  Style note: put the und() just BEFORE the start of the new
-     *  line, like ss << und() << "start of new line";
-     */
-    std::string und()
-    {
-      assert(indent_level >= 1);
-      indent_level -= 1;
-      std::stringstream ss;
-      ss << "\n";
-      for(int i = 0;
-          i < (indent_level * indent_width);
-          i++)
-        ss << " ";
-
-      return ss.str();
-    }
-
-    /**@brief newline, same indentation as before
-     *
-     *  Style note: put the nl() just BEFORE the start of the new
-     *  line, like ss << nl() << "start of new line";
-     */
-    std::string nl()
-    {
-      assert(indent_level >= 0);
-      std::stringstream ss;
-      ss << "\n";
-      for(int i = 0;
-          i < (indent_level * indent_width);
-          i++)
-        ss << " ";
-
-      return ss.str();
-    }
-    ///@}
 };
 
 #endif
