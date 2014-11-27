@@ -397,6 +397,11 @@ void static_cyclest::collect_cycles_in_group(
            << "\"";
         
         ss << "," << j.nl()
+           << "\"function\" : \""
+           << it->get_function()
+           << "\"";
+        
+        ss << "," << j.nl()
            << "\"read?\" : "
            << (it->is_read() ? "true" : "false");
         

@@ -105,25 +105,60 @@ public:
       :file("")
       ,line("")
       ,code("")
+      ,function("")
     {}
 
+    /** @brief  associates this event with a location in the source
+     *          code.
+     *
+     * Used when we want to instrument the source code (using some
+     * external tool, not cprover) to detect when events happen.
+     *
+     * @post  the get_*() functions return sensible values when called
+     *        on this object.
+     */
     void set_location(
         goto_programt::const_targett target
         , namespacet &ns
+        , goto_functionst &goto_functions
         )
     {
       const source_locationt &loc = target->source_location;
       file = loc.get_file().c_str();
       line = loc.get_line().c_str();
       code = from_expr(ns, "", target->code);
+
+      goto_functionst::function_mapt::iterator it;
+      for(it  = goto_functions.function_map.begin();
+          it != goto_functions.function_map.end();
+          it++)
+      {
+        goto_programt &body = it->second.body;
+        goto_programt::instructionst::iterator ins;
+        for(ins  = body.instructions.begin();
+            ins != body.instructions.end();
+            ins++)
+        {
+          const locationt inner_loc = ins->location;
+          if(inner_loc.get_file() == loc.get_file()
+          && inner_loc.get_line() == loc.get_line()
+          && ins->location_number == target->location_number)
+            function = it->first.c_str();
+        }
+      }
     }
 
   public:
     
     /// @brief the file in which this event is located
     std::string get_file(){ return file; }
+
     /// @brief the line of the file where this event is located
     std::string get_line(){ return line; }
+
+    /// @brief the function where this event is located
+    std::string get_function(){ return function; }
+
     /// @brief pretty rep of the code
     std::string get_code()
     {
@@ -173,6 +208,7 @@ public:
     std::string file;
     std::string line;
     std::string code;
+    std::string function;
   };
 
   /* per-thread control flow graph only, no inter-thread edges */
