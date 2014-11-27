@@ -330,7 +330,7 @@ void instrumentert::forward_traverse_once(
 {
 
   cfgt::nodet &cfg_entry=cfg[cfg.entry_map[target]];
-  cfg_entry.set_location(target, ns);
+  cfg_entry.set_location(target, ns, goto_functions);
 
   // we extract events only once per thread; this also means that
   // we do not track call stacks
