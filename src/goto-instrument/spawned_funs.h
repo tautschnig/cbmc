@@ -17,6 +17,21 @@ class spawned_funst
     , namespacet &ns
     );
 
+    /**@brief The name of the function spawned by the call to
+     *        pthread_create.
+     * @param   pthread_create the pthread_create instruction.
+     * @throws  an assertion failure if the third parameter to
+     *          pthread_create is not a straight function pointer.
+     *          (This is a bug. We need to deal with any kind of
+     *          argument passed to pthread_create, so add additional
+     *          cases if you find them.)
+     * @throws  An exception if the instruction doesn't appear to be a
+     *          pthread_create call.
+     */
+    std::string function_pointer_of_pthread_create(
+        goto_programt::instructiont &pthread_create
+        );
+
     ///@brief The list of spawned functions formatted as JSON
     std::string to_json();
 

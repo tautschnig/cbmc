@@ -37,32 +37,49 @@ spawned_funst::spawned_funst(
       if(call_name.compare("c::pthread_create"))
         continue;
 
-      const argumentst &args =
-        to_code_function_call(ins->code).arguments();
-
-      exprt fun_ptr = args[2];
-      
-      /* I only deal with the case that the third argument of
-       * pthread_create is a straight function pointer. If we fail a
-       * lot here, then we need to investigate what other edge cases
-       * exist and then check for them.
-       * There's no way of doing the following code cleanly, as the
-       * third arg to pthread_create could have any form, so we need
-       * to mess around with the irept directly.
-       */
-      if(fun_ptr.id() != ID_address_of)
-        assert(false);
-
-      std::string fun_ptr_name =
-        fun_ptr             // exprt
-        .get_sub()[0]       // symbol
-        .get_named_sub()["identifier"]
-        .pretty();          // something like c::foo
-
-      spawned_functions.insert(fun_ptr_name);
+      spawned_functions.insert(
+        function_pointer_of_pthread_create(*ins));
     }
   }
+}
 
+std::string spawned_funst::function_pointer_of_pthread_create(
+  instructiont &pthread_create
+){
+  if(!pthread_create.is_function_call())
+    throw "Instruction doesn't look like a pthread_create";
+
+  const exprt &function =
+    to_code_function_call(pthread_create.code).function();
+  const std::string &call_name =
+    as_string(to_symbol_expr(function).get_identifier());
+
+  if(call_name.compare("c::pthread_create"))
+    throw "Instruction doesn't look like a pthread_create";
+
+  const argumentst &args =
+    to_code_function_call(pthread_create.code).arguments();
+
+  exprt fun_ptr = args[2];
+  
+  /* I only deal with the case that the third argument of
+   * pthread_create is a straight function pointer. If we fail a
+   * lot here, then we need to investigate what other edge cases
+   * exist and then check for them.
+   * There's no way of doing the following code cleanly, as the
+   * third arg to pthread_create could have any form, so we need
+   * to mess around with the irept directly.
+   */
+  if(fun_ptr.id() != ID_address_of)
+    assert(false);
+
+  std::string fun_ptr_name =
+    fun_ptr             // exprt
+    .get_sub()[0]       // symbol
+    .get_named_sub()["identifier"]
+    .pretty();          // something like c::foo
+
+  return fun_ptr_name;
 }
 
 std::string spawned_funst::to_json()
