@@ -15,5 +15,11 @@
     "function_name" : "biff",
     "called_functions" : [
     ]
+  },
+  {
+    "function_name" : "__actual_thread_spawn",
+    "called_functions" : [
+      "bar", "biff", "bump"
+    ]
   }
 ]

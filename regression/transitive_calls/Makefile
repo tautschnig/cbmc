@@ -21,13 +21,13 @@ GOTOS=$(patsubst %,%/$(TEST_GOTO),$(DIRS))
 default: test
 
 %/result.json: %/$(TEST_GOTO) %/expected.json $(GOTO_IN)
-	@echo thread-functions for $(patsubst %/,%,$(dir $<))
-	@$(GOTO_IN) --transitive-calls $< > $@
+	@echo computing transitive calls for $(patsubst %/,%,$(dir $<))
+	@$(GOTO_IN) --transitive-calls $< > $@ 2>/dev/null
 
 
 %/$(TEST_GOTO): %/main.c
 	@echo compiling $(patsubst %/,%,$(dir $<))
-	@$(GOTO_CC) -o $@ -pthread $<
+	@$(GOTO_CC) -o $@ -pthread $< 2>/dev/null
 
 test: $(patsubst ./%,test_%,$(DIRS))
 

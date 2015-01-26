@@ -6,6 +6,12 @@
     ]
   },
   {
+    "function_name" : "__actual_thread_spawn",
+    "called_functions" : [
+      "bar"
+    ]
+  },
+  {
     "function_name" : "bar",
     "called_functions" : [
     ]
