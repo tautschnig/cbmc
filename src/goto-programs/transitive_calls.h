@@ -47,18 +47,37 @@ class transitive_callst
     namespacet &ns;
 
     typedef std::string namet;
-
-    /**@brief a list of function names */
-    typedef std::list<namet> fun_list;
-    typedef std::set<namet>  fun_set;
+    typedef std::list<namet> name_listt;
+    typedef std::set<namet>  name_sett;
 
     typedef goto_functionst::function_mapt function_mapt;
     typedef goto_programt::instructionst instructionst;
     typedef goto_programt::instructiont instructiont;
 
-    void populate_initial(fun_list &worklist);
-    void propagate_calls(fun_list  &worklist);
+    /**@brief Populates call_map with immediate calls.
+     * @param worklist an empty list
+     * @post  The keys of call_map shall be the names of all functions
+     *        in goto_functions. Each function name F shall map to a
+     *        set of functions called from the body of F. worklist
+     *        shall be a list of all function names */
+    void populate_initial(name_listt &worklist);
 
+    /**@brief Calculates transitive call information.
+     * @param updated a list of all function names in goto_functions
+     * @pre   populate_initial() has been called
+     * @post  The keys of call_map shall be the list of all functions
+     *        in goto_functions. Each function F shall map to a set of
+     *        functions _transitively_ called by F. updated shall be
+     *        empty. */
+    void propagate_calls(name_listt  &worklist);
+
+    /**@brief The function name of a function call instruction
+     *
+     *        For most function calls, this simply returns the
+     *        function name. If the function call is a call to
+     *        pthread_create, return the _spawned_ function instead
+     *        (i.e. the third argument to pthread_create).
+     */
     namet function_of_instruction(const instructiont &instruction);
 
     /**@brief a map from functions to a bucket of functions
@@ -71,8 +90,8 @@ class transitive_callst
 
     typedef code_function_callt::argumentst argumentst;
 
+    /**@brief Should we exclude function from the mapping? */
     inline bool not_interested_in(const namet &function);
-
 };
 
 #endif
