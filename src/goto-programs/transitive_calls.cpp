@@ -122,35 +122,35 @@ inline bool transitive_callst::not_interested_in(
 
 
 void transitive_callst::propagate_calls(
-   name_listt &updated
+   name_listt &marked
 ){
   /* Algorithm:
-   *  Initially, all functions have been updated.
-   *  For each function F that has been updated
+   *  Initially, all functions have been marked.
+   *  For each function F that has been marked
    *    For each function C called by F (i.e. C is in the bucket of F)
-   *      If C has been updated
+   *      If C has been marked
    *        Copy all functions called by C into the bucket of F
    *        If the bucket of F has changed
-   *          F has been updated
+   *          mark F
    */
-  while(!updated.empty())
+  while(!marked.empty())
   {
-    namet work_item = updated.front();
-    updated.pop_front();
+    namet work_item = marked.front();
+    marked.pop_front();
     name_sett &work_bucket = call_map[work_item];
     
     name_sett::iterator call;
     for(call = work_bucket.begin(); call != work_bucket.end(); call++)
     {
-      if(std::find(updated.begin(), updated.end(), *call)
-          != updated.end())
+      if(std::find(marked.begin(), marked.end(), *call)
+          != marked.end())
       {
         name_sett &call_bucket = call_map[*call];
 
         /* Optimisation: if everything in the call list of the
          * called function we're looking at is already in the bucket
          * of the caller, then there's no need to put the caller back
-         * in the updated list, or to copy the call list of the called
+         * in the marked list, or to copy the call list of the called
          * function into the bucket of the caller. */
         if(std::includes(work_bucket.begin(), work_bucket.end(),
                          call_bucket.begin(), call_bucket.end()))
@@ -159,13 +159,13 @@ void transitive_callst::propagate_calls(
         std::copy(call_bucket.begin(), call_bucket.end(),
                   std::inserter(work_bucket, work_bucket.begin()));
 
-        /* Optimisation: functions don't have to be in the `updated'
+        /* Optimisation: functions don't have to be in the `marked'
          * list more than once. However, we do need to add the
-         * function to the _back_ of the updated list. So, erase all
-         * ocurrences of the function in the updated list before
+         * function to the _back_ of the marked list. So, erase all
+         * ocurrences of the function in the marked list before
          * adding it to the back */
-        std::remove(updated.begin(), updated.end(), work_item);
-        updated.push_back(work_item);
+        std::remove(marked.begin(), marked.end(), work_item);
+        marked.push_back(work_item);
       }
     }
   }

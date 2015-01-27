@@ -63,13 +63,13 @@ class transitive_callst
     void populate_initial(name_listt &worklist);
 
     /**@brief Calculates transitive call information.
-     * @param updated a list of all function names in goto_functions
+     * @param marked a list of all function names in goto_functions
      * @pre   populate_initial() has been called
      * @post  The keys of call_map shall be the list of all functions
      *        in goto_functions. Each function F shall map to a set of
-     *        functions _transitively_ called by F. updated shall be
+     *        functions _transitively_ called by F. marked shall be
      *        empty. */
-    void propagate_calls(name_listt  &worklist);
+    void propagate_calls(name_listt  &marked);
 
     /**@brief The function name of a function call instruction
      *
