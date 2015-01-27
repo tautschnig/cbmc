@@ -1,30 +1,17 @@
 [
   {
-    "function_name" : "main",
-    "called_functions" : [
-      "call1", "call2", "call3", "pthread_create",
-      "spawn1", "spawn4", "call4", "call5", "call6",
-      "call7", "call8", "call9", "call10", "spawn2"
-    ]
-  },
-  {
-    "function_name" : "actual_thread_spawn",
-    "called_functions" : [
-      "spawn1", "spawn4", "spawn2", "spawn3",
-      "call10", "call8", "call9", "call6", "call7",
-      "call3", "call4", "call5"
-    ]
-  },
-  {
     "function_name" : "spawn1",
     "called_functions" : [
-      "call3", "call4", "call5", "pthread_create"
+      "call3", "call4", "call5", "spawn2",
+      "call6", "call7", "spawn3", "call8",
+      "call9"
     ]
   },
   {
     "function_name" : "spawn2",
     "called_functions" : [
-      "call6", "call7", "pthread_create"
+      "call6", "call7", "spawn3", "call8",
+      "call9"
     ]
   },
   {
