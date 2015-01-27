@@ -25,6 +25,16 @@
  * called by a given function. When constructed with a goto_functionst
  * object, this transitive_callst will calculate all functions
  * transitively called by each function in the goto_functionst.
+ *
+ * This class is aware of function spawns using pthread_create. In
+ * other words, if function foo contains a call to pthread_create(...,
+ * ..., bar, ...), then the analysis will indicate that foo
+ * transitively calls bar (and all the functions that bar transitively
+ * calls). The analysis will _not_ indicate that foo transitively
+ * calls pthread_create.
+ *
+ * Regression tests for this class are found in
+ * regression/transitive_calls.
  */
 class transitive_callst
 {
