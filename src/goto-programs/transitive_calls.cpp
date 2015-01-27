@@ -110,7 +110,7 @@ transitive_callst::namet transitive_callst::function_of_instruction(
 }
 
 
-bool transitive_callst::not_interested_in(
+inline bool transitive_callst::not_interested_in(
     const namet &function
 ){
   return
@@ -125,8 +125,9 @@ void transitive_callst::propagate_calls(
    fun_list &updated
 ){
   /* Algorithm:
+   *  Initially, all functions have been updated.
    *  For each function F that has been updated
-   *    For each function C called by F (i.e. in the bucket of F)
+   *    For each function C called by F (i.e. C is in the bucket of F)
    *      If C has been updated
    *        Copy all functions called by C into the bucket of F
    *        If the bucket of F has changed
@@ -146,18 +147,25 @@ void transitive_callst::propagate_calls(
       {
         fun_set &call_bucket = call_map[*call];
 
-        bool needs_update = false;
-        fun_set::iterator new_call;
-        for(new_call  = call_bucket.begin();
-            new_call != call_bucket.end();
-            new_call++)
-        {
-          if(work_bucket.insert(*new_call).second)
-            needs_update = true;
-        }
+        /* Optimisation: if everything in the call list of the
+         * called function we're looking at is already in the bucket
+         * of the caller, then there's no need to put the caller back
+         * in the updated list, or to copy the call list of the called
+         * function into the bucket of the caller. */
+        if(std::includes(work_bucket.begin(), work_bucket.end(),
+                         call_bucket.begin(), call_bucket.end()))
+          continue;
 
-        if(needs_update)
-          updated.push_back(work_item);
+        std::copy(call_bucket.begin(), call_bucket.end(),
+                  std::inserter(work_bucket, work_bucket.begin()));
+
+        /* Optimisation: functions don't have to be in the `updated'
+         * list more than once. However, we do need to add the
+         * function to the _back_ of the updated list. So, erase all
+         * ocurrences of the function in the updated list before
+         * adding it to the back */
+        std::remove(updated.begin(), updated.end(), work_item);
+        updated.push_back(work_item);
       }
     }
   }
