@@ -29,7 +29,7 @@ transitive_callst::transitive_callst(
 
 void transitive_callst::operator()()
 {
-  fun_list worklist;
+  name_listt worklist;
 
   populate_initial(worklist);
   propagate_calls(worklist);
@@ -37,7 +37,7 @@ void transitive_callst::operator()()
 
 
 void transitive_callst::populate_initial(
-   fun_list &worklist
+   name_listt &worklist
 ){
   function_mapt &fun_map = goto_functions.function_map;
 
@@ -50,7 +50,7 @@ void transitive_callst::populate_initial(
     if(not_interested_in(fun_name))
       continue;
 
-    fun_set bucket;
+    name_sett bucket;
 
     if(it->second.body_available)
     {
@@ -122,7 +122,7 @@ inline bool transitive_callst::not_interested_in(
 
 
 void transitive_callst::propagate_calls(
-   fun_list &updated
+   name_listt &updated
 ){
   /* Algorithm:
    *  Initially, all functions have been updated.
@@ -137,15 +137,15 @@ void transitive_callst::propagate_calls(
   {
     namet work_item = updated.front();
     updated.pop_front();
-    fun_set &work_bucket = call_map[work_item];
+    name_sett &work_bucket = call_map[work_item];
     
-    fun_set::iterator call;
+    name_sett::iterator call;
     for(call = work_bucket.begin(); call != work_bucket.end(); call++)
     {
       if(std::find(updated.begin(), updated.end(), *call)
           != updated.end())
       {
-        fun_set &call_bucket = call_map[*call];
+        name_sett &call_bucket = call_map[*call];
 
         /* Optimisation: if everything in the call list of the
          * called function we're looking at is already in the bucket
