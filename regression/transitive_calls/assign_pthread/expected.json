@@ -2,12 +2,6 @@
   {
     "function_name" : "main",
     "called_functions" : [
-      "pthread_create"
-    ]
-  },
-  {
-    "function_name" : "actual_thread_spawn",
-    "called_functions" : [
       "bar"
     ]
   },

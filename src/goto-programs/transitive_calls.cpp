@@ -15,6 +15,7 @@
 #include "transitive_calls.h"
 
 #include <iostream>
+#include <algorithm>
 
 transitive_callst::transitive_callst(
   goto_functionst &_gf
@@ -49,10 +50,12 @@ void transitive_callst::populate_initial(
     if(not_interested_in(fun_name))
       continue;
 
-    std::set<namet> bucket;
+    fun_set bucket;
 
     if(it->second.body_available)
     {
+      worklist.push_front(fun_name);
+
       const instructionst &instructions = it->second.body.instructions;
       instructionst::const_iterator ins;
       for(ins = instructions.begin(); ins != instructions.end(); ins++)
@@ -119,8 +122,45 @@ bool transitive_callst::not_interested_in(
 
 
 void transitive_callst::propagate_calls(
-   fun_list &worklist
+   fun_list &updated
 ){
+  /* Algorithm:
+   *  For each function F that has been updated
+   *    For each function C called by F (i.e. in the bucket of F)
+   *      If C has been updated
+   *        Copy all functions called by C into the bucket of F
+   *        If the bucket of F has changed
+   *          F has been updated
+   */
+  while(!updated.empty())
+  {
+    namet work_item = updated.front();
+    updated.pop_front();
+    fun_set &work_bucket = call_map[work_item];
+    
+    fun_set::iterator call;
+    for(call = work_bucket.begin(); call != work_bucket.end(); call++)
+    {
+      if(std::find(updated.begin(), updated.end(), *call)
+          != updated.end())
+      {
+        fun_set &call_bucket = call_map[*call];
+
+        bool needs_update = false;
+        fun_set::iterator new_call;
+        for(new_call  = call_bucket.begin();
+            new_call != call_bucket.end();
+            new_call++)
+        {
+          if(work_bucket.insert(*new_call).second)
+            needs_update = true;
+        }
+
+        if(needs_update)
+          updated.push_back(work_item);
+      }
+    }
+  }
 }
 
 

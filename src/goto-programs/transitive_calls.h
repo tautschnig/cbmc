@@ -50,6 +50,7 @@ class transitive_callst
 
     /**@brief a list of function names */
     typedef std::list<namet> fun_list;
+    typedef std::set<namet>  fun_set;
 
     typedef goto_functionst::function_mapt function_mapt;
     typedef goto_programt::instructionst instructionst;

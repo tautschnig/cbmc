@@ -65,7 +65,7 @@ def compare_result real, expected
     found = false
     expected_calls.collect {|e| found = true if fun_eql e, real_call}
     unless found
-      unless fun_name == "main"
+      unless fun_name == "c::main"
         all_ok = false
         warn "#{real_call} called from #{fun_name} (unexpected)"
       end
@@ -88,8 +88,6 @@ def compare_results results, expected
       name2 = r2['function_name']
       all_funs << name2
       if fun_eql name1, name2
-        fun_1_match = true
-        fun_2_match = true
         all_ok = false unless compare_result r1, r2
       end
     end
@@ -101,6 +99,7 @@ def compare_results results, expected
   all_funs.delete "c::__actual_thread_spawn"
   all_funs.delete "c::__CPROVER_initialize"
   all_funs.delete "c::main"
+  all_funs.delete "c::pthread_create"
   all_funs.delete "main"
   main_exp = {"function_name"=>"main", "called_functions"=>all_funs}
 
