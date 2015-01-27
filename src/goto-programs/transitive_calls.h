@@ -71,7 +71,7 @@ class transitive_callst
 
     typedef code_function_callt::argumentst argumentst;
 
-    bool not_interested_in(const namet &function);
+    inline bool not_interested_in(const namet &function);
 
 };
 
