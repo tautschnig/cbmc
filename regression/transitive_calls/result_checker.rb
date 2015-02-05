@@ -63,8 +63,7 @@ def compare_result real, expected
     found = false
     expected_calls.collect {|e| found = true if fun_eql e, real_call}
     unless found
-      unless fun_name == "main" or \
-        (fun_name == "c::__actual_thread_spawn" and real_call == "c::pthread_create")
+      unless fun_name == "main"
         all_ok = false
         warn "#{real_call} called from #{fun_name} (unexpected)"
       end

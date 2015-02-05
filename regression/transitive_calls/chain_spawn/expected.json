@@ -17,7 +17,7 @@
     ]
   },
   {
-    "function_name" : "__actual_thread_spawn",
+    "function_name" : "actual_thread_spawn",
     "called_functions" : [
       "bar", "biff", "bump"
     ]
