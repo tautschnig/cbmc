@@ -56,7 +56,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(error-label):(string-abstraction)" \
   "(verbosity):(version)(xml-ui)(show-loops)" \
   "(accelerate)(constant-propagator)" \
-  "(thread-functions)" \
+  "(transitive-calls)(spawned-functions)" \
   "(event-functions)" \
   "(k-induction):(step-case)(base-case)" \
   "(show-call-sequences)(check-call-sequence)" \

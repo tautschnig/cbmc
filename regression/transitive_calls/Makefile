@@ -1,4 +1,4 @@
-MAKEFLAGS=-j 1
+MAKEFLAGS=-j
 
 # Change for your environment
 CPROVER_ROOT=/home/kareem/doc/cbmc
@@ -22,8 +22,7 @@ default: test
 
 %/result.json: %/$(TEST_GOTO) %/expected.json $(GOTO_IN)
 	@echo thread-functions for $(patsubst %/,%,$(dir $<))
-	@$(GOTO_IN) --thread-functions $< > $@
-#@$(GOTO_IN) --thread-functions $< $(STDERR) > $@
+	@$(GOTO_IN) --transitive-calls $< > $@
 
 
 %/$(TEST_GOTO): %/main.c
@@ -34,8 +33,6 @@ test: $(patsubst ./%,test_%,$(DIRS))
 
 test_%: %/result.json %/expected.json
 	@./result_checker.rb $(patsubst test_%,%,$@) $?
-
-
 
 .SECONDAY: $(GOTOS)
 
