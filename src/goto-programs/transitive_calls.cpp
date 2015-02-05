@@ -52,7 +52,7 @@ void transitive_callst::populate_initial(
 
     name_sett bucket;
 
-    if(it->second.body_available)
+    if(it->second.body_available())
     {
       worklist.push_front(fun_name);
 

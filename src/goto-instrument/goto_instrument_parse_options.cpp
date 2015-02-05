@@ -33,6 +33,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/remove_unused_functions.h>
 #include <goto-programs/parameter_assignments.h>
 #include <goto-programs/transitive_calls.h>
+#include <goto-programs/spawn_marker.h>
 
 #include <pointer-analysis/value_set_analysis.h>
 #include <pointer-analysis/goto_program_dereference.h>
@@ -164,14 +165,31 @@ int goto_instrument_parse_optionst::doit()
 
     if(cmdline.isset("static-cycles")
     || cmdline.isset("output-event-source-locations")
+    || cmdline.isset("egraph-dump")
+    || cmdline.isset("cfg-dot")
     ){
       namespacet ns(symbol_table);
       prepare_for_static_cycles(ns, goto_functions);
 
-      static_cyclest ss(symbol_table, goto_functions);
+      concurrent_cfg_baset<empty_cfg_nodet> cfg;
+      cfg(goto_functions);
+
+      spawn_markert marker(cfg, ns);
+      marker();
+
+      if(cmdline.isset("cfg-dot"))
+      {
+        cfg.output_dot(std::cout);
+        return 0;
+      }
+
+      static_cyclest ss(symbol_table, goto_functions, cfg);
 
       ss.output_event_source_locations() =
         cmdline.isset("output-event-source-locations");
+
+      ss.enable_egraph_dump() =
+        cmdline.isset("egraph-dump");
 
       ss();
 
@@ -1525,6 +1543,7 @@ void goto_instrument_parse_optionst::help()
     " --spawned-functions          output what C functions are spawned as threads\n"
     " --event-functions            output list of C functions containing events\n"
     " --output-event-source-locations output source locations of events\n"
+    " --egraph-dump                output a combined eventgraph and CFG\n"
     "\n"
     "Slicing:\n"
     " --reachability-slice         slice away instructions that can't reach assertions\n"

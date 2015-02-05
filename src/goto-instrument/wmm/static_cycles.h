@@ -29,14 +29,21 @@ class static_cyclest{
 
 private:
   typedef hash_set_cont<irep_idt, irep_id_hash> thread_functionst;
+  typedef concurrent_cfg_baset<empty_cfg_nodet> cfgt;
+  typedef goto_programt::instructiont::const_targett targett;
+  typedef goto_programt::instructiont instructiont;
 
 public:
   static_cyclest(symbol_tablet &_symbol_table,
-      goto_functionst &_goto_functions)
+      goto_functionst &_goto_functions,
+      cfgt &cfg)
     : symbol_table(_symbol_table)
     , goto_functions(_goto_functions)
+    , cfg(cfg)
     , b_output_event_source_locations(false)
     , r_output_event_source_locations(b_output_event_source_locations)
+    , b_enable_egraph_dump(false)
+    , r_enable_egraph_dump(b_enable_egraph_dump)
   {}
 
   /** @brief Starts the static cycles analysis */
@@ -52,9 +59,15 @@ public:
   bool &output_event_source_locations()
   { return r_output_event_source_locations; }
 
+  /** If set to true, this static_cyclest will output a combined
+   * egraph and cfg without computing static cycles.
+   */
+  bool &enable_egraph_dump()
+  { return r_enable_egraph_dump; }
+
   //@}
 
-protected:
+private:
   void add_thread(
     const irep_idt &identifier,
     thread_functionst &thread_functions);
@@ -92,12 +105,19 @@ protected:
     thread_functionst &thread_functions,
     may_aliast &may_alias);
 
-private:
+  typedef std::map<unsigned, instructiont> egraph2inst_mapt;
+  egraph2inst_mapt egraph2inst;
+
+  void build_egraph2inst(instrumentert &instrumenter);
+
   symbol_tablet   &symbol_table;
   goto_functionst &goto_functions;
+  cfgt &cfg;
 
-  bool b_output_event_source_locations;
+  bool  b_output_event_source_locations;
   bool &r_output_event_source_locations;
+  bool  b_enable_egraph_dump;
+  bool &r_enable_egraph_dump;
 };
 
 #endif

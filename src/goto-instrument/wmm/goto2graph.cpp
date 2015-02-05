@@ -29,6 +29,9 @@ Date: 2012
 #include "fence.h"
 #include "goto2graph.h"
 
+#include <util/dot.h>
+
+//#define DEBUG
 //#define PRINT_UNSAFES
 
 
@@ -1439,6 +1442,133 @@ void instrumentert::print_outputs(memory_modelt model, bool hide_internals)
   output.close();
   all.close();
   table.close();
+}
+
+int event_number(instrumentert::event_datat event)
+{                                                                                    
+  std::map<unsigned, instrumentert::thread_eventst>::iterator it;
+  for(it = event.events.begin(); it != event.events.end(); it++)
+  {
+    instrumentert::thread_eventst te = it->second;
+    if(!te.reads.empty()){
+      return te.reads.front();
+    }
+    if(!te.writes.empty()){
+      return te.writes.front();
+    }
+    if(!te.fences.empty()){
+      return te.fences.front();
+    }
+  }
+  return -1;
+}
+
+void instrumentert::output_dot(std::ostream &out)
+{ 
+  std::map<unsigned, unsigned> egraph2cfg;
+  digraph_factoryt<int> fact;
+  fact.node_default("shape", "box");
+  
+  unsigned size = cfg.size();
+  for(unsigned i = 0; i < size; i++)
+  {
+    std::stringstream s;
+    s << "cfg [" << i << "]";
+  
+    if(event_number(cfg[i]) != -1)
+    {
+      s << "\nevent number [";
+      std::map<unsigned, instrumentert::thread_eventst>::iterator it;
+      for(it = cfg[i].events.begin(); it != cfg[i].events.end(); it++)
+      {
+        instrumentert::thread_eventst te = it->second;
+        std::list<unsigned>::iterator ev_it;
+        for(ev_it = te.reads.begin(); ev_it != te.reads.end(); ev_it++)
+        {
+          s << *ev_it << ", ";
+          egraph2cfg.insert(std::pair<unsigned, unsigned>(*ev_it, i));
+        }
+        for(ev_it = te.writes.begin(); ev_it != te.writes.end(); ev_it++)
+        {
+          s << *ev_it << ", ";
+          egraph2cfg.insert(std::pair<unsigned, unsigned>(*ev_it, i));
+        }
+        for(ev_it = te.fences.begin(); ev_it != te.fences.end(); ev_it++)
+        {
+          s << *ev_it << ", ";
+          egraph2cfg.insert(std::pair<unsigned, unsigned>(*ev_it, i));
+        }
+      }
+      s << "]\n";
+    }
+  
+    s << cfg[i].to_string();
+
+    fact.node(i).set("label", s.str());
+  
+  
+    std::map<unsigned, instrumentert::thread_eventst>::iterator e_it;
+    for(e_it =  cfg[i].events.begin();
+        e_it != cfg[i].events.end();
+        e_it++)
+    {
+      unsigned thread_num = e_it->first;
+      std::stringstream ss;
+      ss << "Thread " << thread_num;
+      fact.subgraph(ss.str()).set("label", ss.str());
+      fact.add_node_to_sub(i, ss.str());
+    }
+    for(unsigned j = 0; j < size; j++)
+    {
+      if(cfg.has_edge(i, j))
+        fact.create_edge(i, j);
+    }
+  
+    if(event_number(cfg[i]) != -1)
+    {
+      fact.node(i).set("fillcolor", "#cb4b16")
+                  .set("style", "filled");
+    }
+  }
+  
+  fact.edge_default("color", "red").edge_default("label", "po")
+      .edge_default("style", "bold").edge_default("fontcolor", "red");
+  
+  size = egraph.po_graph.size();
+  for(unsigned i = 0; i < size; i++)
+  {
+    std::stringstream s;
+    for(unsigned j = 0; j < size; j++)
+    {
+      std::map<unsigned, unsigned>::iterator cfg_i =
+        egraph2cfg.find(i);
+      std::map<unsigned, unsigned>::iterator cfg_j =
+        egraph2cfg.find(j);
+  
+      if(egraph.po_graph.has_edge(i, j))
+        fact.create_edge(cfg_i->second, cfg_j->second);
+    }
+  }
+                                                                                     
+  fact.edge_default("color", "blue").edge_default("label", "com")
+      .edge_default("style", "bold").edge_default("fontcolor", "blue");
+
+  size = egraph.com_graph.size();
+  for(unsigned i = 0; i < size; i++)
+  {
+    std::stringstream s;
+    for(unsigned j = 0; j < size; j++)
+    {
+      std::map<unsigned, unsigned>::iterator cfg_i =
+        egraph2cfg.find(i);
+      std::map<unsigned, unsigned>::iterator cfg_j =
+        egraph2cfg.find(j);
+
+      if(egraph.com_graph.has_edge(i, j))
+        fact.create_edge(cfg_i->second, cfg_j->second);
+    }
+  }
+  fact.output(out);
 }
 
 /*******************************************************************\
