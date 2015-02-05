@@ -69,7 +69,7 @@ std::set<std::string> transitive_callst::make_call_bucket_for(
   function_mapt::const_iterator it;
   for(it = fun_map.begin(); it != fun_map.end(); it++)
   {
-    if(it->second.body_available
+    if(it->second.body_available()
     && fun_name.compare(as_string(ns.lookup(it->first).name)) == 0)
     {
       instructions = it->second.body.instructions;

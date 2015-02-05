@@ -12,6 +12,7 @@ Date: 2012
 #define INSTRUMENTER_H
 
 #include <map>
+#include <sstream>
 
 #include <util/graph.h>
 #include <util/namespace.h>
@@ -92,12 +93,34 @@ public:
     nodest reads;
     nodest writes;
     nodest fences;
+
   };
 
   struct event_datat
   {
     std::map<unsigned, thread_eventst> events;
     std::set<goto_programt::const_targett> use_events_from;
+
+    event_datat():loc("") {}
+
+    void set_location(goto_programt::const_targett target)
+    {
+      const source_locationt &target_loc = target->source_location;
+      std::stringstream ss;
+      ss << target_loc.get_file() << ":" << target_loc.get_line();
+      loc = ss.str();
+    }
+
+    std::string location()
+    {
+      if(loc.compare("") == 0)
+        throw "event_datat has not had location set";
+
+      return loc;
+    }
+
+    private:
+      std::string loc;
   };
 
   /* per-thread control flow graph only, no inter-thread edges */
@@ -109,6 +132,37 @@ protected:
   messaget& message;
 
 public:
+  /** @brief Return a list of source locations of events in this
+   * instrumentert.
+   *
+   * @pre set_location() should have been called for each event in the
+   * cfg.
+   */
+  std::list<std::string> event_source_locations()
+  {
+    std::list<std::string> ret;
+    for(unsigned i = 0; i < cfg.size(); i++)
+    {
+      event_datat ed = cfg[i];
+      bool is_event = false;
+      std::map<unsigned, thread_eventst>::iterator te;
+      for(te = ed.events.begin(); te != ed.events.end(); te++)
+      {
+        if(!te->second.reads.empty()
+        || !te->second.writes.empty()
+        || !te->second.fences.empty()
+        ){
+          is_event = true;
+          break;
+        }
+      }
+      if(!is_event) continue;
+
+      ret.push_front(ed.location());
+    }
+    return ret;
+  }
+
   /* graph */
   event_grapht egraph;
 protected:

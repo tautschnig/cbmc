@@ -58,7 +58,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(verbosity):(version)(xml-ui)(show-loops)" \
   "(accelerate)(constant-propagator)" \
   "(transitive-calls)(spawned-functions)" \
-  "(event-functions)" \
+  "(event-functions)(output-event-source-locations)" \
   "(k-induction):(step-case)(base-case)" \
   "(show-call-sequences)(check-call-sequence):(call-sequence-bound):" \
   "(interpreter)(show-reaching-definitions)(count-eloc)" \

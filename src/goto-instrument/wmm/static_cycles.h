@@ -42,7 +42,8 @@ public:
   /** @brief Starts the static cycles analysis */
   void operator()();
 
-  /** {@name Output options */
+  /// @name Output options
+  //{@
   
   /** If set to true, this static_cyclest will output the file and
    *  line numbers of all events, then returns without computing
@@ -51,7 +52,7 @@ public:
   bool &output_event_source_locations()
   { return r_output_event_source_locations; }
 
-  /** @} */
+  //@}
 
 protected:
   void add_thread(
@@ -98,7 +99,6 @@ private:
   bool b_output_event_source_locations;
   bool &r_output_event_source_locations;
 };
-
 
 #endif
 

@@ -9,6 +9,8 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 #include <iostream>
 #include <algorithm>
 
+#include <util/json_utils.h>
+
 #include "static_cycles.h"
 
 typedef hash_set_cont<irep_idt, irep_id_hash> thread_functionst;
@@ -351,6 +353,42 @@ void static_cyclest::collect_cycles_in_group(
   absolute_timet graph_time_start=current_time();
   {
     instrumenter.build_event_graph(may_alias, Static_Weak, false, no_loop);
+    instrumenter.cfg(goto_functions);
+
+    goto_functionst::function_mapt::const_iterator fn=
+      goto_functions.function_map.find(identifier);
+    assert(fn!=goto_functions.function_map.end() &&
+           !fn->second.body.instructions.empty());
+    instrumenter.forward_traverse_once(
+      may_alias,
+      Static_Weak,
+      false,
+      fn->second.body.instructions.begin());
+
+    instrumenter.propagate_events_in_po();
+
+    if(output_event_source_locations())
+    {
+      std::list<std::string> locs =
+        instrumenter.event_source_locations();
+      json_utilt j(2);
+      std::stringstream ss;
+      ss << "[" << j.ind();
+      std::list<std::string>::iterator it;
+      std::list<std::string>::iterator last = locs.end();
+      --last;
+      for(it = locs.begin(); it != locs.end(); it++)
+      {
+        ss << "\"" << *it << "\"";
+        if(last != it)
+          ss << "," << j.nl();
+      }
+      ss << j.und() << "]" << j.nl();
+      std::cout << ss.str();
+      return;
+    }
+
+    instrumenter.add_edges();
   }
   std::cerr << "Time event graph construction: "
             << current_time()-graph_time_start << std::endl;

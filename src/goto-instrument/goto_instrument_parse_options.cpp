@@ -163,7 +163,7 @@ int goto_instrument_parse_optionst::doit()
     instrument_goto_program();
 
     if(cmdline.isset("static-cycles")
-    || cmdline.isset("output_event_source_locations")
+    || cmdline.isset("output-event-source-locations")
     ){
       namespacet ns(symbol_table);
       prepare_for_static_cycles(ns, goto_functions);
@@ -171,7 +171,7 @@ int goto_instrument_parse_optionst::doit()
       static_cyclest ss(symbol_table, goto_functions);
 
       ss.output_event_source_locations() =
-        cmdline.isset("output_event_source_locations");
+        cmdline.isset("output-event-source-locations");
 
       ss();
 
@@ -1520,6 +1520,7 @@ void goto_instrument_parse_optionst::help()
     " --transitive-calls           output what C functions are called by which others\n"
     " --spawned-functions          output what C functions are spawned as threads\n"
     " --event-functions            output list of C functions containing events\n"
+    " --output-event-source-locations output source locations of events\n"
     "\n"
     "Slicing:\n"
     " --reachability-slice         slice away instructions that can't reach assertions\n"
