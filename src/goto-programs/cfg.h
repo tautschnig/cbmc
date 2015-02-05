@@ -34,6 +34,14 @@ struct cfg_base_nodet:public graph_nodet<empty_edget>, public T
   typedef typename graph_nodet<empty_edget>::edgest edgest;
 
   I PC;
+
+  edgest spawn_points;
+
+  void add_spawn_point(unsigned n)
+  {
+    spawn_points.insert(std::pair<unsigned, edget>(n, edget()));
+  }
+
 };
 
 template<class T,
@@ -65,6 +73,14 @@ public:
     }
   };
   entry_mapt entry_map;
+
+  void add_spawn_edge(unsigned target, unsigned spawn_point)
+  {
+    graph<cfg_base_nodet<T, I> >::nodes[target].add_spawn_point(spawn_point);
+  }
+
+  unsigned node_of_instruction(
+      goto_programt::instructiont target);
 
 protected:
   virtual void compute_edges_goto(
