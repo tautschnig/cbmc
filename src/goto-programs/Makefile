@@ -15,7 +15,7 @@ SRC = goto_convert.cpp goto_convert_function_call.cpp \
       compute_called_functions.cpp link_to_library.cpp \
       remove_returns.cpp osx_fat_reader.cpp remove_complex.cpp \
       goto_trace.cpp xml_goto_trace.cpp vcd_goto_trace.cpp graphml_goto_trace.cpp \
-			spawn_marker.cpp pretty_instruction.cpp
+			spawn_marker.cpp pretty_instruction.cpp transitive_calls.cpp
 
 INCLUDES= -I ..
 

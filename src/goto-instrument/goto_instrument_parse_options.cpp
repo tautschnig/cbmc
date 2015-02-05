@@ -32,6 +32,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/remove_asm.h>
 #include <goto-programs/remove_unused_functions.h>
 #include <goto-programs/parameter_assignments.h>
+#include <goto-programs/transitive_calls.h>
 
 #include <pointer-analysis/value_set_analysis.h>
 #include <pointer-analysis/goto_program_dereference.h>
@@ -88,7 +89,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "code_contracts.h"
 #include "check_invariant.h"
 #include "wmm/static_cycles.h"
-#include "goto-programs/spawn_marker.h"
 
 /*******************************************************************\
 
@@ -178,11 +178,9 @@ int goto_instrument_parse_optionst::doit()
 
       prepare_for_static_cycles(ns, goto_functions);
 
-      concurrent_cfg_baset<empty_cfg_nodet> cfg;
-      cfg(goto_functions);
+      transitive_callst transitive_calls(goto_functions, ns);
 
-      spawn_markert marker(cfg, ns);
-      marker();
+      std::cout << transitive_calls.to_json() << "\n";
 
       return 0;
     }
