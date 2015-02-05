@@ -20,6 +20,7 @@ Date: 2012
 
 #include <goto-programs/goto_program.h>
 #include <goto-programs/cfg.h>
+#include <goto-programs/pretty_instruction.h>
 
 #include "event_graph.h"
 #include "wmm.h"
@@ -108,6 +109,12 @@ public:
       ,function("")
     {}
 
+    std::string to_string()
+    {
+      // TODO implement in terms of pretty_instruction
+      return pretty;
+    }
+
     /** @brief  associates this event with a location in the source
      *          code.
      *
@@ -139,13 +146,16 @@ public:
             ins != body.instructions.end();
             ins++)
         {
-          const locationt inner_loc = ins->location;
+          const source_locationt inner_loc = ins->source_location;
           if(inner_loc.get_file() == loc.get_file()
           && inner_loc.get_line() == loc.get_line()
           && ins->location_number == target->location_number)
             function = it->first.c_str();
         }
       }
+
+      cfg_pretty_instructiont cpi(ns);
+      pretty = cpi(target);
     }
 
   public:
@@ -209,6 +219,8 @@ public:
     std::string line;
     std::string code;
     std::string function;
+
+    std::string pretty;
   };
 
   /* per-thread control flow graph only, no inter-thread edges */
@@ -419,6 +431,9 @@ public:
      - output.txt: names of the instructions in the code 
      - all.txt: all */
   void print_outputs(memory_modelt model, bool hide_internals);
+
+  //! \brief Writes a combined CFG and event graph to `out`.
+  void output_dot(std::ostream &out);
 };
 
 #endif

@@ -434,6 +434,13 @@ void static_cyclest::collect_cycles_in_group(
   instrumenter.egraph.filter_thin_air=false;
   instrumenter.egraph.filter_uniproc=false;
 
+  // We don't need expensive cycle search if we're just dumping dot
+  if(enable_egraph_dump())
+  {
+    instrumenter.output_dot(std::cout);
+    return;
+  }
+
   absolute_timet cycle_enum_time_start=current_time();
   instrumenter.collect_cycles(Static_Weak);
   std::cout << "Time cycle enumeration: "

@@ -21,7 +21,7 @@ spawned_funst::spawned_funst(
   function_mapt::const_iterator it;
   for(it = fun_map.begin(); it != fun_map.end(); it++)
   {
-    if(!it->second.body_available)
+    if(!it->second.body_available())
       continue;
 
     instructionst instructions = it->second.body.instructions;
