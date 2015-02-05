@@ -959,11 +959,15 @@ void goto_instrument_parse_optionst::instrument_goto_program()
      cmdline.isset("mm") ||
      cmdline.isset("static-cycles"))
   {
+<<<<<<< HEAD
     if(cmdline.isset("show-custom-bitvector-analysis") ||
        cmdline.isset("custom-bitvector-analysis"))
       config.ansi_c.defines.push_back("__CPROVER_CUSTOM_BITVECTOR_ANALYSIS");
   
     status() << "Adding CPROVER library" << eom;
+=======
+    std::cerr << "Adding CPROVER library" << eom;
+>>>>>>> cb2c4cf... formatting fixes
     link_to_library(symbol_table, goto_functions, ui_message_handler);
   }
 
