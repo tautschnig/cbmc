@@ -428,8 +428,8 @@ void static_cyclest::collect_cycles_in_group(
   std::cerr << "Time event graph construction: "
             << current_time()-graph_time_start << std::endl;
 
-  std::cout << "Number of reads: " <<  instrumenter.read_counter <<std::endl;
-  std::cout << "Number of writes: " << instrumenter.write_counter <<std::endl;
+  std::cerr << "Number of reads: " << instrumenter.read_counter <<std::endl;
+  std::cerr << "Number of writes: " << instrumenter.write_counter <<std::endl;
 
   instrumenter.egraph.filter_thin_air=false;
   instrumenter.egraph.filter_uniproc=false;

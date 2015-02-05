@@ -13,6 +13,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/graph.h>
 
 #include "goto_functions.h"
+#include "pretty_instruction.h"
 
 /*******************************************************************\
 
@@ -42,6 +43,11 @@ struct cfg_base_nodet:public graph_nodet<empty_edget>, public T
     spawn_points.insert(std::pair<unsigned, edget>(n, edget()));
   }
 
+  std::string to_string()
+  {
+    cfg_pretty_instructiont pp(namespacet::get_global());
+    return pp(PC);
+  }
 };
 
 template<class T,

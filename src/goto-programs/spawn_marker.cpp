@@ -1,3 +1,8 @@
+/** @file   spawn_marker.cpp
+ *  @author Kareem Khazem <karkhaz@karkhaz.com>
+ *  @date   2014
+ *  @brief  Marking thread spawns on CFG
+ */
 #include "spawn_marker.h"
 #include "pretty_instruction.h"
 
@@ -87,7 +92,7 @@ void spawn_markert::start_routine(
     if(cfg[it->first].PC == ins->get_target())
       worklist.push_front(it->first);
 
-  std::cout << "Adding spawn edge between "
+  std::cerr << "Adding spawn edge between "
     << instruction_of(worklist.front()) << " and "
     << instruction_of(spawn_node) << "\n";
 

@@ -84,6 +84,26 @@ public:
   
 protected:
   const symbol_tablet *symbol_table1, *symbol_table2;
+
+  /** @{ @name Global namespace
+   * It is often convenient to set a global variable referring to the
+   * namespace at some point in the program, and later refer to that
+   * namespace in a place where the namespace is not accessible. This
+   * can be done by calling \ref set_global() <em>once</em>, and then
+   * later accessing the namespace using \ref get_global().
+   *
+   * The global namespace is not intended to be mutable. Setting it
+   * twice, or getting it if it has not been set, raises an exception.
+   */
+
+  private:
+    static namespacet *instance;
+  public:
+    /// \brief throws exception if the global namespace has already been set
+    static void set_global(namespacet *ns);
+    /// \brief throws exception if the global namespace has not yet been set
+    static namespacet &get_global();
+  ///@}
 };
 
 class multi_namespacet:public namespacet
