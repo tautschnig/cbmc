@@ -57,6 +57,8 @@ Author: Daniel Kroening, kroening@kroening.com
   "(error-label):(string-abstraction)" \
   "(verbosity):(version)(xml-ui)(show-loops)" \
   "(accelerate)(constant-propagator)" \
+  "(thread-functions)" \
+  "(event-functions)" \
   "(k-induction):(step-case)(base-case)" \
   "(show-call-sequences)(check-call-sequence):(call-sequence-bound):" \
   "(interpreter)(show-reaching-definitions)(count-eloc)" \
@@ -98,6 +100,12 @@ protected:
   bool remove_returns_done;
   
   goto_functionst goto_functions;
+
+  /* Performs program transformations that must take place before the
+   * static-cycles analysis.
+   */
+  int prepare_for_static_cycles(
+      namespacet &ns, goto_functionst &goto_functions);
 };
 
 #endif

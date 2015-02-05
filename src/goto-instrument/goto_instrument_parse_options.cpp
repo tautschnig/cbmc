@@ -88,6 +88,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "code_contracts.h"
 #include "check_invariant.h"
 #include "wmm/static_cycles.h"
+#include "goto-programs/spawn_marker.h"
 
 /*******************************************************************\
 
@@ -126,6 +127,17 @@ Function: goto_instrument_parse_optionst::doit
 
 \*******************************************************************/
 
+int goto_instrument_parse_optionst::prepare_for_static_cycles(
+    namespacet &ns, goto_functionst &goto_functions)
+{
+  std::cerr << "Preparing for static cycles\n";
+  link_to_library(symbol_table, goto_functions, ui_message_handler);
+  remove_function_pointers(symbol_table, goto_functions, false);
+  goto_partial_inline(goto_functions, ns, ui_message_handler);
+  goto_functions.update();
+  return 0;
+}
+
 int goto_instrument_parse_optionst::doit()
 {
   if(cmdline.isset("version"))
@@ -149,6 +161,32 @@ int goto_instrument_parse_optionst::doit()
     get_goto_program();
     instrument_goto_program();
 
+    if(cmdline.isset("static-cycles"))
+    {
+      namespacet ns(symbol_table);
+
+      prepare_for_static_cycles(ns, goto_functions);
+
+      static_cycles(symbol_table, goto_functions);
+
+      return 0;
+    }
+  
+    if(cmdline.isset("thread-functions"))
+    {
+      namespacet ns(symbol_table);
+
+      prepare_for_static_cycles(ns, goto_functions);
+
+      concurrent_cfg_baset<empty_cfg_nodet> cfg;
+      cfg(goto_functions);
+
+      spawn_markert marker(cfg, ns);
+      marker();
+
+      return 0;
+    }
+  
     if(cmdline.isset("show-value-sets"))
     {
       do_function_pointer_removal();
@@ -769,7 +807,7 @@ Function: goto_instrument_parse_optionst::get_goto_program
   
 void goto_instrument_parse_optionst::get_goto_program()
 {
-  status() << "Reading GOTO program from `" << cmdline.args[0] << "'" << eom;
+  std::cerr << "Reading GOTO program from `" << cmdline.args[0] << "'" << eom;
 
   if(read_goto_binary(cmdline.args[0],
     symbol_table, goto_functions, get_message_handler()))
@@ -1459,6 +1497,8 @@ void goto_instrument_parse_optionst::help()
     " --render-cluster-file        clusterises the dot by files\n"
     " --render-cluster-function    clusterises the dot by functions\n"
     " --static-cycles              identify potentially critical cycles\n"
+    " --thread-functions           output list of C functions, grouped by thread\n"
+    " --event-functions            output list of C functions containing events\n"
     "\n"
     "Slicing:\n"
     " --reachability-slice         slice away instructions that can't reach assertions\n"
