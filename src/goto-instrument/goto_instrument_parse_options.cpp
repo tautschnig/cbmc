@@ -1118,9 +1118,11 @@ void goto_instrument_parse_optionst::instrument_goto_program()
         loops=no_loop;
 
       if(model!=Unknown)
+      {
+        may_aliast may_alias(goto_functions, ns);
         weak_memory(
           model,
-          value_set_analysis,
+          may_alias,
           symbol_table,
           goto_functions,
           cmdline.isset("scc"),
@@ -1138,6 +1140,7 @@ void goto_instrument_parse_optionst::instrument_goto_program()
           cmdline.isset("hide-internals"),
           get_message_handler(),
           cmdline.isset("ignore-arrays"));
+      }
     }
 
     // Interrupt handler

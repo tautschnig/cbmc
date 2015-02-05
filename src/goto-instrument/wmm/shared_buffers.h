@@ -11,7 +11,7 @@
 
 class symbol_tablet;
 class goto_functionst;
-class value_setst;
+class may_aliast;
 
 class shared_bufferst
 {
@@ -165,7 +165,7 @@ public:
     bool is_write);
 
   void weak_memory(
-    value_setst &value_sets,
+    may_aliast &may_alias,
     symbol_tablet &symbol_table,
     goto_programt &goto_program,
     memory_modelt model,
@@ -174,7 +174,7 @@ public:
 
   void affected_by_delay(
     symbol_tablet &symbol_table,
-    value_setst &value_sets,
+    may_aliast &may_alias,
     goto_functionst &goto_functions);
 
   class cfg_visitort
@@ -204,7 +204,7 @@ public:
     }
 
   void weak_memory(
-    value_setst &value_sets,
+    may_aliast &may_alias,
     const irep_idt& function,
     memory_modelt model);
   };

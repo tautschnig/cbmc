@@ -104,7 +104,6 @@ Function: instrumentert::extract_events_rw
 \*******************************************************************/
 
 void instrumentert::extract_events_rw(
-  value_setst& value_sets,
   may_aliast& may_alias,
   memory_modelt model,
   bool no_dependencies,
@@ -113,7 +112,7 @@ void instrumentert::extract_events_rw(
 {
   const goto_programt::instructiont &instruction=*target;
 
-  rw_set_loct rw_set(ns, value_sets, target);
+  rw_set_loct rw_set(ns, may_alias, target);
 
   /* Read (Rb) */
   forall_rw_set_r_entries(r_it, rw_set)
@@ -160,7 +159,6 @@ void instrumentert::extract_events_rw(
     /* skip local variables */
     if(local(write))
       continue;
-
     ++write_counter;
 
     /* creates Write */
@@ -300,7 +298,7 @@ Function: instrumentert::extract_events
 \*******************************************************************/
 
 void instrumentert::extract_events(
-  value_setst& value_sets,
+  may_aliast &may_alias,
   memory_modelt model,
   bool no_dependencies,
   cfgt::entryt &cfg_entry)
@@ -308,7 +306,7 @@ void instrumentert::extract_events(
   goto_programt::const_targett target=cfg[cfg_entry].PC;
   thread_eventst &dest=cfg[cfg_entry].events[thread];
 
-  extract_events_rw(value_sets, model, no_dependencies, target, dest);
+  extract_events_rw(may_alias, model, no_dependencies, target, dest);
   extract_events_fence(model, target, dest);
 }
 
@@ -325,7 +323,7 @@ Function: instrumentert::forward_traverse_once
 \*******************************************************************/
 
 void instrumentert::forward_traverse_once(
-    value_setst& value_sets,
+  may_aliast &may_alias,
     memory_modelt model,
     bool no_dependencies,
     goto_programt::const_targett target)
@@ -336,7 +334,7 @@ void instrumentert::forward_traverse_once(
   // we do not track call stacks
   if(cfg[cfg_entry].events.find(thread)==cfg[cfg_entry].events.end())
     extract_events(
-      value_sets,
+      may_alias,
       model,
       no_dependencies,
       cfg_entry);
@@ -355,7 +353,7 @@ void instrumentert::forward_traverse_once(
     thread=++max_thread;
     assert(instruction.targets.size()==1);
     forward_traverse_once(
-      value_sets,
+      may_alias,
       model,
       no_dependencies,
       instruction.targets.front());
@@ -381,13 +379,13 @@ void instrumentert::forward_traverse_once(
       if(fun_id!=CPROVER_PREFIX "initialize" &&
          functions_met.insert(fun_id).second)
         forward_traverse_once(
-          value_sets,
+          may_alias,
           model,
           no_dependencies,
           cfg[cfg[cfg_entry].out.begin()->first].PC);
 
       forward_traverse_once(
-        value_sets,
+        may_alias,
         model,
         no_dependencies,
         next_PC);
@@ -415,7 +413,7 @@ void instrumentert::forward_traverse_once(
       const cfgt::nodet &succ_entry=cfg[it->first];
       if(succ_entry.events.find(thread)==succ_entry.events.end())
         forward_traverse_once(
-          value_sets,
+          may_alias,
           model,
           no_dependencies,
           succ_entry.PC);
@@ -433,7 +431,7 @@ void instrumentert::forward_traverse_once(
   assert(cfg[cfg_entry].out.size()==1);
 
   forward_traverse_once(
-    value_sets,
+    may_alias,
     model,
     no_dependencies,
     cfg[cfg[cfg_entry].out.begin()->first].PC);
@@ -452,7 +450,7 @@ Function: instrumentert::forward_traverse_once
 \*******************************************************************/
 
 void instrumentert::forward_traverse_once(
-    value_setst& value_sets,
+    may_aliast& may_alias,
     memory_modelt model,
     bool no_dependencies)
 {
@@ -461,7 +459,7 @@ void instrumentert::forward_traverse_once(
 
   if(!goto_program.instructions.empty())
     forward_traverse_once(
-      value_sets,
+      may_alias,
       model,
       no_dependencies,
       goto_program.instructions.begin());
@@ -766,7 +764,8 @@ Function: instrumentert::add_com_edges
 
 void instrumentert::add_com_edges(
   const cfgt::entryt &cfg_entry,
-  const thread_eventst &thread_events)
+  const thread_eventst &thread_events
+  )
 {
   /* Read (Rb) */
   for(nodest::const_iterator r_it=thread_events.reads.begin();
@@ -959,7 +958,7 @@ Function: instrumentert::build_event_graph
 \*******************************************************************/
 
 unsigned instrumentert::build_event_graph(
-  value_setst& value_sets,
+  may_aliast& may_alias,
   memory_modelt model,
   bool no_dependencies,
   loop_strategyt duplicate_body)
@@ -970,7 +969,7 @@ unsigned instrumentert::build_event_graph(
   cfg(goto_functions);
 
   forward_traverse_once(
-    value_sets,
+    may_alias,
     model,
     no_dependencies);
 

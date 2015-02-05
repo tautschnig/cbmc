@@ -16,6 +16,8 @@ Date: September 2011
 
 #include <analyses/goto_rw.h>
 
+#include <goto-programs/goto_functions.h>
+
 #include "interrupt.h"
 
 #ifdef LOCAL_MAY

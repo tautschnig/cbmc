@@ -25,7 +25,6 @@ Date: 2012
 
 class symbol_tablet;
 class goto_functionst;
-class value_setst;
 class local_may_aliast;
 class may_aliast;
 
@@ -109,8 +108,10 @@ protected:
   /* message */
   messaget& message;
 
+public:
   /* graph */
   event_grapht egraph;
+protected:
 
   /* for thread marking (dynamic) */
   unsigned max_thread;
@@ -134,7 +135,7 @@ protected:
 
   /* transformers */
   void extract_events_rw(
-    value_setst& value_sets,
+    may_aliast &may_alias,
     memory_modelt model,
     bool no_dependencies,
     goto_programt::const_targett target,
@@ -144,7 +145,7 @@ protected:
     goto_programt::const_targett target,
     thread_eventst &dest);
   void extract_events(
-    value_setst& value_sets,
+    may_aliast &may_alias,
     memory_modelt model,
     bool no_dependencies,
     cfgt::entryt &cfg_entry);
@@ -217,12 +218,12 @@ public:
   unsigned read_counter;
 
   void forward_traverse_once(
-    value_setst& value_sets,
+    may_aliast &may_alias,
     memory_modelt model,
     bool no_dependencies,
     goto_programt::const_targett target);
   void forward_traverse_once(
-    value_setst& value_sets,
+    may_aliast &may_alias,
     memory_modelt model,
     bool no_dependencies);
 
@@ -231,7 +232,7 @@ public:
   void add_edges();
 
   unsigned build_event_graph(
-    value_setst& value_sets,
+    may_aliast &may_alias,
     memory_modelt model,
     bool no_dependencies,
     /* forces the duplication, with arrays or not; otherwise, arrays only */
