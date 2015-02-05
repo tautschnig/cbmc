@@ -23,120 +23,104 @@ transitive_callst::transitive_callst(
   , ns(_ns)
   , call_map()
 {
-  function_mapt fun_map = goto_functions.function_map;
+}
+
+
+void transitive_callst::operator()()
+{
+  fun_list worklist;
+
+  populate_initial(worklist);
+  propagate_calls(worklist);
+}
+
+
+void transitive_callst::populate_initial(
+   fun_list &worklist
+){
+  function_mapt &fun_map = goto_functions.function_map;
 
   function_mapt::const_iterator it;
   for(it = fun_map.begin(); it != fun_map.end(); it++)
   {
     const symbolt &fun_symbol = ns.lookup(it->first);
-    const std::string &fun_name = as_string(fun_symbol.name);
+    const namet fun_name = as_string(fun_symbol.name);
 
-    // fun_name should be globally unique.
-    assert(visited.find(fun_name) == visited.end());
+    if(not_interested_in(fun_name))
+      continue;
 
-    std::set<std::string> bucket =
-      make_call_bucket_for(fun_name);
+    std::set<namet> bucket;
 
-    /* We should always visit pthread_create. This is because each
-     * pthread_create might spawn a different function, and we want to
-     * include _all_ those functions. */
-    if(fun_name.compare("c::pthread_create"))
+    if(it->second.body_available)
     {
-      visited.insert(fun_name);
-      if(interested_in(fun_name))
-        call_map.insert(std::make_pair(fun_name, bucket));
-    }
-    else
-    /* fun_name is "c::pthread_create"; don't add fun_name to visted */
-    {
-      /* Each invocation of make_call_bucket_for("c::pthread_create")
-       * returns a different set of functions transitively called. We
-       * want to map to all of them, so union the sets. */
-      std::set<std::string> &old_bucket = call_map[fun_name];
-      std::set<std::string>::iterator buck_it;
-      for(buck_it = bucket.begin(); buck_it != bucket.end(); buck_it++)
+      const instructionst &instructions = it->second.body.instructions;
+      instructionst::const_iterator ins;
+      for(ins = instructions.begin(); ins != instructions.end(); ins++)
       {
-        old_bucket.insert(*buck_it);
+        if(!ins->is_function_call())
+          continue;
+
+        namet child_name = function_of_instruction(*ins);
+        if(not_interested_in(child_name))
+          continue;
+
+        bucket.insert(child_name);
       }
     }
+
+    call_map.insert(std::make_pair(fun_name, bucket));
   }
 }
 
 
-std::set<std::string> transitive_callst::make_call_bucket_for(
-  std::string fun_name
+transitive_callst::namet transitive_callst::function_of_instruction(
+    const instructiont &instruction
 ){
-  if(visited.find(fun_name) != visited.end())
-    return call_map[fun_name];
+  const exprt &function =
+    to_code_function_call(instruction.code).function();
 
-  std::set<std::string> worklist, accumulator;
-  worklist.insert(fun_name);
-  return make_call_bucket_for(worklist, accumulator, true);
+  const namet &call_name =
+    as_string(to_symbol_expr(function).get_identifier());
+
+  if(call_name.compare("c::pthread_create") != 0)
+  {
+    return call_name;
+  }
+  else /* This instruction is a pthread_create spawn */
+  {
+    const argumentst &args =
+      to_code_function_call(instruction.code).arguments();
+
+    exprt fun_ptr = args[2];
+
+    if(fun_ptr.id() != ID_address_of)
+      throw "Unrecognised third parameter to pthread_create";
+
+    namet fun_ptr_name =
+      fun_ptr           // exprt
+      .get_sub()[0]     // symbol
+      .get_named_sub()["identifier"]
+      .pretty();        // something like c::foo
+
+    return fun_ptr_name;
+  }
 }
 
 
-std::set<std::string> transitive_callst::make_call_bucket_for(
-  std::set<std::string> &worklist
-, std::set<std::string> &accumulator
-, bool first_call
+bool transitive_callst::not_interested_in(
+    const namet &function
 ){
-  if(worklist.size() == 0)
-    return accumulator;
+  return
+     ( function.compare("c::__CPROVER_initialize")  ==  0
+    || function.compare("c::__actual_thread_spawn")  ==  0
+    || function.compare("main")  ==  0
+    );
+}
 
-  std::string fun_name = *(worklist.begin());
-  worklist.erase(fun_name);
 
-  assert(accumulator.find(fun_name) == accumulator.end());
-  if(!first_call){
-    accumulator.insert(fun_name);
-  }
-
-  /* pthread_create is a special case---we want it to be mapped to the
-   * functions that are spawned by pthread_create, not called. */
-  if(fun_name.compare("c::pthread_create") == 0)
-  {
-  }
-  else
-  {
-    instructionst &instructions;
-    bool found = false;
-    function_mapt &fun_map = goto_functions.function_map;
-    function_mapt::const_iterator it;
-    for(it = fun_map.begin(); it != fun_map.end(); it++)
-    {
-      if(it->second.body_available
-      && fun_name.compare(as_string(ns.lookup(it->first).name)) == 0)
-      {
-        instructions = it->second.body.instructions;
-        found = true;
-        break;
-      }
-    }
-
-    // We might not have found the function because the function is not
-    // defined in the program, for example it might be a libc function.
-    if(!found)
-      return make_call_bucket_for(worklist, accumulator, false);
-
-    instructionst::iterator ins;
-    for(ins = instructions.begin(); ins != instructions.end(); ins++)
-    {
-      if(!ins->is_function_call())
-        continue;
-
-      const exprt &function =
-        to_code_function_call(ins->code).function();
-      const std::string &call_name =
-        as_string(to_symbol_expr(function).get_identifier());
-
-      if(accumulator.find(call_name) == accumulator.end()
-      && interested_in(call_name)
-      ){
-        worklist.insert(call_name);
-      }
-    }
-  }
-  return make_call_bucket_for(worklist, accumulator, false);
+void transitive_callst::propagate_calls(
+   fun_list &worklist
+){
 }
 
 
@@ -171,16 +155,4 @@ std::string transitive_callst::to_json()
   }
   ret << fmt.und() << "]";
   return ret.str();
-}
-
-bool transitive_callst::interested_in(std::string fun_name)
-{
-  return true;
-
-  return
-    // Functions that are not part of the original program
-    (   fun_name.compare("c::__actual_thread_spawn")
-    &&  fun_name.compare("main")
-    &&  fun_name.compare("c::__CPROVER_initialize")
-    );
 }

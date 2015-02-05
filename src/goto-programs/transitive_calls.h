@@ -32,6 +32,8 @@ class transitive_callst
     /**@brief For each C function in goto_functions, calculates what
      *        functions are transitively called by that C function.
      */
+    void operator()();
+
     transitive_callst(
       goto_functionst &goto_functions
     , namespacet &ns
@@ -40,48 +42,36 @@ class transitive_callst
     ///@brief The transitive call information formatted as JSON
     std::string to_json();
 
-  protected:
-    /**@brief Generates the transitive call bucket for `function`.
-     * @param fun_name The name of the function; used as the key in
-     *        call_map
-     */
-    std::set<std::string> make_call_bucket_for(
-      std::string fun_name
-    );
-
   private:
     goto_functionst &goto_functions;
     namespacet &ns;
 
-    std::set<std::string> make_call_bucket_for(
-      std::set<std::string> &worklist
-    , std::set<std::string> &accumulator
-    , bool first_call
-    );
+    typedef std::string namet;
 
-    /**@brief a map from functions to a bucket of functions
-     *        transitively called
-     */
-    typedef std::map<std::string, std::set<std::string> >
-      call_mapt;
-    ///@brief transitive call information
-    call_mapt call_map;
-
-    typedef std::set<std::string> visitedt;
-    /**@brief All functions for which we have already generated a
-     *        call bucket
-     */
-    visitedt visited;
+    /**@brief a list of function names */
+    typedef std::list<namet> fun_list;
 
     typedef goto_functionst::function_mapt function_mapt;
     typedef goto_programt::instructionst instructionst;
     typedef goto_programt::instructiont instructiont;
 
-    /**@brief Are we interested in fun_name?
-     *
-     * We are interested in all non-builtin functions.
+    void populate_initial(fun_list &worklist);
+    void propagate_calls(fun_list  &worklist);
+
+    namet function_of_instruction(const instructiont &instruction);
+
+    /**@brief a map from functions to a bucket of functions
+     *        transitively called
      */
-    bool interested_in(std::string fun_name);
+    typedef std::map<namet, std::set<namet> >
+      call_mapt;
+    ///@brief transitive call information
+    call_mapt call_map;
+
+    typedef code_function_callt::argumentst argumentst;
+
+    bool not_interested_in(const namet &function);
+
 };
 
 #endif
