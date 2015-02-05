@@ -20,7 +20,7 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include <analyses/call_graph.h>
 #include <analyses/goto_rw.h>
-#include <pointer-analysis/value_set_analysis_fi.h>
+#include <analyses/may_alias.h>
 
 #include "goto2graph.h"
 
@@ -410,7 +410,7 @@ Function: collect_cycles_in_group
 \*******************************************************************/
 
 static void collect_cycles_in_group(
-  value_setst &value_sets,
+  may_aliast &may_alias,
   symbol_tablet &symbol_table,
   goto_functionst& goto_functions,
   const irep_idt &identifier)
@@ -427,7 +427,7 @@ static void collect_cycles_in_group(
     assert(fn!=goto_functions.function_map.end() &&
            !fn->second.body.instructions.empty());
     instrumenter.forward_traverse_once(
-      value_sets,
+      may_alias,
       Static_Weak,
       false,
       fn->second.body.instructions.begin());
@@ -476,7 +476,7 @@ static void form_thread_groups(
   symbol_tablet &symbol_table,
   goto_functionst& goto_functions,
   thread_functionst &thread_functions,
-  value_setst &value_sets)
+  may_aliast &may_alias)
 {
   forall_goto_functions(it, goto_functions)
     add_thread(goto_functions, it->first, thread_functions);
@@ -538,7 +538,7 @@ static void form_thread_groups(
 
       const goto_programt &goto_program=fn->second.body;
 
-      rw_range_set_value_sett rw_set(ns, value_sets);
+      rw_range_set_dereft rw_set(ns, may_alias);
       goto_rw(goto_program, rw_set);
 
       forall_rw_range_set_w_objects(w_it, rw_set)
@@ -643,7 +643,7 @@ static void form_thread_groups(
     body.update();
 
     collect_cycles_in_group(
-      value_sets,
+      may_alias,
       symbol_table,
       goto_functions,
       "$$thread_dummy");
@@ -684,8 +684,7 @@ void static_cycles(
 
   const namespacet ns(symbol_table);
   absolute_timet alias_time_start=current_time();
-  value_set_analysis_fit value_set_analysis(ns);
-  value_set_analysis(goto_functions);
+  may_aliast may_alias(goto_functions, ns);
   std::cout << "Time alias analysis: "
             << current_time()-alias_time_start << std::endl;
 
@@ -694,10 +693,10 @@ void static_cycles(
       symbol_table,
       goto_functions,
       thread_functions,
-      value_set_analysis);
+      may_alias);
   else
     collect_cycles_in_group(
-      value_set_analysis,
+      may_alias,
       symbol_table,
       goto_functions,
       ID_main);
