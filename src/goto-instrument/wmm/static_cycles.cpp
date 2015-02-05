@@ -9,21 +9,6 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 #include <iostream>
 #include <algorithm>
 
-#include <util/graph.h>
-#include <util/message.h>
-#include <util/time_stopping.h>
-
-#include <goto-programs/goto_functions.h>
-#include <goto-programs/goto_convert.h>
-#include <goto-programs/remove_skip.h>
-#include <goto-programs/remove_function_pointers.h>
-
-#include <analyses/call_graph.h>
-#include <analyses/goto_rw.h>
-#include <analyses/may_alias.h>
-
-#include "goto2graph.h"
-
 #include "static_cycles.h"
 
 typedef hash_set_cont<irep_idt, irep_id_hash> thread_functionst;
@@ -40,8 +25,7 @@ Function: add_thread
 
 \*******************************************************************/
 
-static void add_thread(
-  const goto_functionst& goto_functions,
+void static_cyclest::add_thread(
   const irep_idt &identifier,
   thread_functionst &thread_functions)
 {
@@ -67,18 +51,14 @@ Function: find_thread_start_thread
 
 \*******************************************************************/
 
-static void find_thread_start_thread(
+void static_cyclest::find_thread_start_thread(
   goto_programt::const_targett start_thread,
   const goto_programt &goto_program,
-  const goto_functionst& goto_functions,
   thread_functionst &thread_functions)
 {
   assert(start_thread->targets.size()==1);
 
-  add_thread(
-    goto_functions,
-    start_thread->function,
-    thread_functions);
+  add_thread(start_thread->function, thread_functions);
 
   for(goto_programt::const_targett
       target=start_thread->targets.front();
@@ -96,7 +76,7 @@ static void find_thread_start_thread(
 
     const irep_idt &f_name=
       to_symbol_expr(call.function()).get_identifier();
-    add_thread(goto_functions, f_name, thread_functions);
+    add_thread(f_name, thread_functions);
   }
 }
 
@@ -112,9 +92,7 @@ Function: get_function_symbols
 
 \*******************************************************************/
 
-static void get_function_symbols(
-  symbol_tablet &symbol_table,
-  const goto_functionst& goto_functions,
+void static_cyclest::get_function_symbols(
   const exprt &fn_ptr,
   const exprt &arg,
   std::set<symbol_exprt> &functions)
@@ -122,8 +100,6 @@ static void get_function_symbols(
   if(fn_ptr.id()==ID_typecast)
   {
     get_function_symbols(
-      symbol_table,
-      goto_functions,
       to_typecast_expr(fn_ptr).op(),
       arg,
       functions);
@@ -132,18 +108,8 @@ static void get_function_symbols(
   {
     const if_exprt &fn_ptr_if=to_if_expr(fn_ptr);
 
-    get_function_symbols(
-      symbol_table,
-      goto_functions,
-      fn_ptr_if.true_case(),
-      arg,
-      functions);
-    get_function_symbols(
-      symbol_table,
-      goto_functions,
-      fn_ptr_if.false_case(),
-      arg,
-      functions);
+    get_function_symbols(fn_ptr_if.true_case(), arg, functions);
+    get_function_symbols(fn_ptr_if.false_case(), arg, functions);
   }
   else if(fn_ptr.id()==ID_symbol ||
           fn_ptr.id()==ID_member ||
@@ -193,10 +159,8 @@ Function: find_thread_function_call
 
 \*******************************************************************/
 
-static void find_thread_function_call(
-  symbol_tablet &symbol_table,
+void static_cyclest::find_thread_function_call(
   const goto_programt::instructiont &function_call,
-  const goto_functionst& goto_functions,
   thread_functionst &thread_functions)
 {
   const code_function_callt &call=
@@ -229,27 +193,16 @@ static void find_thread_function_call(
     return;
 
   std::set<symbol_exprt> functions;
-  get_function_symbols(
-    symbol_table,
-    goto_functions,
-    thread_fn_ptr,
-    arg,
-    functions);
+  get_function_symbols(thread_fn_ptr, arg, functions);
 
   for(std::set<symbol_exprt>::const_iterator it=functions.begin();
       it!=functions.end();
       ++it)
   {
-    add_thread(
-      goto_functions,
-      it->get_identifier(),
-      thread_functions);
+    add_thread(it->get_identifier(), thread_functions);
   }
 
-  add_thread(
-    goto_functions,
-    function_call.function,
-    thread_functions);
+  add_thread(function_call.function, thread_functions);
 }
 
 /*******************************************************************\
@@ -264,25 +217,15 @@ Function: find_threads
 
 \*******************************************************************/
 
-static void find_threads(
-  symbol_tablet &symbol_table,
+void static_cyclest::find_threads(
   const goto_programt &goto_program,
-  const goto_functionst& goto_functions,
   thread_functionst &thread_functions)
 {
   forall_goto_program_instructions(it, goto_program)
     if(it->is_start_thread())
-      find_thread_start_thread(
-        it,
-        goto_program,
-        goto_functions,
-        thread_functions);
+      find_thread_start_thread(it, goto_program, thread_functions);
     else if(it->is_function_call())
-      find_thread_function_call(
-        symbol_table,
-        *it,
-        goto_functions,
-        thread_functions);
+      find_thread_function_call(*it, thread_functions);
 }
 
 /*******************************************************************\
@@ -297,19 +240,13 @@ Function: find_threads
 
 \*******************************************************************/
 
-static void find_threads(
-  symbol_tablet &symbol_table,
-  const goto_functionst& goto_functions,
+void static_cyclest::find_threads(
   thread_functionst &thread_functions)
 {
   forall_goto_functions(f_it, goto_functions)
     if(f_it->first!="c::pthread_create" &&
        f_it->first!="c::kthread_create_on_node")
-      find_threads(
-        symbol_table,
-        f_it->second.body,
-        goto_functions,
-        thread_functions);
+      find_threads(f_it->second.body, thread_functions);
 }
 
 /*******************************************************************\
@@ -324,8 +261,7 @@ Function: filter_thread_functions
 
 \*******************************************************************/
 
-static void filter_thread_functions(
-  const goto_functionst& goto_functions,
+void static_cyclest::filter_thread_functions(
   const call_grapht &call_map,
   thread_functionst &thread_functions)
 {
@@ -370,10 +306,7 @@ static void filter_thread_functions(
 
     if(call_graph.in(n).empty())
     {
-      add_thread(
-        goto_functions,
-        identifier,
-        thread_functions);
+      add_thread(identifier, thread_functions);
       call_graph.visit_reachable(n);
       continue;
     }
@@ -382,19 +315,16 @@ static void filter_thread_functions(
     call_graph.shortest_loop(n, path);
     if(!path.empty())
     {
-      add_thread(
-        goto_functions,
-        identifier,
-        thread_functions);
+      add_thread(identifier, thread_functions);
       call_graph.visit_reachable(n);
     }
   }
 
-  std::cout << "Thread entry candidates:" << std::endl;
+  std::cerr << "Thread entry candidates:" << std::endl;
   for(thread_functionst::const_iterator it=thread_functions.begin();
       it!=thread_functions.end();
       ++it)
-    std::cout << *it << std::endl;
+    std::cerr << *it << std::endl;
 }
 
 /*******************************************************************\
@@ -409,10 +339,8 @@ Function: collect_cycles_in_group
 
 \*******************************************************************/
 
-static void collect_cycles_in_group(
+void static_cyclest::collect_cycles_in_group(
   may_aliast &may_alias,
-  symbol_tablet &symbol_table,
-  goto_functionst& goto_functions,
   const irep_idt &identifier)
 {
   const namespacet ns(symbol_table);
@@ -424,7 +352,7 @@ static void collect_cycles_in_group(
   {
     instrumenter.build_event_graph(may_alias, Static_Weak, false, no_loop);
   }
-  std::cout << "Time event graph construction: "
+  std::cerr << "Time event graph construction: "
             << current_time()-graph_time_start << std::endl;
 
   std::cout << "Number of reads: " <<  instrumenter.read_counter <<std::endl;
@@ -460,18 +388,16 @@ Function: form_thread_groups
 
 \*******************************************************************/
 
-static void form_thread_groups(
-  symbol_tablet &symbol_table,
-  goto_functionst& goto_functions,
+void static_cyclest::form_thread_groups(
   thread_functionst &thread_functions,
   may_aliast &may_alias)
 {
   forall_goto_functions(it, goto_functions)
-    add_thread(goto_functions, it->first, thread_functions);
+    add_thread(it->first, thread_functions);
 
   call_grapht call_map(goto_functions);
 
-  filter_thread_functions(goto_functions, call_map, thread_functions);
+  filter_thread_functions(call_map, thread_functions);
 
   const namespacet ns(symbol_table);
 
@@ -632,8 +558,6 @@ static void form_thread_groups(
 
     collect_cycles_in_group(
       may_alias,
-      symbol_table,
-      goto_functions,
       "$$thread_dummy");
   }
 }
@@ -650,14 +574,12 @@ Function: static_cycles
 
 \*******************************************************************/
 
-void static_cycles(
-  symbol_tablet &symbol_table,
-  goto_functionst& goto_functions)
+void static_cyclest::operator()()
 {
   absolute_timet total_time_start=current_time();
 
   hash_set_cont<irep_idt, irep_id_hash> thread_functions;
-  find_threads(symbol_table, goto_functions, thread_functions);
+  find_threads(thread_functions);
 
   bool is_linked=
     goto_functions.function_map.find(ID_main)
@@ -673,23 +595,14 @@ void static_cycles(
   const namespacet ns(symbol_table);
   absolute_timet alias_time_start=current_time();
   may_aliast may_alias(goto_functions, ns);
-  std::cout << "Time alias analysis: "
+  std::cerr << "Time alias analysis: "
             << current_time()-alias_time_start << std::endl;
 
   if(!is_linked)
-    form_thread_groups(
-      symbol_table,
-      goto_functions,
-      thread_functions,
-      may_alias);
+    form_thread_groups(thread_functions, may_alias);
   else
-    collect_cycles_in_group(
-      may_alias,
-      symbol_table,
-      goto_functions,
-      ID_main);
+    collect_cycles_in_group(may_alias, ID_main);
 
-  std::cout << "Time static cycle search: "
+  std::cerr << "Time static cycle search: "
             << current_time()-total_time_start << std::endl;
 }
-
