@@ -1,8 +1,10 @@
 #include "spawn_marker.h"
+#include "pretty_instruction.h"
 
 #include <iostream>
 #include <algorithm>
 #include <set>
+#include <map>
 
 spawn_markert::spawn_markert(cfgt &cfg, namespacet &ns)
   :cfg(cfg), ns(ns) {}
@@ -85,6 +87,10 @@ void spawn_markert::start_routine(
     if(cfg[it->first].PC == ins->get_target())
       worklist.push_front(it->first);
 
+  std::cout << "Adding spawn edge between "
+    << instruction_of(worklist.front()) << " and "
+    << instruction_of(spawn_node) << "\n";
+
   // the start_routine node should have only a single target, namely
   // the beginning of the spawned function. This beginning of the
   // spawned function is what is now in the worklist.
@@ -110,6 +116,18 @@ void spawn_markert::start_routine(
       == visited.end())
         worklist.push_front(it->first);
   }
+}
+
+std::string spawn_markert::instruction_of(unsigned node)
+{
+  plain_pretty_instructiont pp(ns);
+  return pp(cfg[node].PC);
+}
+
+std::string spawn_markert::pretty_function_groups()
+{
+  std::string ret = "";
+  return ret;
 }
 
 std::string spawn_markert::pthread_target(
