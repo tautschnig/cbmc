@@ -162,13 +162,18 @@ int goto_instrument_parse_optionst::doit()
     get_goto_program();
     instrument_goto_program();
 
-    if(cmdline.isset("static-cycles"))
-    {
+    if(cmdline.isset("static-cycles")
+    || cmdline.isset("output_event_source_locations")
+    ){
       namespacet ns(symbol_table);
-
       prepare_for_static_cycles(ns, goto_functions);
 
-      static_cycles(symbol_table, goto_functions);
+      static_cyclest ss(symbol_table, goto_functions);
+
+      ss.output_event_source_locations() =
+        cmdline.isset("output_event_source_locations");
+
+      ss();
 
       return 0;
     }
@@ -290,6 +295,7 @@ int goto_instrument_parse_optionst::doit()
       }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
       // recalculate numbers, etc.
       goto_functions.update();
       
@@ -317,6 +323,8 @@ int goto_instrument_parse_optionst::doit()
 <<<<<<< HEAD
     if(cmdline.isset("show-escape-analysis"))
 =======
+=======
+>>>>>>> 81b4b39... changed static-cycles into a class
     if(cmdline.isset("show-points-to"))
 >>>>>>> 8efba42... Collecting critical (weak memory) cycles without relying on the program being linked
     {
