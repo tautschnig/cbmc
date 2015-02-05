@@ -15,6 +15,12 @@ Date: 2012
 
 #include <fstream>
 
+#ifdef DEBUG
+#include <iostream>
+#define DEBUG_MESSAGE(a) std::cout<<a<<std::endl
+#else
+#define DEBUG_MESSAGE(a)
+#endif
 
 #define NB_COLOURS 14
 std::string colour_map[NB_COLOURS] = {"red", "blue", "black", "green", "yellow",
