@@ -732,9 +732,10 @@ bool rd_range_domaint::gen(
       it!=ranges.end();
      ) // no ++it
   {
-    if((it->second!=-1 && it->second <= range_start) ||
-       (range_end!=-1 && it->first >= range_end))
+    if(it->second!=-1 && it->second <= range_start)
       ++it;
+    else if(range_end!=-1 && it->first >= range_end)
+      break;
     else if(it->first > range_start) // rs < a < b,re
     {
       if(range_end!=-1)
