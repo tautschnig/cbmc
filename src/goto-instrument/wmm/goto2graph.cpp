@@ -328,21 +328,23 @@ void instrumentert::forward_traverse_once(
     bool no_dependencies,
     goto_programt::const_targett target)
 {
-  cfgt::entryt &cfg_entry=cfg.entry_map[target];
+
+  cfgt::nodet &cfg_entry=cfg[cfg.entry_map[target]];
+  cfg_entry.set_location(target);
 
   // we extract events only once per thread; this also means that
   // we do not track call stacks
-  if(cfg[cfg_entry].events.find(thread)==cfg[cfg_entry].events.end())
+  if(cfg_entry.events.find(thread)==cfg_entry.events.end())
     extract_events(
       may_alias,
       model,
       no_dependencies,
-      cfg_entry);
+      cfg.entry_map[target]);
 
   goto_programt::const_targett next_PC=target;
   ++next_PC;
 
-  const goto_programt::instructiont& instruction=*cfg[cfg_entry].PC;
+  const goto_programt::instructiont& instruction=*(cfg_entry.PC);
 
   if(instruction.is_start_thread())
   {
@@ -360,12 +362,12 @@ void instrumentert::forward_traverse_once(
 
     thread=coming_from;
 
-    assert(cfg[cfg_entry].out.size()==1 &&
-           cfg[cfg[cfg_entry].out.begin()->first].PC==next_PC);
+    assert(cfg_entry.out.size()==1 &&
+           cfg[cfg_entry.out.begin()->first].PC==next_PC);
   }
   else if(instruction.is_end_thread())
   {
-    assert(cfg[cfg_entry].out.empty());
+    assert(cfg_entry.out.empty());
   }
   else if(instruction.is_function_call())
   {
@@ -373,8 +375,8 @@ void instrumentert::forward_traverse_once(
     const irep_idt& fun_id=to_symbol_expr(fun).get_identifier();
 
     // do not enter recursion and skip __CPROVER_initialize
-    assert(cfg[cfg_entry].out.size()==1);
-    if(cfg[cfg[cfg_entry].out.begin()->first].PC!=next_PC)
+    assert(cfg_entry.out.size()==1);
+    if(cfg[cfg_entry.out.begin()->first].PC!=next_PC)
     {
       if(fun_id!=CPROVER_PREFIX "initialize" &&
          functions_met.insert(fun_id).second)
@@ -382,7 +384,7 @@ void instrumentert::forward_traverse_once(
           may_alias,
           model,
           no_dependencies,
-          cfg[cfg[cfg_entry].out.begin()->first].PC);
+          cfg[cfg_entry.out.begin()->first].PC);
 
       forward_traverse_once(
         may_alias,
@@ -406,8 +408,8 @@ void instrumentert::forward_traverse_once(
   else if(instruction.is_goto())
   {
     for(cfgt::edgest::const_iterator
-        it=cfg[cfg_entry].out.begin();
-        it!=cfg[cfg_entry].out.end();
+        it=cfg_entry.out.begin();
+        it!=cfg_entry.out.end();
         ++it)
     {
       const cfgt::nodet &succ_entry=cfg[it->first];
@@ -422,19 +424,19 @@ void instrumentert::forward_traverse_once(
     return;
   }
 
-  if(cfg[cfg_entry].out.empty())
+  if(cfg_entry.out.empty())
   {
     /* forward traversal done for this thread or branch */
     return;
   }
 
-  assert(cfg[cfg_entry].out.size()==1);
+  assert(cfg_entry.out.size()==1);
 
   forward_traverse_once(
     may_alias,
     model,
     no_dependencies,
-    cfg[cfg[cfg_entry].out.begin()->first].PC);
+    cfg[cfg_entry.out.begin()->first].PC);
 }
 
 /*******************************************************************\
