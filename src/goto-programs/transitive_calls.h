@@ -44,9 +44,6 @@ class transitive_callst
     /**@brief Generates the transitive call bucket for `function`.
      * @param fun_name The name of the function; used as the key in
      *        call_map
-     * @param function The actual function, whose body will be scanned
-     *        for function calls
-     * @return The call bucket for `function`.
      */
     std::set<std::string> make_call_bucket_for(
       std::string fun_name
@@ -57,8 +54,8 @@ class transitive_callst
     namespacet &ns;
 
     std::set<std::string> make_call_bucket_for(
-      std::set<std::string> worklist
-    , std::set<std::string> accumulator
+      std::set<std::string> &worklist
+    , std::set<std::string> &accumulator
     , bool first_call
     );
 

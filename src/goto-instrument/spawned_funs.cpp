@@ -16,6 +16,8 @@ spawned_funst::spawned_funst(
 {
   function_mapt &fun_map = goto_functions.function_map;
 
+  spawned_functions.insert("c::main");
+
   function_mapt::const_iterator it;
   for(it = fun_map.begin(); it != fun_map.end(); it++)
   {
