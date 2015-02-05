@@ -132,6 +132,7 @@ public:
     const namespacet &ns);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   // each element x represents a range of bits [x.first, x.second)
   typedef std::multimap<range_spect, range_spect> rangest;
   typedef std::map<locationt, rangest> ranges_at_loct;
@@ -155,9 +156,19 @@ protected:
   typedef std::map<irep_idt, values_innert> valuest;
   #else
   typedef hash_map_cont<irep_idt, values_innert, irep_id_hash> valuest;
+=======
+  // each element x represents a range of bits [x.first, x.second)
+  typedef std::map<range_spect, range_spect> rangest;
+  typedef std::map<locationt, rangest> ranges_at_loct;
+  #ifdef USE_DSTRING
+  typedef std::map<irep_idt, ranges_at_loct> valuest;
+  #else
+  typedef hash_map_cont<irep_idt, ranges_at_loct, irep_id_hash> valuest;
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   #endif
   valuest values;
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   #ifdef USE_DSTRING
   typedef std::map<irep_idt, ranges_at_loct> export_cachet;
@@ -166,6 +177,9 @@ protected:
     export_cachet;
   #endif
   mutable export_cachet export_cache;
+=======
+  const ranges_at_loct& get(const irep_idt &identifier) const;
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
 
   void populate_cache(const irep_idt &identifier) const;
 =======
@@ -204,6 +218,10 @@ protected:
   bool gen(
     locationt from,
     const irep_idt &identifier,
+    const range_spect &range_start,
+    const range_spect &range_end);
+  bool gen(
+    rangest &ranges,
     const range_spect &range_start,
     const range_spect &range_end);
 

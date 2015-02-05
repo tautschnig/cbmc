@@ -233,8 +233,11 @@ void dep_graph_domaint::data_dependencies(
             found=true;
           }
     }
+<<<<<<< HEAD
 
     dep_graph.reaching_definitions()[to].clear_cache(it->first);
+=======
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   }
 
   // add edges to the graph

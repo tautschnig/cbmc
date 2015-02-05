@@ -323,6 +323,7 @@ void rd_range_domaint::transform_end_function(
     if(!rd.get_is_threaded()(call) ||
        (!ns.lookup(identifier).is_shared() &&
         !rd.get_is_dirty()(identifier)))
+<<<<<<< HEAD
       for(values_innert::const_iterator
           i_it=it->second.begin();
           i_it!=it->second.end();
@@ -340,6 +341,27 @@ void rd_range_domaint::transform_end_function(
       const reaching_definitiont &v=bv_container->get(*i_it);
       gen(v.definition_at, v.identifier, v.bit_begin, v.bit_end);
     }
+=======
+      for(ranges_at_loct::const_iterator
+          itl=it->second.begin();
+          itl!=it->second.end();
+          ++itl)
+        for(rangest::const_iterator
+            r_it=itl->second.begin();
+            r_it!=itl->second.end();
+            ++r_it)
+          kill(identifier, r_it->first, r_it->second);
+
+    for(ranges_at_loct::const_iterator
+        itl=it->second.begin();
+        itl!=it->second.end();
+        ++itl)
+      for(rangest::const_iterator
+          r_it=itl->second.begin();
+          r_it!=itl->second.end();
+          ++r_it)
+        gen(itl->first, identifier, r_it->first, r_it->second);
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   }
 
   const code_typet &code_type=
@@ -459,6 +481,7 @@ void rd_range_domaint::kill(
   if(entry==values.end())
     return;
 
+<<<<<<< HEAD
   bool clear_export_cache=false;
   values_innert new_values;
 
@@ -540,6 +563,52 @@ void rd_range_domaint::kill(
       assert(*it==*itn);
       ++it;
     }
+=======
+  for(ranges_at_loct::iterator itl=entry->second.begin();
+      itl!=entry->second.end();
+     ) // no ++itl
+  {
+    rangest &ranges=itl->second;
+
+    for(rangest::iterator it=ranges.begin();
+        it!=ranges.end();
+       ) // no ++it
+    {
+      if(it->first >= range_end)
+        break;
+      else if(it->second!=-1 &&
+              it->second <= range_start)
+        ++it;
+      else if(it->first >= range_start &&
+              it->second!=-1 &&
+              it->second <= range_end) // rs <= a < b <= re
+      {
+        ranges.erase(it++);
+      }
+      else if(it->first >= range_start) // rs <= a <= re < b
+      {
+        ranges.insert(std::make_pair(range_end, it->second));
+        ranges.erase(it++);
+      }
+      else if(it->second==-1 ||
+              it->second > range_end) // a <= rs < re < b
+      {
+        ranges.insert(std::make_pair(range_end, it->second));
+        it->second=range_start;
+        ++it;
+      }
+      else // a <= rs < b <= re
+      {
+        it->second=range_start;
+        ++it;
+      }
+    }
+
+    if(ranges.empty())
+      entry->second.erase(itl++);
+    else
+      ++itl;
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   }
 }
 
@@ -607,6 +676,35 @@ bool rd_range_domaint::gen(
   const range_spect &range_start,
   const range_spect &range_end)
 {
+<<<<<<< HEAD
+=======
+  // objects of size 0 like union U { signed : 0; };
+  if(range_start==0 && range_end==0)
+    return false;
+
+  return gen(values[identifier][from], range_start, range_end);
+}
+
+/*******************************************************************\
+
+Function: rd_range_domaint::gen
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool rd_range_domaint::gen(
+  rangest &ranges,
+  const range_spect &range_start,
+  const range_spect &range_end)
+{
+  assert(range_start>=0);
+
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   // objects of size 0 like union U { signed : 0; };
   if(range_start==0 && range_end==0)
     return false;
@@ -630,45 +728,41 @@ bool rd_range_domaint::gen(
 #if 0
   range_spect merged_range_end=range_end;
 
-  std::pair<valuest::iterator, bool> entry=
-    values.insert(std::make_pair(identifier, rangest()));
-  rangest &ranges=entry.first->second;
-
-  if(!entry.second)
+  for(rangest::iterator it=ranges.begin();
+      it!=ranges.end();
+     ) // no ++it
   {
-    for(rangest::iterator it=ranges.begin();
-        it!=ranges.end();
-        ) // no ++it
+    if((it->second!=-1 && it->second <= range_start) ||
+       (range_end!=-1 && it->first >= range_end))
+      ++it;
+    else if(it->first > range_start) // rs < a < b,re
     {
-      if(it->second.second!=from ||
-         (it->second.first!=-1 && it->second.first <= range_start) ||
-         (range_end!=-1 && it->first >= range_end))
-        ++it;
-      else if(it->first > range_start) // rs < a < b,re
-      {
-        if(range_end!=-1)
-          merged_range_end=std::max(range_end, it->second.first);
-        ranges.erase(it++);
-      }
-      else if(it->second.first==-1 ||
-              (range_end!=-1 &&
-               it->second.first >= range_end)) // a <= rs < re <= b
-      {
-        // nothing to do
-        return false;
-      }
-      else // a <= rs < b < re
-      {
-        it->second.first=range_end;
-        return true;
-      }
+      if(range_end!=-1)
+        merged_range_end=std::max(range_end, it->second);
+      ranges.erase(it++);
+    }
+    else if(it->second==-1 ||
+            (range_end!=-1 &&
+             it->second >= range_end)) // a <= rs < re <= b
+    {
+      // nothing to do
+      return false;
+    }
+    else // a <= rs < b < re
+    {
+      it->second=range_end;
+      return true;
     }
   }
 
+<<<<<<< HEAD
   ranges.insert(std::make_pair(
       range_start,
       std::make_pair(merged_range_end, from)));
 #endif
+=======
+  ranges.insert(std::make_pair(range_start, merged_range_end));
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
 
   return true;
 }
@@ -693,6 +787,7 @@ void rd_range_domaint::output(std::ostream &out) const
       it!=values.end();
       ++it)
   {
+<<<<<<< HEAD
     const irep_idt &identifier=it->first;
 
     const ranges_at_loct &ranges=get(identifier);
@@ -701,13 +796,23 @@ void rd_range_domaint::output(std::ostream &out) const
 
     for(ranges_at_loct::const_iterator itl=ranges.begin();
         itl!=ranges.end();
+=======
+    out << "  " << it->first << "[";
+
+    for(ranges_at_loct::const_iterator itl=it->second.begin();
+        itl!=it->second.end();
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
         ++itl)
       for(rangest::const_iterator itr=itl->second.begin();
           itr!=itl->second.end();
           ++itr)
       {
         if(itr!=itl->second.begin() ||
+<<<<<<< HEAD
            itl!=ranges.begin())
+=======
+           itl!=it->second.begin())
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
           out << ";";
 
         out << itr->first << ":" << itr->second;
@@ -715,6 +820,7 @@ void rd_range_domaint::output(std::ostream &out) const
       }
 
     out << "]" << std::endl;
+<<<<<<< HEAD
 
     clear_cache(identifier);
   }
@@ -783,6 +889,8 @@ bool rd_range_domaint::merge_inner(
       assert(*itr==*itro);
       ++itr;
     }
+=======
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   }
 #endif
 
@@ -824,10 +932,37 @@ bool rd_range_domaint::merge(
     {
       assert(it->first==ito->first);
 
+<<<<<<< HEAD
       if(merge_inner(it->second, ito->second))
       {
         more=true;
         export_cache.erase(it->first);
+=======
+      ranges_at_loct::iterator itr=it->second.begin();
+      for(ranges_at_loct::const_iterator itro=ito->second.begin();
+          itro!=ito->second.end();
+          ++itro)
+      {
+        while(itr!=it->second.end() && itr->first<itro->first)
+          ++itr;
+        if(itr==it->second.end() || itro->first<itr->first)
+        {
+          it->second.insert(*itro);
+          more=true;
+        }
+        else if(itr!=it->second.end())
+        {
+          assert(itr->first==itro->first);
+
+          for(rangest::const_iterator itrro=itro->second.begin();
+              itrro!=itro->second.end();
+              ++itrro)
+            more=gen(itr->second, itrro->first, itrro->second) ||
+                 more;
+
+          ++itr;
+        }
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
       }
 
       ++it;
@@ -909,10 +1044,37 @@ bool rd_range_domaint::merge_shared(
     {
       assert(it->first==ito->first);
 
+<<<<<<< HEAD
       if(merge_inner(it->second, ito->second))
       {
         more=true;
         export_cache.erase(it->first);
+=======
+      ranges_at_loct::iterator itr=it->second.begin();
+      for(ranges_at_loct::const_iterator itro=ito->second.begin();
+          itro!=ito->second.end();
+          ++itro)
+      {
+        while(itr!=it->second.end() && itr->first<itro->first)
+          ++itr;
+        if(itr==it->second.end() || itro->first<itr->first)
+        {
+          it->second.insert(*itro);
+          more=true;
+        }
+        else if(itr!=it->second.end())
+        {
+          assert(itr->first==itro->first);
+
+          for(rangest::const_iterator itrro=itro->second.begin();
+              itrro!=itro->second.end();
+              ++itrro)
+            more=gen(itr->second, itrro->first, itrro->second) ||
+                 more;
+
+          ++itr;
+        }
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
       }
 
       ++it;
@@ -944,7 +1106,11 @@ Function: rd_range_domaint::get
 const rd_range_domaint::ranges_at_loct& rd_range_domaint::get(
   const irep_idt &identifier) const
 {
+<<<<<<< HEAD
   populate_cache(identifier);
+=======
+  static ranges_at_loct empty;
+>>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
 
   static ranges_at_loct empty;
 
