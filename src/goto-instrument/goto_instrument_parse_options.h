@@ -64,7 +64,8 @@ Author: Daniel Kroening, kroening@kroening.com
   "(interpreter)(show-reaching-definitions)(count-eloc)" \
   "(list-symbols)(list-undefined-functions)(cfg-dot)" \
   "(z3)(add-library)(show-dependence-graph)(information-leak-check)" \
-  "(horn)(skip-loops):(apply-code-contracts)(static-cycles)(egraph-dump)"
+  "(horn)(skip-loops):(apply-code-contracts)(static-cycles)(egraph-dump)" \
+  "(fake-static-cycles)"
 
 class goto_instrument_parse_optionst:
   public parse_options_baset,

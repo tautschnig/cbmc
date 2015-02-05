@@ -591,6 +591,12 @@ int goto_instrument_parse_optionst::doit()
     if(cmdline.isset("show-goto-functions"))
     {
       namespacet ns(symbol_table);
+
+      if(cmdline.isset("fake-static-cycles"))
+      {
+        prepare_for_static_cycles(ns, goto_functions);
+      }
+
       goto_functions.output(ns, std::cout);
       return 0;
     }
@@ -1533,6 +1539,7 @@ void goto_instrument_parse_optionst::help()
     " --skip-loops <loop-ids>      add gotos to skip selected loops during execution\n"
     "\n"
     "Memory model instrumentations:\n"
+    " --fake-static-cycles         see efects of --static-cycles processing; use with --show-goto-functions\n"
     " --mm <tso,pso,rmo,power>     instruments a weak memory model\n"
     " --scc                        detects critical cycles per SCC (one thread per SCC)\n"
     " --one-event-per-cycle        only instruments one event per cycle\n"
