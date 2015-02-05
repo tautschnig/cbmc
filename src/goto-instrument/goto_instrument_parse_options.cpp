@@ -34,6 +34,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/parameter_assignments.h>
 #include <goto-programs/transitive_calls.h>
 #include <goto-programs/spawn_marker.h>
+#include <goto-programs/graph_specialisations.h>
 
 #include <pointer-analysis/value_set_analysis.h>
 #include <pointer-analysis/goto_program_dereference.h>
@@ -155,6 +156,9 @@ int goto_instrument_parse_optionst::doit()
   }
   
   eval_verbosity();
+
+  namespacet ns(symbol_table);
+  namespacet::set_global(&ns);
 
   try
   {
@@ -1481,6 +1485,7 @@ void goto_instrument_parse_optionst::help()
     " --dump-c                     generate C source\n"
     " --dump-cpp                   generate C++ source\n"
     " --dot                        generate CFG graph in DOT format\n"
+    " --cfg-dot                    more useful CFG graph in DOT format\n"
     " --interpreter                do concrete execution\n"
     " --count-eloc                 count effective lines of code\n"
     "\n"

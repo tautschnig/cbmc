@@ -339,3 +339,21 @@ bool multi_namespacet::lookup(
 
   return true;
 }
+
+namespacet *namespacet::instance = 0;
+
+void namespacet::set_global(namespacet *ns)
+{
+  if(instance != 0)
+    throw "Tried to reset already-initialised global namespace instance";
+
+  instance = ns;
+}
+
+namespacet &namespacet::get_global()
+{
+  if(instance == 0)
+    throw "Attempted to retrieve uninitialised global namespace";
+
+  return *instance;
+}
