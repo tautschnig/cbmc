@@ -2,7 +2,9 @@
   {
     "function_name" : "main",
     "called_functions" : [
-      "call1", "call2", "call3", "pthread_create"
+      "call1", "call2", "call3", "pthread_create",
+      "spawn1", "spawn4", "call4", "call5", "call6",
+      "call7", "call8", "call9", "call10", "spawn2"
     ]
   },
   {

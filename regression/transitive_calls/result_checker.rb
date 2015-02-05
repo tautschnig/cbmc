@@ -6,6 +6,8 @@
 
 require 'json'
 
+require 'set'
+
 usage = "USAGE\n  result_checker.rb test_name result_file expected_file\n"
 
 if ARGV.length != 3
@@ -72,17 +74,42 @@ def compare_result real, expected
   all_ok
 end
 
-def compare_results list1, list2
+def compare_results results, expected
+  # Add all functions to a set. We want to ensure that main
+  # transitively calls everything, even if the expected file didn't
+  # specify that.
+  all_funs = Set.new
+
   all_ok = true
-  list1.each do |r1|
+  results.each do |r1|
     name1 = r1['function_name']
-    list2.each do |r2|
+    all_funs << name1
+    expected.each do |r2|
       name2 = r2['function_name']
+      all_funs << name2
       if fun_eql name1, name2
-         all_ok = false unless compare_result r1, r2
+        fun_1_match = true
+        fun_2_match = true
+        all_ok = false unless compare_result r1, r2
       end
     end
   end
+
+  # Now ensure that main transitively called everything
+  all_funs = all_funs.to_a
+  all_funs.delete "__actual_thread_spawn"
+  all_funs.delete "c::__actual_thread_spawn"
+  all_funs.delete "c::__CPROVER_initialize"
+  all_funs.delete "c::main"
+  all_funs.delete "main"
+  main_exp = {"function_name"=>"main", "called_functions"=>all_funs}
+
+  main_real = results.select {|i| i["function_name"] == "c::main"}
+  (eror main_real; exit 1) if main_real.length != 1
+  main_real = main_real[0]
+
+  all_ok = false unless compare_result main_real, main_exp
+
   all_ok
 end
 
