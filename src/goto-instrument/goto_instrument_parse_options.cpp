@@ -807,7 +807,7 @@ Function: goto_instrument_parse_optionst::get_goto_program
   
 void goto_instrument_parse_optionst::get_goto_program()
 {
-  std::cerr << "Reading GOTO program from `" << cmdline.args[0] << "'" << eom;
+  std::cerr << "Reading GOTO program from `" << cmdline.args[0] << "'\n";
 
   if(read_goto_binary(cmdline.args[0],
     symbol_table, goto_functions, get_message_handler()))
