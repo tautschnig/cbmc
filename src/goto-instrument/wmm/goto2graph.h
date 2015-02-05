@@ -101,26 +101,78 @@ public:
     std::map<unsigned, thread_eventst> events;
     std::set<goto_programt::const_targett> use_events_from;
 
-    event_datat():loc("") {}
+    event_datat()
+      :file("")
+      ,line("")
+      ,code("")
+    {}
 
-    void set_location(goto_programt::const_targett target)
+    void set_location(
+        goto_programt::const_targett target
+        , namespacet &ns
+        )
     {
-      const source_locationt &target_loc = target->source_location;
-      std::stringstream ss;
-      ss << target_loc.get_file() << ":" << target_loc.get_line();
-      loc = ss.str();
+      const source_locationt &loc = target->source_location;
+      file = loc.get_file().c_str();
+      line = loc.get_line().c_str();
+      code = from_expr(ns, "", target->code);
     }
 
-    std::string location()
+  public:
+    
+    /// @brief the file in which this event is located
+    std::string get_file(){ return file; }
+    /// @brief the line of the file where this event is located
+    std::string get_line(){ return line; }
+    /// @brief pretty rep of the code
+    std::string get_code()
     {
-      if(loc.compare("") == 0)
-        throw "event_datat has not had location set";
-
-      return loc;
+      if(code.substr(0, 4).compare("irep") == 0)
+        return "<unknown_irep>";
+      return code;
     }
 
-    private:
-      std::string loc;
+    /// @brief is this a read?
+    bool is_read()
+    {
+      std::map<unsigned, thread_eventst>::iterator ev;
+      for(ev = events.begin(); ev != events.end(); ev++)
+      {
+        thread_eventst te = ev->second;
+        if (!te.reads.empty())
+            return true;
+      }
+      return false;
+    }
+    /// @brief is this a write?
+    bool is_write()
+    {
+      std::map<unsigned, thread_eventst>::iterator ev;
+      for(ev = events.begin(); ev != events.end(); ev++)
+      {
+        thread_eventst te = ev->second;
+        if (!te.writes.empty())
+            return true;
+      }
+      return false;
+    }
+    /// @brief is this a fence?
+    bool is_fence()
+    {
+      std::map<unsigned, thread_eventst>::iterator ev;
+      for(ev = events.begin(); ev != events.end(); ev++)
+      {
+        thread_eventst te = ev->second;
+        if (!te.fences.empty())
+            return true;
+      }
+      return false;
+    }
+
+  private:
+    std::string file;
+    std::string line;
+    std::string code;
   };
 
   /* per-thread control flow graph only, no inter-thread edges */
@@ -138,27 +190,18 @@ public:
    * @pre set_location() should have been called for each event in the
    * cfg.
    */
-  std::list<std::string> event_source_locations()
+  std::list<event_datat> event_source_locations()
   {
-    std::list<std::string> ret;
+    std::list<event_datat> ret;
     for(unsigned i = 0; i < cfg.size(); i++)
     {
       event_datat ed = cfg[i];
-      bool is_event = false;
-      std::map<unsigned, thread_eventst>::iterator te;
-      for(te = ed.events.begin(); te != ed.events.end(); te++)
-      {
-        if(!te->second.reads.empty()
-        || !te->second.writes.empty()
-        || !te->second.fences.empty()
-        ){
-          is_event = true;
-          break;
-        }
-      }
-      if(!is_event) continue;
+      if(!ed.is_read()
+      && !ed.is_write()
+      && !ed.is_fence())
+         continue;
 
-      ret.push_front(ed.location());
+      ret.push_front(ed);
     }
     return ret;
   }

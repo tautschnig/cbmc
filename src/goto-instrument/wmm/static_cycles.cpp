@@ -369,17 +369,47 @@ void static_cyclest::collect_cycles_in_group(
 
     if(output_event_source_locations())
     {
-      std::list<std::string> locs =
+      std::list<instrumentert::event_datat> events =
         instrumenter.event_source_locations();
       json_utilt j(2);
       std::stringstream ss;
       ss << "[" << j.ind();
-      std::list<std::string>::iterator it;
-      std::list<std::string>::iterator last = locs.end();
+      std::list<instrumentert::event_datat>::iterator it;
+      std::list<instrumentert::event_datat>::iterator last
+        = events.end();
       --last;
-      for(it = locs.begin(); it != locs.end(); it++)
+      for(it = events.begin(); it != events.end(); it++)
       {
-        ss << "\"" << *it << "\"";
+        ss << "{" << j.ind();
+
+        ss << "\"file\" : \""
+           << it->get_file()
+           << "\"";
+
+        ss << "," << j.nl()
+           << "\"line\" : \""
+           << it->get_line()
+           << "\"";
+        
+        ss << "," << j.nl()
+           << "\"code\" : \""
+           << it->get_code()
+           << "\"";
+        
+        ss << "," << j.nl()
+           << "\"read?\" : "
+           << (it->is_read() ? "true" : "false");
+        
+        ss << "," << j.nl()
+           << "\"write?\" : "
+           << (it->is_write() ? "true" : "false");
+        
+        ss << "," << j.nl()
+           << "\"fence?\" : "
+           << (it->is_fence() ? "true" : "false");
+
+        ss << j.und() << "}";
+
         if(last != it)
           ss << "," << j.nl();
       }
