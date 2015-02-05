@@ -167,9 +167,9 @@ void weak_memory(
 
   unsigned max_thds = 0;
   instrumentert instrumenter(symbol_table, goto_functions, message);
-  max_thds=instrumenter.goto2graph_cfg(value_sets, model, no_dependencies, 
+  max_thds=instrumenter.build_event_graph(value_sets, model, no_dependencies,
     duplicate_body);
-  message.status()<<"abstraction completed"<<messaget::eom;
+  message.status()<<"abstraction completed"<< messaget::eom;
 
   // collects cycles, directly or by SCCs
   if(input_max_var!=0 || input_max_po_trans!=0)
