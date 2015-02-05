@@ -25,6 +25,8 @@ Date: September 2011
 
 #include <goto-programs/remove_skip.h>
 
+#include <analyses/may_alias.h>
+
 #include "../rw_set.h"
 
 #include "weak_memory.h"

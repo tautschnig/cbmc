@@ -27,6 +27,7 @@ class symbol_tablet;
 class goto_functionst;
 class value_setst;
 class local_may_aliast;
+class may_aliast;
 
 class instrumentert
 {

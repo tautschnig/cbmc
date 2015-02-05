@@ -105,6 +105,7 @@ Function: instrumentert::extract_events_rw
 
 void instrumentert::extract_events_rw(
   value_setst& value_sets,
+  may_aliast& may_alias,
   memory_modelt model,
   bool no_dependencies,
   goto_programt::const_targett target,
