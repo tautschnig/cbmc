@@ -6,7 +6,7 @@
     ]
   },
   {
-    "function_name" : "__actual_thread_spawn",
+    "function_name" : "actual_thread_spawn",
     "called_functions" : [
       "spawn1", "spawn4", "spawn2", "spawn3",
       "call10", "call8", "call9", "call6", "call7",
