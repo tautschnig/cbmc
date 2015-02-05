@@ -416,30 +416,18 @@ static void collect_cycles_in_group(
   const irep_idt &identifier)
 {
   const namespacet ns(symbol_table);
-  instrumentert instrumenter(symbol_table, goto_functions);
+  null_message_handlert mh;
+  messaget message(mh);
+  instrumentert instrumenter(symbol_table, goto_functions, message);
 
   absolute_timet graph_time_start=current_time();
   {
-    instrumenter.cfg(goto_functions);
-
-    goto_functionst::function_mapt::const_iterator fn=
-      goto_functions.function_map.find(identifier);
-    assert(fn!=goto_functions.function_map.end() &&
-           !fn->second.body.instructions.empty());
-    instrumenter.forward_traverse_once(
-      may_alias,
-      Static_Weak,
-      false,
-      fn->second.body.instructions.begin());
-
-    instrumenter.propagate_events_in_po();
-
-    instrumenter.add_edges();
+    instrumenter.build_event_graph(may_alias, Static_Weak, false, no_loop);
   }
   std::cout << "Time event graph construction: "
             << current_time()-graph_time_start << std::endl;
 
-  std::cout << "Number of reads: " << instrumenter.read_counter <<std::endl;
+  std::cout << "Number of reads: " <<  instrumenter.read_counter <<std::endl;
   std::cout << "Number of writes: " << instrumenter.write_counter <<std::endl;
 
   instrumenter.egraph.filter_thin_air=false;

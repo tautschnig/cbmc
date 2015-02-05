@@ -13,14 +13,14 @@ Date: September 2011
 
 #include "wmm.h"
 
-class value_setst;
+class may_aliast;
 class goto_functionst;
 class symbol_tablet;
 class message_handlert;
 
 void weak_memory(
   memory_modelt model,
-  value_setst &value_sets,
+  may_aliast &may_alias,
   symbol_tablet &symbol_table,
   goto_functionst &goto_functions,
   bool SCC,

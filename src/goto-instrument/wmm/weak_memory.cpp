@@ -45,7 +45,7 @@ Function: introduce_temporaries
 \*******************************************************************/
 
 void introduce_temporaries(
-  value_setst &value_sets,
+  may_aliast &may_alias,
   symbol_tablet &symbol_table,
   const irep_idt &function,
   goto_programt &goto_program,
@@ -71,7 +71,7 @@ void introduce_temporaries(
        instruction.is_assert() ||
        instruction.is_assume())
     {
-      rw_range_set_value_sett rw_set(ns, value_sets);
+      rw_range_set_dereft rw_set(ns, may_alias);
       goto_rw(i_it, rw_set);
 
       if(rw_set.get_r_set().empty() &&
@@ -123,7 +123,7 @@ Function: weak_memory
 
 void weak_memory(
   memory_modelt model,
-  value_setst& value_sets,
+  may_aliast &may_alias,
   symbol_tablet& symbol_table,
   goto_functionst &goto_functions,
   bool SCC,
@@ -155,19 +155,14 @@ void weak_memory(
   // all access to shared variables is pushed into assignments
   Forall_goto_functions(f_it, goto_functions)
     if(f_it->first!=CPROVER_PREFIX "initialize" &&
-      f_it->first!=goto_functionst::entry_point())
-      introduce_temporaries(value_sets, symbol_table, f_it->first, 
-        f_it->second.body, 
-#ifdef LOCAL_MAY
-        f_it->second,
-#endif
-        message);
-
-  message.status() << "Temp added" << messaget::eom;
+      f_it->first!=ID_main)
+      introduce_temporaries(may_alias, symbol_table, f_it->first, 
+        f_it->second.body, message);
+  message.status()<<"Temp added"<<messaget::eom;
 
   unsigned max_thds = 0;
   instrumentert instrumenter(symbol_table, goto_functions, message);
-  max_thds=instrumenter.build_event_graph(value_sets, model, no_dependencies,
+  max_thds=instrumenter.build_event_graph(may_alias, model, no_dependencies,
     duplicate_body);
   message.status()<<"abstraction completed"<< messaget::eom;
 
@@ -243,7 +238,7 @@ void weak_memory(
   shared_buffers.cycles_r_loc = instrumenter.id2cycloc; // places in the cycles
 
   // for reads delays
-  shared_buffers.affected_by_delay(symbol_table,value_sets,goto_functions);
+  shared_buffers.affected_by_delay(symbol_table,may_alias,goto_functions);
 
   for(std::set<irep_idt>::iterator it=
     shared_buffers.affected_by_delay_set.begin(); 
@@ -264,7 +259,7 @@ void weak_memory(
 
   shared_bufferst::cfg_visitort visitor(shared_buffers, symbol_table, 
     goto_functions);
-  visitor.weak_memory(value_sets, goto_functions.entry_point(), model);
+  visitor.weak_memory(may_alias, goto_functions.entry_point(), model);
 
   /* removes potential skips */
   Forall_goto_functions(f_it, goto_functions)
