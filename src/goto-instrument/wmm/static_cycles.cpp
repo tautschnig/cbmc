@@ -402,7 +402,7 @@ void static_cyclest::collect_cycles_in_group(
            << "\"";
         
         ss << "," << j.nl()
-           << "\"read?\" : "
+           << "\"read?\"  : "
            << (it->is_read() ? "true" : "false");
         
         ss << "," << j.nl()
