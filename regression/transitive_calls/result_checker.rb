@@ -88,4 +88,4 @@ results  = JSON.parse (File.read result_file)
 expected = JSON.parse (File.read expected_file)
 
 all_ok = compare_results results, expected
-note "All tests passed for #{$test_name}" if all_ok
+note "All tests passed" if all_ok

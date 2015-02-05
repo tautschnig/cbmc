@@ -89,6 +89,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "code_contracts.h"
 #include "check_invariant.h"
 #include "wmm/static_cycles.h"
+#include "spawned_funs.h"
 
 /*******************************************************************\
 
@@ -172,7 +173,7 @@ int goto_instrument_parse_optionst::doit()
       return 0;
     }
   
-    if(cmdline.isset("thread-functions"))
+    if(cmdline.isset("transitive-calls"))
     {
       namespacet ns(symbol_table);
 
@@ -181,6 +182,19 @@ int goto_instrument_parse_optionst::doit()
       transitive_callst transitive_calls(goto_functions, ns);
 
       std::cout << transitive_calls.to_json() << "\n";
+
+      return 0;
+    }
+  
+    if(cmdline.isset("spawned-functions"))
+    {
+      namespacet ns(symbol_table);
+
+      prepare_for_static_cycles(ns, goto_functions);
+
+      spawned_funst spawned_funs(goto_functions, ns);
+
+      std::cout << spawned_funs.to_json() << "\n";
 
       return 0;
     }
@@ -1495,7 +1509,8 @@ void goto_instrument_parse_optionst::help()
     " --render-cluster-file        clusterises the dot by files\n"
     " --render-cluster-function    clusterises the dot by functions\n"
     " --static-cycles              identify potentially critical cycles\n"
-    " --thread-functions           output list of C functions, grouped by thread\n"
+    " --transitive-calls           output what C functions are called by which others\n"
+    " --spawned-functions          output what C functions are spawned as threads\n"
     " --event-functions            output list of C functions containing events\n"
     "\n"
     "Slicing:\n"
