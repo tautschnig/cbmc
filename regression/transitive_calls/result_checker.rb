@@ -65,7 +65,7 @@ def compare_result real, expected
     found = false
     expected_calls.collect {|e| found = true if fun_eql e, real_call}
     unless found
-      unless fun_name == "c::main"
+      unless fun_name == "main"
         all_ok = false
         warn "#{real_call} called from #{fun_name} (unexpected)"
       end
@@ -96,14 +96,14 @@ def compare_results results, expected
   # Now ensure that main transitively called everything
   all_funs = all_funs.to_a
   all_funs.delete "__actual_thread_spawn"
-  all_funs.delete "c::__actual_thread_spawn"
-  all_funs.delete "c::__CPROVER_initialize"
-  all_funs.delete "c::main"
-  all_funs.delete "c::pthread_create"
+  all_funs.delete "__actual_thread_spawn"
+  all_funs.delete "__CPROVER_initialize"
+  all_funs.delete "main"
+  all_funs.delete "pthread_create"
   all_funs.delete "main"
   main_exp = {"function_name"=>"main", "called_functions"=>all_funs}
 
-  main_real = results.select {|i| i["function_name"] == "c::main"}
+  main_real = results.select {|i| i["function_name"] == "main"}
   (eror main_real; exit 1) if main_real.length != 1
   main_real = main_real[0]
 

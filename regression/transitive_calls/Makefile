@@ -3,7 +3,7 @@ MAKEFLAGS=-j
 # Change for your environment
 CPROVER_ROOT=/home/kareem/doc/cbmc
 GOTO_IN=$(CPROVER_ROOT)/src/goto-instrument/goto-instrument
-GOTO_CC=$(CPROVER_ROOT)/src/goto-cc/goto-cc
+GOTO_CC=$(CPROVER_ROOT)/src/goto-cc/goto-gcc
 
 # The goto binary that each C file will be compiled into
 TEST_GOTO=test.goto

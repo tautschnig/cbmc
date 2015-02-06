@@ -47,6 +47,7 @@ void transitive_callst::populate_initial(
     const symbolt &fun_symbol = ns.lookup(it->first);
     const namet fun_name = as_string(fun_symbol.name);
 
+
     if(not_interested_in(fun_name))
       continue;
 
@@ -55,6 +56,7 @@ void transitive_callst::populate_initial(
     if(it->second.body_available())
     {
       worklist.push_front(fun_name);
+
 
       const instructionst &instructions = it->second.body.instructions;
       instructionst::const_iterator ins;
@@ -85,7 +87,7 @@ transitive_callst::namet transitive_callst::function_of_instruction(
   const namet &call_name =
     as_string(to_symbol_expr(function).get_identifier());
 
-  if(call_name.compare("c::pthread_create") != 0)
+  if(call_name.compare("pthread_create") != 0)
   {
     return call_name;
   }
@@ -114,9 +116,9 @@ inline bool transitive_callst::not_interested_in(
     const namet &function
 ){
   return
-     ( function.compare("c::__CPROVER_initialize")  ==  0
-    || function.compare("c::__actual_thread_spawn")  ==  0
-    || function.compare("main")  ==  0
+     ( function.compare("__CPROVER_initialize")  ==  0
+    || function.compare("__actual_thread_spawn")  ==  0
+    || function.compare(id2string(goto_functions.entry_point()))  ==  0
     );
 }
 
@@ -138,7 +140,7 @@ void transitive_callst::propagate_calls(
     namet work_item = marked.front();
     marked.pop_front();
     name_sett &work_bucket = call_map[work_item];
-    
+
     name_sett::iterator call;
     for(call = work_bucket.begin(); call != work_bucket.end(); call++)
     {
@@ -156,6 +158,7 @@ void transitive_callst::propagate_calls(
                          call_bucket.begin(), call_bucket.end()))
           continue;
 
+        name_sett::iterator bi;
         std::copy(call_bucket.begin(), call_bucket.end(),
                   std::inserter(work_bucket, work_bucket.begin()));
 

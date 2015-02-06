@@ -115,16 +115,17 @@ void instrumentert::extract_events_rw(
 {
   const goto_programt::instructiont &instruction=*target;
 
-  rw_set_loct rw_set(ns, may_alias, target);
+  rw_range_set_dereft rw_set(ns, may_alias);
+  goto_rw(target, rw_set);
 
   /* Read (Rb) */
-  forall_rw_set_r_entries(r_it, rw_set)
+  forall_rw_range_set_r_objects(r_it, rw_set)
   {
     /* creates Read:
        read is the irep_id of the read in the code;
        new_read_event is the corresponding abstract event;
        new_read_node is the node in the graph */
-    const irep_idt& read=r_it->second.object;
+    const irep_idt& read=r_it->first;
 
     /* skip local variables */
     if(local(read))
@@ -152,13 +153,13 @@ void instrumentert::extract_events_rw(
   }
 
   /* Write (Wa) */
-  forall_rw_set_w_entries(w_it, rw_set)
+  forall_rw_range_set_w_objects(w_it, rw_set)
   {
     /* creates Write:
        write is the irep_id in the code;
        new_write_event is the corresponding abstract event;
        new_write_node is the node in the graph */
-    const irep_idt& write = w_it->second.object;
+    const irep_idt& write = w_it->first;
     /* skip local variables */
     if(local(write))
       continue;
@@ -188,11 +189,11 @@ void instrumentert::extract_events_rw(
   if(target->is_assign() &&
      !no_dependencies)
   {
-    forall_rw_set_w_entries(write_it, rw_set)
-      forall_rw_set_r_entries(read_it, rw_set)
+    forall_rw_range_set_w_objects(write_it, rw_set)
+      forall_rw_range_set_r_objects(read_it, rw_set)
       {
-        const irep_idt& write=write_it->second.object;
-        const irep_idt& read=read_it->second.object;
+        const irep_idt& write=write_it->first;
+        const irep_idt& read=read_it->first;
         message.debug()<<"dp: Write:"<<write<<"; Read:"<<read << messaget::eom;
         const datat read_p(read,instruction.source_location);
         const datat write_p(write,instruction.source_location);
@@ -200,11 +201,11 @@ void instrumentert::extract_events_rw(
         }
     data_dp.dp_merge();
 
-    forall_rw_set_r_entries(read2_it, rw_set)
-      forall_rw_set_r_entries(read_it, rw_set)
+    forall_rw_range_set_r_objects(read2_it, rw_set)
+      forall_rw_range_set_r_objects(read_it, rw_set)
       {
-        const irep_idt& read2=read2_it->second.object;
-        const irep_idt& read=read_it->second.object;
+        const irep_idt& read2=read2_it->first;
+        const irep_idt& read=read_it->first;
         if(read2==read)
           continue;
         const datat read_p(read,instruction.source_location);

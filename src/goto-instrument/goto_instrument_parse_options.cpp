@@ -208,6 +208,8 @@ int goto_instrument_parse_optionst::doit()
 
       transitive_callst transitive_calls(goto_functions, ns);
 
+      transitive_calls();
+
       std::cout << transitive_calls.to_json() << "\n";
 
       return 0;
