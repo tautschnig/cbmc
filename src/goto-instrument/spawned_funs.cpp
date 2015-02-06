@@ -16,7 +16,7 @@ spawned_funst::spawned_funst(
 {
   function_mapt &fun_map = goto_functions.function_map;
 
-  spawned_functions.insert("c::main");
+  spawned_functions.insert("main");
 
   function_mapt::const_iterator it;
   for(it = fun_map.begin(); it != fun_map.end(); it++)
@@ -36,7 +36,7 @@ spawned_funst::spawned_funst(
       const std::string &call_name =
         as_string(to_symbol_expr(function).get_identifier());
 
-      if(call_name.compare("c::pthread_create"))
+      if(call_name.compare("pthread_create"))
         continue;
 
       spawned_functions.insert(
@@ -56,8 +56,8 @@ std::string spawned_funst::function_pointer_of_pthread_create(
   const std::string &call_name =
     as_string(to_symbol_expr(function).get_identifier());
 
-  if(call_name.compare("c::pthread_create"))
-    throw "Instruction doesn't look like a pthread_create";
+  if(call_name.compare("pthread_create"))
+    throw "Instruction dn't look like a pthread_create";
 
   const argumentst &args =
     to_code_function_call(pthread_create.code).arguments();
