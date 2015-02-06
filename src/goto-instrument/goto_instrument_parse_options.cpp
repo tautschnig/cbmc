@@ -34,6 +34,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/parameter_assignments.h>
 #include <goto-programs/transitive_calls.h>
 #include <goto-programs/spawn_marker.h>
+#include <goto-programs/graph_transitive.h>
 #include <goto-programs/graph_specialisations.h>
 
 #include <pointer-analysis/value_set_analysis.h>
@@ -166,6 +167,17 @@ int goto_instrument_parse_optionst::doit()
 
     get_goto_program();
     instrument_goto_program();
+
+    if(cmdline.isset("graph-transitive"))
+    {
+      graph_transitivet gt(ns, goto_functions);
+
+      gt();
+
+      gt.output();
+
+      return 0;
+    }
 
     if(cmdline.isset("static-cycles")
     || cmdline.isset("output-event-source-locations")

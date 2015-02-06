@@ -65,7 +65,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(list-symbols)(list-undefined-functions)(cfg-dot)" \
   "(z3)(add-library)(show-dependence-graph)(information-leak-check)" \
   "(horn)(skip-loops):(apply-code-contracts)(static-cycles)(egraph-dump)" \
-  "(fake-static-cycles)"
+  "(fake-static-cycles)(graph-transitive)"
 
 class goto_instrument_parse_optionst:
   public parse_options_baset,
