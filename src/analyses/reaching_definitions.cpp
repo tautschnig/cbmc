@@ -462,34 +462,6 @@ Function: rd_range_domaint::kill
 
 \*******************************************************************/
 
-static inline bool ranges_order(
-  const std::pair<range_spect, range_spect> &a,
-  const range_spect &b)
-{
-  return a.first<b;
-}
-
-#if 0
-static inline rd_range_domaint::rangest::const_iterator ranges_lower_bound(
-  const rd_range_domaint::rangest &r, const range_spect &lb)
-{
-  return std::lower_bound(r.begin(), r.end(), lb, ranges_order);
-}
-#endif
-
-static inline rd_range_domaint::rangest::iterator ranges_lower_bound(
-  rd_range_domaint::rangest &r, const range_spect &lb)
-{
-  return std::lower_bound(r.begin(), r.end(), lb, ranges_order);
-}
-
-#define INSERT(r, p) \
-{ \
-  rangest::iterator it_##r=ranges_lower_bound(r, p.first); \
-  if(it_##r==r.end() || it_##r->first!=p.first) \
-    r.insert(it_##r, p); \
-}
-
 void rd_range_domaint::kill(
   const irep_idt &identifier,
   const range_spect &range_start,
@@ -615,13 +587,13 @@ void rd_range_domaint::kill(
       }
       else if(it->first >= range_start) // rs <= a <= re < b
       {
-        INSERT(ranges, std::make_pair(range_end, it->second));
+        ranges.insert(std::make_pair(range_end, it->second));
         ranges.erase(it++);
       }
       else if(it->second==-1 ||
               it->second > range_end) // a <= rs < re < b
       {
-        INSERT(ranges, std::make_pair(range_end, it->second));
+        ranges.insert(std::make_pair(range_end, it->second));
         it->second=range_start;
         ++it;
       }
@@ -710,7 +682,7 @@ bool rd_range_domaint::gen(
   if(range_start==0 && range_end==0)
     return false;
 
-  return gen(values[identifier][from], from, identifier, range_start, range_end);
+  return gen(values[identifier][from], range_start, range_end);
 }
 
 /*******************************************************************\
@@ -727,8 +699,6 @@ Function: rd_range_domaint::gen
 
 bool rd_range_domaint::gen(
   rangest &ranges,
-  locationt from,
-  const irep_idt &identifier,
   const range_spect &range_start,
   const range_spect &range_end)
 {
@@ -765,7 +735,7 @@ bool rd_range_domaint::gen(
     if(it->second!=-1 && it->second <= range_start)
       ++it;
     else if(range_end!=-1 && it->first >= range_end)
-      ++it;
+      break;
     else if(it->first > range_start) // rs < a < b,re
     {
       if(range_end!=-1)
@@ -788,6 +758,7 @@ bool rd_range_domaint::gen(
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
   ranges.insert(std::make_pair(
       range_start,
       std::make_pair(merged_range_end, from)));
@@ -798,6 +769,9 @@ bool rd_range_domaint::gen(
 =======
   INSERT(ranges, std::make_pair(range_start, merged_range_end));
 >>>>>>> a5fe57b... First proposal for reducing memory footprint of RD
+=======
+  ranges.insert(std::make_pair(range_start, merged_range_end));
+>>>>>>> 9aebd47... Revert "First proposal for reducing memory footprint of RD"
 
   return true;
 }
@@ -992,7 +966,7 @@ bool rd_range_domaint::merge(
           for(rangest::const_iterator itrro=itro->second.begin();
               itrro!=itro->second.end();
               ++itrro)
-            more=gen(itr->second, itr->first, it->first, itrro->first, itrro->second) ||
+            more=gen(itr->second, itrro->first, itrro->second) ||
                  more;
 
           ++itr;
@@ -1104,7 +1078,7 @@ bool rd_range_domaint::merge_shared(
           for(rangest::const_iterator itrro=itro->second.begin();
               itrro!=itro->second.end();
               ++itrro)
-            more=gen(itr->second, itr->first, it->first, itrro->first, itrro->second) ||
+            more=gen(itr->second, itrro->first, itrro->second) ||
                  more;
 
           ++itr;

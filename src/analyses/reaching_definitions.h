@@ -158,7 +158,7 @@ protected:
   typedef hash_map_cont<irep_idt, values_innert, irep_id_hash> valuest;
 =======
   // each element x represents a range of bits [x.first, x.second)
-  typedef std::list<std::pair<range_spect, range_spect> > rangest;
+  typedef std::map<range_spect, range_spect> rangest;
   typedef std::map<locationt, rangest> ranges_at_loct;
   #ifdef USE_DSTRING
   typedef std::map<irep_idt, ranges_at_loct> valuest;
@@ -222,8 +222,6 @@ protected:
     const range_spect &range_end);
   bool gen(
     rangest &ranges,
-  locationt from,
-  const irep_idt &identifier,
     const range_spect &range_start,
     const range_spect &range_end);
 
