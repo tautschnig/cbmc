@@ -33,6 +33,7 @@ Function: rd_range_domaint::populate_cache
 
 \*******************************************************************/
 
+<<<<<<< HEAD
 void rd_range_domaint::populate_cache(const irep_idt &identifier) const
 {
   assert(bv_container);
@@ -47,13 +48,32 @@ void rd_range_domaint::populate_cache(const irep_idt &identifier) const
   for(values_innert::const_iterator
       it=v_entry->second.begin();
       it!=v_entry->second.end();
+=======
+void rd_range_domaint::populate_cache() const
+{
+  if(export_cache_available) return;
+
+  export_cache.clear();
+  assert(bv_container);
+
+  for(valuest::const_iterator it=values.begin();
+      it!=values.end();
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
       ++it)
   {
     const reaching_definitiont &v=bv_container->get(*it);
 
+<<<<<<< HEAD
     export_entry[v.definition_at].insert(
       std::make_pair(v.bit_begin, v.bit_end));
   }
+=======
+    export_cache[v.identifier][v.definition_at][v.bit_begin]=
+      v.bit_end;
+  }
+
+  export_cache_available=true;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 }
 
 /*******************************************************************\
@@ -156,6 +176,7 @@ void rd_range_domaint::transform_dead(
   const irep_idt& identifier=
     to_symbol_expr(to_code_dead(from->code).symbol()).get_identifier();
 
+<<<<<<< HEAD
   valuest::iterator entry=values.find(identifier);
 
   if(entry!=values.end())
@@ -163,6 +184,22 @@ void rd_range_domaint::transform_dead(
     values.erase(entry);
     export_cache.erase(identifier);
   }
+=======
+  for(valuest::iterator it=values.begin();
+      it!=values.end();
+      ) // no ++it
+    if(bv_container->get(*it).identifier==identifier)
+    {
+      export_cache_available=false;
+
+      valuest::iterator next=it;
+      ++next;
+      values.erase(it);
+      it=next;
+    }
+    else
+      ++it;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 }
 
 /*******************************************************************\
@@ -185,12 +222,20 @@ void rd_range_domaint::transform_start_thread(
       it!=values.end();
       ) // no ++it
   {
+<<<<<<< HEAD
     const irep_idt &identifier=it->first;
+=======
+    const irep_idt &identifier=bv_container->get(*it).identifier;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
     if(!ns.lookup(identifier).is_shared() &&
        !rd.get_is_dirty()(identifier))
     {
+<<<<<<< HEAD
       export_cache.erase(identifier);
+=======
+      export_cache_available=false;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
       valuest::iterator next=it;
       ++next;
@@ -239,7 +284,11 @@ void rd_range_domaint::transform_function_call(
         it!=values.end();
        ) // no ++it
     {
+<<<<<<< HEAD
       const irep_idt &identifier=it->first;
+=======
+      const irep_idt &identifier=bv_container->get(*it).identifier;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
       // dereferencing may introduce extra symbols
       const symbolt *sym;
@@ -247,7 +296,11 @@ void rd_range_domaint::transform_function_call(
           !sym->is_shared()) &&
          !rd.get_is_dirty()(identifier))
       {
+<<<<<<< HEAD
         export_cache.erase(identifier);
+=======
+        export_cache_available=false;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
         valuest::iterator next=it;
         ++next;
@@ -309,6 +362,8 @@ void rd_range_domaint::transform_end_function(
   --call;
   const code_function_callt &code=to_code_function_call(call->code);
 
+  export_cache_available=false;
+
   valuest new_values;
   new_values.swap(values);
   values=rd[call].values;
@@ -318,9 +373,10 @@ void rd_range_domaint::transform_end_function(
       it!=new_values.end();
       ++it)
   {
-    const irep_idt &identifier=it->first;
+    const reaching_definitiont &v=bv_container->get(*it);
 
     if(!rd.get_is_threaded()(call) ||
+<<<<<<< HEAD
        (!ns.lookup(identifier).is_shared() &&
         !rd.get_is_dirty()(identifier)))
 <<<<<<< HEAD
@@ -362,6 +418,13 @@ void rd_range_domaint::transform_end_function(
           ++r_it)
         gen(itl->first, identifier, r_it->first, r_it->second);
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
+=======
+       (!ns.lookup(v.identifier).is_shared() &&
+        !rd.get_is_dirty()(v.identifier)))
+      kill(v.identifier, v.bit_begin, v.bit_end);
+
+    gen(v.definition_at, v.identifier, v.bit_begin, v.bit_end);
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   }
 
   const code_typet &code_type=
@@ -372,6 +435,7 @@ void rd_range_domaint::transform_end_function(
       p_it!=parameters.end();
       ++p_it)
   {
+<<<<<<< HEAD
     const irep_idt &identifier=p_it->get_identifier();
 
     if(identifier.empty())
@@ -384,6 +448,25 @@ void rd_range_domaint::transform_end_function(
       values.erase(entry);
       export_cache.erase(identifier);
     }
+=======
+    if(p_it->get_identifier().empty())
+      continue;
+
+    const irep_idt &identifier=p_it->get_identifier();
+
+    for(valuest::iterator it=values.begin();
+        it!=values.end();
+       ) // no ++it
+      if(bv_container->get(*it).identifier==identifier)
+      {
+        valuest::iterator next=it;
+        ++next;
+        values.erase(it);
+        it=next;
+      }
+      else
+        ++it;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   }
 
   // handle return values
@@ -477,10 +560,9 @@ void rd_range_domaint::kill(
 
   assert(range_end>range_start);
 
-  valuest::iterator entry=values.find(identifier);
-  if(entry==values.end())
-    return;
+  valuest new_values;
 
+<<<<<<< HEAD
 <<<<<<< HEAD
   bool clear_export_cache=false;
   values_innert new_values;
@@ -567,49 +649,80 @@ void rd_range_domaint::kill(
   for(ranges_at_loct::iterator itl=entry->second.begin();
       itl!=entry->second.end();
      ) // no ++itl
+=======
+  for(valuest::iterator it=values.begin();
+      it!=values.end();
+     ) // no ++it
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   {
-    rangest &ranges=itl->second;
+    const reaching_definitiont &v=bv_container->get(*it);
 
-    for(rangest::iterator it=ranges.begin();
-        it!=ranges.end();
-       ) // no ++it
+    if(v.identifier!=identifier)
+      ++it;
+    else if(v.bit_begin >= range_end)
+      ++it;
+    else if(v.bit_end!=-1 &&
+            v.bit_end <= range_start)
+      ++it;
+    else if(v.bit_begin >= range_start &&
+            v.bit_end!=-1 &&
+            v.bit_end <= range_end) // rs <= a < b <= re
     {
-      if(it->first >= range_end)
-        break;
-      else if(it->second!=-1 &&
-              it->second <= range_start)
-        ++it;
-      else if(it->first >= range_start &&
-              it->second!=-1 &&
-              it->second <= range_end) // rs <= a < b <= re
-      {
-        ranges.erase(it++);
-      }
-      else if(it->first >= range_start) // rs <= a <= re < b
-      {
-        ranges.insert(std::make_pair(range_end, it->second));
-        ranges.erase(it++);
-      }
-      else if(it->second==-1 ||
-              it->second > range_end) // a <= rs < re < b
-      {
-        ranges.insert(std::make_pair(range_end, it->second));
-        it->second=range_start;
-        ++it;
-      }
-      else // a <= rs < b <= re
-      {
-        it->second=range_start;
-        ++it;
-      }
-    }
+      export_cache_available=false;
 
+      values.erase(it++);
+    }
+    else if(v.bit_begin >= range_start) // rs <= a <= re < b
+    {
+      export_cache_available=false;
+
+<<<<<<< HEAD
     if(ranges.empty())
       entry->second.erase(itl++);
     else
       ++itl;
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
+=======
+      reaching_definitiont v_new=v;
+      v_new.bit_begin=range_end;
+      new_values.insert(bv_container->add(v_new));
+
+      values.erase(it++);
+    }
+    else if(v.bit_end==-1 ||
+            v.bit_end > range_end) // a <= rs < re < b
+    {
+      export_cache_available=false;
+
+      reaching_definitiont v_new=v;
+      v_new.bit_end=range_start;
+      new_values.insert(bv_container->add(v_new));
+
+      reaching_definitiont v_new2=v;
+      v_new2.bit_begin=range_end;
+      new_values.insert(bv_container->add(v_new2));
+
+      values.erase(it++);
+    }
+    else // a <= rs < b <= re
+    {
+      export_cache_available=false;
+
+      reaching_definitiont v_new=v;
+      v_new.bit_end=range_start;
+      new_values.insert(bv_container->add(v_new));
+
+      values.erase(it++);
+    }
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   }
+
+  for(valuest::iterator it=new_values.begin();
+      it!=new_values.end();
+      ++it)
+    export_cache_available=
+      !new_values.insert(*it).second &&
+      export_cache_available;
 }
 
 /*******************************************************************\
@@ -682,28 +795,9 @@ bool rd_range_domaint::gen(
   if(range_start==0 && range_end==0)
     return false;
 
-  return gen(values[identifier][from], range_start, range_end);
-}
-
-/*******************************************************************\
-
-Function: rd_range_domaint::gen
-
-  Inputs:
-
- Outputs:
-
- Purpose:
-
-\*******************************************************************/
-
-bool rd_range_domaint::gen(
-  rangest &ranges,
-  const range_spect &range_start,
-  const range_spect &range_end)
-{
   assert(range_start>=0);
 
+<<<<<<< HEAD
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   // objects of size 0 like union U { signed : 0; };
   if(range_start==0 && range_end==0)
@@ -711,6 +805,8 @@ bool rd_range_domaint::gen(
 
   assert(range_start>=0);
 
+=======
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   // -1 for objects of infinite/unknown size
   assert(range_end>range_start || range_end==-1);
 
@@ -719,6 +815,7 @@ bool rd_range_domaint::gen(
   v.definition_at=from;
   v.bit_begin=range_start;
   v.bit_end=range_end;
+<<<<<<< HEAD
 
   if(!values[identifier].insert(bv_container->add(v)).second)
     return false;
@@ -727,35 +824,13 @@ bool rd_range_domaint::gen(
 
 #if 0
   range_spect merged_range_end=range_end;
+=======
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
-  for(rangest::iterator it=ranges.begin();
-      it!=ranges.end();
-     ) // no ++it
-  {
-    if(it->second!=-1 && it->second <= range_start)
-      ++it;
-    else if(range_end!=-1 && it->first >= range_end)
-      break;
-    else if(it->first > range_start) // rs < a < b,re
-    {
-      if(range_end!=-1)
-        merged_range_end=std::max(range_end, it->second);
-      ranges.erase(it++);
-    }
-    else if(it->second==-1 ||
-            (range_end!=-1 &&
-             it->second >= range_end)) // a <= rs < re <= b
-    {
-      // nothing to do
-      return false;
-    }
-    else // a <= rs < b < re
-    {
-      it->second=range_end;
-      return true;
-    }
-  }
+  if(!values.insert(bv_container->add(v)).second)
+    return false;
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -772,6 +847,9 @@ bool rd_range_domaint::gen(
 =======
   ranges.insert(std::make_pair(range_start, merged_range_end));
 >>>>>>> 9aebd47... Revert "First proposal for reducing memory footprint of RD"
+=======
+  export_cache_available=false;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
   return true;
 }
@@ -790,10 +868,12 @@ Function: rd_range_domaint::output
 
 void rd_range_domaint::output(std::ostream &out) const
 {
+  populate_cache();
+
   out << "Reaching definitions:" << std::endl;
-  for(valuest::const_iterator
-      it=values.begin();
-      it!=values.end();
+  for(export_cachet::const_iterator
+      it=export_cache.begin();
+      it!=export_cache.end();
       ++it)
   {
 <<<<<<< HEAD
@@ -930,6 +1010,7 @@ bool rd_range_domaint::merge(
       ito!=other.values.end();
       ++ito)
   {
+#if 0
     while(it!=values.end() && it->first<ito->first)
       ++it;
     if(it==values.end() || ito->first<it->first)
@@ -976,7 +1057,23 @@ bool rd_range_domaint::merge(
 
       ++it;
     }
+#else
+    while(it!=values.end() && *it<*ito)
+      ++it;
+    if(it==values.end() || *ito<*it)
+    {
+      values.insert(*ito);
+      more=true;
+    }
+    else if(it!=values.end())
+    {
+      assert(*it==*ito);
+      ++it;
+    }
+#endif
   }
+
+  export_cache_available=export_cache_available && !more;
 
   return more;
 }
@@ -1036,12 +1133,16 @@ bool rd_range_domaint::merge_shared(
       ++ito)
   {
 <<<<<<< HEAD
+<<<<<<< HEAD
     const irep_idt &identifier=ito->first;
 
     if(!ns.lookup(identifier).is_shared() /*&&
        !rd.get_is_dirty()(identifier)*/)
       continue;
 
+=======
+#if 0
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
     while(it!=values.end() && it->first<ito->first)
       ++it;
     if(it==values.end() || ito->first<it->first)
@@ -1088,14 +1189,41 @@ bool rd_range_domaint::merge_shared(
 
       ++it;
     }
+<<<<<<< HEAD
 =======
     local_may_aliases.insert(
       std::make_pair(f_it->first, local_may_aliast(f_it->second, ns)));
 >>>>>>> 1ed43de... Preparing local_may_aliast for extensibility
+=======
+#else
+    while(it!=values.end() && *it<*ito)
+      ++it;
+    if(it==values.end() || *ito<*it)
+    {
+      if(ns.lookup(bv_container->get(*ito).identifier).is_shared())
+      {
+        values.insert(*ito);
+        more=true;
+      }
+    }
+    else if(it!=values.end() &&
+            !ns.lookup(bv_container->get(*ito).identifier).is_shared())
+    {
+      ++it;
+    }
+    else if(it!=values.end())
+    {
+      assert(*it==*ito);
+      ++it;
+    }
+#endif
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   }
 =======
   may_alias=new may_aliast(goto_functions, ns);
 >>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
+
+  export_cache_available=export_cache_available && !more;
 
   return more;
 }
@@ -1116,16 +1244,26 @@ const rd_range_domaint::ranges_at_loct& rd_range_domaint::get(
   const irep_idt &identifier) const
 {
 <<<<<<< HEAD
+<<<<<<< HEAD
   populate_cache(identifier);
 =======
+=======
+  populate_cache();
+
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   static ranges_at_loct empty;
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
 
+<<<<<<< HEAD
   static ranges_at_loct empty;
 
 <<<<<<< HEAD
   export_cachet::const_iterator entry=export_cache.find(identifier);
 
+=======
+  export_cachet::const_iterator entry=export_cache.find(identifier);
+
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   if(entry==export_cache.end())
     return empty;
   else

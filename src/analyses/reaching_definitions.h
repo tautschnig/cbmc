@@ -92,11 +92,17 @@ class rd_range_domaint:public ai_domain_baset
 public:
   rd_range_domaint():
 <<<<<<< HEAD
+<<<<<<< HEAD
     ai_domain_baset(),
     bv_container(0)
 =======
     may_alias(0)
 >>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
+=======
+    ai_domain_baset(),
+    bv_container(0),
+    export_cache_available(true)
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   {
   }
 
@@ -160,6 +166,7 @@ protected:
   // each element x represents a range of bits [x.first, x.second)
   typedef std::map<range_spect, range_spect> rangest;
   typedef std::map<locationt, rangest> ranges_at_loct;
+<<<<<<< HEAD
   #ifdef USE_DSTRING
   typedef std::map<irep_idt, ranges_at_loct> valuest;
   #else
@@ -167,6 +174,8 @@ protected:
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
   #endif
   valuest values;
+=======
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -181,10 +190,29 @@ protected:
   const ranges_at_loct& get(const irep_idt &identifier) const;
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
 
+<<<<<<< HEAD
   void populate_cache(const irep_idt &identifier) const;
 =======
   may_aliast * may_alias;
 >>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
+=======
+protected:
+  sparse_bitvector_analysist<reaching_definitiont> *bv_container;
+
+  typedef std::set<std::size_t> valuest;
+  valuest values;
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
+
+  #ifdef USE_DSTRING
+  typedef std::map<irep_idt, ranges_at_loct> export_cachet;
+  #else
+  typedef hash_map_cont<irep_idt, ranges_at_loct, irep_id_hash>
+    export_cachet;
+  #endif
+  mutable bool export_cache_available;
+  mutable export_cachet export_cache;
+
+  void populate_cache() const;
 
   void transform_dead(
     const namespacet &ns,
@@ -218,10 +246,6 @@ protected:
   bool gen(
     locationt from,
     const irep_idt &identifier,
-    const range_spect &range_start,
-    const range_spect &range_end);
-  bool gen(
-    rangest &ranges,
     const range_spect &range_start,
     const range_spect &range_end);
 
@@ -260,6 +284,9 @@ public:
   virtual statet &get_state(goto_programt::const_targett l)
   {
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
     statet &s=concurrency_aware_ait<rd_range_domaint>::get_state(l);
 
     rd_range_domaint *rd_state=dynamic_cast<rd_range_domaint*>(&s);
@@ -268,9 +295,12 @@ public:
     rd_state->set_bitvector_container(*this);
 
     return s;
+<<<<<<< HEAD
 =======
     throw "reaching definitions uses may_aliast, cannot be used on goto_programt";
 >>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
+=======
+>>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
   }
 
   rd_dereferencet &get_rd_dereference() const
