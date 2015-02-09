@@ -63,8 +63,14 @@ protected:
    */
   virtual std::string escape(std::string str) = 0;
 
+  /**@brief A string to be prepended to every instruction printed
+   *        using this pretty-printer
+   */
   virtual std::string pre_string(goto_programt::const_targett ins)
   { return ""; }
+  /**@brief A string to be appended to every instruction printed
+   *        using this pretty-printer
+   */
   virtual std::string post_string(goto_programt::const_targett ins)
   { return ""; }
 
@@ -108,6 +114,12 @@ protected:
   
 };
 
+/**@brief Generic pretty-printing of instructions
+ *
+ * This pretty-printer outputs a prettier representation of
+ * instructions suitable for debugging. Calling operator()() on an
+ * instruction returns a prettified representation of it.
+ */
 class plain_pretty_instructiont: public pretty_instruction_baset
 {
 
@@ -136,11 +148,26 @@ protected:
   std::string pretty_start_thread(goto_programt::const_targett instruction);
   std::string pretty_end_thread(goto_programt::const_targett instruction);
   std::string pretty_end_function(goto_programt::const_targett instruction);
+  
+  /**@brief Returns `str` unmodified. */
   inline std::string escape(std::string str);
+  /**@brief Prepends nothing to the pretty representation of
+   * `instruction`.
+   */
   inline std::string pre_string(goto_programt::const_targett instruction);
+  /**@brief Appends nothing to the pretty representation of
+   * `instruction`.
+   */
   inline std::string post_string(goto_programt::const_targett instruction);
 };
 
+/**@brief Pretty-printing instructions to DOT files
+ *
+ * This pretty-printer outputs instructions in a format suitable for
+ * adding to the labels of DOT-formatted files. Calling operator()()
+ * on an instruction returns a prettified version of that instruction,
+ * including all necessary escape sequences.
+ */
 class cfg_pretty_instructiont: public plain_pretty_instructiont
 {
 
@@ -149,9 +176,15 @@ public:
     plain_pretty_instructiont(_ns) {}
 
 protected:
-  /// @brief Returns a version of `str` suitable for DOT files
+  /**@brief Returns a version of `str` suitable for DOT files. */
   std::string escape(std::string str);
+  /**@brief Prepends `instruction`'s location number to the pretty
+   * representation of `instruction`.
+   */
   std::string pre_string(goto_programt::const_targett instruction);
+  /**@brief Appends nothing to the pretty representation of
+   * `instruction`.
+   */
   std::string post_string(goto_programt::const_targett instruction);
 };
 
