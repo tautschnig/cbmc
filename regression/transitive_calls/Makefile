@@ -36,5 +36,20 @@ test_%: %/result.json %/expected.json
 
 .SECONDAY: $(GOTOS)
 
+$(GOTO_IN):
+	@if ! stat $(GOTO_IN) 2>/dev/null >/dev/null; then \
+		echo -e "\n\ngoto-instrument not found, please add the correct path to \
+goto-instrument in the Makefile\n\n"; \
+		exit 1; \
+		fi
+
+$(GOTO_CC):
+	@if ! stat $(GOTO_CC) 2>/dev/null >/dev/null; then \
+		echo -e "\n\ngoto-instrument not found, please add the correct path to \
+goto-instrument in the Makefile\n\n"; \
+		exit 1; \
+		fi
+
+
 clean:
 	-rm $(GOTOS)
