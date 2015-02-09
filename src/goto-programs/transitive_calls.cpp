@@ -1,6 +1,6 @@
 /** @file   transitive_calls.cpp
  *  @author Kareem Khazem <karkhaz@karkhaz.com>
- *  @date   2014
+ *  @date   2015
  *
  *  If making changes to this file, please run the regression tests at
  *  regression/transitive_calls. The tests should all pass.
@@ -8,37 +8,23 @@
  *  If you discover a bug, please add a regression that fails due to
  *  the bug.
  */
-#include <util/dstring.h>
-#include <util/json_utils.h>
-#include <langapi/language_util.h>
-
 #include "transitive_calls.h"
 
+#include <util/dot.h>
+#include <util/json_utils.h>
+
 #include <iostream>
-#include <algorithm>
-
-transitive_callst::transitive_callst(
-  goto_functionst &_gf
-, namespacet &_ns
-) : goto_functions(_gf)
-  , ns(_ns)
-  , call_map()
-{
-}
-
+#include <sstream>
 
 void transitive_callst::operator()()
 {
-  name_listt worklist;
-
-  populate_initial(worklist);
-  propagate_calls(worklist);
+  add_functions();
+  add_calls();
 }
 
 
-void transitive_callst::populate_initial(
-   name_listt &worklist
-){
+void transitive_callst::add_functions()
+{
   function_mapt &fun_map = goto_functions.function_map;
 
   function_mapt::const_iterator it;
@@ -47,16 +33,33 @@ void transitive_callst::populate_initial(
     const symbolt &fun_symbol = ns.lookup(it->first);
     const namet fun_name = as_string(fun_symbol.name);
 
-
     if(not_interested_in(fun_name))
       continue;
 
-    name_sett bucket;
+    unsigned node_number = g.add_node();
+    g[node_number].name() = fun_name;
+
+    fun2graph.insert(std::make_pair(fun_name, node_number));
+  }
+}
+
+
+void transitive_callst::add_calls()
+{
+  function_mapt &fun_map = goto_functions.function_map;
+
+  function_mapt::const_iterator it;
+  for(it = fun_map.begin(); it != fun_map.end(); it++)
+  {
+    const symbolt &caller_symbol = ns.lookup(it->first);
+    const namet caller_name = as_string(caller_symbol.name);
+
+    if(not_interested_in(caller_name))
+      continue;
 
     if(it->second.body_available())
     {
-      worklist.push_front(fun_name);
-
+      unsigned caller_number = fun2graph[caller_name];
 
       const instructionst &instructions = it->second.body.instructions;
       instructionst::const_iterator ins;
@@ -65,24 +68,29 @@ void transitive_callst::populate_initial(
         if(!ins->is_function_call())
           continue;
 
-        namet child_name = function_of_instruction(*ins);
-        if(not_interested_in(child_name))
-          continue;
+        namet child_name = name_of_call(*ins);
+        if(not_interested_in(child_name)
+        || (child_name.compare("") == 0)
+        ) continue;
 
-        bucket.insert(child_name);
+        unsigned child_number = fun2graph[child_name];
+
+        g.add_edge(caller_number, child_number);
       }
     }
-
-    call_map.insert(std::make_pair(fun_name, bucket));
   }
 }
 
 
-transitive_callst::namet transitive_callst::function_of_instruction(
-    const instructiont &instruction
-){
+transitive_callst::namet transitive_callst::name_of_call(
+    const instructiont &instruction)
+{
+
   const exprt &function =
     to_code_function_call(instruction.code).function();
+
+  if(function.id() != ID_symbol)
+    return "";
 
   const namet &call_name =
     as_string(to_symbol_expr(function).get_identifier());
@@ -112,98 +120,127 @@ transitive_callst::namet transitive_callst::function_of_instruction(
 }
 
 
-inline bool transitive_callst::not_interested_in(
-    const namet &function
-){
+bool transitive_callst::not_interested_in(namet fun_name)
+{
   return
-     ( function.compare("__CPROVER_initialize")  ==  0
-    || function.compare("__actual_thread_spawn")  ==  0
-    || function.compare(id2string(goto_functions.entry_point()))  ==  0
+     ( fun_name.compare("__CPROVER_initialize")  ==  0
+    || fun_name.compare("__actual_thread_spawn")  ==  0
+    || fun_name.compare(id2string(goto_functions.entry_point()))  ==  0
     );
 }
 
 
-void transitive_callst::propagate_calls(
-   name_listt &marked
-){
-  /* Algorithm:
-   *  Initially, all functions have been marked.
-   *  For each function F that has been marked
-   *    For each function C called by F (i.e. C is in the bucket of F)
-   *      If C has been marked
-   *        Copy all functions called by C into the bucket of F
-   *        If the bucket of F has changed
-   *          mark F
-   */
-  while(!marked.empty())
+void transitive_callst::output_dot(std::ostream &out)
+{
+  digraph_factoryt<int> fact;
+
+  for(unsigned i = 0; i < g.size(); i++)
   {
-    namet work_item = marked.front();
-    marked.pop_front();
-    name_sett &work_bucket = call_map[work_item];
-
-    name_sett::iterator call;
-    for(call = work_bucket.begin(); call != work_bucket.end(); call++)
+    fact.node(i).set("label", g[i].name());
+    for(unsigned j = 0; j < g.size(); j++)
     {
-      if(std::find(marked.begin(), marked.end(), *call)
-          != marked.end())
+      if(g.has_edge(i, j))
       {
-        name_sett &call_bucket = call_map[*call];
-
-        /* Optimisation: if everything in the call list of the
-         * called function we're looking at is already in the bucket
-         * of the caller, then there's no need to put the caller back
-         * in the marked list, or to copy the call list of the called
-         * function into the bucket of the caller. */
-        if(std::includes(work_bucket.begin(), work_bucket.end(),
-                         call_bucket.begin(), call_bucket.end()))
-          continue;
-
-        name_sett::iterator bi;
-        std::copy(call_bucket.begin(), call_bucket.end(),
-                  std::inserter(work_bucket, work_bucket.begin()));
-
-        /* Optimisation: functions don't have to be in the `marked'
-         * list more than once. However, we do need to add the
-         * function to the _back_ of the marked list. So, erase all
-         * ocurrences of the function in the marked list before
-         * adding it to the back */
-        std::remove(marked.begin(), marked.end(), work_item);
-        marked.push_back(work_item);
+        fact.edge(i, j);
       }
+    }
+  }
+
+  fact.output(out);
+}
+
+
+void transitive_callst::output_json(std::ostream &out)
+{
+  std::stringstream ss;
+  json_utilt f(2);
+  
+  ss << "[" << f.ind();
+
+  unsigned g_size = g.size();
+
+  for(unsigned i = 0; i < g_size; i++)
+  {
+    ss << "{" << f.ind();
+    ss << "\"function_name\" : \"" << g[i].name() << "\",";
+    ss << f.nl() << "\"called_functions\" : [" << f.ind();
+
+    namest called_funs;
+    get_transitive_calls(g[i].name(), called_funs);
+
+    namest::iterator call;
+    for(call = called_funs.begin(); call != called_funs.end(); call++)
+    {
+      ss << "\"" << *call << "\"";
+
+      if(call != called_funs.end() && (call != --called_funs.end()))
+        ss << "," << f.nl();
+    }
+
+    ss << f.und() << "]";
+
+    ss << f.und() << "}";
+
+    if(i < g_size - 1)
+      ss << "," << f.nl();
+  }
+  
+  ss << f.und() << "]";
+  ss << f.nl();
+
+  out << ss.str();
+}
+
+
+void transitive_callst::get_transitive_calls(
+  namet &function,
+  namest &calls
+){
+
+  clear_visited();
+
+  assert(fun2graph.find(function) != fun2graph.end());
+
+  unsigned function_node = fun2graph[function];
+  std::list<unsigned> worklist;
+  worklist.push_back(function_node);
+
+  /* Usually, `function' will only be on the worklist once. If we see
+   * it on the worklist a second time, then it must have transitively
+   * called itself. Only add `function' to `calls' under that
+   * circumstance.
+   */
+  bool function_seen_once = false;
+
+  while(!worklist.empty())
+  {
+    unsigned work_item = worklist.front();
+    worklist.pop_front();
+
+    if(work_item != function_node
+    || function_seen_once)
+      g[work_item].visited = true;
+    else
+      function_seen_once = true;
+
+    for(unsigned i = 0; i < g.size(); i++)
+    {
+      if(g[i].visited)
+        continue;
+
+      if(g.has_edge(work_item, i))
+      {
+        worklist.push_back(i);
+        calls.push_back(g[i].name());
+      }
+
     }
   }
 }
 
 
-std::string transitive_callst::to_json()
+void transitive_callst::clear_visited()
 {
-  std::stringstream ret;
-  json_utilt fmt(2);
-  ret << "[" << fmt.ind();
-  call_mapt::iterator it;
-  for(it = call_map.begin(); it != call_map.end(); it++)
-  {
-    ret << "{" << fmt.ind();
-    ret << "\"function_name\" : \"" << it->first << "\",";
-    ret << fmt.nl() << "\"called_functions\" : [";
-    ret << fmt.ind();
-
-    std::set<std::string>::iterator call_it;
-    for(call_it  = it->second.begin();
-        call_it != it->second.end();
-        call_it++)
-    {
-      ret << "\"" << *call_it << "\"";
-      if(call_it != it->second.end() && (call_it != --it->second.end()))
-        ret << "," << fmt.nl();
-    }
-  
-    ret << fmt.und() << "]";
-    ret << fmt.und() << "}";
-    if(it != call_map.end() && (it != --call_map.end())){
-      ret << "," << fmt.nl();
-    }
-  }
-  ret << fmt.und() << "]";
-  return ret.str();
+  for(unsigned i = 0; i < g.size(); i++)
+    g[i].visited = false;
 }

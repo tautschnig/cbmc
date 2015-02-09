@@ -1,0 +1,19 @@
+[
+  {
+    "function_name" : "bar",
+    "called_functions" : [
+      "baz"
+    ]
+  },
+  {
+    "function_name" : "foo",
+    "called_functions" : [
+      "quux"
+    ]
+  },
+  {
+    "function_name" : "main",
+    "called_functions" : [
+    ]
+  }
+]
