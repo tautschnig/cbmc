@@ -110,16 +110,9 @@ protected:
  * We can generate the following graph with just 20 lines of
  * uncommented code, shown below:
  *
- * ![The resulting DOT graph](/home/kareem/doc/cbmc/src/demos/dot.png)
+ * @image html dot.png "The resulting DOT graph"
  *
  * \include "dot_factory.cpp"
- *
- * dot_factory makes it easy to add useful information to graphs. For
- * example, if you are looking for thread spawns/kills in a huge
- * graph, it is useful to be able to colour those nodes in. Doing this
- * manually is kludgy and wasteful.
- *
- * ![A CFG](/home/kareem/doc/cbmc/src/demos/krcu.png)
  *
  * \tparam node_id The type of the node identifiers. %Node identifiers
  * in DOT files are typically integers, like `0 -> 1`, or strings,
