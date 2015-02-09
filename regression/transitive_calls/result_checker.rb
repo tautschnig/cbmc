@@ -93,7 +93,16 @@ def compare_results results, expected
     end
   end
 
-  # Now ensure that main transitively called everything
+  # Now ensure that main transitively called everything, unless one of
+  # our tests specifically indicates that main doesn't call everything
+  main_obj = expected.select do |obj|
+    obj["function_name"] == "main"
+  end
+
+  return all_ok unless main_obj.nil?
+
+  # The `expected' JSON file didn't have an entry for main. Thus, we
+  # should check that main transitively calls everything.
   all_funs = all_funs.to_a
   all_funs.delete "__actual_thread_spawn"
   all_funs.delete "__actual_thread_spawn"

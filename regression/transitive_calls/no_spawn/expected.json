@@ -1,2 +1,8 @@
 [
+  {
+    "function_name" : "bar",
+    "called_functions" : [
+      "baz"
+    ]
+  }
 ]

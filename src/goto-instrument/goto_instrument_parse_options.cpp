@@ -34,7 +34,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/parameter_assignments.h>
 #include <goto-programs/transitive_calls.h>
 #include <goto-programs/spawn_marker.h>
-#include <goto-programs/graph_transitive.h>
 #include <goto-programs/graph_specialisations.h>
 
 #include <pointer-analysis/value_set_analysis.h>
@@ -168,16 +167,6 @@ int goto_instrument_parse_optionst::doit()
     get_goto_program();
     instrument_goto_program();
 
-    if(cmdline.isset("graph-transitive"))
-    {
-      graph_transitivet gt(ns, goto_functions);
-
-      gt();
-
-      gt.output_json(std::cout);
-
-      return 0;
-    }
 
     if(cmdline.isset("static-cycles")
     || cmdline.isset("output-event-source-locations")
@@ -215,22 +204,18 @@ int goto_instrument_parse_optionst::doit()
     if(cmdline.isset("transitive-calls"))
     {
       namespacet ns(symbol_table);
-
       prepare_for_static_cycles(ns, goto_functions);
 
-      transitive_callst transitive_calls(goto_functions, ns);
-
+      transitive_callst transitive_calls(ns, goto_functions);
       transitive_calls();
 
-      std::cout << transitive_calls.to_json() << "\n";
-
+      transitive_calls.output_json(std::cout);
       return 0;
     }
   
     if(cmdline.isset("spawned-functions"))
     {
       namespacet ns(symbol_table);
-
       prepare_for_static_cycles(ns, goto_functions);
 
       spawned_funst spawned_funs(goto_functions, ns);
