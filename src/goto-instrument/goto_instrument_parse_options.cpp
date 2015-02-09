@@ -174,7 +174,7 @@ int goto_instrument_parse_optionst::doit()
 
       gt();
 
-      gt.output();
+      gt.output_json(std::cout);
 
       return 0;
     }
