@@ -9,6 +9,8 @@ Date: February 2013
 
 \*******************************************************************/
 
+#include <iostream>
+
 #include <util/pointer_offset_size.h>
 #include <util/prefix.h>
 
@@ -64,12 +66,17 @@ void rd_range_domaint::populate_cache() const
     const reaching_definitiont &v=bv_container->get(*it);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     export_entry[v.definition_at].insert(
       std::make_pair(v.bit_begin, v.bit_end));
   }
 =======
     export_cache[v.identifier][v.definition_at][v.bit_begin]=
       v.bit_end;
+=======
+    export_cache[v.identifier][v.definition_at].insert(
+      std::make_pair(v.bit_begin, v.bit_end));
+>>>>>>> 62f8b91... debugging reachdef
   }
 
   export_cache_available=true;
@@ -100,6 +107,9 @@ void rd_range_domaint::transform(
 
   assert(bv_container);
 
+  if(my_loc->location_number==12)
+    output(std::cerr);
+
   // kill values
   if(from->is_dead())
     transform_dead(ns, from);
@@ -118,6 +128,9 @@ void rd_range_domaint::transform(
   // initial (non-deterministic) value
   else if(from->is_decl())
     transform_assign(ns, from, from, *rd);
+
+  if(my_loc->location_number==12)
+    output(std::cerr);
 
 #if 0
   // handle return values
@@ -352,6 +365,7 @@ Function: rd_range_domaint::transform_end_function
 
 \*******************************************************************/
 
+int do_print=0;
 void rd_range_domaint::transform_end_function(
   const namespacet &ns,
   locationt from,
@@ -373,7 +387,8 @@ void rd_range_domaint::transform_end_function(
       it!=new_values.end();
       ++it)
   {
-    const reaching_definitiont &v=bv_container->get(*it);
+    // local copy as kill might cause inconsistencies
+    reaching_definitiont v=bv_container->get(*it);
 
     if(!rd.get_is_threaded()(call) ||
 <<<<<<< HEAD
@@ -422,9 +437,20 @@ void rd_range_domaint::transform_end_function(
        (!ns.lookup(v.identifier).is_shared() &&
         !rd.get_is_dirty()(v.identifier)))
       kill(v.identifier, v.bit_begin, v.bit_end);
+  }
 
+  for(valuest::const_iterator
+      it=new_values.begin();
+      it!=new_values.end();
+      ++it)
+  {
+    reaching_definitiont v=bv_container->get(*it);
     gen(v.definition_at, v.identifier, v.bit_begin, v.bit_end);
+<<<<<<< HEAD
 >>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
+=======
+    do_print=0;
+>>>>>>> 62f8b91... debugging reachdef
   }
 
   const code_typet &code_type=
@@ -523,13 +549,27 @@ void rd_range_domaint::transform_assign(
           r_it=ranges.begin();
           r_it!=ranges.end();
           ++r_it)
+      {
+        /*if(from->location_number==14 ||
+           from->location_number==15)
+          std::cerr << "kill@" << from->location_number
+            << ":" << identifier << " " << r_it->first
+            << "--" << r_it->second << std::endl;*/
         kill(identifier, r_it->first, r_it->second);
+      }
 
     for(range_domaint::const_iterator
         r_it=ranges.begin();
         r_it!=ranges.end();
         ++r_it)
+    {
+        /*if(from->location_number==14 ||
+           from->location_number==15)
+          std::cerr << "gen@" << from->location_number
+            << ":" << identifier << " " << r_it->first
+            << "--" << r_it->second << std::endl;*/
       gen(from, identifier, r_it->first, r_it->second);
+    }
   }
 }
 
@@ -696,10 +736,11 @@ void rd_range_domaint::kill(
 
       reaching_definitiont v_new=v;
       v_new.bit_end=range_start;
-      new_values.insert(bv_container->add(v_new));
 
       reaching_definitiont v_new2=v;
       v_new2.bit_begin=range_end;
+
+      new_values.insert(bv_container->add(v_new));
       new_values.insert(bv_container->add(v_new2));
 
       values.erase(it++);
@@ -721,7 +762,7 @@ void rd_range_domaint::kill(
       it!=new_values.end();
       ++it)
     export_cache_available=
-      !new_values.insert(*it).second &&
+      !values.insert(*it).second &&
       export_cache_available;
 }
 
@@ -790,7 +831,17 @@ bool rd_range_domaint::gen(
   const range_spect &range_end)
 {
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+  if(do_print)
+  {
+    std::cerr << "gen@" << from->location_number << std::endl;
+    std::cerr << "range_start=" << range_start << std::endl;
+    std::cerr << "range_end=" << range_end << std::endl;
+  }
+
+>>>>>>> 62f8b91... debugging reachdef
   // objects of size 0 like union U { signed : 0; };
   if(range_start==0 && range_end==0)
     return false;
@@ -828,7 +879,12 @@ bool rd_range_domaint::gen(
 >>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 
   if(!values.insert(bv_container->add(v)).second)
+  {
+    if(do_print) std::cerr << "Not added" << std::endl;;
+    if(do_print) output(std::cerr);
     return false;
+  }
+  if(do_print) output(std::cerr);
 
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -1075,6 +1131,16 @@ bool rd_range_domaint::merge(
 
   export_cache_available=export_cache_available && !more;
 
+  if(my_loc->location_number==12)
+  {
+    std::cerr << "After merge" << std::endl;
+    /*assert(from->location_number!=115 ||
+           to->location_number!=12);*/
+    std::cerr << "from=" << from->location_number << std::endl;
+    std::cerr << "to=" << to->location_number << std::endl;
+    output(std::cerr);
+  }
+
   return more;
 }
 
@@ -1118,6 +1184,7 @@ bool rd_range_domaint::merge_shared(
   const namespacet &ns)
 {
 <<<<<<< HEAD
+<<<<<<< HEAD
   // TODO: dirty vars
 #if 0
   reaching_definitions_analysist *rd=
@@ -1125,6 +1192,10 @@ bool rd_range_domaint::merge_shared(
   assert(rd!=0);
 #endif
 
+=======
+  assert(false);
+  // TODO: consider dirty vars?
+>>>>>>> 62f8b91... debugging reachdef
   bool more=false;
 
   valuest::iterator it=values.begin();

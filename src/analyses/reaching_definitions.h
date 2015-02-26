@@ -107,8 +107,10 @@ public:
   }
 
   inline void set_bitvector_container(
+    locationt _my_loc,
     sparse_bitvector_analysist<reaching_definitiont> &_bv_container)
   {
+    my_loc=_my_loc,
     bv_container=&_bv_container;
   }
 
@@ -155,6 +157,7 @@ public:
   }
 
 protected:
+  locationt my_loc;
   sparse_bitvector_analysist<reaching_definitiont> *bv_container;
 
   typedef std::set<std::size_t> values_innert;
@@ -292,7 +295,7 @@ public:
     rd_range_domaint *rd_state=dynamic_cast<rd_range_domaint*>(&s);
     assert(rd_state!=0);
 
-    rd_state->set_bitvector_container(*this);
+    rd_state->set_bitvector_container(l, *this);
 
     return s;
 <<<<<<< HEAD
