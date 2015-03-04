@@ -167,7 +167,6 @@ int goto_instrument_parse_optionst::doit()
     get_goto_program();
     instrument_goto_program();
 
-
     if(cmdline.isset("static-cycles")
     || cmdline.isset("output-event-source-locations")
     || cmdline.isset("egraph-dump")
