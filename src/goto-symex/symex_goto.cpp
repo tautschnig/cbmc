@@ -259,6 +259,13 @@ void goto_symext::merge_gotos(statet &state)
 
     // adjust depth
     state.depth=std::min(state.depth, goto_state.depth);
+
+    // merge set of current counterexample nodes
+    state.cex_graph_nodes.insert(
+      goto_state.cex_graph_nodes.begin(),
+      goto_state.cex_graph_nodes.end());
+    if(!state.cex_started)
+      state.cex_started=goto_state.cex_started;
   }
   
   // clean up to save some memory

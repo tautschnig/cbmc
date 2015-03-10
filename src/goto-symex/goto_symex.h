@@ -17,6 +17,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <goto-programs/goto_functions.h>
 
+#include <xmllang/graphml.h>
+
 #include "substitute.h"
 #include "goto_symex_state.h"
 
@@ -102,6 +104,8 @@ protected:
   const namespacet &ns;
   symex_targett &target;  
   unsigned atomic_section_counter;
+  graphmlt cex_graph;
+  std::map<unsigned, std::set<unsigned> > target_to_cex_state;
 
   friend class symex_dereference_statet;
   

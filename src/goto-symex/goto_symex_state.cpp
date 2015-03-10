@@ -31,7 +31,8 @@ goto_symex_statet::goto_symex_statet():
   depth(0),
   symex_target(NULL),
   atomic_section_id(0),
-  record_events(true)
+  record_events(true),
+  cex_started(false)
 {
   threads.resize(1);
   new_frame();
