@@ -982,6 +982,7 @@ void goto_instrument_parse_optionst::instrument_goto_program()
      cmdline.isset("static-cycles"))
   {
 <<<<<<< HEAD
+<<<<<<< HEAD
     if(cmdline.isset("show-custom-bitvector-analysis") ||
        cmdline.isset("custom-bitvector-analysis"))
       config.ansi_c.defines.push_back("__CPROVER_CUSTOM_BITVECTOR_ANALYSIS");
@@ -990,6 +991,9 @@ void goto_instrument_parse_optionst::instrument_goto_program()
 =======
     std::cerr << "Adding CPROVER library" << eom;
 >>>>>>> cb2c4cf... formatting fixes
+=======
+    status() << "Adding CPROVER library" << eom;
+>>>>>>> dc3435d... Fixed syntax error introduced in 920e82bd
     link_to_library(symbol_table, goto_functions, ui_message_handler);
   }
 
