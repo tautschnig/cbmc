@@ -213,7 +213,7 @@ int goto_instrument_parse_optionst::doit()
       namespacet ns(symbol_table);
       prepare_for_static_cycles(ns, goto_functions);
 
-      spawned_funst spawned_funs(goto_functions, ns);
+      spawned_funst spawned_funs(goto_functions);
 
       std::cout << spawned_funs.to_json() << "\n";
 

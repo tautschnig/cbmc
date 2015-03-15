@@ -9,9 +9,7 @@
 
 spawned_funst::spawned_funst(
   goto_functionst &_gf
-, namespacet &_ns
 ) : goto_functions(_gf)
-  , ns(_ns)
   , spawned_functions()
 {
   function_mapt &fun_map = goto_functions.function_map;
