@@ -12,9 +12,8 @@ class spawned_funst
     /**@brief Generates a list of functions that are spawned as
      *        threads
      */
-    spawned_funst(
+    explicit spawned_funst(
       goto_functionst &goto_functions
-    , namespacet &ns
     );
 
     /**@brief The name of the function spawned by the call to
@@ -51,7 +50,6 @@ class spawned_funst
 
   private:
     goto_functionst &goto_functions;
-    namespacet &ns;
 
     int num_of_anomalies;
 
