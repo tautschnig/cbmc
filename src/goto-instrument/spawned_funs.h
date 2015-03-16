@@ -20,8 +20,10 @@ class spawned_funst
     /**@brief The name of the function spawned by the call to
      *        pthread_create.
      * @param   pthread_create the pthread_create instruction.
-     * @throws  an assertion failure if the third parameter to
-     *          pthread_create is not a straight function pointer.
+     * @return  the name of the function spawned by the call to
+     *          pthread_create, or the empty string (`""`) if the
+     *          third argument to pthread_create is not a straight
+     *          function pointer.
      *          (This is a bug. We need to deal with any kind of
      *          argument passed to pthread_create, so add additional
      *          cases if you find them.)

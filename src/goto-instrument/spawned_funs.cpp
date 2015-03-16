@@ -39,8 +39,10 @@ spawned_funst::spawned_funst(
       if(call_name.compare("pthread_create"))
         continue;
 
-      spawned_functions.insert(
-        function_pointer_of_pthread_create(*ins));
+      std::string fp_name = function_pointer_of_pthread_create(*ins);
+
+      if(fp_name.compare(""))
+        spawned_functions.insert(fp_name);
     }
   }
 }
@@ -73,7 +75,7 @@ std::string spawned_funst::function_pointer_of_pthread_create(
    * to mess around with the irept directly.
    */
   if(fun_ptr.id() != ID_address_of)
-    assert(false);
+    return "";
 
   std::string fun_ptr_name =
     fun_ptr             // exprt
