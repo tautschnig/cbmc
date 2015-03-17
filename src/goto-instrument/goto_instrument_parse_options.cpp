@@ -217,7 +217,7 @@ int goto_instrument_parse_optionst::doit()
 
       std::cout << spawned_funs.to_json() << "\n";
 
-      return 0;
+      return spawned_funs.result();
     }
   
     if(cmdline.isset("show-value-sets"))
