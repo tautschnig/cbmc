@@ -33,7 +33,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/remove_unused_functions.h>
 #include <goto-programs/parameter_assignments.h>
 #include <goto-programs/transitive_calls.h>
-#include <goto-programs/spawn_marker.h>
 #include <goto-programs/graph_specialisations.h>
 
 #include <pointer-analysis/value_set_analysis.h>
@@ -177,9 +176,6 @@ int goto_instrument_parse_optionst::doit()
 
       concurrent_cfg_baset<empty_cfg_nodet> cfg;
       cfg(goto_functions);
-
-      spawn_markert marker(cfg, ns);
-      marker();
 
       if(cmdline.isset("cfg-dot"))
       {
