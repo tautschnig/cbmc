@@ -75,7 +75,12 @@ std::string spawned_funst::function_pointer_of_pthread_create(
    * to mess around with the irept directly.
    */
   if(fun_ptr.id() != ID_address_of)
+  {
+    std::cerr << "Warning: malformed call to pthread_create. irep:\n";
+    std::cerr << pthread_create.code.pretty() << "\n";
+
     return "";
+  }
 
   std::string fun_ptr_name =
     fun_ptr             // exprt
