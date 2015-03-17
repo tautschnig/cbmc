@@ -79,6 +79,8 @@ std::string spawned_funst::function_pointer_of_pthread_create(
     std::cerr << "Warning: malformed call to pthread_create. irep:\n";
     std::cerr << pthread_create.code.pretty() << "\n";
 
+    num_of_anomalies++;
+
     return "";
   }
 

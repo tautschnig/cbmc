@@ -27,6 +27,11 @@ class spawned_funst
      *          (This is a bug. We need to deal with any kind of
      *          argument passed to pthread_create, so add additional
      *          cases if you find them.)
+     * @post    After this function runs, any calls to result() on
+     *          this spawned_funst will return 0 if there were no
+     *          problems with pthread_create third-parameters as
+     *          described above. Else, the +number+ of such
+     *          occurrences is returned by a call to result().
      * @throws  An exception if the instruction doesn't appear to be a
      *          pthread_create call.
      */
@@ -37,9 +42,18 @@ class spawned_funst
     ///@brief The list of spawned functions formatted as JSON
     std::string to_json();
 
+    /**@brief   Returns the number of pthread_create anomalies
+     *          occurred when constructing this spawed_funst.
+     * @sa      the documentation for function_pointer_of_pthread_create()
+     *          for more details.
+     */
+    int result(){ return num_of_anomalies; }
+
   private:
     goto_functionst &goto_functions;
     namespacet &ns;
+
+    int num_of_anomalies;
 
     std::set<std::string> spawned_functions;
 
