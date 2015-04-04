@@ -711,6 +711,7 @@ Function: symex_target_equationt::convert
 void symex_target_equationt::convert(
    prop_convt &prop_conv)
 {
+  merge_irep.complete();
   convert_guards(prop_conv);
   convert_assignments(prop_conv);
   convert_decls(prop_conv);

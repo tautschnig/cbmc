@@ -306,7 +306,7 @@ protected:
   const namespacet &ns;
 
   // for enforcing sharing in the expressions stored
-  merge_irept merge_irep;
+  merged_irepst merge_irep;
   void merge_ireps(SSA_stept &SSA_step);
 
   typedef hash_map_cont<irep_idt,
