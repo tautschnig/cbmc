@@ -274,12 +274,16 @@ void dep_graph_domaint::transform(
   dependence_grapht *dep_graph=dynamic_cast<dependence_grapht*>(&ai);
   assert(dep_graph!=0);
 
+<<<<<<< HEAD
   // propagate control dependencies across function calls
+=======
+>>>>>>> 50bd73a... fixed control deps
   if(from->is_function_call())
   {
     goto_programt::const_targett next=from;
     ++next;
 
+<<<<<<< HEAD
     dep_graph_domaint *s=
       dynamic_cast<dep_graph_domaint*>(&(dep_graph->get_state(next)));
     assert(s!=0);
@@ -301,6 +305,31 @@ void dep_graph_domaint::transform(
   }
   else
     control_dependencies(from, to, *dep_graph);
+=======
+    if(next!=to)
+    {
+      dep_graph_domaint *s=
+        dynamic_cast<dep_graph_domaint*>(&(dep_graph->get_state(next)));
+      assert(s!=0);
+
+      depst::iterator it=s->control_deps.begin();
+      for(depst::const_iterator ito=control_deps.begin();
+          ito!=control_deps.end();
+          ++ito)
+      {
+        while(it!=s->control_deps.end() && *it<*ito)
+          ++it;
+        if(it==s->control_deps.end() || *ito<*it)
+          s->control_deps.insert(it, *ito);
+        else if(it!=s->control_deps.end())
+          ++it;
+      }
+
+      control_dependencies(from, next, *dep_graph);
+    }
+  }
+  control_dependencies(from, to, *dep_graph);
+>>>>>>> 50bd73a... fixed control deps
 
   data_dependencies(from, to, *dep_graph, ns);
 }
