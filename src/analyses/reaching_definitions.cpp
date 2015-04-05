@@ -9,8 +9,6 @@ Date: February 2013
 
 \*******************************************************************/
 
-#include <iostream>
-
 #include <util/pointer_offset_size.h>
 #include <util/prefix.h>
 
@@ -107,8 +105,8 @@ void rd_range_domaint::transform(
 
   assert(bv_container);
 
-  if(my_loc->location_number==12)
-    output(std::cerr);
+  /*if(my_loc->location_number==12)
+    output(std::cerr);*/
 
   // kill values
   if(from->is_dead())
@@ -129,8 +127,8 @@ void rd_range_domaint::transform(
   else if(from->is_decl())
     transform_assign(ns, from, from, *rd);
 
-  if(my_loc->location_number==12)
-    output(std::cerr);
+  /*if(my_loc->location_number==12)
+    output(std::cerr);*/
 
 #if 0
   // handle return values
@@ -365,7 +363,7 @@ Function: rd_range_domaint::transform_end_function
 
 \*******************************************************************/
 
-int do_print=0;
+//int do_print=0;
 void rd_range_domaint::transform_end_function(
   const namespacet &ns,
   locationt from,
@@ -447,10 +445,14 @@ void rd_range_domaint::transform_end_function(
     reaching_definitiont v=bv_container->get(*it);
     gen(v.definition_at, v.identifier, v.bit_begin, v.bit_end);
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 =======
     do_print=0;
 >>>>>>> 62f8b91... debugging reachdef
+=======
+    //do_print=0;
+>>>>>>> b5cca5d... disable debugging
   }
 
   const code_typet &code_type=
@@ -832,14 +834,18 @@ bool rd_range_domaint::gen(
 {
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 =======
   if(do_print)
+=======
+  /*if(do_print)
+>>>>>>> b5cca5d... disable debugging
   {
     std::cerr << "gen@" << from->location_number << std::endl;
     std::cerr << "range_start=" << range_start << std::endl;
     std::cerr << "range_end=" << range_end << std::endl;
-  }
+  }*/
 
 >>>>>>> 62f8b91... debugging reachdef
   // objects of size 0 like union U { signed : 0; };
@@ -880,11 +886,11 @@ bool rd_range_domaint::gen(
 
   if(!values.insert(bv_container->add(v)).second)
   {
-    if(do_print) std::cerr << "Not added" << std::endl;;
-    if(do_print) output(std::cerr);
+    //if(do_print) std::cerr << "Not added" << std::endl;;
+    //if(do_print) output(std::cerr);
     return false;
   }
-  if(do_print) output(std::cerr);
+  //if(do_print) output(std::cerr);
 
 <<<<<<< HEAD
 <<<<<<< HEAD
@@ -1133,12 +1139,12 @@ bool rd_range_domaint::merge(
 
   if(my_loc->location_number==12)
   {
-    std::cerr << "After merge" << std::endl;
+    //std::cerr << "After merge" << std::endl;
     /*assert(from->location_number!=115 ||
            to->location_number!=12);*/
-    std::cerr << "from=" << from->location_number << std::endl;
-    std::cerr << "to=" << to->location_number << std::endl;
-    output(std::cerr);
+    //std::cerr << "from=" << from->location_number << std::endl;
+    //std::cerr << "to=" << to->location_number << std::endl;
+    //output(std::cerr);
   }
 
   return more;
