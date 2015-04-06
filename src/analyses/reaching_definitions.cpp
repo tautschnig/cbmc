@@ -1191,6 +1191,7 @@ bool rd_range_domaint::merge_shared(
 {
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
   // TODO: dirty vars
 #if 0
   reaching_definitions_analysist *rd=
@@ -1200,6 +1201,8 @@ bool rd_range_domaint::merge_shared(
 
 =======
   assert(false);
+=======
+>>>>>>> 1acd251... merge_shared should be ok
   // TODO: consider dirty vars?
 >>>>>>> 62f8b91... debugging reachdef
   bool more=false;
