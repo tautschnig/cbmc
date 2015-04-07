@@ -158,6 +158,7 @@ public:
 
 protected:
   locationt my_loc;
+<<<<<<< HEAD
   sparse_bitvector_analysist<reaching_definitiont> *bv_container;
 
   typedef std::set<std::size_t> values_innert;
@@ -200,6 +201,8 @@ protected:
 >>>>>>> 58b702d... Changed --show-local-may-alias to use may_aliast, reach-def uses may_aliast
 =======
 protected:
+=======
+>>>>>>> 35b32eb... Revert "removed debugging"
   sparse_bitvector_analysist<reaching_definitiont> *bv_container;
 
   typedef std::set<std::size_t> valuest;

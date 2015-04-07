@@ -446,6 +446,7 @@ void rd_range_domaint::transform_end_function(
     gen(v.definition_at, v.identifier, v.bit_begin, v.bit_end);
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> 9de64cc... Implement reaching definitions as sparse bitvector analysis for memory efficiency
 =======
     do_print=0;
@@ -453,6 +454,9 @@ void rd_range_domaint::transform_end_function(
 =======
     //do_print=0;
 >>>>>>> b5cca5d... disable debugging
+=======
+    //do_print=0;
+>>>>>>> 35b32eb... Revert "removed debugging"
   }
 
   const code_typet &code_type=
@@ -835,18 +839,23 @@ bool rd_range_domaint::gen(
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 =======
   if(do_print)
 =======
   /*if(do_print)
 >>>>>>> b5cca5d... disable debugging
+=======
+  /*if(do_print)
+>>>>>>> 35b32eb... Revert "removed debugging"
   {
     std::cerr << "gen@" << from->location_number << std::endl;
     std::cerr << "range_start=" << range_start << std::endl;
     std::cerr << "range_end=" << range_end << std::endl;
   }*/
 
+<<<<<<< HEAD
 >>>>>>> 62f8b91... debugging reachdef
   // objects of size 0 like union U { signed : 0; };
   if(range_start==0 && range_end==0)
@@ -856,6 +865,8 @@ bool rd_range_domaint::gen(
 
 <<<<<<< HEAD
 >>>>>>> 2442e8f... Changed reaching-definitions data structure for reduced lookup times
+=======
+>>>>>>> 35b32eb... Revert "removed debugging"
   // objects of size 0 like union U { signed : 0; };
   if(range_start==0 && range_end==0)
     return false;
@@ -874,8 +885,17 @@ bool rd_range_domaint::gen(
   v.bit_end=range_end;
 <<<<<<< HEAD
 
+<<<<<<< HEAD
   if(!values[identifier].insert(bv_container->add(v)).second)
+=======
+  if(!values.insert(bv_container->add(v)).second)
+  {
+    //if(do_print) std::cerr << "Not added" << std::endl;;
+    //if(do_print) output(std::cerr);
+>>>>>>> 35b32eb... Revert "removed debugging"
     return false;
+  }
+  //if(do_print) output(std::cerr);
 
   export_cache.erase(identifier);
 
