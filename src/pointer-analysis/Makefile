@@ -5,7 +5,7 @@ SRC = value_set.cpp goto_program_dereference.cpp value_set_analysis.cpp \
       value_set_analysis_fivr.cpp value_set_fivr.cpp value_set_domain_fivr.cpp \
       value_set_analysis_fivrns.cpp value_set_fivrns.cpp \
       value_set_domain_fivrns.cpp value_set_dereference.cpp \
-      dereference_callback.cpp rd_dereference.cpp
+      dereference_callback.cpp rd_dereference.cpp memory_regions.cpp
 
 INCLUDES= -I ..
 
