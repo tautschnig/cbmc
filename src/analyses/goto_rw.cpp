@@ -21,7 +21,10 @@ Date: April 2010
 
 #include <goto-programs/goto_functions.h>
 
+#include <pointer-analysis/rd_dereference.h>
 #include <pointer-analysis/goto_program_dereference.h>
+
+#include "reaching_definitions.h"
 
 #include "goto_rw.h"
 
@@ -795,6 +798,49 @@ void rw_range_sett::get_objects_rec(const typet &type)
     get_objects_rec(type.subtype());
     get_objects_rec(READ, to_array_type(type).size());
   }
+}
+
+/*******************************************************************\
+
+Function: rw_range_set_dereft::get_objects_dereference
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+void rw_range_set_dereft::get_objects_dereference(
+  get_modet mode,
+  const dereference_exprt &deref,
+  const range_spect &range_start,
+  const range_spect &size)
+{
+  rw_range_sett::get_objects_dereference(
+    mode,
+    deref,
+    range_start,
+    size);
+
+  const exprt &pointer=deref.pointer();
+  exprt object=rd_dereference(pointer, target);
+
+  range_spect new_size=
+    to_range_spect(pointer_offset_bits(object.type(), ns));
+
+  if(range_start==-1 || new_size<=range_start)
+    new_size=-1;
+  else
+  {
+    new_size-=range_start;
+    new_size=std::min(size, new_size);
+  }
+
+  if(object.is_not_nil() &&
+     object!=deref)
+    get_objects_rec(mode, object, range_start, new_size);
 }
 
 /*******************************************************************\

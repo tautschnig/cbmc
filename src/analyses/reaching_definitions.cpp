@@ -12,7 +12,7 @@ Date: February 2013
 #include <util/pointer_offset_size.h>
 #include <util/prefix.h>
 
-#include <pointer-analysis/value_set_analysis_fi.h>
+#include <pointer-analysis/rd_dereference.h>
 
 #include "is_threaded.h"
 #include "dirty.h"
@@ -105,7 +105,7 @@ void rd_range_domaint::transform(
 
     if(code.lhs().is_not_nil())
     {
-      rw_range_set_value_sett rw_set(ns, rd->get_value_sets());
+      rw_range_set_dereft rw_set(ns, rd->get_rd_dereference());
       goto_rw(to, rw_set);
       const bool is_must_alias=rw_set.get_w_set().size()==1;
 
@@ -386,8 +386,8 @@ void rd_range_domaint::transform_assign(
   locationt to,
   reaching_definitions_analysist &rd)
 {
-  rw_range_set_value_sett rw_set(ns, rd.get_value_sets());
-  goto_rw(to, rw_set);
+  rw_range_set_dereft rw_set(ns, rd.get_rd_dereference());
+  goto_rw(from, rw_set);
   const bool is_must_alias=rw_set.get_w_set().size()==1;
 
   forall_rw_range_set_w_objects(it, rw_set)
@@ -933,7 +933,7 @@ reaching_definitions_analysist::~reaching_definitions_analysist()
 {
   if(is_dirty) delete is_dirty;
   if(is_threaded) delete is_threaded;
-  if(value_sets) delete value_sets;
+  if(rd_dereference) delete rd_dereference;
 }
 
 /*******************************************************************\
@@ -951,9 +951,7 @@ Function: reaching_definitions_analysist::initialize
 void reaching_definitions_analysist::initialize(
   const goto_functionst &goto_functions)
 {
-  value_set_analysis_fit *value_sets_=new value_set_analysis_fit(ns);
-  (*value_sets_)(goto_functions);
-  value_sets=value_sets_;
+  rd_dereference=new rd_dereferencet(ns, goto_functions, *this);
 
   is_threaded=new is_threadedt(goto_functions);
 
@@ -961,4 +959,3 @@ void reaching_definitions_analysist::initialize(
 
   concurrency_aware_ait<rd_range_domaint>::initialize(goto_functions);
 }
-

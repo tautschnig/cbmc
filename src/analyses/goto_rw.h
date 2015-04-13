@@ -218,6 +218,43 @@ inline std::ostream & operator << (
   return out;
 }
 
+class rd_dereferencet;
+
+class rw_range_set_dereft:public rw_range_sett
+{
+public:
+  rw_range_set_dereft(
+    const namespacet &_ns,
+    rd_dereferencet &_rd_dereference):
+    rw_range_sett(_ns),
+    rd_dereference(_rd_dereference)
+  {
+  }
+
+  using rw_range_sett::get_objects_rec;
+
+  virtual void get_objects_rec(
+    goto_programt::const_targett _target,
+    get_modet mode,
+    const exprt &expr)
+  {
+    target=_target;
+
+    rw_range_sett::get_objects_rec(mode, expr);
+  }
+
+protected:
+  rd_dereferencet &rd_dereference;
+
+  goto_programt::const_targett target;
+
+  virtual void get_objects_dereference(
+    get_modet mode,
+    const dereference_exprt &deref,
+    const range_spect &range_start,
+    const range_spect &size);
+};
+
 class value_setst;
 
 class rw_range_set_value_sett:public rw_range_sett

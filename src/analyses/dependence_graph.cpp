@@ -202,10 +202,7 @@ void dep_graph_domaint::data_dependencies(
   // data dependencies using def-use pairs
   data_deps.clear();
 
-  // TODO use (future) reaching-definitions-dereferencing rw_set
-  value_setst &value_sets=
-    dep_graph.reaching_definitions().get_value_sets();
-  rw_range_set_value_sett rw_set(ns, value_sets);
+  rw_range_set_dereft rw_set(ns, dep_graph.reaching_definitions().get_rd_dereference());
   goto_rw(to, rw_set);
 
   forall_rw_range_set_r_objects(it, rw_set)

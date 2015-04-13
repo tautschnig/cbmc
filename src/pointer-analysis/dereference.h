@@ -31,7 +31,7 @@ public:
   {
   }
 
-  ~dereferencet() { }
+  virtual ~dereferencet() { }
   
   /*! 
    * The operator '()' dereferences the
@@ -45,10 +45,10 @@ public:
 
   exprt operator()(const exprt &pointer, exprt &invalid_cond);
     
-private:
+protected:
   const namespacet &ns;
 
-  exprt dereference_rec(
+  virtual exprt dereference_rec(
     const exprt &address,
     const exprt &offset,
     const typet &type,

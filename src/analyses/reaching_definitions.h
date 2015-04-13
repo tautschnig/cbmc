@@ -15,7 +15,7 @@ Date: February 2013
 #include "ai.h"
 #include "goto_rw.h"
 
-class value_setst;
+class rd_dereferencet;
 class is_threadedt;
 class dirtyt;
 class reaching_definitions_analysist;
@@ -200,7 +200,7 @@ public:
   explicit reaching_definitions_analysist(const namespacet &_ns):
     concurrency_aware_ait<rd_range_domaint>(),
     ns(_ns),
-    value_sets(0),
+    rd_dereference(0),
     is_threaded(0),
     is_dirty(0)
   {
@@ -223,10 +223,10 @@ public:
     return s;
   }
 
-  value_setst &get_value_sets() const
+  rd_dereferencet &get_rd_dereference() const
   {
-    assert(value_sets);
-    return *value_sets;
+    assert(rd_dereference);
+    return *rd_dereference;
   }
 
   const is_threadedt &get_is_threaded() const
@@ -243,7 +243,7 @@ public:
 
 protected:
   const namespacet &ns;
-  value_setst * value_sets;
+  rd_dereferencet * rd_dereference;
   is_threadedt * is_threaded;
   dirtyt * is_dirty;
 };

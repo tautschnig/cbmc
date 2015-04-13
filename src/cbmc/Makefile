@@ -21,6 +21,8 @@ OBJ += ../ansi-c/ansi-c$(LIBEXT) \
       ../pointer-analysis/goto_program_dereference$(OBJEXT) \
       ../goto-instrument/full_slicer$(OBJEXT) \
       ../goto-instrument/nondet_static$(OBJEXT) \
+      ../pointer-analysis/dereference$(OBJEXT) \
+      ../pointer-analysis/rd_dereference$(OBJEXT) \
       ../analyses/analyses$(LIBEXT) \
       ../langapi/langapi$(LIBEXT) \
       ../xmllang/xmllang$(LIBEXT) \
