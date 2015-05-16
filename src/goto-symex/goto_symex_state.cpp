@@ -150,7 +150,8 @@ Function: goto_symex_statet::constant_propagation
 
 bool goto_symex_statet::constant_propagation(const exprt &expr) const
 {
-  if(expr.is_constant())
+  if(expr.is_constant() ||
+     expr.id()==ID_nondet_symbol)
     return true;
   
   if(expr.id()==ID_address_of)
@@ -267,7 +268,10 @@ bool goto_symex_statet::constant_propagation_reference(const exprt &expr) const
 
     return constant_propagation_reference(expr.op0());
   }
-  else if(expr.id()==ID_string_constant)
+  else if(expr.id()==ID_string_constant ||
+          expr.id()==ID_array ||
+          expr.id()==ID_struct ||
+          expr.id()==ID_union)
     return true;
 
   return false;
