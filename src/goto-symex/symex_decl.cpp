@@ -11,8 +11,9 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/expr_util.h>
 #include <util/rename.h>
 #include <util/std_expr.h>
+#include <util/message.h>
 
-#include <pointer-analysis/add_failed_symbols.h>
+#include <linking/zero_initializer.h>
 
 #include "goto_symex.h"
 
@@ -71,39 +72,20 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
   state.rename(ssa.type(), l1_identifier, ns);
   ssa.update_type();
 
-  // in case of pointers, put something into the value set
-  if(ns.follow(expr.type()).id()==ID_pointer)
-  {
-    exprt failed=
-      get_failed_symbol(expr, ns);
-    
-    exprt rhs;
-    
-    if(failed.is_not_nil())
-    {
-      address_of_exprt address_of_expr;
-      address_of_expr.object()=failed;
-      address_of_expr.type()=expr.type();
-      rhs=address_of_expr;
-    }
-    else
-      rhs=exprt(ID_invalid);
-    
-    state.rename(rhs, ns, goto_symex_statet::L1);
-    state.value_set.assign(ssa, rhs, ns, true, false);
-  }
-  
-  // prevent propagation
-  state.propagation.remove(l1_identifier);
-
   // L2 renaming
   // inlining may yield multiple declarations of the same identifier
   // within the same L1 context
   if(state.level2.current_names.find(l1_identifier)==
      state.level2.current_names.end())
     state.level2.current_names[l1_identifier]=std::make_pair(ssa, 0);
-  state.level2.increase_counter(l1_identifier);
-  state.rename(ssa, ns);
+
+  // skip non-deterministic initialisation if the next instruction
+  // will take care of initialisation
+  goto_programt::const_targett next=state.source.pc;
+  ++next;
+  if(next->is_assign() &&
+     to_code_assign(next->code).lhs()==expr)
+    return;
   
   // we hide the declaration of auxiliary variables
   // and if the statement itself is hidden
@@ -112,9 +94,39 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
     state.top().hidden_function ||
     state.source.pc->source_location.get_hide();
   
-  target.decl(
-    state.guard.as_expr(),
-    ssa,
-    state.source,
-    hidden?symex_targett::HIDDEN:symex_targett::STATE);
+  try
+  {
+    // will fail in case of arrays of non-const size
+    null_message_handlert null_message;
+    exprt rhs=
+      nondet_initializer(
+        ssa.type(),
+        state.source.pc->source_location,
+        ns,
+        null_message);
+    replace_nondet(rhs);
+
+    guardt guard;
+    symex_assign_symbol(
+      state,
+      ssa,
+      nil_exprt(),
+      rhs,
+      guard,
+      hidden?symex_targett::HIDDEN:symex_targett::STATE);
+  }
+  catch(int)
+  {
+    // prevent propagation
+    state.propagation.remove(l1_identifier);
+
+    state.level2.increase_counter(l1_identifier);
+    state.rename(ssa, ns);
+
+    target.decl(
+      state.guard.as_expr(),
+      ssa,
+      state.source,
+      hidden?symex_targett::HIDDEN:symex_targett::STATE);
+  }
 }

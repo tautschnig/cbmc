@@ -11,6 +11,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/expr_util.h>
 #include <util/std_types.h>
 #include <util/std_expr.h>
+#include <util/std_code.h>
 #include <util/pointer_offset_size.h>
 
 #include <ansi-c/c_types.h>
@@ -18,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "zero_initializer.h"
 
+template<bool nondet>
 class zero_initializert:public message_streamt
 {
 public:
@@ -66,7 +68,8 @@ Function: zero_initializert::zero_initializer_rec
 
 \*******************************************************************/
 
-exprt zero_initializert::zero_initializer_rec(
+template<bool nondet>
+exprt zero_initializert<nondet>::zero_initializer_rec(
   const typet &type,
   const source_locationt &source_location)
 {
@@ -74,7 +77,11 @@ exprt zero_initializert::zero_initializer_rec(
   
   if(type_id==ID_bool)
   {
-    exprt result=false_exprt();
+    exprt result;
+    if(nondet)
+      result=side_effect_expr_nondett(type);
+    else
+      result=false_exprt();
     result.add_source_location()=source_location;
     return result;
   }
@@ -90,7 +97,11 @@ exprt zero_initializert::zero_initializer_rec(
           type_id==ID_c_bit_field ||
           type_id==ID_c_bool)
   {
-    exprt result=gen_zero(type);
+    exprt result;
+    if(nondet)
+      result=side_effect_expr_nondett(type);
+    else
+      result=gen_zero(type);
     result.add_source_location()=source_location;
     return result;
   }
@@ -299,6 +310,28 @@ exprt zero_initializer(
   const namespacet &ns,
   message_handlert &message_handler)
 {
-  zero_initializert z_i(ns, message_handler);
+  zero_initializert<false> z_i(ns, message_handler);
+  return z_i(type, source_location);
+}
+
+/*******************************************************************\
+
+Function: nondet_initializer
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+exprt nondet_initializer(
+  const typet &type,
+  const source_locationt &source_location,
+  const namespacet &ns,
+  message_handlert &message_handler)
+{
+  zero_initializert<true> z_i(ns, message_handler);
   return z_i(type, source_location);
 }

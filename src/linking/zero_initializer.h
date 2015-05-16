@@ -15,3 +15,9 @@ exprt zero_initializer(
   const source_locationt &,
   const namespacet &,
   message_handlert &);
+
+exprt nondet_initializer(
+  const typet &,
+  const source_locationt &,
+  const namespacet &,
+  message_handlert &);

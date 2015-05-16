@@ -20,8 +20,11 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/simplify_expr.h>
 #include <util/prefix.h>
 #include <util/string2int.h>
+#include <util/message.h>
 
 #include <ansi-c/c_types.h>
+
+#include <linking/zero_initializer.h>
 
 #include "goto_symex.h"
 #include "goto_symex_state.h"
@@ -151,6 +154,28 @@ void goto_symext::symex_malloc(
   value_symbol.mode=ID_C;
 
   new_symbol_table.add(value_symbol);
+
+  if(object_type.id()!=ID_array ||
+     to_array_type(object_type).size().is_constant())
+  {
+    null_message_handlert null_message;
+    exprt init=
+      nondet_initializer(
+        object_type,
+        state.source.pc->source_location,
+        ns,
+        null_message);
+    replace_nondet(init);
+
+    guardt guard;
+    symex_assign_symbol(
+      state,
+      ssa_exprt(value_symbol.symbol_expr()),
+      nil_exprt(),
+      init,
+      guard,
+      symex_targett::HIDDEN);
+  }
   
   address_of_exprt rhs;
   
