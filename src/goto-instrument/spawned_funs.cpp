@@ -10,6 +10,7 @@
 spawned_funst::spawned_funst(
   goto_functionst &_gf
 ) : goto_functions(_gf)
+  , num_of_anomalies(0)
   , spawned_functions()
 {
   function_mapt &fun_map = goto_functions.function_map;
