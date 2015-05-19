@@ -954,7 +954,8 @@ void symex_target_equationt::convert_assertions(
         return; // prevent further assumptions!
       }
       else if(it->is_assume())
-        prop_conv.set_to_true(it->cond_expr);
+        // the assumptions have been converted before
+        prop_conv.set_to_true(it->cond_literal);
     }
 
     assert(false); // unreachable
