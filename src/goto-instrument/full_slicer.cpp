@@ -44,7 +44,7 @@ void full_slicert::add_dependencies(
       it=d_node.in.begin();
       it!=d_node.in.end();
       ++it)
-    add_to_queue(queue, dep_node_to_cfg[it->first], node.PC);
+    add_to_queue(queue, dep_node_to_cfg[it->first], node.PC, false);
 }
 
 /*******************************************************************\
@@ -80,7 +80,7 @@ void full_slicert::add_function_calls(
       it=cfg[entry->second].in.begin();
       it!=cfg[entry->second].in.end();
       ++it)
-    add_to_queue(queue, it->first, node.PC);
+    add_to_queue(queue, it->first, node.PC, true);
 }
 
 /*******************************************************************\
@@ -116,7 +116,7 @@ void full_slicert::add_decl_dead(
 
     while(!entry->second.empty())
     {
-      add_to_queue(queue, entry->second.top(), node.PC);
+      add_to_queue(queue, entry->second.top().first, node.PC, false);
       entry->second.pop();
     }
 
@@ -205,7 +205,7 @@ void full_slicert::add_jumps(
     // find the nearest post-dominator in slice
     if(n.dominators.find(lex_succ)==n.dominators.end())
     {
-      add_to_queue(queue, *it, lex_succ);
+      add_to_queue(queue, *it, lex_succ, false);
       jumps.erase(it);
     }
     else
@@ -240,7 +240,7 @@ void full_slicert::add_jumps(
       }
       if(nearest!=lex_succ)
       {
-        add_to_queue(queue, *it, nearest);
+        add_to_queue(queue, *it, nearest, false);
         jumps.erase(it);
       }
     }
@@ -284,25 +284,34 @@ void full_slicert::fixedpoint(
   {
     while(!queue.empty())
     {
-      cfgt::entryt e=queue.top();
-      cfgt::nodet &node=cfg[e];
+      std::pair<cfgt::entryt,bool> e=queue.top();
+      cfgt::nodet &node=cfg[e.first];
       queue.pop();
 
       // already done by some earlier iteration?
-      if(node.node_required)
+      if(node.node_required &&
+         (node.is_dominated || !e.second))
         continue;
 
-      // node is required
-      node.node_required=true;
+      if(!node.node_required)
+      {
+        // node is required
+        node.node_required=true;
 
-      // add data and control dependencies of node
-      add_dependencies(node, queue, dep_graph, dep_node_to_cfg);
+        // add data and control dependencies of node
+        add_dependencies(node, queue, dep_graph, dep_node_to_cfg);
 
-      // retain all calls of the containing function
-      add_function_calls(node, queue, goto_functions);
+        // find all the symbols it uses to add declarations
+        add_decl_dead(node, queue, decl_dead);
+      }
 
-      // find all the symbols it uses to add declarations
-      add_decl_dead(node, queue, decl_dead);
+      if(e.second)
+      {
+        node.is_dominated=true;
+
+        // retain all calls of the containing function
+        add_function_calls(node, queue, goto_functions);
+      }
     }
 
     // add any required jumps
@@ -369,21 +378,23 @@ void full_slicert::operator()(
       e_it++)
   {
     if(criterion(e_it->first))
-      add_to_queue(queue, e_it->second, e_it->first);
+      add_to_queue(queue, e_it->second, e_it->first, true);
     else if(implicit(e_it->first))
-      add_to_queue(queue, e_it->second, e_it->first);
+      add_to_queue(queue, e_it->second, e_it->first, false);
     else if((e_it->first->is_goto() && e_it->first->guard.is_true()) ||
             e_it->first->is_throw())
       jumps.push_back(e_it->second);
     else if(e_it->first->is_decl())
     {
-      const exprt &s=to_code_decl(e_it->first->code).symbol();
-      decl_dead[to_symbol_expr(s).get_identifier()].push(e_it->second);
+      const symbol_exprt &s=
+        to_symbol_expr(to_code_decl(e_it->first->code).symbol());
+      decl_dead[s.get_identifier()].push(std::make_pair(e_it->second, false));
     }
     else if(e_it->first->is_dead())
     {
-      const exprt &s=to_code_dead(e_it->first->code).symbol();
-      decl_dead[to_symbol_expr(s).get_identifier()].push(e_it->second);
+      const symbol_exprt &s=
+        to_symbol_expr(to_code_dead(e_it->first->code).symbol());
+      decl_dead[s.get_identifier()].push(std::make_pair(e_it->second, false));
     }
   }
 

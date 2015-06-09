@@ -51,11 +51,12 @@ public:
 protected:
   struct cfg_nodet
   {
-    cfg_nodet():node_required(false)
+    cfg_nodet():node_required(false), is_dominated(false)
     {
     }
 
     bool node_required;
+    bool is_dominated;
 #ifdef DEBUG_FULL_SLICERT
     std::set<unsigned> required_by;
 #endif
@@ -65,7 +66,7 @@ protected:
   cfgt cfg;
 
   typedef std::vector<cfgt::entryt> dep_node_to_cfgt;
-  typedef std::stack<cfgt::entryt> queuet;
+  typedef std::stack<std::pair<cfgt::entryt, bool> > queuet;
   typedef std::list<cfgt::entryt> jumpst;
   typedef hash_map_cont<irep_idt, queuet, irep_id_hash> decl_deadt;
 
@@ -100,12 +101,13 @@ protected:
   inline void add_to_queue(
     queuet &queue,
     const cfgt::entryt &entry,
-    goto_programt::const_targett reason)
+    goto_programt::const_targett reason,
+    const bool dominator)
   {
 #ifdef DEBUG_FULL_SLICERT
     cfg[entry].required_by.insert(reason->location_number);
 #endif
-    queue.push(entry);
+    queue.push(std::make_pair(entry, dominator));
   }
 };
 
