@@ -486,7 +486,9 @@ void value_sett::get_value_set_rec(
   
   const typet &expr_type=ns.follow(expr.type());
 
-  if(expr.id()==ID_unknown || expr.id()==ID_invalid)
+  if(expr.id()==ID_unknown ||
+     expr.id()==ID_invalid ||
+     expr.id()==ID_nondet_symbol)
   {
     insert(dest, exprt(ID_unknown, original_type));
   }
@@ -1290,9 +1292,9 @@ void value_sett::assign(
                 "type:\n"+type.pretty();
 
         rhs_member=make_member(rhs, name, ns);
-      
-        assign(lhs_member, rhs_member, ns, is_simplified, add_to_sets);
       }
+
+      assign(lhs_member, rhs_member, ns, is_simplified, add_to_sets);
     }
   }
   else if(type.id()==ID_array)
