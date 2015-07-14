@@ -193,16 +193,16 @@ public:
   inline void id(const irep_idt &_data)
   { write().data=_data; }
 
-  const irept &find(const irep_namet &name) const;
-  irept &add(const irep_namet &name);
-  irept &add(const irep_namet &name, const irept &irep);
+  const irept &find(const irep_namet &name, bool not_comment=false) const;
+  irept &add(const irep_namet &name, bool not_comment=false);
+  irept &add(const irep_namet &name, const irept &irep, bool not_comment=false);
 
   inline const std::string &get_string(const irep_namet &name) const
   {
     return id2string(get(name));
   }
   
-  const irep_idt &get(const irep_namet &name) const;
+  const irep_idt &get(const irep_namet &name, bool not_comment=false) const;
   bool get_bool(const irep_namet &name) const;
   signed int get_int(const irep_namet &name) const;
   unsigned int get_unsigned_int(const irep_namet &name) const;
@@ -214,7 +214,7 @@ public:
   { add(name, irep); }
   void set(const irep_namet &name, const long long value);
   
-  void remove(const irep_namet &name);
+  void remove(const irep_namet &name, bool not_comment=false);
   void move_to_sub(irept &irep);
   void move_to_named_sub(const irep_namet &name, irept &irep);
   

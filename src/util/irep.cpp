@@ -300,10 +300,10 @@ Function: irept::get
 
 \*******************************************************************/
 
-const irep_idt &irept::get(const irep_namet &name) const
+const irep_idt &irept::get(const irep_namet &name, bool not_comment) const
 {
   const named_subt &s=
-    is_comment(name)?get_comments():get_named_sub();
+    (!not_comment&&is_comment(name))?get_comments():get_named_sub();
 
   #ifdef SUB_IS_LIST
   named_subt::const_iterator it=named_subt_lower_bound(s, name);
@@ -424,10 +424,10 @@ Function: irept::remove
 
 \*******************************************************************/
 
-void irept::remove(const irep_namet &name)
+void irept::remove(const irep_namet &name, bool not_comment)
 {
   named_subt &s=
-    is_comment(name)?get_comments():get_named_sub();
+    (!not_comment&&is_comment(name))?get_comments():get_named_sub();
 
   #ifdef SUB_IS_LIST
   named_subt::iterator it=named_subt_lower_bound(s, name);
@@ -450,10 +450,10 @@ Function: irept::find
 
 \*******************************************************************/
 
-const irept &irept::find(const irep_namet &name) const
+const irept &irept::find(const irep_namet &name, bool not_comment) const
 {
   const named_subt &s=
-    is_comment(name)?get_comments():get_named_sub();
+    (!not_comment&&is_comment(name))?get_comments():get_named_sub();
 
   #ifdef SUB_IS_LIST
   named_subt::const_iterator it=named_subt_lower_bound(s, name);
@@ -483,10 +483,10 @@ Function: irept::add
 
 \*******************************************************************/
 
-irept &irept::add(const irep_namet &name)
+irept &irept::add(const irep_namet &name, bool not_comment)
 {
   named_subt &s=
-    is_comment(name)?get_comments():get_named_sub();
+    (!not_comment&&is_comment(name))?get_comments():get_named_sub();
 
   #ifdef SUB_IS_LIST
   named_subt::iterator it=named_subt_lower_bound(s, name);
@@ -513,10 +513,10 @@ Function: irept::add
 
 \*******************************************************************/
 
-irept &irept::add(const irep_namet &name, const irept &irep)
+irept &irept::add(const irep_namet &name, const irept &irep, bool not_comment)
 {
   named_subt &s=
-    is_comment(name)?get_comments():get_named_sub();
+    (!not_comment&&is_comment(name))?get_comments():get_named_sub();
 
   #ifdef SUB_IS_LIST
   named_subt::iterator it=named_subt_lower_bound(s, name);

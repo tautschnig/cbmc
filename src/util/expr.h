@@ -50,11 +50,11 @@ public:
   // constructors
   inline exprt() { }
   inline explicit exprt(const irep_idt &_id):irept(_id) { }
-  inline exprt(const irep_idt &_id, const typet &_type):irept(_id) { add(ID_type, _type); }
+  inline exprt(const irep_idt &_id, const typet &_type):irept(_id) { add(ID_type, _type, true); }
  
   // returns the type of the expression
-  inline typet &type() { return static_cast<typet &>(add(ID_type)); }
-  inline const typet &type() const { return static_cast<const typet &>(find(ID_type)); }
+  inline typet &type() { return static_cast<typet &>(add(ID_type, true)); }
+  inline const typet &type() const { return static_cast<const typet &>(find(ID_type, true)); }
 
   // returns true if there is at least one operand
   inline bool has_operands() const

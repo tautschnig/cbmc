@@ -112,7 +112,7 @@ public:
 
   inline const irep_idt &get_identifier() const
   {
-    return get(ID_identifier);
+    return get(ID_identifier, true);
   }
 };
 

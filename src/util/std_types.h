@@ -177,7 +177,7 @@ public:
   
     inline const irep_idt &get_name() const
     {
-      return get(ID_name);
+      return get(ID_name, true);
     }
 
     inline void set_name(const irep_idt &name)
@@ -187,7 +187,7 @@ public:
 
     inline const irep_idt &get_base_name() const
     {
-      return get(ID_base_name);
+      return get(ID_base_name, true);
     }
 
     inline void set_base_name(const irep_idt &base_name)
@@ -240,12 +240,12 @@ public:
   
   inline const componentst &components() const
   {
-    return (const componentst &)(find(ID_components).get_sub());
+    return (const componentst &)(find(ID_components, true).get_sub());
   }
   
   inline componentst &components()
   {
-    return (componentst &)(add(ID_components).get_sub());
+    return (componentst &)(add(ID_components, true).get_sub());
   }
   
   inline bool has_component(const irep_idt &component_name) const

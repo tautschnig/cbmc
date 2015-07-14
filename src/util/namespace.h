@@ -36,7 +36,7 @@ public:
   
   const symbolt &lookup(const irept &irep) const
   {
-    return lookup(irep.get(ID_identifier));
+    return lookup(irep.get(ID_identifier, true));
   }
   
   virtual ~namespace_baset();
