@@ -75,6 +75,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "havoc_loops.h"
 #include "k_induction.h"
 #include "function.h"
+#include "learn.h"
 #include "branch.h"
 #include "wmm/weak_memory.h"
 #include "call_sequences.h"
@@ -342,8 +343,14 @@ int goto_instrument_parse_optionst::doit()
 
     if(cmdline.isset("check-call-sequence"))
     {
+      int bound = -1;
+      if (cmdline.isset("call-sequence-bound"))
+        bound=unsafe_string2int(cmdline.get_value("call-sequence-bound"));
       do_remove_returns();
-      check_call_sequence(goto_functions);
+      check_call_sequence(
+        goto_functions,
+        cmdline.get_value("check-call-sequence"),
+        bound);
       return 0;
     }
 
@@ -1165,6 +1172,26 @@ void goto_instrument_parse_optionst::instrument_goto_program()
   {
     status() << "Havocing loops" << eom;
     havoc_loops(goto_functions);
+  }
+
+  if (cmdline.isset("learn")) {
+    status() << "_Learn_function_enter and Learn_trap instrumentation" << eom;
+    instrument_functions_for_learn(symbol_table, goto_functions,
+        cmdline.get_value("learn-functions"));
+  }
+
+  if (cmdline.isset("learn-word-length")) {
+    status() << "Estimating minimumg learn word length" << eom;
+    size_t function_length(0);
+    if (cmdline.isset("fl")) {
+      function_length = string2integer(cmdline.get_value("fl")).to_ulong();
+    }
+    size_t call_sites(0);
+    if (cmdline.isset("cs")) {
+      call_sites = string2integer(cmdline.get_value("cs")).to_ulong();
+    }
+    show_learn_word_length(symbol_table, goto_functions,
+        cmdline.get_value("learn-functions"), function_length, call_sites);
   }
 
   if(cmdline.isset("k-induction"))

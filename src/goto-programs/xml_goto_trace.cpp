@@ -201,11 +201,13 @@ void convert(
         xml_call_return.set_attribute("thread", i2string(it->thread_nr));
         xml_call_return.set_attribute("step_nr", i2string(it->step_nr));
 
-        const symbolt &symbol=ns.lookup(it->identifier);
         xmlt &xml_function=xml_call_return.new_element("function");
-        xml_function.set_attribute("display_name", id2string(symbol.display_name()));
+        const symbolt *symbol;
+        if(!ns.lookup(it->identifier, symbol)) {
+          xml_function.set_attribute("display_name", id2string(symbol->display_name()));
+          xml_function.new_element()=xml(symbol->location);
+        }
         xml_function.set_attribute("identifier", id2string(it->identifier));
-        xml_function.new_element()=xml(symbol.location);
 
         if(xml_location.name!="")
           xml_call_return.new_element().swap(xml_location);

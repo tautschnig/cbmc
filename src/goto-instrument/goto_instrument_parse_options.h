@@ -39,6 +39,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(nondet-volatile)(isr):" \
   "(stack-depth):(nondet-static)" \
   "(function-enter):(function-exit):(branch):" \
+  "(learn)(learn-functions):(learn-word-length)(fl):(cs):" \
   "(signed-overflow-check)(unsigned-overflow-check)(float-overflow-check)" \
   "(show-goto-functions)(show-value-sets)" \
   "(show-local-may-alias)(show-global-may-alias)" \
@@ -57,7 +58,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(verbosity):(version)(xml-ui)(show-loops)" \
   "(accelerate)(constant-propagator)" \
   "(k-induction):(step-case)(base-case)" \
-  "(show-call-sequences)(check-call-sequence)" \
+  "(show-call-sequences)(check-call-sequence):(call-sequence-bound):" \
   "(interpreter)(show-reaching-definitions)(count-eloc)" \
   "(list-symbols)(list-undefined-functions)" \
   "(z3)(add-library)(show-dependence-graph)" \

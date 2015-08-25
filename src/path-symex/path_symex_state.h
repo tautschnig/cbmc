@@ -185,6 +185,9 @@ public:
   // counts how many times we have executed backwards edges
   typedef std::map<loc_reft, unsigned> unwinding_mapt;
   unwinding_mapt unwinding_map;
+  typedef std::map<loc_reft, loc_reft> backedge_mapt;
+  backedge_mapt backedge_map;
+  loc_reft previous_pc;
 
   // similar for recursive function calls
   typedef std::map<irep_idt, unsigned> recursion_mapt;

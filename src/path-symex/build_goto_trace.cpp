@@ -52,6 +52,8 @@ void build_goto_trace(
       trace_step.type=goto_trace_stept::ASSIGNMENT;
       trace_step.full_lhs=step.full_lhs;
       trace_step.full_lhs_value=decision_procedure.get(step.ssa_lhs);
+      trace_step.lhs_object = step.ssa_lhs;
+      trace_step.lhs_object_value = step.ssa_rhs;
       break;
     
     case DECL:
@@ -59,6 +61,10 @@ void build_goto_trace(
       trace_step.full_lhs=step.full_lhs;
       trace_step.lhs_object=ssa_exprt(step.full_lhs);
       trace_step.full_lhs_value=decision_procedure.get(step.ssa_lhs);
+      if (ID_symbol == step.full_lhs.id()) {
+        trace_step.lhs_object = to_symbol_expr(step.full_lhs);
+        trace_step.lhs_object_value = trace_step.full_lhs_value;
+      }
       break;
       
     case DEAD:

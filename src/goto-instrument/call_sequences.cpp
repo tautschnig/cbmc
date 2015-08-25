@@ -10,6 +10,8 @@ Date: April 2013
 
 #include <stack>
 #include <iostream>
+#include <fstream>
+#include <algorithm>
 
 #include <util/std_expr.h>
 
@@ -156,9 +158,12 @@ class check_call_sequencet
 public:
   explicit check_call_sequencet(
     const goto_functionst &_goto_functions,
-    const std::vector<irep_idt> &_sequence):
+    const std::vector<irep_idt> &_sequence,
+    const std::set<irep_idt> &_interesting_set,
+    int _bound):
     goto_functions(_goto_functions),
-    sequence(_sequence)
+    sequence(_sequence),
+    interesting_set(_interesting_set), bound(_bound)
   {
   }  
 
@@ -167,6 +172,8 @@ public:
 protected:
   const goto_functionst &goto_functions;
   const std::vector<irep_idt> &sequence;
+  const std::set<irep_idt> &interesting_set;
+  int bound;
 
   struct call_stack_entryt
   {
@@ -238,12 +245,17 @@ void check_call_sequencet::operator()()
     queue.top().pc=f_it->second.body.instructions.begin();
     queue.top().index=1;
   }
-  
+
+  bool all_interesting = interesting_set.empty();
+  bool is_bounded = (bound > -1);
+  unsigned ending_index = 0;
+  int non_interesting_counter = 0;
+
   while(!queue.empty())
   {
     statet &e=queue.top();
-    
-    // seen already?
+    if (e.index > ending_index) ending_index = e.index;
+    // seen already (control-flow join points)
     if(states.find(e)!=states.end())
     {
       // drop, continue
@@ -261,7 +273,7 @@ void check_call_sequencet::operator()()
       return;
     }
 
-    // new, explore
+    // reached end of function, return
     if(e.pc==e.f->second.body.instructions.end())
     {
       if(e.call_stack.empty())
@@ -280,11 +292,21 @@ void check_call_sequencet::operator()()
       if(function.id()==ID_symbol)
       {
         irep_idt identifier=to_symbol_expr(function).get_identifier();
-        
-        if(sequence[e.index]==identifier)
+
+        if (sequence[e.index]==identifier ||   // found it
+            // the other option is to counter a case in which a
+            // non-interesting function is recursive and hence we may diverge
+            (!all_interesting &&
+             interesting_set.find(identifier) == interesting_set.end() && // it is not an interesting function
+             !(is_bounded && non_interesting_counter > bound))) // we did not yet cross the bound
         {
-          e.index++; // yes, we have seen it
-        
+
+          if(sequence[e.index]==identifier) {
+            e.index++; // yes, we have seen it
+            non_interesting_counter = 0;
+          }
+          else non_interesting_counter++;
+
           goto_functionst::function_mapt::const_iterator f_call_it=
             goto_functions.function_map.find(identifier);
           
@@ -323,7 +345,7 @@ void check_call_sequencet::operator()()
     }
   }
 
-  std::cout << "sequence not feasible\n";
+  std::cout << "sequence not feasible\n" << ending_index << "\n";
 }
 
 /*******************************************************************\
@@ -338,14 +360,19 @@ Function: check_call_sequence
 
 \*******************************************************************/
 
-void check_call_sequence(const goto_functionst &goto_functions)
+void check_call_sequence(
+  const goto_functionst &goto_functions,
+  const std::string &in_file_prefix,
+  int bound)
 {
-  // read the sequence from stdin
-  
+  std::ifstream in_file;
+  std::string in_file_name = in_file_prefix + ".seq";
+  in_file.open(in_file_name.c_str());
+
   std::vector<irep_idt> sequence;
   
   std::string line;
-  while(std::getline(std::cin, line))
+  while(std::getline(in_file, line))
   {
     if(line!="" && line[line.size()-1]=='\r')
       line.resize(line.size()-1);
@@ -353,7 +380,28 @@ void check_call_sequence(const goto_functionst &goto_functions)
     if(line!="")
       sequence.push_back(line);
   }
+  in_file.close();
+  // read the 'interesting set', i.e., set of function names that we want to
+  // follow (others cause an \epsilon transition). It is assumed (but not
+  // checked) that (name \in sequence ==> name \in interesting_set)
+  in_file_name = in_file_prefix + ".is";
+  in_file.open(in_file_name.c_str());
 
-  check_call_sequencet(goto_functions, sequence)();
+  std::set<irep_idt> interesting_set;
+
+  if (in_file.is_open())
+  {
+    //std::cerr << "Reading set of interesting functions from " << in_file_name << " \n";
+    while(std::getline(in_file, line))
+    {
+      if(line!="" && line[line.size()-1]=='\r')
+        line.resize(line.size()-1);
+
+      if(line!="")
+        interesting_set.insert(line);
+    }
+  }
+
+  check_call_sequencet(goto_functions, sequence, interesting_set, bound)();
 }
 

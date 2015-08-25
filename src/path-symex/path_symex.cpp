@@ -763,14 +763,15 @@ void path_symext::do_goto(
   const goto_programt::instructiont &instruction=
     *state.get_instruction();
 
+  const loct &loc=state.locs[state.pc()];
+  assert(!loc.branch_target.is_nil());
+
   if(instruction.is_backwards_goto())
   {
     // we keep a statistic on how many times we execute backwards gotos
     state.unwinding_map[state.pc()]++;
+    state.backedge_map.insert(std::make_pair(state.pc(), loc.branch_target));
   }
-
-  const loct &loc=state.locs[state.pc()];
-  assert(!loc.branch_target.is_nil());
 
   exprt guard=state.read(instruction.guard);
   
@@ -865,6 +866,15 @@ void path_symext::operator()(
   path_symex_statet &state,
   std::list<path_symex_statet> &further_states)
 {
+  for(__typeof__(state.backedge_map.begin()) it(state.backedge_map.begin()); it != state.backedge_map.end(); ++it) {
+    if(it->second == state.pc()) {
+      path_symex_statet::backedge_mapt::const_iterator edge(state.backedge_map.find(state.previous_pc));
+      if(state.backedge_map.end() == edge || edge->second != state.pc()) {
+        state.unwinding_map[it->first] = 0;
+      }
+    }
+  }
+  const loc_reft previous_pc(state.pc());
   const goto_programt::instructiont &instruction=
     *state.get_instruction();
     
@@ -1015,6 +1025,7 @@ void path_symext::operator()(
   default:
     throw "path_symext: unexpected instruction";
   }
+  state.previous_pc = previous_pc;
 }
 
 /*******************************************************************\

@@ -138,7 +138,8 @@ void remove_returnst::do_function_calls(
 {
   Forall_goto_program_instructions(i_it, goto_program)
   {
-    if(i_it->is_function_call())
+    if(i_it->is_function_call() &&
+       to_code_function_call(i_it->code).lhs().is_not_nil())
     {
       code_function_callt &function_call=to_code_function_call(i_it->code);
 
