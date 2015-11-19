@@ -21,6 +21,9 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "pointer_offset_size.h"
 
+typedef hash_map_cont<typet, mp_integer, irep_hash> type_bit_sizet;
+static type_bit_sizet type_bit_size;
+
 /*******************************************************************\
 
 Function: member_offset
@@ -107,6 +110,13 @@ mp_integer pointer_offset_bits(
   const typet &type,
   const namespacet &ns)
 {
+  std::pair<type_bit_sizet::iterator, bool> cache_entry=
+    type_bit_size.insert(std::make_pair(type, 0));
+  if(!cache_entry.second)
+    return cache_entry.first->second;
+
+  mp_integer &result=cache_entry.first->second;
+
   if(type.id()==ID_array)
   {
     mp_integer sub=pointer_offset_bits(type.subtype(), ns);
@@ -118,9 +128,9 @@ mp_integer pointer_offset_bits(
     mp_integer i;
     
     if(to_integer(size, i))
-      return -1; // we cannot distinguish the elements
-    
-    return sub*i;
+      result=-1; // we cannot distinguish the elements
+    else
+      result=sub*i;
   }
   else if(type.id()==ID_vector)
   {
@@ -133,22 +143,20 @@ mp_integer pointer_offset_bits(
     mp_integer i;
     
     if(to_integer(size, i))
-      return -1; // we cannot distinguish the elements
-    
-    return sub*i;
+      result=-1; // we cannot distinguish the elements
+    else
+      result=sub*i;
   }
   else if(type.id()==ID_complex)
   {
     mp_integer sub=pointer_offset_bits(type.subtype(), ns);
-    return sub*2;
+    result=sub*2;
   }
   else if(type.id()==ID_struct)
   {
     const struct_typet &struct_type=to_struct_type(type);
     const struct_typet::componentst &components=
       struct_type.components();
-      
-    mp_integer result=0;
     
     for(struct_typet::componentst::const_iterator
         it=components.begin();
@@ -157,19 +165,19 @@ mp_integer pointer_offset_bits(
     {
       const typet &subtype=it->type();
       mp_integer sub_size=pointer_offset_bits(subtype, ns);
-      if(sub_size==-1) return -1;
+      if(sub_size==-1)
+      {
+        result=-1;
+        break;
+      }
       result+=sub_size;
     }
-
-    return result;
   }
   else if(type.id()==ID_union)
   {
     const union_typet &union_type=to_union_type(type);
     const union_typet::componentst &components=
       union_type.components();
-      
-    mp_integer result=0;
 
     // compute max
     
@@ -182,8 +190,6 @@ mp_integer pointer_offset_bits(
       mp_integer sub_size=pointer_offset_bits(subtype, ns);
       if(sub_size>result) result=sub_size;
     }
-    
-    return result;
   }
   else if(type.id()==ID_signedbv ||
           type.id()==ID_unsignedbv ||
@@ -192,42 +198,44 @@ mp_integer pointer_offset_bits(
           type.id()==ID_bv ||
           type.id()==ID_c_bool)
   {
-    return to_bitvector_type(type).get_width();
+    result=to_bitvector_type(type).get_width();
   }
   else if(type.id()==ID_c_bit_field)
   {
-    return to_c_bit_field_type(type).get_width();
+    result=to_c_bit_field_type(type).get_width();
   }
   else if(type.id()==ID_c_enum)
   {
-    return to_bitvector_type(type.subtype()).get_width();
+    result=to_bitvector_type(type.subtype()).get_width();
   }
   else if(type.id()==ID_c_enum_tag)
   {
-    return pointer_offset_bits(ns.follow_tag(to_c_enum_tag_type(type)), ns);
+    result=pointer_offset_bits(ns.follow_tag(to_c_enum_tag_type(type)), ns);
   }
   else if(type.id()==ID_bool)
   {
-    return 1;
+    result=1;
   }
   else if(type.id()==ID_pointer)
   {
-    return config.ansi_c.pointer_width;
+    result=config.ansi_c.pointer_width;
   }
   else if(type.id()==ID_symbol)
   {
-    return pointer_offset_bits(ns.follow(type), ns);
+    result=pointer_offset_bits(ns.follow(type), ns);
   }
   else if(type.id()==ID_code)
   {
-    return 0;
+    result=0;
   }
   else if(type.id()==ID_string)
   {
     return 32;
   }
   else
-    return mp_integer(-1);
+    result=-1;
+
+  return result;
 }
 
 /*******************************************************************\
