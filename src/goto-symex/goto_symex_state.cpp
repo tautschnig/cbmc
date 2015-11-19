@@ -538,12 +538,13 @@ Function: goto_symex_statet::rename
 
 \*******************************************************************/
 
-void goto_symex_statet::rename(
+bool goto_symex_statet::rename(
   exprt &expr,
   const namespacet &ns,
   levelt level)
 {
   // rename all the symbols with their last known value
+  bool result=false;
 
   if(expr.id()==ID_symbol &&
      expr.get_bool(ID_C_SSA_symbol))
@@ -578,7 +579,10 @@ void goto_symex_statet::rename(
           propagation.values.find(ssa.get_identifier());
 
         if(p_it!=propagation.values.end())
+        {
           expr=p_it->second; // already L2
+          result=true;
+        }
         else
           set_ssa_indices(ssa, ns, L2);
       }
@@ -595,16 +599,16 @@ void goto_symex_statet::rename(
         ns,
         level);
 
-      return;
+      return false;
     }
 
     expr=ssa_exprt(expr);
-    rename(expr, ns, level);
+    result=rename(expr, ns, level);
   }
   else if(expr.id()==ID_address_of)
   {
     assert(expr.operands().size()==1);
-    rename_address(expr.op0(), ns, level);
+    result=rename_address(expr.op0(), ns, level);
     assert(expr.type().id()==ID_pointer);
     expr.type().subtype()=expr.op0().type();
   }
@@ -615,7 +619,7 @@ void goto_symex_statet::rename(
 
     // do this recursively
     Forall_operands(it, expr)
-      rename(*it, ns, level);
+      result=rename(*it, ns, level) || result;
 
     // some fixes
     if(expr.id()==ID_with)
@@ -626,6 +630,11 @@ void goto_symex_statet::rename(
       expr.type()=to_if_expr(expr).true_case().type();
     }
   }
+
+  if(result)
+    expr.remove(ID_C_expr_simplified);
+
+  return result;
 }
 
 /*******************************************************************\
@@ -834,11 +843,13 @@ Function: goto_symex_statet::rename_address
 
 \*******************************************************************/
 
-void goto_symex_statet::rename_address(
+bool goto_symex_statet::rename_address(
   exprt &expr,
   const namespacet &ns,
   levelt level)
 {
+  bool result=false;
+
   if(expr.id()==ID_symbol &&
      expr.get_bool(ID_C_SSA_symbol))
   {
@@ -853,7 +864,7 @@ void goto_symex_statet::rename_address(
   else if(expr.id()==ID_symbol)
   {
     expr=ssa_exprt(expr);
-    rename_address(expr, ns, level);
+    result=rename_address(expr, ns, level);
   }
   else
   {
@@ -861,20 +872,20 @@ void goto_symex_statet::rename_address(
     {
       index_exprt &index_expr=to_index_expr(expr);
 
-      rename_address(index_expr.array(), ns, level);
+      result=rename_address(index_expr.array(), ns, level);
       assert(index_expr.array().type().id()==ID_array);
       expr.type()=index_expr.array().type().subtype();
 
       // the index is not an address
-      rename(index_expr.index(), ns, level);
+      result=rename(index_expr.index(), ns, level) || result;
     }
     else if(expr.id()==ID_if)
     {
       // the condition is not an address
       if_exprt &if_expr=to_if_expr(expr);
-      rename(if_expr.cond(), ns, level);
-      rename_address(if_expr.true_case(), ns, level);
-      rename_address(if_expr.false_case(), ns, level);
+      result=rename(if_expr.cond(), ns, level);
+      result=rename_address(if_expr.true_case(), ns, level) || result;
+      result=rename_address(if_expr.false_case(), ns, level) || result;
 
       if_expr.type()=if_expr.true_case().type();
     }
@@ -882,7 +893,7 @@ void goto_symex_statet::rename_address(
     {
       member_exprt &member_expr=to_member_expr(expr);
 
-      rename_address(member_expr.struct_op(), ns, level);
+      result=rename_address(member_expr.struct_op(), ns, level);
 
       // type might not have been renamed in case of nesting of
       // structs and pointers/arrays
@@ -906,9 +917,14 @@ void goto_symex_statet::rename_address(
       // do this recursively; we assume here
       // that all the operands are addresses
       Forall_operands(it, expr)
-        rename_address(*it, ns, level);
+        result=rename_address(*it, ns, level) || result;
     }
   }
+
+  if(result)
+    expr.remove(ID_C_expr_simplified);
+
+  return result;
 }
 
 /*******************************************************************\
