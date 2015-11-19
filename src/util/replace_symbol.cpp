@@ -117,6 +117,9 @@ bool replace_symbolt::replace(exprt &dest) const
      !replace(static_cast<typet&>(dest.add(ID_C_va_arg_type))))
     result=false;
 
+  if(!result)
+    dest.remove(ID_C_expr_simplified);
+
   return result;
 }
 
@@ -232,6 +235,9 @@ bool replace_symbolt::replace(typet &dest) const
     if(!replace(array_type.size()))
       result=false;
   }
+
+  if(!result)
+    dest.remove(ID_C_expr_simplified);
 
   return result;
 }
