@@ -288,6 +288,7 @@ void symex_target_equationt::assignment(
   assignment_typet assignment_type)
 {
   assert(ssa_lhs.is_not_nil());
+  //assert(ssa_lhs.get_identifier()!="symex::invalid_object0#1");
   
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();

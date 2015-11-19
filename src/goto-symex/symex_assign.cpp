@@ -284,7 +284,8 @@ void goto_symext::symex_assign_symbol(
   do_simplify(ssa_rhs);
   
   ssa_exprt ssa_lhs=lhs;
-  state.assignment(ssa_lhs, ssa_rhs, ns, options.get_bool_option("simplify"), constant_propagation);
+  bool required=
+    state.assignment(ssa_lhs, ssa_rhs, ns, options.get_bool_option("simplify"), constant_propagation);
   
   exprt ssa_full_lhs=full_lhs;
   ssa_full_lhs=add_to_lhs(ssa_full_lhs, ssa_lhs);
@@ -300,13 +301,17 @@ void goto_symext::symex_assign_symbol(
   const symbolt &symbol=ns.lookup(ssa_lhs.get_original_expr());
   if(symbol.is_auxiliary) assignment_type=symex_targett::HIDDEN;
   
-  target.assignment(
-    tmp_guard.as_expr(),
-    ssa_lhs,
-    ssa_full_lhs, add_to_lhs(full_lhs, ssa_lhs.get_original_expr()),
-    ssa_rhs, 
-    state.source,
-    assignment_type);
+
+  if(true || required || !constant_propagation)
+    target.assignment(
+      tmp_guard.as_expr(),
+      ssa_lhs,
+      ssa_full_lhs, add_to_lhs(full_lhs, ssa_lhs.get_original_expr()),
+      ssa_rhs, 
+      state.source,
+      assignment_type);
+  else
+    target.location(tmp_guard.as_expr(), state.source);
 }
 
 /*******************************************************************\

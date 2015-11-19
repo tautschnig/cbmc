@@ -7,6 +7,7 @@ Author: Daniel Kroening, kroening@kroening.com
 \*******************************************************************/
 
 #include <cassert>
+#include <iostream>
 
 #include <util/std_expr.h>
 #include <util/rename.h>
@@ -45,6 +46,7 @@ Function: goto_symext::vcc
 
 \*******************************************************************/
 
+int three_times=0;
 void goto_symext::vcc(
   const exprt &vcc_expr,
   const std::string &msg,
@@ -61,11 +63,19 @@ void goto_symext::vcc(
   state.rename(expr, ns);
   
   // now try simplifier on it
+  ++three_times;
+  //if(three_times<4)
+  //std::cerr << "simplify_vcc: " << from_expr(ns, "", expr) << std::endl;
   do_simplify(expr);
+  //if(three_times<4)
+  //std::cerr << "simplified_vcc: " << from_expr(ns, "", expr) << std::endl;
 
   if(expr.is_true()) return;
   
   state.guard.guard_expr(expr);
+
+  // simplify guard expression
+  do_simplify(expr);
   
   remaining_vccs++;
   target.assertion(state.guard.as_expr(), expr, msg, state.source);
@@ -95,7 +105,9 @@ void goto_symext::symex_assume(statet &state, const exprt &cond)
   {
     exprt tmp=simplified_cond;
     state.guard.guard_expr(tmp);
+    do_simplify(tmp);
     target.assumption(state.guard.as_expr(), tmp, state.source);
+    state.guard.add(simplified_cond);
   }
   // symex_target_equationt::convert_assertions would fail to
   // consider assumptions of threads that have a thread-id above that

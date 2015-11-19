@@ -151,7 +151,7 @@ public:
     const namespacet &ns,
     levelt level=L2);
   
-  void assignment(
+  bool assignment(
     ssa_exprt &lhs, // L0/L1
     const exprt &rhs,  // L2
     const namespacet &ns,
@@ -159,8 +159,12 @@ public:
     bool record_value);
 
   // what to propagate
-  bool constant_propagation(const exprt &expr) const;
-  bool constant_propagation_reference(const exprt &expr) const;
+  bool constant_propagation(
+    const namespacet &ns,
+    const exprt &expr) const;
+  bool constant_propagation_reference(
+    const namespacet &ns,
+    const exprt &expr) const;
 
   // undoes all levels of renaming
   void get_original_name(exprt &expr) const;

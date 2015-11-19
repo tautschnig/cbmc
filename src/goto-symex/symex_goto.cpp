@@ -8,6 +8,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <cassert>
 #include <algorithm>
+#include <iostream>
 
 #include <util/expr_util.h>
 #include <util/std_expr.h>
@@ -27,6 +28,7 @@ Function: goto_symext::symex_goto
 
 \*******************************************************************/
 
+int four_times=0;
 void goto_symext::symex_goto(statet &state)
 {
   const goto_programt::instructiont &instruction=*state.source.pc;
@@ -37,7 +39,15 @@ void goto_symext::symex_goto(statet &state)
 
   exprt new_guard=old_guard;
   state.rename(new_guard, ns);
+  ++four_times;
+#define UB 829
+#define LB 800
+  //if(four_times>LB && four_times<UB)
+  //std::cerr << "simplify_new_guard: " << from_expr(ns, "", new_guard) << std::endl;
   do_simplify(new_guard);
+  //if(four_times>LB && four_times<UB)
+  //std::cerr << "simplified_new_guard: " << from_expr(ns, "", new_guard) << std::endl;
+  //assert(four_times<UB);
   
   if(new_guard.is_false() ||
      state.guard.is_false())
@@ -143,7 +153,7 @@ void goto_symext::symex_goto(statet &state)
       
       ssa_exprt new_lhs(guard_symbol_expr);
       state.rename(new_lhs, ns, goto_symex_statet::L1);
-      state.assignment(new_lhs, new_rhs, ns, true, false);
+      state.assignment(new_lhs, new_rhs, ns, true, true);
       
       guardt guard;
 
@@ -378,15 +388,18 @@ void goto_symext::phi_function(
     ssa_exprt new_lhs=*it;
     const bool record_events=dest_state.record_events;
     dest_state.record_events=false;
-    dest_state.assignment(new_lhs, rhs, ns, true, true);
+    bool required=dest_state.assignment(new_lhs, rhs, ns, true, true);
     dest_state.record_events=record_events;
     
-    target.assignment(
-      true_exprt(),
-      new_lhs, new_lhs, new_lhs.get_original_expr(),
-      rhs,
-      dest_state.source,
-      symex_targett::PHI);
+    if(required || !constant_propagation)
+      target.assignment(
+        true_exprt(),
+        new_lhs, new_lhs, new_lhs.get_original_expr(),
+        rhs,
+        dest_state.source,
+        symex_targett::PHI);
+    else
+      target.location(true_exprt(), dest_state.source);
   }
 }
 

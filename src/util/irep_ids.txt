@@ -711,6 +711,8 @@ force
 release
 popcount
 function_type
+C_expr_is_renamed #expr_is_renamed
+C_expr_simplified #expr_simplified
 noreturn
 C_noreturn #noreturn
 process

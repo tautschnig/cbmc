@@ -148,93 +148,45 @@ Function: goto_symex_statet::constant_propagation
 
 \*******************************************************************/
 
-bool goto_symex_statet::constant_propagation(const exprt &expr) const
+bool goto_symex_statet::constant_propagation(
+  const namespacet& ns,
+  const exprt &expr) const
 {
-  if(expr.is_constant() ||
-     expr.id()==ID_nondet_symbol)
+  if(expr.get_bool(ID_C_expr_is_renamed))
     return true;
-  
+
   if(expr.id()==ID_address_of)
   {
     const address_of_exprt &address_of_expr=to_address_of_expr(expr);
 
-    return constant_propagation_reference(address_of_expr.object());
+    return constant_propagation_reference(ns, address_of_expr.object());
   }
-  else if(expr.id()==ID_typecast)
+#if 0
+  // byte_extract may be out-of-bounds
+  else if(expr.id()==ID_byte_extract_big_endian ||
+          expr.id()==ID_byte_extract_little_endian)
   {
-    const typecast_exprt &typecast_expr=to_typecast_expr(expr);
-
-    return constant_propagation(typecast_expr.op());
-  }
-  else if(expr.id()==ID_plus)
-  {
-    forall_operands(it, expr)
-      if(!constant_propagation(*it))
-        return false;
-
-    return true;
-  }
-  else if(expr.id()==ID_mult)
-  {
-    // propagate stuff with sizeof in it
-    forall_operands(it, expr)
-      if(it->find(ID_C_c_sizeof_type).is_not_nil())
-        return true;
-
-    return true;
-  }
-  else if(expr.id()==ID_array)
-  {
-    forall_operands(it, expr)
-      if(!constant_propagation(*it))
-        return false;
-        
-    return true;
-  }
-  else if(expr.id()==ID_array_of)
-  {
-    return constant_propagation(expr.op0());
-  }
-  else if(expr.id()==ID_with)
-  {
-    // this is bad
-    /*
-    forall_operands(it, expr)
-      if(!constant_propagation(expr.op0()))
-        return false;
-
-    return true;
-    */
     return false;
   }
-  else if(expr.id()==ID_struct)
+  else if(expr.id()==ID_symbol &&
+          expr.get_bool(ID_C_SSA_symbol))
   {
-    forall_operands(it, expr)
-      if(!constant_propagation(*it))
-        return false;
+    // do we have threads?
+    if(threads.size()<=1)
+      return true;
 
-    return true;
+    // is it a shared object?
+    const irep_idt &obj_identifier=to_ssa_expr(expr).get_object_name();
+    return obj_identifier=="goto_symex::\\guard" ||
+      !ns.lookup(obj_identifier).is_shared();
   }
-  else if(expr.id()==ID_union)
-  {
-    forall_operands(it, expr)
-      if(!constant_propagation(*it))
-        return false;
+#endif
 
-    return true;
-  }
-  // byte_update works, byte_extract may be out-of-bounds
-  else if(expr.id()==ID_byte_update_big_endian ||
-          expr.id()==ID_byte_update_little_endian)
-  {
-    forall_operands(it, expr)
-      if(!constant_propagation(*it))
-        return false;
+  forall_operands(it, expr)
+    if(!constant_propagation(ns, *it))
+      return false;
 
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
 /*******************************************************************\
@@ -250,23 +202,27 @@ Function: goto_symex_statet::constant_propagation_reference
 
 \*******************************************************************/
 
-bool goto_symex_statet::constant_propagation_reference(const exprt &expr) const
+bool goto_symex_statet::constant_propagation_reference(
+  const namespacet &ns,
+  const exprt &expr) const
 {
-  if(expr.id()==ID_symbol)
+  if(expr.id()==ID_symbol ||
+     expr.id()==ID_dynamic_object ||
+     expr.id()==ID_nondet_symbol)
     return true;
   else if(expr.id()==ID_index)
   {
     const index_exprt &index_expr=to_index_expr(expr);
 
-    return constant_propagation_reference(index_expr.array()) &&
-           constant_propagation(index_expr.index());
+    return constant_propagation_reference(ns, index_expr.array()) &&
+           constant_propagation(ns, index_expr.index());
   }
   else if(expr.id()==ID_member)
   {
     if(expr.operands().size()!=1)
       throw "member expects one operand";
 
-    return constant_propagation_reference(expr.op0());
+    return constant_propagation_reference(ns, expr.op0());
   }
   else if(expr.id()==ID_string_constant ||
           expr.id()==ID_array ||
@@ -289,6 +245,7 @@ Function: goto_symex_statet::assignment
 
 \*******************************************************************/
 
+#if 0
 static bool check_renaming(const exprt &expr);
 
 static bool check_renaming(const typet &type)
@@ -360,10 +317,11 @@ static bool check_renaming(const exprt &expr)
 
   return false;
 }
+#endif
 
 static void assert_l1_renaming(const exprt &expr)
 {
-  #if 1
+  #if 0
   if(check_renaming_l1(expr))
   {
     std::cerr << expr.pretty() << std::endl;
@@ -376,7 +334,7 @@ static void assert_l1_renaming(const exprt &expr)
 
 static void assert_l2_renaming(const exprt &expr)
 {
-  #if 1
+  #if 0
   if(check_renaming(expr))
   {
     std::cerr << expr.pretty() << std::endl;
@@ -387,7 +345,7 @@ static void assert_l2_renaming(const exprt &expr)
   #endif
 }
 
-void goto_symex_statet::assignment(
+bool goto_symex_statet::assignment(
   ssa_exprt &lhs, // L0/L1
   const exprt &rhs,  // L2
   const namespacet &ns,
@@ -424,13 +382,19 @@ void goto_symex_statet::assignment(
   assert_l2_renaming(rhs);
 
   // for value propagation -- the RHS is L2
+  const bool rhs_recorded=
+    !is_shared && record_value && constant_propagation(ns, rhs);
   
-  if(!is_shared && record_value && constant_propagation(rhs))
-    propagation.values[l1_identifier]=rhs;
+  if(rhs_recorded)
+  {
+    exprt rhs_writable=rhs;
+    rhs_writable.set(ID_C_expr_is_renamed, true);
+    propagation.values[l1_identifier].swap(rhs_writable);
+  }
   else
+  {
     propagation.remove(l1_identifier);
       
-  {
     // update value sets
     value_sett::expr_sett rhs_value_set;
     exprt l1_rhs(rhs);
@@ -450,6 +414,8 @@ void goto_symex_statet::assignment(
   value_set.output(ns, std::cout);
   std::cout << "**********************" << std::endl;
   #endif
+
+  return !rhs_recorded;
 }
 
 /*******************************************************************\
@@ -544,6 +510,9 @@ bool goto_symex_statet::rename(
   const namespacet &ns,
   levelt level)
 {
+  if(expr.get_bool(ID_C_expr_is_renamed))
+    return false;
+
   // rename all the symbols with their last known value
   bool result=false;
 
