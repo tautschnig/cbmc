@@ -2599,20 +2599,38 @@ bool simplify_exprt::simplify_rec(exprt &expr)
   exprt tmp=expr;
   bool result=true;
 
-  result=simplify_node_preorder(tmp);
-
-  if(!simplify_node(tmp)) result=false;
-
-  #if 1
-  replace_mapt::const_iterator it=local_replace_map.find(tmp);
-  if(it!=local_replace_map.end())
+  if(!tmp.get_bool(ID_C_expr_simplified))
   {
-    tmp=it->second;
-    result=false;
+    result=simplify_node_preorder(tmp);
+
+    if(!simplify_node(tmp)) result=false;
+
+    replace_mapt::const_iterator it=local_replace_map.find(tmp);
+    if(it!=local_replace_map.end())
+    {
+      tmp=it->second;
+      result=false;
+    }
+
+    tmp.set(ID_C_expr_simplified, true);
   }
-  #else
-  if(!local_replace_map.empty() &&
-     !replace_expr(local_replace_map, tmp))
+  #if 0
+  else
+  {
+    exprt tmp2=tmp;
+    tmp2.remove(ID_C_expr_simplified);
+    simplify_rec(tmp2);
+    if(tmp2!=tmp)
+    {
+      std::cerr << "tmp=" << from_expr(ns, "", tmp) << std::endl;
+      std::cerr << "tmp2=" << from_expr(ns, "", tmp2) << std::endl;
+    }
+    assert(tmp2==tmp);
+  }
+  #endif
+  #if 0
+  else if(!local_replace_map.empty() &&
+          !replace_expr(local_replace_map, tmp))
   {
     simplify_rec(tmp);
     result=false;
