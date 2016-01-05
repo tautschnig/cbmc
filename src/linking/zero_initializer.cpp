@@ -132,20 +132,14 @@ exprt zero_initializert<nondet>::zero_initializer_rec(
 
       mp_integer array_size;
 
-      if(array_type.size().id()==ID_infinity)
+      if(array_type.size().id()==ID_infinity ||
+         to_integer(array_type.size(), array_size) ||
+         (nondet && array_size>1000)) // magic number consistent with boolbv.cpp
       {
         exprt value(ID_array_of, type);
         value.copy_to_operands(tmpval);
         value.add_source_location()=source_location;
         return value;
-      }
-      else if(to_integer(array_type.size(), array_size))
-      {
-        err_location(source_location);
-        str << "failed to zero-initialize array of non-fixed size `"
-            << to_string(array_type.size()) << "'";
-        error_msg();
-        throw 0;
       }
         
       if(array_size<0)
