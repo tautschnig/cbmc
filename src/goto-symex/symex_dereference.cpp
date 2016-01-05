@@ -311,6 +311,8 @@ void goto_symext::dereference(
   // symbols whose address is taken.
   assert(!state.call_stack().empty());
   state.rename(expr, ns, goto_symex_statet::L1);
+  // really, we need to use another dereferencing implementation,
+  // such as dereferencet, with L2 renaming on demand
 
   // start the recursion!
 #if 0
