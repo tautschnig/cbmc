@@ -302,7 +302,7 @@ void goto_symext::symex_assign_symbol(
   if(symbol.is_auxiliary) assignment_type=symex_targett::HIDDEN;
   
 
-  if(true || required || !constant_propagation)
+  if(/*true ||*/ required || !constant_propagation)
     target.assignment(
       tmp_guard.as_expr(),
       ssa_lhs,
