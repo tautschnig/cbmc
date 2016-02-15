@@ -9,6 +9,13 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "irep_hash.h"
 #include "merge_irep.h"
 
+#ifdef IREP_HASH_STATS
+unsigned long long merge_hash_cnt=0;
+unsigned long long merge_cmp_cnt=0;
+unsigned long long merge_cmp_ne_cnt=0;
+#endif
+
+#if 0
 /*******************************************************************\
 
 Function: to_be_merged_irept::hash
@@ -21,7 +28,7 @@ Function: to_be_merged_irept::hash
 
 \*******************************************************************/
 
-std::size_t to_be_merged_irept::hash() const
+std::size_t merged_irepst::to_be_merged_irept::hash() const
 {
   std::size_t result=hash_string(id());
 
@@ -39,6 +46,9 @@ std::size_t to_be_merged_irept::hash() const
 
   result=hash_finalize(result, named_sub.size()+sub.size());
 
+  #ifdef IREP_HASH_STATS
+  ++merge_hash_cnt;
+  #endif
   return result;
 }
 
@@ -54,9 +64,19 @@ Function: to_be_merged_irept::operator==
 
 \*******************************************************************/
 
-bool to_be_merged_irept::operator == (const to_be_merged_irept &other) const
+bool merged_irepst::to_be_merged_irept::operator == (
+  const to_be_merged_irept &other) const
 {
-  if(id()!=other.id()) return false;
+  #ifdef IREP_HASH_STATS
+  ++merge_cmp_cnt;
+  #endif
+  if(id()!=other.id())
+  {
+    #ifdef IREP_HASH_STATS
+    ++merge_cmp_ne_cnt;
+    #endif
+    return false;
+  }
 
   const irept::subt &sub=get_sub();
   const irept::subt &o_sub=other.get_sub();
@@ -71,9 +91,14 @@ bool to_be_merged_irept::operator == (const to_be_merged_irept &other) const
     irept::subt::const_iterator os_it=o_sub.begin();
   
     for(; s_it!=sub.end(); s_it++, os_it++)
-      if(static_cast<const merged_irept &>(*s_it)!=
-         static_cast<const merged_irept &>(*os_it))
+      if(!(static_cast<const merged_irept &>(*s_it)==
+           static_cast<const merged_irept &>(*os_it)))
+      {
+        #ifdef IREP_HASH_STATS
+        ++merge_cmp_ne_cnt;
+        #endif
         return false;
+      }
   }
   
   {
@@ -82,13 +107,19 @@ bool to_be_merged_irept::operator == (const to_be_merged_irept &other) const
   
     for(; s_it!=named_sub.end(); s_it++, os_it++)
       if(s_it->first!=os_it->first ||
-         static_cast<const merged_irept &>(s_it->second)!=
-         static_cast<const merged_irept &>(os_it->second))
+         !(static_cast<const merged_irept &>(s_it->second)==
+           static_cast<const merged_irept &>(os_it->second)))
+      {
+        #ifdef IREP_HASH_STATS
+        ++merge_cmp_ne_cnt;
+        #endif
         return false;
+      }
   }
 
   return true;
 }
+#endif
 
 /*******************************************************************\
 
@@ -105,15 +136,36 @@ Function: merged_irepst::merged
 const merged_irept &merged_irepst::merged(const irept &irep)
 {
   // first see if it's already a merged_irep
+  const merged_irept m(irep);
 
+  // syntactic equality to earlier merge
   merged_irep_storet::const_iterator entry=
-    merged_irep_store.find(merged_irept(irep));
+    merged_irep_store.find(m);
 
   if(entry!=merged_irep_store.end())
     return *entry; // nothing to do
 
+  // syntactic equality to irep merged earlier
+  std::pair<merge_done_irep_storet::iterator, bool> syn_entry=
+    merge_done_irep_store.insert(
+      std::make_pair(m, merged_irept()));
+
+  if(!syn_entry.second)
+    return syn_entry.first->second; // nothing to do
+
+  // semantic equality to irep merged earlier
+  std::pair<to_be_merged_irep_storet::iterator, bool> sem_entry=
+    to_be_merged_irep_store.insert(
+      std::make_pair(irep, merged_irept()));
+
+  if(!sem_entry.second)
+  {
+    syn_entry.first->second=sem_entry.first->second;
+    return sem_entry.first->second; // nothing to do
+  }
+
   // need to build new irep that will be in the container
-  irept new_irep(irep.id());
+  merged_irept new_irep(irep.id());
 
   const irept::subt &src_sub=irep.get_sub();
   irept::subt &dest_sub=new_irep.get_sub();
@@ -133,13 +185,11 @@ const merged_irept &merged_irepst::merged(const irept &irep)
     dest_named_sub[it->first]=merged(it->second); // recursive call
     #endif
 
-  std::pair<to_be_merged_irep_storet::const_iterator, bool> result=
-    to_be_merged_irep_store.insert(to_be_merged_irept(new_irep));
+  sem_entry.first->second=new_irep;
+  syn_entry.first->second=new_irep;
+  merged_irep_store.insert(new_irep);
 
-  if(result.second) // really new, record
-    merged_irep_store.insert(merged_irept(new_irep));
-  
-  return static_cast<const merged_irept &>(static_cast<const irept &>(*result.first));
+  return sem_entry.first->second;
 }
 
 /*******************************************************************\

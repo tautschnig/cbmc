@@ -1,6 +1,6 @@
 SRC = cpp_parser.cpp cpp_scanner.cpp elf_reader.cpp float_utils.cpp \
       ieee_float.cpp json.cpp miniBDD.cpp osx_fat_reader.cpp \
-      smt2_parser.cpp wp.cpp
+      smt2_parser.cpp wp.cpp merge_irep.cpp
 
 INCLUDES= -I ../src/
 
@@ -42,6 +42,9 @@ ieee_float$(EXEEXT): ieee_float$(OBJEXT)
 	$(LINKBIN)
 
 json$(EXEEXT): json$(OBJEXT)
+	$(LINKBIN)
+
+merge_irep$(EXEEXT): merge_irep$(OBJEXT)
 	$(LINKBIN)
 
 miniBDD$(EXEEXT): miniBDD$(OBJEXT)
