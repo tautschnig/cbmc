@@ -369,9 +369,9 @@ std::string expr2ct::convert_rec(
 
     const irep_idt &tag=struct_type.get_tag();
     if(tag!="") dest+=" "+id2string(tag);
-    dest+=" {";
+    dest+=" {...";
     
-    for(struct_typet::componentst::const_iterator
+    /*for(struct_typet::componentst::const_iterator
         it=struct_type.components().begin();
         it!=struct_type.components().end();
         it++)
@@ -379,7 +379,7 @@ std::string expr2ct::convert_rec(
       dest+=' ';
       dest+=convert_rec(it->type(), c_qualifierst(), id2string(it->get_name()));
       dest+=';';
-    }
+    }*/
     
     dest+=" }";
     
@@ -2273,8 +2273,10 @@ std::string expr2ct::convert_constant(
     if(value==ID_NULL)
     {
       dest="NULL";
+#if 0
       if(type.subtype().id()!=ID_empty)
         dest="(("+convert(type)+")"+dest+")";
+#endif
     }
     else if(value==std::string(value.size(), '0') &&
             config.ansi_c.NULL_is_zero)
