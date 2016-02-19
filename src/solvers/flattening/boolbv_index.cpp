@@ -6,6 +6,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
+#include <iostream>
 #include <cassert>
 
 #include <util/arith_tools.h>
@@ -341,6 +342,12 @@ void boolbvt::convert_index(
     // in bounds
 
     // Expression simplification should remove these cases
+    if(array.id() == ID_array_of ||
+       array.id() == ID_array)
+    {
+      std::cerr << array.pretty() << std::endl;
+      std::cerr << "Index: " << index << std::endl;
+    }
     assert(array.id()!=ID_array_of &&
            array.id()!=ID_array);
     // If not there are large improvements possible as above
