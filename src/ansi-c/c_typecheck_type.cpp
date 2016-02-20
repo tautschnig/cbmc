@@ -6,6 +6,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
+#include <iostream>
+
 #include <util/config.h>
 #include <util/simplify_expr.h>
 #include <util/arith_tools.h>
@@ -1188,6 +1190,7 @@ void c_typecheck_baset::typecheck_c_enum_type(typet &type)
   type.id(ID_c_enum_tag);
   type.remove(ID_tag);
   type.set(ID_identifier, identifier);
+  std::cerr << "Result type=" << type.pretty() << std::endl;
 }
 
 /*******************************************************************\
@@ -1252,6 +1255,7 @@ void c_typecheck_baset::typecheck_c_enum_tag_type(c_enum_tag_typet &type)
     
     symbolt *new_symbol;
     move_symbol(enum_tag_symbol, new_symbol);
+    std::cerr << "Incomplete type=" << type.pretty() << std::endl;
   }
   
   // Clean up resulting type

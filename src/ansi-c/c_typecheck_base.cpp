@@ -391,7 +391,9 @@ void c_typecheck_baset::typecheck_redefinition_non_type(
       str << "error: function symbol `" << new_symbol.display_name()
           << "' redefined with a different type:" << "\n";
       str << "Original: " << to_string(old_symbol.type) << "\n";
-      str << "     New: " << to_string(new_symbol.type);
+      str << "     New: " << to_string(new_symbol.type) << "\n";
+      str << "Original: " << old_symbol.type.pretty() << "\n";
+      str << "     New: " << new_symbol.type.pretty() << "\n";
       throw 0;
     }
 
@@ -543,7 +545,9 @@ void c_typecheck_baset::typecheck_redefinition_non_type(
       str << "error: symbol `" << new_symbol.display_name()
           << "' redefined with a different type:" << "\n";
       str << "Original: " << to_string(old_symbol.type) << "\n";
-      str << "     New: " << to_string(new_symbol.type);
+      str << "     New: " << to_string(new_symbol.type) << "\n";
+      str << "Original: " << old_symbol.type.pretty() << "\n";
+      str << "     New: " << new_symbol.type.pretty() << "\n";
       throw 0;
     }
   }

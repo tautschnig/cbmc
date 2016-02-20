@@ -6,6 +6,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
+#include <iostream>
 #include <cassert>
 #include <stack>
 
@@ -21,6 +22,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "linking.h"
 #include "linking_class.h"
+
+#define DEBUG
 
 /*******************************************************************\
 
@@ -301,6 +304,16 @@ void linkingt::detailed_conflict_report_rec(
     msg+="\nenum declarations at\n";
     msg+=t1.source_location().as_string()+" and\n";
     msg+=t1.source_location().as_string();
+    msg+="\n";
+    msg+=t1.pretty()+"\n";
+    msg+=type1.pretty()+"\n";
+    str << old_symbol << std::endl;
+    //str << main_symbol_table.symbols["tag-pipe$link1"] << std::endl;
+    msg+=t2.pretty()+"\n";
+    msg+=type2.pretty();
+    str << new_symbol << std::endl;
+    //str << main_symbol_table.symbols["tag-pipe$link2"] << std::endl;
+
   }
   else if(t1.id()==ID_code)
   {
@@ -1015,13 +1028,25 @@ bool linkingt::needs_renaming_type(
   const symbolt &old_symbol,
   const symbolt &new_symbol)
 {
+  if(old_symbol.name=="tag-pipe")
+  {
+    std::cerr << "Testing renaming of tag-pipe" << std::endl;
+    std::cerr << "old_symbol:" << old_symbol << std::endl;
+    std::cerr << "new_symbol:" << new_symbol << std::endl;
+  }
   assert(new_symbol.is_type);
   
   if(!old_symbol.is_type)
     return true;
 
   if(old_symbol.type==new_symbol.type)
+  {
+    if(old_symbol.name=="tag-pipe")
+    {
+      std::cerr << "Types are the same" << std::endl;
+    }
     return false;
+  }
   
   if(old_symbol.type.id()==ID_incomplete_struct &&
      new_symbol.type.id()==ID_struct)
