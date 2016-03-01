@@ -308,6 +308,10 @@ exprt make_binary(const exprt &expr)
     tmp.op0().swap(previous);
     tmp.op1()=*it;
     previous.swap(tmp);
+    if(previous.type().id()==ID_pointer &&
+       previous.op0().type().id()!=ID_pointer &&
+       previous.op1().type().id()!=ID_pointer)
+      previous.type()=previous.op0().type();
   }
   
   return previous;
