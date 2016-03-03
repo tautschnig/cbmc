@@ -335,7 +335,8 @@ static bool check_renaming(const exprt &expr)
   if(check_renaming(expr.type())) return true;
 
   if(expr.id()==ID_address_of &&
-     expr.op0().id()==ID_symbol)
+     (expr.op0().id()==ID_symbol ||
+      expr.op0().id()==ID_member))
     return check_renaming_l1(expr.op0());
   else if(expr.id()==ID_address_of &&
           expr.op0().id()==ID_index)

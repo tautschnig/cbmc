@@ -2540,7 +2540,7 @@ bool simplify_exprt::simplify_node(exprt &expr)
   else if(expr.id()==ID_dereference)
     result=simplify_dereference(expr) && result;
   else if(expr.id()==ID_address_of)
-    result=simplify_address_of(expr) && result;
+    result=simplify_address_of(to_address_of_expr(expr)) && result;
   else if(expr.id()==ID_pointer_offset)
     result=simplify_pointer_offset(expr) && result;
   else if(expr.id()==ID_extractbit)

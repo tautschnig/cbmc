@@ -19,173 +19,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "threeval.h"
 #include "prefix.h"
 #include "pointer_predicates.h"
-#include "pointer_arithmetic.h"
-
-/*******************************************************************\
-
-Function: is_dereference_integer_object
-
-  Inputs:
-
- Outputs:
-
- Purpose:
-
-\*******************************************************************/
-
-static bool is_dereference_integer_object(
-  const exprt &expr,
-  mp_integer &address)
-{
-  if(expr.id()==ID_dereference &&
-     expr.operands().size()==1)
-  {
-    if(expr.op0().id()==ID_typecast &&
-       expr.op0().operands().size()==1 &&
-       expr.op0().op0().is_constant() &&
-       !to_integer(expr.op0().op0(), address))
-      return true;
-
-    if(expr.op0().is_constant())
-    {
-      if(to_constant_expr(expr.op0()).get_value()==ID_NULL &&
-         config.ansi_c.NULL_is_zero) // NULL
-      {
-        address=0;
-        return true;
-      }
-      else if(!to_integer(expr.op0(), address))
-        return true;
-    }
-  }
-  
-  return false;
-}
-
-/*******************************************************************\
-
-Function: simplify_exprt::simplify_address_of_arg
-
-  Inputs:
-
- Outputs:
-
- Purpose:
-
-\*******************************************************************/
-
-bool simplify_exprt::simplify_address_of_arg(exprt &expr)
-{
-  if(expr.id()==ID_index)
-  {
-    if(expr.operands().size()==2)
-    {
-      bool result=true;
-      if(!simplify_address_of_arg(expr.op0())) result=false;
-      if(!simplify_rec(expr.op1())) result=false;
-
-      // rewrite (*(type *)int) [index] by
-      // pushing the index inside
-      
-      mp_integer address;
-      if(is_dereference_integer_object(expr.op0(), address))
-      {
-        // push index into address
-        
-        mp_integer step_size, index;
-        
-        step_size=pointer_offset_size(expr.type(), ns);
-        
-        if(!to_integer(expr.op1(), index) &&
-           step_size!=-1)
-        {
-          unsignedbv_typet int_type(config.ansi_c.pointer_width);
-          pointer_typet pointer_type;
-          pointer_type.subtype()=expr.type();
-          typecast_exprt typecast_expr(
-            from_integer(step_size*index+address, int_type), pointer_type);
-          exprt new_expr=dereference_exprt(typecast_expr, expr.type());
-          expr=new_expr;
-          result=true;
-        }
-      }
-
-      return result;
-    }
-  }
-  else if(expr.id()==ID_member)
-  {
-    if(expr.operands().size()==1)
-    {
-      bool result=true;
-      if(!simplify_address_of_arg(expr.op0())) result=false;
-
-      const typet &op_type=ns.follow(expr.op0().type());
-
-      if(op_type.id()==ID_struct)
-      {
-        // rewrite NULL -> member by
-        // pushing the member inside
-
-        mp_integer address;
-        if(is_dereference_integer_object(expr.op0(), address))
-        {
-          const struct_typet &struct_type=to_struct_type(op_type);
-          const irep_idt &member=to_member_expr(expr).get_component_name();
-          mp_integer offset=member_offset(struct_type, member, ns);
-          if(offset!=-1)
-          {
-            unsignedbv_typet int_type(config.ansi_c.pointer_width);
-            pointer_typet pointer_type;
-            pointer_type.subtype()=expr.type();
-            typecast_exprt typecast_expr(
-              from_integer(address+offset, int_type), pointer_type);
-            exprt new_expr=dereference_exprt(typecast_expr, expr.type());
-            expr=new_expr;
-            result=true;
-          }          
-        }
-      }
-      
-      return result;
-    }
-  }
-  else if(expr.id()==ID_dereference)
-  {
-    if(expr.operands().size()==1)
-      return simplify_rec(expr.op0());
-  }
-  else if(expr.id()==ID_if)
-  {
-    if(expr.operands().size()==3)
-    {
-      bool result=true;
-      if(!simplify_rec(expr.op0())) result=false;
-      if(!simplify_address_of_arg(expr.op1())) result=false;
-      if(!simplify_address_of_arg(expr.op2())) result=false;
-
-      // op0 is a constant?
-      if(expr.op0().is_true())
-      {
-        result=false;
-        exprt tmp;
-        tmp.swap(expr.op1());
-        expr.swap(tmp);
-      }
-      else if(expr.op0().is_false())
-      {
-        result=false;
-        exprt tmp;
-        tmp.swap(expr.op2());
-        expr.swap(tmp);
-      }
-      
-      return result;
-    }
-  }
-
-  return true;
-}
+#include "byte_operators.h"
+#include "base_type.h"
 
 /*******************************************************************\
 
@@ -199,12 +34,77 @@ Function: simplify_exprt::simplify_address_of
 
 \*******************************************************************/
 
-bool simplify_exprt::simplify_address_of(exprt &expr)
+bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
 {
-  if(expr.operands().size()!=1) return true;
+  const typet &expr_type=ns.follow(expr.type());
+  exprt &object=expr.object();
 
-  if(ns.follow(expr.type()).id()!=ID_pointer) return true;
+  if(expr_type.id()!=ID_pointer) return true;
 
+  if(object.id()==ID_index ||
+     object.id()==ID_member)
+  {
+    object_descriptor_exprt ode;
+    ode.build(object, ns);
+
+    byte_extract_exprt be(byte_extract_id());
+    be.type()=object.type();
+    be.op()=ode.root_object();
+    be.offset()=ode.offset();
+
+    address_of_exprt tmp(be);
+    simplify_address_of(tmp);
+    expr.swap(tmp);
+
+    return false;
+  }
+  else if(object.id()==ID_byte_extract_little_endian ||
+          object.id()==ID_byte_extract_big_endian)
+  {
+    // address_of(byte_extract(op, offset, t)) is
+    // address_of(op) + offset with adjustments for arrays
+
+    byte_extract_exprt &be=to_byte_extract_expr(object);
+    simplify_rec(be.op());
+
+    exprt result=address_of_exprt(be.op());
+    result.type()=expr.type();
+
+    simplify_address_of(to_address_of_expr(result));
+    simplify_rec(be.offset());
+
+    // do (expr.type() *)(((char *)op)+offset)
+    if(!be.offset().is_zero())
+    {
+      unsignedbv_typet byte_type(8);
+      result.make_typecast(pointer_typet(byte_type));
+      simplify_node(result);
+
+      result=plus_exprt(result, be.offset());
+      simplify_node(result);
+    }
+
+    result.make_typecast(expr.type());
+    simplify_node(result);
+    expr.swap(result);
+
+    return false;
+  }
+
+  simplify_rec(object);
+
+  if(object.id()==ID_if)
+  {
+    if_exprt if_expr=lift_if(expr, 0);
+    simplify_address_of(to_address_of_expr(if_expr.true_case()));
+    simplify_address_of(to_address_of_expr(if_expr.false_case()));
+    simplify_if(if_expr);
+    expr.swap(if_expr);
+
+    return false;
+  }
+
+#if 0
   pointer_arithmetict ptr(expr);
   assert(!ptr.pointer.is_nil());
   if(!ptr.offset.is_nil())
@@ -218,27 +118,64 @@ bool simplify_exprt::simplify_address_of(exprt &expr)
       return false;
     }
   }
+#endif
   
-  exprt &object=expr.op0();
-  
-  bool result=simplify_address_of_arg(object);
-  
-  if(object.id()==ID_index)
-  {
-    index_exprt &index_expr=to_index_expr(object);
-    // normalized &a[i] to (&a[0])+i above
-    assert(index_expr.index().is_zero());
-  }
-  else if(object.id()==ID_dereference)
+  if(object.id()==ID_dereference)
   {
     // simplify &*p to p
-    assert(object.operands().size()==1);
-    exprt tmp=object.op0();
-    expr=tmp;
+    exprt tmp=to_dereference_expr(object).pointer();
+    expr.swap(tmp);
+    return false;
+  }
+  else if(object.id()!=ID_symbol &&
+          object.id()!=ID_string_constant &&
+          object.id()!=ID_label &&
+          object.id()!=ID_array &&
+          object.id()!=ID_compound_literal)
+    throw "simplify_address_of does not handle "+object.id_string();
+
+  if((ns.follow(object.type()).id()==ID_array ||
+      ns.follow(object.type()).id()==ID_struct) &&
+     !base_type_eq(expr_type.subtype(), object.type(), ns))
+  {
+    unsignedbv_typet size_type(config.ansi_c.pointer_width);
+
+    // turn &a of type T[i][j] into &(a[0][0])
+    // turn &s of type struct T { TT i; } into &(s.i)
+    for(const typet *t=&(ns.follow(object.type()));
+        (t->id()==ID_array || t->id()==ID_struct) &&
+        !base_type_eq(expr_type.subtype(), *t, ns);
+        ) // no successor computation
+    {
+      if(t->id()==ID_array)
+      {
+        object=index_exprt(object, gen_zero(size_type));
+        t=&(ns.follow(t->subtype()));
+      }
+      else
+      {
+        const struct_typet &s_t=to_struct_type(*t);
+        const struct_typet::componentst &components=
+          s_t.components();
+        assert(!components.empty());
+        const struct_typet::componentt &c=components.front();
+
+        object=member_exprt(object, c.get_name(), c.type());
+        t=&(ns.follow(c.type()));
+      }
+    }
+
+    // struct fields might have different types
+    if(!base_type_eq(object.type(), expr_type.subtype(), ns))
+    {
+      expr.make_typecast(expr_type);
+      to_typecast_expr(expr).op().type().subtype()=object.type();
+    }
+
     return false;
   }
 
-  return result;
+  return true;
 }
 
 /*******************************************************************\
