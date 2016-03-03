@@ -133,14 +133,6 @@ protected:
     exprt &expr,
     statet &state,
     guardt &guard);
-    
-  static bool is_index_member_symbol_if(const exprt &expr);
-  
-  exprt address_arithmetic(
-    const exprt &expr,
-    statet &state,
-    guardt &guard,
-    bool keep_array);
   
   // guards
   
