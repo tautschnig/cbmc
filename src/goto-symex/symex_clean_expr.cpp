@@ -203,6 +203,35 @@ void goto_symext::replace_array_equal(exprt &expr)
 
 /*******************************************************************\
 
+Function: adjust_byte_extract_rec
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: Rewrite index/member expressions in byte_extract to offset
+
+\*******************************************************************/
+
+static void adjust_byte_extract_rec(exprt &expr, const namespacet &ns)
+{
+  Forall_operands(it, expr)
+    adjust_byte_extract_rec(*it, ns);
+
+  if(expr.id()==ID_byte_extract_big_endian ||
+     expr.id()==ID_byte_extract_little_endian)
+  {
+    object_descriptor_exprt ode;
+    ode.build(expr, ns);
+
+    byte_extract_exprt &be=to_byte_extract_expr(expr);
+    be.op()=ode.root_object();
+    be.offset()=ode.offset();
+  }
+}
+
+/*******************************************************************\
+
 Function: goto_symext::clean_expr
 
   Inputs:
@@ -221,6 +250,13 @@ void goto_symext::clean_expr(
   rewrite_union(expr, ns);
   replace_nondet(expr);
   dereference(expr, state, write);
+
+  // make sure all remaining byte extract operations use the root
+  // object to avoid nesting of with/update and byte_update when on
+  // lhs
+  if(write)
+    adjust_byte_extract_rec(expr, ns);
+
   replace_array_equal(expr);
   adjust_float_expressions(expr, ns);
 }
