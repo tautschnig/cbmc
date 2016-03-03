@@ -342,12 +342,14 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
   // (int)((T*)0 + int) -> (int)(sizeof(T)*(size_t)int) if NULL is zero
   if(config.ansi_c.NULL_is_zero &&
      (expr_type.id()==ID_signedbv || expr_type.id()==ID_unsignedbv) &&
+     op_type.id()==ID_pointer &&
      expr.op0().id()==ID_plus &&
      expr.op0().operands().size()==2 &&
-     expr.op0().op0().id()==ID_typecast &&
-     expr.op0().op0().operands().size()==1 &&
-     expr.op0().op0().op0().is_zero() &&
-     op_type.id()==ID_pointer)
+     ((expr.op0().op0().id()==ID_typecast &&
+       expr.op0().op0().operands().size()==1 &&
+       expr.op0().op0().op0().is_zero()) ||
+      (expr.op0().op0().is_constant() &&
+       to_constant_expr(expr.op0().op0()).get_value()==ID_NULL)))
   {
     unsignedbv_typet size_type(config.ansi_c.pointer_width);
 
@@ -726,6 +728,22 @@ bool simplify_exprt::simplify_typecast(exprt &expr)
       expr.op0().swap(tmp);
       // might enable further simplification
       simplify_typecast(expr); // recursive call
+      return false;
+    }
+  }
+  else if(operand.id()==ID_address_of)
+  {
+    const exprt &o=to_address_of_expr(operand).object();
+
+    // turn &array into &array[0] when casting to pointer-to-element-type
+    if(o.type().id()==ID_array &&
+       base_type_eq(expr_type, pointer_typet(o.type().subtype()), ns))
+    {
+      unsignedbv_typet size_type(config.ansi_c.pointer_width);
+
+      expr=address_of_exprt(index_exprt(o, gen_zero(size_type)));
+
+      simplify_rec(expr);
       return false;
     }
   }
