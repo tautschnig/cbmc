@@ -9,10 +9,12 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_POINTER_ANALYSIS_DEREFERENCE_H
 #define CPROVER_POINTER_ANALYSIS_DEREFERENCE_H
 
-#include <util/namespace.h>
+#include <cassert>
+
 #include <util/expr.h>
 
 class if_exprt;
+class namespacet;
 class typecast_exprt;
 
 /*! \brief TO_BE_DOCUMENTED
@@ -22,10 +24,6 @@ class dereferencet
 public:
   /*! \brief Constructor 
    * \param _ns Namespace
-   * \param _new_symbol_table A symbol_table to store new symbols in
-   * \param _options Options, in particular whether pointer checks are
-            to be performed
-   * \param _dereference_callback Callback object for error reporting
   */
   explicit dereferencet(
     const namespacet &_ns):
@@ -40,10 +38,12 @@ public:
    * given pointer-expression.
    *
    * \param pointer A pointer-typed expression, to
-            be dereferenced.
+   *        be dereferenced.
+   * \param invalid_cond Guarding expression specifying when
+   *        dereferencing will yield an invalid object
   */
 
-  exprt operator()(const exprt &pointer);
+  exprt operator()(const exprt &pointer, exprt &invalid_cond);
     
 private:
   const namespacet &ns;
@@ -51,30 +51,30 @@ private:
   exprt dereference_rec(
     const exprt &address,
     const exprt &offset,
-    const typet &type);
+    const typet &type,
+    exprt &invalid_cond);
 
   exprt dereference_if(
     const if_exprt &expr,
     const exprt &offset,
-    const typet &type);
+    const typet &type,
+    exprt &invalid_cond);
 
   exprt dereference_plus(
     const exprt &expr,
     const exprt &offset,
-    const typet &type);
+    const typet &type,
+    exprt &invalid_cond);
 
   exprt dereference_typecast(
     const typecast_exprt &expr,
     const exprt &offset,
-    const typet &type);
+    const typet &type,
+    exprt &invalid_cond);
 
   bool type_compatible(
     const typet &object_type,
     const typet &dereference_type) const;
-
-  void offset_sum(
-    exprt &dest,
-    const exprt &offset) const;
 
   exprt read_object(
     const exprt &object,
@@ -82,10 +82,22 @@ private:
     const typet &type);
 };
 
-static inline exprt dereference(const exprt &pointer, const namespacet &ns)
+static inline exprt dereference(
+  const exprt &pointer,
+  const namespacet &ns,
+  exprt &invalid_cond)
 {
   dereferencet dereference_object(ns);
-  return dereference_object(pointer);
+  exprt result=dereference_object(pointer, invalid_cond);
+  return result;
+}
+
+static inline exprt dereference(const exprt &pointer, const namespacet &ns)
+{
+  exprt invalid_cond;
+  exprt result=dereference(pointer, ns, invalid_cond);
+  assert(invalid_cond.is_false());
+  return result;
 }
 
 #endif
