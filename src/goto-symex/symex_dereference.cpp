@@ -267,6 +267,30 @@ bool goto_symext::dereference_rec(
     result=dereference_rec_address_of(
       to_address_of_expr(expr).object(), state);
   }
+  else if(expr.id()==ID_address_of &&
+          to_address_of_expr(expr).object().id()==ID_symbol &&
+          to_address_of_expr(expr).object().get_bool(ID_C_SSA_symbol))
+  {
+    exprt &object=to_address_of_expr(expr).object();
+
+    // handle field-sensitive SSA symbol
+    mp_integer offset=0;
+    offset=compute_pointer_offset(object, ns);
+    assert(offset>=0);
+
+    if(offset>0)
+    {
+      byte_extract_exprt be(byte_extract_id());
+      be.type()=object.type();
+      be.op()=to_ssa_expr(object).get_l1_object();
+      be.offset()=from_integer(offset, index_type());
+
+      object.swap(be);
+      do_simplify(expr);
+
+      result=true;
+    }
+  }
   else
   {
     Forall_operands(it, expr)
