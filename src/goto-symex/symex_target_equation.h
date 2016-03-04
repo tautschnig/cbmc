@@ -31,6 +31,13 @@ public:
   explicit symex_target_equationt(const namespacet &_ns);
   virtual ~symex_target_equationt();
 
+  // obtain the rhs assigned to ssa_lhs_identifier; returns nil_exprt
+  // if this is not available; if it is available, step_number is set
+  // to the sequence number of symbolic execution steps
+  virtual exprt get_ssa_rhs(
+    const irep_idt &ssa_lhs_identifier,
+    std::size_t &step_number) const;
+
   // read event
   virtual void shared_read(
     const exprt &guard,
@@ -219,6 +226,9 @@ public:
     // for slicing
     bool ignore;
     
+    // sequence number
+    std::size_t step_number;
+
     SSA_stept():
       type(goto_trace_stept::NONE),
       hidden(false),
@@ -230,7 +240,8 @@ public:
       cond_expr(static_cast<const exprt &>(get_nil_irep())),
       formatted(false),
       atomic_section_id(0),
-      ignore(false)
+      ignore(false),
+      step_number(0)
     {
     }
     
@@ -297,6 +308,11 @@ protected:
   // for enforcing sharing in the expressions stored
   merge_irept merge_irep;
   void merge_ireps(SSA_stept &SSA_step);
+
+  typedef hash_map_cont<irep_idt,
+                        SSA_stepst::const_iterator,
+                        irep_id_hash> ssa_lhs_mapt;
+  ssa_lhs_mapt ssa_lhs_map;
 };
 
 extern inline bool operator<(

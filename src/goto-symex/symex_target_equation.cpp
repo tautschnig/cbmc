@@ -55,6 +55,33 @@ symex_target_equationt::~symex_target_equationt()
 
 /*******************************************************************\
 
+Function: symex_target_equationt::get_ssa_rhs
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+exprt symex_target_equationt::get_ssa_rhs(
+  const irep_idt &ssa_lhs_identifier,
+  std::size_t &step_number) const
+{
+  ssa_lhs_mapt::const_iterator it=ssa_lhs_map.find(ssa_lhs_identifier);
+
+  if(it!=ssa_lhs_map.end())
+  {
+    step_number=it->second->step_number;
+    return it->second->ssa_rhs;
+  }
+
+  return nil_exprt();
+}
+
+/*******************************************************************\
+
 Function: symex_target_equationt::shared_read
 
   Inputs:
@@ -73,6 +100,9 @@ void symex_target_equationt::shared_read(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.ssa_lhs=ssa_object;
@@ -103,6 +133,9 @@ void symex_target_equationt::shared_write(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.ssa_lhs=ssa_object;
@@ -131,6 +164,10 @@ void symex_target_equationt::spawn(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
+
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::SPAWN;
   SSA_step.source=source;
@@ -156,6 +193,10 @@ void symex_target_equationt::memory_barrier(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
+
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::MEMORY_BARRIER;
   SSA_step.source=source;
@@ -182,6 +223,10 @@ void symex_target_equationt::atomic_begin(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
+
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::ATOMIC_BEGIN;
   SSA_step.atomic_section_id=atomic_section_id;
@@ -209,6 +254,10 @@ void symex_target_equationt::atomic_end(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
+
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::ATOMIC_END;
   SSA_step.atomic_section_id=atomic_section_id;
@@ -242,6 +291,9 @@ void symex_target_equationt::assignment(
   
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.ssa_lhs=ssa_lhs;
@@ -257,6 +309,8 @@ void symex_target_equationt::assignment(
   SSA_step.source=source;
 
   merge_ireps(SSA_step);
+
+  ssa_lhs_map[ssa_lhs.get_identifier()]=--SSA_steps.end();
 }
 
 /*******************************************************************\
@@ -281,6 +335,9 @@ void symex_target_equationt::decl(
   
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.ssa_lhs=ssa_lhs;
@@ -335,6 +392,9 @@ void symex_target_equationt::location(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::LOCATION;
@@ -362,6 +422,9 @@ void symex_target_equationt::function_call(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::FUNCTION_CALL;
@@ -390,6 +453,9 @@ void symex_target_equationt::function_return(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::FUNCTION_RETURN;
@@ -419,6 +485,9 @@ void symex_target_equationt::output(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::OUTPUT;
@@ -450,6 +519,9 @@ void symex_target_equationt::output_fmt(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::OUTPUT;
@@ -482,6 +554,9 @@ void symex_target_equationt::input(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.type=goto_trace_stept::INPUT;
@@ -511,6 +586,9 @@ void symex_target_equationt::assumption(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.cond_expr=cond;
@@ -540,6 +618,9 @@ void symex_target_equationt::assertion(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.cond_expr=cond;
@@ -569,6 +650,9 @@ void symex_target_equationt::goto_instruction(
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=guard;
   SSA_step.cond_expr=cond;
@@ -598,6 +682,9 @@ void symex_target_equationt::constraint(
   // like assumption, but with global effect
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
+  SSA_stepst::const_reverse_iterator prev=++SSA_steps.rbegin();
+  if(prev!=SSA_steps.rend())
+    SSA_step.step_number=prev->step_number+1;
   
   SSA_step.guard=true_exprt();
   SSA_step.cond_expr=cond;

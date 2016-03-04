@@ -55,6 +55,13 @@ public:
     STATE, HIDDEN, VISIBLE_ACTUAL_PARAMETER, HIDDEN_ACTUAL_PARAMETER, PHI, GUARD
   } assignment_typet;
   
+  // obtain the rhs assigned to ssa_lhs_identifier; returns nil_exprt
+  // if this is not available; if it is available, step_number is set
+  // to the sequence number of symbolic execution steps
+  virtual exprt get_ssa_rhs(
+    const irep_idt &ssa_lhs_identifier,
+    std::size_t &step_number) const=0;
+
   // read event
   virtual void shared_read(
     const exprt &guard,
