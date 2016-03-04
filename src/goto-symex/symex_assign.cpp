@@ -36,6 +36,14 @@ void goto_symext::symex_assign_rec(
   code_assignt deref_code=code;
 
   clean_expr(deref_code.lhs(), state, true);
+  // make the structure of the lhs as simple as possible to avoid,
+  // e.g., (b ? s1 : s2).member=X resulting in
+  // (b ? s1 : s2)=(b ? s1 : s2) with member:=X and then
+  // s1=b ? ((b ? s1 : s2) with member:=X) : s1
+  // when all we need is
+  // s1=s1 with member:=X [and guard b]
+  // s2=s2 with member:=X [and guard !b]
+  do_simplify(deref_code.lhs());
   clean_expr(deref_code.rhs(), state, false);
 
   symex_assign(state, deref_code);
