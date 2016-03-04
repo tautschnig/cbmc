@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <goto-programs/goto_functions.h>
 
+#include "substitute.h"
 #include "goto_symex_state.h"
 
 class typet;
@@ -35,6 +36,7 @@ class namespacet;
 class side_effect_exprt;
 class symex_targett;
 class typecast_exprt;
+class dereference_callbackt;
 
 /*! \brief The main class for the forward symbolic simulator
 */
@@ -52,6 +54,7 @@ public:
     ns(_ns),
     target(_target),
     atomic_section_counter(0),
+    expand_deref(_ns, _target, true),
     guard_identifier("goto_symex::\\guard")
   {
     options.set_option("simplify", true);
@@ -118,6 +121,9 @@ protected:
   void process_array_expr_rec(exprt &expr, const typet &type) const;
   exprt make_auto_object(const typet &type);
 
+  // dereferencing
+  substitutet expand_deref;
+
   virtual void dereference(
     exprt &expr,
     statet &state,
@@ -126,13 +132,17 @@ protected:
   bool dereference_rec(
     exprt &expr,
     statet &state,
-    guardt &guard,
     const bool write);
   
   bool dereference_rec_address_of(
     exprt &expr,
-    statet &state,
-    guardt &guard);
+    statet &state);
+
+  void make_invalid_object(
+    dereference_callbackt &dereference_callback,
+    symbol_tablet &new_symbol_table,
+    exprt &expr,
+    const typet &dereference_type);
   
   // guards
   
