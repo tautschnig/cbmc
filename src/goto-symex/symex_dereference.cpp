@@ -300,6 +300,31 @@ Function: goto_symext::dereference
 
 \*******************************************************************/
 
+static void rename_l1_reads_l2(
+  exprt &expr,
+  goto_symext::statet &state,
+  const namespacet &ns,
+  const bool write)
+{
+  if(!write)
+    state.rename(expr, ns);
+  else
+  {
+    if(expr.id()==ID_dereference)
+      rename_l1_reads_l2(expr, state, ns, false);
+    else if(expr.id()==ID_index)
+    {
+      index_exprt &index_expr=to_index_expr(expr);
+
+      rename_l1_reads_l2(index_expr.array(), state, ns, write);
+      rename_l1_reads_l2(index_expr.index(), state, ns, false);
+    }
+    else
+      Forall_operands(it, expr)
+        rename_l1_reads_l2(*it, state, ns, write);
+  }
+}
+
 void goto_symext::dereference(
   exprt &expr,
   statet &state,
@@ -311,6 +336,7 @@ void goto_symext::dereference(
   // symbols whose address is taken.
   assert(!state.call_stack().empty());
   state.rename(expr, ns, goto_symex_statet::L1);
+  rename_l1_reads_l2(expr, state, ns, write);
   // really, we need to use another dereferencing implementation,
   // such as dereferencet, with L2 renaming on demand
 
