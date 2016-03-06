@@ -20,6 +20,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/arith_tools.h>
 #include <util/pointer_offset_size.h>
 #include <util/cprover_prefix.h>
+#include <util/ssa_expr.h>
 
 #include <ansi-c/c_types.h>
 
@@ -522,8 +523,6 @@ void value_sett::get_value_set_rec(
   }
   else if(expr.id()==ID_symbol)
   {
-    irep_idt identifier=to_symbol_expr(expr).get_identifier();
-    
     // is it a pointer, integer, array or struct?
     if(expr_type.id()==ID_pointer ||
        expr_type.id()==ID_signedbv ||
@@ -532,6 +531,11 @@ void value_sett::get_value_set_rec(
        expr_type.id()==ID_union ||
        expr_type.id()==ID_array)
     {
+      const irep_idt identifier=
+        is_ssa_expr(expr)?
+        to_ssa_expr(expr).get_l1_object_identifier():
+        to_symbol_expr(expr).get_identifier();
+
       // look it up
       valuest::const_iterator v_it=
         values.find(id2string(identifier)+suffix);
