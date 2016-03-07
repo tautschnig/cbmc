@@ -736,6 +736,19 @@ void substitutet::subst_if(
   exprt simp_neg_cond=not_exprt(simp_cond);
   non_redundant_guard(simp_neg_cond, guards_seen);
 
+#ifdef DEBUG_SUBST
+  ++depth;
+  std::cerr << std::string(2*depth, ' ') << depth
+    << ": expr.cond()=" << from_expr(ns, "", expr.cond()) << std::endl;
+  std::cerr << std::string(2*depth, ' ') << depth
+    << ": simp_cond=" << from_expr(ns, "", simp_cond) << std::endl;
+  std::cerr << std::string(2*depth, ' ') << depth
+    << ": simp_neg_cond=" << from_expr(ns, "", simp_neg_cond) << std::endl;
+  std::cerr << std::string(2*depth, ' ') << depth
+    << ": guards_seen=" << from_expr(ns, "", guards_seen) << std::endl;
+  --depth;
+#endif
+
   expr_mapt true_map;
   if(!simp_cond.is_false())
   {
@@ -761,6 +774,33 @@ void substitutet::subst_if(
       subst_rec(expr.false_case(), pointers_only, recurse, false_guards, false_map);
     }
   }
+
+#ifdef DEBUG_SUBST
+  ++depth;
+  for(expr_mapt::const_iterator it=true_map.begin();
+      it!=true_map.end();
+      ++it)
+  {
+    exprt o=expr_numbering[it->first];
+    std::cerr << std::string(2*depth, ' ') << depth << ": true_map "
+      << " cand: "
+      << "{g=" << from_expr(ns, "", it->second.as_expr()) << "} "
+      << from_expr(ns, "", o)
+      << " [" << from_type(ns, "", o.type()) << "]" << std::endl;
+  }
+  for(expr_mapt::const_iterator it=false_map.begin();
+      it!=false_map.end();
+      ++it)
+  {
+    exprt o=expr_numbering[it->first];
+    std::cerr << std::string(2*depth, ' ') << depth << ": false_map "
+      << " cand: "
+      << "{g=" << from_expr(ns, "", it->second.as_expr()) << "} "
+      << from_expr(ns, "", o)
+      << " [" << from_type(ns, "", o.type()) << "]" << std::endl;
+  }
+  --depth;
+#endif
 
   // a refined variant of merge_expr_maps
   for(expr_mapt::iterator
@@ -808,7 +848,9 @@ void substitutet::subst_if(
     guardt false_guard=itf->second;
 
     bdd_exprt t(ns);
-    t.from_expr(or_exprt(true_guard, false_guard));
+    t.from_expr(or_exprt(
+        and_exprt(simp_cond, true_guard),
+        and_exprt(simp_neg_cond, false_guard)));
     itt->second=t.as_expr();
 
     ++itt;
