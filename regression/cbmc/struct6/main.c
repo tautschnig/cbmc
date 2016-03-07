@@ -10,6 +10,7 @@ struct S
 int main()
 {
   struct S *p=malloc(sizeof(struct S)+10);
+  if(p==0) return 0;
   
   p->x=1;
   p->a[0]=3;

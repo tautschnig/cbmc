@@ -22,6 +22,7 @@ int main(void)
         len = __VERIFIER_nondet_int();
 	__CPROVER_assume(len > 0);
 	data = malloc(len * sizeof(int));	
+      __CPROVER_assume(data!=0);
     }
 
     data[0] = 0;

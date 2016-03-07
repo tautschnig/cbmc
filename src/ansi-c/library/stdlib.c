@@ -69,6 +69,8 @@ inline void *calloc(__CPROVER_size_t nmemb, __CPROVER_size_t size)
   __CPROVER_HIDE:;
   void *res;
   res=malloc(nmemb*size);
+  if(res==(void*)0)
+    return (void*)0;
   #ifdef __CPROVER_STRING_ABSTRACTION
   __CPROVER_is_zero_string(res)=1;
   __CPROVER_zero_string_length(res)=0;
@@ -85,13 +87,22 @@ inline void *calloc(__CPROVER_size_t nmemb, __CPROVER_size_t size)
 
 /* FUNCTION: malloc */
 
+#ifndef __CPROVER_ERRNO_H_INCLUDED
+#include <errno.h>
+#define __CPROVER_ERRNO_H_INCLUDED
+#endif
+
 #undef malloc
 
 inline void *malloc(__CPROVER_size_t malloc_size)
 {
-  // realistically, malloc may return NULL,
-  // and __CPROVER_malloc doesn't, but no one cares
   __CPROVER_HIDE:;
+  __CPROVER_bool out_of_memory;
+  if(out_of_memory)
+  {
+    errno=ENOMEM;
+    return (void*)0;
+  }
   void *malloc_res;
   malloc_res=__CPROVER_malloc(malloc_size);
 
@@ -355,6 +366,8 @@ inline void *realloc(void *ptr, __CPROVER_size_t malloc_size)
   // this shouldn't move if the new size isn't bigger
   void *res;
   res=malloc(malloc_size);
+  if(res==(void*)0)
+    return (void*)0;
   __CPROVER_array_copy(res, ptr);
   free(ptr);
 

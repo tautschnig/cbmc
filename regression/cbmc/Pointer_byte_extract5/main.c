@@ -23,6 +23,7 @@ typedef struct
 int main()
 {
   Struct3 *p = malloc (sizeof (int) + 2 * sizeof(Union));
+  __CPROVER_assume(p!=0);
   p->Count = 3;
   int po=0;
 

@@ -15,6 +15,7 @@ int main()
 
   assert(strlen(str)==5);
   char * str_cpy=strdup(str);
+  __CPROVER_assume(str_cpy!=0);
   assert(strcmp(str, str_cpy)==0);
   free(str_cpy);
 
