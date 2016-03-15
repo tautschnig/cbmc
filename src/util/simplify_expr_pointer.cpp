@@ -7,7 +7,9 @@ Author: Daniel Kroening, kroening@kroening.com
 \*******************************************************************/
 
 #include <cassert>
+#include <iostream>
 
+#include <langapi/language_util.h>
 #include "simplify_expr_class.h"
 #include "expr.h"
 #include "namespace.h"
@@ -37,6 +39,7 @@ Function: simplify_exprt::simplify_address_of
 bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
 {
   const typet &expr_type=ns.follow(expr.type());
+  const typet type_before=expr_type;
   exprt &object=expr.object();
 
   if(expr_type.id()!=ID_pointer) return true;
@@ -44,6 +47,8 @@ bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
   if(object.id()==ID_index ||
      object.id()==ID_member)
   {
+    std::cerr << "type_before=" << from_type(ns, "", type_before) << std::endl;
+    std::cerr << "object.type()=" << from_type(ns, "", object.type()) << std::endl;
     object_descriptor_exprt ode;
     ode.build(object, ns);
 
@@ -53,9 +58,13 @@ bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
     be.offset()=ode.offset();
 
     address_of_exprt tmp(be);
+    std::cerr << "tmp=" << from_expr(ns, "", tmp) << std::endl;
     simplify_address_of(tmp);
+    tmp.make_typecast(expr.type());
+    simplify_node(tmp);
     expr.swap(tmp);
 
+    assert(expr.type()==type_before);
     return false;
   }
   else if(object.id()==ID_byte_extract_little_endian ||
@@ -88,6 +97,7 @@ bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
     simplify_node(result);
     expr.swap(result);
 
+    assert(expr.type()==type_before);
     return false;
   }
 
@@ -101,6 +111,7 @@ bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
     simplify_if(if_expr);
     expr.swap(if_expr);
 
+    assert(expr.type()==type_before);
     return false;
   }
 
@@ -124,7 +135,10 @@ bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
   {
     // simplify &*p to p
     exprt tmp=to_dereference_expr(object).pointer();
+    tmp.make_typecast(expr.type());
+    simplify_node(tmp);
     expr.swap(tmp);
+    assert(expr.type()==type_before);
     return false;
   }
   else if(object.id()!=ID_symbol &&
@@ -172,9 +186,11 @@ bool simplify_exprt::simplify_address_of(address_of_exprt &expr)
       to_typecast_expr(expr).op().type().subtype()=object.type();
     }
 
+    assert(expr.type()==type_before);
     return false;
   }
 
+  assert(expr.type()==type_before);
   return true;
 }
 

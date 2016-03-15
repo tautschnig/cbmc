@@ -158,10 +158,36 @@ bool goto_symext::dereference_rec(
 {
   bool result=false;
   const typet type_before=expr.type();
+  const exprt expr_before=expr;
 
   // use the simplifier to perform some address arithmetic
   if(expr.id()==ID_address_of)
     do_simplify(expr);
+  else if(expr.id()==ID_index)
+  {
+    const exprt &index=to_index_expr(expr).index();
+    const exprt &array=to_index_expr(expr).array();
+
+    if(array.id()==ID_member &&
+       ((array.type().id()==ID_array &&
+         to_array_type(array.type()).size().is_zero()) ||
+        (array.type().id()==ID_vector &&
+         to_vector_type(array.type()).size().is_zero())))
+    {
+      // This is an expression of the form x.a[i],
+      // where a is a zero-sized array. This gets
+      // re-written into *(&x.a+i)
+
+      address_of_exprt address_of_expr(array);
+      address_of_expr.type()=pointer_typet(expr.type());
+
+      expr=dereference_exprt(
+        plus_exprt(address_of_expr, index),
+        expr.type());
+
+      result=true;
+    }
+  }
 
   if(expr.id()==ID_dereference)
   {
@@ -279,6 +305,9 @@ bool goto_symext::dereference_rec(
   // we really shouldn't have changed the expression type
   if(!base_type_eq(expr.type(), type_before, ns))
   {
+    std::cerr << "expr_before=" << from_expr(ns, "", expr_before) << std::endl;
+    std::cerr << "expr_before=" << expr_before.pretty() << std::endl;
+    std::cerr << "expr_before.id()=" << expr_before.id() << std::endl;
     std::cerr << "expr.type()=" << from_type(ns, "", expr.type()) << std::endl;
     std::cerr << "type_before=" << from_type(ns, "", type_before) << std::endl;
     std::cerr << "expr=" << expr.pretty() << std::endl;

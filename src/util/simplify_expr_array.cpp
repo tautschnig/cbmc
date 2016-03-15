@@ -36,28 +36,6 @@ bool simplify_exprt::simplify_index(exprt &expr)
   const exprt &index=to_index_expr(expr).index();
   const exprt &array=to_index_expr(expr).array();
 
-  if(array.id()==ID_member &&
-     ((array.type().id()==ID_array &&
-       to_array_type(array.type()).size().is_zero()) ||
-      (array.type().id()==ID_vector &&
-       to_vector_type(array.type()).size().is_zero())))
-  {
-    // This is an expression of the form x.a[i],
-    // where a is a zero-sized array. This gets
-    // re-written into *(&x.a+i)
-
-    address_of_exprt address_of_expr(array);
-    address_of_expr.type()=pointer_typet(expr.type());
-
-    dereference_exprt tmp(
-      plus_exprt(address_of_expr, index),
-      expr.type());
-
-    simplify_rec(tmp);
-    expr.swap(tmp);
-    return false;
-  }
-
   if(index.id()==ID_div &&
      index.operands().size()==2)
   {

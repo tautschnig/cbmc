@@ -336,16 +336,35 @@ static bool check_renaming_l1(const exprt &expr)
 
 static bool check_renaming(const exprt &expr)
 {
-  if(check_renaming(expr.type())) return true;
+  if(check_renaming(expr.type()))
+  {
+    std::cerr << expr.pretty() << std::endl;
+    assert(false);
+    return true;
+  }
 
   if(expr.id()==ID_address_of &&
      (expr.op0().id()==ID_symbol ||
       expr.op0().id()==ID_member))
-    return check_renaming_l1(expr.op0());
+  {
+    bool r=check_renaming_l1(expr.op0());
+    if(!r)
+      return false;
+    std::cerr << expr.pretty() << std::endl;
+    assert(false);
+    return true;
+  }
   else if(expr.id()==ID_address_of &&
           expr.op0().id()==ID_index)
-    return check_renaming_l1(expr.op0().op0()) ||
+  {
+    bool r=check_renaming_l1(expr.op0().op0()) ||
            check_renaming(expr.op0().op1());
+    if(!r)
+      return false;
+    std::cerr << expr.pretty() << std::endl;
+    assert(false);
+    return true;
+  }
   else if(expr.id()==ID_symbol)
   {
     if(!expr.get_bool(ID_C_SSA_symbol)) return expr.type().id()!=ID_code;
@@ -355,7 +374,12 @@ static bool check_renaming(const exprt &expr)
   else
   {
     forall_operands(it, expr)
-      if(check_renaming(*it)) return true;
+      if(check_renaming(*it))
+      {
+        std::cerr << it->pretty() << std::endl;
+        assert(false);
+        return true;
+      }
   }
 
   return false;

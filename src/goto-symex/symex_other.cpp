@@ -21,6 +21,60 @@ Author: Daniel Kroening, kroening@kroening.com
 
 /*******************************************************************\
 
+Function: remove_void_types
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+static void remove_void_types(exprt &expr)
+{
+  if(expr.type().id()!=ID_empty)
+    return;
+
+  if(expr.id()==byte_extract_id())
+    expr=expr.op0();
+  else if(expr.id()==ID_if)
+  {
+    if_exprt &if_expr=to_if_expr(expr);
+    remove_void_types(if_expr.true_case());
+    remove_void_types(if_expr.false_case());
+
+    if(if_expr.true_case().type().id()!=ID_empty)
+    {
+      assert(if_expr.false_case().type().id()==ID_empty);
+
+      byte_extract_exprt be(
+        byte_extract_id(),
+        if_expr.false_case(),
+        gen_zero(index_type()),
+        if_expr.true_case().type());
+      if_expr.false_case().swap(be);
+
+      if_expr.type()=if_expr.true_case().type();
+    }
+    else if(if_expr.false_case().type().id()!=ID_empty)
+    {
+      assert(if_expr.true_case().type().id()==ID_empty);
+
+      byte_extract_exprt be(
+        byte_extract_id(),
+        if_expr.true_case(),
+        gen_zero(index_type()),
+        if_expr.false_case().type());
+      if_expr.true_case().swap(be);
+
+      if_expr.type()=if_expr.true_case().type();
+    }
+  }
+}
+
+/*******************************************************************\
+
 Function: goto_symext::symex_other
 
   Inputs:
@@ -104,18 +158,23 @@ void goto_symext::symex_other(
     clean_code.op1()=d1;
     
     clean_expr(clean_code.op0(), state, true);
-    if(clean_code.op0().id()==byte_extract_id() &&
-       clean_code.op0().type().id()==ID_empty)
-      clean_code.op0()=clean_code.op0().op0();
+    std::cerr << "CLEAN_CODE for " << statement << std::endl;
+    std::cerr << "CLEAN_CODE OP0=" << from_expr(ns, "", clean_code.op0()) << std::endl;
+    remove_void_types(clean_code.op0());
+    std::cerr << "CLEAN_CODE OP0a=" << from_expr(ns, "", clean_code.op0()) << std::endl;
     clean_expr(clean_code.op1(), state, false);
-    if(clean_code.op1().id()==byte_extract_id() &&
-       clean_code.op1().type().id()==ID_empty)
-      clean_code.op1()=clean_code.op1().op0();
+    std::cerr << "CLEAN_CODE OP1=" << from_expr(ns, "", clean_code.op1()) << std::endl;
+    remove_void_types(clean_code.op1());
+    std::cerr << "CLEAN_CODE OP1a=" << from_expr(ns, "", clean_code.op1()) << std::endl;
     
     process_array_expr(clean_code.op0());
     clean_expr(clean_code.op0(), state, true);
+    remove_void_types(clean_code.op0());
+    std::cerr << "CLEAN_CODE OP0b=" << from_expr(ns, "", clean_code.op0()) << std::endl;
     process_array_expr(clean_code.op1());
     clean_expr(clean_code.op1(), state, false);
+    remove_void_types(clean_code.op1());
+    std::cerr << "CLEAN_CODE OP1b=" << from_expr(ns, "", clean_code.op1()) << std::endl;
     
 
     if(!base_type_eq(clean_code.op0().type(),
@@ -158,13 +217,12 @@ void goto_symext::symex_other(
     clean_code.op0()=d0;
 
     clean_expr(clean_code.op0(), state, true);
-    if(clean_code.op0().id()==byte_extract_id() &&
-       clean_code.op0().type().id()==ID_empty)
-      clean_code.op0()=clean_code.op0().op0();
+    remove_void_types(clean_code.op0());
     clean_expr(clean_code.op1(), state, false);
     
     process_array_expr(clean_code.op0());
     clean_expr(clean_code.op0(), state, true);
+    remove_void_types(clean_code.op0());
     
     const typet &op0_type=ns.follow(clean_code.op0().type());
     

@@ -2,7 +2,7 @@
 
 inline char *__builtin___strcpy_chk(char *dst, const char *src, __CPROVER_size_t s)
 {
-  __CPROVER_HIDE:;
+  //__CPROVER_HIDE:;
   #ifdef __CPROVER_STRING_ABSTRACTION
   __CPROVER_assert(__CPROVER_is_zero_string(src), "strcpy zero-termination of 2nd argument");
   __CPROVER_assert(__CPROVER_buffer_size(dst)>__CPROVER_zero_string_length(src), "strcpy buffer overflow");
@@ -109,7 +109,7 @@ __inline char *__builtin___strncat_chk(
 
 inline char *strcpy(char *dst, const char *src)
 {
-  __CPROVER_HIDE:;
+  //__CPROVER_HIDE:;
   #ifdef __CPROVER_STRING_ABSTRACTION
   __CPROVER_assert(__CPROVER_is_zero_string(src), "strcpy zero-termination of 2nd argument");
   __CPROVER_assert(__CPROVER_buffer_size(dst)>__CPROVER_zero_string_length(src), "strcpy buffer overflow");
@@ -297,7 +297,7 @@ inline char *strncat(char *dst, const char *src, size_t n)
 
 inline int strcmp(const char *s1, const char *s2)
 {
-  __CPROVER_HIDE:;
+  //__CPROVER_HIDE:;
   if(s1!=0 && s1==s2) return 0;
   #ifdef __CPROVER_STRING_ABSTRACTION
   int retval;
@@ -495,7 +495,7 @@ inline size_t strlen(const char *s)
 
 inline char *strdup(const char *str)
 {
-  __CPROVER_HIDE:;
+  //__CPROVER_HIDE:;
   __CPROVER_size_t bufsz;
   bufsz=(strlen(str)+1);
   char *cpy=(char *)malloc(bufsz*sizeof(char));
@@ -538,7 +538,7 @@ inline void *memcpy(void *dst, const void *src, size_t n)
   //for(__CPROVER_size_t i=0; i<n ; i++) ((char *)dst)[i]=((const char *)src)[i];
   char src_n[n];
   __CPROVER_array_copy(src_n, (char*)src);
-  __CPROVER_array_replace((char*)dst, src_n);
+  __CPROVER_array_replace(dst, src_n);
   #endif
   return dst;
 }
@@ -569,7 +569,7 @@ void *__builtin___memcpy_chk(void *dst, const void *src, __CPROVER_size_t n, __C
   //for(__CPROVER_size_t i=0; i<n ; i++) ((char *)dst)[i]=((const char *)src)[i];
   char src_n[n];
   __CPROVER_array_copy(src_n, (char*)src);
-  __CPROVER_array_replace((char*)dst, src_n);
+  __CPROVER_array_replace(dst, src_n);
   #endif
   return dst;
 }
@@ -585,7 +585,7 @@ void *__builtin___memcpy_chk(void *dst, const void *src, __CPROVER_size_t n, __C
 
 inline void *memset(void *s, int c, size_t n)
 {
-  __CPROVER_HIDE:;
+  //__CPROVER_HIDE:;
   #ifdef __CPROVER_STRING_ABSTRACTION
   __CPROVER_assert(__CPROVER_buffer_size(s)>=n, "memset buffer overflow");
   //  for(size_t i=0; i<n ; i++) s[i]=c;
@@ -606,7 +606,7 @@ inline void *memset(void *s, int c, size_t n)
   //for(__CPROVER_size_t i=0; i<n ; i++) sp[i]=c;
   unsigned char s_n[n];
   __CPROVER_array_set(s_n, (unsigned char)c);
-  __CPROVER_array_replace((unsigned char*)s, s_n);
+  __CPROVER_array_replace(s, s_n);
   #endif
   return s;
 }
@@ -615,7 +615,7 @@ inline void *memset(void *s, int c, size_t n)
 
 void *__builtin___memset_chk(void *s, int c, __CPROVER_size_t n, __CPROVER_size_t size)
 {
-  __CPROVER_HIDE:;
+  //__CPROVER_HIDE:;
   #ifdef __CPROVER_STRING_ABSTRACTION
   __CPROVER_assert(__CPROVER_buffer_size(s)>=n, "memset buffer overflow");
   __CPROVER_assert(__CPROVER_buffer_size(s)==size, "builtin object size");
@@ -638,7 +638,7 @@ void *__builtin___memset_chk(void *s, int c, __CPROVER_size_t n, __CPROVER_size_
   //for(__CPROVER_size_t i=0; i<n ; i++) sp[i]=c;
   unsigned char s_n[n];
   __CPROVER_array_set(s_n, (unsigned char)c);
-  __CPROVER_array_replace((unsigned char*)s, s_n);
+  __CPROVER_array_replace(s, s_n);
   #endif
   return s;
 }
@@ -669,7 +669,7 @@ inline void *memmove(void *dest, const void *src, size_t n)
   #else
   char src_n[n];
   __CPROVER_array_copy(src_n, (char*)src);
-  __CPROVER_array_replace((char*)dest, src_n);
+  __CPROVER_array_replace(dest, src_n);
   #endif
   return dest;
 }
