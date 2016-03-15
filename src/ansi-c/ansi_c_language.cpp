@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <linking/linking.h>
 #include <linking/remove_internal_symbols.h>
+#include <linking/canonicalize_type_symbols.h>
 
 #include "ansi_c_entry_point.h"
 #include "ansi_c_language.h"
@@ -201,6 +202,7 @@ bool ansi_c_languaget::typecheck(
     return true;
 
   remove_internal_symbols(new_symbol_table);
+  canonicalize_type_symbols(new_symbol_table, get_message_handler());
   
   if(linking(symbol_table, new_symbol_table, get_message_handler()))
     return true;

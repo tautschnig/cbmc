@@ -1,5 +1,5 @@
 SRC = linking.cpp zero_initializer.cpp static_lifetime_init.cpp \
-      remove_internal_symbols.cpp
+      remove_internal_symbols.cpp canonicalize_type_symbols.cpp
 
 INCLUDES= -I ..
 
