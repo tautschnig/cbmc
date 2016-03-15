@@ -6,8 +6,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
-#include <iostream>
-#include <langapi/language_util.h>
 #include <cassert>
 
 #include "arith_tools.h"
@@ -190,7 +188,6 @@ void object_descriptor_exprt::build(
 
   build_object_descriptor_rec(ns, expr, *this);
 
-  std::cerr << from_expr(ns, "", *this) << std::endl;
   assert(root_object().type().id()!=ID_empty);
 }
 

@@ -31,7 +31,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "endianness_map.h"
 #include "simplify_utils.h"
 
-#define DEBUGX
+//#define DEBUGX
 
 #ifdef DEBUGX
 #include <langapi/language_util.h>
@@ -2633,17 +2633,6 @@ bool simplify_exprt::simplify_rec(exprt &expr)
     }
 
     tmp.set(ID_C_expr_simplified, true);
-    if(tmp.id()==ID_plus &&
-       !base_type_eq(tmp.type(), tmp.op0().type(), ns))
-    {
-      std::cerr << "expr=" << from_expr(ns, "", expr) << std::endl;
-      std::cerr << "expr.id()=" << expr.id() << std::endl;
-      std::cerr << "tmp=" << from_expr(ns, "", tmp) << std::endl;
-    }
-    assert(expr.id()!=ID_plus ||
-           base_type_eq(expr.type(), expr.op0().type(), ns));
-    assert(tmp.id()!=ID_plus ||
-           base_type_eq(tmp.type(), tmp.op0().type(), ns));
   }
   #if 0
   else

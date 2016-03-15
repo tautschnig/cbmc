@@ -96,7 +96,7 @@ inline void *calloc(__CPROVER_size_t nmemb, __CPROVER_size_t size)
 
 inline void *malloc(__CPROVER_size_t malloc_size)
 {
-  //__CPROVER_HIDE:;
+  __CPROVER_HIDE:;
   __CPROVER_bool out_of_memory;
   if(out_of_memory)
   {

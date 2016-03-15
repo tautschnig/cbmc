@@ -6,8 +6,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
-#include <iostream>
-
 #include <util/expr_util.h>
 #include <util/byte_operators.h>
 #include <util/cprover_prefix.h>
@@ -37,7 +35,6 @@ void goto_symext::symex_assign_rec(
 {
   code_assignt deref_code=code;
 
-  std::cerr << "0 deref_code.lhs()=" << from_expr(ns, "", deref_code.lhs()) << std::endl;
   clean_expr(deref_code.lhs(), state, true);
   // make the structure of the lhs as simple as possible to avoid,
   // e.g., (b ? s1 : s2).member=X resulting in
@@ -46,14 +43,7 @@ void goto_symext::symex_assign_rec(
   // when all we need is
   // s1=s1 with member:=X [and guard b]
   // s2=s2 with member:=X [and guard !b]
-  std::cerr << "B deref_code.lhs()=" << from_expr(ns, "", deref_code.lhs()) << std::endl;
   do_simplify(deref_code.lhs());
-  std::cerr << "A deref_code.lhs()=" << from_expr(ns, "", deref_code.lhs()) << std::endl;
-  if(deref_code.lhs().id()==ID_if)
-  {
-    std::cerr << from_type(ns, "", deref_code.lhs().op1().type()) << std::endl;
-    std::cerr << from_type(ns, "", deref_code.lhs().op2().type()) << std::endl;
-  }
   clean_expr(deref_code.rhs(), state, false);
 
   symex_assign(state, deref_code);

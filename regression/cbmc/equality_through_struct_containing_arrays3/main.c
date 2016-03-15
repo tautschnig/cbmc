@@ -31,7 +31,6 @@ clause * createClause (literal *lits, uint32_t count)
 
   size_t s = sizeof(clause) + count * sizeof(literal);
   clause *c = malloc(s);
-  __CPROVER_assume(c!=0);
 
   memset(c,0,s);
 
