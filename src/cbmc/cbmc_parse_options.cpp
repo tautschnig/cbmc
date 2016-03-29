@@ -456,6 +456,10 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(cmdline.isset("graphml-cex"))
     options.set_option("graphml-cex", cmdline.get_value("graphml-cex"));
+
+  if(cmdline.isset("symex-coverage-report"))
+    options.set_option("symex-coverage-report",
+                       cmdline.get_value("symex-coverage-report"));
 }
 
 /*******************************************************************\
@@ -1079,6 +1083,7 @@ void cbmc_parse_optionst::help()
     " --property id                only check one specific property\n"
     " --stop-on-fail               stop analysis once a failed property is detected\n"
     " --trace                      give a counterexample trace for failed properties\n"
+    " --symex-coverage-report f    generate a Cobertura XML coverage report in f\n"
     "\n"
     "C/C++ frontend options:\n"
     " -I path                      set include path (C/C++)\n"
