@@ -23,8 +23,9 @@ Date: March 2016
 
 #include "symex_coverage.h"
 
-struct coverage_recordt
+class coverage_recordt
 {
+public:
   explicit coverage_recordt(const std::string &node_id):
     xml(node_id),
     lines_covered(0),
