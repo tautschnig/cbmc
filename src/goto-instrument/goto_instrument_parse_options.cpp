@@ -84,8 +84,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "skip_loops.h"
 #include "code_contracts.h"
 #include "unwind.h"
-
-
+#include "model_argc_argv.h"
 
 /*******************************************************************\
 
@@ -871,6 +870,24 @@ void goto_instrument_parse_optionst::instrument_goto_program()
       throw 0;
   }
 
+  namespacet ns(symbol_table);
+
+  // initialize argv with valid pointers
+  if(cmdline.isset("model-argc-argv"))
+  {
+    unsigned max_argc=
+      safe_string2unsigned(cmdline.get_value("model-argc-argv"));
+
+    status() << "Adding up to " << max_argc
+             << " command line arguments" << eom;
+    if(model_argc_argv(
+        symbol_table,
+        goto_functions,
+        max_argc,
+        get_message_handler()))
+      throw 0;
+  }
+
   // we add the library in some cases, as some analyses benefit
 
   if(cmdline.isset("add-library") ||
@@ -884,14 +901,11 @@ void goto_instrument_parse_optionst::instrument_goto_program()
     link_to_library(symbol_table, goto_functions, ui_message_handler);
   }
 
-  namespacet ns(symbol_table);
-
   if(cmdline.isset("show-custom-bitvector-analysis") ||
      cmdline.isset("custom-bitvector-analysis"))
   {
     partial_inlining_done=true;
     status() << "Partial Inlining" << eom;
-    const namespacet ns(symbol_table);
     goto_partial_inline(goto_functions, ns, ui_message_handler);
     status() << "Propagating Constants" << eom;
     constant_propagator_ait constant_propagator_ai(goto_functions, ns);
@@ -904,8 +918,6 @@ void goto_instrument_parse_optionst::instrument_goto_program()
     do_partial_inlining();
     do_remove_returns();
     parameter_assignments(symbol_table, goto_functions);
-
-    namespacet ns(symbol_table);
 
     // recalculate numbers, etc.
     goto_functions.update();
@@ -951,8 +963,6 @@ void goto_instrument_parse_optionst::instrument_goto_program()
   if(cmdline.isset("constant-propagator"))
   {
     do_function_pointer_removal();
-
-    namespacet ns(symbol_table);
 
     status() << "Propagating Constants" << eom;
 
@@ -1359,6 +1369,7 @@ void goto_instrument_parse_optionst::help()
     " --constant-propagator        propagate constants and simplify expressions\n"
     " --inline                     perform full inlining\n"
     " --add-library                add models of C library functions\n"
+    " --model-argc-argv <n>        model up to <n> command line arguments\n"
     "\n"
     "Other options:\n"
     " --use-system-headers         with --dump-c/--dump-cpp: generate C source with includes\n"
