@@ -108,7 +108,7 @@ public:
     targetst targets;
 
     // for the usual case of a single target
-    targett get_target() const
+    const_targett get_target() const
     {
       assert(targets.size()==1);
       return targets.front();
@@ -126,7 +126,7 @@ public:
     labelst labels;
 
     // will go away
-    std::set<targett> incoming_edges;
+    std::set<const_targett> incoming_edges;
 
     //! is this node a branch target?
     bool is_target() const
@@ -302,7 +302,7 @@ public:
   void insert_before_swap(targett target)
   {
     assert(target!=instructions.end());
-    targett next=target;
+    const_targett next=target;
     next++;
     instructions.insert(next, instructiont())->swap(*target);
   }
@@ -325,17 +325,10 @@ public:
     if(p.instructions.empty())
       return;
     insert_before_swap(target, p.instructions.front());
-    targett next=target;
+    const_targett next=target;
     next++;
     p.instructions.erase(p.instructions.begin());
     instructions.splice(next, p.instructions);
-  }
-
-  //! Insertion before the given target
-  //! \return newly inserted location
-  targett insert_before(targett target)
-  {
-    return instructions.insert(target, instructiont());
   }
 
   //! Insertion before the given target
@@ -347,9 +340,9 @@ public:
 
   //! Insertion after the given target
   //! \return newly inserted location
-  targett insert_after(targett target)
+  targett insert_after(const_targett target)
   {
-    targett t=target;
+    const_targett t=target;
     t++;
     return instructions.insert(t, instructiont());
   }
@@ -359,16 +352,6 @@ public:
   {
     instructions.splice(instructions.end(),
                         p.instructions);
-    // BUG: The iterators to p-instructions are invalidated!
-  }
-
-  //! Inserts the given program at the given location.
-  //! The program is destroyed.
-  void destructive_insert(
-    targett target,
-    goto_program_templatet<codeT, guardT> &p)
-  {
-    instructions.splice(target, p.instructions);
     // BUG: The iterators to p-instructions are invalidated!
   }
 

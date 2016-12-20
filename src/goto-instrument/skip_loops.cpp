@@ -49,7 +49,7 @@ static bool skip_loops(
     if(*l_it>loop_id)
       continue;
 
-    goto_programt::targett loop_head=it->get_target();
+    goto_programt::const_targett loop_head=it->get_target();
     goto_programt::targett next=it;
     ++next;
     assert(next!=goto_program.instructions.end());
