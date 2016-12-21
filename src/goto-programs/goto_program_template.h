@@ -605,26 +605,30 @@ void goto_program_templatet<codeT, guardT>::compute_target_numbers()
   for(auto &i : instructions)
     i.target_number=instructiont::nil_target;
 
-  // mark the goto targets
+  // collect the goto targets
+  std::set<const_targett> targets;
 
   for(const auto &i : instructions)
   {
     for(const auto &t : i.targets)
     {
       if(t!=instructions.end())
-        t->target_number=0;
+        targets.insert(t);
     }
   }
 
   // number the targets properly
   unsigned cnt=0;
 
-  for(auto &i : instructions)
+  for(typename instructionst::iterator
+      it=instructions.begin();
+      it!=instructions.end();
+      ++it)
   {
-    if(i.is_target())
+    if(targets.find(it)!=targets.end())
     {
-      i.target_number=++cnt;
-      assert(i.target_number!=0);
+      it->target_number=++cnt;
+      assert(it->target_number!=0);
     }
   }
 
@@ -637,7 +641,7 @@ void goto_program_templatet<codeT, guardT>::compute_target_numbers()
     {
       if(t!=instructions.end())
       {
-        assert(t->target_number!=0);
+        assert(t->target_number>0);
         assert(t->target_number!=instructiont::nil_target);
       }
     }
