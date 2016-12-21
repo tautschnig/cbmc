@@ -111,7 +111,7 @@ void sat_path_enumeratort::find_distinguishing_points()
       it!=loop.end();
       ++it)
   {
-    goto_programt::targetst succs;
+    goto_programt::const_targetst succs;
 
     goto_program.get_successors(*it, succs);
 
@@ -136,18 +136,18 @@ void sat_path_enumeratort::build_path(
   scratch_programt &scratch_program,
   patht &path)
 {
-  goto_programt::targett t=loop_header;
+  goto_programt::const_targett t=loop_header;
 
   do
   {
-    goto_programt::targett next;
-    goto_programt::targetst succs;
+    goto_programt::const_targett next;
+    goto_programt::const_targetst succs;
 
     goto_program.get_successors(t, succs);
 
     // We should have a looping path, so we should never hit a location
     // with no successors.
-    assert(succs.size() > 0);
+    assert(!succs.empty());
 
     if(succs.size()==1)
     {
@@ -189,23 +189,16 @@ void sat_path_enumeratort::build_path(
       // appropriate guard.
       cond=not_exprt(t->guard);
 
-      for(goto_programt::targetst::iterator it=t->targets.begin();
-          it!=t->targets.end();
-          ++it)
-      {
-        if(next==*it)
-        {
-          cond=t->guard;
-          break;
-        }
-      }
+      if(t->get_target()==next)
+        cond=t->guard;
     }
 
     path.push_back(path_nodet(t, cond));
 
     t=next;
   }
-  while(t!=loop_header && (loop.find(t)!=loop.end()));
+  while(t!=loop_header &&
+        loop.find(goto_program.const_cast_target(t))!=loop.end());
 }
 
 /*
@@ -308,7 +301,7 @@ void sat_path_enumeratort::build_fixed()
         if(target->location_number > t->location_number)
         {
           // A forward jump...
-          if(loop.find(target)!=loop.end())
+          if(loop.find(goto_program.const_cast_target(target))!=loop.end())
           {
             // Case 1: a forward jump within the loop.  Do nothing.
             continue;

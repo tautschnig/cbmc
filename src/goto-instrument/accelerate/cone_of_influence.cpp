@@ -89,14 +89,9 @@ void cone_of_influencet::get_succs(
     if(!rit->guard.is_false())
     {
       // Branch can be taken.
-      for(goto_programt::targetst::const_iterator t=rit->targets.begin();
-          t != rit->targets.end();
-          ++t)
-      {
-        unsigned int loc=(*t)->location_number;
-        expr_sett &s=cone_map[loc];
-        targets.insert(s.begin(), s.end());
-      }
+      unsigned int loc=rit->get_target()->location_number;
+      expr_sett &s=cone_map[loc];
+      targets.insert(s.begin(), s.end());
     }
 
     if(rit->guard.is_true())

@@ -21,8 +21,8 @@ class all_paths_enumeratort:public path_enumeratort
 public:
   all_paths_enumeratort(
     goto_programt &_goto_program,
-    natural_loops_mutablet::natural_loopt &_loop,
-    goto_programt::targett _loop_header):
+    const natural_loops_mutablet::natural_loopt &_loop,
+    goto_programt::const_targett _loop_header):
     goto_program(_goto_program),
     loop(_loop),
     loop_header(_loop_header)
@@ -34,12 +34,12 @@ public:
 protected:
   int backtrack(patht &path);
   void complete_path(patht &path, int succ);
-  void extend_path(patht &path, goto_programt::targett t, int succ);
+  void extend_path(patht &path, goto_programt::const_targett t, int succ);
   bool is_looping(patht &path);
 
   goto_programt &goto_program;
-  natural_loops_mutablet::natural_loopt &loop;
-  goto_programt::targett loop_header;
+  const natural_loops_mutablet::natural_loopt &loop;
+  goto_programt::const_targett loop_header;
 
   patht last_path;
 };

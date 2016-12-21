@@ -117,7 +117,7 @@ void natural_loops_templatet<P, T>::compute(P &program)
 #endif
           if(node.dominators.find(target)!=node.dominators.end())
           {
-            compute_natural_loop(m_it, target);
+            compute_natural_loop(m_it, program.const_cast_target(target));
           }
         }
       }

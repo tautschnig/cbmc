@@ -23,7 +23,7 @@ template <class P, class T, bool post_dom>
 class cfg_dominators_templatet
 {
 public:
-  typedef std::set<T> target_sett;
+  typedef std::set<typename P::const_targett> target_sett;
 
   struct nodet
   {

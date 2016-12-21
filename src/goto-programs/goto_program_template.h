@@ -105,7 +105,7 @@ public:
     typedef std::list<targett> targetst;
     typedef std::list<const_targett> const_targetst;
 
-    targetst targets;
+    const_targetst targets;
 
     // for the usual case of a single target
     const_targett get_target() const
@@ -115,7 +115,7 @@ public:
     }
 
     // for the usual case of a single target
-    void set_target(targett t)
+    void set_target(const_targett t)
     {
       targets.clear();
       targets.push_back(t);
@@ -155,13 +155,13 @@ public:
     void make_atomic_begin() { clear(ATOMIC_BEGIN); }
     void make_atomic_end() { clear(ATOMIC_END); }
 
-    void make_goto(targett _target)
+    void make_goto(const_targett _target)
     {
       make_goto();
-      targets.push_back(_target);
+      set_target(_target);
     }
 
-    void make_goto(targett _target, const guardT &g)
+    void make_goto(const_targett _target, const guardT &g)
     {
       make_goto(_target);
       guard=g;
@@ -490,7 +490,7 @@ void goto_program_templatet<codeT, guardT>::get_successors(
   if(i.is_goto())
   {
     for(const auto &t : i.targets)
-      successors.push_back(t);
+      successors.push_back(const_cast_target(t));
 
     if(!i.guard.is_true() && next!=instructions.end())
       successors.push_back(next);
@@ -498,7 +498,7 @@ void goto_program_templatet<codeT, guardT>::get_successors(
   else if(i.is_start_thread())
   {
     for(const auto &t : i.targets)
-      successors.push_back(t);
+      successors.push_back(const_cast_target(t));
 
     if(next!=instructions.end())
       successors.push_back(next);

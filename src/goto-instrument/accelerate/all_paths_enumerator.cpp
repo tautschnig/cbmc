@@ -71,7 +71,7 @@ int all_paths_enumeratort::backtrack(patht &path)
   path.pop_back();
 
   path_nodet &parent=path.back();
-  goto_programt::targetst succs;
+  goto_programt::const_targetst succs;
   goto_program.get_successors(parent.loc, succs);
 
   unsigned int ret=0;
@@ -107,7 +107,8 @@ void all_paths_enumeratort::complete_path(patht &path, int succ)
   path_nodet &node=path.back();
   extend_path(path, node.loc, succ);
 
-  goto_programt::targett end=path.back().loc;
+  goto_programt::targett end=
+    goto_program.const_cast_target(path.back().loc);
 
   if(end==loop_header || loop.find(end)==loop.end())
     return;
@@ -117,11 +118,11 @@ void all_paths_enumeratort::complete_path(patht &path, int succ)
 
 void all_paths_enumeratort::extend_path(
   patht &path,
-  goto_programt::targett t,
+  goto_programt::const_targett t,
   int succ)
 {
-  goto_programt::targett next;
-  goto_programt::targetst succs;
+  goto_programt::const_targett next;
+  goto_programt::const_targetst succs;
   exprt guard=true_exprt();
 
   goto_program.get_successors(t, succs);
@@ -141,16 +142,8 @@ void all_paths_enumeratort::extend_path(
   {
     guard=not_exprt(t->guard);
 
-    for(goto_programt::targetst::iterator it=t->targets.begin();
-        it != t->targets.end();
-        ++it)
-    {
-      if(next == *it)
-      {
-        guard=t->guard;
-        break;
-      }
-    }
+    if(t->get_target()==next)
+      guard=t->guard;
   }
 
   path.push_back(path_nodet(next, guard));

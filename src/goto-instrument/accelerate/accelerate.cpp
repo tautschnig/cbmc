@@ -222,12 +222,11 @@ void acceleratet::insert_looping_path(
   jump->guard=true_exprt();
   jump->targets.push_back(back_jump);
 
-  for(goto_programt::targett t=loop_header;
+  for(goto_programt::const_targett
+      t=loop_header;
       t!=loop_body;
       ++t)
-  {
     inserted_path.push_back(path_nodet(t));
-  }
 
   inserted_path.push_back(path_nodet(back_jump));
 }
@@ -517,7 +516,7 @@ void acceleratet::insert_automaton(trace_automatont &automaton)
     build_state_machine(p.first, p.second, accept_states, state, next_state,
         state_machine);
 
-    program.insert_before_swap(sym, state_machine);
+    program.insert_before_swap(program.const_cast_target(sym), state_machine);
   }
 }
 

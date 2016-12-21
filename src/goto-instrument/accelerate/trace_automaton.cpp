@@ -38,9 +38,9 @@ void trace_automatont::build()
  */
 void trace_automatont::build_alphabet(goto_programt &program)
 {
-  Forall_goto_program_instructions(it, program)
+  forall_goto_program_instructions(it, program)
   {
-    goto_programt::targetst succs;
+    goto_programt::const_targetst succs;
 
     program.get_successors(it, succs);
 
@@ -75,7 +75,7 @@ void trace_automatont::add_path(patht &path)
 
   for(const auto &step : path)
   {
-    goto_programt::targett l=step.loc;
+    goto_programt::const_targett l=step.loc;
 #ifdef DEBUG
       std::cout << ", " << l->location_number << ":" << l->location;
 #endif
@@ -284,7 +284,10 @@ statet automatont::add_state()
 /*
  * Add the transition s -a-> t.
  */
-void automatont::add_trans(statet s, goto_programt::targett a, statet t)
+void automatont::add_trans(
+  statet s,
+  goto_programt::const_targett a,
+  statet t)
 {
   assert(s < transitions.size());
   transitionst &trans=transitions[s];
@@ -297,7 +300,7 @@ void automatont::add_trans(statet s, goto_programt::targett a, statet t)
  */
 void trace_automatont::add_dtrans(
   state_sett &s,
-  goto_programt::targett a,
+  goto_programt::const_targett a,
   state_sett &t)
 {
   statet sidx=find_dstate(s);
@@ -309,7 +312,10 @@ void trace_automatont::add_dtrans(
   dta.add_trans(sidx, a, tidx);
 }
 
-void automatont::move(statet s, goto_programt::targett a, state_sett &t)
+void automatont::move(
+  statet s,
+  goto_programt::const_targett a,
+  state_sett &t)
 {
   assert(s < transitions.size());
 
@@ -344,7 +350,7 @@ void trace_automatont::get_transitions(sym_mapt &transitions)
 
     for(const auto &trans : dta_transitions)
     {
-      goto_programt::targett l=trans.first;
+      goto_programt::const_targett l=trans.first;
       unsigned int j=trans.second;
 
       // We have a transition: i -l-> j.
@@ -401,7 +407,7 @@ void automatont::reverse(goto_programt::targett epsilon)
 
     for(const auto &t : trans)
     {
-      goto_programt::targett l=t.first;
+      goto_programt::const_targett l=t.first;
       unsigned int j=t.second;
 
       // There was a transition i -l-> j, so add a transition
@@ -479,7 +485,7 @@ void automatont::output(std::ostream &str)
   {
     for(const auto &trans : transitions[i])
     {
-      goto_programt::targett l=trans.first;
+      goto_programt::const_targett l=trans.first;
       statet j=trans.second;
 
       str << i << " -- " << l->location_number << " --> " << j << std::endl;

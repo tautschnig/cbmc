@@ -29,7 +29,7 @@ class automatont
   }
 
   statet add_state();
-  void add_trans(statet s, goto_programt::targett a, statet t);
+  void add_trans(statet s, goto_programt::const_targett a, statet t);
 
   bool is_accepting(statet s)
   {
@@ -41,8 +41,8 @@ class automatont
     accept_states.insert(s);
   }
 
-  void move(statet s, goto_programt::targett a, state_sett &t);
-  void move(state_sett &s, goto_programt::targett a, state_sett &t);
+  void move(statet s, goto_programt::const_targett a, state_sett &t);
+  void move(state_sett &s, goto_programt::const_targett a, state_sett &t);
 
   void reverse(goto_programt::targett epsilon);
   void trim();
@@ -67,7 +67,7 @@ class automatont
   }
 
 // protected:
-  typedef std::multimap<goto_programt::targett, statet> transitionst;
+  typedef std::multimap<goto_programt::const_targett, statet> transitionst;
   typedef std::pair<transitionst::iterator, transitionst::iterator>
     transition_ranget;
   typedef std::vector<transitionst> transition_tablet;
@@ -107,7 +107,7 @@ class trace_automatont
   }
 
   typedef std::pair<statet, statet> state_pairt;
-  typedef std::multimap<goto_programt::targett, state_pairt> sym_mapt;
+  typedef std::multimap<goto_programt::const_targett, state_pairt> sym_mapt;
   typedef std::pair<sym_mapt::iterator, sym_mapt::iterator> sym_range_pairt;
 
   void get_transitions(sym_mapt &transitions);
@@ -117,14 +117,14 @@ class trace_automatont
     return dta.num_states;
   }
 
-  typedef std::set<goto_programt::targett> alphabett;
+  typedef std::set<goto_programt::const_targett> alphabett;
   alphabett alphabet;
 
  protected:
   void build_alphabet(goto_programt &program);
   void init_nta();
 
-  bool in_alphabet(goto_programt::targett t)
+  bool in_alphabet(goto_programt::const_targett t)
   {
     return alphabet.find(t)!=alphabet.end();
   }
@@ -140,7 +140,10 @@ class trace_automatont
   static const statet no_state = -1;
   statet add_dstate(state_sett &s);
   statet find_dstate(state_sett &s);
-  void add_dtrans(state_sett &s, goto_programt::targett a, state_sett &t);
+  void add_dtrans(
+    state_sett &s,
+    goto_programt::const_targett a,
+    state_sett &t);
 
   typedef std::map<state_sett, statet> state_mapt;
 

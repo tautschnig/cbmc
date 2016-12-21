@@ -105,7 +105,7 @@ std::ostream &goto_programt::output_instruction(
 
     out << "GOTO ";
 
-    for(instructiont::targetst::const_iterator
+    for(instructiont::const_targetst::const_iterator
         gt_it=instruction.targets.begin();
         gt_it!=instruction.targets.end();
         gt_it++)
@@ -183,7 +183,7 @@ std::ostream &goto_programt::output_instruction(
       const irept::subt &exception_list=
         instruction.code.find(ID_exception_list).get_sub();
       assert(instruction.targets.size()==exception_list.size());
-      for(instructiont::targetst::const_iterator
+      for(instructiont::const_targetst::const_iterator
           gt_it=instruction.targets.begin();
           gt_it!=instruction.targets.end();
           gt_it++,
@@ -537,7 +537,7 @@ std::string as_string(
 
     result+="GOTO ";
 
-    for(goto_programt::instructiont::targetst::const_iterator
+    for(goto_programt::instructiont::const_targetst::const_iterator
         gt_it=i.targets.begin();
         gt_it!=i.targets.end();
         gt_it++)

@@ -99,7 +99,8 @@ void remove_skip(goto_programt &goto_program)
     old_size=goto_program.instructions.size();
 
     // maps deleted instructions to their replacement
-    typedef std::map<goto_programt::targett, goto_programt::targett>
+    typedef std::map<goto_programt::const_targett,
+            goto_programt::const_targett>
       new_targetst;
     new_targetst new_targets;
 
@@ -107,7 +108,8 @@ void remove_skip(goto_programt &goto_program)
 
     for(goto_programt::instructionst::iterator
         it=goto_program.instructions.begin();
-        it!=goto_program.instructions.end();)
+        it!=goto_program.instructions.end();
+       ) // no it++
     {
       goto_programt::targett old_target=it;
 
@@ -145,17 +147,13 @@ void remove_skip(goto_programt &goto_program)
     Forall_goto_program_instructions(i_it, goto_program)
       if(i_it->is_goto() || i_it->is_start_thread() || i_it->is_catch())
       {
-        for(goto_programt::instructiont::targetst::iterator
-            t_it=i_it->targets.begin();
-            t_it!=i_it->targets.end();
-            t_it++)
-        {
-          new_targetst::const_iterator
-            result=new_targets.find(*t_it);
+        goto_programt::const_targett old_target=i_it->get_target();
 
-          if(result!=new_targets.end())
-            *t_it=result->second;
-        }
+        new_targetst::const_iterator
+          result=new_targets.find(old_target);
+
+        if(result!=new_targets.end())
+          i_it->set_target(result->second);
       }
 
     // now delete the skips -- we do so after adjusting the

@@ -161,17 +161,9 @@ void havoc_loopst::havoc_loop(
       l_it=loop.begin(); l_it!=loop.end(); l_it++)
   {
     goto_programt::instructiont &instruction=**l_it;
-    if(instruction.is_goto())
-    {
-      for(goto_programt::targetst::iterator
-          t_it=instruction.targets.begin();
-          t_it!=instruction.targets.end();
-          t_it++)
-      {
-        if(*t_it==loop_head)
-          *t_it=loop_exit; // divert
-      }
-    }
+    if(instruction.is_goto() &&
+       instruction.get_target()==loop_head)
+      instruction.set_target(loop_exit);
   }
 
   // remove skips

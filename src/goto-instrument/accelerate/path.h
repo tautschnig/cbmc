@@ -20,13 +20,13 @@ Author: Matt Lewis
 class path_nodet
 {
 public:
-  explicit path_nodet(const goto_programt::targett &_loc):
+  explicit path_nodet(const goto_programt::const_targett &_loc):
     loc(_loc),
     guard(nil_exprt())
   {
   }
 
-  path_nodet(const goto_programt::targett &_loc,
+  path_nodet(const goto_programt::const_targett &_loc,
              const exprt &_guard) :
       loc(_loc),
       guard(_guard)
@@ -35,7 +35,7 @@ public:
 
   void output(const goto_programt &program, std::ostream &str);
 
-  goto_programt::targett loc;
+  goto_programt::const_targett loc;
   const exprt guard;
 };
 
