@@ -18,8 +18,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "irep_ids.h"
 
 #define SHARING
-// #define HASH_CODE
-// #define NAMED_SUB_IS_FORWARD_LIST
+#define HASH_CODE
+#define NAMED_SUB_IS_FORWARD_LIST
 
 #ifdef NAMED_SUB_IS_FORWARD_LIST
 #include <forward_list>
