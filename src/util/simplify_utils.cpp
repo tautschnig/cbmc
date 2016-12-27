@@ -119,30 +119,31 @@ static const struct saj_tablet &sort_and_join(
   return saj_table[i];
 }
 
-bool sort_and_join(exprt &expr)
+bool sort_and_join(exprt &expr, bool do_sort)
 {
   bool result=true;
 
   if(!expr.has_operands())
     return true;
 
-  const struct saj_tablet &saj_entry=
-    sort_and_join(expr.id(), expr.type().id());
+  const exprt &expr_const = expr;
+  const struct saj_tablet &saj_entry =
+    sort_and_join(expr_const.id(), expr_const.type().id());
   if(saj_entry.id.empty())
     return true;
 
   // check operand types
 
-  forall_operands(it, expr)
+  forall_operands(it, expr_const)
     if(!sort_and_join(saj_entry, it->type().id()))
       return true;
 
   // join expressions
 
   exprt::operandst new_ops;
-  new_ops.reserve(expr.operands().size());
+  new_ops.reserve(expr_const.operands().size());
 
-  forall_operands(it, expr)
+  forall_operands(it, expr_const)
   {
     if(it->id()==expr.id())
     {
@@ -158,9 +159,11 @@ bool sort_and_join(exprt &expr)
   }
 
   // sort it
+  if(do_sort)
+    result = sort_operands(new_ops) && result;
 
-  result=sort_operands(new_ops) && result;
-  expr.operands().swap(new_ops);
+  if(!result)
+    expr.operands().swap(new_ops);
 
   return result;
 }
