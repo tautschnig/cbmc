@@ -231,6 +231,7 @@ satcheck_glucose_no_simplifiert::satcheck_glucose_no_simplifiert():
 satcheck_glucose_simplifiert::satcheck_glucose_simplifiert():
   satcheck_glucose_baset<Glucose::SimpSolver>(new Glucose::SimpSolver)
 {
+  solver->use_elim=false;
 }
 
 void satcheck_glucose_simplifiert::set_frozen(literalt a)
