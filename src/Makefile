@@ -84,4 +84,17 @@ glucose-download:
 	@(cd ../glucose-syrup; patch -p1 < ../scripts/glucose-syrup-patch)
 	@rm glucose-syrup.tgz
 
-.PHONY: minisat2-download glucose-download
+ipasir-download:
+	# get the 2016 version of the ipasir package, which contains a few solvers
+	@echo "Download ipasir 2016 package"
+	@(lwp-download http://baldur.iti.kit.edu/sat-competition-2016/downloads/ipasir.zip ../ipasir.zip)
+	@(cd ..; unzip -u ipasir.zip)
+
+ipasir-build: ipasir-download
+	# build libpicosat, and create a libipasir.a in ipasir directory
+	# make sure that the ipasir.h file is located there as well (ships with 2016 package)
+	@echo "Build Picosat 961 from ipasir 2016 package"
+	$(MAKE) -C ../ipasir/sat/picosat961 libipasirpicosat961.a
+	@(cd ../ipasir; ln -sf sat/picosat961/libipasirpicosat961.a libipasir.a)
+
+.PHONY: ipasir-build minisat2-download glucose-download
