@@ -23,7 +23,7 @@ LIBS += ../src/ansi-c/ansi-c$(LIBEXT) \
         ../src/langapi/langapi$(LIBEXT) \
         ../src/assembler/assembler$(LIBEXT) \
         ../src/analyses/analyses$(LIBEXT) \
-        ../src/solvers/solvers$(LIBEXT) \
+        ../src/solvers/solvers$(LIBEXT) $(LIBSOLVER) \
         # Empty last line
 
 TESTS = unit_tests$(EXEEXT) \

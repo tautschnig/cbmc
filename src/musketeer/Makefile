@@ -22,7 +22,7 @@ OBJ += ../ansi-c/ansi-c$(LIBEXT) \
       ../analyses/analyses$(LIBEXT) \
       ../langapi/langapi$(LIBEXT) \
       ../util/util$(LIBEXT) \
-      ../solvers/solvers$(LIBEXT) \
+      ../solvers/solvers$(LIBEXT) $(LIBSOLVER)  \
       ../goto-instrument/wmm/weak_memory$(OBJEXT) \
       ../goto-instrument/wmm/fence$(OBJEXT) \
       ../goto-instrument/wmm/event_graph$(OBJEXT) \
