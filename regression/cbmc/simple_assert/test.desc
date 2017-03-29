@@ -1,0 +1,12 @@
+CORE
+main.c
+--cover location
+^EXIT=0$
+^SIGNAL=0$
+^\[main\.coverage\.1\] .* function main block 1: SATISFIED$
+^\[main\.coverage\.2\] .* function main block 2: SATISFIED$
+^\[main\.coverage\.3\] .* function main block 3: SATISFIED$
+3 of 3 covered \(100\.0%\)$
+--
+^warning: ignoring
+^CONVERSION ERROR$
