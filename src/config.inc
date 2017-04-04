@@ -8,6 +8,9 @@ else
   CXXFLAGS += -Wall -pedantic -Werror
 endif
 
+CXXFLAGS=-O2 -pg -finline-limit=4
+LINKFLAGS=-pg
+
 # Select optimisation or debug info
 #CXXFLAGS += -O2 -DNDEBUG
 #CXXFLAGS += -O0 -g
