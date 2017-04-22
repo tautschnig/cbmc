@@ -100,6 +100,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "undefined_functions.h"
 #include "remove_function.h"
 #include "splice_call.h"
+#include "loop_transforms.h"
 
 void goto_instrument_parse_optionst::eval_verbosity()
 {
@@ -958,6 +959,12 @@ void goto_instrument_parse_optionst::instrument_goto_program()
 
   namespacet ns(goto_model.symbol_table);
 
+  if(cmdline.isset("transform-loops"))
+  {
+    status() << "Transforming loop bodies" << eom;
+    transform_loops(goto_functions, ns);
+  }
+
   // initialize argv with valid pointers
   if(cmdline.isset("model-argc-argv"))
   {
@@ -1533,6 +1540,8 @@ void goto_instrument_parse_optionst::help()
     " --havoc-loops                over-approximate all loops\n"
     " --accelerate                 add loop accelerators\n"
     " --skip-loops <loop-ids>      add gotos to skip selected loops during execution\n" // NOLINT(*)
+    // NOLINTNEXTLINE(whitespace/line_length)
+    " --transform-loops            apply classic code motion (semantics preserving)\n"
     "\n"
     "Memory model instrumentations:\n"
     " --mm <tso,pso,rmo,power>     instruments a weak memory model\n"

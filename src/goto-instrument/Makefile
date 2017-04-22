@@ -42,6 +42,7 @@ SRC = accelerate/accelerate.cpp \
       horn_encoding.cpp \
       interrupt.cpp \
       k_induction.cpp \
+      loop_transforms.cpp \
       loop_utils.cpp \
       mmio.cpp \
       model_argc_argv.cpp \

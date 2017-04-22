@@ -83,7 +83,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(z3)(add-library)(show-dependence-graph)" \
   "(horn)(skip-loops):(apply-code-contracts)(model-argc-argv):" \
   "(show-threaded)(list-calls-args)(print-path-lengths)" \
-  "(undefined-function-is-assume-false)" \
+  "(undefined-function-is-assume-false)(transform-loops)" \
   "(remove-function-body):"\
   "(splice-call):" \
   OPT_REMOVE_CALLS_NO_BODY
