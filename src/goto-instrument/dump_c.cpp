@@ -62,6 +62,8 @@ void dump_ct::operator()(std::ostream &os)
   std::stringstream func_body_stream;
   local_static_declst local_static_decls;
 
+  gather_global_typedefs();
+
   // add copies of struct types when ID_C_transparent_union is only
   // annotated to parameter
   symbol_tablet symbols_transparent;
@@ -113,6 +115,9 @@ void dump_ct::operator()(std::ostream &os)
     symbolt &symbol=it->second;
     bool tag_added=false;
 
+    // TODO we could get rid of some of the ID_anonymous by looking up
+    // the origin symbol types in typedef_types and adjusting any other
+    // uses of ID_tag
     if((symbol.type.id()==ID_union || symbol.type.id()==ID_struct) &&
        symbol.type.get(ID_tag).empty())
     {
@@ -284,6 +289,8 @@ void dump_ct::operator()(std::ostream &os)
        << "#endif" << std::endl;
     os << std::endl;
   }
+
+  dump_typedefs(os);
 
   if(!func_decl_stream.str().empty())
     os << func_decl_stream.str() << std::endl;
@@ -521,7 +528,21 @@ void dump_ct::convert_compound(
     struct_body << ";" << std::endl;
   }
 
-  os << type_to_string(unresolved);
+  typet unresolved_clean=unresolved;
+  typedef_typest::const_iterator td_entry=
+    typedef_types.find(unresolved);
+  irep_idt typedef_str;
+  if(td_entry!=typedef_types.end())
+  {
+    unresolved_clean.remove(ID_C_typedef);
+    typedef_str=td_entry->second;
+    std::pair<std::string, bool> &td_map_entry=typedef_map[typedef_str];
+    if(!td_map_entry.second)
+      td_map_entry.first="";
+    os << "typedef ";
+  }
+
+  os << type_to_string(unresolved_clean);
   if(!base_decls.str().empty())
   {
     assert(language->id()=="cpp");
@@ -548,6 +569,8 @@ void dump_ct::convert_compound(
     os << " __attribute__ ((__transparent_union__))";
   if(type.get_bool(ID_C_packed))
     os << " __attribute__ ((__packed__))";
+  if(!typedef_str.empty())
+    os << " " << typedef_str;
   os << ";";
   os << std::endl;
   os << std::endl;
@@ -901,6 +924,10 @@ void dump_ct::cleanup_decl(
 
   tmp.add_instruction(END_FUNCTION);
 
+  std::unordered_set<irep_idt, irep_id_hash> typedef_names;
+  for(const auto &td : typedef_map)
+    typedef_names.insert(td.first);
+
   code_blockt b;
   goto_program2codet p2s(
     irep_idt(),
@@ -909,11 +936,138 @@ void dump_ct::cleanup_decl(
     b,
     local_static,
     local_type_decls,
+    typedef_names,
     system_headers);
   p2s();
 
   assert(b.operands().size()==1);
   decl.swap(b.op0());
+}
+
+/*******************************************************************\
+
+Function: dump_ct::collect_typedefs
+
+Inputs:
+    type  Type to inspect for ID_C_typedef entry
+    early Set to true to enforce that typedef is dumped before any
+          function declarations or struct definitions
+
+Outputs:
+
+Purpose: Find any typedef names contained in the input type and store
+         their declaration strings in typedef_map for eventual output.
+
+\*******************************************************************/
+
+void dump_ct::collect_typedefs(const typet &type, bool early)
+{
+  if(type.id()==ID_code)
+  {
+    const code_typet &code_type=to_code_type(type);
+
+    collect_typedefs(code_type.return_type(), early);
+    for(const auto &param : code_type.parameters())
+      collect_typedefs(param.type(), early);
+  }
+  else if(type.id()==ID_pointer || type.id()==ID_array)
+  {
+    collect_typedefs(type.subtype(), early);
+  }
+  else if(type.id()==ID_symbol)
+  {
+    const symbolt &symbol=
+      ns.lookup(to_symbol_type(type).get_identifier());
+    collect_typedefs(symbol.type, early);
+  }
+
+  const irep_idt &typedef_str=type.get(ID_C_typedef);
+
+  if(!typedef_str.empty())
+  {
+    std::pair<typedef_mapt::iterator, bool> entry=
+      typedef_map.insert({typedef_str, {"", early}});
+
+    if(entry.second)
+    {
+      if(typedef_str=="__gnuc_va_list" || typedef_str == "va_list")
+      {
+        system_headers.insert("stdarg.h");
+      }
+      else
+      {
+        typet t=type;
+        t.remove(ID_C_typedef);
+
+        std::ostringstream oss;
+        oss << "typedef " << type_to_string(t) << " "
+            << typedef_str << ';';
+
+        entry.first->second.first=oss.str();
+      }
+    }
+    else if(early)
+    {
+      entry.first->second.second=true;
+    }
+  }
+}
+
+/*******************************************************************\
+
+Function: dump_ct::gather_global_typedefs
+
+Inputs:
+
+Outputs:
+
+Purpose: find all global typdefs in the symbol table and store them
+         in typedef_types
+
+\*******************************************************************/
+
+void dump_ct::gather_global_typedefs()
+{
+  forall_symbols(it, copied_symbol_table.symbols)
+  {
+    const symbolt &symbol=it->second;
+
+    if(symbol.is_macro && symbol.is_type && !ignore(symbol) &&
+       symbol.location.get_function().empty())
+    {
+      assert(!symbol.type.get(ID_C_typedef).empty());
+      typedef_types[symbol.type]=symbol.type.get(ID_C_typedef);
+      collect_typedefs(symbol.type, false);
+    }
+  }
+}
+
+/*******************************************************************\
+
+Function: dump_ct::dump_typedefs
+
+Inputs:
+
+Outputs: os  output stream
+
+Purpose: print all typedefs that are not covered via
+         typedef struct xyz { ... } name;
+
+\*******************************************************************/
+
+void dump_ct::dump_typedefs(std::ostream &os) const
+{
+  bool need_newline=false;
+
+  for(const auto &td : typedef_map)
+    if(!td.second.first.empty())
+    {
+      need_newline=true;
+      os << td.second.first << std::endl;
+    }
+
+  if(need_newline)
+    os << std::endl;
 }
 
 /*******************************************************************\
@@ -1024,6 +1178,10 @@ void dump_ct::convert_function_declaration(
     code_blockt b;
     std::list<irep_idt> type_decls, local_static;
 
+    std::unordered_set<irep_idt, irep_id_hash> typedef_names;
+    for(const auto &td : typedef_map)
+      typedef_names.insert(td.first);
+
     goto_program2codet p2s(
       symbol.name,
       func_entry->second.body,
@@ -1031,6 +1189,7 @@ void dump_ct::convert_function_declaration(
       b,
       local_static,
       type_decls,
+      typedef_names,
       system_headers);
     p2s();
 
@@ -1065,6 +1224,10 @@ void dump_ct::convert_function_declaration(
   if(symbol.name!=goto_functionst::entry_point() &&
      symbol.name!=ID_main)
   {
+    // make sure typedef names are available before outputting this
+    // declaration
+    collect_typedefs(symbol.type, true);
+
     os_decl << "// " << symbol.name << std::endl;
     os_decl << "// " << symbol.location << std::endl;
     os_decl << make_decl(symbol.name, symbol.type) << ";" << std::endl;
