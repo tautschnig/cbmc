@@ -59,6 +59,9 @@ protected:
     declared_enum_constants_mapt;
   declared_enum_constants_mapt declared_enum_constants;
 
+  typedef std::map<irep_idt, std::string> typedef_mapt;
+  typedef_mapt typedef_map;
+
   void init_system_library_map();
 
   std::string type_to_string(const typet &type);
@@ -84,6 +87,8 @@ protected:
 
     return d_str.substr(0, d_str.size()-1);
   }
+
+  void collect_typedefs(const typet &type);
 
   void convert_compound_declaration(
       const symbolt &symbol,

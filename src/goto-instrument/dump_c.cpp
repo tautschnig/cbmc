@@ -285,6 +285,13 @@ void dump_ct::operator()(std::ostream &os)
     os << std::endl;
   }
 
+  // global typedefs
+  for(const auto &td : typedef_map)
+    if(!td.second.empty())
+      os << td.second << std::endl;
+  if(!typedef_map.empty())
+    os << std::endl;
+
   if(!func_decl_stream.str().empty())
     os << func_decl_stream.str() << std::endl;
   if(!compound_body_stream.str().empty())
@@ -338,6 +345,8 @@ void dump_ct::convert_compound(
   bool recursive,
   std::ostream &os)
 {
+  collect_typedefs(type);
+
   if(type.id()==ID_symbol)
   {
     const symbolt &symbol=
@@ -468,6 +477,8 @@ void dump_ct::convert_compound(
 
     if(recursive && non_array_type->id()!=ID_pointer)
       convert_compound(comp.type(), comp.type(), recursive, os);
+    else
+      collect_typedefs(comp.type());
 
     irep_idt comp_name=comp.get_name();
 
@@ -521,7 +532,16 @@ void dump_ct::convert_compound(
     struct_body << ";" << std::endl;
   }
 
-  os << type_to_string(unresolved);
+  typet unresolved_clean=unresolved;
+  const irep_idt &typedef_str=unresolved.get(ID_C_typedef);
+  if(!typedef_str.empty())
+  {
+    unresolved_clean.remove(ID_C_typedef);
+    typedef_map[typedef_str]="";
+    os << "typedef ";
+  }
+
+  os << type_to_string(unresolved_clean);
   if(!base_decls.str().empty())
   {
     assert(language->id()=="cpp");
@@ -548,6 +568,8 @@ void dump_ct::convert_compound(
     os << " __attribute__ ((__transparent_union__))";
   if(type.get_bool(ID_C_packed))
     os << " __attribute__ ((__packed__))";
+  if(!typedef_str.empty())
+    os << " " << typedef_str;
   os << ";";
   os << std::endl;
   os << std::endl;
@@ -898,6 +920,10 @@ void dump_ct::cleanup_decl(
 
   tmp.add_instruction(END_FUNCTION);
 
+  std::unordered_set<irep_idt, irep_id_hash> typedef_names;
+  for(const auto &td : typedef_map)
+    typedef_names.insert(td.first);
+
   code_blockt b;
   goto_program2codet p2s(
     irep_idt(),
@@ -906,11 +932,72 @@ void dump_ct::cleanup_decl(
     b,
     local_static,
     local_type_decls,
+    typedef_names,
     system_headers);
   p2s();
 
   assert(b.operands().size()==1);
   decl.swap(b.op0());
+}
+
+/*******************************************************************\
+
+Function: dump_ct::collect_typedefs
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+void dump_ct::collect_typedefs(const typet &type)
+{
+  if(type.id()==ID_code)
+  {
+    const code_typet &code_type=to_code_type(type);
+
+    collect_typedefs(code_type.return_type());
+    for(const auto &param : code_type.parameters())
+      collect_typedefs(param.type());
+  }
+  else if(type.id()==ID_pointer || type.id()==ID_array)
+  {
+    collect_typedefs(type.subtype());
+  }
+  else if(type.id()==ID_symbol)
+  {
+    const symbolt &symbol=
+      ns.lookup(to_symbol_type(type).get_identifier());
+    collect_typedefs(symbol.type);
+  }
+
+  const irep_idt &typedef_str=type.get(ID_C_typedef);
+
+  if(!typedef_str.empty())
+  {
+    std::pair<typedef_mapt::iterator, bool> entry=
+      typedef_map.insert({typedef_str, ""});
+
+    if(entry.second &&
+       (typedef_str=="__gnuc_va_list" ||
+        typedef_str == "va_list"))
+    {
+      system_headers.insert("stdarg.h");
+    }
+    else if(entry.second)
+    {
+      typet t=type;
+      t.remove(ID_C_typedef);
+
+      std::ostringstream oss;
+      oss << "typedef " << type_to_string(t) << " "
+          << typedef_str << ';';
+
+      entry.first->second=oss.str();
+    }
+  }
 }
 
 /*******************************************************************\
@@ -934,6 +1021,9 @@ void dump_ct::convert_global_variable(
   if((func.empty() || symbol.is_extern || symbol.value.is_not_nil()) &&
       !converted_global.insert(symbol.name).second)
     return;
+
+  if(func.empty() || symbol.is_extern)
+    collect_typedefs(symbol.type);
 
   code_declt d(symbol.symbol_expr());
 
@@ -1021,6 +1111,10 @@ void dump_ct::convert_function_declaration(
     code_blockt b;
     std::list<irep_idt> type_decls, local_static;
 
+    std::unordered_set<irep_idt, irep_id_hash> typedef_names;
+    for(const auto &td : typedef_map)
+      typedef_names.insert(td.first);
+
     goto_program2codet p2s(
       symbol.name,
       func_entry->second.body,
@@ -1028,6 +1122,7 @@ void dump_ct::convert_function_declaration(
       b,
       local_static,
       type_decls,
+      typedef_names,
       system_headers);
     p2s();
 
@@ -1062,6 +1157,8 @@ void dump_ct::convert_function_declaration(
   if(symbol.name!=goto_functionst::entry_point() &&
      symbol.name!=ID_main)
   {
+    collect_typedefs(symbol.type);
+
     os_decl << "// " << symbol.name << std::endl;
     os_decl << "// " << symbol.location << std::endl;
     os_decl << make_decl(symbol.name, symbol.type) << ";" << std::endl;
