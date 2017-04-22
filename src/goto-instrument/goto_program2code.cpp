@@ -1818,6 +1818,8 @@ void goto_program2codet::cleanup_code(
 
     add_local_types(code.op0().type());
 
+    code.op0().type().remove(ID_C_typedef);
+
     return;
   }
   else if(code.get_statement()==ID_function_call)

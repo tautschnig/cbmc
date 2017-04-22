@@ -285,6 +285,12 @@ void dump_ct::operator()(std::ostream &os)
     os << std::endl;
   }
 
+  // global typedefs
+  for(const auto &td : typedef_map)
+    os << td.second << std::endl;
+  if(!typedef_map.empty())
+    os << std::endl;
+
   if(!func_decl_stream.str().empty())
     os << func_decl_stream.str() << std::endl;
   if(!compound_body_stream.str().empty())
@@ -519,6 +525,8 @@ void dump_ct::convert_compound(
       assert(false);
 
     struct_body << ";" << std::endl;
+
+    collect_typedefs(comp.type());
   }
 
   os << type_to_string(unresolved);
@@ -915,6 +923,54 @@ void dump_ct::cleanup_decl(
 
 /*******************************************************************\
 
+Function: dump_ct::collect_typedefs
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
+void dump_ct::collect_typedefs(const typet &type)
+{
+  if(type.id()==ID_code)
+  {
+    const code_typet &code_type=to_code_type(type);
+
+    collect_typedefs(code_type.return_type());
+    for(const auto &param : code_type.parameters())
+      collect_typedefs(param.type());
+  }
+  else if(type.id()==ID_pointer)
+  {
+    collect_typedefs(type.subtype());
+  }
+
+  const irep_idt &typedef_str=type.get(ID_C_typedef);
+
+  if(!typedef_str.empty())
+  {
+    std::pair<typedef_mapt::iterator, bool> entry=
+      typedef_map.insert({typedef_str, ""});
+
+    if(entry.second)
+    {
+      typet t=type;
+      t.remove(ID_C_typedef);
+
+      std::ostringstream oss;
+      oss << "typedef " << type_to_string(t) << " "
+          << typedef_str << ';';
+
+      entry.first->second=oss.str();
+    }
+  }
+}
+
+/*******************************************************************\
+
 Function: dump_ct::convert_global_variables
 
 Inputs:
@@ -934,6 +990,9 @@ void dump_ct::convert_global_variable(
   if((func.empty() || symbol.is_extern || symbol.value.is_not_nil()) &&
       !converted_global.insert(symbol.name).second)
     return;
+
+  if(func.empty() || symbol.is_extern)
+    collect_typedefs(symbol.type);
 
   code_declt d(symbol.symbol_expr());
 
@@ -1062,6 +1121,8 @@ void dump_ct::convert_function_declaration(
   if(symbol.name!=goto_functionst::entry_point() &&
      symbol.name!=ID_main)
   {
+    collect_typedefs(symbol.type);
+
     os_decl << "// " << symbol.name << std::endl;
     os_decl << "// " << symbol.location << std::endl;
     os_decl << make_decl(symbol.name, symbol.type) << ";" << std::endl;
