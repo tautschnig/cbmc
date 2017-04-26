@@ -851,12 +851,7 @@ bool dump_ct::ignore(const symbolt &symbol)
   const std::string &file_str=id2string(symbol.location.get_file());
 
   // don't dump internal GCC builtins
-  if((file_str=="gcc_builtin_headers_alpha.h" ||
-      file_str=="gcc_builtin_headers_arm.h" ||
-      file_str=="gcc_builtin_headers_ia32.h" ||
-      file_str=="gcc_builtin_headers_mips.h" ||
-      file_str=="gcc_builtin_headers_power.h" ||
-      file_str=="gcc_builtin_headers_generic.h") &&
+  if(has_prefix(file_str, "gcc_builtin_headers_") &&
      has_prefix(name_str, "__builtin_"))
     return true;
 
@@ -877,6 +872,14 @@ bool dump_ct::ignore(const symbolt &symbol)
   if(it!=system_library_map.end())
   {
     system_headers.insert(it->second);
+    return true;
+  }
+  else if(!system_library_map.empty() &&
+          has_prefix(file_str, "/usr/include/") &&
+          file_str.find("/bits/")==std::string::npos)
+  {
+    system_headers.insert(
+      file_str.substr(std::string("/usr/include/").size()));
     return true;
   }
 
