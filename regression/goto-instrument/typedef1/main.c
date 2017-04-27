@@ -1,25 +1,30 @@
 typedef long int off_t;
 typedef signed char smallint;
 
-typedef struct dumper_t dumper_t;
-typedef struct FS FS;
+typedef struct chain_s {
+    struct node_s *first;
+    struct node_s *last;
+    const char *programname;
+} chain;
 
-dumper_t * alloc_dumper(void);
+typedef struct node_s { 
+    struct node_s *n;
+} node;
 
-typedef struct dumper_t
+typedef struct dumper_t_x
 {
+  node n; //chaning this line to 'struct node_s n' removes some bugs
   off_t dump_skip;
   signed int dump_length;
   smallint dump_vflag;
-  FS *fshead;
 } dumper_t;
 
-
-typedef struct FS
+typedef struct FS_x
 {
   struct FS *nextfs;
   signed int bcnt;
 } FS;
+
 
 dumper_t * alloc_dumper(void)
 {
@@ -27,6 +32,10 @@ dumper_t * alloc_dumper(void)
 }
 
 int main() {
+    node n;
+    chain c;
+    dumper_t a;
+    dumper_t b[3];
 	alloc_dumper();
 	return 0;
 }

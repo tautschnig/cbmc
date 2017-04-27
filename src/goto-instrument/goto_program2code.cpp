@@ -1818,7 +1818,10 @@ void goto_program2codet::cleanup_code(
 
     add_local_types(code.op0().type());
 
-    code.op0().type().remove(ID_C_typedef);
+    const irep_idt &typedef_str=code.op0().type().get(ID_C_typedef);
+    if(!typedef_str.empty() &&
+       typedef_names.find(typedef_str)==typedef_names.end())
+      code.op0().type().remove(ID_C_typedef);
 
     return;
   }

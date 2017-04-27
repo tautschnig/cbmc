@@ -314,12 +314,11 @@ void dump_ct::operator()(std::ostream &os)
   }
 
   // global typedefs
-  for(const auto &td : typedef_map) {
-    os << td.second << std::endl;
-  }
-  if(!typedef_map.empty()) {
+  for(const auto &td : typedef_map)
+    if(!td.second.empty())
+      os << td.second << std::endl;
+  if(!typedef_map.empty())
     os << std::endl;
-  }
 
   if(!func_decl_stream.str().empty())
     os << func_decl_stream.str() << std::endl;
@@ -376,6 +375,8 @@ void dump_ct::convert_compound(
   bool recursive,
   std::ostream &os)
 {
+  collect_typedefs(type);
+
   if(type.id()==ID_symbol)
   {
     const symbolt &symbol=
@@ -510,6 +511,8 @@ void dump_ct::convert_compound(
     {
       convert_compound(comp.type(), comp.type(), recursive, os);
     }
+    else
+      collect_typedefs(comp.type());
 
     irep_idt comp_name=comp.get_name();
 
@@ -565,8 +568,16 @@ void dump_ct::convert_compound(
     collect_typedefs(comp.type());
   }
 
-  os << type_to_string(unresolved);
+  typet unresolved_clean=unresolved;
+  const irep_idt &typedef_str=unresolved.get(ID_C_typedef);
+  if(!typedef_str.empty())
+  {
+    unresolved_clean.remove(ID_C_typedef);
+    typedef_map[typedef_str]="";
+    os << "typedef ";
+  }
 
+  os << type_to_string(unresolved_clean);
   if(!base_decls.str().empty())
   {
     assert(language->id()=="cpp");
@@ -593,6 +604,8 @@ void dump_ct::convert_compound(
     os << " __attribute__ ((__transparent_union__))";
   if(type.get_bool(ID_C_packed))
     os << " __attribute__ ((__packed__))";
+  if(!typedef_str.empty())
+    os << " " << typedef_str;
   os << ";";
   os << std::endl;
   os << std::endl;
@@ -698,12 +711,7 @@ bool dump_ct::ignore(const symbolt &symbol)
   const std::string &file_str=id2string(symbol.location.get_file());
 
   // don't dump internal GCC builtins
-  if((file_str=="gcc_builtin_headers_alpha.h" ||
-      file_str=="gcc_builtin_headers_arm.h" ||
-      file_str=="gcc_builtin_headers_ia32.h" ||
-      file_str=="gcc_builtin_headers_mips.h" ||
-      file_str=="gcc_builtin_headers_power.h" ||
-      file_str=="gcc_builtin_headers_generic.h") &&
+  if(has_prefix(file_str, "gcc_builtin_headers_") &&
      has_prefix(name_str, "__builtin_"))
     return true;
 
@@ -722,6 +730,14 @@ bool dump_ct::ignore(const symbolt &symbol)
       }
       return true;
     }
+  }
+  else if(!system_library_map.empty() &&
+          has_prefix(file_str, "/usr/include/") &&
+          file_str.find("/bits/")==std::string::npos)
+  {
+    system_headers.insert(
+      file_str.substr(std::string("/usr/include/").size()));
+    return true;
   }
 
   return false;
@@ -764,6 +780,10 @@ void dump_ct::cleanup_decl(
 
   tmp.add_instruction(END_FUNCTION);
 
+  std::unordered_set<irep_idt, irep_id_hash> typedef_names;
+  for(const auto &td : typedef_map)
+    typedef_names.insert(td.first);
+
   code_blockt b;
   goto_program2codet p2s(
     irep_idt(),
@@ -772,6 +792,7 @@ void dump_ct::cleanup_decl(
     b,
     local_static,
     local_type_decls,
+    typedef_names,
     system_headers);
   p2s();
 
@@ -793,11 +814,6 @@ Purpose:
 
 void dump_ct::collect_typedefs(const typet &type)
 {
-  if (ignore(type))
-  {
-    return;
-  }
-
   if(type.id()==ID_code)
   {
     const code_typet &code_type=to_code_type(type);
@@ -806,9 +822,15 @@ void dump_ct::collect_typedefs(const typet &type)
     for(const auto &param : code_type.parameters())
       collect_typedefs(param.type());
   }
-  else if(type.id()==ID_pointer)
+  else if(type.id()==ID_pointer || type.id()==ID_array)
   {
     collect_typedefs(type.subtype());
+  }
+  else if(type.id()==ID_symbol)
+  {
+    const symbolt &symbol=
+      ns.lookup(to_symbol_type(type).get_identifier());
+    collect_typedefs(symbol.type);
   }
 
   const irep_idt &typedef_str=type.get(ID_C_typedef);
@@ -818,7 +840,13 @@ void dump_ct::collect_typedefs(const typet &type)
     std::pair<typedef_mapt::iterator, bool> entry=
       typedef_map.insert({typedef_str, ""});
 
-    if(entry.second)
+    if(entry.second &&
+       (typedef_str=="__gnuc_va_list" ||
+        typedef_str == "va_list"))
+    {
+      system_headers.insert("stdarg.h");
+    }
+    else if(entry.second)
     {
       typet t=type;
       t.remove(ID_C_typedef);
@@ -954,6 +982,10 @@ void dump_ct::convert_function_declaration(
     code_blockt b;
     std::list<irep_idt> type_decls, local_static;
 
+    std::unordered_set<irep_idt, irep_id_hash> typedef_names;
+    for(const auto &td : typedef_map)
+      typedef_names.insert(td.first);
+
     goto_program2codet p2s(
       symbol.name,
       func_entry->second.body,
@@ -961,6 +993,7 @@ void dump_ct::convert_function_declaration(
       b,
       local_static,
       type_decls,
+      typedef_names,
       system_headers);
     p2s();
 
@@ -997,12 +1030,9 @@ void dump_ct::convert_function_declaration(
   {
     collect_typedefs(symbol.type);
 
-    if (!ignore(symbol))
-    {
-      os_decl << "// " << symbol.name << std::endl;
-      os_decl << "// " << symbol.location << std::endl;
-      os_decl << make_decl(symbol.name, symbol.type) << ";" << std::endl;
-    }
+    os_decl << "// Ignore? " << symbol.name << std::endl;
+    os_decl << "// " << symbol.location << std::endl;
+    os_decl << make_decl(symbol.name, symbol.type) << ";" << std::endl;
   }
 }
 
