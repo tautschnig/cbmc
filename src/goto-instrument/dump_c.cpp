@@ -1030,7 +1030,7 @@ void dump_ct::convert_function_declaration(
   {
     collect_typedefs(symbol.type);
 
-    os_decl << "// Ignore? " << symbol.name << std::endl;
+    os_decl << "// " << symbol.name << std::endl;
     os_decl << "// " << symbol.location << std::endl;
     os_decl << make_decl(symbol.name, symbol.type) << ";" << std::endl;
   }
