@@ -232,9 +232,10 @@ std::string expr2ct::convert_rec(
   std::string d=
     declarator==""?declarator:" "+declarator;
 
-  if(src.find(ID_C_typedef).is_not_nil())
+  if (src.find(ID_C_typedef).is_not_nil())
   {
-    return q+id2string(src.get(ID_C_typedef))+d;
+    // dump a defined type instead
+    return q + id2string(src.get(ID_C_typedef)) + d;
   }
 
   if(src.id()==ID_bool)

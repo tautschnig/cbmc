@@ -23,6 +23,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "dump_c_class.h"
 
 #include "dump_c.h"
+#include "../util/symbol.h"
 
 /*******************************************************************\
 
@@ -69,6 +70,11 @@ void dump_ct::operator()(std::ostream &os)
   {
     symbolt &symbol=it->second;
 
+    if (ignore(symbol))
+    {
+      continue;
+    }
+
     if(symbol.type.id()!=ID_code)
       continue;
 
@@ -112,6 +118,11 @@ void dump_ct::operator()(std::ostream &os)
   {
     symbolt &symbol=it->second;
     bool tag_added=false;
+
+    if (ignore(symbol))
+    {
+      continue;
+    }
 
     if((symbol.type.id()==ID_union || symbol.type.id()==ID_struct) &&
        symbol.type.get(ID_tag).empty())
@@ -180,6 +191,11 @@ void dump_ct::operator()(std::ostream &os)
     const symbolt &symbol=ns.lookup(*it);
     const irep_idt &type_id=symbol.type.id();
 
+    if (ignore(symbol))
+    {
+      continue;
+    }
+
     if(symbol.is_type &&
        symbol.location.get_function().empty() &&
        (type_id==ID_struct ||
@@ -225,6 +241,11 @@ void dump_ct::operator()(std::ostream &os)
     if(symbol.type.id()!=ID_code)
       continue;
 
+    if (ignore(symbol))
+    {
+      continue;
+    }
+
     convert_function_declaration(
       symbol,
       skip_function_main,
@@ -241,6 +262,11 @@ void dump_ct::operator()(std::ostream &os)
   {
     const symbolt &symbol=ns.lookup(*it);
 
+    if (ignore(symbol))
+    {
+      continue;
+    }
+
     if(symbol.is_type &&
         (symbol.type.id()==ID_struct ||
          symbol.type.id()==ID_incomplete_struct ||
@@ -255,7 +281,9 @@ void dump_ct::operator()(std::ostream &os)
       it=system_headers.begin();
       it!=system_headers.end();
       ++it)
+  {
     os << "#include <" << *it << ">" << std::endl;
+  }
   if(!system_headers.empty())
     os << std::endl;
 
@@ -323,8 +351,10 @@ void dump_ct::convert_compound_declaration(
   // do compound type body
   if(symbol.type.id()==ID_struct ||
      symbol.type.id()==ID_union ||
-     symbol.type.id()==ID_c_enum)
+     symbol.type.id()==ID_c_enum) {
+
     convert_compound(symbol.type, symbol_typet(symbol.name), true, os_body);
+  }
 }
 
 /*******************************************************************\
@@ -388,10 +418,11 @@ void dump_ct::convert_compound(
       }
     }
   }
-  else if(type.id()==ID_struct || type.id()==ID_union)
+  else if(type.id()==ID_struct || type.id()==ID_union) {
     convert_compound(to_struct_union_type(type), unresolved, recursive, os);
-  else if(type.id()==ID_c_enum)
+  } else if(type.id()==ID_c_enum) {
     convert_compound_enum(type, os);
+  }
 }
 
 /*******************************************************************\
@@ -468,15 +499,18 @@ void dump_ct::convert_compound(
 
     if(comp_type.id()==ID_code ||
        comp.get_bool(ID_from_base) ||
-       comp.get_is_padding())
+       comp.get_is_padding()) {
       continue;
+    }
 
     const typet *non_array_type=&ns.follow(comp_type);
     while(non_array_type->id()==ID_array)
       non_array_type=&(ns.follow(non_array_type->subtype()));
 
-    if(recursive && non_array_type->id()!=ID_pointer)
+    if(recursive && non_array_type->id() != ID_pointer)
+    {
       convert_compound(comp.type(), comp.type(), recursive, os);
+    }
     else
       collect_typedefs(comp.type());
 
@@ -530,6 +564,8 @@ void dump_ct::convert_compound(
       assert(false);
 
     struct_body << ";" << std::endl;
+
+    collect_typedefs(comp.type());
   }
 
   typet unresolved_clean=unresolved;
@@ -630,196 +666,8 @@ void dump_ct::convert_compound_enum(
   os << ";\n\n";
 }
 
-/*******************************************************************\
-
-Function: dump_ct::init_system_library_map
-
-Inputs:
-
-Outputs:
-
-Purpose:
-
-\*******************************************************************/
-
-#define ADD_TO_SYSTEM_LIBRARY(v, header) \
-  for(size_t i=0; i<sizeof(v)/sizeof(char*); ++i) \
-    system_library_map.insert( \
-      std::make_pair(v[i], header))
-
 void dump_ct::init_system_library_map()
 {
-  // ctype.h
-  const char* ctype_syms[]=
-  {
-    "isalnum", "isalpha", "isblank", "iscntrl", "isdigit", "isgraph",
-    "islower", "isprint", "ispunct", "isspace", "isupper", "isxdigit",
-    "tolower", "toupper"
-  };
-  ADD_TO_SYSTEM_LIBRARY(ctype_syms, "ctype.h");
-
-  // fcntl.h
-  const char* fcntl_syms[]=
-  {
-    "creat", "fcntl", "open"
-  };
-  ADD_TO_SYSTEM_LIBRARY(fcntl_syms, "fcntl.h");
-
-  // locale.h
-  const char* locale_syms[]=
-  {
-    "setlocale"
-  };
-  ADD_TO_SYSTEM_LIBRARY(locale_syms, "locale.h");
-
-  // math.h
-  const char* math_syms[]=
-  {
-    "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh",
-    "cbrt", "ceil", "copysign", "cos", "cosh", "erf", "erfc", "exp",
-    "exp2", "expm1", "fabs", "fdim", "floor", "fma", "fmax", "fmin",
-    "fmod", "fpclassify", "frexp", "hypot", "ilogb", "isfinite",
-    "isinf", "isnan", "isnormal", "j0", "j1", "jn", "ldexp", "lgamma",
-    "llrint", "llround", "log", "log10", "log1p", "log2", "logb",
-    "lrint", "lround", "modf", "nan", "nearbyint", "nextafter", "pow",
-    "remainder", "remquo", "rint", "round", "scalbln", "scalbn",
-    "signbit", "sin", "sinh", "sqrt", "tan", "tanh", "tgamma",
-    "trunc", "y0", "y1", "yn"
-  };
-  ADD_TO_SYSTEM_LIBRARY(math_syms, "math.h");
-
-  // pthread.h
-  const char* pthread_syms[]=
-  {
-    "pthread_cleanup_pop", "pthread_cleanup_push",
-    "pthread_cond_broadcast", "pthread_cond_destroy",
-    "pthread_cond_init", "pthread_cond_signal",
-    "pthread_cond_timedwait", "pthread_cond_wait", "pthread_create",
-    "pthread_detach", "pthread_equal", "pthread_exit",
-    "pthread_getspecific", "pthread_join", "pthread_key_delete",
-    "pthread_mutex_destroy", "pthread_mutex_init",
-    "pthread_mutex_lock", "pthread_mutex_trylock",
-    "pthread_mutex_unlock", "pthread_once", "pthread_rwlock_destroy",
-    "pthread_rwlock_init", "pthread_rwlock_rdlock",
-    "pthread_rwlock_unlock", "pthread_rwlock_wrlock",
-    "pthread_rwlockattr_destroy", "pthread_rwlockattr_getpshared",
-    "pthread_rwlockattr_init", "pthread_rwlockattr_setpshared",
-    "pthread_self", "pthread_setspecific"
-  };
-  ADD_TO_SYSTEM_LIBRARY(pthread_syms, "pthread.h");
-
-  // setjmp.h
-  const char* setjmp_syms[]=
-  {
-    "_longjmp", "_setjmp", "longjmp", "longjmperror", "setjmp",
-    "siglongjmp", "sigsetjmp"
-  };
-  ADD_TO_SYSTEM_LIBRARY(setjmp_syms, "setjmp.h");
-
-  // stdio.h
-  const char* stdio_syms[]=
-  {
-    "asprintf", "clearerr", "fclose", "fdopen", "feof", "ferror",
-    "fflush", "fgetc", "fgetln", "fgetpos", "fgets", "fgetwc",
-    "fgetws", "fileno", "fopen", "fprintf", "fpurge", "fputc",
-    "fputs", "fputwc", "fputws", "fread", "freopen", "fropen",
-    "fscanf", "fseek", "fsetpos", "ftell", "funopen", "fwide",
-    "fwopen", "fwprintf", "fwrite", "getc", "getchar", "getdelim",
-    "getline", "gets", "getw", "getwc", "getwchar", "mkdtemp",
-    "mkstemp", "mktemp", "perror", "printf", "putc", "putchar",
-    "puts", "putw", "putwc", "putwchar", "remove", "rewind", "scanf",
-    "setbuf", "setbuffer", "setlinebuf", "setvbuf", "snprintf",
-    "sprintf", "sscanf", "strerror", "swprintf", "sys_errlist",
-    "sys_nerr", "tempnam", "tmpfile", "tmpnam", "ungetc", "ungetwc",
-    "vasprintf", "vfprintf", "vfscanf", "vfwprintf", "vprintf",
-    "vscanf", "vsnprintf", "vsprintf", "vsscanf", "vswprintf",
-    "vwprintf", "wprintf",
-    /* non-public struct types */
-    "tag-__sFILE", "tag-__sbuf", // OS X
-    "tag-_IO_FILE", "tag-_IO_marker", // Linux
-  };
-  ADD_TO_SYSTEM_LIBRARY(stdio_syms, "stdio.h");
-
-  // stdlib.h
-  const char* stdlib_syms[]=
-  {
-    "abort", "abs", "atexit", "atof", "atoi", "atol", "atoll",
-    "bsearch", "calloc", "div", "exit", "free", "getenv", "labs",
-    "ldiv", "llabs", "lldiv", "malloc", "mblen", "mbstowcs", "mbtowc",
-    "qsort", "rand", "realloc", "srand", "strtod", "strtof", "strtol",
-    "strtold", "strtoll", "strtoul", "strtoull", "system", "wcstombs",
-    "wctomb"
-  };
-  ADD_TO_SYSTEM_LIBRARY(stdlib_syms, "stdlib.h");
-
-  // string.h
-  const char* string_syms[]=
-  {
-    "strcat", "strncat", "strchr", "strrchr", "strcmp", "strncmp",
-    "strcpy", "strncpy", "strerror", "strlen", "strpbrk", "strspn",
-    "strcspn", "strstr", "strtok"
-  };
-  ADD_TO_SYSTEM_LIBRARY(string_syms, "string.h");
-
-  // time.h
-  const char* time_syms[]=
-  {
-    "asctime", "asctime_r", "ctime", "ctime_r", "difftime", "gmtime",
-    "gmtime_r", "localtime", "localtime_r", "mktime",
-    /* non-public struct types */
-    "tag-timespec", "tag-timeval"
-  };
-  ADD_TO_SYSTEM_LIBRARY(time_syms, "time.h");
-
-  // unistd.h
-  const char* unistd_syms[]=
-  {
-    "_exit", "access", "alarm", "chdir", "chown", "close", "dup",
-    "dup2", "execl", "execle", "execlp", "execv", "execve", "execvp",
-    "fork", "fpathconf", "getcwd", "getegid", "geteuid", "getgid",
-    "getgroups", "getlogin", "getpgrp", "getpid", "getppid", "getuid",
-    "isatty", "link", "lseek", "pathconf", "pause", "pipe", "read",
-    "rmdir", "setgid", "setpgid", "setsid", "setuid", "sleep",
-    "sysconf", "tcgetpgrp", "tcsetpgrp", "ttyname", "ttyname_r",
-    "unlink", "write"
-  };
-  ADD_TO_SYSTEM_LIBRARY(unistd_syms, "unistd.h");
-
-  // sys/select.h
-  const char* sys_select_syms[]=
-  {
-    "select"
-  };
-  ADD_TO_SYSTEM_LIBRARY(sys_select_syms, "sys/select.h");
-
-  // sys/socket.h
-  const char* sys_socket_syms[]=
-  {
-    "accept", "bind", "connect"
-  };
-  ADD_TO_SYSTEM_LIBRARY(sys_socket_syms, "sys/socket.h");
-
-  // sys/stat.h
-  const char* sys_stat_syms[]=
-  {
-    "fstat", "lstat", "stat"
-  };
-  ADD_TO_SYSTEM_LIBRARY(sys_stat_syms, "sys/stat.h");
-
-  /*
-  // sys/types.h
-  const char* sys_types_syms[]=
-  {
-  };
-  ADD_TO_SYSTEM_LIBRARY(sys_types_syms, "sys/types.h");
-  */
-
-  // sys/wait.h
-  const char* sys_wait_syms[]=
-  {
-    "wait", "waitpid"
-  };
-  ADD_TO_SYSTEM_LIBRARY(sys_wait_syms, "sys/wait.h");
 }
 
 /*******************************************************************\
@@ -833,6 +681,18 @@ Outputs:
 Purpose:
 
 \*******************************************************************/
+
+bool dump_ct::ignore(const typet &type) {
+  const irep_idt &typedef_str=type.get(ID_C_typedef);
+
+  if (typedef_str == "__gnuc_va_list"
+      || typedef_str == "va_list") {
+
+    system_headers.insert("stdarg.h");
+    return true;
+  }
+  return false;
+}
 
 bool dump_ct::ignore(const symbolt &symbol)
 {
@@ -863,16 +723,13 @@ bool dump_ct::ignore(const symbolt &symbol)
     return true;
   }
 
-  if(name_str.find("$link")!=std::string::npos)
-    return false;
-
-  system_library_mapt::const_iterator it=
-    system_library_map.find(symbol.name);
-
-  if(it!=system_library_map.end())
-  {
-    system_headers.insert(it->second);
-    return true;
+  if ("" != file_str) {
+    if (std::string(file_str).find("/usr/include/") == 0) {
+      if (std::string(file_str).find("/bits/") == std::string::npos) {
+        system_headers.insert(file_str);
+      }
+      return true;
+    }
   }
   else if(!system_library_map.empty() &&
           has_prefix(file_str, "/usr/include/") &&
@@ -1025,6 +882,11 @@ void dump_ct::convert_global_variable(
       !converted_global.insert(symbol.name).second)
     return;
 
+  if (ignore(symbol))
+  {
+    return;
+  }
+
   if(func.empty() || symbol.is_extern)
     collect_typedefs(symbol.type);
 
@@ -1039,6 +901,7 @@ void dump_ct::convert_global_variable(
   if((func.empty() || symbol.is_extern) &&
      (symbol.value.is_nil() || !syms.empty()))
   {
+    os << "// " << symbol.name << std::endl;
     os << "// " << symbol.name << std::endl;
     os << "// " << symbol.location << std::endl;
     os << expr_to_string(d) << std::endl;
@@ -1103,6 +966,11 @@ void dump_ct::convert_function_declaration(
   // don't dump artificial main
   if(skip_main && symbol.name==goto_functionst::entry_point())
     return;
+
+  if (ignore(symbol))
+  {
+    return;
+  }
 
   // convert the goto program back to code - this might change
   // the function type
