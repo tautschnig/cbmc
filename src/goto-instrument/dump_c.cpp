@@ -876,11 +876,12 @@ bool dump_ct::ignore(const symbolt &symbol)
     return true;
   }
   else if(!system_library_map.empty() &&
-          has_prefix(file_str, "/usr/include/") &&
-          file_str.find("/bits/")==std::string::npos)
+          has_prefix(file_str, "/usr/include/"))
   {
-    system_headers.insert(
-      file_str.substr(std::string("/usr/include/").size()));
+    if (file_str.find("/bits/")==std::string::npos) {
+      // Do not include transitive includes of system headers!
+      system_headers.insert(file_str.substr(std::string("/usr/include/").size()));
+    }
     return true;
   }
 
