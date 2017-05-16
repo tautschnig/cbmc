@@ -24,6 +24,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "dump_c_class.h"
 
 #include "dump_c.h"
+#include "../util/symbol.h"
 
 /*******************************************************************\
 
@@ -168,6 +169,10 @@ void dump_ct::operator()(std::ostream &os)
       else
         symbol.type.set(ID_tag, new_tag);
     }
+
+    // do not dump anonymous types that are defined in system headers
+    if(tag_added && symbol.is_type && ignore(symbol.type))
+      continue;
 
     // we don't want to dump in full all definitions
     if(!tag_added && ignore(symbol))
