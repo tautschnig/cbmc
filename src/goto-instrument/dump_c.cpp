@@ -883,9 +883,11 @@ bool dump_ct::ignore(const symbolt &symbol)
   else if(!system_library_map.empty() &&
           has_prefix(file_str, "/usr/include/"))
   {
-    if (file_str.find("/bits/")==std::string::npos) {
+    if(file_str.find("/bits/")==std::string::npos)
+    {
       // Do not include transitive includes of system headers!
-      system_headers.insert(file_str.substr(std::string("/usr/include/").size()));
+      unsigned long prefix_len = std::string("/usr/include/").size();
+      system_headers.insert(file_str.substr(prefix_len));
     }
     return true;
   }
