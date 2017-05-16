@@ -185,7 +185,7 @@ void dump_ct::operator()(std::ostream &os)
   {
     const symbolt &symbol=ns.lookup(*it);
     const irep_idt &type_id=symbol.type.id();
-    
+
     if(symbol.is_type &&
        symbol.location.get_function().empty() &&
        (type_id==ID_struct ||
