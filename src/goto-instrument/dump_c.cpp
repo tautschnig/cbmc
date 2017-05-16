@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/config.h>
 #include <util/prefix.h>
 #include <util/suffix.h>
+#include <util/symbol.h>
 #include <util/find_symbols.h>
 #include <util/base_type.h>
 #include <util/cprover_prefix.h>
@@ -23,7 +24,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "dump_c_class.h"
 
 #include "dump_c.h"
-#include "../util/symbol.h"
 
 /*******************************************************************\
 
