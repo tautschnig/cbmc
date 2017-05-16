@@ -261,6 +261,11 @@ void dump_ct::operator()(std::ostream &os)
           compound_body_stream);
   }
 
+  //
+  // Dump the code to the target stream!
+  //    The statements before to this point collect the code to dump!
+  //
+
   for(std::set<std::string>::const_iterator
       it=system_headers.begin();
       it!=system_headers.end();
