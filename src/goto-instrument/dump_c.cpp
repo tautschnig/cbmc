@@ -60,6 +60,7 @@ void dump_ct::operator()(std::ostream &os)
   std::stringstream func_decl_stream;
   std::stringstream compound_body_stream;
   std::stringstream global_var_stream;
+  std::stringstream global_decl_stream;
   std::stringstream func_body_stream;
   local_static_declst local_static_decls;
 
@@ -196,13 +197,13 @@ void dump_ct::operator()(std::ostream &os)
     {
       if(!ignore(symbol.type))
       {
-        os << "// " << symbol.name << std::endl;
-        os << "// " << symbol.location << std::endl;
+        global_decl_stream << "// " << symbol.name << std::endl;
+        global_decl_stream << "// " << symbol.location << std::endl;
 
         if (type_id == ID_c_enum)
-          convert_compound_enum(symbol.type, os);
+          convert_compound_enum(symbol.type, global_decl_stream);
         else
-          os << type_to_string(symbol_typet(symbol.name)) << ";\n\n";
+          global_decl_stream << type_to_string(symbol_typet(symbol.name)) << ";\n\n";
       }
     }
     else if(symbol.is_static_lifetime && symbol.type.id()!=ID_code)
@@ -296,6 +297,8 @@ void dump_ct::operator()(std::ostream &os)
 
   dump_typedefs(os);
 
+  if(!global_decl_stream.str().empty())
+    os << global_decl_stream.str() << std::endl;
   if(!func_decl_stream.str().empty())
     os << func_decl_stream.str() << std::endl;
   if(!compound_body_stream.str().empty())
