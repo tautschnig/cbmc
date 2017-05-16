@@ -23,6 +23,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "dump_c_class.h"
 
 #include "dump_c.h"
+#include "../util/symbol.h"
 
 /*******************************************************************\
 
@@ -185,6 +186,7 @@ void dump_ct::operator()(std::ostream &os)
     const symbolt &symbol=ns.lookup(*it);
     const irep_idt &type_id=symbol.type.id();
 
+
     if(symbol.is_type &&
        symbol.location.get_function().empty() &&
        (type_id==ID_struct ||
@@ -193,13 +195,16 @@ void dump_ct::operator()(std::ostream &os)
         type_id==ID_incomplete_union ||
         type_id==ID_c_enum))
     {
-      os << "// " << symbol.name << std::endl;
-      os << "// " << symbol.location << std::endl;
+      if(!ignore(symbol.type))
+      {
+        os << "// " << symbol.name << std::endl;
+        os << "// " << symbol.location << std::endl;
 
-      if(type_id==ID_c_enum)
-        convert_compound_enum(symbol.type, os);
-      else
-        os << type_to_string(symbol_typet(symbol.name)) << ";\n\n";
+        if (type_id == ID_c_enum)
+          convert_compound_enum(symbol.type, os);
+        else
+          os << type_to_string(symbol_typet(symbol.name)) << ";\n\n";
+      }
     }
     else if(symbol.is_static_lifetime && symbol.type.id()!=ID_code)
       convert_global_variable(
@@ -843,6 +848,37 @@ Purpose:
 
 \*******************************************************************/
 
+bool dump_ct::ignore(const typet &type)
+{
+  const std::string &file_str=id2string(type.source_location().get_file());
+
+  if(!system_library_map.empty() &&
+          has_prefix(file_str, "/usr/include/"))
+  {
+    if(file_str.find("/bits/")==std::string::npos)
+    {
+      // Do not include transitive includes of system headers!
+      unsigned long prefix_len = std::string("/usr/include/").size();
+      system_headers.insert(file_str.substr(prefix_len));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/*******************************************************************\
+
+Function: dump_ct::ignore
+
+Inputs:
+
+Outputs:
+
+Purpose:
+
+\*******************************************************************/
+
 bool dump_ct::ignore(const symbolt &symbol)
 {
   const std::string &name_str=id2string(symbol.name);
@@ -970,6 +1006,11 @@ Purpose: Find any typedef names contained in the input type and store
 
 void dump_ct::collect_typedefs(const typet &type, bool early)
 {
+  if(ignore(type))
+  {
+    return;
+  }
+
   if(type.id()==ID_code)
   {
     const code_typet &code_type=to_code_type(type);
