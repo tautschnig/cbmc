@@ -11,7 +11,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "remove_skip.h"
 
-static bool is_skip(goto_programt::instructionst::iterator it)
+bool is_skip(goto_programt::const_targett it)
 {
   // we won't remove labelled statements
   // (think about error labels or the like)
@@ -30,7 +30,7 @@ static bool is_skip(goto_programt::instructionst::iterator it)
     if(it->targets.size()!=1)
       return false;
 
-    goto_programt::instructionst::iterator next_it=it;
+    goto_programt::const_targett next_it=it;
     next_it++;
 
     // A branch to the next instruction is a skip

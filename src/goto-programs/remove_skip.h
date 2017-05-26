@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "goto_functions.h"
 
+bool is_skip(goto_programt::const_targett it);
 void remove_skip(goto_programt &goto_program);
 void remove_skip(goto_functionst &goto_functions);
 
