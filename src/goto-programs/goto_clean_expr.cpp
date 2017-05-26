@@ -260,13 +260,15 @@ void goto_convertt::clean_expr(
       // preserve the expressions for possible later checks
       if(if_expr.true_case().is_not_nil())
       {
-        code_expressiont code_expression(if_expr.true_case());
+        code_expressiont code_expression(
+          typecast_exprt(if_expr.true_case(), empty_typet()));
         convert(code_expression, tmp_true);
       }
 
       if(if_expr.false_case().is_not_nil())
       {
-        code_expressiont code_expression(if_expr.false_case());
+        code_expressiont code_expression(
+          typecast_exprt(if_expr.false_case(), empty_typet()));
         convert(code_expression, tmp_false);
       }
 
