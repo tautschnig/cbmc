@@ -25,6 +25,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "goto_convert.h"
 #include "goto_convert_class.h"
 #include "destructor.h"
+#include "remove_skip.h"
 
 static bool is_empty(const goto_programt &goto_program)
 {
@@ -1811,6 +1812,9 @@ void goto_convertt::generate_ifthenelse(
     true_case.instructions.back().guard=boolean_negate(guard);
     dest.destructive_append(true_case);
     true_case.instructions.clear();
+    if(is_empty(false_case) ||
+       (is_size_one(false_case) && is_skip(false_case.instructions.begin())))
+      return;
   }
 
   // similarly, do guarded assertions directly
@@ -1824,6 +1828,9 @@ void goto_convertt::generate_ifthenelse(
     false_case.instructions.back().guard=guard;
     dest.destructive_append(false_case);
     false_case.instructions.clear();
+    if(is_empty(true_case) ||
+       (is_size_one(true_case) && is_skip(true_case.instructions.begin())))
+      return;
   }
 
   // Flip around if no 'true' case code.
