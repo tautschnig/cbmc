@@ -656,7 +656,7 @@ void dump_ct::collect_typedefs_rec(
   bool early,
   std::unordered_set<irep_idt, irep_id_hash> &dependencies)
 {
-  if(system_symbols.is_type_internal(type, system_headers))
+  if(ignore(type))
     return;
 
   std::unordered_set<irep_idt, irep_id_hash> local_deps;
@@ -707,17 +707,9 @@ void dump_ct::collect_typedefs_rec(
         entry.first->second.dependencies=local_deps;
       }
     }
-
-    if(early)
+    else if(early)
     {
       entry.first->second.early=true;
-
-      for(const auto &d : local_deps)
-      {
-        auto td_entry=typedef_map.find(d);
-        PRECONDITION(td_entry!=typedef_map.end());
-        td_entry->second.early=true;
-      }
     }
 
     dependencies.insert(typedef_str);
@@ -748,7 +740,7 @@ void dump_ct::gather_global_typedefs()
       const irep_idt &typedef_str=symbol.type.get(ID_C_typedef);
       PRECONDITION(!typedef_str.empty());
       typedef_types[symbol.type]=typedef_str;
-      if(system_symbols.is_symbol_internal_symbol(symbol, system_headers))
+      if(ignore(symbol))
         typedef_map.insert({typedef_str, typedef_infot(typedef_str)});
       else
         collect_typedefs(symbol.type, false);
@@ -765,9 +757,28 @@ void dump_ct::dump_typedefs(std::ostream &os) const
   std::vector<typedef_infot> typedefs_sorted;
   typedefs_sorted.reserve(typedef_map.size());
 
-  // elements in to_insert are lexicographically sorted and ready for
-  // output
-  std::map<std::string, typedef_infot> to_insert;
+
+bool dump_ct::typedef_sort(const typedef_infot &a, const typedef_infot &b)
+{
+  assert(a.dependencies.find(a.typedef_name)==a.dependencies.end());
+  assert(b.dependencies.find(b.typedef_name)==b.dependencies.end());
+
+  if(a.typedef_name==b.typedef_name)
+    return false;
+
+  if(b.dependencies.find(a.typedef_name)!=b.dependencies.end())
+  {
+    assert(a.dependencies.find(b.typedef_name)==a.dependencies.end());
+    return true;
+  }
+
+  if(a.dependencies.find(b.typedef_name)!=a.dependencies.end())
+  {
+    assert(b.dependencies.find(a.typedef_name)==b.dependencies.end());
+    return false;
+  }
+
+  return id2string(a.typedef_name)<id2string(b.typedef_name);
 
   typedef std::unordered_set<irep_idt, irep_id_hash> id_sett;
   id_sett typedefs_done;
@@ -815,6 +826,7 @@ void dump_ct::dump_typedefs(std::ostream &os) const
         continue;
       }
 
+<<<<<<< HEAD
       // update dependencies
       id_sett &f_deps=f_it->second;
       PRECONDITION(!f_deps.empty());
@@ -835,6 +847,24 @@ void dump_ct::dump_typedefs(std::ostream &os) const
   }
 
   POSTCONDITION(forward_deps.empty());
+=======
+void dump_ct::dump_typedefs(std::ostream &os) const
+{
+  std::vector<typedef_infot> typedefs_sorted;
+  typedefs_sorted.reserve(typedef_map.size());
+
+  for(const auto &td : typedef_map)
+    if(!td.second.type_decl_str.empty())
+    {
+      typedefs_sorted.insert(
+        std::lower_bound(
+          typedefs_sorted.begin(),
+          typedefs_sorted.end(),
+          td.second,
+          typedef_sort),
+        td.second);
+    }
+>>>>>>> 11da5dcac... Fixup for typedef dump
 
   for(const auto &td : typedefs_sorted)
     os << td.type_decl_str << '\n';

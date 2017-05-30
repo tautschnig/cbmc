@@ -110,6 +110,9 @@ protected:
     bool early,
     std::unordered_set<irep_idt, irep_id_hash> &dependencies);
   void gather_global_typedefs();
+  static bool typedef_sort(
+    const typedef_infot &a,
+    const typedef_infot &b);
   void dump_typedefs(std::ostream &os) const;
 
   void convert_compound_declaration(
