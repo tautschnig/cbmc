@@ -687,7 +687,7 @@ void dump_ct::init_system_library_map()
     "mkstemp", "mktemp", "perror", "printf", "putc", "putchar",
     "puts", "putw", "putwc", "putwchar", "remove", "rewind", "scanf",
     "setbuf", "setbuffer", "setlinebuf", "setvbuf", "snprintf",
-    "sprintf", "sscanf", "strerror", "swprintf", "sys_errlist",
+    "sprintf", "sscanf", "swprintf", "sys_errlist",
     "sys_nerr", "tempnam", "tmpfile", "tmpnam", "ungetc", "ungetwc",
     "vasprintf", "vfprintf", "vfscanf", "vfwprintf", "vprintf",
     "vscanf", "vsnprintf", "vsprintf", "vsscanf", "vswprintf",
@@ -966,12 +966,6 @@ void dump_ct::collect_typedefs_rec(
   else if(type.id()==ID_pointer || type.id()==ID_array)
   {
     collect_typedefs_rec(type.subtype(), early, local_deps);
-  }
-  else if(type.id()==ID_symbol)
-  {
-    const symbolt &symbol=
-      ns.lookup(to_symbol_type(type).get_identifier());
-    collect_typedefs_rec(symbol.type, early, local_deps);
   }
 
   const irep_idt &typedef_str=type.get(ID_C_typedef);
