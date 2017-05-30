@@ -200,7 +200,6 @@ protected:
 
   goto_programt::const_targett convert_goto_break_continue(
       goto_programt::const_targett target,
-      goto_programt::const_targett upper_bound,
       codet &dest);
 
   goto_programt::const_targett convert_goto_goto(
