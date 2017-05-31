@@ -268,7 +268,7 @@ void overflow_instrumentert::fix_types(exprt &overflow)
 {
   typet &t1=overflow.op0().type();
   typet &t2=overflow.op1().type();
-  const typet &t=join_types(t1, t2);
+  const typet &t=join_types(t1, t2, overflow);
 
   if(t1!=t)
   {

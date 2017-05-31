@@ -18,6 +18,6 @@ signedbv_typet signed_poly_type();
 unsignedbv_typet unsigned_poly_type();
 
 bool is_bitvector(const typet &t);
-typet join_types(const typet &t1, const typet &t2);
+typet join_types(const typet &t1, const typet &t2, const exprt &context);
 
 #endif // CPROVER_GOTO_INSTRUMENT_ACCELERATE_UTIL_H

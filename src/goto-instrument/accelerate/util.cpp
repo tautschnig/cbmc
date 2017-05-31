@@ -69,7 +69,7 @@ bool is_unsigned(const typet &t)
  * join_types(signedbv_typet(16), unsignedbv_typet(16))=signedbv_typet(17)
  * join_types(signedbv_typet(32), signedbv_typet(32))=signedbv_typet(32)
  */
-typet join_types(const typet &t1, const typet &t2)
+typet join_types(const typet &t1, const typet &t2, const exprt &context)
 {
   // Handle the simple case first...
   if(t1==t2)
@@ -117,7 +117,9 @@ typet join_types(const typet &t1, const typet &t2)
   }
 
   std::cerr << "Tried to join types: "
-            << t1.pretty() << " and " << t2.pretty()
+            << t1.pretty() << "\nand\n" << t2.pretty()
+            << '\n'
+            << "In context of:\n" << context.pretty()
             << '\n';
   assert(!"Couldn't join types");
 }

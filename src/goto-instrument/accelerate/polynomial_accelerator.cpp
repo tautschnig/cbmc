@@ -510,10 +510,12 @@ void polynomial_acceleratort::assert_for_values(
   // First figure out what the appropriate type for this expression is.
   typet expr_type=nil_typet();
 
+  exprt debug_expr("poly_values");
   for(std::map<exprt, int>::iterator it=values.begin();
       it!=values.end();
       ++it)
   {
+    debug_expr.copy_to_operands(it->first);
     typet this_type=it->first.type();
     if(this_type.id()==ID_pointer)
     {
@@ -529,7 +531,7 @@ void polynomial_acceleratort::assert_for_values(
     }
     else
     {
-      expr_type=join_types(expr_type, this_type);
+      expr_type=join_types(expr_type, this_type, debug_expr);
     }
   }
 

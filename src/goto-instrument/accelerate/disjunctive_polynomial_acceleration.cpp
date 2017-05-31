@@ -659,17 +659,19 @@ void disjunctive_polynomial_accelerationt::assert_for_values(
   // First figure out what the appropriate type for this expression is.
   typet expr_type=nil_typet();
 
+  exprt debug_expr("assert_for_values");
   for(std::map<exprt, exprt>::iterator it=values.begin();
       it!=values.end();
       ++it)
   {
+    debug_expr.copy_to_operands(it->first);
     if(expr_type==nil_typet())
     {
       expr_type=it->first.type();
     }
     else
     {
-      expr_type=join_types(expr_type, it->first.type());
+      expr_type=join_types(expr_type, it->first.type(), debug_expr);
     }
   }
 

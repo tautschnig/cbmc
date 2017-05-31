@@ -30,17 +30,19 @@ exprt polynomialt::to_expr()
       m_it!=monomials.end();
       ++m_it)
   {
+    exprt debug_expr("monomial");
     for(std::vector<monomialt::termt>::iterator t_it=m_it->terms.begin();
         t_it!=m_it->terms.end();
         ++t_it)
     {
+      debug_expr.copy_to_operands(t_it->var);
       if(itype==nil_typet())
       {
         itype=t_it->var.type();
       }
       else
       {
-        itype=join_types(itype, t_it->var.type());
+        itype=join_types(itype, t_it->var.type(), debug_expr);
       }
     }
   }
