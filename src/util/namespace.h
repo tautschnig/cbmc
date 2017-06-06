@@ -38,6 +38,14 @@ public:
     return lookup(irep.get(ID_identifier));
   }
   
+  symbolt &get_symbol(const irep_idt &name) const
+  {
+    symbolt *symbol;
+    if(get_symbol(name, symbol))
+      throw "identifier "+id2string(name)+" not found";
+    return *symbol;
+  }
+
   virtual ~namespace_baset();
    
   void follow_symbol(irept &irep) const;
@@ -51,6 +59,7 @@ public:
   // these do the actual lookup
   virtual unsigned get_max(const std::string &prefix) const=0;
   virtual bool lookup(const irep_idt &name, const symbolt *&symbol) const=0;
+  virtual bool get_symbol(const irep_idt &name, symbolt *&symbol) const=0;
 };
 
 /*! \brief TO_BE_DOCUMENTED
@@ -59,28 +68,30 @@ class namespacet:public namespace_baset
 {
 public:
   // constructors
-  explicit namespacet(const symbol_tablet &_symbol_table)
+  explicit namespacet(symbol_tablet &_symbol_table)
   { symbol_table1=&_symbol_table; symbol_table2=NULL; }
    
-  namespacet(const symbol_tablet &_symbol_table1, const symbol_tablet &_symbol_table2)
+  namespacet(symbol_tablet &_symbol_table1, symbol_tablet &_symbol_table2)
   { symbol_table1=&_symbol_table1; symbol_table2=&_symbol_table2; }
   
-  namespacet(const symbol_tablet *_symbol_table1, const symbol_tablet *_symbol_table2)
+  namespacet(symbol_tablet *_symbol_table1, symbol_tablet *_symbol_table2)
   { symbol_table1=_symbol_table1; symbol_table2=_symbol_table2; }
  
   using namespace_baset::lookup;
+  using namespace_baset::get_symbol;
    
   // these do the actual lookup
   virtual bool lookup(const irep_idt &name, const symbolt *&symbol) const;
+  virtual bool get_symbol(const irep_idt &name, symbolt *&symbol) const;
   virtual unsigned get_max(const std::string &prefix) const;
   
-  const symbol_tablet &get_symbol_table() const
+  symbol_tablet &get_symbol_table() const
   {
     return *symbol_table1;
   }
   
 protected:
-  const symbol_tablet *symbol_table1, *symbol_table2;
+  symbol_tablet *symbol_table1, *symbol_table2;
 };
 
 class multi_namespacet:public namespacet

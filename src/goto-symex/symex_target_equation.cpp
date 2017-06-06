@@ -20,6 +20,9 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "goto_symex_state.h"
 #include "symex_target_equation.h"
 
+#include <iostream>
+#include <algorithm>
+
 /*******************************************************************\
 
 Function: symex_target_equationt::symex_target_equationt
@@ -70,7 +73,8 @@ void symex_target_equationt::shared_read(
   const symbol_exprt &ssa_object,
   const symbol_exprt &original_object,
   unsigned atomic_section_id,
-  const sourcet &source)
+  const sourcet &source,
+  const bool array_assign)
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
@@ -81,6 +85,7 @@ void symex_target_equationt::shared_read(
   SSA_step.type=goto_trace_stept::SHARED_READ;
   SSA_step.atomic_section_id=atomic_section_id;
   SSA_step.source=source;
+  SSA_step.array_assign = array_assign;
 
   merge_ireps(SSA_step);
 }
@@ -363,7 +368,8 @@ Function: symex_target_equationt::function_call
 void symex_target_equationt::function_call(
   const exprt &guard,
   const irep_idt &identifier,
-  const sourcet &source)
+  const sourcet &source,
+  const irep_idt pthread_join_id)
 {
   SSA_steps.push_back(SSA_stept());
   SSA_stept &SSA_step=SSA_steps.back();
@@ -372,6 +378,7 @@ void symex_target_equationt::function_call(
   SSA_step.type=goto_trace_stept::FUNCTION_CALL;
   SSA_step.source=source;
   SSA_step.identifier=identifier;
+  SSA_step.pthread_join_id = pthread_join_id;
 
   merge_ireps(SSA_step);
 }
@@ -602,7 +609,7 @@ void symex_target_equationt::convert(
 {
   convert_guards(prop_conv);
   convert_assignments(prop_conv);
-  convert_decls(prop_conv);
+//  convert_decls(prop_conv);
   convert_assumptions(prop_conv);
   convert_assertions(prop_conv);
   convert_io(prop_conv);
@@ -627,8 +634,10 @@ void symex_target_equationt::convert_assignments(
   for(SSA_stepst::const_iterator it=SSA_steps.begin();
       it!=SSA_steps.end(); it++)
   {
-    if(it->is_assignment() && !it->ignore)
+    if(it->is_assignment() && !it->ignore && it->rely) {
+//      std::cout << "assignment: " << from_expr(ns, "", it->cond_expr) << "\n";
       decision_procedure.set_to_true(it->cond_expr);
+    }
   }
 }
 
@@ -679,8 +688,10 @@ void symex_target_equationt::convert_guards(
   {
     if(it->ignore)
       it->guard_literal=const_literal(false);
-    else
+    else {
       it->guard_literal=prop_conv.convert(it->guard);
+//      std::cout << "guard: " << from_expr(ns, "", it->guard) << "\n";
+    }
   }
 }
 
@@ -736,6 +747,7 @@ void symex_target_equationt::convert_constraints(
       if(it->ignore)
         continue;
 
+//      std::cout << "constraint: " << from_expr(ns, "", it->cond_expr) << "\n";
       decision_procedure.set_to_true(it->cond_expr);
     }
   }
@@ -794,6 +806,7 @@ void symex_target_equationt::convert_assertions(
   {
     if(it->is_assert())
     {
+//    	std::cout << "ASSERT " << from_expr(ns, "", it->cond_expr) << "\n";
       implies_exprt implication(
         assumption,
         it->cond_expr);
@@ -806,6 +819,7 @@ void symex_target_equationt::convert_assertions(
     }
     else if(it->is_assume())
     {
+//    	std::cout << "ASSUME " << from_expr(ns, "", it->cond_expr) << "\n";
       // the assumptions have been converted before
       // avoid deep nesting of ID_and expressions
       if(assumption.id()==ID_and)
@@ -920,7 +934,7 @@ void symex_target_equationt::output(std::ostream &out) const
       it++)
   {
     it->output(ns, out);    
-    out << "--------------" << std::endl;
+//    out << "--------------" << std::endl;
   }
 }
 
@@ -936,71 +950,126 @@ Function: symex_target_equationt::SSA_stept::output
 
 \*******************************************************************/
 
-void symex_target_equationt::SSA_stept::output(
+void symex_target_equationt::SSA_stept::output_backup(
   const namespacet &ns,
   std::ostream &out) const
 {
-  if(source.is_set)
-  {
-    out << "Thread " << source.thread_nr;
-
-    if(source.pc->source_location.is_not_nil())
-      out << " " << source.pc->source_location << std::endl;
-    else
-      out << std::endl;
-  }
+//  if(source.is_set)
+//  {
+//    out << "Thread " << source.thread_nr;
+//
+//    if(source.pc->source_location.is_not_nil())
+//      out << " " << source.pc->source_location << std::endl;
+//    else
+//      out << std::endl;
+//  }
 
   switch(type)
   {
-  case goto_trace_stept::ASSERT: out << "ASSERT" << std::endl; break;
-  case goto_trace_stept::ASSUME: out << "ASSUME" << std::endl; break;
-  case goto_trace_stept::LOCATION: out << "LOCATION" << std::endl; break;
-  case goto_trace_stept::INPUT: out << "INPUT" << std::endl; break;
-  case goto_trace_stept::OUTPUT: out << "OUTPUT" << std::endl; break;
+//  case goto_trace_stept::ASSERT: out << "ASSERT" << std::endl; break;
+//  case goto_trace_stept::ASSUME: out << "ASSUME" << std::endl; break;
+//  case goto_trace_stept::LOCATION: out << "LOCATION" << std::endl; break;
+//  case goto_trace_stept::INPUT: out << "INPUT" << std::endl; break;
+//  case goto_trace_stept::OUTPUT: out << "OUTPUT" << std::endl; break;
+//
+//  case goto_trace_stept::DECL:
+//    out << "DECL" << std::endl;
+//    out << from_expr(ns, "", ssa_lhs) << std::endl;
+//    break;
 
-  case goto_trace_stept::DECL:
-    out << "DECL" << std::endl;
-    out << from_expr(ns, "", ssa_lhs) << std::endl;
-    break;
-
-  case goto_trace_stept::ASSIGNMENT:
-    out << "ASSIGNMENT (";
-    switch(assignment_type)
-    {
-    case HIDDEN: out << "HIDDEN"; break;
-    case STATE: out << "STATE"; break;
-    case PHI: out << "PHI"; break;
-    case GUARD: out << "GUARD"; break; 
-    default:;
-    }
-
-    out << ")" << std::endl;
-    break;
-    
-  case goto_trace_stept::DEAD: out << "DEAD" << std::endl; break;
-  case goto_trace_stept::FUNCTION_CALL: out << "FUNCTION_CALL" << std::endl; break;
-  case goto_trace_stept::FUNCTION_RETURN: out << "FUNCTION_RETURN" << std::endl; break;
-  case goto_trace_stept::CONSTRAINT: out << "CONSTRAINT" << std::endl; break;
+//  case goto_trace_stept::ASSIGNMENT:
+//    out << "ASSIGNMENT (";
+//    switch(assignment_type)
+//    {
+//    case HIDDEN: out << "HIDDEN"; break;
+//    case STATE: out << "STATE"; break;
+//    case PHI: out << "PHI"; break;
+//    case GUARD: out << "GUARD"; break;
+//    default:;
+//    }
+//
+//    out << ")" << std::endl;
+//    break;
+//
+//  case goto_trace_stept::DEAD: out << "DEAD" << std::endl; break;
+//  case goto_trace_stept::FUNCTION_CALL: out << "FUNCTION_CALL" << std::endl; break;
+//  case goto_trace_stept::FUNCTION_RETURN: out << "FUNCTION_RETURN" << std::endl; break;
+//  case goto_trace_stept::CONSTRAINT: out << "CONSTRAINT" << std::endl; break;
   case goto_trace_stept::SHARED_READ: out << "SHARED READ" << std::endl; break;
   case goto_trace_stept::SHARED_WRITE: out << "SHARED WRITE" << std::endl; break;
-  case goto_trace_stept::ATOMIC_BEGIN: out << "ATOMIC_BEGIN" << std::endl; break;
-  case goto_trace_stept::ATOMIC_END: out << "AUTOMIC_END" << std::endl; break;
+//  case goto_trace_stept::ATOMIC_BEGIN: out << "ATOMIC_BEGIN" << std::endl; break;
+//  case goto_trace_stept::ATOMIC_END: out << "AUTOMIC_END" << std::endl; break;
   case goto_trace_stept::SPAWN: out << "SPAWN" << std::endl; break;
   case goto_trace_stept::MEMORY_BARRIER: out << "MEMORY_BARRIER" << std::endl; break;
 
-  default: assert(false);
+//  default: assert(false);
   }
 
-  if(is_assert() || is_assume() || is_assignment() || is_constraint())
-    out << from_expr(ns, "", cond_expr) << std::endl;
-  
-  if(is_assert() || is_constraint())
-    out << comment << std::endl;
+//  if(is_assert() || is_assume() || is_assignment() || is_constraint())
+//    out << from_expr(ns, "", cond_expr) << std::endl;
+//
+//  if(is_assert() || is_constraint())
+//    out << comment << std::endl;
 
   if(is_shared_read() || is_shared_write())
     out << from_expr(ns, "", ssa_lhs) << std::endl;
 
-  out << "Guard: " << from_expr(ns, "", guard) << std::endl;
+//  out << "Guard: " << from_expr(ns, "", guard) << std::endl;
+}
+
+void symex_target_equationt::SSA_stept::output(
+  const namespacet &ns,
+  std::ostream &out) const
+{
+//  if(source.is_set)
+//  {
+//	out << "Thread " << source.thread_nr;
+//
+//	if(source.pc->source_location.is_not_nil())
+//	  out << " " << source.pc->source_location << std::endl;
+//	else
+//	  out << std::endl;
+//  }
+
+//  if (type == goto_trace_stept::FUNCTION_CALL && identifier == "c::__VERIFIER_atomic_begin")
+//	  std::cout << "===================================\n";
+//  if (type == goto_trace_stept::FUNCTION_CALL && identifier == "c::__VERIFIER_atomic_end")
+//  	  std::cout << "###################################\n";
+
+
+  switch(type)
+  {
+  case goto_trace_stept::SHARED_READ: out << "SHARED READ " << atomic_section_id << ": " << from_expr(ns, "", ssa_lhs) << std::endl; break;
+  case goto_trace_stept::SHARED_WRITE: out << "SHARED WRITE " << atomic_section_id << ": " << from_expr(ns, "", ssa_lhs) << std::endl; break;
+  case goto_trace_stept::ATOMIC_BEGIN: out << "ATOMIC_BEGIN" << std::endl; break;
+  case goto_trace_stept::ATOMIC_END: out << "AUTOMIC_END" << std::endl; break;
+
+  case goto_trace_stept::ASSERT: out << "ASSERT "; break;
+   case goto_trace_stept::ASSUME: out << "ASSUME "; break;
+   case goto_trace_stept::ASSIGNMENT: out << "ASSIGNMENT "; break;
+   case goto_trace_stept::CONSTRAINT: out << "CONSTRAINT "; break;
+//
+//   case goto_trace_stept::DEAD: out << "DEAD" << std::endl; break;
+//   case goto_trace_stept::FUNCTION_CALL:
+//	   if (is_verify_atomic_begin())
+//		   out << "ATOMIC_BEGIN " << std::endl;
+//	   if (is_verify_atomic_end())
+//		   out << "ATOMIC_END " << std::endl;
+//	   break;
+   case goto_trace_stept::FUNCTION_CALL: out << "FUNCTION_CALL " << identifier << std::endl; break;
+   case goto_trace_stept::FUNCTION_RETURN: out << "FUNCTION_RETURN " << identifier << std::endl; break;
+//   case goto_trace_stept::SHARED_READ: out << "SHARED READ " << atomic_section_id << ": " << from_expr(ns, "", ssa_lhs) << std::endl; break;
+//   case goto_trace_stept::SHARED_WRITE: out << "SHARED WRITE " << atomic_section_id << ": " << from_expr(ns, "", ssa_lhs) << std::endl; break;
+   case goto_trace_stept::SPAWN: out << "SPAWN" << std::endl; break;
+   case goto_trace_stept::MEMORY_BARRIER: out << "MEMORY_BARRIER" << std::endl; break;
+
+  default: break;
+  }
+
+  if(is_assert() || is_assume() || is_assignment() || is_constraint())
+    out << from_expr(ns, "", cond_expr) << std::endl;
+//  if (!guard.is_true())
+//	   out << "Guard: " << from_expr(ns, "", guard) << std::endl;
 }
 
 /*******************************************************************\
@@ -1046,3 +1115,212 @@ std::ostream &operator<<(
   return out;
 }
 
+/*******************************************************************\
+
+Function: slice
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: delete unrelated assignments and variables
+
+\*******************************************************************/
+void symex_target_equationt::slice()
+{
+	compute_maps();
+
+	compute_address_map();
+
+	initial_rely_symbols();
+
+//	std::cout << "\n\n Initial Rely_Symbols: \n";
+//	for (unsigned i = 0; i < rely_symbols.size(); i++)
+//	{
+//		std::cout << rely_symbols[i] << "\n";
+//	}
+
+	compute_rely_symbols();
+}
+
+/*******************************************************************\
+
+Function: slice
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: delete unrelated assignments and variables
+
+\*******************************************************************/
+void symex_target_equationt::compute_maps()
+{
+	for(SSA_stepst::iterator
+	    it=SSA_steps.begin();
+	    it!=SSA_steps.end();
+	    it++)
+	{
+	    if (it->is_assignment())
+	    {
+	    	const irep_idt ssa_lhs = it->ssa_lhs.get_identifier();
+	    	assignment_map[ssa_lhs] = &(*it);
+	    }
+	    else if (it->is_shared_read())
+	    {
+	    	const irep_idt ssa_lhs = it->ssa_lhs.get_identifier();
+	    	shared_read_map[ssa_lhs] = &(*it);
+	    }
+	    else if (it->is_shared_write())
+	    {
+	    	const irep_idt ssa_lhs = it->ssa_lhs.get_identifier();
+	    	shared_write_map[ssa_lhs] = &(*it);
+	    }
+	}
+}
+
+/*******************************************************************\
+
+Function: initial_rely_symbols
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: initial rely_symbols, it is all the symbols in the assert
+
+\*******************************************************************/
+void symex_target_equationt::initial_rely_symbols()
+{
+	for(SSA_stepst::const_iterator
+	    it=SSA_steps.begin();
+	    it!=SSA_steps.end();
+	    it++)
+	{
+	    if (it->is_assert())
+	    {
+	    	std::vector<exprt> symbols;
+	    	(it->cond_expr).get_symbols(symbols);
+
+	    	for (unsigned i = 0; i < symbols.size(); i++)
+	    	{
+	    		const irep_idt symbol = (to_symbol_expr(symbols[i])).get_identifier();
+	    		rely_symbols.push_back(symbol);
+	    	}
+	    }
+	}
+}
+
+/*******************************************************************\
+
+Function: compute_rely_symbols
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: compute all rely_symbols
+
+\*******************************************************************/
+void symex_target_equationt::compute_rely_symbols()
+{
+	for (unsigned i = 0; i < rely_symbols.size(); i++)
+	{
+		irep_idt rely_var = rely_symbols[i];
+
+		if (is_shared_read(rely_var))
+		{
+			assert(shared_read_map.find(rely_var) != shared_read_map.end());
+			SSA_stept* r = shared_read_map[rely_var];
+			if (r->rely == false)
+			{
+				r->rely = true;
+				irep_idt address = r->original_lhs_object.get_identifier();
+				const a_rect &a_rec=address_map[address];
+				for (unsigned i = 0; i < a_rec.writes.size(); i++)
+				{
+					SSA_stept* w = a_rec.writes[i];
+					w->rely = true;
+					const irep_idt symbol = w->ssa_lhs.get_identifier();
+					if (find(rely_symbols.begin(), rely_symbols.end(), symbol) == rely_symbols.end())
+						rely_symbols.push_back(symbol);
+				}
+			}
+		}
+		else
+		{
+			if (assignment_map.find(rely_var) != assignment_map.end()) {
+				SSA_stept* assignment = assignment_map[rely_var];
+				if (assignment->rely == false)
+				{
+					assignment->rely = true;
+					std::vector<exprt> symbols;
+					(assignment->ssa_rhs).get_symbols(symbols);
+					(assignment->guard).get_symbols(symbols);
+
+					for (unsigned i = 0; i < symbols.size(); i++)
+					{
+						const irep_idt symbol = (to_symbol_expr(symbols[i])).get_identifier();
+						if (find(rely_symbols.begin(), rely_symbols.end(), symbol) == rely_symbols.end())
+						{
+							rely_symbols.push_back(symbol);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+
+/*******************************************************************\
+
+Function: is_shared_read
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: judge if a symbol is shared read
+
+\*******************************************************************/
+bool symex_target_equationt::is_shared_read(irep_idt var)
+{
+	return shared_read_map.find(var) != shared_read_map.end();
+}
+
+
+/*******************************************************************\
+
+Function: compute_address_map
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: compute address map
+
+\*******************************************************************/
+void symex_target_equationt::compute_address_map()
+{
+	for(SSA_stepst::iterator
+		e_it=SSA_steps.begin();
+		e_it!=SSA_steps.end();
+		e_it++)
+	{
+		if(e_it->is_shared_read() || e_it->is_shared_write())
+		{
+			irep_idt address = e_it->original_lhs_object.get_identifier();
+			a_rect &a_rec=address_map[address];
+
+			if(e_it->is_shared_read())
+			{
+				a_rec.reads.push_back(&(*e_it));
+			}
+			else
+			{
+				a_rec.writes.push_back(&(*e_it));
+			}
+		}
+	}
+}

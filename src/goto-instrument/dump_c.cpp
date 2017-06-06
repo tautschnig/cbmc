@@ -7,6 +7,7 @@ Author: Daniel Kroening, kroening@kroening.com
 \*******************************************************************/
 
 #include <sstream>
+#include <cctype>
 
 #include <util/config.h>
 #include <util/prefix.h>
@@ -198,6 +199,21 @@ void dump_ct::operator()(std::ostream &os)
     }
   }
 
+  // enum types
+  for(std::set<std::string>::const_iterator
+      it=symbols_sorted.begin();
+      it!=symbols_sorted.end();
+      ++it)
+  {
+    const symbolt &symbol=ns.lookup(*it);
+
+    if(symbol.is_type &&
+       symbol.type.id()==ID_c_enum)
+      convert_compound_declaration(
+          symbol,
+          compound_body_stream);
+  }
+
   // function declarations and definitions
   for(std::set<std::string>::const_iterator
       it=symbols_sorted.begin();
@@ -228,8 +244,7 @@ void dump_ct::operator()(std::ostream &os)
         (symbol.type.id()==ID_struct ||
          symbol.type.id()==ID_incomplete_struct ||
          symbol.type.id()==ID_union ||
-         symbol.type.id()==ID_incomplete_union ||
-         symbol.type.id()==ID_c_enum))
+         symbol.type.id()==ID_incomplete_union))
       convert_compound_declaration(
           symbol,
           compound_body_stream);
@@ -324,6 +339,15 @@ void dump_ct::convert_compound(
   {
     const symbolt &symbol=
       ns.lookup(to_symbol_type(type).get_identifier());
+    assert(symbol.is_type);
+
+    if(!ignore(symbol))
+      convert_compound(symbol.type, recursive, os);
+  }
+  else if(type.id()==ID_c_enum_tag)
+  {
+    const symbolt &symbol=
+      ns.lookup(to_c_enum_tag_type(type).get_identifier());
     assert(symbol.is_type);
 
     if(!ignore(symbol))
@@ -445,10 +469,7 @@ void dump_ct::convert_compound(
     assert(s.find("NO/SUCH/NS")==std::string::npos);
 
     if(comp.get_is_bit_field() &&
-       ((comp_type.id()!=ID_c_enum &&
-         to_bitvector_type(comp_type).get_width()==0) ||
-        (comp_type.id()==ID_c_enum &&
-         to_bitvector_type(comp_type.subtype()).get_width()==0)))
+       comp.get_bit_field_bits(ns)==0)
     {
       comp_name="";
       s=type_to_string(comp_type);
@@ -457,10 +478,8 @@ void dump_ct::convert_compound(
     if(s.find("__CPROVER_bitvector")==std::string::npos)
     {
       struct_body << s;
-      if(comp.get_is_bit_field() && comp_type.id()!=ID_c_enum)
-        struct_body << " : " << to_bitvector_type(comp_type).get_width();
-      else if(comp.get_is_bit_field() && comp_type.id()==ID_c_enum)
-        struct_body << " : " << to_bitvector_type(comp_type.subtype()).get_width();
+      if(comp.get_is_bit_field())
+        struct_body << " : " << comp.get_bit_field_bits(ns);
     }
     else if(comp_type.id()==ID_signedbv)
     {
@@ -545,7 +564,7 @@ void dump_ct::convert_compound_enum(
   const irept &tag=type.find(ID_tag);
   const irep_idt &name=tag.get(ID_C_base_name);
 
-  if(tag.is_not_nil() &&
+  if(tag.is_nil() ||
      !converted.insert(name).second)
     return;
 
@@ -567,6 +586,8 @@ void dump_ct::convert_compound_enum(
       os << ',';
 
     os << '\n';
+
+    declared_enum_constants.insert(name);
   }
 
 
@@ -1234,14 +1255,9 @@ void dump_ct::cleanup_expr(exprt &expr)
         it!=old_components.end();
         ++it)
     {
-      const typet &comp_type=ns.follow(it->type());
-
       const bool is_zero_bit_field=
         it->get_is_bit_field() &&
-        ((comp_type.id()!=ID_c_enum &&
-          to_bitvector_type(comp_type).get_width()==0) ||
-         (comp_type.id()==ID_c_enum &&
-          to_bitvector_type(comp_type.subtype()).get_width()==0));
+        it->get_bit_field_bits(ns)==0;
 
       if(!it->get_is_padding() && !is_zero_bit_field)
       {
@@ -1330,6 +1346,17 @@ void dump_ct::cleanup_expr(exprt &expr)
         }
       }
     }
+  }
+  else if(expr.id()==ID_constant &&
+          expr.type().id()==ID_signedbv)
+  {
+    const irep_idt &cformat=expr.get(ID_C_cformat);
+
+    if(!cformat.empty() &&
+       declared_enum_constants.find(cformat)==
+       declared_enum_constants.end() &&
+       !std::isdigit(id2string(cformat)[0]))
+      expr.remove(ID_C_cformat);
   }
 }
 

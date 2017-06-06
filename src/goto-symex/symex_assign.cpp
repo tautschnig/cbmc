@@ -35,6 +35,11 @@ void goto_symext::symex_assign(
   exprt lhs=code.lhs();
   exprt rhs=code.rhs();
 
+  if (lhs.type().id() == ID_array &&
+	  to_symbol_expr(lhs).get_identifier() != "c::__CPROVER_threads_exited") {
+	  has_array = true;
+  }
+
   replace_nondet(lhs);
   replace_nondet(rhs);
   
@@ -142,10 +147,11 @@ void goto_symext::symex_assign_rec(
   const exprt &full_lhs,
   const exprt &rhs,
   guardt &guard,
-  visibilityt visibility)
+  visibilityt visibility,
+  const bool array_assign)
 {
   if(lhs.id()==ID_symbol)
-    symex_assign_symbol(state, to_symbol_expr(lhs), full_lhs, rhs, guard, visibility);
+    symex_assign_symbol(state, to_symbol_expr(lhs), full_lhs, rhs, guard, visibility, array_assign);
   else if(lhs.id()==ID_index)
     symex_assign_array(state, to_index_expr(lhs), full_lhs, rhs, guard, visibility);
   else if(lhs.id()==ID_member)
@@ -217,13 +223,27 @@ Function: goto_symext::symex_assign_symbol
 
 \*******************************************************************/
 
+bool goto_symext::global_expr(statet &state, exprt expr)
+{
+	if (expr.id() == ID_symbol) {
+		const symbolt& symbol = ns.lookup(state.get_original_name(to_symbol_expr(expr).get_identifier()));
+		return (symbol.type.id() == ID_pointer) && (symbol.is_shared() || symbol.is_transitive_global);
+	}
+    Forall_operands(it, expr) {
+    	if (global_expr(state, *it))
+    		return true;
+    }
+    return false;
+}
+
 void goto_symext::symex_assign_symbol(
   statet &state,
   const symbol_exprt &lhs,
   const exprt &full_lhs,
   const exprt &rhs,
   guardt &guard,
-  visibilityt visibility)
+  visibilityt visibility,
+  const bool array_assign)
 {
   exprt ssa_rhs=rhs;
   
@@ -241,7 +261,7 @@ void goto_symext::symex_assign_symbol(
   symbol_exprt original_lhs=lhs;
   state.get_original_name(original_lhs);
   
-  state.rename(ssa_rhs, ns);
+  state.rename(ssa_rhs, ns, goto_symex_statet::L2, array_assign);
   do_simplify(ssa_rhs);
   
   symbol_exprt ssa_lhs=lhs;
@@ -258,12 +278,80 @@ void goto_symext::symex_assign_symbol(
   guardt tmp_guard(state.guard);
   tmp_guard.append(guard);
   
+  if (global_expr(state, ssa_rhs)) {
+	const irep_idt identifier_lhs = ssa_lhs.get_identifier();
+    ns.get_symbol(state.get_original_name(identifier_lhs)).is_transitive_global = true;
+  }
+
   // do the assignment
   target.assignment(
     tmp_guard.as_expr(),
     ssa_lhs, original_lhs,
     ssa_full_lhs, add_to_lhs(full_lhs, original_lhs),
     ssa_rhs, 
+    state.source,
+    visibility==HIDDEN?symex_targett::HIDDEN:symex_targett::STATE);
+}
+
+/*******************************************************************\
+
+Function: goto_symext::symex_assign_symbol
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+void goto_symext::symex_assign_symbol_malloc_size(
+  statet &state,
+  const symbol_exprt &lhs,
+  const exprt &full_lhs,
+  const exprt &rhs,
+  guardt &guard,
+  visibilityt visibility)
+{
+  exprt ssa_rhs=rhs;
+
+  // put assignment guard into the rhs
+  if(!guard.empty())
+  {
+    if_exprt tmp_ssa_rhs;
+    tmp_ssa_rhs.type()=ssa_rhs.type();
+    tmp_ssa_rhs.cond()=guard.as_expr();
+    tmp_ssa_rhs.true_case()=ssa_rhs;
+    tmp_ssa_rhs.false_case()=lhs;
+    tmp_ssa_rhs.swap(ssa_rhs);
+  }
+
+  symbol_exprt original_lhs=lhs;
+  state.get_original_name(original_lhs);
+
+//  state.rename(ssa_rhs, ns);
+  do_simplify(ssa_rhs);
+
+  symbol_exprt ssa_lhs=lhs;
+  state.rename(ssa_lhs, ns, goto_symex_statet::L1);
+  state.assignment(ssa_lhs, ssa_rhs, ns, constant_propagation);
+
+  exprt ssa_full_lhs=full_lhs;
+  ssa_full_lhs=add_to_lhs(ssa_full_lhs, ssa_lhs);
+  const bool record_events=state.record_events;
+  state.record_events=false;
+  state.rename(ssa_full_lhs, ns);
+  state.record_events=record_events;
+
+  guardt tmp_guard(state.guard);
+  tmp_guard.append(guard);
+
+  // do the assignment
+  target.assignment(
+    tmp_guard.as_expr(),
+    ssa_lhs, original_lhs,
+    ssa_full_lhs, add_to_lhs(full_lhs, original_lhs),
+    ssa_rhs,
     state.source,
     visibility==HIDDEN?symex_targett::HIDDEN:symex_targett::STATE);
 }
@@ -365,7 +453,7 @@ void goto_symext::symex_assign_array(
   exprt new_full_lhs=add_to_lhs(full_lhs, lhs);
 
   symex_assign_rec(
-    state, lhs_array, new_full_lhs, new_rhs, guard, visibility);
+    state, lhs_array, new_full_lhs, new_rhs, guard, visibility, true);
   #endif
 }
 
@@ -536,6 +624,6 @@ void goto_symext::symex_assign_byte_extract(
   exprt new_full_lhs=add_to_lhs(full_lhs, lhs);
 
   symex_assign_rec(
-    state, lhs.op(), new_full_lhs, new_rhs, guard, visibility);
+    state, lhs.op(), new_full_lhs, new_rhs, guard, visibility, true);
 }
 

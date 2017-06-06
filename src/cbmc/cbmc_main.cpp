@@ -15,7 +15,9 @@ Author: Daniel Kroening, kroening@kroening.com
 */
 
 #include <util/unicode.h>
-
+#include <util/time_stopping.h>
+#include <fstream>
+#include <iostream>
 #ifdef IREP_HASH_STATS
 #include <iostream>
 #endif
@@ -48,6 +50,12 @@ int wmain(int argc, const wchar_t **argv_wide)
 int main(int argc, const char **argv)
 {
 #endif
+
+	std::cout << "This product includes software developed by Daniel Kroening, Edmund Clarke, \n";
+    std::cout << "Computer Science Department, University of Oxford \n";
+    std::cout << "Computer Science Department, Carnegie Mellon University\n";
+  absolute_timet t=current_time();
+
   cbmc_parseoptionst parseoptions(argc, argv);
 
   int res=parseoptions.main();

@@ -13,6 +13,7 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 #include <util/simplify_expr.h>
 
 #include "partial_order_concurrency.h"
+#include <iostream>
 
 /*******************************************************************\
 
@@ -153,6 +154,24 @@ void partial_order_concurrencyt::build_event_lists(
       numbering[e_it]=cnt;
     }
   }
+
+  int reads = 0, writes = 0;
+  for(address_mapt::const_iterator
+      a_it=address_map.begin();
+      a_it!=address_map.end();
+      a_it++)
+  {
+    const a_rect &a_rec=a_it->second;
+    if(a_rec.reads.empty()) continue;
+
+    statistics() << "Shared " << a_it->first << ": "
+                 << a_rec.reads.size() << "R/"
+                 << a_rec.writes.size() << "W" << eom;
+    reads += a_rec.reads.size();
+    writes += a_rec.writes.size();
+  }
+  statistics() << "reads num: " << reads << eom;
+  statistics() << "writes num: " << writes << eom;
 }
 
 /*******************************************************************\
@@ -258,9 +277,11 @@ Function: partial_order_concurrencyt::is_shared_read
 
 bool partial_order_concurrencyt::is_shared_read(event_it event) const
 {
-  if(!event->is_shared_read()) return false;
+  if(!event->is_shared_read())
+	  return false;
   const irep_idt identifier=event->original_lhs_object.get_identifier();
-  if(identifier=="goto_symex::\\guard") return false;
+  if(identifier=="goto_symex::\\guard")
+	  return false;
   const symbolt &symbol=ns.lookup(identifier);
   return !symbol.is_thread_local;
 }
@@ -329,6 +350,26 @@ exprt partial_order_concurrencyt::before(
 
   return conjunction(ops);
 }
+/*******************************************************************\
+
+Function: partial_order_concurrencyt::before_ssa
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+exprt partial_order_concurrencyt::before_ssa(unsigned ssa_id1, unsigned ssa_id2)
+{
+	irep_idt identifier_e1 = "clk" + i2string(ssa_id1);
+	irep_idt identifier_e2 = "clk" + i2string(ssa_id2);
+	symbol_exprt symbol_e1 = symbol_exprt(identifier_e1, clock_type);
+	symbol_exprt symbol_e2 = symbol_exprt(identifier_e2, clock_type);
+	return binary_relation_exprt(symbol_e1, ID_lt, symbol_e2);
+}
 
 /*******************************************************************\
 
@@ -349,6 +390,7 @@ void partial_order_concurrencyt::add_constraint(
   const symex_targett::sourcet &source) const
 {
   exprt tmp=cond;
+
   simplify(tmp, ns);
 
   equation.constraint(tmp, msg, source);

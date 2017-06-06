@@ -57,7 +57,7 @@ public:
     void set_ILP32(); // int=32, long=32, pointer=32
     void set_LP32();  // int=16, long=32, pointer=32
 
-    void set_from_symbol_table(const symbol_tablet &symbol_table);
+    void set_from_symbol_table(symbol_tablet &symbol_table);
     
     // minimum alignment (in structs) measured in bytes
     unsigned alignment;

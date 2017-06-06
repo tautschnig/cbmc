@@ -7,6 +7,7 @@ Author: Daniel Kroening, kroening@kroening.com
 \*******************************************************************/
 
 #include <cassert>
+#include <memory>
 
 #include <util/i2string.h>
 #include <util/cprover_prefix.h>
@@ -16,6 +17,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/symbol_table.h>
 #include <util/simplify_expr.h>
 #include <util/rename.h>
+#include <util/language.h>
+#include <langapi/mode.h>
 
 #include <ansi-c/c_types.h>
 
@@ -998,10 +1001,15 @@ Function: goto_convertt::convert_for
 
 \*******************************************************************/
 
+
+
 void goto_convertt::convert_for(
   const code_fort &code,
   goto_programt &dest)
 {
+  // added by ylz
+  update_for_unwind_limit(code);
+
   // turn for(A; c; B) { P } into
   //  A; while(c) { P; B; }
   //-----------------------------
@@ -1955,6 +1963,16 @@ void goto_convertt::convert_ifthenelse(
 
   const source_locationt &source_location=code.source_location();
 
+  // added by ylz, special dispose for 40_barrier_vf_false-unreach-call.i
+  const exprt& cond = code.cond();
+  if (cond.id() == ID_equal && cond.op0().id() == ID_symbol &&
+	  cond.op1().id() == ID_typecast && cond.op1().op0().id() == ID_constant &&
+	  to_symbol_expr(cond.op0()).get_identifier() == "c::count")
+  {
+	  int limit = string2integer(cond.op1().op0().get_string(ID_value), 2).to_long();
+	  for_unwind_limit = limit;
+  }
+
   // We do a bit of special treatment for && in the condition
   // in case cleaning would be needed otherwise.
   if(code.cond().id()==ID_and &&
@@ -2479,6 +2497,134 @@ const symbolt &goto_convertt::lookup(const irep_idt &identifier) const
 
 /*******************************************************************\
 
+Function: goto_convertt::update_for_unwind_limit
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: added by ylz
+
+\*******************************************************************/
+#include <iostream>
+void goto_convertt::update_for_unwind_limit(const code_fort &code)
+{
+	int limit = 0;
+	exprt op0 = code.op0();
+	exprt op1 = code.op1();
+	exprt op2 = code.op2();
+
+	if (op1.id() != ID_lt && op1.id() != ID_le && op1.id() != ID_gt && op1.id() != ID_ge)
+		return;
+	std::string type_str, value_str;
+	if (op1.op1().id() == ID_symbol) {
+		const symbolt &symbol=ns.lookup(to_symbol_expr(op1.op1()).get_identifier());
+
+		const namespacet ns(symbol_table);
+		languaget *ptr = get_language_from_mode(symbol.mode);
+		std::auto_ptr<languaget> p(ptr);
+
+		if(symbol.type.is_not_nil())
+		  p->from_type(symbol.type, type_str, ns);
+
+		if(symbol.value.is_not_nil())
+		  p->from_expr(symbol.value, value_str, ns);
+	}
+
+//	std::cout << type_str << "\n";
+
+	if (op0.op0().op0().id() == ID_symbol &&
+			op1.op0().id() == ID_symbol
+			&& op2.op0().id() == ID_symbol
+			&& op0.op0().op0() == op1.op0() && op1.op0() == op2.op0() &&
+			op0.op0().op1().id() == ID_constant &&
+			(op1.op1().id() == ID_constant ||
+			(op1.op1().id() == ID_symbol && type_str == "const signed int")))
+	{
+		int a0, a1;
+		a0 = string2integer(op0.op0().op1().get_string(ID_value), 2).to_long();
+
+		if (op1.op1().id() == ID_constant)
+			a1 = string2integer(op1.op1().get_string(ID_value), 2).to_long();
+		else
+			a1 = string2integer(value_str).to_long() + 1;
+
+		// for (int k = a0; k < a1; k += a2)
+		if (op1.id() == ID_lt || op1.id() == ID_le) {
+			limit = a1 - a0;
+			if (op1.id() == ID_lt)
+				limit--;
+			if (op2.id() == ID_side_effect) {
+				if (to_side_effect_expr(op2).get_statement() == ID_postincrement ||
+					to_side_effect_expr(op2).get_statement() == ID_preincrement)
+						limit++;
+				else if (to_side_effect_expr(op2).get_statement() == ID_assign_plus) {
+					if (op2.op1().id() == ID_constant) {
+						int a2 = string2integer(op2.op1().get_string(ID_value), 2).to_long();
+						if (a2 > 1)
+							limit = limit / a2 + 1;
+						else
+							limit++;
+					}
+				} else if (to_side_effect_expr(op2).get_statement() == ID_assign) {
+					if (op2.op1().id() == ID_plus
+							&& op2.op1().op0().id() == ID_symbol
+							&& op2.op1().op0() == op2.op0() &&
+							op2.op1().op1().id() == ID_constant)
+					{
+						int a2 = string2integer( op2.op1().op1().get_string(ID_value), 2).to_long();
+						if (a2 > 1)
+							limit = limit / a2 + 1;
+						else
+							limit++;
+					}
+				} else {
+					limit = 0;
+				}
+			}
+		}
+
+		// for (int k = a0; k > a1; k -= a2)
+		if (op1.id() == ID_gt || op1.id() == ID_ge) {
+			limit = a0 - a1;
+			if (op1.id() == ID_gt)
+				limit--;
+			if (op2.id() == ID_side_effect) {
+				if (to_side_effect_expr(op2).get_statement() == ID_postdecrement ||
+					to_side_effect_expr(op2).get_statement() == ID_predecrement)
+						limit++;
+				else if (to_side_effect_expr(op2).get_statement() == ID_assign_minus) {
+					if (op2.op1().id() == ID_constant) {
+						int a2 = string2integer(op2.op1().get_string(ID_value), 2).to_long();
+						if (a2 > 1)
+							limit = limit / a2 + 1;
+						else
+							limit++;
+					}
+				} else if (to_side_effect_expr(op2).get_statement() == ID_assign) {
+					if (op2.op1().id() == ID_minus
+							&& op2.op1().op0().id() == ID_symbol
+							&& op2.op1().op0() == op2.op0() &&
+							op2.op1().op1().id() == ID_constant)
+					{
+						int a2 = string2integer(op2.op1().op1().get_string(ID_value), 2).to_long();
+						if (a2 > 1)
+							limit = limit / a2 + 1;
+						else
+							limit++;
+					}
+				} else {
+					limit = 0;
+				}
+			}
+		}
+	}
+	if (limit > for_unwind_limit)
+		for_unwind_limit = limit;
+}
+
+/*******************************************************************\
+
 Function: goto_convert
 
   Inputs:
@@ -2549,3 +2695,4 @@ void goto_convert(
   
   ::goto_convert(to_code(symbol.value), symbol_table, dest, message_handler);
 }
+

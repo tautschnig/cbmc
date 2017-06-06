@@ -144,7 +144,7 @@ Function: show_properties
 \*******************************************************************/
 
 void show_properties(
-  const goto_modelt &goto_model,
+  goto_modelt &goto_model,
   ui_message_handlert::uit ui)
 {
   const namespacet ns(goto_model.symbol_table);

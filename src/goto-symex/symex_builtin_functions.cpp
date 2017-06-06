@@ -69,6 +69,9 @@ void goto_symext::symex_malloc(
   if(lhs.is_nil())
     return; // ignore
 
+  if (state.source.thread_nr > 0)
+	  target.thread_malloc = true;
+
   dynamic_counter++;
   
   exprt size=code.op0();
@@ -129,6 +132,7 @@ void goto_symext::symex_malloc(
 
       guardt guard;
       symex_assign_rec(state, size_symbol.symbol_expr(), nil_exprt(), size, guard, VISIBLE);
+//      symex_assign_symbol_malloc_size(state, to_symbol_expr(size_symbol.symbol_expr()), nil_exprt(), size, guard, VISIBLE);
 
       size=size_symbol.symbol_expr();
     }

@@ -86,7 +86,7 @@ Function: interrupt
 
 void interrupt(
   value_setst &value_sets,
-  const symbol_tablet &symbol_table,
+  symbol_tablet &symbol_table,
   goto_programt &goto_program,
   const symbol_exprt &interrupt_handler,
   const rw_set_baset &isr_rw_set)
@@ -228,7 +228,7 @@ Function: interrupt
 
 void interrupt(
   value_setst &value_sets,
-  const symbol_tablet &symbol_table,
+  symbol_tablet &symbol_table,
   goto_functionst &goto_functions,
   const irep_idt &interrupt_handler)
 {

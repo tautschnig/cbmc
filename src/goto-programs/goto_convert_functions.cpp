@@ -259,35 +259,35 @@ void goto_convert_functionst::convert_function(const irep_idt &identifier)
     add_return(f, end_location);
       
   // handle SV-COMP's __VERIFIER_atomic_
-  if(!f.body.instructions.empty() &&
-      has_prefix(id2string(identifier), "c::__VERIFIER_atomic_"))
-  {
-    goto_programt::instructiont a_begin;
-    a_begin.make_atomic_begin();
-    a_begin.source_location=f.body.instructions.front().source_location;
-    f.body.insert_before_swap(f.body.instructions.begin(), a_begin);
+   if(!f.body.instructions.empty() &&
+       has_prefix(id2string(identifier), "c::__VERIFIER_atomic_"))
+   {
+     goto_programt::instructiont a_begin;
+     a_begin.make_atomic_begin();
+     a_begin.source_location=f.body.instructions.front().source_location;
+     f.body.insert_before_swap(f.body.instructions.begin(), a_begin);
 
-    bool last_is_return=false;
-    Forall_goto_program_instructions(i_it, f.body)
-    {
-      last_is_return=i_it->is_return();
-      if(last_is_return)
-      {
-        goto_programt::instructiont a_end;
-        a_end.make_atomic_end();
-        a_end.source_location=i_it->source_location;
-        f.body.insert_before_swap(i_it, a_end);
-        ++i_it;
-      }
-    }
+     bool last_is_return=false;
+     Forall_goto_program_instructions(i_it, f.body)
+     {
+       last_is_return=i_it->is_return();
+       if(last_is_return)
+       {
+         goto_programt::instructiont a_end;
+         a_end.make_atomic_end();
+         a_end.source_location=i_it->source_location;
+         f.body.insert_before_swap(i_it, a_end);
+         ++i_it;
+       }
+     }
 
-    if(!last_is_return)
-    {
-      goto_programt::targett t=f.body.add_instruction();
-      t->make_atomic_end();
-      t->source_location=end_location;
-    }
-  }
+     if(!last_is_return)
+     {
+       goto_programt::targett t=f.body.add_instruction();
+       t->make_atomic_end();
+       t->source_location=end_location;
+     }
+   }
 
   // add "end of function"
   goto_programt::targett t=f.body.add_instruction();
@@ -354,6 +354,8 @@ void goto_convert(
   try
   {  
     goto_convert_functions.goto_convert();
+
+    functions.for_unwind_limit = goto_convert_functions.for_unwind_limit;
   }
 
   catch(int)

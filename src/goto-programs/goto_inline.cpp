@@ -557,6 +557,17 @@ bool goto_inlinet::inline_instruction(
   {
     const code_function_callt &call=to_code_function_call(it->code);
 
+    // ylz08
+    const irep_idt function_identifier=call.function().get(ID_identifier);
+    if (function_identifier == "c::__VERIFIER_atomic_begin" || function_identifier == "c::__VERIFIER_atomic_end" ||
+    	function_identifier == "c::pthread_mutex_lock" || function_identifier == "c::pthread_mutex_unlock"  ||
+		function_identifier == "c::pthread_join" || function_identifier == "c::pthread_mutex_init" || function_identifier == "c::pthread_mutex_destroy" ||
+		function_identifier == "c::pthread_cond_wait")
+    {
+    	it++;
+    	return false;
+    }
+
     if(call.function().id()==ID_symbol)
     {
       expand_function_call(

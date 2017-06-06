@@ -37,6 +37,7 @@ public:
   bvt inverted(const bvt &op);
 
   literalt carry(literalt a, literalt b, literalt c);
+  literalt adder_bit(literalt a, literalt b, literalt c);
 
   bvt add_sub(const bvt &op0, const bvt &op1, bool subtract);
   bvt add_sub(const bvt &op0, const bvt &op1, literalt subtract);

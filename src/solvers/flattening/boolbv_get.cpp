@@ -99,8 +99,8 @@ exprt boolbvt::bv_get_rec(
 
   unsigned width=boolbv_width(type);
   
-  assert(bv.size()==unknown.size());
-  assert(bv.size()>=offset+width);
+//  assert(bv.size()==unknown.size());
+//  assert(bv.size()>=offset+width);
 
   if(type.id()==ID_bool)
   {

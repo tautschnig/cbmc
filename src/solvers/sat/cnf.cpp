@@ -526,6 +526,87 @@ literalt cnft::lequal(literalt a, literalt b)
 
 /*******************************************************************\
 
+Function: cnft::lequal
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+literalt cnft::lequal(const bvt &bv0, const bvt &bv1)
+{
+	assert(bv0.size()==bv1.size());
+	if(bv0.size()==0) return const_literal(true);
+
+	literalt o=new_variable();
+	bvt lits;
+	for (unsigned i = 0; i < bv0.size(); i++)
+	{
+		lits.clear();
+		lits.reserve(3);
+		lits.push_back(lnot(o));
+		lits.push_back(bv0[i]);
+		lits.push_back(lnot(bv1[i]));
+		lcnf(lits);
+
+		lits.clear();
+		lits.reserve(3);
+		lits.push_back(lnot(o));
+		lits.push_back(lnot(bv0[i]));
+		lits.push_back(bv1[i]);
+		lcnf(lits);
+	}
+	return o;
+}
+
+/*******************************************************************\
+
+Function: cnft::lequal
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+literalt cnft::lequal(const bvt &bv0, const bvt &bv1, const literalt& x)
+{
+	assert(bv0.size() == bv1.size());
+	assert(bv0.size() > 0);
+	assert(!bv0[0].is_constant());
+
+	// not sure why the unused variables is needed
+	unsigned unused_var_num = (bv1[0].is_constant() ? 2 : bv0.size() + 1);
+	for (unsigned m = 0; m < 2; m++)
+		new_variable();
+
+	bvt lits;
+	for (unsigned i = 0; i < bv0.size(); i++)
+	{
+		lits.clear();
+		lits.reserve(3);
+		lits.push_back(x);
+		lits.push_back(bv0[i]);
+		lits.push_back(lnot(bv1[i]));
+		lcnf(lits);
+
+		lits.clear();
+		lits.reserve(3);
+		lits.push_back(x);
+		lits.push_back(lnot(bv0[i]));
+		lits.push_back(bv1[i]);
+		lcnf(lits);
+	}
+	return x;
+}
+
+/*******************************************************************\
+
 Function: cnft::limplies
 
   Inputs:

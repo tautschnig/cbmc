@@ -10,6 +10,7 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 #define CPROVER_MEMORY_MODEL_H
 
 #include "partial_order_concurrency.h"
+#include "../cbmc/eog.h"
 
 class memory_model_baset:public partial_order_concurrencyt
 {
@@ -33,10 +34,16 @@ protected:
     std::pair<event_it, event_it>, symbol_exprt> choice_symbolst;
   choice_symbolst choice_symbols;
 
-  void read_from(symex_target_equationt &equation);
-  
   // maps thread numbers to an event list
   typedef std::map<unsigned, event_listt> per_thread_mapt;
+
+  bool valid_mutex(symex_target_equationt &equation);
+
+  void read_from(symex_target_equationt &equation);
+  
+  void read_from_item(const event_it& r, symex_target_equationt &equation, int thread_num);
+
+  void read_from_backup(symex_target_equationt &equation);
 };
 
 #endif

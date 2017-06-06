@@ -37,7 +37,7 @@ Function: mmio
 
 void mmio(
   value_setst &value_sets,
-  const symbol_tablet &symbol_table,
+  symbol_tablet &symbol_table,
   goto_programt &goto_program)
 {
   namespacet ns(symbol_table);

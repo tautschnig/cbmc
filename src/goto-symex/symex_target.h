@@ -9,14 +9,24 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_GOTO_SYMEX_SYMEX_TARGET_H
 #define CPROVER_GOTO_SYMEX_SYMEX_TARGET_H
 
-#include <goto-programs/goto_program.h>
+#include <list>
+#include <map>
+#include <string>
+
+#include "../goto-programs/goto_program.h"
+#include "../goto-programs/goto_program_template.h"
+#include "../util/expr.h"
+#include "../util/irep.h"
 
 class symbol_exprt;
 
 class symex_targett
 {
 public:
-  symex_targett()
+  symex_targett():
+	  array_thread_id(false),
+	  thread_malloc(false),
+	  aux_enable(true)
   {
   }
 
@@ -51,14 +61,23 @@ public:
   };
   
   typedef enum { STATE, HIDDEN, PHI, GUARD } assignment_typet;
+  std::map<irep_idt, int> thread_id_map;
+  bool array_thread_id;
+  bool thread_malloc;
   
+  // added by ylz, denote whether aux_variables is enable in this example,
+  // it is true by default, and it is false if there exist loop_bound_exceeded
+  // in some state.source.thread_nr > 0
+  bool aux_enable;
+
   // read event
   virtual void shared_read(
     const exprt &guard,
     const symbol_exprt &ssa_rhs,
     const symbol_exprt &original_rhs,
     unsigned atomic_section_id,
-    const sourcet &source)=0;
+    const sourcet &source,
+	const bool array_assign = false)=0;
 
   // write event
   virtual void shared_write(
@@ -97,7 +116,8 @@ public:
   virtual void function_call(
     const exprt &guard,
     const irep_idt &identifier,
-    const sourcet &source)=0;
+    const sourcet &source,
+	const irep_idt pthread_join_id = "")=0;
 
   // record return from a function
   virtual void function_return(

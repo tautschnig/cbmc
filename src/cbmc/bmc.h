@@ -25,19 +25,24 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-symex/symex_target_equation.h>
 
 #include "symex_bmc.h"
+#include "eog.h"
 
 class bmct:public messaget
 {
+	typedef std::vector<event_it> event_listt;
+	typedef std::map<unsigned, event_listt> per_thread_mapt;
+
 public:
   bmct(
     const optionst &_options,
-    const symbol_tablet &_symbol_table,
+    symbol_tablet &_symbol_table,
     message_handlert &_message_handler):
     messaget(_message_handler),
     options(_options),
     ns(_symbol_table, new_symbol_table),
     equation(ns),
     symex(ns, new_symbol_table, equation),
+    gf_ptr(0),
     ui(ui_message_handlert::PLAIN)
   {
     symex.constant_propagation=options.get_bool_option("propagation");
@@ -61,12 +66,15 @@ protected:
   namespacet ns;
   symex_target_equationt equation;
   symex_bmct symex;
+  const goto_functionst *gf_ptr;
  
   // use gui format
   language_uit::uit ui;
   
   virtual decision_proceduret::resultt
     run_decision_procedure(prop_convt &prop_conv);
+
+  virtual decision_proceduret::resultt incremental_solve(prop_convt &prop_conv, exprt& constraint);
     
   virtual bool decide(prop_convt &prop_conv);
     
@@ -108,6 +116,20 @@ protected:
   void cover_assertions(
     const goto_functionst &goto_functions,
     prop_convt &solver);
+
+  // for event-order-graphs, used for CGAR
+  void build_eog(eog& graph, prop_convt &prop_conv);
+  void add_nodes(eog& graph, prop_convt &prop_conv, bool trace_flag = true);
+  void add_all_nodes(eog& graph);
+  void add_program_order(eog& graph, prop_convt &prop_conv, bool trace_flag = true);
+  void add_program_order_back1(eog& graph, prop_convt &prop_conv);
+  void add_read_from(eog& graph, prop_convt &prop_conv);
+  void thread_spawn(symex_target_equationt &equation,
+    const per_thread_mapt &per_thread_map, prop_convt &prop_conv,eog& graph, bool trace_flag = true);
+  bool is_true_counterexample(prop_convt &prop_conv, eog& graph);
+  bool compute_refine_constraint(eog& graph, exprt& constraint);
+  bool valid_mutex(symex_target_equationt &equation);
+  void compute_init_constraint(prop_convt &prop_conv, exprt& constraint);
 };
 
 #endif

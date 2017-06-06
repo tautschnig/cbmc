@@ -10,6 +10,7 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 #include <util/i2string.h>
 
 #include "memory_model_sc.h"
+#include <iostream>
 
 /*******************************************************************\
 
@@ -27,13 +28,16 @@ void memory_model_sct::operator()(symex_target_equationt &equation)
 {
   print(8, "Adding SC constraints");
 
-  build_event_lists(equation);
-  build_clock_type(equation);
-  
-  read_from(equation);
-  write_serialization_external(equation);
-  program_order(equation);
-  from_read(equation);
+  build_event_lists(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
+  build_clock_type(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
+  set_events_ssa_id(equation);
+
+  read_from(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
+
+//  read_from_backup(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
+//  write_serialization_external(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
+//  program_order(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
+//  from_read(equation); std::cout << equation.SSA_steps.size() << " steps" << "\n";
 }
 
 /*******************************************************************\
@@ -153,6 +157,7 @@ void memory_model_sct::thread_spawn(
         ;
 
       if(n_it!=next_thread->second.end())
+    	  std::cout << "PO: (" << e_it->ssa_lhs.get_identifier() << ", " << (*n_it)->ssa_lhs.get_identifier() << ") \n";
         add_constraint(
           equation,
           before(e_it, *n_it),
@@ -183,12 +188,14 @@ void memory_model_sct::program_order(
   thread_spawn(equation, per_thread_map);
   
   // iterate over threads
-
+  int num = 0;
+  int tt = 0;
   for(per_thread_mapt::const_iterator
       t_it=per_thread_map.begin();
       t_it!=per_thread_map.end();
       t_it++)
   {
+//	  std::cout << "======== begin thread " << num << "===========\n";
     const event_listt &events=t_it->second;
     
     // iterate over relevant events in the thread
@@ -210,14 +217,17 @@ void memory_model_sct::program_order(
         continue;
       }
 
-      add_constraint(
-        equation,
-        before(previous, *e_it),
-        "po",
-        (*e_it)->source);
+//	  std::cout << tt << "PO: (" << previous->ssa_lhs.get_identifier() << ", " << (*e_it)->ssa_lhs.get_identifier() << ") \n";
+
+	  add_constraint(
+		equation,
+		before(previous, *e_it),
+		"po",
+		(*e_it)->source);
 
       previous=*e_it;
     }
+//    std::cout << "======== end thread " << num++ << "===========\n";
   }
 }
 
@@ -386,4 +396,58 @@ void memory_model_sct::from_read(symex_target_equationt &equation)
     }
   }
 }
+
+void memory_model_sct::get_symbols(const exprt &expr, std::vector<symbol_exprt>& symbols)
+{
+  forall_operands(it, expr)
+    get_symbols(*it, symbols);
+
+  if(expr.id()==ID_symbol)
+    symbols.push_back(to_symbol_expr(expr));
+}
+
+void memory_model_sct::set_events_ssa_id(symex_target_equationt &equation)
+{
+	int id = 0;
+	for(eventst::iterator
+	      e_it=equation.SSA_steps.begin();
+	      e_it!=equation.SSA_steps.end();
+	      e_it++)
+	  {
+	    if(e_it->is_assignment())
+	    {
+	    	 unsigned event_num = 0;
+	    	 std::vector<symbol_exprt> symbols;
+	    	 get_symbols(e_it->cond_expr, symbols);
+	    	 for (unsigned i = 0; i < symbols.size(); i++)
+	    	 {
+	    		 unsigned result = set_single_event_ssa_id(equation, symbols[i], id);
+	    		 event_num += result;
+	    	 }
+	    	 if (event_num > 0)
+	    		 e_it->event_flag = true;
+	    }
+	    id++;
+	  }
+}
+
+unsigned memory_model_sct::set_single_event_ssa_id(symex_target_equationt &equation, symbol_exprt event, int id)
+{
+	for(eventst::iterator
+		e_it=equation.SSA_steps.begin();
+		e_it!=equation.SSA_steps.end();
+		e_it++)
+	{
+		if ((e_it->is_shared_read() || e_it->is_shared_write()))
+		{
+			if (e_it->ssa_lhs.get_identifier() == event.get_identifier())
+            {
+				e_it->appear_ssa_id = id;
+				return 1;
+		  }
+		}
+	}
+	return 0;
+}
+
 

@@ -39,6 +39,7 @@ protected:
   const namespacet &ns;
 
   typedef std::vector<event_it> event_listt;
+  typedef std::vector<symbol_exprt> choice_listt;
   
   // lists of reads and writes per address
   struct a_rect
@@ -48,6 +49,8 @@ protected:
   
   typedef std::map<irep_idt, a_rect> address_mapt;
   address_mapt address_map;
+  typedef std::map<irep_idt, choice_listt> array_mapt;
+  array_mapt array_map;
   
   void build_event_lists(symex_target_equationt &);
   void add_init_writes(symex_target_equationt &);
@@ -83,6 +86,7 @@ protected:
   // the partial order constraint for two events
   exprt before(event_it e1, event_it e2, unsigned axioms);
   virtual exprt before(event_it e1, event_it e2)=0;
+  exprt before_ssa(unsigned ssa_id1, unsigned ssa_id2); // ylz08
 
   // is it an assignment for a shared variable?
   bool is_shared_write(event_it e) const;

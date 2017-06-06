@@ -35,6 +35,8 @@ public:
   virtual literalt lnand(literalt a, literalt b)=0;
   virtual literalt lnor(literalt a, literalt b)=0;
   virtual literalt lequal(literalt a, literalt b)=0;
+  virtual literalt lequal(const bvt &bv0, const bvt &bv1)=0;
+  virtual literalt lequal(const bvt &bv0, const bvt &bv1, const literalt& x)=0;
   virtual literalt limplies(literalt a, literalt b)=0;
   virtual literalt lselect(literalt a, literalt b, literalt c)=0; // a?b:c
   virtual void set_equal(literalt a, literalt b);

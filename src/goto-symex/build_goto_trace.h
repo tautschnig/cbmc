@@ -20,4 +20,10 @@ void build_goto_trace(
   const namespacet &ns,
   goto_tracet &goto_trace);
 
+void build_goto_trace_backup(
+  const symex_target_equationt &target,
+  const prop_convt &prop_conv,
+  const namespacet &ns,
+  goto_tracet &goto_trace);
+
 #endif

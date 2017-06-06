@@ -285,49 +285,98 @@ literalt bv_utilst::carry(literalt a, literalt b, literalt c)
     IFF
     (x=((a AND b) OR (a AND c) OR (b AND c)));
   */
+// modified by ylz
+//  clause.resize(3);
+//  clause[0]=a;
+//  clause[1]=b;
+//  clause[2]=neg(x);
+//  prop.lcnf(clause);
+//
+//  clause.resize(4);
+//  clause[0]=a;
+//  clause[1]=neg(b);
+//  clause[2]=c;
+//  clause[3]=neg(x);
+//  prop.lcnf(clause);
+//
+//  clause.resize(4);
+//  clause[0]=a;
+//  clause[1]=neg(b);
+//  clause[2]=neg(c);
+//  clause[3]=x;
+//  prop.lcnf(clause);
+//
+//  clause.resize(4);
+//  clause[0]=neg(a);
+//  clause[1]=b;
+//  clause[2]=c;
+//  clause[3]=neg(x);
+//  prop.lcnf(clause);
+//
+//  clause.resize(4);
+//  clause[0]=neg(a);
+//  clause[1]=b;
+//  clause[2]=neg(c);
+//  clause[3]=x;
+//  prop.lcnf(clause);
+//
+//  clause.resize(3);
+//  clause[0]=neg(a);
+//  clause[1]=neg(b);
+//  clause[2]=x;
+//  prop.lcnf(clause);
 
-  clause.resize(3);
-  clause[0]=a;
-  clause[1]=b;
-  clause[2]=neg(x);
-  prop.lcnf(clause);
-
-  clause.resize(4);
-  clause[0]=a;
-  clause[1]=neg(b);
-  clause[2]=c;
-  clause[3]=neg(x);
-  prop.lcnf(clause);
-
-  clause.resize(4);
-  clause[0]=a;
-  clause[1]=neg(b);
-  clause[2]=neg(c);
-  clause[3]=x;
-  prop.lcnf(clause);
-
-  clause.resize(4);
-  clause[0]=neg(a);
-  clause[1]=b;
-  clause[2]=c;
-  clause[3]=neg(x);
-  prop.lcnf(clause);
-
-  clause.resize(4);
-  clause[0]=neg(a);
-  clause[1]=b;
-  clause[2]=neg(c);
-  clause[3]=x;
-  prop.lcnf(clause);
-
+  clause.clear();
   clause.resize(3);
   clause[0]=neg(a);
   clause[1]=neg(b);
   clause[2]=x;
   prop.lcnf(clause);
 
-  return x;
+  if (!b.is_true()) {
+	  clause.clear();
+	  clause.resize(3);
+	  clause[0]=neg(a);
+	  clause[1]=neg(c);
+	  clause[2]=x;
+	  prop.lcnf(clause);
+  }
 
+  if (!a.is_true()) {
+	  clause.clear();
+	  clause.resize(3);
+	  clause[0]=neg(b);
+	  clause[1]=neg(c);
+	  clause[2]=x;
+	  prop.lcnf(clause);
+  }
+
+   clause.clear();
+   clause.resize(3);
+   clause[0]=a;
+   clause[1]=b;
+   clause[2]=neg(x);
+   prop.lcnf(clause);
+
+   if (!b.is_false()) {
+	   clause.clear();
+	   clause.resize(3);
+	   clause[0]=a;
+	   clause[1]=c;
+	   clause[2]=neg(x);
+	   prop.lcnf(clause);
+   }
+
+   if (!a.is_false()) {
+	   clause.clear();
+	   clause.resize(3);
+	   clause[0]=b;
+	   clause[1]=c;
+	   clause[2]=neg(x);
+	   prop.lcnf(clause);
+   }
+
+  return x;
   #else
 
   bvt tmp;
@@ -338,6 +387,91 @@ literalt bv_utilst::carry(literalt a, literalt b, literalt c)
 
   return prop.lor(tmp);
   #endif
+}
+
+/*******************************************************************\
+
+Function: bv_utilst::adder_bit
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+literalt bv_utilst::adder_bit(literalt a, literalt b, literalt c)
+{
+  bvt clause;
+
+  literalt x=prop.new_variable();
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=x;
+  clause[1]=a;
+  clause[2]=b;
+  clause[3]=neg(c);
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=x;
+  clause[1]=a;
+  clause[2]=neg(b);
+  clause[3]=c;
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=x;
+  clause[1]=neg(a);
+  clause[2]=b;
+  clause[3]=c;
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=x;
+  clause[1]=neg(a);
+  clause[2]=neg(b);
+  clause[3]=neg(c);
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=neg(x);
+  clause[1]=a;
+  clause[2]=b;
+  clause[3]=c;
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=neg(x);
+  clause[1]=a;
+  clause[2]=neg(b);
+  clause[3]=neg(c);
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=neg(x);
+  clause[1]=neg(a);
+  clause[2]=b;
+  clause[3]=neg(c);
+  prop.lcnf(clause);
+
+  clause.clear();
+  clause.resize(4);
+  clause[0]=neg(x);
+  clause[1]=neg(a);
+  clause[2]=neg(b);
+  clause[3]=c;
+  prop.lcnf(clause);
+
+  return x;
 }
 
 /*******************************************************************\
@@ -366,12 +500,13 @@ void bv_utilst::adder(
   {
     literalt op0_bit=sum[i];
     literalt op1_bit=op[i];
-
-    sum[i]=prop.lxor(
-           prop.lxor(op0_bit, op1_bit), carry_out);
+//    sum[i]=prop.lxor(
+//           prop.lxor(op0_bit, op1_bit), carry_out);
+    sum[i]=adder_bit(op0_bit, op1_bit, carry_out);
 
     carry_out=carry(op0_bit, op1_bit, carry_out);
   }
+
 }
 
 /*******************************************************************\
@@ -1367,6 +1502,8 @@ Function: bv_utilst::equal
 literalt bv_utilst::equal(const bvt &op0, const bvt &op1)
 {
   assert(op0.size()==op1.size());
+  // modified by ylz
+//  return prop.lequal(op0, op1);
 
   bvt equal_bv;
   equal_bv.resize(op0.size());

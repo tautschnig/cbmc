@@ -738,6 +738,50 @@ void boolbvt::set_to(const exprt &expr, bool value)
     }
   }
 
+  // modified by ylz, for constraint !choice || r = w
+  if (expr.id() == ID_or && expr.operands().size() == 2 &&
+	  expr.op0().id() == ID_not && expr.op0().op0().id() == ID_symbol &&
+	  expr.op1().id() == ID_equal)
+  {
+	  literalt x = convert(expr.op0());
+	  const bvt &bv0=convert_bv(to_equal_expr(expr.op1()).lhs());
+	  const bvt &bv1=convert_bv(to_equal_expr(expr.op1()).rhs());
+	  if (bv0.size() > 0)
+	  {
+		  prop.lequal(bv0, bv1, x);
+		  return;
+	  }
+  }
+
+  // modified by ylz, for constraint !choice || r = w && guard
+  if (expr.id() == ID_or && expr.operands().size() == 2 &&
+	  expr.op0().id() == ID_not && expr.op0().op0().id() == ID_symbol &&
+	  expr.op1().id() == ID_and && expr.op1().op0().id() == ID_equal)
+  {
+	  literalt x = convert(expr.op0());
+
+	  const bvt &bv0=convert_bv(to_equal_expr(expr.op1().op0()).lhs());
+	  const bvt &bv1=convert_bv(to_equal_expr(expr.op1().op0()).rhs());
+
+	  if (bv0.size() > 0)
+		  prop.lequal(bv0, bv1, x);
+
+	  bvt bv;
+	  unsigned i = (bv0.size() > 0 ? 1 : 0);
+	  for (; i < expr.op1().operands().size(); i++)
+	  {
+		  const exprt& tmp = expr.op1().operands()[i];
+
+		  literalt g = convert(tmp);
+
+		  bv.clear();
+		  bv.push_back(x);
+		  bv.push_back(g);
+		  prop.lcnf(bv);
+	  }
+	  return;
+  }
+
   return SUB::set_to(expr, value);
 }
 

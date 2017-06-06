@@ -795,3 +795,45 @@ void exprt::visit(const_expr_visitort &visitor) const
       stack.push(&(*it));
   }
 }
+
+/*******************************************************************\
+
+Function: exprt::is_symbol
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+bool exprt::is_symbol() const
+{
+	return id() == "symbol";
+}
+
+/*******************************************************************\
+
+Function: exprt::get_symbols
+
+  Inputs:
+
+ Outputs:
+
+ Purpose: get all symbols of a exprt
+
+\*******************************************************************/
+void exprt::get_symbols(std::vector<exprt>& symbols) const
+{
+	if (is_symbol()) {
+		symbols.push_back(*this);
+	}
+	else {
+		if (has_operands())	{
+			operandst ops = operands();
+			for (unsigned i = 0; i < ops.size(); i++) {
+				ops[i].get_symbols(symbols);
+			}
+		}
+	}
+}

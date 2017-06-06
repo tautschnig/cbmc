@@ -867,7 +867,7 @@ void c_typecheck_baset::typecheck_compound_body(symbolt &symbol)
       ) // blank
   {
     if(it->get_is_bit_field() &&
-       it->get_bit_field_bits()==0)
+       it->get_bit_field_bits(*this)==0)
       it=components.erase(it);
     else
       it++;
@@ -1127,6 +1127,7 @@ void c_typecheck_baset::typecheck_c_enum_type(typet &type)
           // ok, overwrite the default subtype
           symbol.type.id(ID_c_enum);
           symbol.type.subtype()=type.subtype();
+          symbol.type.get_sub()=enum_tag_symbol.type.get_sub();
         }
         else if(symbol.type.id()==ID_c_enum)
         {

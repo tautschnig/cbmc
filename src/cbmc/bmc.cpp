@@ -82,12 +82,19 @@ void bmct::error_trace(const prop_convt &prop_conv)
     }
   }
   #endif
-  
+  std::ofstream output;
   switch(ui)
   {
   case ui_message_handlert::PLAIN:
     std::cout << "\n" << "Counterexample:" << "\n";
     show_goto_trace(std::cout, ns, goto_trace);
+
+    // write into counterexample.witness
+    output.open("counterexample.witness", std::ios::out);
+    output << "\n" << "Counterexample:" << "\n";
+    show_goto_trace(output, ns, goto_trace);
+    output.close();
+
     break;
   
   case ui_message_handlert::XML_UI:
@@ -158,11 +165,42 @@ bmct::run_decision_procedure(prop_convt &prop_conv)
   decision_proceduret::resultt dec_result=prop_conv.dec_solve();
   // output runtime
 
-  {
-    absolute_timet sat_stop=current_time();
-    status() << "Runtime decision procedure: "
+  absolute_timet sat_stop=current_time();
+  status() << "Runtime decision procedure: "
              << (sat_stop-sat_start) << "s" << eom;
-  }
+
+  return dec_result;
+}
+
+
+/*******************************************************************\
+
+Function: bmct::run_decision_procedure
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+decision_proceduret::resultt
+bmct::incremental_solve(prop_convt &prop_conv, exprt& constraint)
+{
+  // stop the time
+  absolute_timet sat_start=current_time();
+
+  prop_conv.set_to_true(constraint);
+
+  status() << "Running " << prop_conv.decision_procedure_text() << eom;
+
+  decision_proceduret::resultt dec_result=prop_conv.dec_solve();
+  // output runtime
+
+  absolute_timet sat_stop=current_time();
+  status() << "Runtime decision procedure: "
+             << (sat_stop-sat_start) << "s" << eom;
 
   return dec_result;
 }
@@ -309,6 +347,8 @@ Function: bmct::run
 
 bool bmct::run(const goto_functionst &goto_functions)
 {
+  gf_ptr=&goto_functions;
+
   const std::string mm=options.get_option("mm");
   std::auto_ptr<memory_model_baset> memory_model(0);
   if(mm.empty() || mm=="sc")
@@ -328,13 +368,36 @@ bool bmct::run(const goto_functionst &goto_functions)
 
   symex.last_source_location.make_nil();
 
+  // 核心全在这个try块里面
   try
   {
     // get unwinding info
     setup_unwind();
 
+//    goto_functions.output(ns, std::cout);
+
+    // preprocess, if pointer pt is global, and pt = &data, then set data to be global
+    symex_target_equationt equation_pre(ns);
+    symex_bmct symex_pre(ns, new_symbol_table, equation_pre);
+    symex_pre.set_unwind_limit(1);
+    symex_pre(goto_functions);
+
+    // the program has arrays, set the unwind depth to be 2
+    int max_limit = 2;
+    if (symex_pre.has_array)
+    	max_limit = 2;
+    else if (symex_pre.has_pthread_cond_wait)
+    	max_limit = 6;
+    else if (goto_functions.for_unwind_limit > 0) {
+    	max_limit = goto_functions.for_unwind_limit;
+    }
+    std::cout << "--unwind " << max_limit << "\n";
+    symex.set_unwind_limit(max_limit);
+
     // perform symbolic execution
     symex(goto_functions);
+
+    equation.slice();
 
     // add a partial ordering, if required    
     if(equation.has_threads())
@@ -342,6 +405,11 @@ bool bmct::run(const goto_functionst &goto_functions)
       memory_model->set_message_handler(get_message_handler());
       (*memory_model)(equation);
     }
+    statistics() << "size of program expression: "
+                 << equation.SSA_steps.size()
+                 << " steps" << eom;
+
+//	equation.output(std::cout);
   }
 
   catch(std::string &error_str)

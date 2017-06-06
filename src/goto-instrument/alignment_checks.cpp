@@ -25,7 +25,7 @@ Function: print_struct_alignment_problems
 \*******************************************************************/
 
 void print_struct_alignment_problems(
-  const symbol_tablet &symbol_table,
+  symbol_tablet &symbol_table,
   std::ostream &out)
 {
   forall_symbols(it, symbol_table.symbols)

@@ -32,6 +32,7 @@ public:
     symbol_table(_symbol_table),
     ns(_symbol_table),
     temporary_counter(0),
+	for_unwind_limit(0),
     tmp_symbol_prefix("goto_convertt::")
   {
   }
@@ -40,6 +41,8 @@ public:
   {
   }
   
+  int for_unwind_limit;
+
 protected:
   symbol_tablet &symbol_table;
   namespacet ns;
@@ -209,6 +212,9 @@ protected:
 
   void copy(const codet &code, goto_program_instruction_typet type, goto_programt &dest);
   
+  // added by ylz
+  void update_for_unwind_limit(const code_fort &code);
+
   //
   // exceptions
   //

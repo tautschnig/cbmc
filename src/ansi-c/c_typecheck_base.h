@@ -39,7 +39,7 @@ public:
 
   c_typecheck_baset(
     symbol_tablet &_symbol_table1,
-    const symbol_tablet &_symbol_table2,
+    symbol_tablet &_symbol_table2,
     const std::string &_module,
     message_handlert &_message_handler):
     typecheckt(_message_handler),

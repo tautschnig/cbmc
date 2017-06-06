@@ -217,7 +217,7 @@ public:
 
   // performs renaming _up to_ the given level
   irep_idt rename_identifier(const irep_idt &identifier, const namespacet &ns, levelt level=L2);
-  void rename(exprt &expr, const namespacet &ns, levelt level=L2);
+  void rename(exprt &expr, const namespacet &ns, levelt level=L2, const bool array_assign = false);
   void rename(typet &type, const namespacet &ns, levelt level=L2);
   
   void rename_address(exprt &expr, const namespacet &ns, levelt level);
@@ -388,11 +388,13 @@ public:
   typedef std::vector<threadt> threadst;
   threadst threads;
   
-  bool l2_thread_read_encoding(symbol_exprt &expr, const namespacet &ns);
+  bool l2_thread_read_encoding(symbol_exprt &expr, const namespacet &ns, const bool array_assign = false);
   bool l2_thread_write_encoding(const symbol_exprt &expr, const namespacet &ns);
 
   void switch_to_thread(unsigned t);
   bool record_events;
+
+  std::set<unsigned> cex_graph_nodes;
 };
 
 #endif

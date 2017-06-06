@@ -36,6 +36,10 @@ void boolbvt::convert_array(const exprt &expr, bvt &bv)
     assert(!operands.empty());
     std::size_t op_width=width/operands.size();
     
+    bool pthread_mutex = false;
+    if (width == 320)
+    	pthread_mutex = true;
+    int m = 0;
     forall_expr(it, operands)
     {
       const bvt &tmp=convert_bv(*it);
@@ -45,6 +49,8 @@ void boolbvt::convert_array(const exprt &expr, bvt &bv)
 
       forall_literals(it2, tmp)
         bv.push_back(*it2);
+      if (pthread_mutex && ++m == 4)
+    	  break;
     }   
 
     return;

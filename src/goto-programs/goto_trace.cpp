@@ -157,7 +157,8 @@ std::string counterexample_value_binary(
        type.id()==ID_fixedbv ||
        type.id()==ID_floatbv ||
        type.id()==ID_pointer ||
-       type.id()==ID_c_enum)
+       type.id()==ID_c_enum ||
+       type.id()==ID_c_enum_tag)
     {
       return expr.get_string(ID_value);
     }
@@ -303,7 +304,7 @@ Function: show_goto_trace
 
 \*******************************************************************/
 
-void show_goto_trace(
+void show_goto_trace_backup(
   std::ostream &out,
   const namespacet &ns,
   const goto_tracet &goto_trace)
@@ -440,6 +441,141 @@ void show_goto_trace(
       
     default:
       assert(false);
+    }
+  }
+}
+
+/*******************************************************************\
+
+Function: show_goto_trace
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+void show_goto_trace(
+  std::ostream &out,
+  const namespacet &ns,
+  const goto_tracet &goto_trace)
+{
+  unsigned prev_step_nr=0;
+  bool first_step=true;
+
+  for(goto_tracet::stepst::const_iterator
+      it=goto_trace.steps.begin();
+      it!=goto_trace.steps.end();
+      it++)
+  {
+    switch(it->type)
+    {
+    case goto_trace_stept::ASSERT:
+      if(!it->cond_value)
+      {
+        out << "\n";
+        out << "Violated property:" << "\n";
+        if(!it->pc->source_location.is_nil())
+          out << "  " << it->pc->source_location << "\n";
+        out << "  " << it->comment << "\n";
+
+        if(it->pc->is_assert())
+          out << "  " << from_expr(ns, "", it->pc->guard) << "\n";
+
+        out << "\n";
+      }
+      break;
+
+    case goto_trace_stept::ASSUME:
+      break;
+
+    case goto_trace_stept::LOCATION:
+      break;
+
+    case goto_trace_stept::ASSIGNMENT:
+      if(it->pc->is_assign() ||
+         it->pc->is_return() || // returns have a lhs!
+         it->pc->is_function_call() ||
+         (it->pc->is_other() && it->lhs_object.is_not_nil()))
+      {
+        if(prev_step_nr!=it->step_nr || first_step)
+        {
+          first_step=false;
+          prev_step_nr=it->step_nr;
+          show_state_header(out, *it, it->pc->source_location, it->step_nr);
+        }
+
+        // see if the full lhs is something clean
+        if(is_index_member_symbol(it->full_lhs))
+          counterexample_value(out, ns, it->lhs_object, it->full_lhs, it->full_lhs_value);
+        else
+          counterexample_value(out, ns, it->lhs_object, it->lhs_object, it->lhs_object_value);
+      }
+      break;
+
+    case goto_trace_stept::DECL:
+      if(prev_step_nr!=it->step_nr || first_step)
+      {
+        first_step=false;
+        prev_step_nr=it->step_nr;
+        show_state_header(out, *it, it->pc->source_location, it->step_nr);
+      }
+
+      counterexample_value(out, ns, it->lhs_object, it->full_lhs, it->full_lhs_value);
+      break;
+
+    case goto_trace_stept::OUTPUT:
+      if(it->formatted)
+      {
+        printf_formattert printf_formatter(ns);
+        printf_formatter(id2string(it->format_string), it->io_args);
+        printf_formatter.print(out);
+        out << "\n";
+      }
+      else
+      {
+        show_state_header(out, *it, it->pc->source_location, it->step_nr);
+        out << "  OUTPUT " << it->io_id << ":";
+
+        for(std::list<exprt>::const_iterator
+            l_it=it->io_args.begin();
+            l_it!=it->io_args.end();
+            l_it++)
+        {
+          if(l_it!=it->io_args.begin()) out << ";";
+          out << " " << from_expr(ns, "", *l_it);
+
+          // the binary representation
+          out << " (" << counterexample_value_binary(*l_it, ns) << ")";
+        }
+
+        out << "\n";
+      }
+      break;
+
+    case goto_trace_stept::INPUT:
+      show_state_header(out, *it, it->pc->source_location, it->step_nr);
+      out << "  INPUT " << it->io_id << ":";
+
+      for(std::list<exprt>::const_iterator
+          l_it=it->io_args.begin();
+          l_it!=it->io_args.end();
+          l_it++)
+      {
+        if(l_it!=it->io_args.begin()) out << ";";
+        out << " " << from_expr(ns, "", *l_it);
+
+        // the binary representation
+        out << " (" << counterexample_value_binary(*l_it, ns) << ")";
+      }
+
+      out << "\n";
+      break;
+
+    default:
+      break;
     }
   }
 }

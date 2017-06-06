@@ -16,7 +16,7 @@ class interpretert
 {
 public:
   interpretert(
-    const symbol_tablet &_symbol_table,
+    symbol_tablet &_symbol_table,
     const goto_functionst &_goto_functions):
     symbol_table(_symbol_table),
     ns(_symbol_table),

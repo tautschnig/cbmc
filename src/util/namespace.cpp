@@ -281,6 +281,48 @@ bool namespacet::lookup(
 
 /*******************************************************************\
 
+Function: namespacet::lookup
+
+  Inputs:
+
+ Outputs:
+
+ Purpose:
+
+\*******************************************************************/
+
+bool namespacet::get_symbol(
+  const irep_idt &name,
+  symbolt *&symbol) const
+{
+	symbol_tablet::symbolst::iterator it;
+  if(symbol_table1!=NULL)
+  {
+	  for (it = symbol_table1->symbols.begin(); it != symbol_table1->symbols.end(); it++)
+	  {
+		  if (it->first == name) {
+			  symbol=&(it->second);
+			  return false;
+		  }
+	  }
+  }
+
+  if(symbol_table2!=NULL)
+  {
+	  for (it = symbol_table2->symbols.begin(); it != symbol_table2->symbols.end(); it++)
+	  {
+		  if (it->first == name) {
+			  symbol=&(it->second);
+			  return false;
+		  }
+	  }
+  }
+
+  return true;
+}
+
+/*******************************************************************\
+
 Function: multi_namespacet::get_max
 
   Inputs:

@@ -27,6 +27,8 @@ public:
   virtual literalt lnand(literalt a, literalt b);
   virtual literalt lnor(literalt a, literalt b);
   virtual literalt lequal(literalt a, literalt b);
+  virtual literalt lequal(const bvt &bv0, const bvt &bv1);
+  virtual literalt lequal(const bvt &bv0, const bvt &bv1, const literalt& x);
   virtual literalt limplies(literalt a, literalt b);
   virtual literalt lselect(literalt a, literalt b, literalt c); // a?b:c
   virtual literalt new_variable();

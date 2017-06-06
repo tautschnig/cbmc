@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/base_type.h>
 #include <util/std_expr.h>
 #include <util/symbol_table.h>
+#include <iostream>
 
 #include <ansi-c/c_types.h>
 
@@ -223,6 +224,9 @@ void goto_symext::symex_function_call_symbol(
 
   const irep_idt &identifier=
     to_symbol_expr(code.function()).get_identifier();
+
+  if (identifier == "c::pthread_cond_wait")
+	  has_pthread_cond_wait = true;
     
   if(identifier=="c::CBMC_trace")
   {
@@ -296,7 +300,36 @@ void goto_symext::symex_function_call_code(
   }
   
   // record the call
-  target.function_call(state.guard.as_expr(), identifier, state.source);
+  if (identifier == "c::pthread_create")
+  {
+	  std::string id = from_expr(ns, "", (*(call.arguments().begin())));
+	  if (id[0] == '&')
+		  id = id.substr(1, id.size() - 1);
+	  target.thread_id_map[irep_idt(id)] = state.threads.size();
+	  target.function_call(state.guard.as_expr(), identifier, state.source);
+  }
+
+  else if (identifier == "c::pthread_join")
+  {
+	  std::string id = from_expr(ns, "", (*(call.arguments().begin())));
+
+	  if (id.find('[', 0) != std::string::npos)
+		  target.array_thread_id = true;
+
+	  target.function_call(state.guard.as_expr(), identifier, state.source, irep_idt(id));
+  }
+  else
+  {
+	  target.function_call(state.guard.as_expr(), identifier, state.source);
+  }
+
+  // added by ylz08
+  if (identifier == "c::__VERIFIER_atomic_begin" || identifier == "c::__VERIFIER_atomic_end" ||
+	  identifier == "c::pthread_mutex_lock" || identifier == "c::pthread_mutex_unlock")
+  {
+	  state.source.pc++;
+	  return;
+  }
 
   if(!goto_function.body_available)
   {
@@ -320,9 +353,24 @@ void goto_symext::symex_function_call_code(
   
   // read the arguments -- before the locality renaming
   exprt::operandst arguments=call.arguments();
-  for(unsigned i=0; i<arguments.size(); i++)
-    state.rename(arguments[i], ns);
+//  for(unsigned i=0; i<arguments.size(); i++)
+//    state.rename(arguments[i], ns);
   
+  // added by ylz08: if the fourth argument of pthread_create is a pointer, set it to be global
+  if (identifier == "c::pthread_create")
+  {
+    assert(arguments.size() == 4);
+    exprt arg = arguments[3];
+    if (arg.id() == ID_symbol || (arg.id() == ID_typecast && arg.op0().id() == ID_symbol)) {
+      if (arg.id() != ID_symbol)
+        arg = arg.op0();
+      const symbolt& symbol = ns.lookup(state.get_original_name(to_symbol_expr(arg).get_identifier()));
+      if (symbol.type.id() == ID_pointer) {
+        ns.get_symbol(state.get_original_name(to_symbol_expr(arg).get_identifier())).is_thread_local = false;
+      }
+    }
+  }
+
   // produce a new frame
   assert(!state.call_stack().empty());
   goto_symex_statet::framet &frame=state.new_frame();
@@ -383,7 +431,10 @@ void goto_symext::pop_frame(statet &state)
         it=frame.local_variables.begin();
         it!=frame.local_variables.end();
         it++)
-      state.level2.remove(*it);
+    {
+      if (!ns.lookup(state.get_original_name(*it)).is_shared())
+    	  state.level2.remove(*it);
+    }
   }
   
   state.pop_frame();

@@ -21,6 +21,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "goto_symex.h"
 #include "renaming_ns.h"
 #include "symex_dereference_state.h"
+#include <iostream>
 
 /*******************************************************************\
 
@@ -280,6 +281,33 @@ void goto_symext::dereference_rec(
     exprt tmp2=dereference.dereference(
       tmp1, guard, write?value_set_dereferencet::WRITE:value_set_dereferencet::READ);
     //std::cout << "**** " << from_expr(ns, "", tmp2) << std::endl;
+
+    exprt tmp3 = (tmp2.id()==ID_byte_extract_little_endian ? tmp2.op0() : tmp2);
+    if(tmp1.id()==ID_symbol && !tmp1.has_operands() &&
+       tmp3.id()==ID_symbol && !tmp3.has_operands())
+    {
+		const irep_idt identifier_tmp1 = to_symbol_expr(tmp1).get_identifier();
+		const irep_idt identifier_tmp3 = to_symbol_expr(tmp3).get_identifier();
+
+		if (ns.lookup(state.get_original_name(identifier_tmp1)).is_shared() ||
+			ns.lookup(state.get_original_name(identifier_tmp1)).is_transitive_global) {
+			ns.get_symbol(state.get_original_name(identifier_tmp3)).is_thread_local = false;
+		}
+    }
+    if(tmp1.id()==ID_symbol && !tmp1.has_operands() && tmp3.id()==ID_if)
+	{
+    	exprt tmp4 = (tmp3.op1().id() == ID_byte_extract_little_endian ? tmp3.op1().op0() : tmp3.op1());
+    	exprt tmp5 = (tmp3.op2().id() == ID_byte_extract_little_endian ? tmp3.op2().op0() : tmp3.op2());
+		const irep_idt identifier_tmp1 = to_symbol_expr(tmp1).get_identifier();
+		const irep_idt identifier_tmp4 = to_symbol_expr(tmp4).get_identifier();
+		const irep_idt identifier_tmp5 = to_symbol_expr(tmp5).get_identifier();
+
+		if (ns.lookup(state.get_original_name(identifier_tmp1)).is_shared() ||
+			ns.lookup(state.get_original_name(identifier_tmp1)).is_transitive_global) {
+			ns.get_symbol(state.get_original_name(identifier_tmp4)).is_thread_local = false;
+			ns.get_symbol(state.get_original_name(identifier_tmp5)).is_thread_local = false;
+		}
+	}
 
     expr.swap(tmp2);
     

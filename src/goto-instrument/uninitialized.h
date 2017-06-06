@@ -20,7 +20,7 @@ void add_uninitialized_locals_assertions(
   goto_functionst &goto_functions);
 
 void show_uninitialized(
-  const class symbol_tablet &symbol_table,
+  class symbol_tablet &symbol_table,
   const goto_functionst &goto_functions,
   std::ostream &out);
 

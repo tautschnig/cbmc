@@ -1100,7 +1100,7 @@ Function: configt::ansi_ct::set_from_symbol_table
 
 \*******************************************************************/
 
-void configt::ansi_ct::set_from_symbol_table(const symbol_tablet &symbol_table)
+void configt::ansi_ct::set_from_symbol_table(symbol_tablet &symbol_table)
 {
   namespacet ns(symbol_table);
 

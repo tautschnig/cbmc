@@ -17,6 +17,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <goto-programs/goto_functions.h>
 
+#include <xmllang/graphml.h>
+
 #include "goto_symex_state.h"
 
 class typet;
@@ -52,6 +54,8 @@ public:
     ns(_ns),
     target(_target),
     atomic_section_counter(0),
+	has_array(false),
+	has_pthread_cond_wait(false),
     guard_identifier("goto_symex::\\guard")
   {
     options.set_option("simplify", true);
@@ -77,7 +81,7 @@ public:
   virtual void operator()(
     statet &state,
     const goto_functionst &goto_functions,
-    const goto_programt &goto_program);	   
+    const goto_programt &goto_program);
 
   /** execute just one step */
   virtual void symex_step(
@@ -96,10 +100,15 @@ public:
   optionst options;
   symbol_tablet &new_symbol_table;
 
+  bool has_array;	// added by ylz, used to record if the program has array
+  bool has_pthread_cond_wait; // added by ylz, used to record if the program has function pthread_cond_wait
+
 protected:
   const namespacet &ns;
   symex_targett &target;  
   unsigned atomic_section_counter;
+  graphmlt cex_graph;
+  std::map<unsigned, std::pair<unsigned, unsigned> > token_map;
 
   friend class symex_dereference_statet;
   
@@ -242,9 +251,10 @@ protected:
   virtual void symex_assign(statet &state, const code_assignt &code);
   
   typedef enum { VISIBLE, HIDDEN } visibilityt;
-  
-  void symex_assign_rec(statet &state, const exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility);
-  void symex_assign_symbol(statet &state, const symbol_exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility);
+  bool global_expr(statet &state, exprt expr);
+  void symex_assign_rec(statet &state, const exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility,const bool array_assign = false);
+  void symex_assign_symbol(statet &state, const symbol_exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility,const bool array_assign = false);
+  void symex_assign_symbol_malloc_size(statet &state, const symbol_exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility);
   void symex_assign_typecast(statet &state, const typecast_exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility);
   void symex_assign_array(statet &state, const index_exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility);
   void symex_assign_struct_member(statet &state, const member_exprt &lhs, const exprt &full_lhs, const exprt &rhs, guardt &guard, visibilityt visibility);

@@ -661,7 +661,7 @@ Function: interpreter
 \*******************************************************************/
 
 void interpreter(
-  const symbol_tablet &symbol_table,
+  symbol_tablet &symbol_table,
   const goto_functionst &goto_functions)
 {
   interpretert interpreter(symbol_table, goto_functions);

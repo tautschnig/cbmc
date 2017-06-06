@@ -46,9 +46,11 @@ public:
   
   virtual ~goto_convert_functionst();
 
-protected:
   goto_functionst &functions;
+
+protected:
   
+
   static bool hide(const goto_programt &goto_program);
 
   //

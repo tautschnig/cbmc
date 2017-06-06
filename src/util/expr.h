@@ -163,6 +163,10 @@ public:
   
   void visit(class expr_visitort &visitor);
   void visit(class const_expr_visitort &visitor) const;
+
+  // added by ylz
+  bool is_symbol() const;
+  void get_symbols(std::vector<exprt>& symbols) const;
 };
 
 typedef std::list<exprt> expr_listt;

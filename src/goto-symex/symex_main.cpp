@@ -12,6 +12,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/rename.h>
 #include <util/symbol_table.h>
 #include <util/replace_symbol.h>
+#include <util/string2int.h>
+#include <iostream>
 
 #include "goto_symex.h"
 
@@ -93,14 +95,18 @@ void goto_symext::symex_assume(statet &state, const exprt &cond)
 
   // not clear why different treatment for threads vs. no threads
   // is essential
+//  std::cout << state.threads.size() << " " << from_expr(ns, "", simplified_cond) << "\n";
   if(state.threads.size()==1)
   {
     exprt tmp=simplified_cond;
     state.guard.guard_expr(tmp);
     target.assumption(state.guard.as_expr(), tmp, state.source);
   }
-  else
+  else {
     state.guard.add(simplified_cond);
+    if (state.source.thread_nr > 0)
+    	target.aux_enable = false;
+  }
 
   if(state.atomic_section_id!=0 &&
      state.guard.is_false())
@@ -240,7 +246,7 @@ void goto_symext::symex_step(
 {
   #if 0
   std::cout << "\ninstruction type is " << state.source.pc->type << std::endl;
-  std::cout << "Location: " << state.source.pc->location << std::endl;
+  std::cout << "Location: " << state.source.pc->source_location << std::endl;
   std::cout << "Guard: " << from_expr(ns, "", state.guard.as_expr()) << std::endl;
   std::cout << "Code: " << from_expr(ns, "", state.source.pc->code) << std::endl;
   #endif

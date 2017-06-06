@@ -57,7 +57,7 @@ public:
   cpp_typecheckt(
     cpp_parse_treet &_cpp_parse_tree,
     symbol_tablet &_symbol_table1,
-    const symbol_tablet &_symbol_table2,
+    symbol_tablet &_symbol_table2,
     const std::string &_module,
     message_handlert &message_handler):
     c_typecheck_baset(_symbol_table1, _symbol_table2,

@@ -78,15 +78,18 @@ public:
   typedef goto_function_templatet<bodyT> goto_functiont;
   typedef std::map<irep_idt, goto_functiont> function_mapt;
   function_mapt function_map;
+  int for_unwind_limit;
   
   inline goto_functions_templatet()
   {
+	  for_unwind_limit = 0;
   }
 
   // copy constructor, don't use me!
   goto_functions_templatet(const goto_functions_templatet<bodyT> &src)
   {
     assert(src.function_map.empty());
+    for_unwind_limit = 0;
   }
   
   inline void clear()

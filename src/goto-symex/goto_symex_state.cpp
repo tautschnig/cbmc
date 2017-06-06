@@ -294,7 +294,7 @@ void goto_symex_statet::assignment(
   assert(lhs.id()==ID_symbol);
 
   // the type might need renaming
-  rename(lhs.type(), ns);
+//  rename(lhs.type(), ns);
 
   irep_idt identifier=lhs.get_identifier();
     
@@ -433,11 +433,12 @@ Function: goto_symex_statet::rename
 void goto_symex_statet::rename(
   exprt &expr,
   const namespacet &ns,
-  levelt level)
+  levelt level,
+  const bool array_assign)
 {
   // rename all the symbols with their last known value
   
-  rename(expr.type(), ns, level);
+//  rename(expr.type(), ns, level);
 
   if(expr.id()==ID_symbol)
   {
@@ -454,7 +455,8 @@ void goto_symex_statet::rename(
     }  
     else if(level==L2)
     {
-      if(l2_thread_read_encoding(to_symbol_expr(expr), ns))
+      bool assign = (array_assign && (expr.type().id() == ID_array));
+      if(l2_thread_read_encoding(to_symbol_expr(expr), ns, assign))
       {
         // renaming taken care of by l2_thread_encoding
       }
@@ -491,7 +493,7 @@ void goto_symex_statet::rename(
   {
     // do this recursively
     Forall_operands(it, expr)
-      rename(*it, ns, level);
+      rename(*it, ns, level, array_assign);
   }
 }
 
@@ -509,7 +511,8 @@ Function: goto_symex_statet::l2_thread_read_encoding
 
 bool goto_symex_statet::l2_thread_read_encoding(
   symbol_exprt &expr,
-  const namespacet &ns)
+  const namespacet &ns,
+  const bool array_assign)
 {
   if(!record_events)
     return false;
@@ -624,7 +627,8 @@ bool goto_symex_statet::l2_thread_read_encoding(
     expr,
     original_symbol,
     atomic_section_id,
-    source);
+    source,
+	array_assign);
 
   return true;
 }

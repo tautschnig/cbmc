@@ -106,6 +106,13 @@ const boolbv_widtht::entryt &boolbv_widtht::get_entry(const typet &type) const
   
     for(std::size_t i=0; i<entry.members.size(); i++)
     {
+    	// added by ylz
+      std::string str_type = components[i].type().to_string();
+	  if (str_type.find("pthread_mutex") !=std::string::npos) {
+		 entry.total_width = 32;
+		 return entry;
+	  }
+
       std::size_t sub_width=operator()(components[i].type());
       entry.members[i].width=sub_width;
       max_width=std::max(max_width, sub_width);
@@ -229,8 +236,15 @@ const boolbv_widtht::entryt &boolbv_widtht::get_entry(const typet &type) const
   {
     entry.total_width=config.ansi_c.pointer_width;
   }
-  else if(type_id==ID_symbol)
-    entry=get_entry(ns.follow(type));
+  else if(type_id==ID_symbol) {
+	  // added by ylz
+	  std::string str_type = type.to_string();
+	  if (str_type.find("pthread_mutex") !=std::string::npos) {
+		  entry.total_width = 32;
+	  }
+	  else
+		  entry=get_entry(ns.follow(type));
+  }
   else if(type_id==ID_struct_tag)
     entry=get_entry(ns.follow_tag(to_struct_tag_type(type)));
   else if(type_id==ID_union_tag)

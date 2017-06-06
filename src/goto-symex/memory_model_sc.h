@@ -36,6 +36,11 @@ protected:
   void program_order(symex_target_equationt &equation);
   void from_read(symex_target_equationt &equation);
   void write_serialization_external(symex_target_equationt &equation);
+
+  // added by ylz08
+  void get_symbols(const exprt &expr, std::vector<symbol_exprt>& symbols);
+  void set_events_ssa_id(symex_target_equationt &equation);
+  unsigned set_single_event_ssa_id(symex_target_equationt &equation, symbol_exprt event, int id);
 };
 
 #endif
