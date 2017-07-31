@@ -11,6 +11,12 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
+//#define DEBUG
+
+#ifdef DEBUG
+#include <iostream>
+#endif
+
 #include <algorithm>
 
 #include <util/arith_tools.h>
@@ -382,7 +388,7 @@ void cpp_typecheckt::typecheck_compound_declarator(
   irep_idt identifier;
 
   // the below is a temporary hack
-  // if(is_method || is_static)d
+  // if(is_method || is_static)
   if(id2string(cpp_scopes.current_scope().prefix).find("#anon")==
      std::string::npos ||
      is_method || is_static)
@@ -891,12 +897,25 @@ void cpp_typecheckt::typecheck_friend_declaration(
   // It should be a friend function.
   // Do the declarators.
 
+#ifdef DEBUG
+  std::cout << "friend declaration: " << declaration.pretty() << std::endl;
+#endif
+
   for(auto &sub_it : declaration.declarators())
   {
-    bool has_value=sub_it.value().is_not_nil();
-
+#ifdef DEBUG
+    std::cout << "decl: " << sub_it->pretty() << "\n with value "
+	      << sub_it->value().pretty() << std::endl;
+    std::cout << "  scope: " << cpp_scopes.current_scope().prefix << std::endl;
+#endif
+    // In which scope are we going to typecheck this?
+#if 0
+    // TODO: not sure what the value is?!
+    bool has_value = sub_it.value().is_not_nil();
     if(!has_value)
     {
+      // TODO: This doesn't work if we are inside a template class declaration.
+
       // If no value is found, then we jump to the
       // global scope, and we convert the declarator
       // as if it were declared there
@@ -910,6 +929,7 @@ void cpp_typecheckt::typecheck_friend_declaration(
       symbol.type.add("#friends").move_to_sub(symb_expr);
     }
     else
+#endif
     {
       cpp_declarator_convertert cpp_declarator_converter(*this);
       cpp_declarator_converter.is_friend=true;
