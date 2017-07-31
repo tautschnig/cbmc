@@ -47,12 +47,16 @@ codet cpp_typecheckt::cpp_constructor(
     // The purpose of the tag #array_ini is to rule out ill-formed
     // programs.
 
+    // TODO: in a program it is not allowed, but the implementation of the
+    //       copy constructor requires it...
+#if 0
     if(!operands.empty() && !operands.front().get_bool("#array_ini"))
     {
       error().source_location=source_location;
       error() << "bad array initializer" << eom;
       throw 0;
     }
+#endif
 
     assert(operands.empty() || operands.size()==1);
 
