@@ -404,9 +404,7 @@ void cpp_declarator_convertert::get_final_identifier()
     }
   }
 
-  final_identifier=
-    scope->prefix+
-    identifier;
+  final_identifier = (is_friend ? "" : scope->prefix) + identifier;
 }
 
 symbolt &cpp_declarator_convertert::convert_new_symbol(
