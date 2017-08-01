@@ -11,7 +11,7 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck_resolve.h"
 
-//#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 #include <iostream>
@@ -486,51 +486,44 @@ void cpp_typecheck_resolvet::disambiguate_functions(
     }
   }
 
-  identifiers.clear();
+  old_identifiers.clear();
 
   // put in the top ones
   if(!distance_map.empty())
   {
-    std::size_t distance=distance_map.begin()->first;
-
-    for(std::multimap<std::size_t, exprt>::const_iterator
-        it=distance_map.begin();
-        it!=distance_map.end() && it->first==distance;
-        it++)
-      identifiers.push_back(it->second);
+    auto range=distance_map.equal_range(distance_map.begin()->first);
+    for(auto it=range.first; it!=range.second; ++it)
+      old_identifiers.push_back(it->second);
   }
 
-  if(identifiers.size()>1 && fargs.in_use)
+  if(old_identifiers.size()>1 && fargs.in_use)
   {
     // try to further disambiguate functions
 
-    for(resolve_identifierst::iterator
-        it1=identifiers.begin();
-        it1!=identifiers.end();
+    for(resolve_identifierst::const_iterator
+        it1=old_identifiers.begin();
+        it1!=old_identifiers.end();
         it1++)
     {
+#if 0
+      std::cout << "I1: " << it1->get(ID_identifier) << std::endl;
+#endif
+
       if(it1->type().id()!=ID_code)
-        continue;
+      {
+	       identifiers.push_back(*it1);
+	       continue;
+      }
 
       const code_typet &f1=
         to_code_type(it1->type());
 
-      for(resolve_identifierst::iterator it2=
-          identifiers.begin();
-          it2!=identifiers.end();
-          ) // no it2++
+      for(resolve_identifierst::const_iterator it2=it1+1;
+          it2!=old_identifiers.end();
+          ++it2)
       {
-        if(it1 == it2)
-        {
-          it2++;
-          continue;
-        }
-
         if(it2->type().id()!=ID_code)
-        {
-          it2++;
           continue;
-        }
 
         const code_typet &f2 =
           to_code_type(it2->type());
@@ -585,14 +578,17 @@ void cpp_typecheck_resolvet::disambiguate_functions(
           }
         }
 
-        resolve_identifierst::iterator prev_it=it2;
-        it2++;
-
-        if(f1_better && !f2_better)
-          identifiers.erase(prev_it);
+        if(!f1_better || f2_better)
+          identifiers.push_back(*it2);
       }
     }
   }
+  else
+  {
+    identifiers.swap(old_identifiers);
+  }
+
+  remove_duplicates(identifiers);
 }
 
 void cpp_typecheck_resolvet::make_constructors(
@@ -939,7 +935,9 @@ cpp_scopet &cpp_typecheck_resolvet::resolve_scope(
           id_set);
 
 #ifdef DEBUG
-        std::cout << "S: " << cpp_typecheck.cpp_scopes.current_scope().identifier << std::endl;
+        std::cout << "S: "
+                  << cpp_typecheck.cpp_scopes.current_scope().identifier
+                  << std::endl;
         cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
         std::cout << "X: " << id_set.size() <<std::endl;
 #endif
@@ -1422,7 +1420,8 @@ exprt cpp_typecheck_resolvet::resolve(
   std::cout << "base name: " << base_name << std::endl;
   std::cout << "template args: " << template_args << std::endl;
   std::cout << "original-scope: " << original_scope->prefix << std::endl;
-  std::cout << "scope: " << cpp_typecheck.cpp_scopes.current_scope().prefix << std::endl;
+  std::cout << "scope: "
+            << cpp_typecheck.cpp_scopes.current_scope().prefix << std::endl;
 #endif
 
   const source_locationt &source_location=cpp_name.source_location();
@@ -1614,8 +1613,8 @@ exprt cpp_typecheck_resolvet::resolve(
     std::cout << "\n";
     #endif
   }
-
-  remove_duplicates(new_identifiers);
+  else
+    remove_duplicates(new_identifiers);
 
   #if 0
   std::cout << "P4 " << base_name << " " << new_identifiers.size() << "\n";
