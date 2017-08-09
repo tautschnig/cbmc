@@ -10,6 +10,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/arith_tools.h>
 #include <util/byte_operators.h>
+#include <util/expr_util.h>
 #include <util/invariant.h>
 
 #include <solvers/lowering/expr_lowering.h>
@@ -17,10 +18,13 @@ Author: Daniel Kroening, kroening@kroening.com
 bvt boolbvt::convert_byte_update(const byte_update_exprt &expr)
 {
   // if we update (from) an unbounded array, lower the expression as the array
-  // logic does not handle byte operators
+  // logic does not handle byte operators; similarly, data types that contain
+  // pointers must not be handled here
   if(
     is_unbounded_array(expr.op().type()) ||
-    is_unbounded_array(expr.value().type()))
+    is_unbounded_array(expr.value().type()) ||
+    has_subtype(expr.value().type(), ID_pointer, ns) ||
+    has_subtype(expr.op0().type(), ID_pointer, ns))
   {
     return convert_bv(lower_byte_update(expr, ns));
   }
