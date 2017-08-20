@@ -1,4 +1,4 @@
-typedef int X;
+typedef long X;
 int Y;
 
 int main()
@@ -17,6 +17,6 @@ int main()
 
   (X) * p; // this is a typecast
 
-  z=(int)(p) & 0x1fff; // this is bitwise and
+  z=(long)(p) & 0x1fff; // this is bitwise and
   // z=(int)(p) & z; // this is bitwise and
 }
