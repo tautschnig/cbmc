@@ -44,11 +44,17 @@ public:
     const cpp_declarationt &declaration,
     cpp_declaratort &declarator)
   {
-    return convert(
-      declaration.type(),
-      declaration.storage_spec(),
-      declaration.member_spec(),
-      declarator);
+    symbolt &result=
+      convert(
+        declaration.type(),
+        declaration.storage_spec(),
+        declaration.member_spec(),
+        declarator);
+
+    if(declaration.is_typedef())
+      result.type.set(ID_C_typedef, declarator.name());
+
+    return result;
   }
 
   class cpp_typecheckt &cpp_typecheck;
