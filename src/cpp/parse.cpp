@@ -648,23 +648,28 @@ bool Parser::rTypedefUsing(cpp_declarationt &declaration)
   if(lex.get_token(tk)!=TOK_IDENTIFIER)
     return false;
 
-  cpp_declaratort name;
-  name.name()=cpp_namet(tk.data.get(ID_C_base_name));
-  name.type().make_nil();
-
   #ifdef DEBUG
   std::cout << std::string(__indent, ' ') << "Parser::rTypedefUsing 2\n";
   #endif
 
-  if(lex.get_token(tk)!='=')
-    return false;
+  if(type_name.id()==ID_code)
+  {
+    cpp_declaratort name;
+    name.name()=cpp_namet(type_name.get(ID_identifier));
+    type_name.remove(ID_identifier);
+    name.type().make_nil();
 
-  if(!rTypeNameOrFunctionType(type_name))
-    return false;
+    merge_types(type_name, declaration.type());
 
-  merge_types(type_name, declaration.type());
+    declaration.declarators().push_back(name);
+  }
+  else
+  {
+    merge_types(type_name, declaration.type());
 
-  declaration.declarators().push_back(name);
+    if(!rDeclarators(declaration.declarators(), true))
+      return false;
+  }
 
   if(lex.get_token(tk)!=';')
     return false;
