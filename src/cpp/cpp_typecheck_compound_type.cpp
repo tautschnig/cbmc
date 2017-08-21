@@ -890,15 +890,15 @@ void cpp_typecheckt::typecheck_friend_declaration(
   // Do the declarators.
 
 #ifdef DEBUG
-  std::cout << "friend declaration: " << declaration.pretty() << std::endl;
+  std::cout << "friend declaration: " << declaration.pretty() << '\n';
 #endif
 
   for(auto &sub_it : declaration.declarators())
   {
 #ifdef DEBUG
     std::cout << "decl: " << sub_it->pretty() << "\n with value "
-	      << sub_it->value().pretty() << std::endl;
-    std::cout << "  scope: " << cpp_scopes.current_scope().prefix << std::endl;
+	            << sub_it->value().pretty() << '\n';
+    std::cout << "  scope: " << cpp_scopes.current_scope().prefix << '\n';
 #endif
     // In which scope are we going to typecheck this?
 #if 0
