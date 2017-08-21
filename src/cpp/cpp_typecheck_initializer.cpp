@@ -62,6 +62,12 @@ void cpp_typecheckt::convert_initializer(symbolt &symbol)
 
   // we do have an initializer
 
+  {
+    //instantiate template first
+    exprt object_expr=cpp_symbol_expr(symbol);
+    elaborate_class_template(object_expr.type());
+  }
+  
   if(is_reference(symbol.type))
   {
     typecheck_expr(symbol.value);
