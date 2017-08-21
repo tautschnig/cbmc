@@ -227,7 +227,7 @@ const symbolt &cpp_typecheckt::instantiate_template(
   const typet &specialization)
 {
 #ifdef DEBUG
-  std::cout << "instantiate_template: " << template_symbol.name << std::endl;
+  std::cout << "instantiate_template: " << template_symbol.name << '\n';
 #endif
 
   if(instantiation_stack.size()==MAX_DEPTH)
@@ -388,7 +388,7 @@ const symbolt &cpp_typecheckt::instantiate_template(
   }
 
   #ifdef DEBUG
-  std::cout << "CLASS MAP:" << std::endl;
+  std::cout << "CLASS MAP:\n";
   template_map.print(std::cout);
   #endif
 
@@ -447,7 +447,7 @@ const symbolt &cpp_typecheckt::instantiate_template(
       // mapping from template arguments to values/types
       template_map.build(method_type, specialization_template_args);
 #ifdef DEBUG
-      std::cout << "METHOD MAP:" << std::endl;
+      std::cout << "METHOD MAP:\n";
       template_map.print(std::cout);
 #endif
 
@@ -466,8 +466,8 @@ const symbolt &cpp_typecheckt::instantiate_template(
     new_symb.type.set(ID_C_template_arguments, specialization_template_args);
 
 #ifdef DEBUG
-    std::cout << "instance symbol: " << new_symb.name << std::endl << std::endl;
-    std::cout << "template type: " << template_type << std::endl << std::endl;
+    std::cout << "instance symbol: " << new_symb.name << "\n\n";
+    std::cout << "template type: " << template_type << "\n\n";
 #endif
 
     return new_symb;

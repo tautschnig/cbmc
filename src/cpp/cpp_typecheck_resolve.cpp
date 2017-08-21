@@ -511,8 +511,8 @@ void cpp_typecheck_resolvet::disambiguate_functions(
 
       if(it1->type().id()!=ID_code)
       {
-	       identifiers.push_back(*it1);
-	       continue;
+        identifiers.push_back(*it1);
+        continue;
       }
 
       const code_typet &f1=
