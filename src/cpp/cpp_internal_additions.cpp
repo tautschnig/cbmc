@@ -119,19 +119,63 @@ void cpp_internal_additions(std::ostream &out)
     out << c2cpp(gcc_builtin_headers_ubsan);
     out << c2cpp(clang_builtin_headers);
 
-     if(config.ansi_c.mode==configt::ansi_ct::flavourt::APPLE)
-       out << "typedef double __float128;\n"; // clang doesn't do __float128
+    if(config.ansi_c.arch=="i386" ||
+       config.ansi_c.arch=="x86_64" ||
+       config.ansi_c.arch=="x32")
+    {
+      if(config.ansi_c.mode==configt::ansi_ct::flavourt::APPLE)
+        out << "typedef double __float128;\n"; // clang doesn't do __float128
 
-    out << c2cpp(gcc_builtin_headers_ia32);
-    out << c2cpp(gcc_builtin_headers_ia32_2);
-    out << c2cpp(gcc_builtin_headers_ia32_3);
-    out << c2cpp(gcc_builtin_headers_ia32_4);
+      out << c2cpp(gcc_builtin_headers_ia32);
+      out << c2cpp(gcc_builtin_headers_ia32_2);
+      out << c2cpp(gcc_builtin_headers_ia32_3);
+      out << c2cpp(gcc_builtin_headers_ia32_4);
+    }
+    else if(config.ansi_c.arch=="arm64" ||
+            config.ansi_c.arch=="armel" ||
+            config.ansi_c.arch=="armhf" ||
+            config.ansi_c.arch=="arm")
+    {
+      out << c2cpp(gcc_builtin_headers_arm);
+    }
+    else if(config.ansi_c.arch=="alpha")
+    {
+      out << c2cpp(gcc_builtin_headers_alpha);
+    }
+    else if(config.ansi_c.arch=="mips64el" ||
+            config.ansi_c.arch=="mipsn32el" ||
+            config.ansi_c.arch=="mipsel" ||
+            config.ansi_c.arch=="mips64" ||
+            config.ansi_c.arch=="mipsn32" ||
+            config.ansi_c.arch=="mips")
+    {
+      out << c2cpp(gcc_builtin_headers_mips);
+    }
+    else if(config.ansi_c.arch=="powerpc" ||
+            config.ansi_c.arch=="ppc64" ||
+            config.ansi_c.arch=="ppc64le")
+    {
+      out << c2cpp(gcc_builtin_headers_power);
+    }
+
+    // On 64-bit systems, gcc has typedefs
+    // __int128_t und __uint128_t -- but not on 32 bit!
+    if(config.ansi_c.long_int_width>=64)
+    {
+      out << "typedef signed __int128 __int128_t;\n";
+      out << "typedef unsigned __int128 __uint128_t;\n";
+    }
+
     out << "}" << '\n';
   }
 
   // extensions for Visual C/C++
   if(config.ansi_c.os==configt::ansi_ct::ost::OS_WIN)
     out << "extern \"C\" int __noop(...);\n";
+
+  // ARM stuff
+  if(config.ansi_c.mode==configt::ansi_ct::flavourt::ARM)
+    out << c2cpp(arm_builtin_headers);
 
   // string symbols to identify the architecture we have compiled for
   std::string architecture_strings;
