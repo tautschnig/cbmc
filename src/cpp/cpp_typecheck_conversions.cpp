@@ -1077,9 +1077,10 @@ bool cpp_typecheckt::user_defined_conversion_sequence(
       const irept &component=*it;
       const typet comp_type=static_cast<const typet&>(component.find(ID_type));
 
+#if 0 //UNCLEAR why we shouldn't take a cast operator from a base class
       if(component.get_bool(ID_from_base))
         continue;
-
+#endif
       if(!component.get_bool("is_cast_operator"))
         continue;
 
