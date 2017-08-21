@@ -1290,12 +1290,8 @@ bool Parser::rTempArgDeclaration(cpp_declarationt &declaration)
               << "Parser::rTempArgDeclaration 4\n";
     #endif
 
-    add_id(declarator.name(), new_scopet::kindt::NON_TYPE_TEMPLATE_PARAMETER);
 
-    if(has_ellipsis)
-    {
-      // TODO
-    }
+    add_id(declarator.name(), new_scopet::kindt::NON_TYPE_TEMPLATE_PARAMETER);
 
     exprt &value=declarator.value();
 
