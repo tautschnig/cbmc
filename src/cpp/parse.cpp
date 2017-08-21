@@ -2757,6 +2757,15 @@ bool Parser::optThrowDecl(irept &throw_decl)
 
     // TODO
   }
+  else if(lex.LookAhead(0)==TOK_NOEXCEPT)
+  {
+    exprt expr;
+
+    if(!rNoexceptExpr(expr))
+      return false;
+
+    // TODO
+  }
 
   throw_decl=p;
   return true;
