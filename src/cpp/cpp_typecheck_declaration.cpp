@@ -16,19 +16,38 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 void cpp_typecheckt::convert(cpp_declarationt &declaration)
 {
-  // see if the declaration is empty
-  if(declaration.is_empty())
+#if 0
+  std::cout << "convert_declaration: "
+	    << declaration.pretty() << std::endl << std::endl;
+#endif
+
+    // see if the declaration is empty
+  if(declaration.find(ID_type).is_nil() &&
+     !declaration.has_operands())
     return;
 
-  // The function bodies must not be checked here,
-  // but only at the very end when all declarations have been
-  // processed (or considering forward declarations at least)
+  //The function bodies must not be checked here,
+  //  but only at the very end when all declarations have been
+  //  processed (or considering forward declarations at least)
+  //REMOVE THE FOLLOWING
+#if 0
+  // Record the function bodies so we can check them later.
+  // This function is used recursively, so we save them.
+  method_bodiest old_method_bodies=method_bodies;
+  method_bodies.clear();
+#endif
 
   // templates are done in a dedicated function
   if(declaration.is_template())
     convert_template_declaration(declaration);
   else
     convert_non_template_declaration(declaration);
+
+  //REMOVE THE FOLLOWING
+#if 0
+  typecheck_method_bodies();
+  method_bodies=old_method_bodies;
+#endif
 }
 
 void cpp_typecheckt::convert_anonymous_union(
