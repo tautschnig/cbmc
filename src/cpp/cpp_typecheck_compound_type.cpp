@@ -275,8 +275,32 @@ void cpp_typecheckt::typecheck_compound_declarator(
     assert(declarator.name().get_sub().size()==2 &&
            declarator.name().get_sub().front().id()==ID_operator);
 
+#if DEBUG
+    std::cout << "declarator: " << declarator.name().pretty() << '\n';
+#endif
+
     typet type=static_cast<typet &>(declarator.name().get_sub()[1]);
-    declarator.type().subtype()=type;
+    if(type.id()==ID_cpp_name)
+    {
+      //find type identifier in scope
+      cpp_namet _type = to_cpp_name(type);
+      cpp_scopet::id_sett ids;
+      cpp_scopes.current_scope().lookup(_type.to_string(),
+                                       cpp_scopet::RECURSIVE, ids);
+      assert(ids.size()==1);
+#if DEBUG
+      std::cout << "id: " << ((*ids.begin())->identifier) << '\n';
+#endif
+      //find type
+      type=lookup((*ids.begin())->identifier).type;
+    }
+    //find base type
+    declarator.type().subtype()=follow(type);
+    cpp_convert_plain_type(type); //need to normalize type first
+
+#if DEBUG
+    std::cout << "type: " << cpp_type2name(type) << '\n';
+#endif
 
     irept name(ID_name);
     name.set(ID_identifier, "("+cpp_type2name(type)+")");
