@@ -605,8 +605,20 @@ bool cpp_typecheckt::operator_is_overloaded(exprt &expr)
       // We try and fail silently, maybe conversions will work
       // instead.
 
-      //TODO: need to resolve an incomplete struct (template) here
-      // go into scope of first operand
+
+#if 0
+      std::cout << "OVERLOAD: " << expr.pretty() << std::endl;
+      std::cout << "type: " << follow(expr.op0().type()).pretty() << std::endl;
+#endif
+
+      //resolve an incomplete struct (template) here
+      if(expr.op0().type().id()==ID_symbol &&
+         follow(expr.op0().type()).id()==ID_incomplete_struct)
+      {
+        elaborate_class_template(expr.op0().type());
+      }
+
+      // go into scope of first operand        
       if(expr.op0().type().id()==ID_symbol &&
          follow(expr.op0().type()).id()==ID_struct)
       {
