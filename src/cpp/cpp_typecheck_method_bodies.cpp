@@ -24,25 +24,36 @@ void cpp_typecheckt::typecheck_method_bodies()
 
   while(!method_bodies.empty())
   {
-    // Dangerous not to take a copy here. We'll have to make sure that
-    // convert is never called with the same symbol twice.
-    method_bodyt &method_body = *method_bodies.begin();
-    symbolt &method_symbol = *method_body.method_symbol;
+    //Dangerous not to take a copy here. We'll have to make sure that
+    //  convert is never called with the same symbol twice.
+#if 1
+    method_bodyt &method_body=*method_bodies.begin();
+#else
+    method_bodyt &method_body=method_bodies.begin()->second;
+#endif
+    symbolt &method_symbol=*method_body.method_symbol;
 
     template_map.swap(method_body.template_map);
     instantiation_stack.swap(method_body.instantiation_stack);
 
+#if 0
+    std::cout << "MAP for " << method_symbol.name << ":" << std::endl;
+    template_map.print(std::cout);
+#endif
     method_bodies.erase(method_bodies.begin());
 
     if(method_symbol.name==ID_main)
+    {
       add_argc_argv(method_symbol);
+      method_symbol.mode=ID_cpp; //main has mode C by default
+    }
 
     exprt &body=method_symbol.value;
     if(body.id()=="cpp_not_typechecked")
       continue;
 
 #ifdef DEBUG
-  std::cout << "convert_method_body: " << method_symbol.name << std::endl;
+  std::cout << "convert_function_body: " << function_symbol.name << std::endl;
   std::cout << "  is_not_nil: " << body.is_not_nil() << std::endl;
   std::cout << "  !is_zero: " << (!body.is_zero()) << std::endl;
 #endif
