@@ -166,6 +166,32 @@ void interpretert::evaluate(
 
     return;
   }
+  else if(expr.id()==ID_bitand ||
+          expr.id()==ID_bitor ||
+          expr.id()==ID_bitxor)
+  {
+    if(expr.operands().size()!=2)
+      throw id2string(expr.id())+" expects two operands";
+
+    std::vector<mp_integer> tmp0, tmp1;
+    evaluate(expr.op0(), tmp0);
+    evaluate(expr.op1(), tmp1);
+
+    if(tmp0.size()==1 && tmp1.size()==1)
+    {
+      const mp_integer &op0=tmp0.front();
+      const mp_integer &op1=tmp1.front();
+    
+      if(expr.id()==ID_bitand)
+        dest.push_back(integer2long(op0)&integer2long(op1));
+      else if(expr.id()==ID_bitor)
+        dest.push_back(integer2long(op0)|integer2long(op1));
+      else if(expr.id()==ID_bitxor)
+        dest.push_back(integer2long(op0)^integer2long(op1));
+    }
+
+    return;
+  }
   else if(expr.id()==ID_or)
   {
     if(expr.operands().empty())
@@ -341,6 +367,19 @@ void interpretert::evaluate(
       dest.push_back(tmp0.front()/tmp1.front());
     return;
   }
+  else if(expr.id()==ID_mod)
+  {
+    if(expr.operands().size()!=2)
+      throw "% expects two operands";
+
+    std::vector<mp_integer> tmp0, tmp1;
+    evaluate(expr.op0(), tmp0);
+    evaluate(expr.op1(), tmp1);
+
+    if(tmp0.size()==1 && tmp1.size()==1)
+      dest.push_back(tmp0.front()%tmp1.front());
+    return;
+  }
   else if(expr.id()==ID_unary_minus)
   {
     if(expr.operands().size()!=1)
@@ -450,7 +489,8 @@ void interpretert::evaluate(
       }
     }
   }
-  else if(expr.id()==ID_ashr)
+  else if(expr.id()==ID_ashr ||
+          expr.id()==ID_lshr)
   {
     if(expr.operands().size()!=2)
       throw "ashr expects two operands";
@@ -492,9 +532,10 @@ void interpretert::evaluate(
     return;
   }
 
-  std::cout << "!! failed to evaluate expression: "
+  std::cout << "!! failed to evaluate expression: " << expr.id() << " "
             << from_expr(ns, function->first, expr)
             << '\n';
+  assert(expr.id()==ID_array_of);
 }
 
 mp_integer interpretert::evaluate_address(const exprt &expr) const
