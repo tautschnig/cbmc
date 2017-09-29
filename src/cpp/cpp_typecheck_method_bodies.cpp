@@ -9,8 +9,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 /// \file
 /// C++ Language Type Checking
 
-//#define DEBUG
-
 #ifdef DEBUG
 #include <iostream>
 #endif
@@ -72,7 +70,7 @@ void cpp_typecheckt::add_method_body(symbolt *_method_symbol)
     return;
   }
   method_bodies.push_back(method_bodyt(
-			      _method_symbol, template_map, instantiation_stack));
+    _method_symbol, template_map, instantiation_stack));
 
   // Converting a method body might add method bodies for methods
   // that we have already analyzed. Hence, we have to keep track.

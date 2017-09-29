@@ -433,7 +433,7 @@ bool cpp_typecheckt::overloadable(const exprt &expr)
       t=t.subtype();
 
     if(t.id()==ID_struct ||
-       //this might be an incomplete struct (template) here
+       // this might be an incomplete struct (template) here
        t.id()==ID_incomplete_struct ||
        t.id()==ID_union ||
        t.id()==ID_c_enum)
@@ -605,7 +605,7 @@ bool cpp_typecheckt::operator_is_overloaded(exprt &expr)
       // We try and fail silently, maybe conversions will work
       // instead.
 
-      //TODO: need to resolve an incomplete struct (template) here
+      // TODO: need to resolve an incomplete struct (template) here
       // go into scope of first operand
       if(expr.op0().type().id()==ID_symbol &&
          follow(expr.op0().type()).id()==ID_struct)
@@ -2404,7 +2404,7 @@ void cpp_typecheckt::typecheck_method_application(
     const irept &template_type=tag_symbol.type.find(ID_C_template);
     const irept &template_args=tag_symbol.type.find(ID_C_template_arguments);
     template_map.build(static_cast<const template_typet &>(template_type),
-		       static_cast<const cpp_template_args_tct &>(template_args));
+  	       static_cast<const cpp_template_args_tct &>(template_args));
     add_method_body(&method_symbol);
 #ifdef DEBUG
     std::cout << "MAP for " << symbol << ":" << std::endl;
