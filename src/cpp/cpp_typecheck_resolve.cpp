@@ -11,8 +11,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck_resolve.h"
 
-// #define DEBUG
-
 #ifdef DEBUG
 #include <iostream>
 #endif
@@ -1416,11 +1414,11 @@ exprt cpp_typecheck_resolvet::resolve(
   resolve_scope(cpp_name, base_name, template_args);
 
 #ifdef DEBUG
-  std::cout << "base name: " << base_name << std::endl;
-  std::cout << "template args: " << template_args << std::endl;
-  std::cout << "original-scope: " << original_scope->prefix << std::endl;
+  std::cout << "base name: " << base_name << "\n";
+  std::cout << "template args: " << template_args.pretty() << "\n";
+  std::cout << "original-scope: " << original_scope->prefix << "\n";
   std::cout << "scope: "
-            << cpp_typecheck.cpp_scopes.current_scope().prefix << std::endl;
+            << cpp_typecheck.cpp_scopes.current_scope().prefix << "\n";
 #endif
 
   const source_locationt &source_location=cpp_name.source_location();
