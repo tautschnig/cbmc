@@ -465,7 +465,7 @@ const symbolt &cpp_typecheckt::instantiate_template(
 
 #ifdef DEBUG
     std::cout << "instance symbol: " << new_symb.name << "\n\n";
-    std::cout << "template type: " << template_type << "\n\n";
+    std::cout << "template type: " << template_type.pretty() << "\n\n";
 #endif
 
     return new_symb;
