@@ -11,8 +11,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_declarator_converter.h"
 
-//#define DEBUG
-
 #ifdef DEBUG
 #include <iostream>
 #endif
@@ -74,7 +72,7 @@ symbolt &cpp_declarator_convertert::convert(
     scope=&cpp_typecheck.cpp_scopes.current_scope();
 
     // check the declarator-part of the type, in that scope
-    //TODO: if it is a friend declaration we have to type-check it
+    // TODO: if it is a friend declaration we have to type-check it
     //      in our current scope to have access to the correct
     //      template parameters, although the symbol finally resides
     //      in the resolved scope (actually it should be sufficient
@@ -83,7 +81,7 @@ symbolt &cpp_declarator_convertert::convert(
     if(!is_friend)
       cpp_typecheck.typecheck_type(final_type);
   }
-  //TODO: see comment above
+  // TODO: see comment above
   if(is_friend)
     cpp_typecheck.typecheck_type(final_type);
 

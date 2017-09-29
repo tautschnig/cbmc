@@ -11,8 +11,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
-//#define DEBUG
-
 #ifdef DEBUG
 #include <iostream>
 #endif
@@ -905,7 +903,7 @@ void cpp_typecheckt::typecheck_friend_declaration(
   {
 #ifdef DEBUG
     std::cout << "decl: " << sub_it->pretty() << "\n with value "
-	            << sub_it->value().pretty() << '\n';
+              << sub_it->value().pretty() << '\n';
     std::cout << "  scope: " << cpp_scopes.current_scope().prefix << '\n';
 #endif
     // In which scope are we going to typecheck this?
