@@ -11,8 +11,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
-//#define DEBUG
-
 #ifdef DEBUG
 #include <iostream>
 #endif
@@ -460,8 +458,8 @@ const symbolt &cpp_typecheckt::instantiate_template(
     const irep_idt& new_symb_id = new_decl.type().get(ID_identifier);
     symbolt &new_symb = symbol_table.get_writeable_ref(new_symb_id);
 
-    //add template arguments to type in order to retrieve template map
-    //  when typechecking function body
+    // add template arguments to type in order to retrieve template map
+    // when typechecking function body
     new_symb.type.set(ID_C_template, template_type);
     new_symb.type.set(ID_C_template_arguments, specialization_template_args);
 

@@ -30,7 +30,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 #include <ansi-c/anonymous_member.h>
 
 #include "cpp_typecheck.h"
-#include "cpp_typecheck_resolve.h"
 #include "cpp_template_type.h"
 #include "cpp_type2name.h"
 #include "cpp_util.h"
@@ -686,9 +685,9 @@ void cpp_typecheck_resolvet::resolve_argument(
   exprt &argument,
   const cpp_typecheck_fargst &fargs)
 {
-  if(argument.id()=="ambiguous") //could come from a template parameter
+  if(argument.id()=="ambiguous") // could come from a template parameter
   {
-    //this must be resolved in the template scope
+    // this must be resolved in the template scope
     cpp_save_scopet save_scope(cpp_typecheck.cpp_scopes);
     cpp_typecheck.cpp_scopes.go_to(*original_scope);
 
@@ -937,7 +936,7 @@ cpp_scopet &cpp_typecheck_resolvet::resolve_scope(
 #ifdef DEBUG
         std::cout << "S: "
                   << cpp_typecheck.cpp_scopes.current_scope().identifier
-                  << std::endl;
+                  << "\n";
         cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
         std::cout << "X: " << id_set.size() <<std::endl;
 #endif
