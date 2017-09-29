@@ -31,6 +31,10 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 #include "cpp_exception_id.h"
 #include "expr2cpp.h"
 
+#ifdef DEBUG
+#include <iostream>
+#endif
+
 bool cpp_typecheckt::find_parent(
   const symbolt &symb,
   const irep_idt &base_name,
