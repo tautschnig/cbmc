@@ -233,7 +233,7 @@ void cpp_typecheckt::do_not_typechecked()
          symbol.value.get_bool("is_used"))
       {
         assert(symbol.type.id()==ID_code);
-        symbolt &symbol=*symbol_table.get_writeable(named_symbol.first);
+        symbolt &symbol=symbol_table.get_writeable_ref(named_symbol.first);
 
         if(symbol.base_name=="operator=")
         {

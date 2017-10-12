@@ -107,7 +107,7 @@ void cpp_typecheckt::typecheck_class_template(
 
   // check if we have it already
 
-  if(const auto maybe_symbol=symbol_table.get_writeable(symbol_name))
+  if(symbolt *maybe_symbol=symbol_table.get_writeable(symbol_name))
   {
     // there already
     symbolt &previous_symbol=*maybe_symbol;
@@ -382,7 +382,7 @@ void cpp_typecheckt::typecheck_class_template_member(
 
   const cpp_idt &cpp_id=**(id_set.begin());
   symbolt &template_symbol=
-    *symbol_table.get_writeable(cpp_id.identifier);
+    symbol_table.get_writeable_ref(cpp_id.identifier);
 
   exprt &template_methods=static_cast<exprt &>(
     template_symbol.value.add("template_methods"));

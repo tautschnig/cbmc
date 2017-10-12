@@ -111,7 +111,7 @@ symbolt &cpp_declarator_convertert::convert(
     }
 
     // try static first
-    auto maybe_symbol=
+    symbolt *maybe_symbol=
       cpp_typecheck.symbol_table.get_writeable(final_identifier);
 
     if(!maybe_symbol)
@@ -204,7 +204,7 @@ symbolt &cpp_declarator_convertert::convert(
     }
 
     // already there?
-    const auto maybe_symbol=
+    symbolt *maybe_symbol=
       cpp_typecheck.symbol_table.get_writeable(final_identifier);
     if(!maybe_symbol)
       return convert_new_symbol(storage_spec, member_spec, declarator);

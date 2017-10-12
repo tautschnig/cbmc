@@ -70,7 +70,7 @@ void cpp_typecheckt::convert_anonymous_union(
 
   // do scoping
   symbolt union_symbol=
-    *symbol_table.get_writeable(follow(symbol.type).get(ID_name));
+    symbol_table.get_writeable_ref(follow(symbol.type).get(ID_name));
   const irept::subt &components=union_symbol.type.add(ID_components).get_sub();
 
   forall_irep(it, components)
