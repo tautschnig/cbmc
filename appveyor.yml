@@ -86,6 +86,8 @@ test_script:
     rmdir /s /q cpp\Decltype1
     rmdir /s /q cpp\Decltype2
     rmdir /s /q cpp\Function_Overloading1
+    rmdir /s /q cpp\Function_Overloading2
+    rmdir /s /q cpp\Function_Overloading3
     rmdir /s /q cpp\enum2
     rmdir /s /q cpp\enum7
     rmdir /s /q cpp\enum8
