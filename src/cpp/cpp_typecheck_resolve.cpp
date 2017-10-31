@@ -500,9 +500,9 @@ void cpp_typecheck_resolvet::disambiguate_functions(
     for(resolve_identifierst::const_iterator
         it1=old_identifiers.begin();
         it1!=old_identifiers.end();
-        it1++)
+        ++it1)
     {
-#if 0
+#ifdef DEBUG
       std::cout << "I1: " << it1->get(ID_identifier) << std::endl;
 #endif
 

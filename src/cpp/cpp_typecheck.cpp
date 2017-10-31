@@ -333,8 +333,11 @@ bool cpp_typecheckt::contains_cpp_name(const exprt &expr)
 {
   if(expr.id()==ID_cpp_name)
     return true;
-  forall_operands(it, expr)
-    if(contains_cpp_name(*it))
+
+  for(const exprt &op : expr.operands())
+  {
+    if(contains_cpp_name(op))
       return true;
+  }
   return false;
 }
