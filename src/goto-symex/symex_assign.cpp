@@ -223,7 +223,48 @@ void goto_symext::symex_assign_symbol(
     tmp_ssa_rhs.swap(ssa_rhs);
   }
 
-  state.rename(ssa_rhs, ns);
+  symbol_exprt original_lhs=lhs;
+  state.get_original_name(original_lhs);
+
+  const symbolt &symbol=ns.lookup(original_lhs);
+  if(symbol.is_auxiliary) assignment_type=symex_targett::HIDDEN;
+  
+  bool need_a_s=state.atomic_section_id==0;
+
+  if(need_a_s &&
+     (ssa_rhs.id()==ID_with ||
+      ssa_rhs.id()==ID_update))
+  {
+    assert(ssa_rhs.operands().size()==3);
+    state.rename(ssa_rhs.type(), ns);
+    state.rename(ssa_rhs.op1(), ns);
+    state.rename(ssa_rhs.op2(), ns);
+    symex_atomic_begin(state);
+    state.rename(ssa_rhs.op0(), ns);
+  }
+  else if(need_a_s &&
+          !guard.empty() &&
+          (to_if_expr(ssa_rhs).true_case().id()==ID_with ||
+           to_if_expr(ssa_rhs).true_case().id()==ID_update))
+  {
+    if_exprt &ssa_rhs_if=to_if_expr(ssa_rhs);
+
+    assert(ssa_rhs_if.true_case().operands().size()==3);
+    state.rename(ssa_rhs_if.type(), ns);
+    state.rename(ssa_rhs_if.cond(), ns);
+    state.rename(ssa_rhs_if.false_case(), ns);
+    state.rename(ssa_rhs_if.true_case().type(), ns);
+    state.rename(ssa_rhs_if.true_case().op1(), ns);
+    state.rename(ssa_rhs_if.true_case().op2(), ns);
+    symex_atomic_begin(state);
+    state.rename(ssa_rhs_if.true_case().op0(), ns);
+  }
+  else
+  {
+    need_a_s=false;
+    state.rename(ssa_rhs, ns);
+  }
+
   do_simplify(ssa_rhs);
 
   ssa_exprt ssa_lhs=lhs;
@@ -256,6 +297,9 @@ void goto_symext::symex_assign_symbol(
     ssa_rhs,
     state.source,
     assignment_type);
+
+  if(need_a_s)
+    symex_atomic_end(state);
 }
 
 void goto_symext::symex_assign_typecast(

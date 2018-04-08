@@ -1,5 +1,5 @@
 CORE
-main.c
+peterson.c
 
 ^EXIT=0$
 ^SIGNAL=0$
