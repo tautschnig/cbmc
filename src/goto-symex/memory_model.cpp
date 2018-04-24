@@ -11,6 +11,10 @@ Author: Michael Tautschnig, michael.tautschnig@cs.ox.ac.uk
 
 #include "memory_model.h"
 
+#include <util/arith_tools.h>
+#include <util/base_type.h>
+#include <util/byte_operators.h>
+#include <util/c_types.h>
 #include <util/std_expr.h>
 
 memory_model_baset::memory_model_baset(const namespacet &_ns):
@@ -89,9 +93,16 @@ void memory_model_baset::read_from(symex_target_equationt &equation)
 
         // We rely on the fact that there is at least
         // one write event that has guard 'true'.
+        exprt read_value = r->ssa_lhs;
+        if(!base_type_eq(r->ssa_lhs.type(), r->ssa_rhs.type(), ns))
+          read_value = byte_extract_exprt(
+            byte_extract_id(),
+            r->ssa_lhs,
+            from_integer(0, index_type()),
+            w->ssa_lhs.type());
         implies_exprt read_from(s,
             and_exprt(w->guard,
-              equal_exprt(r->ssa_lhs, w->ssa_lhs)));
+              equal_exprt(read_value, w->ssa_lhs)));
 
         // Uses only the write's guard as precondition, read's guard
         // follows from rf_some
