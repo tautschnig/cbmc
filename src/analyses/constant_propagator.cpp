@@ -571,8 +571,17 @@ bool constant_propagator_domaint::replace_constants_and_simplify(
   exprt &expr,
   const namespacet &ns) const
 {
-  bool did_not_change_anything = values.replace_const.replace(expr);
-  did_not_change_anything &= simplify(expr, ns);
+  bool did_not_change_anything = true;
+
+  while(!values.replace_const.replace(expr))
+  {
+    did_not_change_anything = false;
+    simplify(expr, ns);
+  }
+
+  if(did_not_change_anything)
+    did_not_change_anything &= simplify(expr, ns);
+
   return did_not_change_anything;
 }
 
