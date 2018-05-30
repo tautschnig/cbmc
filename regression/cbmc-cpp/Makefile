@@ -1,10 +1,16 @@
 default: tests.log
 
+ifeq ($(BUILD_ENV_),MSVC)
+	gcc_only = -X gcc-only
+else
+	gcc_only =
+endif
+
 test:
-	@../test.pl -e -p -c ../../../src/cbmc/cbmc
+	@../test.pl -e -p -c ../../../src/cbmc/cbmc $(gcc_only)
 
 tests.log: ../test.pl
-	@../test.pl -e -p -c ../../../src/cbmc/cbmc
+	@../test.pl -e -p -c ../../../src/cbmc/cbmc $(gcc_only)
 
 show:
 	@for dir in *; do \
