@@ -95,6 +95,12 @@ void remove_internal_symbols(
   special.insert(CPROVER_PREFIX "deallocated");
   special.insert(CPROVER_PREFIX "dead_object");
   special.insert(CPROVER_PREFIX "rounding_mode");
+  special.insert("__new");
+  special.insert("__new_array");
+  special.insert("__placement_new");
+  special.insert("__placement_new_array");
+  special.insert("__delete");
+  special.insert("__delete_array");
 
   for(symbol_tablet::symbolst::const_iterator
       it=symbol_table.symbols.begin();
@@ -138,8 +144,9 @@ void remove_internal_symbols(
     else if(is_function)
     {
       // body? not local (i.e., "static")?
-      if(has_body &&
-         (!is_file_local || (config.main==symbol.name.c_str())))
+      if(
+        has_body &&
+        (!is_file_local || config.main == id2string(symbol.base_name)))
       {
         get_symbols(ns, symbol, exported);
       }
