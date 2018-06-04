@@ -159,8 +159,10 @@ void cpp_typecheckt::typecheck_class_template(
         previous_declaration.template_type());
     }
 
-    assert(cpp_scopes.get_id(symbol_name).id_class ==
-           cpp_idt::id_classt::TEMPLATE_SCOPE);
+    INVARIANT(
+      cpp_scopes.get_id(symbol_name).is_template_scope(),
+      "symbol should be in template scope");
+
     return;
   }
 
@@ -198,8 +200,10 @@ void cpp_typecheckt::typecheck_class_template(
 
   // link the template symbol with the template scope
   cpp_scopes.replace_id(symbol_name, template_scope);
-  assert(cpp_scopes.get_id(symbol_name).id_class ==
-         cpp_idt::id_classt::TEMPLATE_SCOPE);
+
+  INVARIANT(
+    cpp_scopes.get_id(symbol_name).is_template_scope(),
+    "symbol should be in template scope");
 }
 
 /// typecheck function templates
@@ -301,7 +305,9 @@ void cpp_typecheckt::typecheck_function_template(
             id2string(new_symbol->base_name);
 
   // link the template symbol with the template scope
-  assert(template_scope.id_class==cpp_idt::id_classt::TEMPLATE_SCOPE);
+  INVARIANT(
+    template_scope.is_template_scope(),
+    "symbol should be in template scope");
   cpp_scopes.replace_id(symbol_name, template_scope);
 }
 
