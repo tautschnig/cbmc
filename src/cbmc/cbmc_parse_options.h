@@ -23,6 +23,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/goto_trace.h>
 
 #include <solvers/refinement/string_refinement.h>
+#include <goto-instrument/speculation.h>
 
 #include "bmc.h"
 #include "xml_interface.h"
@@ -72,6 +73,7 @@ class optionst;
   OPT_FLUSH \
   "(localize-faults)(localize-faults-method):" \
   OPT_GOTO_TRACE \
+  OPT_SPECULATION \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

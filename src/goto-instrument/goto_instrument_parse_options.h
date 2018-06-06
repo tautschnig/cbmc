@@ -31,6 +31,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "count_eloc.h"
 
+#include "speculation.h"
+
 // clang-format off
 #define GOTO_INSTRUMENT_OPTIONS \
   "(all)" \
@@ -100,6 +102,7 @@ Author: Daniel Kroening, kroening@kroening.com
   OPT_GOTO_PROGRAM_STATS \
   "(show-local-safe-pointers)(show-safe-dereferences)" \
   OPT_REPLACE_CALLS \
+  OPT_INSTRUMENT_SPECULATION \
   // empty last line
 
 // clang-format on

@@ -787,6 +787,12 @@ int goto_instrument_parse_optionst::doit()
       undefined_function_abort_path(goto_model);
     }
 
+    if(cmdline.isset("speculation"))
+    {
+      do_indirect_call_and_rtti_removal();
+      instrument_speculation(goto_model);
+    }
+
     // write new binary?
     if(cmdline.args.size()==2)
     {

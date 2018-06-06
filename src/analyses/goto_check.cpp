@@ -63,6 +63,8 @@ public:
       _options.get_bool_option("float-overflow-check");
     enable_simplify=_options.get_bool_option("simplify");
     enable_nan_check=_options.get_bool_option("nan-check");
+    enable_cache_leak_check =
+      _options.get_bool_option("cache-information-leak-check");
     retain_trivial=_options.get_bool_option("retain-trivial");
     enable_assert_to_assume=_options.get_bool_option("assert-to-assume");
     enable_assertions=_options.get_bool_option("assertions");
@@ -114,6 +116,7 @@ protected:
   void float_overflow_check(const exprt &, const guardt &);
   void nan_check(const exprt &, const guardt &);
   void rw_ok_check(exprt &);
+  void cache_leak_check(const exprt &, const guardt &);
 
   std::string array_name(const exprt &);
 
@@ -143,6 +146,7 @@ protected:
   bool enable_float_overflow_check;
   bool enable_simplify;
   bool enable_nan_check;
+  bool enable_cache_leak_check;
   bool retain_trivial;
   bool enable_assert_to_assume;
   bool enable_assertions;
