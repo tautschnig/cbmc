@@ -28,6 +28,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/adjust_float_expressions.h>
 #include <goto-programs/lazy_goto_model.h>
 #include <goto-programs/instrument_preconditions.h>
+#include <goto-programs/interpreter.h>
 #include <goto-programs/goto_convert_functions.h>
 #include <goto-programs/goto_inline.h>
 #include <goto-programs/loop_ids.h>
@@ -543,6 +544,13 @@ int jbmc_parse_optionst::doit()
       show_properties(
         goto_model, get_message_handler(), ui_message_handler.get_ui());
       return 0; // should contemplate EX_OK from sysexits.h
+    }
+
+    if(cmdline.isset("interpreter"))
+    {
+      status() << "Starting interpreter" << eom;
+      interpreter(goto_model, get_message_handler());
+      return CPROVER_EXIT_SUCCESS;
     }
 
     if(set_properties(goto_model))

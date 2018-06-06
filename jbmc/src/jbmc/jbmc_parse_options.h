@@ -81,7 +81,7 @@ class optionst;
   "(localize-faults)(localize-faults-method):" \
   "(java-threading)" \
   OPT_GOTO_TRACE \
-  "(symex-driven-lazy-loading)"
+  "(symex-driven-lazy-loading)(interpreter)"
 // clang-format on
 
 class jbmc_parse_optionst:
