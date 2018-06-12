@@ -11,9 +11,9 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
-#ifdef DEBUG
+//#ifdef DEBUG
 #include <iostream>
-#endif
+//#endif
 
 #include <algorithm>
 
@@ -897,17 +897,23 @@ void cpp_typecheckt::typecheck_friend_declaration(
   // It should be a friend function.
   // Do the declarators.
 
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "friend declaration: " << declaration.pretty() << '\n';
-#endif
+  std::cout << "WITH MAP:" << std::endl;
+  template_map.print(std::cout);
+  std::cout << "IN SCOPE pref: " << cpp_scopes.current_scope().prefix << '\n';
+  std::cout << "IN SCOPE id: " << cpp_scopes.current_scope().identifier << '\n';
+  std::cout << "P SCOPE pref: " << cpp_scopes.current_scope().get_parent().prefix << '\n';
+  std::cout << "P SCOPE id: " << cpp_scopes.current_scope().get_parent().identifier << '\n';
+//#endif
 
   for(auto &sub_it : declaration.declarators())
   {
-#ifdef DEBUG
+//#ifdef DEBUG
     std::cout << "decl: " << sub_it.pretty() << "\n with value "
               << sub_it.value().pretty() << '\n';
     std::cout << "  scope: " << cpp_scopes.current_scope().prefix << '\n';
-#endif
+//#endif
 
     if(sub_it.value().is_not_nil())
       declaration.member_spec().set_inline(true);
@@ -1503,6 +1509,7 @@ bool cpp_typecheckt::get_component(
   const irep_idt &component_name,
   exprt &member)
 {
+  std::cerr << "object.type()=" << object.type().pretty() << std::endl;
   const typet &followed_type=follow(object.type());
 
   assert(followed_type.id()==ID_struct ||
@@ -1600,6 +1607,7 @@ bool cpp_typecheckt::check_component_access(
   const struct_union_typet &struct_union_type)
 {
   const irep_idt &access=component.get(ID_access);
+  std::cerr << "access: " << access << std::endl;
 
   if(access == ID_noaccess)
     return true; // not ok
@@ -1613,12 +1621,14 @@ bool cpp_typecheckt::check_component_access(
   const irep_idt &struct_identifier=
     struct_union_type.get(ID_name);
 
+  std::cerr << "struct_identifier=" << struct_identifier << std::endl;
   for(cpp_scopet *pscope = &(cpp_scopes.current_scope());
       !(pscope->is_root_scope());
       pscope = &(pscope->get_parent()))
   {
     if(pscope->is_class())
     {
+      std::cerr << "pscope->identifier=" << pscope->identifier << std::endl;
       if(pscope->identifier==struct_identifier)
         return false; // ok
 
@@ -1635,10 +1645,12 @@ bool cpp_typecheckt::check_component_access(
 
   // check friendship
   const irept::subt &friends = struct_union_type.find(ID_C_friends).get_sub();
+  std::cerr << "#friends: " << friends.size() << std::endl;
 
   forall_irep(f_it, friends)
   {
     const irept &friend_symb=*f_it;
+    std::cerr << "friend: " << friend_symb.get(ID_identifier) << std::endl;
 
     const cpp_scopet &friend_scope =
       cpp_scopes.get_scope(friend_symb.get(ID_identifier));

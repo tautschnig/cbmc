@@ -9,6 +9,8 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 /// \file
 /// C++ Language Type Checking
 
+#include <iostream>
+
 #include "cpp_typecheck.h"
 
 #include <util/base_exceptions.h>
@@ -832,6 +834,7 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
   const symbolt &template_symbol,
   const cpp_template_args_non_tct &template_args)
 {
+  std::cerr << "template_symbol.name=" << template_symbol.name << std::endl;
   // old stuff
   assert(template_args.id()!=ID_already_typechecked);
 
@@ -903,6 +906,10 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
         template_scope!=nullptr,
         nullptr_exceptiont,
         "template_scope is null");
+      std::cerr << "Current scope id: " << cpp_scopes.current_scope().identifier << std::endl;
+      std::cerr << "Current scope prefix: " << cpp_scopes.current_scope().prefix << std::endl;
+      std::cerr << "T scope id: " << template_scope->identifier << std::endl;
+      std::cerr << "T scope prefix: " << template_scope->prefix << std::endl;
       cpp_scopes.go_to(*template_scope);
 
       if(arg.id()==ID_type)

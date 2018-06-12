@@ -11,9 +11,9 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck_resolve.h"
 
-#ifdef DEBUG
+//#ifdef DEBUG
 #include <iostream>
-#endif
+//#endif
 
 #include <cstdlib>
 #include <algorithm>
@@ -182,10 +182,10 @@ void cpp_typecheck_resolvet::remove_duplicates(
 exprt cpp_typecheck_resolvet::convert_template_parameter(
   const cpp_idt &identifier)
 {
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "RESOLVE MAP:\n";
   cpp_typecheck.template_map.print(std::cout);
-#endif
+//#endif
 
   // look up the parameter in the template map
   exprt e=cpp_typecheck.template_map.lookup(identifier.identifier);
@@ -423,8 +423,11 @@ void cpp_typecheck_resolvet::exact_match_functions(
   {
     unsigned distance;
     if(disambiguate_functions(old_id, distance, fargs))
+    {
+      std::cerr << "old_id=" << old_id.pretty() << " distance=" << distance << std::endl;
       if(distance<=0)
         identifiers.push_back(old_id);
+    }
   }
 }
 
@@ -459,6 +462,8 @@ void cpp_typecheck_resolvet::disambiguate_functions(
         // NOLINTNEXTLINE(whitespace/operators)
         1000*template_distance+args_distance;
 
+      std::cerr << "DMAP insert " << total_distance << ": "
+        << old_id.get(ID_identifier) << std::endl;
       distance_map.insert({total_distance, old_id});
     }
   }
@@ -466,6 +471,7 @@ void cpp_typecheck_resolvet::disambiguate_functions(
   old_identifiers.clear();
 
   // put in the top ones
+  std::cerr << "DMAP: " << distance_map.size() << std::endl;
   if(!distance_map.empty())
   {
     auto range = distance_map.equal_range(distance_map.begin()->first);
@@ -473,6 +479,7 @@ void cpp_typecheck_resolvet::disambiguate_functions(
       old_identifiers.push_back(it->second);
   }
 
+  std::cerr << "OIF: " << old_identifiers.size() << std::endl;
   if(old_identifiers.size() > 1 && fargs.in_use)
   {
     // try to further disambiguate functions
@@ -481,7 +488,7 @@ void cpp_typecheck_resolvet::disambiguate_functions(
         old_it != old_identifiers.end();
         ++old_it)
     {
-#if 0
+#if 1
       std::cout << "I1: " << old_it->get(ID_identifier) << '\n';
 #endif
 
@@ -500,6 +507,7 @@ void cpp_typecheck_resolvet::disambiguate_functions(
         if(resolve_it->type().id() != ID_code)
           continue;
 
+        std::cout << "I2: " << resolve_it->get(ID_identifier) << '\n';
         const code_typet &f2 = to_code_type(resolve_it->type());
 
         // TODO: may fail when using ellipsis
@@ -542,6 +550,9 @@ void cpp_typecheck_resolvet::disambiguate_functions(
           const struct_typet &struct1=to_struct_type(followed1);
           const struct_typet &struct2=to_struct_type(followed2);
 
+          std::cerr << "COMPARING" << std::endl;
+          std::cerr << "ST1: " << type1.pretty() << std::endl;
+          std::cerr << "ST2: " << type2.pretty() << std::endl;
           if(f1_better && cpp_typecheck.subtype_typecast(struct1, struct2))
           {
             f2_better=false;
@@ -572,6 +583,7 @@ void cpp_typecheck_resolvet::make_constructors(
 
   for(const auto &identifier : identifiers)
   {
+    std::cerr << "ID: " << identifier.id() << std::endl;
     if(identifier.id() != ID_type)
     {
       // already an expression
@@ -890,13 +902,13 @@ cpp_scopet &cpp_typecheck_resolvet::resolve_scope(
           recursive ? cpp_scopet::RECURSIVE : cpp_scopet::QUALIFIED,
           cpp_idt::id_classt::TEMPLATE);
 
-#ifdef DEBUG
+//#ifdef DEBUG
         std::cout << "S: "
                   << cpp_typecheck.cpp_scopes.current_scope().identifier
                   << '\n';
         cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
         std::cout << "X: " << id_set.size() << '\n';
-#endif
+//#endif
         struct_tag_typet instance =
           disambiguate_template_classes(final_base_name, id_set, template_args);
 
@@ -1352,13 +1364,16 @@ exprt cpp_typecheck_resolvet::resolve(
   // this changes the scope
   resolve_scope(cpp_name, base_name, template_args);
 
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "base name: " << base_name << '\n';
   std::cout << "template args: " << template_args.pretty() << '\n';
   std::cout << "original-scope: " << original_scope->prefix << '\n';
   std::cout << "scope: " << cpp_typecheck.cpp_scopes.current_scope().prefix
             << '\n';
-#endif
+  std::cout << "fargs: (" << fargs.operands.size() << ")" << '\n';
+  for(const auto &farg : fargs.operands)
+    std::cout << farg.pretty() << '\n';
+//#endif
 
   bool qualified=cpp_name.is_qualified();
 
@@ -1443,7 +1458,7 @@ exprt cpp_typecheck_resolvet::resolve(
 
     cpp_typecheck.error() << messaget::eom;
     // cpp_typecheck.cpp_scopes.get_root_scope().print(std::cout);
-    // cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
+    cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
     throw 0;
   }
 
@@ -1504,13 +1519,25 @@ exprt cpp_typecheck_resolvet::resolve(
       id_set, fargs, identifiers);
   }
 
+  #if 1
+  std::cout << "P-before-constr " << base_name << " " << identifiers.size() << "\n";
+  show_identifiers(base_name, identifiers, std::cout);
+  std::cout << "\n";
+  #endif
+
   // change types into constructors if we want a constructor
   if(want==wantt::VAR)
     make_constructors(identifiers);
 
+  #if 1
+  std::cout << "PF " << base_name << " " << identifiers.size() << "\n";
+  show_identifiers(base_name, identifiers, std::cout);
+  std::cout << "\n";
+  #endif
+
   filter(identifiers, want);
 
-#ifdef DEBUG
+#if 1
   std::cout << "P0 " << base_name << " " << identifiers.size() << '\n';
   show_identifiers(base_name, identifiers, std::cout);
   std::cout << '\n';
@@ -1532,7 +1559,7 @@ exprt cpp_typecheck_resolvet::resolve(
   // we only want _exact_ matches, without templates!
   exact_match_functions(new_identifiers, fargs);
 
-#ifdef DEBUG
+#if 1
   std::cout << "P2 " << base_name << " " << new_identifiers.size() << '\n';
   show_identifiers(base_name, new_identifiers, std::cout);
   std::cout << '\n';
@@ -1550,10 +1577,15 @@ exprt cpp_typecheck_resolvet::resolve(
       if(new_identifiers.empty())
         new_identifiers=identifiers;
     }
+    #if 1
+    std::cout << "P3a " << base_name << " " << new_identifiers.size() << "\n";
+    show_identifiers(base_name, new_identifiers, std::cout);
+    std::cout << "\n";
+    #endif
 
     disambiguate_functions(new_identifiers, fargs);
 
-#ifdef DEBUG
+#if 1
     std::cout << "P3 " << base_name << " " << new_identifiers.size() << '\n';
     show_identifiers(base_name, new_identifiers, std::cout);
     std::cout << '\n';
@@ -1562,7 +1594,7 @@ exprt cpp_typecheck_resolvet::resolve(
   else
     remove_duplicates(new_identifiers);
 
-#ifdef DEBUG
+#if 1
   std::cout << "P4 " << base_name << " " << new_identifiers.size() << '\n';
   show_identifiers(base_name, new_identifiers, std::cout);
   std::cout << '\n';
@@ -1594,7 +1626,7 @@ exprt cpp_typecheck_resolvet::resolve(
         << "' does not uniquely resolve:\n";
       show_identifiers(base_name, new_identifiers, cpp_typecheck.error());
 
-#ifdef DEBUG
+#if 1
       exprt e1=*new_identifiers.begin();
       exprt e2=*(++new_identifiers.begin());
       cpp_typecheck.error() << "e1==e2: " << (e1 == e2) << '\n';
@@ -2115,10 +2147,12 @@ bool cpp_typecheck_resolvet::disambiguate_functions(
   if(expr.id()==ID_member ||
      type.return_type().id() == ID_constructor)
   {
+    std::cerr << "CASE1" << std::endl;
     // if it's a member, but does not have an object yet,
     // we add one
     if(!fargs.has_object)
     {
+      std::cerr << "no object" << std::endl;
       const code_typet::parameterst &parameters=type.parameters();
       const code_typet::parametert &parameter=parameters.front();
 
@@ -2126,6 +2160,7 @@ bool cpp_typecheck_resolvet::disambiguate_functions(
 
       if(type.return_type().id() == ID_constructor)
       {
+        std::cerr << "constructor" << std::endl;
         // it's a constructor
         const typet &object_type=parameter.type().subtype();
         symbol_exprt object(irep_idt(), object_type);
@@ -2153,6 +2188,7 @@ bool cpp_typecheck_resolvet::disambiguate_functions(
   }
   else if(fargs.has_object)
   {
+    std::cerr << "CASE2" << std::endl;
     // if it's not a member then we shall remove the object
     cpp_typecheck_fargst new_fargs(fargs);
     new_fargs.remove_object();
@@ -2160,6 +2196,7 @@ bool cpp_typecheck_resolvet::disambiguate_functions(
     return new_fargs.match(type, args_distance, cpp_typecheck);
   }
 
+  std::cerr << "MATCHING" << std::endl;
   return fargs.match(type, args_distance, cpp_typecheck);
 }
 

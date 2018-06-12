@@ -9,6 +9,8 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 /// \file
 /// C++ Language Type Checking
 
+#include <iostream>
+
 #include "cpp_declarator_converter.h"
 
 #include <util/c_types.h>
@@ -61,6 +63,7 @@ symbolt &cpp_declarator_convertert::convert(
 
     cpp_typecheck_resolvet cpp_typecheck_resolve(cpp_typecheck);
 
+    std::cerr << declarator.name().pretty() << std::endl;
     cpp_typecheck_resolve.resolve_scope(
       declarator.name(), base_name, template_args);
 

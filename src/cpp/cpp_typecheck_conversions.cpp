@@ -12,6 +12,7 @@ Author:
 #include "cpp_typecheck.h"
 
 #include <cstdlib>
+#include <iostream>
 
 #include <util/arith_tools.h>
 #include <util/config.h>
@@ -1226,6 +1227,9 @@ bool cpp_typecheckt::reference_binding(
   exprt &new_expr,
   unsigned &rank)
 {
+  std::cerr << "expr=" << expr.pretty() << std::endl;
+  std::cerr << "expr.type()=" << expr.type().pretty() << std::endl;
+  std::cerr << "type=" << type.pretty() << std::endl;
   assert(is_reference(type));
   assert(!is_reference(expr.type()));
 
@@ -1436,6 +1440,7 @@ bool cpp_typecheckt::implicit_conversion_sequence(
 
   if(is_reference(type))
   {
+    std::cerr << "REF" << std::endl;
     if(!reference_binding(e, type, new_expr, rank))
       return false;
 
@@ -1447,6 +1452,7 @@ bool cpp_typecheckt::implicit_conversion_sequence(
   }
   else if(!standard_conversion_sequence(e, type, new_expr, rank))
   {
+    std::cerr << "NONSTD" << std::endl;
     rank=backup_rank;
     if(!user_defined_conversion_sequence(e, type, new_expr, rank))
       return false;
@@ -1457,6 +1463,7 @@ bool cpp_typecheckt::implicit_conversion_sequence(
     #endif
   }
 
+  std::cerr << "TRUE" << std::endl;
   return true;
 }
 

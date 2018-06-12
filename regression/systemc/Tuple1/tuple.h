@@ -30,29 +30,29 @@ std::ostream& operator<<(std::ostream& os, const null_type dummy)
 null_type dummy;
 
 template
-   <class T0 = null_type,
-    class T1 = null_type,
-    class T2 = null_type,
-    class T3 = null_type>
+   <class A0 = null_type,
+    class A1 = null_type,
+    class A2 = null_type,
+    class A3 = null_type>
 class ltuple;
 
 template
-   <class T0 = null_type,
-    class T1 = null_type,
-    class T2 = null_type,
-    class T3 = null_type>
+   <class X0 = null_type,
+    class X1 = null_type,
+    class X2 = null_type,
+    class X3 = null_type>
 class tuple
 {
 
-  T0 el0;
-  T1 el1;
-  T2 el2;
-  T3 el3;
+  X0 el0;
+  X1 el1;
+  X2 el2;
+  X3 el3;
 
 public:
 
-  friend tuple<T0,T1,T2,T3>
-  ltuple<T0,T1,T2,T3>::operator= (tuple<T0,T1,T2,T3>);
+  friend tuple<X0,X1,X2,X3>
+  ltuple<X0,X1,X2,X3>::operator= (tuple<X0,X1,X2,X3>);
 
 #ifndef NO_IO
   std::ostream&
@@ -64,13 +64,13 @@ public:
 
   tuple() {}
 
-  tuple(T0 t0): el0(t0), el1(cnull()), el2(cnull()), el3(cnull()) {}
+  tuple(X0 t0): el0(t0), el1(cnull()), el2(cnull()), el3(cnull()) {}
 
-  tuple(T0 t0, T1 t1): el0(t0), el1(t1), el2(cnull()), el3(cnull()) {}
+  tuple(X0 t0, X1 t1): el0(t0), el1(t1), el2(cnull()), el3(cnull()) {}
 
-  tuple(T0 t0, T1 t1, T2 t2): el0(t0), el1(t1), el2(t2), el3(cnull()) {}
+  tuple(X0 t0, X1 t1, X2 t2): el0(t0), el1(t1), el2(t2), el3(cnull()) {}
 
-  tuple(T0 t0, T1 t1, T2 t2, T3 t3): el0(t0), el1(t1), el2(t2), el3(t3) {}
+  tuple(X0 t0, X1 t1, X2 t2, X3 t3): el0(t0), el1(t1), el2(t2), el3(t3) {}
 
 };
 

@@ -11,9 +11,9 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
-#ifdef DEBUG
+//#ifdef DEBUG
 #include <iostream>
-#endif
+//#endif
 
 #include <util/arith_tools.h>
 #include <util/c_types.h>
@@ -1815,11 +1815,13 @@ void cpp_typecheckt::typecheck_expr_cpp_name(
     }
   }
 
+  std::cerr << "RESOLVE!!" << std::endl;
   exprt symbol_expr=
     resolve(
       to_cpp_name(expr),
       cpp_typecheck_resolvet::wantt::VAR,
       fargs);
+  std::cerr << "<<< RESOLVED" << std::endl;
 
   // we want VAR
   assert(symbol_expr.id()!=ID_type);
@@ -1884,6 +1886,7 @@ void cpp_typecheckt::add_implicit_dereference(exprt &expr)
 void cpp_typecheckt::typecheck_side_effect_function_call(
   side_effect_expr_function_callt &expr)
 {
+  std::cerr << "===================== TC FCALL ===================" << std::endl;
   // For virtual functions, it is important to check whether
   // the function name is qualified. If it is qualified, then
   // the call is not virtual.
@@ -1909,7 +1912,9 @@ void cpp_typecheckt::typecheck_side_effect_function_call(
   exprt op0=expr.function();
 
   // now do the function -- this has been postponed
+  std::cerr << "op0=" << op0.pretty() << std::endl;
   typecheck_function_expr(expr.function(), cpp_typecheck_fargst(expr));
+  std::cerr << "XXXXXXXXXXXXXXXXXXXXXXXXXXXX DONE XXXXXXXXXXXXXXXXXXX" << std::endl;
 
   if(expr.function().id() == ID_pod_constructor)
   {

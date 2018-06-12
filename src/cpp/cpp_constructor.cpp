@@ -11,6 +11,7 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
+#include <iostream>
 #include <util/arith_tools.h>
 #include <util/std_types.h>
 
@@ -27,11 +28,15 @@ optionalt<codet> cpp_typecheckt::cpp_constructor(
   const exprt &object,
   const exprt::operandst &operands)
 {
+  std::cerr << "############################## CONSTRUCTOR ############" << std::endl;
   exprt object_tc=object;
 
   typecheck_expr(object_tc);
 
   elaborate_class_template(object_tc.type());
+  std::cerr << "object_tc=" << object_tc.pretty() << std::endl;
+  for(const auto &op : operands)
+    std::cerr << "op=" << op.pretty() << std::endl;
 
   typet tmp_type(follow(object_tc.type()));
 
@@ -166,6 +171,7 @@ optionalt<codet> cpp_typecheckt::cpp_constructor(
     {
       typecheck_expr(op);
       add_implicit_dereference(op);
+      std::cerr << "TC op=" << op.pretty() << std::endl;
     }
 
     const struct_typet &struct_type=

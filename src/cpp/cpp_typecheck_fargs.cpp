@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 #include "cpp_typecheck_fargs.h"
 
 #include <cassert>
+#include <iostream>
 
 #include <util/std_types.h>
 
@@ -70,6 +71,7 @@ bool cpp_typecheck_fargst::match(
       return false;
   }
 
+  std::cerr << "still matching" << std::endl;
   exprt::operandst::iterator it=ops.begin();
   for(const auto &parameter : parameters)
   {
@@ -106,7 +108,7 @@ bool cpp_typecheck_fargst::match(
     unsigned rank=0;
     exprt new_expr;
 
-    #if 0
+    #if 1
     std::cout << "C: " << cpp_typecheck.to_string(operand.type())
               << " -> " << cpp_typecheck.to_string(parameter.type())
               << '\n';
@@ -138,6 +140,7 @@ bool cpp_typecheck_fargst::match(
       return false; // no conversion possible
     }
 
+    std::cerr << "CURRENT DIST: " << distance << std::endl;
     ++it;
   }
 
@@ -146,5 +149,6 @@ bool cpp_typecheck_fargst::match(
     // Ellipsis is the 'worst' of the conversion sequences
     distance+=1000;
 
+  std::cerr << "FINAL DIST:" << distance << std::endl;
   return true;
 }
