@@ -9,6 +9,8 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 /// \file
 /// C++ Language Type Checking
 
+#include <iostream>
+
 #include "cpp_typecheck.h"
 
 #include <util/base_exceptions.h>
@@ -842,6 +844,7 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
   const symbolt &template_symbol,
   const cpp_template_args_non_tct &template_args)
 {
+  std::cerr << "template_symbol.name=" << template_symbol.name << std::endl;
   // old stuff
   assert(template_args.id()!=ID_already_typechecked);
 
@@ -870,8 +873,7 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
   }
 
   // we will modify the template map
-  template_mapt old_template_map;
-  old_template_map=template_map;
+  cpp_saved_template_mapt saved_map(template_map);
 
   // check for default arguments
   for(std::size_t i=0; i<parameters.size(); i++)
@@ -906,6 +908,18 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
 
     if(parameter.id()==ID_type)
     {
+      cpp_save_scopet cpp_saved_scope(cpp_scopes);
+      cpp_idt *template_scope=cpp_scopes.id_map[template_symbol.name];
+      INVARIANT_STRUCTURED(
+        template_scope!=nullptr,
+        nullptr_exceptiont,
+        "template_scope is null");
+      std::cerr << "Current scope id: " << cpp_scopes.current_scope().identifier << std::endl;
+      std::cerr << "Current scope prefix: " << cpp_scopes.current_scope().prefix << std::endl;
+      std::cerr << "T scope id: " << template_scope->identifier << std::endl;
+      std::cerr << "T scope prefix: " << template_scope->prefix << std::endl;
+      cpp_scopes.go_to(*template_scope);
+
       if(arg.id()==ID_type)
       {
         typecheck_type(arg.type());
@@ -962,9 +976,6 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
 
     template_map.set(parameter, arg);
   }
-
-  // restore template map
-  template_map.swap(old_template_map);
 
   // now the numbers should match
   assert(args.size()==parameters.size());

@@ -11,9 +11,9 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck.h"
 
-#ifdef DEBUG
+//#ifdef DEBUG
 #include <iostream>
-#endif
+//#endif
 
 #include <algorithm>
 
@@ -900,9 +900,9 @@ void cpp_typecheckt::typecheck_friend_declaration(
   // It should be a friend function.
   // Do the declarators.
 
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "friend declaration: " << declaration.pretty() << '\n';
-#endif
+//#endif
 
   for(auto &sub_it : declaration.declarators())
   {
@@ -911,6 +911,17 @@ void cpp_typecheckt::typecheck_friend_declaration(
               << sub_it.value().pretty() << '\n';
     std::cout << "  scope: " << cpp_scopes.current_scope().prefix << '\n';
 #endif
+    if(sub_it.value().is_not_nil())
+      declaration.member_spec().set_inline(true);
+
+      cpp_save_scopet saved_scope(cpp_scopes);
+      cpp_scopes.go_to_global_scope();
+      cpp_declarator_convertert cpp_declarator_converter(*this);
+      const symbolt &conv_symb=cpp_declarator_converter.convert(
+          declaration.type(), declaration.storage_spec(),
+          declaration.member_spec(), sub_it);
+      exprt symb_expr=cpp_symbol_expr(conv_symb);
+      symbol.type.add("#friends").move_to_sub(symb_expr);
     // In which scope are we going to typecheck this?
 #if 0
     // TODO: not sure what the value is?!
@@ -932,7 +943,6 @@ void cpp_typecheckt::typecheck_friend_declaration(
       symbol.type.add(ID_C_friends).move_to_sub(symb_expr);
     }
     else
-#endif
     {
       cpp_declarator_convertert cpp_declarator_converter(*this);
       cpp_declarator_converter.is_friend=true;
@@ -947,6 +957,7 @@ void cpp_typecheckt::typecheck_friend_declaration(
 
       symbol.type.add(ID_C_friends).move_to_sub(symb_expr);
     }
+#endif
   }
 }
 

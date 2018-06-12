@@ -11,9 +11,9 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 
 #include "cpp_typecheck_resolve.h"
 
-#ifdef DEBUG
+//#ifdef DEBUG
 #include <iostream>
-#endif
+//#endif
 
 #include <cstdlib>
 #include <algorithm>
@@ -194,10 +194,10 @@ void cpp_typecheck_resolvet::remove_duplicates(
 exprt cpp_typecheck_resolvet::convert_template_parameter(
   const cpp_idt &identifier)
 {
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "RESOLVE MAP:" << std::endl;
   cpp_typecheck.template_map.print(std::cout);
-#endif
+//#endif
 
   // look up the parameter in the template map
   exprt e=cpp_typecheck.template_map.lookup(identifier.identifier);
@@ -1396,13 +1396,13 @@ exprt cpp_typecheck_resolvet::resolve(
   // this changes the scope
   resolve_scope(cpp_name, base_name, template_args);
 
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "base name: " << base_name << std::endl;
   std::cout << "template args: " << template_args.pretty() << std::endl;
   std::cout << "original-scope: " << original_scope->prefix << std::endl;
   std::cout << "scope: "
             << cpp_typecheck.cpp_scopes.current_scope().prefix << std::endl;
-#endif
+//#endif
 
   const source_locationt &source_location=cpp_name.source_location();
   bool qualified=cpp_name.is_qualified();
