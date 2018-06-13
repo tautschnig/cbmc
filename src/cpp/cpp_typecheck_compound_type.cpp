@@ -858,13 +858,9 @@ void cpp_typecheckt::typecheck_friend_declaration(
 
   if(declaration.is_template())
   {
-    return; // TODO
-
-#if 0
     error().source_location=declaration.type().source_location();
     error() << "friend template not supported" << eom;
     throw 0;
-#endif
   }
 
   // we distinguish these whether there is a declarator
@@ -902,21 +898,28 @@ void cpp_typecheckt::typecheck_friend_declaration(
 
 //#ifdef DEBUG
   std::cout << "friend declaration: " << declaration.pretty() << '\n';
+  std::cout << "WITH MAP:" << std::endl;
+  template_map.print(std::cout);
+  std::cout << "IN SCOPE pref: " << cpp_scopes.current_scope().prefix << '\n';
+  std::cout << "IN SCOPE id: " << cpp_scopes.current_scope().identifier << '\n';
+  std::cout << "P SCOPE pref: " << cpp_scopes.current_scope().get_parent().prefix << '\n';
+  std::cout << "P SCOPE id: " << cpp_scopes.current_scope().get_parent().identifier << '\n';
 //#endif
 
   for(auto &sub_it : declaration.declarators())
   {
-#ifdef DEBUG
+//#ifdef DEBUG
     std::cout << "decl: " << sub_it.pretty() << "\n with value "
               << sub_it.value().pretty() << '\n';
     std::cout << "  scope: " << cpp_scopes.current_scope().prefix << '\n';
-#endif
+//#endif
     if(sub_it.value().is_not_nil())
       declaration.member_spec().set_inline(true);
 
       cpp_save_scopet saved_scope(cpp_scopes);
       cpp_scopes.go_to_global_scope();
       cpp_declarator_convertert cpp_declarator_converter(*this);
+      cpp_declarator_converter.is_friend=true;
       const symbolt &conv_symb=cpp_declarator_converter.convert(
           declaration.type(), declaration.storage_spec(),
           declaration.member_spec(), sub_it);

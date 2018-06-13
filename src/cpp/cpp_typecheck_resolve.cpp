@@ -919,13 +919,13 @@ cpp_scopet &cpp_typecheck_resolvet::resolve_scope(
           cpp_idt::id_classt::TEMPLATE,
           id_set);
 
-#ifdef DEBUG
+//#ifdef DEBUG
         std::cout << "S: "
                   << cpp_typecheck.cpp_scopes.current_scope().identifier
                   << '\n';
         cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
         std::cout << "X: " << id_set.size() << '\n';
-#endif
+//#endif
         symbol_typet instance=
           disambiguate_template_classes(final_base_name, id_set, template_args);
 
@@ -1489,7 +1489,7 @@ exprt cpp_typecheck_resolvet::resolve(
 
     cpp_typecheck.error() << messaget::eom;
     // cpp_typecheck.cpp_scopes.get_root_scope().print(std::cout);
-    // cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
+    cpp_typecheck.cpp_scopes.current_scope().print(std::cout);
     throw 0;
   }
 
