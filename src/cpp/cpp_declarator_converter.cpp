@@ -26,7 +26,7 @@ cpp_declarator_convertert::cpp_declarator_convertert(
   is_typedef(false),
   is_template(false),
   is_template_parameter(false),
-  is_friend(false),
+  friend_scope(nullptr),
   linkage_spec(_cpp_typecheck.current_linkage_spec),
   cpp_typecheck(_cpp_typecheck),
   is_code(false)
@@ -83,7 +83,7 @@ symbolt &cpp_declarator_convertert::convert(
   get_final_identifier();
 
   // first see if it is a member
-  if(scope->id_class==cpp_idt::id_classt::CLASS && !is_friend)
+  if(scope->id_class==cpp_idt::id_classt::CLASS && !is_friend())
   {
     // it's a member! it must be declared already
 
@@ -407,7 +407,7 @@ void cpp_declarator_convertert::get_final_identifier()
     }
   }
 
-  final_identifier = (is_friend ? "" : scope->prefix) + identifier;
+  final_identifier = (is_friend() ? "" : scope->prefix) + identifier;
 }
 
 symbolt &cpp_declarator_convertert::convert_new_symbol(
@@ -524,7 +524,7 @@ symbolt &cpp_declarator_convertert::convert_new_symbol(
 
   // put into scope
   cpp_idt &identifier=
-    cpp_typecheck.cpp_scopes.put_into_scope(*new_symbol, *scope, is_friend);
+    cpp_typecheck.cpp_scopes.put_into_scope(*new_symbol, *scope, is_friend());
 
   if(is_template)
     identifier.id_class=cpp_idt::id_classt::TEMPLATE;

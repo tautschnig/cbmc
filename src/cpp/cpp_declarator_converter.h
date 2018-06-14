@@ -31,7 +31,7 @@ public:
   bool is_typedef;
   bool is_template;
   bool is_template_parameter;
-  bool is_friend;
+  cpp_scopet *friend_scope;
   irep_idt linkage_spec;
 
   symbolt &convert(
@@ -91,6 +91,11 @@ protected:
     const source_locationt &source_location,
     const typet &decl_type,
     symbolt &symbol);
+
+  bool is_friend() const
+  {
+    return friend_scope != nullptr;
+  }
 };
 
 #endif // CPROVER_CPP_CPP_DECLARATOR_CONVERTER_H

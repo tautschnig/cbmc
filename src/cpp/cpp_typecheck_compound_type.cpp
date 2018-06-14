@@ -916,10 +916,10 @@ void cpp_typecheckt::typecheck_friend_declaration(
     if(sub_it.value().is_not_nil())
       declaration.member_spec().set_inline(true);
 
+      cpp_declarator_convertert cpp_declarator_converter(*this);
+      cpp_declarator_converter.friend_scope = &cpp_scopes.current_scope();
       cpp_save_scopet saved_scope(cpp_scopes);
       cpp_scopes.go_to_global_scope();
-      cpp_declarator_convertert cpp_declarator_converter(*this);
-      cpp_declarator_converter.is_friend=true;
       const symbolt &conv_symb=cpp_declarator_converter.convert(
           declaration.type(), declaration.storage_spec(),
           declaration.member_spec(), sub_it);
