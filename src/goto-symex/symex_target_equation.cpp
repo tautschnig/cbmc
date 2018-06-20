@@ -814,7 +814,8 @@ void symex_target_equationt::SSA_stept::output(
     out << "IF " << from_expr(ns, source.function, cond_expr) << " GOTO\n";
     break;
 
-  default: UNREACHABLE;
+  case goto_trace_stept::typet::NONE:
+    UNREACHABLE;
   }
 
   if(is_assert() || is_assume() || is_assignment() || is_constraint())
@@ -928,7 +929,7 @@ void symex_target_equationt::SSA_stept::output(std::ostream &out) const
     out << "IF " << format(cond_expr) << " GOTO\n";
     break;
 
-  default:
+  case goto_trace_stept::typet::NONE:
     UNREACHABLE;
   }
 

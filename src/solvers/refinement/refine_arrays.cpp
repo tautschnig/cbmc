@@ -94,7 +94,7 @@ void bv_refinementt::arrays_overapproximated()
       nb_active++;
       lazy_array_constraints.erase(it++);
       break;
-    default:
+    case decision_proceduret::resultt::D_ERROR:
       INVARIANT(
         false,
         string_refinement_invariantt("error in array over approximation "

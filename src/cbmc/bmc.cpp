@@ -476,7 +476,7 @@ safety_checkert::resultt bmct::stop_on_fail(prop_convt &prop_conv)
     report_failure();
     return resultt::UNSAFE;
 
-  default:
+  case decision_proceduret::resultt::D_ERROR:
     if(options.get_bool_option("dimacs") ||
        options.get_option("outfile")!="")
       return resultt::SAFE;

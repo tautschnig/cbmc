@@ -70,7 +70,12 @@ void smt2_parsert::command_sequence()
       // what we expect
       break;
 
-    default:
+    case OPEN:
+    case SYMBOL:
+    case NUMERAL:
+    case STRING_LITERAL:
+    case NONE:
+    case KEYWORD:
       throw error("expected ')' at end of command");
     }
   }
@@ -99,7 +104,11 @@ void smt2_parsert::ignore_command()
     case END_OF_FILE:
       throw error("unexpected EOF in command");
 
-    default:
+    case SYMBOL:
+    case NUMERAL:
+    case STRING_LITERAL:
+    case NONE:
+    case KEYWORD:
       next_token();
     }
   }
@@ -899,7 +908,12 @@ exprt smt2_parsert::function_application()
     }
     break;
 
-  default:
+  case CLOSE:
+  case NUMERAL:
+  case STRING_LITERAL:
+  case END_OF_FILE:
+  case NONE:
+  case KEYWORD:
     // just parentheses
     exprt tmp=expression();
     if(next_token()!=CLOSE)
@@ -997,7 +1011,10 @@ exprt smt2_parsert::expression()
   case END_OF_FILE:
     throw error("EOF in an expression");
 
-  default:
+  case CLOSE:
+  case STRING_LITERAL:
+  case NONE:
+  case KEYWORD:
     throw error("unexpected token in an expression");
   }
 
@@ -1082,7 +1099,12 @@ typet smt2_parsert::sort()
     else
       throw error() << "unexpected sort: `" << buffer << '\'';
 
-  default:
+  case CLOSE:
+  case NUMERAL:
+  case STRING_LITERAL:
+  case END_OF_FILE:
+  case NONE:
+  case KEYWORD:
     throw error() << "unexpected token in a sort: `" << buffer << '\'';
   }
 

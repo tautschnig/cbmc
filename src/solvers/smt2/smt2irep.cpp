@@ -81,7 +81,8 @@ bool smt2irept::parse()
           break;
         }
 
-      default:
+      case NONE:
+      case KEYWORD:
         throw error("unexpected token");
       }
     }

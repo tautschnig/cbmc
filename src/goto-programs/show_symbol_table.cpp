@@ -296,8 +296,6 @@ void show_symbol_table(
 
   case ui_message_handlert::uit::JSON_UI:
     show_symbol_table_json_ui(symbol_table, ui);
-
-  default:
     break;
   }
 }
@@ -323,7 +321,7 @@ void show_symbol_table_brief(
     show_symbol_table_xml_ui();
     break;
 
-  default:
+  case ui_message_handlert::uit::JSON_UI:
     show_symbol_table_brief_json_ui(symbol_table, ui);
     break;
   }
