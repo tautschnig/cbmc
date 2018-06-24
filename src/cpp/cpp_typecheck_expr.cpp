@@ -2039,7 +2039,8 @@ void cpp_typecheckt::typecheck_side_effect_function_call(
       throw 0;
     }
   }
-  else if(expr.function().type().id()==ID_code)
+
+  if(expr.function().type().id()==ID_code)
   {
     if(expr.function().type().get_bool(ID_C_is_virtual) && !is_qualified)
     {
