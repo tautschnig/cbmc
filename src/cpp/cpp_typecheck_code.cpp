@@ -280,7 +280,7 @@ void cpp_typecheckt::typecheck_member_initializer(codet &code)
       {
         cpp_save_scopet cpp_saved_scope(cpp_scopes);
         cpp_scopes.go_to(
-          *(cpp_scopes.id_map[cpp_scopes.current_scope().class_identifier]));
+          cpp_scopes.get_scope(cpp_scopes.current_scope().class_identifier));
         symbol_expr=resolve(member, cpp_typecheck_resolvet::wantt::VAR, fargs);
       }
 

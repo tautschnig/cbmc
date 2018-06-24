@@ -146,7 +146,7 @@ void cpp_typecheckt::typecheck_class_template(
       #endif
 
       // We also replace the template scope (the old one could be deleted).
-      cpp_scopes.id_map[symbol_name]=&template_scope;
+      cpp_scopes.replace_id(symbol_name, template_scope);
 
       // We also fix the parent scope in order to see the new
       // template arguments
@@ -159,7 +159,7 @@ void cpp_typecheckt::typecheck_class_template(
         previous_declaration.template_type());
     }
 
-    assert(cpp_scopes.id_map[symbol_name]->id_class ==
+    assert(cpp_scopes.get_id(symbol_name).id_class ==
            cpp_idt::id_classt::TEMPLATE_SCOPE);
     return;
   }
@@ -197,8 +197,8 @@ void cpp_typecheckt::typecheck_class_template(
             id2string(new_symbol->base_name);
 
   // link the template symbol with the template scope
-  cpp_scopes.id_map[symbol_name]=&template_scope;
-  assert(cpp_scopes.id_map[symbol_name]->id_class ==
+  cpp_scopes.replace_id(symbol_name, template_scope);
+  assert(cpp_scopes.get_id(symbol_name).id_class ==
          cpp_idt::id_classt::TEMPLATE_SCOPE);
 }
 
@@ -264,7 +264,7 @@ void cpp_typecheckt::typecheck_function_template(
     if(has_value)
     {
       symbol_table.get_writeable_ref(symbol_name).type.swap(declaration);
-      cpp_scopes.id_map[symbol_name]=&template_scope;
+      cpp_scopes.replace_id(symbol_name, template_scope);
     }
 
     // todo: the old template scope now is useless,
@@ -302,7 +302,7 @@ void cpp_typecheckt::typecheck_function_template(
 
   // link the template symbol with the template scope
   assert(template_scope.id_class==cpp_idt::id_classt::TEMPLATE_SCOPE);
-  cpp_scopes.id_map[symbol_name] = &template_scope;
+  cpp_scopes.replace_id(symbol_name, template_scope);
 }
 
 /// typecheck class template members; these can be methods or static members
@@ -896,10 +896,8 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
 
       // these need to be typechecked in the scope of the template,
       // not in the current scope!
-      cpp_idt *template_scope=cpp_scopes.id_map[template_symbol.name];
-      INVARIANT_STRUCTURED(
-        template_scope!=nullptr, nullptr_exceptiont, "template_scope is null");
-      cpp_scopes.go_to(*template_scope);
+      cpp_idt &template_scope = cpp_scopes.get_scope(template_symbol.name);
+      cpp_scopes.go_to(template_scope);
     }
 
     assert(i<args.size());
@@ -947,12 +945,8 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
       // of template.
       {
         cpp_save_scopet cpp_saved_scope(cpp_scopes);
-        cpp_idt *template_scope=cpp_scopes.id_map[template_symbol.name];
-        INVARIANT_STRUCTURED(
-          template_scope!=nullptr,
-          nullptr_exceptiont,
-          "template_scope is null");
-        cpp_scopes.go_to(*template_scope);
+        cpp_idt &template_scope = cpp_scopes.get_scope(template_symbol.name);
+        cpp_scopes.go_to(template_scope);
         typecheck_type(type);
       }
 

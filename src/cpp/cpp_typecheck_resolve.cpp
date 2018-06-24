@@ -1129,9 +1129,7 @@ symbol_typet cpp_typecheck_resolvet::disambiguate_template_classes(
 
     // we need to do this in the right scope
 
-    cpp_scopet *template_scope=
-      static_cast<cpp_scopet *>(
-        cpp_typecheck.cpp_scopes.id_map[id]);
+    cpp_scopet *template_scope = &cpp_typecheck.cpp_scopes.get_scope(id);
 
     if(template_scope==nullptr)
     {
@@ -1990,9 +1988,8 @@ exprt cpp_typecheck_resolvet::guess_function_template_args(
   cpp_save_scopet cpp_saved_scope(cpp_typecheck.cpp_scopes);
 
   // we need the template scope
-  cpp_scopet *template_scope=
-    static_cast<cpp_scopet *>(
-      cpp_typecheck.cpp_scopes.id_map[template_identifier]);
+  cpp_scopet *template_scope =
+    &cpp_typecheck.cpp_scopes.get_scope(template_identifier);
 
   if(template_scope==nullptr)
   {

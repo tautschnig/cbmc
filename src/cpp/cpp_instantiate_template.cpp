@@ -132,8 +132,7 @@ const symbolt &cpp_typecheckt::class_template_symbol(
   // produce new symbol name
   std::string suffix=template_suffix(full_template_args);
 
-  cpp_scopet *template_scope=
-    static_cast<cpp_scopet *>(cpp_scopes.id_map[template_symbol.name]);
+  cpp_scopet *template_scope = &cpp_scopes.get_scope(template_symbol.name);
 
   INVARIANT_STRUCTURED(
     template_scope!=nullptr, nullptr_exceptiont, "template_scope is null");
@@ -282,8 +281,7 @@ const symbolt &cpp_typecheckt::instantiate_template(
   std::string suffix=template_suffix(full_template_args);
 
   // we need the template scope to see the template parameters
-  cpp_scopet *template_scope=
-    static_cast<cpp_scopet *>(cpp_scopes.id_map[template_symbol.name]);
+  cpp_scopet *template_scope = &cpp_scopes.get_scope(template_symbol.name);
 
   if(template_scope==nullptr)
   {
@@ -328,10 +326,7 @@ const symbolt &cpp_typecheckt::instantiate_template(
   std::string subscope_name=id2string(template_scope->identifier)+suffix;
 
   // let's see if we have the instance already
-  cpp_scopest::id_mapt::iterator scope_it=
-    cpp_scopes.id_map.find(subscope_name);
-
-  if(scope_it!=cpp_scopes.id_map.end())
+  if(cpp_scopes.is_existing_scope(subscope_name))
   {
     cpp_scopet &scope=cpp_scopes.get_scope(subscope_name);
 

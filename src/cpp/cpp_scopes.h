@@ -70,6 +70,20 @@ public:
 
   cpp_scopet *current_scope_ptr;
 
+  bool is_existing_scope(const irep_idt &identifier) const
+  {
+    return id_map.find(identifier) != id_map.end();
+  }
+
+  void replace_id(
+    const irep_idt &identifier,
+    cpp_idt &new_id)
+  {
+    id_mapt::iterator it = id_map.find(identifier);
+    assert(it != id_map.end());
+    it->second = &new_id;
+  }
+
   cpp_idt &get_id(const irep_idt &identifier)
   {
     id_mapt::const_iterator it=id_map.find(identifier);
