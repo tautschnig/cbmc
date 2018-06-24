@@ -2187,8 +2187,7 @@ bool cpp_typecheck_resolvet::disambiguate_functions(
   const code_typet &type=to_code_type(expr.type());
 
   if(expr.id()==ID_member ||
-     type.return_type().id() == ID_constructor ||
-     type.return_type().id() == ID_destructor)
+     type.return_type().id() == ID_constructor)
   {
     // if it's a member, but does not have an object yet,
     // we add one
@@ -2199,8 +2198,7 @@ bool cpp_typecheck_resolvet::disambiguate_functions(
 
       assert(parameter.get(ID_C_base_name)==ID_this);
 
-      if(type.return_type().id() == ID_constructor ||
-         type.return_type().id() == ID_destructor)
+      if(type.return_type().id() == ID_constructor)
       {
         // it's a constructor
         const typet &object_type=parameter.type().subtype();
