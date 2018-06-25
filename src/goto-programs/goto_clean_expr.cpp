@@ -493,6 +493,12 @@ void goto_convertt::clean_expr_address_of(
     // do again
     clean_expr_address_of(expr, dest, mode);
   }
+  else if(
+    expr.id() == ID_side_effect &&
+    to_side_effect_expr(expr).get_statement() == ID_temporary_object)
+  {
+    remove_temporary_object(to_side_effect_expr(expr), dest, true);
+  }
   else
     Forall_operands(it, expr)
       clean_expr_address_of(*it, dest, mode);
