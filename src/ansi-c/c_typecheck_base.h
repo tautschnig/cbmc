@@ -59,7 +59,7 @@ public:
   {
   }
 
-  virtual ~c_typecheck_baset() { }
+  virtual ~c_typecheck_baset();
 
   virtual void typecheck()=0;
   virtual void typecheck_expr(exprt &expr);
@@ -274,6 +274,9 @@ protected:
 
   constant_valuest constant_propagation;
   std::unordered_set<irep_idt> address_taken_symbols;
+
+  typedef std::unordered_set<irep_idt> inlining_sett;
+  inlining_sett inlining_set;
 };
 
 #endif // CPROVER_ANSI_C_C_TYPECHECK_BASE_H
