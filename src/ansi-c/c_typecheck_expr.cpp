@@ -2093,7 +2093,9 @@ void c_typecheck_baset::typecheck_side_effect_function_call(
     else if(
       sym_entry->second.type.get_bool(ID_C_inlined) &&
       sym_entry->second.is_macro && sym_entry->second.value.is_not_nil() &&
-      inlining_set.find(sym_entry->first) == inlining_set.end())
+      inlining_set.find(sym_entry->first) == inlining_set.end() &&
+      expr.arguments().size() ==
+        to_code_type(sym_entry->second.type).parameters().size())
     {
       // calling a function marked as always_inline
       const symbolt &func_sym = sym_entry->second;
@@ -2103,14 +2105,7 @@ void c_typecheck_baset::typecheck_side_effect_function_call(
       auto p_it = parameters.begin();
       for(const auto &arg : expr.arguments())
       {
-        if(p_it == parameters.end())
-        {
-          // we don't support varargs with always_inline
-          err_location(f_op);
-          error() << "function call has additional arguments, "
-                  << "cannot apply always_inline" << eom;
-          throw 0;
-        }
+        PRECONDITION(p_it != parameters.end());
 
         irep_idt p_id = p_it->get_identifier();
         if(p_id.empty())
@@ -2129,14 +2124,6 @@ void c_typecheck_baset::typecheck_side_effect_function_call(
         constant_propagation.set_to(symbol_exprt{p_id, p_it->type()}, arg);
 
         ++p_it;
-      }
-
-      if(p_it != parameters.end())
-      {
-        err_location(f_op);
-        error() << "function call has missing arguments, "
-                << "cannot apply always_inline" << eom;
-        throw 0;
       }
 
       // simulates parts of typecheck_function_body
@@ -2174,7 +2161,6 @@ void c_typecheck_baset::typecheck_side_effect_function_call(
     else if(
       !is_asm_alias && sym_entry->second.type.get_bool(ID_C_inlined) &&
       sym_entry->second.is_macro && sym_entry->second.value.is_not_nil() &&
-      inlining_set.find(sym_entry->first) != inlining_set.end() &&
       sym_entry->second.value.id() == ID_code)
     {
       // genunine (i.e., not one resulting from asm renaming) recursive call to
