@@ -16,27 +16,33 @@ Author: Michael Tautschnig, 2018
 
 #include <cstring>
 
+std::string objcopy_command(const std::string &compiler_or_linker)
+{
+  if(has_suffix(compiler_or_linker, "-ld"))
+  {
+    std::string objcopy_cmd = compiler_or_linker;
+    objcopy_cmd.erase(objcopy_cmd.size() - 2);
+    objcopy_cmd += "objcopy";
+
+    return objcopy_cmd;
+  }
+  else
+    return "objcopy";
+}
+
 int hybrid_binary(
   const std::string &compiler_or_linker,
   const std::string &goto_binary_file,
   const std::string &output_file,
-  message_handlert &message_handler)
+  message_handlert &message_handler,
+  bool linking_efi)
 {
   messaget message(message_handler);
 
-  int result;
+  int result = 0;
 
 #if defined(__linux__) || defined(__FreeBSD_kernel__)
-  std::string objcopy_cmd;
-
-  if(has_suffix(compiler_or_linker, "-ld"))
-  {
-    objcopy_cmd = compiler_or_linker;
-    objcopy_cmd.erase(objcopy_cmd.size() - 2);
-    objcopy_cmd += "objcopy";
-  }
-  else
-    objcopy_cmd = "objcopy";
+  const std::string objcopy_cmd = objcopy_command(compiler_or_linker);
 
   // merge output from gcc or ld with goto-binary using objcopy
 
@@ -52,7 +58,15 @@ int hybrid_binary(
       "--remove-section", "goto-cc",
       "--add-section", "goto-cc=" + goto_binary_file, output_file};
 
-    result = run(objcopy_argv[0], objcopy_argv, "", "");
+    const int add_section_result = run(objcopy_argv[0], objcopy_argv, "", "");
+    if(add_section_result != 0)
+    {
+      if(linking_efi)
+        message.warning() << "cannot merge EFI binaries: goto-cc section lost"
+                          << messaget::eom;
+      else
+        result = add_section_result;
+    }
   }
 
   // delete the goto binary

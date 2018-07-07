@@ -195,6 +195,38 @@ int ld_modet::ld_hybrid_binary(compilet &compiler)
     return result;
   }
 
+  const bool linking_efi = cmdline.get_value('m') == "i386pep";
+
+  #ifdef __linux__
+  if(linking_efi)
+  {
+    const std::string objcopy_cmd = objcopy_command(native_tool_name);
+
+    for(const auto &object_file : compiler.object_files)
+    {
+      debug() << "stripping goto-cc sections before building EFI binary" << eom;
+      // create a backup copy
+      const std::string bin_name = object_file + goto_binary_tmp_suffix;
+
+      std::ifstream in(object_file, std::ios::binary);
+      std::ofstream out(bin_name, std::ios::binary);
+      out << in.rdbuf();
+
+      // remove any existing goto-cc section
+      std::vector<std::string> objcopy_argv;
+
+      objcopy_argv.push_back(objcopy_cmd);
+      objcopy_argv.push_back("--remove-section=goto-cc");
+      objcopy_argv.push_back(object_file);
+
+      result = run(objcopy_argv[0], objcopy_argv, "", "");
+      if(result != 0)
+        debug() << "EFI binary preparation: removing goto-cc section failed"
+                << eom;
+    }
+  }
+  #endif
+
   result = run_ld();
 
   if(result == 0 && cmdline.isset('T'))
@@ -204,12 +236,32 @@ int ld_modet::ld_hybrid_binary(compilet &compiler)
     result = ls_merge.add_linker_script_definitions();
   }
 
+  #ifdef __linux__
+  if(linking_efi)
+  {
+    debug() << "arch set with " << compiler.object_files.size() << eom;
+    for(const auto &object_file : compiler.object_files)
+    {
+      debug() << "EFI binary preparation: restoring object files" << eom;
+      const std::string bin_name = object_file + goto_binary_tmp_suffix;
+      const int mv_result = rename(bin_name.c_str(), object_file.c_str());
+      if(mv_result != 0)
+        debug() << "Rename failed: " << std::strerror(errno) << eom;
+    }
+  }
+  #endif
+
   if(result == 0)
   {
     std::string native_linker = linker_name(cmdline, base_name);
 
-    result = hybrid_binary(
-      native_linker, goto_binary, output_file, get_message_handler());
+    result =
+      hybrid_binary(
+        native_linker,
+        goto_binary,
+        output_file,
+        get_message_handler(),
+        linking_efi);
   }
 
   return result;
