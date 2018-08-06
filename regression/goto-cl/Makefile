@@ -3,11 +3,13 @@ default: tests.log
 test:
 	@../test.pl -p -c ../../../src/goto-cc/goto-cl -X goto-link
 	@cp ../../src/goto-cc/goto-cl.exe ../../src/goto-cc/goto-link.exe
+	ls -R
 	@../test.pl -p -c ../../../src/goto-cc/goto-link -I goto-link
 
 tests.log: ../test.pl
 	@../test.pl -p -c ../../../src/goto-cc/goto-cl -X goto-link
 	@cp ../../src/goto-cc/goto-cl.exe ../../src/goto-cc/goto-link.exe
+	ls -R
 	@../test.pl -p -c ../../../src/goto-cc/goto-link -I goto-link
 
 show:
