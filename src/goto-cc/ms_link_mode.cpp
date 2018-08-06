@@ -31,7 +31,7 @@ int ms_link_modet::doit()
   }
 
   eval_verbosity(
-    cmdline.get_value("verbosity"), messaget::M_ERROR, message_handler);
+    "10", messaget::M_ERROR, message_handler);
 
   compilet compiler(cmdline, message_handler, false);
 

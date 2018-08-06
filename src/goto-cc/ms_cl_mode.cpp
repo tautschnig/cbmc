@@ -57,7 +57,7 @@ int ms_cl_modet::doit()
   #endif
 
   const auto verbosity = eval_verbosity(
-    cmdline.get_value("verbosity"), messaget::M_ERROR, message_handler);
+    "10", messaget::M_ERROR, message_handler);
 
   debug() << "Visual Studio mode" << eom;
 
