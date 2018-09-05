@@ -21,7 +21,6 @@ Author: CM Wintersteiger, 2006
 
 #include <iostream>
 
-#include <util/message.h>
 #include <util/prefix.h>
 #include <util/config.h>
 
@@ -36,7 +35,8 @@ int cw_modet::doit()
     return EX_OK;
   }
 
-  compilet compiler(cmdline, message_handler, cmdline.isset("Werror"));
+  ui_message_handlert ui_message(message_handler);
+  compilet compiler(cmdline, ui_message, cmdline.isset("Werror"));
 
   #if 0
   bool act_as_ld=

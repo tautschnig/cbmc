@@ -33,7 +33,8 @@ int ms_link_modet::doit()
   eval_verbosity(
     cmdline.get_value("verbosity"), messaget::M_ERROR, message_handler);
 
-  compilet compiler(cmdline, message_handler, false);
+  ui_message_handlert ui_message(message_handler);
+  compilet compiler(cmdline, ui_message, false);
 
   // determine actions to be undertaken
   compiler.mode = compilet::LINK_LIBRARY;
