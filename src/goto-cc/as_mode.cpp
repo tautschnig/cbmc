@@ -24,7 +24,6 @@ Author: Michael Tautschnig
 #include <cstring>
 
 #include <util/config.h>
-#include <util/cout_message.h>
 #include <util/get_base_name.h>
 #include <util/run.h>
 #include <util/tempdir.h>
@@ -122,7 +121,8 @@ int as_modet::doit()
   config.set(cmdline);
 
   // determine actions to be undertaken
-  compilet compiler(cmdline, message_handler, cmdline.isset("fatal-warnings"));
+  ui_message_handlert ui_message(message_handler);
+  compilet compiler(cmdline, ui_message, cmdline.isset("fatal-warnings"));
 
   if(cmdline.isset('b')) // as86 only
   {

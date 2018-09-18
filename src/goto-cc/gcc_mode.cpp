@@ -361,8 +361,9 @@ int gcc_modet::doit()
     }
   }
 
+  ui_message_handlert ui_message(gcc_message_handler);
   compilet compiler(cmdline,
-                    gcc_message_handler,
+                    ui_message,
                     cmdline.isset("Werror") &&
                     cmdline.isset("Wextra") &&
                     !cmdline.isset("Wno-error"));

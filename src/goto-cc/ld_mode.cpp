@@ -91,7 +91,8 @@ int ld_modet::doit()
   eval_verbosity(
     cmdline.get_value("verbosity"), messaget::M_ERROR, gcc_message_handler);
 
-  compilet compiler(cmdline, gcc_message_handler, false);
+  ui_message_handlert ui_message(gcc_message_handler);
+  compilet compiler(cmdline, ui_message, false);
 
   // determine actions to be undertaken
   compiler.mode = compilet::LINK_LIBRARY;

@@ -24,7 +24,6 @@ Author: CM Wintersteiger, 2006
 #include <util/config.h>
 #include <util/file_util.h>
 #include <util/get_base_name.h>
-#include <util/message.h>
 #include <util/prefix.h>
 
 #include "compile.h"
@@ -49,7 +48,8 @@ int ms_cl_modet::doit()
     return EX_OK;
   }
 
-  compilet compiler(cmdline, message_handler, cmdline.isset("WX"));
+  ui_message_handlert ui_message(message_handler);
+  compilet compiler(cmdline, ui_message, cmdline.isset("WX"));
 
   #if 0
   bool act_as_ld=
