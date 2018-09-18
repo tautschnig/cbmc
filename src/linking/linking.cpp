@@ -24,6 +24,21 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "linking_class.h"
 
+bool casting_replace_symbolt::replace_symbol_expr(symbol_exprt &s) const
+{
+  expr_mapt::const_iterator it = expr_map.find(s.get_identifier());
+
+  if(it == expr_map.end())
+    return true;
+
+  const exprt &e = it->second;
+
+  typet type = s.type();
+  static_cast<exprt &>(s) = typecast_exprt::conditional_cast(e, type);
+
+  return false;
+}
+
 std::string linkingt::expr_to_string(
   const namespacet &ns,
   const irep_idt &identifier,
@@ -873,6 +888,11 @@ bool linkingt::adjust_object_type_rec(
       "conflicting pointer types for variable");
     #endif
 
+    if(info.old_symbol.is_extern && !info.new_symbol.is_extern)
+    {
+      info.set_to_new = true; // store new type
+    }
+
     return false;
   }
   else if(t1.id()==ID_array &&
@@ -959,10 +979,10 @@ void linkingt::duplicate_object_symbol(
   symbolt &new_symbol)
 {
   // both are variables
+  bool set_to_new = false;
 
   if(!base_type_eq(old_symbol.type, new_symbol.type, ns))
   {
-    bool set_to_new=false;
     bool failed=
       adjust_object_type(old_symbol, new_symbol, set_to_new);
 
@@ -1041,6 +1061,14 @@ void linkingt::duplicate_object_symbol(
                   << eom;
       }
     }
+  }
+  else if(
+    set_to_new && !old_symbol.value.is_nil() &&
+    !old_symbol.value.get_bool(ID_C_zero_initializer))
+  {
+    // the type has been updated, now make sure that the initialising assignment
+    // will have matching types
+    old_symbol.value.make_typecast(old_symbol.type);
   }
 }
 
