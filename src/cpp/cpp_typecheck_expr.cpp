@@ -500,7 +500,7 @@ bool cpp_typecheckt::operator_is_overloaded(exprt &expr)
     // See if the struct declares the cast operator as a member
     bool found_in_struct=false;
     assert(!expr.operands().empty());
-    typet t0(follow(expr.op0().type()));
+    const typet &t0 = follow(expr.op0().type());
 
     if(t0.id()==ID_struct)
     {
