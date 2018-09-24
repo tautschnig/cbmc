@@ -1186,6 +1186,7 @@ void value_sett::assign(
          rhs.id()==ID_invalid)
       {
         rhs_member=exprt(rhs.id(), subtype);
+        assert(false);
       }
       else
       {
@@ -1195,9 +1196,9 @@ void value_sett::assign(
                 "type:\n"+type.pretty();
 
         rhs_member=make_member(rhs, name, ns);
-
-        assign(lhs_member, rhs_member, ns, false, add_to_sets);
       }
+
+      assign(lhs_member, rhs_member, ns, false, add_to_sets);
     }
   }
   else if(type.id()==ID_array)
