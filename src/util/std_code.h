@@ -199,7 +199,7 @@ public:
   void add(codet code, const source_locationt &loc)
   {
     code.add_source_location() = loc;
-    add(code);
+    add(std::move(code));
   }
 
   void append(const code_blockt &extra_block);
@@ -264,6 +264,11 @@ public:
   code_assignt(const exprt &lhs, const exprt &rhs):codet(ID_assign)
   {
     add_to_operands(lhs, rhs);
+  }
+
+  code_assignt(exprt &&lhs, exprt &&rhs) : codet(ID_assign)
+  {
+    add_to_operands(std::move(lhs), std::move(rhs));
   }
 
   exprt &lhs()
@@ -357,6 +362,11 @@ public:
     add_to_operands(symbol);
   }
 
+  explicit code_declt(symbol_exprt &&symbol) : codet(ID_decl)
+  {
+    add_to_operands(std::move(symbol));
+  }
+
   symbol_exprt &symbol()
   {
     return static_cast<symbol_exprt &>(op0());
@@ -414,6 +424,11 @@ public:
   explicit code_deadt(const symbol_exprt &symbol) : codet(ID_dead)
   {
     add_to_operands(symbol);
+  }
+
+  explicit code_deadt(symbol_exprt &&symbol) : codet(ID_dead)
+  {
+    add_to_operands(std::move(symbol));
   }
 
   symbol_exprt &symbol()
@@ -479,6 +494,11 @@ public:
     add_to_operands(expr);
   }
 
+  explicit code_assumet(exprt &&expr):codet(ID_assume)
+  {
+    add_to_operands(std::move(expr));
+  }
+
   const exprt &assumption() const
   {
     return op0();
@@ -524,6 +544,11 @@ public:
   explicit code_assertt(const exprt &expr):codet(ID_assert)
   {
     add_to_operands(expr);
+  }
+
+  explicit code_assertt(exprt &&expr):codet(ID_assert)
+  {
+    add_to_operands(std::move(expr));
   }
 
   const exprt &assertion() const
@@ -576,11 +601,50 @@ code_blockt create_fatal_assertion(
 class code_ifthenelset:public codet
 {
 public:
+  DEPRECATED("use code_ifthenelset(condition, then_code[, else_code]) instead")
   code_ifthenelset():codet(ID_ifthenelse)
   {
     operands().resize(3);
     op1().make_nil();
     op2().make_nil();
+  }
+
+  /// An if \p condition then \p then_code else \p else_code statement.
+  code_ifthenelset(
+    const exprt &condition,
+    const codet &then_code,
+    const codet &else_code)
+    : codet(ID_ifthenelse)
+  {
+    add_to_operands(condition, then_code, else_code);
+  }
+
+  /// An if \p condition then \p then_code else \p else_code statement.
+  code_ifthenelset(
+    exprt &&condition,
+    codet &&then_code,
+    codet &&else_code)
+    : codet(ID_ifthenelse)
+  {
+    add_to_operands(std::move(condition), std::move(then_code), std::move(else_code));
+  }
+
+  /// An if \p condition then \p then_code statement (no "else" case).
+  code_ifthenelset(
+    const exprt &condition,
+    const codet &then_code)
+    : codet(ID_ifthenelse)
+  {
+    add_to_operands(condition, then_code, nil_exprt());
+  }
+
+  /// An if \p condition then \p then_code statement (no "else" case).
+  code_ifthenelset(
+    exprt &&condition,
+    codet &&then_code)
+    : codet(ID_ifthenelse)
+  {
+    add_to_operands(std::move(condition), std::move(then_code), nil_exprt());
   }
 
   const exprt &cond() const
@@ -657,9 +721,12 @@ public:
 
   code_switcht(const exprt &_value, const codet &_body) : codet(ID_switch)
   {
-    operands().resize(2);
-    value() = _value;
-    body() = _body;
+    add_to_operands(_value, _body);
+  }
+
+  code_switcht(exprt &&_value, codet &&_body) : codet(ID_switch)
+  {
+    add_to_operands(std::move(_value), std::move(_body));
   }
 
   const exprt &value() const
@@ -719,9 +786,12 @@ public:
 
   code_whilet(const exprt &_cond, const codet &_body) : codet(ID_while)
   {
-    operands().resize(2);
-    cond() = _cond;
-    body() = _body;
+    add_to_operands(_cond, _body);
+  }
+
+  code_whilet(exprt &&_cond, codet &&_body) : codet(ID_while)
+  {
+    add_to_operands(std::move(_cond), std::move(_body));
   }
 
   const exprt &cond() const
@@ -781,9 +851,12 @@ public:
 
   code_dowhilet(const exprt &_cond, const codet &_body) : codet(ID_dowhile)
   {
-    operands().resize(2);
-    cond() = _cond;
-    body() = _body;
+    add_to_operands(_cond, _body);
+  }
+
+  code_dowhilet(exprt &&_cond, codet &&_body) : codet(ID_dowhile)
+  {
+    add_to_operands(std::move(_cond), std::move(_body));
   }
 
   const exprt &cond() const
@@ -837,9 +910,32 @@ inline code_dowhilet &to_code_dowhile(codet &code)
 class code_fort:public codet
 {
 public:
+  DEPRECATED("use code_fort(init, cond, iter, body) instead")
   code_fort():codet(ID_for)
   {
     operands().resize(4);
+  }
+
+  code_fort(
+    const exprt &_init,
+    const exprt &_cond,
+    const exprt &_iter,
+    const codet &_body) : codet(ID_for)
+  {
+    reserve_operands(4);
+    add_to_operands(_init, _cond, _iter);
+    add_to_operands(_body);
+  }
+
+  code_fort(
+    exprt &&_init,
+    exprt &&_cond,
+    exprt &&_iter,
+    codet &&_body) : codet(ID_for)
+  {
+    reserve_operands(4);
+    add_to_operands(std::move(_init), std::move(_cond), std::move(_iter));
+    add_to_operands(std::move(_body);
   }
 
   // nil or a statement
@@ -981,15 +1077,20 @@ public:
     function() = _function;
   }
 
+  explicit code_function_callt(exprt &&_function) : codet(ID_function_call)
+  {
+    add_to_operands(nil_exprt(), std::move(_function), exprt(ID_arguments));
+  }
+
   typedef exprt::operandst argumentst;
 
   code_function_callt(
-    const exprt &_lhs,
-    const exprt &_function,
+    exprt &&_lhs,
+    exprt &&_function,
     argumentst &&_arguments)
-    : code_function_callt(_function)
+    : code_function_callt(std::move(_function))
   {
-    lhs() = _lhs;
+    lhs() = std::move(_lhs);
     arguments() = std::move(_arguments);
   }
 
@@ -1003,8 +1104,8 @@ public:
     arguments() = _arguments;
   }
 
-  code_function_callt(const exprt &_function, argumentst &&_arguments)
-    : code_function_callt(_function)
+  code_function_callt(exprt &&_function, argumentst &&_arguments)
+    : code_function_callt(std::move(_function))
   {
     arguments() = std::move(_arguments);
   }
@@ -1081,6 +1182,11 @@ public:
     add_to_operands(_op);
   }
 
+  explicit code_returnt(exprt &&_op) : codet(ID_return)
+  {
+    add_to_operands(std::move(_op));
+  }
+
   const exprt &return_value() const
   {
     return op0();
@@ -1143,6 +1249,12 @@ public:
     code()=_code;
   }
 
+  code_labelt(const irep_idt &_label, codet &&_code) : codet(ID_label)
+  {
+    set_label(_label);
+    add_to_operands(std::move(_code));
+  }
+
   const irep_idt &get_label() const
   {
     return get(ID_label);
@@ -1203,6 +1315,11 @@ public:
     const exprt &_case_op, const codet &_code):codet(ID_switch_case)
   {
     add_to_operands(_case_op, _code);
+  }
+
+  code_switch_caset(exprt &&_case_op, codet &&_code) : codet(ID_switch_case)
+  {
+    add_to_operands(std::move(_case_op), std::move(_code));
   }
 
   bool is_default() const
@@ -1335,6 +1452,11 @@ public:
     add_to_operands(expr);
   }
 
+  explicit code_asmt(exprt &&expr) : codet(ID_asm)
+  {
+    add_to_operands(std::move(expr));
+  }
+
   const irep_idt &get_flavor() const
   {
     return get(ID_flavor);
@@ -1380,6 +1502,11 @@ public:
   explicit code_expressiont(const exprt &expr):codet(ID_expression)
   {
     add_to_operands(expr);
+  }
+
+  explicit code_expressiont(exprt &&expr) : codet(ID_expression)
+  {
+    add_to_operands(std::move(expr));
   }
 
   const exprt &expression() const
@@ -1443,7 +1570,22 @@ public:
   side_effect_exprt(
     const irep_idt &statement,
     const typet &_type,
-    const source_locationt &loc);
+    const source_locationt &loc)
+    : exprt(ID_side_effect, _type)
+  {
+    set_statement(statement);
+    add_source_location() = loc;
+  }
+
+  side_effect_exprt(
+    const irep_idt &statement,
+    typet &&_type,
+    source_locationt &&loc)
+    : exprt(ID_side_effect, std::move(_type))
+  {
+    set_statement(statement);
+    add_source_location() = std::move(loc);
+  }
 
   const irep_idt &get_statement() const
   {
@@ -1508,7 +1650,21 @@ public:
     set_nullable(true);
   }
 
-  side_effect_expr_nondett(const typet &_type, const source_locationt &loc);
+  side_effect_expr_nondett(
+    const typet &_type,
+    const source_locationt &loc)
+    : side_effect_exprt(ID_nondet, _type, loc)
+  {
+    set_nullable(true);
+  }
+
+  side_effect_expr_nondett(
+    typet &&_type,
+    source_locationt &&loc)
+    : side_effect_exprt(ID_nondet, std::move(_type), std::move(loc))
+  {
+    set_nullable(true);
+  }
 
   void set_nullable(bool nullable)
   {
@@ -1592,7 +1748,23 @@ public:
     const exprt &_function,
     const exprt::operandst &_arguments,
     const typet &_type,
-    const source_locationt &loc);
+    const source_locationt &loc)
+    : side_effect_exprt(ID_function_call, _type, loc)
+  {
+    add_to_operands(_function, exprt(ID_arguments));
+    arguments() = _arguments;
+  }
+
+  side_effect_expr_function_callt(
+    exprt &&_function,
+    exprt::operandst &&_arguments,
+    typet &&_type,
+    source_locationt &&loc)
+    : side_effect_exprt(ID_function_call, std::move(_type), std::move(loc))
+  {
+    add_to_operands(std::move(_function), exprt(ID_arguments));
+    arguments() = std::move(_arguments);
+  }
 
   exprt &function()
   {
@@ -1650,13 +1822,22 @@ public:
   {
   }
 
-  explicit side_effect_expr_throwt(
+  side_effect_expr_throwt(
     const irept &exception_list,
     const typet &type,
     const source_locationt &loc)
     : side_effect_exprt(ID_throw, type, loc)
   {
     set(ID_exception_list, exception_list);
+  }
+
+  side_effect_expr_throwt(
+    irept &&exception_list,
+    typet &&type,
+    source_locationt &&loc)
+    : side_effect_exprt(ID_throw, std::move(type), std::move(loc))
+  {
+    set(ID_exception_list, std::move(exception_list));
   }
 };
 
@@ -1821,15 +2002,24 @@ class code_landingpadt:public codet
   {
     operands().resize(1);
   }
-  explicit code_landingpadt(const exprt &catch_expr):
-  codet(ID_exception_landingpad)
+
+  explicit code_landingpadt(const exprt &catch_expr)
+    : codet(ID_exception_landingpad)
   {
     add_to_operands(catch_expr);
   }
+
+  explicit code_landingpadt(exprt &&catch_expr)
+    : codet(ID_exception_landingpad)
+  {
+    add_to_operands(std::move(catch_expr));
+  }
+
   const exprt &catch_expr() const
   {
     return op0();
   }
+
   exprt &catch_expr()
   {
     return op0();
@@ -1860,9 +2050,20 @@ static inline const code_landingpadt &to_code_landingpad(const codet &code)
 class code_try_catcht:public codet
 {
 public:
+  DEPRECATED("use code_try_catcht(try_code) instead")
   code_try_catcht():codet(ID_try_catch)
   {
     operands().resize(1);
+  }
+
+  explicit code_try_catcht(const codet &_try_code) : codet(ID_try_catch)
+  {
+    add_to_operands(_try_code);
+  }
+
+  explicit code_try_catcht(codet &&_try_code) : codet(ID_try_catch)
+  {
+    add_to_operands(std::move(_try_code));
   }
 
   codet &try_code()

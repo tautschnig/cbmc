@@ -32,7 +32,12 @@ public:
   explicit typet(const irep_idt &_id):irept(_id) { }
   typet(const irep_idt &_id, const typet &_subtype):irept(_id)
   {
-    subtype()=_subtype;
+    get_sub().push_back(_subtype);
+  }
+
+  typet(const irep_idt &_id, typet &&_subtype) : irept(_id)
+  {
+    get_sub().push_back(std::move(_subtype));
   }
 
   const typet &subtype() const
@@ -69,6 +74,7 @@ public:
     return static_cast<source_locationt &>(add(ID_C_source_location));
   }
 
+#if 0
   typet &add_type(const irep_namet &name)
   {
     return static_cast<typet &>(add(name));
@@ -78,6 +84,7 @@ public:
   {
     return static_cast<const typet &>(find(name));
   }
+#endif
 
   /// Check that the type is well-formed (shallow checks only, i.e., subtypes
   /// are not checked)
@@ -135,11 +142,17 @@ public:
 class type_with_subtypet:public typet
 {
 public:
+  DEPRECATED("use type_with_subtypet(id, subtype) instead")
   explicit type_with_subtypet(const irep_idt &_id):typet(_id) { }
+
   type_with_subtypet(const irep_idt &_id, const typet &_subtype):
-    typet(_id)
+    typet(_id, _subtype)
   {
-    subtype()=_subtype;
+  }
+
+  type_with_subtypet(const irep_idt &_id, typet &&_subtype):
+    typet(_id, std::move(_subtype))
+  {
   }
 
   #if 0
@@ -169,8 +182,10 @@ class type_with_subtypest:public typet
 public:
   typedef std::vector<typet> subtypest;
 
+  DEPRECATED("use type_with_subtypest(id, subtypes) instead")
   type_with_subtypest() { }
 
+  DEPRECATED("use type_with_subtypest(id, subtypes) instead")
   explicit type_with_subtypest(const irep_idt &_id):typet(_id) { }
 
   type_with_subtypest(const irep_idt &_id, const subtypest &_subtypes)
@@ -194,9 +209,11 @@ public:
     return (const subtypest &)get_sub();
   }
 
+#if 0
   void move_to_subtypes(typet &type); // destroys type
 
   void copy_to_subtypes(const typet &type);
+#endif
 };
 
 inline const type_with_subtypest &to_type_with_subtypes(const typet &type)

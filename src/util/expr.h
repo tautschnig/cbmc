@@ -64,6 +64,11 @@ public:
     add(ID_type, _type);
   }
 
+  exprt(const irep_idt &_id, typet &&_type) : irept(_id)
+  {
+    add(ID_type, std::move(_type));
+  }
+
   /// Return the type of the expression
   typet &type() { return static_cast<typet &>(add(ID_type)); }
   const typet &type() const

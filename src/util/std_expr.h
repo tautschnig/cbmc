@@ -33,6 +33,11 @@ public:
   {
   }
 
+  nullary_exprt(const irep_idt &_id, typet &&_type)
+    : exprt(_id, std::move(_type))
+  {
+  }
+
   /// remove all operand methods
   operandst &operands() = delete;
   const operandst &operands() const = delete;
@@ -82,6 +87,17 @@ public:
     : exprt(_id, _type)
   {
     add_to_operands(_op0, _op1, _op2);
+  }
+
+  ternary_exprt(
+    const irep_idt &_id,
+    exprt &&_op0,
+    exprt &&_op1,
+    exprt &&_op2,
+    typet &&_type)
+    : exprt(_id, std::move(_type))
+  {
+    add_to_operands(std::move(_op0), std::move(_op1), std::move(_op2));
   }
 
   const exprt &op3() const = delete;
@@ -160,10 +176,23 @@ public:
   {
   }
 
+  /// \param type: Type of symbol
+  explicit symbol_exprt(typet &&type) : nullary_exprt(ID_symbol, std::move(type))
+  {
+  }
+
   /// \param identifier: Name of symbol
   /// \param type: Type of symbol
   symbol_exprt(const irep_idt &identifier, const typet &type)
     : nullary_exprt(ID_symbol, type)
+  {
+    set_identifier(identifier);
+  }
+
+  /// \param identifier: Name of symbol
+  /// \param type: Type of symbol
+  symbol_exprt(const irep_idt &identifier, typet &&type)
+    : nullary_exprt(ID_symbol, std::move(type))
   {
     set_identifier(identifier);
   }
@@ -208,6 +237,14 @@ public:
   decorated_symbol_exprt(
     const irep_idt &identifier,
     const typet &type):symbol_exprt(identifier, type)
+  {
+  }
+
+  /// \param identifier: Name of symbol
+  /// \param type: Type of symbol
+  decorated_symbol_exprt(
+    const irep_idt &identifier,
+    typet &&type) : symbol_exprt(identifier, std::move(type))
   {
   }
 
@@ -285,6 +322,14 @@ public:
     set_identifier(identifier);
   }
 
+  /// \param identifier: Name of symbol
+  /// \param type: Type of symbol
+  nondet_symbol_exprt(const irep_idt &identifier, typet &&type)
+    : nullary_exprt(ID_nondet_symbol, std::move(type))
+  {
+    set_identifier(identifier);
+  }
+
   void set_identifier(const irep_idt &identifier)
   {
     set(ID_identifier, identifier);
@@ -353,6 +398,15 @@ public:
 
   unary_exprt(
     const irep_idt &_id,
+    exprt &&_op):
+    exprt(_id, _op.type())
+  {
+    add_to_operands(std::move(_op));
+  }
+
+  DEPRECATED("use unary_exprt(id, op, type) instead")
+  unary_exprt(
+    const irep_idt &_id,
     const typet &_type):exprt(_id, _type)
   {
     operands().resize(1);
@@ -365,6 +419,15 @@ public:
     exprt(_id, _type)
   {
     add_to_operands(_op);
+  }
+
+  unary_exprt(
+    const irep_idt &_id,
+    exprt &&_op,
+    typet &&_type):
+    exprt(_id, std::move(_type))
+  {
+    add_to_operands(std::move(_op));
   }
 
   const exprt &op() const
@@ -427,6 +490,11 @@ public:
     unary_exprt(ID_abs, _op, _op.type())
   {
   }
+
+  explicit abs_exprt(exprt &&_op):
+    unary_exprt(ID_abs, std::move(_op))
+  {
+  }
 };
 
 /// \brief Cast an exprt to a \ref abs_exprt
@@ -480,8 +548,20 @@ public:
   {
   }
 
+  unary_minus_exprt(
+    exprt &&_op,
+    typet &&_type):
+    unary_exprt(ID_unary_minus, std::move(_op), std::move(_type))
+  {
+  }
+
   explicit unary_minus_exprt(const exprt &_op):
     unary_exprt(ID_unary_minus, _op, _op.type())
+  {
+  }
+
+  explicit unary_minus_exprt(exprt &&_op):
+    unary_exprt(ID_unary_minus, std::move(_op))
   {
   }
 };
@@ -526,6 +606,11 @@ class unary_plus_exprt : public unary_exprt
 public:
   explicit unary_plus_exprt(const exprt &op)
     : unary_exprt(ID_unary_plus, op, op.type())
+  {
+  }
+
+  explicit unary_plus_exprt(exprt &&op)
+    : unary_exprt(ID_unary_plus, std::move(op))
   {
   }
 };
@@ -573,8 +658,20 @@ public:
     set_bits_per_byte(bits_per_byte);
   }
 
+  bswap_exprt(exprt &&_op, std::size_t bits_per_byte, typet &&_type)
+    : unary_exprt(ID_bswap, std::move(_op), std::move(_type))
+  {
+    set_bits_per_byte(bits_per_byte);
+  }
+
   bswap_exprt(const exprt &_op, std::size_t bits_per_byte)
     : unary_exprt(ID_bswap, _op, _op.type())
+  {
+    set_bits_per_byte(bits_per_byte);
+  }
+
+  bswap_exprt(exprt &&_op, std::size_t bits_per_byte)
+    : unary_exprt(ID_bswap, std::move(_op))
   {
     set_bits_per_byte(bits_per_byte);
   }
@@ -632,6 +729,7 @@ inline void validate_expr(const bswap_exprt &value)
 class predicate_exprt:public exprt
 {
 public:
+  DEPRECATED("use predicate_exprt(id) instead")
   predicate_exprt():exprt(irep_idt(), bool_typet())
   {
   }
@@ -641,6 +739,7 @@ public:
   {
   }
 
+  DEPRECATED("use unary_predicate_exprt(id, op) instead")
   predicate_exprt(
     const irep_idt &_id,
     const exprt &_op):exprt(_id, bool_typet())
@@ -648,6 +747,7 @@ public:
     add_to_operands(_op);
   }
 
+  DEPRECATED("use binary_predicate_exprt(op1, id, op2) instead")
   predicate_exprt(
     const irep_idt &_id,
     const exprt &_op0,
@@ -662,10 +762,12 @@ public:
 class unary_predicate_exprt:public unary_exprt
 {
 public:
+  DEPRECATED("use unary_predicate_exprt(id, op) instead")
   unary_predicate_exprt():unary_exprt(irep_idt(), bool_typet())
   {
   }
 
+  DEPRECATED("use unary_predicate_exprt(id, op) instead")
   explicit unary_predicate_exprt(const irep_idt &_id):
     unary_exprt(_id, bool_typet())
   {
@@ -677,9 +779,11 @@ public:
   {
   }
 
-protected:
-  using exprt::op1; // hide
-  using exprt::op2; // hide
+  unary_predicate_exprt(
+    const irep_idt &_id,
+    exprt &&_op):unary_exprt(_id, std::move(_op), bool_typet())
+  {
+  }
 };
 
 /// \brief Sign of an expression
@@ -687,12 +791,18 @@ protected:
 class sign_exprt:public unary_predicate_exprt
 {
 public:
+  DEPRECATED("use sign_exprt(op) instead")
   sign_exprt()
   {
   }
 
   explicit sign_exprt(const exprt &_op):
     unary_predicate_exprt(ID_sign, _op)
+  {
+  }
+
+  explicit sign_exprt(exprt &&_op):
+    unary_predicate_exprt(ID_sign, std::move(_op))
   {
   }
 };
@@ -746,6 +856,7 @@ public:
     operands().resize(2);
   }
 
+  DEPRECATED("use binary_exprt(lhs, id, rhs, type) instead")
   binary_exprt(
     const irep_idt &_id,
     const typet &_type):exprt(_id, _type)
@@ -763,6 +874,15 @@ public:
   }
 
   binary_exprt(
+    exprt &&_lhs,
+    const irep_idt &_id,
+    exprt &&_rhs):
+    exprt(_id, _lhs.type())
+  {
+    add_to_operands(std::move(_lhs), std::move(_rhs));
+  }
+
+  binary_exprt(
     const exprt &_lhs,
     const irep_idt &_id,
     const exprt &_rhs,
@@ -770,6 +890,16 @@ public:
     exprt(_id, _type)
   {
     add_to_operands(_lhs, _rhs);
+  }
+
+  binary_exprt(
+    exprt &&_lhs,
+    const irep_idt &_id,
+    exprt &&_rhs,
+    typet &&_type):
+    exprt(_id, std::move(_type))
+  {
+    add_to_operands(std::move(_lhs), std::move(_rhs));
   }
 
   static void check(
@@ -830,10 +960,12 @@ template<> inline bool can_cast_expr<binary_exprt>(const exprt &base)
 class binary_predicate_exprt:public binary_exprt
 {
 public:
+  DEPRECATED("use binary_predicate_exprt(lhs, id, rhs) instead")
   binary_predicate_exprt():binary_exprt(irep_idt(), bool_typet())
   {
   }
 
+  DEPRECATED("use binary_predicate_exprt(lhs, id, rhs) instead")
   explicit binary_predicate_exprt(const irep_idt &_id):
     binary_exprt(_id, bool_typet())
   {
@@ -843,6 +975,13 @@ public:
     const exprt &_op0,
     const irep_idt &_id,
     const exprt &_op1):binary_exprt(_op0, _id, _op1, bool_typet())
+  {
+  }
+
+  binary_predicate_exprt(
+    exprt &&_op0,
+    const irep_idt &_id,
+    exprt &&_op1):binary_exprt(std::move(_op0), _id, std::move(_op1), bool_typet())
   {
   }
 
@@ -871,10 +1010,12 @@ public:
 class binary_relation_exprt:public binary_predicate_exprt
 {
 public:
+  DEPRECATED("use binary_relation_exprt(lhs, id, rhs) instead")
   binary_relation_exprt()
   {
   }
 
+  DEPRECATED("use binary_relation_exprt(lhs, id, rhs) instead")
   explicit binary_relation_exprt(const irep_idt &id):
     binary_predicate_exprt(id)
   {
@@ -885,6 +1026,14 @@ public:
     const irep_idt &_id,
     const exprt &_rhs):
     binary_predicate_exprt(_lhs, _id, _rhs)
+  {
+  }
+
+  binary_relation_exprt(
+    exprt &&_lhs,
+    const irep_idt &_id,
+    exprt &&_rhs):
+    binary_predicate_exprt(std::move(_lhs), _id, std::move(_rhs))
   {
   }
 
@@ -981,12 +1130,27 @@ public:
   }
 
   multi_ary_exprt(
+    const irep_idt &_id,
+    typet &&_type):exprt(_id, std::move(_type))
+  {
+  }
+
+  multi_ary_exprt(
     const exprt &_lhs,
     const irep_idt &_id,
     const exprt &_rhs):
     exprt(_id, _lhs.type())
   {
     add_to_operands(_lhs, _rhs);
+  }
+
+  multi_ary_exprt(
+    exprt &&_lhs,
+    const irep_idt &_id,
+    exprt &&_rhs):
+    exprt(_id, _lhs.type())
+  {
+    add_to_operands(std::move(_lhs), std::move(_rhs));
   }
 
   multi_ary_exprt(
@@ -997,6 +1161,16 @@ public:
     exprt(_id, _type)
   {
     add_to_operands(_lhs, _rhs);
+  }
+
+  multi_ary_exprt(
+    exprt &&_lhs,
+    const irep_idt &_id,
+    exprt &&_rhs,
+    typet &&_type):
+    exprt(_id, std::move(_type))
+  {
+    add_to_operands(std::move(_lhs), std::move(_rhs));
   }
 };
 
@@ -1032,6 +1206,10 @@ public:
   {
   }
 
+  plus_exprt(typet &&type) : multi_ary_exprt(ID_plus, std::move(type))
+  {
+  }
+
   plus_exprt(
     const exprt &_lhs,
     const exprt &_rhs):
@@ -1040,10 +1218,25 @@ public:
   }
 
   plus_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs):
+    multi_ary_exprt(std::move(_lhs), ID_plus, std::move(_rhs))
+  {
+  }
+
+  plus_exprt(
     const exprt &_lhs,
     const exprt &_rhs,
     const typet &_type):
     multi_ary_exprt(_lhs, ID_plus, _rhs, _type)
+  {
+  }
+
+  plus_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs,
+    typet &&_type):
+    multi_ary_exprt(std::move(_lhs), ID_plus, std::move(_rhs), std::move(_type))
   {
   }
 };
@@ -1096,6 +1289,13 @@ public:
     const exprt &_lhs,
     const exprt &_rhs):
     binary_exprt(_lhs, ID_minus, _rhs)
+  {
+  }
+
+  minus_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs):
+    binary_exprt(std::move(_lhs), ID_minus, std::move(_rhs))
   {
   }
 };
@@ -1151,6 +1351,13 @@ public:
     multi_ary_exprt(_lhs, ID_mult, _rhs)
   {
   }
+
+  mult_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs):
+    multi_ary_exprt(std::move(_lhs), ID_mult, std::move(_rhs))
+  {
+  }
 };
 
 /// \brief Cast an exprt to a \ref mult_exprt
@@ -1201,6 +1408,13 @@ public:
     const exprt &_lhs,
     const exprt &_rhs):
     binary_exprt(_lhs, ID_div, _rhs)
+  {
+  }
+
+  div_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs):
+    binary_exprt(std::move(_lhs), ID_div, std::move(_rhs))
   {
   }
 
@@ -1279,6 +1493,13 @@ public:
     binary_exprt(_lhs, ID_mod, _rhs)
   {
   }
+
+  mod_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs):
+    binary_exprt(std::move(_lhs), ID_mod, std::move(_rhs))
+  {
+  }
 };
 
 /// \brief Cast an exprt to a \ref mod_exprt
@@ -1325,6 +1546,13 @@ public:
     const exprt &_lhs,
     const exprt &_rhs):
     binary_exprt(_lhs, ID_rem, _rhs)
+  {
+  }
+
+  rem_exprt(
+    exprt &&_lhs,
+    exprt &&_rhs):
+    binary_exprt(std::move(_lhs), ID_rem, std::move(_rhs))
   {
   }
 };
@@ -1375,6 +1603,13 @@ public:
     binary_exprt(_base, ID_power, _exp)
   {
   }
+
+  power_exprt(
+    exprt &&_base,
+    exprt &&_exp):
+    binary_exprt(std::move(_base), ID_power, std::move(_exp))
+  {
+  }
 };
 
 /// \brief Cast an exprt to a \ref power_exprt
@@ -1421,6 +1656,13 @@ public:
     const exprt &_base,
     const exprt &_exp):
     binary_exprt(_base, ID_factorial_power, _exp)
+  {
+  }
+
+  factorial_power_exprt(
+    exprt &&_base,
+    exprt &&_exp):
+    binary_exprt(std::move(_base), ID_factorial_power, std::move(_exp))
   {
   }
 };
@@ -1472,6 +1714,11 @@ public:
 
   equal_exprt(const exprt &_lhs, const exprt &_rhs):
     binary_relation_exprt(_lhs, ID_equal, _rhs)
+  {
+  }
+
+  equal_exprt(exprt &&_lhs, exprt &&_rhs):
+    binary_relation_exprt(std::move(_lhs), ID_equal, std::move(_rhs))
   {
   }
 
@@ -1535,6 +1782,11 @@ public:
     binary_relation_exprt(_lhs, ID_notequal, _rhs)
   {
   }
+
+  notequal_exprt(exprt &&_lhs, exprt &&_rhs):
+    binary_relation_exprt(std::move(_lhs), ID_notequal, std::move(_rhs))
+  {
+  }
 };
 
 /// \brief Cast an exprt to an \ref notequal_exprt
@@ -1596,6 +1848,14 @@ public:
     const exprt &_index,
     const typet &_type):
     binary_exprt(_array, ID_index, _index, _type)
+  {
+  }
+
+  index_exprt(
+    exprt &&_array,
+    exprt &&_index,
+    typet &&_type):
+    binary_exprt(std::move(_array), ID_index, std::move(_index), std::move(_type))
   {
   }
 
@@ -1670,6 +1930,12 @@ public:
   {
   }
 
+  explicit array_of_exprt(
+    exprt &&_what, array_typet &&_type):
+    unary_exprt(ID_array_of, std::move(_what), std::move(_type))
+  {
+  }
+
   exprt &what()
   {
     return op0();
@@ -1729,6 +1995,11 @@ public:
     : multi_ary_exprt(ID_array, _type)
   {
   }
+
+  explicit array_exprt(array_typet &&_type)
+    : multi_ary_exprt(ID_array, std::move(_type))
+  {
+  }
 };
 
 /// \brief Cast an exprt to an \ref array_exprt
@@ -1764,6 +2035,11 @@ public:
     : multi_ary_exprt(ID_array_list, _type)
   {
   }
+
+  explicit array_list_exprt(array_typet &&_type)
+    : multi_ary_exprt(ID_array_list, std::move(_type))
+  {
+  }
 };
 
 template <>
@@ -1788,6 +2064,11 @@ public:
 
   explicit vector_exprt(const vector_typet &_type)
     : multi_ary_exprt(ID_vector, _type)
+  {
+  }
+
+  explicit vector_exprt(vector_typet &&_type)
+    : multi_ary_exprt(ID_vector, std::move(_type))
   {
   }
 };
@@ -1832,11 +2113,20 @@ public:
   {
   }
 
-  explicit union_exprt(
+  union_exprt(
     const irep_idt &_component_name,
     const exprt &_value,
     const typet &_type):
     unary_exprt(ID_union, _value, _type)
+  {
+    set_component_name(_component_name);
+  }
+
+  union_exprt(
+    const irep_idt &_component_name,
+    exprt &&_value,
+    typet &&_type):
+    unary_exprt(ID_union, std::move(_value), std::move(_type))
   {
     set_component_name(_component_name);
   }
@@ -1910,6 +2200,10 @@ public:
   {
   }
 
+  explicit struct_exprt(typet &&_type) : multi_ary_exprt(ID_struct, std::move(_type))
+  {
+  }
+
   exprt &component(const irep_idt &name, const namespacet &ns);
   const exprt &component(const irep_idt &name, const namespacet &ns) const;
 };
@@ -1954,9 +2248,15 @@ public:
   {
   }
 
-  explicit complex_exprt(
+  complex_exprt(
     const exprt &_real, const exprt &_imag, const complex_typet &_type):
     binary_exprt(_real, ID_complex, _imag, _type)
+  {
+  }
+
+  complex_exprt(
+    exprt &&_real, exprt &&_imag, complex_typet &&_type):
+    binary_exprt(std::move(_real), ID_complex, std::move(_imag), std::move(_type))
   {
   }
 
@@ -2115,10 +2415,9 @@ class namespacet;
 class object_descriptor_exprt:public binary_exprt
 {
 public:
-  object_descriptor_exprt():binary_exprt(ID_object_descriptor)
+  object_descriptor_exprt():
+    binary_exprt(exprt(ID_unknown), ID_object_descriptor, exprt(ID_unknown))
   {
-    op0().id(ID_unknown);
-    op1().id(ID_unknown);
   }
 
   void build(const exprt &expr, const namespacet &ns);
@@ -2187,17 +2486,20 @@ inline void validate_expr(const object_descriptor_exprt &value)
 class dynamic_object_exprt:public binary_exprt
 {
 public:
-  dynamic_object_exprt():binary_exprt(ID_dynamic_object)
+  DEPRECATED("use dynamic_object_exprt(type) instead")
+  dynamic_object_exprt():
+    binary_exprt(exprt(ID_unknown), ID_dynamic_object, exprt(ID_unknown))
   {
-    op0().id(ID_unknown);
-    op1().id(ID_unknown);
   }
 
   explicit dynamic_object_exprt(const typet &type):
-    binary_exprt(ID_dynamic_object, type)
+    binary_exprt(exprt(ID_unknown), ID_dynamic_object, exprt(ID_unknown), type)
   {
-    op0().id(ID_unknown);
-    op1().id(ID_unknown);
+  }
+
+  explicit dynamic_object_exprt(typet &&type):
+    binary_exprt(exprt(ID_unknown), ID_dynamic_object, exprt(ID_unknown), std::move(type))
+  {
   }
 
   void set_instance(unsigned int instance);
@@ -2263,6 +2565,11 @@ public:
 
   typecast_exprt(const exprt &op, const typet &_type):
     unary_exprt(ID_typecast, op, _type)
+  {
+  }
+
+  typecast_exprt(exprt &&op, typet &&_type):
+    unary_exprt(ID_typecast, std::move(op), std::move(_type))
   {
   }
 
