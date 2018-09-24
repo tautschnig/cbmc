@@ -505,6 +505,15 @@ public:
     op2().make_nil();
   }
 
+  code_ifthenelset(
+    const exprt &condition,
+    const codet &then_code,
+    const codet &else_code)
+    : codet(ID_ifthenelse)
+  {
+    copy_to_operands(condition, then_code, else_code);
+  }
+
   const exprt &cond() const
   {
     return op0();
