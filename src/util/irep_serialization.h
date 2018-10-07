@@ -64,8 +64,6 @@ public:
     debug_output = getenv("IREP_DEBUG") != nullptr;
   };
 
-  std::size_t insert_on_write(std::size_t h);
-
   void reference_convert(std::istream &, irept &irep);
   void reference_convert(const irept &irep, std::ostream &);
 
