@@ -45,6 +45,9 @@ void irep_serializationt::write_irep(
     reference_convert(it->second, out);
   }
 
+  if(debug_output)
+    std::cout << "Wrote " << irep.id() << std::endl;
+
   out.put(0); // terminator
 }
 
@@ -96,7 +99,14 @@ void irep_serializationt::read_irep(
 
   if(in.get()!=0)
   {
+    if(debug_output)
+      std::cout << irep.pretty() << std::endl;
     throw deserialization_exceptiont("irep not terminated");
+  }
+  else
+  {
+    if(debug_output)
+      std::cout << "Read " << irep.id() << std::endl;
   }
 }
 
@@ -255,6 +265,8 @@ void irep_serializationt::write_string_ref(
   const irep_idt &s)
 {
   size_t id=irep_id_hash()(s);
+  if(debug_output)
+    std::cout << "String id: " << id << std::endl;
   if(id>=ireps_container.string_map.size())
     ireps_container.string_map.resize(id+1, false);
 
@@ -265,6 +277,8 @@ void irep_serializationt::write_string_ref(
     ireps_container.string_map[id]=true;
     write_gb_word(out, id);
     write_gb_string(out, id2string(s));
+    if(debug_output)
+      std::cout << "New string " << s << std::endl;
   }
 }
 
@@ -274,6 +288,8 @@ void irep_serializationt::write_string_ref(
 irep_idt irep_serializationt::read_string_ref(std::istream &in)
 {
   std::size_t id=read_gb_word(in);
+  if(debug_output)
+    std::cout << "String id: " << id << std::endl;
 
   if(id>=ireps_container.string_rev_map.size())
     ireps_container.string_rev_map.resize(1+id*2,
@@ -288,6 +304,8 @@ irep_idt irep_serializationt::read_string_ref(std::istream &in)
     irep_idt s=read_gb_string(in);
     ireps_container.string_rev_map[id]=
       std::pair<bool, irep_idt>(true, s);
+    if(debug_output)
+      std::cout << "New string " << s << std::endl;
     return ireps_container.string_rev_map[id].second;
   }
 }

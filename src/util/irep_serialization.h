@@ -18,6 +18,7 @@ Date: May 2007
 #include <iosfwd>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 #include "irep_hash_container.h"
 #include "irep.h"
@@ -59,6 +60,8 @@ public:
   {
     read_buffer.resize(1, 0);
     clear();
+
+    debug_output = getenv("IREP_DEBUG") != nullptr;
   };
 
   std::size_t insert_on_write(std::size_t h);
@@ -81,6 +84,8 @@ private:
 
   void write_irep(std::ostream &, const irept &irep);
   void read_irep(std::istream &, irept &irep);
+
+  bool debug_output = false;
 };
 
 #endif // CPROVER_UTIL_IREP_SERIALIZATION_H
