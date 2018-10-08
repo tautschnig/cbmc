@@ -56,6 +56,8 @@ void irep_serializationt::reference_convert(
   irept &irep)
 {
   std::size_t id=read_gb_word(in);
+  if(debug_output)
+    std::cout << "R ref " << id << std::endl;
 
   if(id<ireps_container.ireps_on_read.size() &&
      ireps_container.ireps_on_read[id].first)
@@ -64,6 +66,8 @@ void irep_serializationt::reference_convert(
   }
   else
   {
+    if(debug_output)
+      std::cout << "New irep" << std::endl;
     read_irep(in, irep);
 
     if(id >= ireps_container.ireps_on_read.size())
@@ -130,17 +134,25 @@ void irep_serializationt::reference_convert(
   const auto res = ireps_container.ireps_on_write.insert(
     {h, ireps_container.ireps_on_write.size()});
 
+  if(debug_output)
+    std::cout << "W ref " << res.first->second << std::endl;
   write_gb_word(out, res.first->second);
   if(res.second)
+  {
+    if(debug_output)
+      std::cout << "New irep" << std::endl;
     write_irep(out, irep);
+  }
 }
 
-/// Write 7 bits of `u` each time, most-significant byte first, until we have
+/// Write 7 bits of `u` each time, least-significant byte first, until we have
 /// zero.
 /// \param out: target stream
 /// \param u: number to write
-void write_gb_word(std::ostream &out, std::size_t u)
+void irep_serializationt::write_gb_word(std::ostream &out, std::size_t u)
 {
+  if(debug_output)
+    std::cout << "W: " << u << std::endl;
 
   while(true)
   {
@@ -149,10 +161,14 @@ void write_gb_word(std::ostream &out, std::size_t u)
 
     if(u==0)
     {
+      if(debug_output)
+        std::cout << "P1: " << std::hex << std::size_t(value) << std::endl;
       out.put(value);
       break;
     }
 
+    if(debug_output)
+      std::cout << "P2: " << std::hex << std::size_t((char)(value | 0x80)) << std::endl;
     out.put(value | 0x80);
   }
 }
@@ -172,14 +188,23 @@ std::size_t irep_serializationt::read_gb_word(std::istream &in)
       throw deserialization_exceptiont("input number too large");
 
     unsigned char ch=static_cast<unsigned char>(in.get());
+    if(debug_output)
+      std::cout << "R: " << std::hex << std::size_t(ch) << std::endl;
     res|=(size_t(ch&0x7f))<<shift_distance;
     shift_distance+=7;
     if((ch&0x80)==0)
+    {
+      if(debug_output)
+        std::cout << "T" << std::endl;
       break;
+    }
   }
 
   if(!in.good())
     throw deserialization_exceptiont("unexpected end of input stream");
+
+  if(debug_output)
+    std::cout << "R: " << res << std::endl;
 
   return res;
 }

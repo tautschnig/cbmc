@@ -23,7 +23,7 @@ Date: May 2007
 #include "irep_hash_container.h"
 #include "irep.h"
 
-void write_gb_word(std::ostream &, std::size_t);
+// void write_gb_word(std::ostream &, std::size_t);
 void write_gb_string(std::ostream &, const std::string &);
 
 class irep_serializationt
@@ -72,7 +72,8 @@ public:
 
   void clear() { ireps_container.clear(); }
 
-  static std::size_t read_gb_word(std::istream &);
+  std::size_t read_gb_word(std::istream &);
+  void write_gb_word(std::ostream &out, std::size_t u);
   irep_idt read_gb_string(std::istream &);
 
 private:

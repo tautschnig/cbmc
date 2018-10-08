@@ -12,6 +12,8 @@ Author: CM Wintersteiger
 #include "write_goto_binary.h"
 
 #include <fstream>
+#include <iostream>
+#include <cstdlib>
 
 #include <util/exception_utils.h>
 #include <util/invariant.h>
@@ -28,9 +30,10 @@ bool write_goto_binary_v4(
   const goto_functionst &goto_functions,
   irep_serializationt &irepconverter)
 {
+  bool dbg = getenv("IREP_DEBUG") != nullptr;
   // first write symbol table
 
-  write_gb_word(out, symbol_table.symbols.size());
+  irepconverter.write_gb_word(out, symbol_table.symbols.size());
 
   for(const auto &symbol_pair : symbol_table.symbols)
   {
@@ -39,17 +42,35 @@ bool write_goto_binary_v4(
 
     const symbolt &sym = symbol_pair.second;
 
+    if(dbg)
+      std::cout << "C: sym.type" << std::endl;
     irepconverter.reference_convert(sym.type, out);
+    if(dbg)
+      std::cout << "C: sym.value" << std::endl;
     irepconverter.reference_convert(sym.value, out);
+    if(dbg)
+      std::cout << "C: sym.location" << std::endl;
     irepconverter.reference_convert(sym.location, out);
 
+    if(dbg)
+      std::cout << "C: sym.name" << std::endl;
     irepconverter.write_string_ref(out, sym.name);
+    if(dbg)
+      std::cout << "C: sym.module" << std::endl;
     irepconverter.write_string_ref(out, sym.module);
+    if(dbg)
+      std::cout << "C: sym.base_name" << std::endl;
     irepconverter.write_string_ref(out, sym.base_name);
+    if(dbg)
+      std::cout << "C: sym.mode" << std::endl;
     irepconverter.write_string_ref(out, sym.mode);
+    if(dbg)
+      std::cout << "C: sym.pretty_name" << std::endl;
     irepconverter.write_string_ref(out, sym.pretty_name);
 
-    write_gb_word(out, 0); // old: sym.ordering
+    if(dbg)
+      std::cout << "C: T" << std::endl;
+    irepconverter.write_gb_word(out, 0); // old: sym.ordering
 
     unsigned flags=0;
     flags = (flags << 1) | static_cast<int>(sym.is_weak);
@@ -70,7 +91,9 @@ bool write_goto_binary_v4(
     flags = (flags << 1) | static_cast<int>(sym.is_extern);
     flags = (flags << 1) | static_cast<int>(sym.is_volatile);
 
-    write_gb_word(out, flags);
+    if(dbg)
+      std::cout << "C: flags" << std::endl;
+    irepconverter.write_gb_word(out, flags);
   }
 
   // now write functions, but only those with body
@@ -80,7 +103,7 @@ bool write_goto_binary_v4(
     if(it->second.body_available())
       cnt++;
 
-  write_gb_word(out, cnt);
+  irepconverter.write_gb_word(out, cnt);
 
   for(const auto &fct : goto_functions.function_map)
   {
@@ -90,7 +113,7 @@ bool write_goto_binary_v4(
       // instead they are saved in a custom binary format
 
       write_gb_string(out, id2string(fct.first)); // name
-      write_gb_word(out, fct.second.body.instructions.size()); // # instructions
+      irepconverter.write_gb_word(out, fct.second.body.instructions.size()); // # instructions
 
       forall_goto_program_instructions(i_it, fct.second.body)
       {
@@ -99,17 +122,17 @@ bool write_goto_binary_v4(
         irepconverter.reference_convert(instruction.code, out);
         irepconverter.write_string_ref(out, instruction.function);
         irepconverter.reference_convert(instruction.source_location, out);
-        write_gb_word(out, (long)instruction.type);
+        irepconverter.write_gb_word(out, (long)instruction.type);
         irepconverter.reference_convert(instruction.guard, out);
         irepconverter.write_string_ref(out, irep_idt()); // former event
-        write_gb_word(out, instruction.target_number);
+        irepconverter.write_gb_word(out, instruction.target_number);
 
-        write_gb_word(out, instruction.targets.size());
+        irepconverter.write_gb_word(out, instruction.targets.size());
 
         for(const auto &t_it : instruction.targets)
-          write_gb_word(out, t_it->target_number);
+          irepconverter.write_gb_word(out, t_it->target_number);
 
-        write_gb_word(out, instruction.labels.size());
+        irepconverter.write_gb_word(out, instruction.labels.size());
 
         for(const auto &l_it : instruction.labels)
           irepconverter.write_string_ref(out, l_it);
@@ -143,12 +166,12 @@ bool write_goto_binary(
   const goto_functionst &goto_functions,
   int version)
 {
-  // header
-  out << char(0x7f) << "GBF";
-  write_gb_word(out, version);
-
   irep_serializationt::ireps_containert irepc;
   irep_serializationt irepconverter(irepc);
+
+  // header
+  out << char(0x7f) << "GBF";
+  irepconverter.write_gb_word(out, version);
 
   const int current_goto_version = 4;
   if(version < current_goto_version)
