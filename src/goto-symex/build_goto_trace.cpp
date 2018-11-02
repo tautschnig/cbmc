@@ -13,6 +13,7 @@ Author: Daniel Kroening
 
 #include "build_goto_trace.h"
 
+#include <iostream>
 #include <cassert>
 
 #include <util/arith_tools.h>

@@ -9,6 +9,9 @@ Author: Daniel Kroening, kroening@kroening.com
 /// \file
 /// Symbolic Execution
 
+#include <iostream>
+#include <util/format_expr.h>
+
 #include "goto_symex.h"
 
 #include <util/byte_operators.h>
@@ -235,8 +238,11 @@ void goto_symext::symex_assign_symbol(
   // TODO: done via rename
   // field_sensitivityt::apply(ns, ssa_rhs, false);
 
+  std::cerr << "ssa_rhs before rename: " << format(ssa_rhs) << std::endl;
   state.rename(ssa_rhs, ns);
+  std::cerr << "ssa_rhs after rename: " << format(ssa_rhs) << std::endl;
 
+  std::cerr << "lhs before mods: " << format(lhs) << std::endl;
   ssa_exprt lhs_mod = lhs;
 
   if(
@@ -331,7 +337,10 @@ void goto_symext::symex_assign_symbol(
   }
 #endif
 
+  std::cerr << "lhs after mods: " << format(lhs) << std::endl;
+  std::cerr << "lhs_mod after mods: " << format(lhs_mod) << std::endl;
   do_simplify(ssa_rhs);
+  std::cerr << "ssa_rhs after simp: " << format(ssa_rhs) << std::endl;
 
   ssa_exprt ssa_lhs = lhs_mod;
   state.assignment(

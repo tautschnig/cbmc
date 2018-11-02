@@ -9,6 +9,9 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "boolbv.h"
 
 #include <algorithm>
+#include <iostream>
+#include <util/format_expr.h>
+#include <util/format_type.h>
 
 #include <util/arith_tools.h>
 #include <util/cprover_prefix.h>
@@ -129,6 +132,7 @@ bvt boolbvt::convert_index(const index_exprt &expr)
     if((array.id()==ID_constant || array.id()==ID_array) &&
        prop.has_set_to())
     {
+      std::cerr << "HACK: " << array.id() << std::endl;
       #ifdef CONSTANT_ARRAY_HACK
       // TODO : Compile the whole array into a single relation
       #endif
@@ -139,6 +143,7 @@ bvt boolbvt::convert_index(const index_exprt &expr)
       const std::string identifier = CPROVER_PREFIX "internal_actual_array_" +
                                      std::to_string(actual_array_counter++);
 
+      std::cerr << "expr.type() = " << format(expr.type()) << std::endl;
       symbol_exprt result(identifier, expr.type());
       bv = convert_bv(result);
 
@@ -170,6 +175,8 @@ bvt boolbvt::convert_index(const index_exprt &expr)
         value_equality.rhs()=*it++;
 
         // Cache comparisons and equalities
+        std::cerr << "imp: " << format(implies_exprt(index_equality,
+                                                 value_equality)) << std::endl;
         prop.l_set_to_true(convert(implies_exprt(index_equality,
                                                  value_equality)));
       }

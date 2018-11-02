@@ -240,6 +240,8 @@ void goto_symex_statet::assignment(
   value_set.output(ns, std::cout);
   std::cout << "**********************\n";
   #endif
+  std::cerr << "LHS: " << lhs.pretty() << std::endl;
+  std::cerr << "RHS: " << rhs.pretty() << std::endl;
 }
 
 void goto_symex_statet::set_l0_indices(
