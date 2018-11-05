@@ -51,7 +51,7 @@ void test_set()
 int main()
 {
   test_equal();
-  test_copy();
-  test_replace();
+  // test_copy();
+  // test_replace();
   test_set();
 }
