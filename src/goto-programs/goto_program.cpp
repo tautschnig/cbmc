@@ -269,6 +269,7 @@ std::list<exprt> expressions_read(
 {
   std::list<exprt> dest;
 
+  // clang-format off
   switch(instruction.type)
   {
   case ASSUME:
@@ -317,6 +318,7 @@ std::list<exprt> expressions_read(
   case NO_INSTRUCTION_TYPE:
     break;
   }
+  // clang-format on
 
   return dest;
 }

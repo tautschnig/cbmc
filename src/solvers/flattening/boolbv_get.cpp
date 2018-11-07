@@ -83,12 +83,14 @@ exprt boolbvt::bv_get_rec(
   {
     if(!unknown[offset])
     {
+      // clang-format off
       switch(prop.l_get(bv[offset]).get_value())
       {
       case tvt::tv_enumt::TV_FALSE: return false_exprt();
       case tvt::tv_enumt::TV_TRUE:  return true_exprt();
       case tvt::tv_enumt::TV_UNKNOWN: return false_exprt(); // default
       }
+      // clang-format on
     }
 
     return nil_exprt();
@@ -231,6 +233,7 @@ exprt boolbvt::bv_get_rec(
     value=ch+value;
   }
 
+  // clang-format off
   switch(bvtype)
   {
   case bvtypet::IS_UNKNOWN:
@@ -272,6 +275,7 @@ exprt boolbvt::bv_get_rec(
     return constant_exprt(bvrep, type);
   }
   }
+  // clang-format on
 
   return nil_exprt();
 }

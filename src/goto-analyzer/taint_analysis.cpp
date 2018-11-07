@@ -69,6 +69,7 @@ void taint_analysist::instrument(
 
     goto_programt insert_before, insert_after;
 
+    // clang-format off
     if(instruction.is_function_call())
       {
         const code_function_callt &function_call=
@@ -201,6 +202,7 @@ void taint_analysist::instrument(
           }
         }
       }
+      // clang-format off
 
     if(!insert_before.empty())
     {
