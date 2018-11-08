@@ -333,7 +333,6 @@ bool boolbvt::type_conversion(
   case bvtypet::IS_UNSIGNED:
   case bvtypet::IS_SIGNED:
   case bvtypet::IS_C_ENUM:
-    // clang-format off
     switch(src_bvtype)
     {
     case bvtypet::IS_FLOAT: // float to integer
@@ -342,92 +341,89 @@ bool boolbvt::type_conversion(
       break;
 
     case bvtypet::IS_FIXED: // fixed to integer
+    {
+      std::size_t op_fraction_bits =
+        to_fixedbv_type(src_type).get_fraction_bits();
+
+      for(std::size_t i = 0; i < dest_width; i++)
       {
-        std::size_t op_fraction_bits=
-          to_fixedbv_type(src_type).get_fraction_bits();
-
-        for(std::size_t i=0; i<dest_width; i++)
+        if(i < src_width - op_fraction_bits)
+          dest.push_back(src[i + op_fraction_bits]);
+        else
         {
-          if(i<src_width-op_fraction_bits)
-            dest.push_back(src[i+op_fraction_bits]);
+          if(dest_bvtype == bvtypet::IS_SIGNED)
+            dest.push_back(src[src_width - 1]); // sign extension
           else
-          {
-            if(dest_bvtype==bvtypet::IS_SIGNED)
-              dest.push_back(src[src_width-1]); // sign extension
-            else
-              dest.push_back(const_literal(false)); // zero extension
-          }
+            dest.push_back(const_literal(false)); // zero extension
         }
-
-        // we might need to round up in case of negative numbers
-        // e.g., (int)(-1.00001)==1
-
-        bvt fraction_bits_bv=src;
-        fraction_bits_bv.resize(op_fraction_bits);
-        literalt round_up=
-          prop.land(prop.lor(fraction_bits_bv), src.back());
-
-        dest=bv_utils.incrementer(dest, round_up);
-
-        return false;
       }
+
+      // we might need to round up in case of negative numbers
+      // e.g., (int)(-1.00001)==1
+
+      bvt fraction_bits_bv = src;
+      fraction_bits_bv.resize(op_fraction_bits);
+      literalt round_up = prop.land(prop.lor(fraction_bits_bv), src.back());
+
+      dest = bv_utils.incrementer(dest, round_up);
+
+      return false;
+    }
 
     case bvtypet::IS_UNSIGNED: // integer to integer
     case bvtypet::IS_SIGNED:
     case bvtypet::IS_C_ENUM:
     case bvtypet::IS_C_BOOL:
+    {
+      // We do sign extension for any source type
+      // that is signed, independently of the
+      // destination type.
+      // E.g., ((short)(ulong)(short)-1)==-1
+      bool sign_extension =
+        src_bvtype == bvtypet::IS_SIGNED || src_bvtype == bvtypet::IS_C_ENUM;
+
+      for(std::size_t i = 0; i < dest_width; i++)
       {
-        // We do sign extension for any source type
-        // that is signed, independently of the
-        // destination type.
-        // E.g., ((short)(ulong)(short)-1)==-1
-        bool sign_extension=
-          src_bvtype==bvtypet::IS_SIGNED || src_bvtype==bvtypet::IS_C_ENUM;
-
-        for(std::size_t i=0; i<dest_width; i++)
-        {
-          if(i<src_width)
-            dest.push_back(src[i]);
-          else if(sign_extension)
-            dest.push_back(src[src_width-1]); // sign extension
-          else
-            dest.push_back(const_literal(false));
-        }
-
-        return false;
+        if(i < src_width)
+          dest.push_back(src[i]);
+        else if(sign_extension)
+          dest.push_back(src[src_width - 1]); // sign extension
+        else
+          dest.push_back(const_literal(false));
       }
+
+      return false;
+    }
     // verilog_unsignedbv to signed/unsigned/enum
     case bvtypet::IS_VERILOG_UNSIGNED:
+    {
+      for(std::size_t i = 0; i < dest_width; i++)
       {
-        for(std::size_t i=0; i<dest_width; i++)
-        {
-          std::size_t src_index=i*2; // we take every second bit
+        std::size_t src_index = i * 2; // we take every second bit
 
-          if(src_index<src_width)
-            dest.push_back(src[src_index]);
-          else // always zero-extend
-            dest.push_back(const_literal(false));
-        }
-
-        return false;
+        if(src_index < src_width)
+          dest.push_back(src[src_index]);
+        else // always zero-extend
+          dest.push_back(const_literal(false));
       }
-      break;
+
+      return false;
+    }
 
     case bvtypet::IS_VERILOG_SIGNED: // verilog_signedbv to signed/unsigned/enum
+    {
+      for(std::size_t i = 0; i < dest_width; i++)
       {
-        for(std::size_t i=0; i<dest_width; i++)
-        {
-          std::size_t src_index=i*2; // we take every second bit
+        std::size_t src_index = i * 2; // we take every second bit
 
-          if(src_index<src_width)
-            dest.push_back(src[src_index]);
-          else // always sign-extend
-            dest.push_back(src.back());
-        }
-
-        return false;
+        if(src_index < src_width)
+          dest.push_back(src[src_index]);
+        else // always sign-extend
+          dest.push_back(src.back());
       }
-      break;
+
+      return false;
+    }
 
     case bvtypet::IS_C_BIT_FIELD:
     case bvtypet::IS_UNKNOWN:
@@ -451,7 +447,6 @@ bool boolbvt::type_conversion(
         return false;
       }
     }
-    // clang-format on
     break;
 
   case bvtypet::IS_VERILOG_UNSIGNED:

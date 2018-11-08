@@ -28,7 +28,6 @@ bool value_set_domain_fit::transform(
 //      from_l->function << " " << from_l->location_number << " to " <<
 //      to_l->function << " " << to_l->location_number << '\n';
 
-  // clang-format off
   switch(from_l->type)
   {
   case GOTO:
@@ -46,13 +45,12 @@ bool value_set_domain_fit::transform(
     break;
 
   case FUNCTION_CALL:
-    {
-      const code_function_callt &code=
-        to_code_function_call(from_l->code);
+  {
+    const code_function_callt &code = to_code_function_call(from_l->code);
 
-      value_set.do_function_call(to_l->function, code.arguments(), ns);
-    }
+    value_set.do_function_call(to_l->function, code.arguments(), ns);
     break;
+  }
 
   case CATCH:
   case THROW:
@@ -71,7 +69,6 @@ bool value_set_domain_fit::transform(
     // do nothing
     break;
   }
-  // clang-format on
 
   return (value_set.changed);
 }

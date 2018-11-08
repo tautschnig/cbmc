@@ -477,9 +477,9 @@ decision_proceduret::resultt prop_conv_solvert::dec_solve()
   // clang-format off
   switch(prop.prop_solve())
   {
-    case propt::resultt::P_SATISFIABLE: return resultt::D_SATISFIABLE;
-    case propt::resultt::P_UNSATISFIABLE: return resultt::D_UNSATISFIABLE;
-    case propt::resultt::P_ERROR: return resultt::D_ERROR;
+  case propt::resultt::P_SATISFIABLE: return resultt::D_SATISFIABLE;
+  case propt::resultt::P_UNSATISFIABLE: return resultt::D_UNSATISFIABLE;
+  case propt::resultt::P_ERROR: return resultt::D_ERROR;
   }
   // clang-format on
 
@@ -493,12 +493,14 @@ exprt prop_conv_solvert::get(const exprt &expr) const
   if(expr.type().id()==ID_bool &&
      !get_bool(expr, value))
   {
+    // clang-format off
     switch(value.get_value())
     {
-     case tvt::tv_enumt::TV_TRUE:  return true_exprt();
-     case tvt::tv_enumt::TV_FALSE: return false_exprt();
-     case tvt::tv_enumt::TV_UNKNOWN: return false_exprt(); // default
+    case tvt::tv_enumt::TV_TRUE:  return true_exprt();
+    case tvt::tv_enumt::TV_FALSE: return false_exprt();
+    case tvt::tv_enumt::TV_UNKNOWN: return false_exprt(); // default
     }
+    // clang-format on
   }
 
   exprt tmp = expr;
