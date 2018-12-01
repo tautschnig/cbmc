@@ -170,9 +170,9 @@ void goto_symext::parameter_assignments(
 
       state.symbol_table.insert(std::move(symbol));
 
-      symbol_exprt lhs=symbol_exprt(id, it1->type());
+      const symbol_exprt lhs(id, it1->type());
 
-      symex_assign(state, code_assignt(lhs, *it1));
+      symex_assign(state, code_assignt(std::move(lhs), *it1));
     }
   }
   else if(it1!=arguments.end())

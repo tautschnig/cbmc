@@ -1283,30 +1283,28 @@ bool instrumentert::is_cfg_spurious(const event_grapht::critical_cyclet &cyc)
       }
     }
 
+#if 0
   /* now test whether this part of the code can exist */
   goto_functionst::function_mapt map;
   goto_functiont one_interleaving;
   one_interleaving.body.copy_from(interleaving);
-  map.insert(std::make_pair(
-    goto_functionst::entry_point(),
-    std::move(one_interleaving)));
+  map.emplace(goto_functionst::entry_point(), std::move(one_interleaving));
 
   goto_functionst this_interleaving;
   this_interleaving.function_map=std::move(map);
   optionst no_option;
   null_message_handlert no_message;
 
-  #if 0
   bmct bmc(no_option, symbol_table, no_message);
 
   bool is_spurious=bmc.run(this_interleaving);
 
   message.debug() << "CFG:"<<is_spurious << messaget::eom;
   return is_spurious;
-  #else
+#else
 
   return false; // conservative for now
-  #endif
+#endif
 }
 
 void instrumentert::cfg_cycles_filter()

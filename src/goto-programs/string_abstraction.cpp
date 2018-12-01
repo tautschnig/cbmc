@@ -1352,7 +1352,7 @@ exprt string_abstractiont::member(const exprt &a, whatt what)
     type_eq(a.type(), string_struct, ns) || is_ptr_string_struct(a.type()),
     "either the expression is not a string or it is not a pointer to one");
 
-  exprt struct_op=
+  const exprt struct_op=
     a.type().id()==ID_pointer?
     dereference_exprt(a, string_struct):a;
 
