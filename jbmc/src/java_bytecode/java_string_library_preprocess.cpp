@@ -1282,9 +1282,8 @@ exprt java_string_library_preprocesst::get_object_at_index(
   member_exprt data_member(deref_objs, "data", pointer_of_pointer);
   plus_exprt data_pointer_plus_index(
     data_member, from_integer(index, java_int_type()), data_member.type());
-  dereference_exprt data_at_index(
+  return dereference_exprt(
     data_pointer_plus_index, data_pointer_plus_index.type().subtype());
-  return std::move(data_at_index);
 }
 
 /// Helper for format function. Adds code:

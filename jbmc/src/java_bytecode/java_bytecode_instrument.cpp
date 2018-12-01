@@ -251,10 +251,9 @@ code_ifthenelset java_bytecode_instrumentt::check_class_cast(
     check_code=std::move(assert_class);
   }
 
-  code_ifthenelset conditional_check;
-  notequal_exprt op_not_null(null_check_op, null_pointer_exprt(voidptr));
-  conditional_check.cond()=std::move(op_not_null);
-  conditional_check.then_case()=std::move(check_code);
+  const code_ifthenelset conditional_check(
+    notequal_exprt(std::move(null_check_op), null_pointer_exprt(voidptr)),
+    std::move(check_code));
   return conditional_check;
 }
 

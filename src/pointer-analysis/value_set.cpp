@@ -1660,7 +1660,5 @@ exprt value_sett::make_member(
 
   // give up
   const typet &subtype = struct_union_type.component_type(component_name);
-  member_exprt member_expr(src, component_name, subtype);
-
-  return std::move(member_expr);
+  return member_exprt(src, component_name, subtype);
 }

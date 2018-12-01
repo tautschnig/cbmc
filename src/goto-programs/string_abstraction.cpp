@@ -1365,7 +1365,6 @@ exprt string_abstractiont::member(const exprt &a, whatt what)
   case whatt::LENGTH: component_name="length"; break;
   }
 
-  member_exprt result(struct_op, component_name, build_type(what));
-
-  return std::move(result);
+  return member_exprt(
+    std::move(struct_op), component_name, build_type(what));
 }
