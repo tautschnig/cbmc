@@ -121,14 +121,18 @@ public:
   class componentt:public exprt
   {
   public:
-    componentt()
-    {
-    }
+    componentt() = default;
 
     componentt(const irep_idt &_name, const typet &_type)
     {
       set_name(_name);
       type()=_type;
+    }
+
+    componentt(const irep_idt &_name, typet &&_type)
+    {
+      set_name(_name);
+      type() = std::move(_type);
     }
 
     const irep_idt &get_name() const
@@ -303,6 +307,10 @@ public:
     }
 
     explicit baset(const symbol_typet &base) : exprt(ID_base, base)
+    {
+    }
+
+    explicit baset(symbol_typet &&base) : exprt(ID_base, std::move(base))
     {
     }
   };
@@ -673,6 +681,11 @@ public:
   {
   }
 
+  explicit c_enum_typet(typet &&_subtype):
+    type_with_subtypet(ID_c_enum, std::move(_subtype))
+  {
+  }
+
   class c_enum_membert:public irept
   {
   public:
@@ -1026,6 +1039,13 @@ public:
     const exprt &_size):type_with_subtypet(ID_array, _subtype)
   {
     size()=_size;
+  }
+
+  array_typet(
+    typet &&_subtype,
+    exprt &&_size):type_with_subtypet(ID_array, std::move(_subtype))
+  {
+    size() = std::move(_size);
   }
 
   const exprt &size() const
@@ -1489,6 +1509,12 @@ public:
     subtype() = _subtype;
   }
 
+  explicit c_bit_field_typet(typet &&_subtype, std::size_t width)
+    : bitvector_typet(ID_c_bit_field, width)
+  {
+    subtype() = std::move(_subtype);
+  }
+
   // These have a sub-type
 };
 
@@ -1532,6 +1558,12 @@ public:
     : bitvector_typet(ID_pointer, width)
   {
     subtype() = _subtype;
+  }
+
+  pointer_typet(typet &&_subtype, std::size_t width)
+    : bitvector_typet(ID_pointer, width)
+  {
+    subtype() = std::move(_subtype);
   }
 
   signedbv_typet difference_type() const
@@ -1588,6 +1620,12 @@ class reference_typet:public pointer_typet
 public:
   reference_typet(const typet &_subtype, std::size_t _width):
     pointer_typet(_subtype, _width)
+  {
+    set(ID_C_reference, true);
+  }
+
+  reference_typet(typet &_subtype, std::size_t _width):
+    pointer_typet(std::move(_subtype), _width)
   {
     set(ID_C_reference, true);
   }
@@ -1783,6 +1821,13 @@ public:
     size()=_size;
   }
 
+  vector_typet(
+    typet &&_subtype,
+    exprt &&_size):type_with_subtypet(ID_vector, std::move(_subtype))
+  {
+    size() = std::move(_size);
+  }
+
   const exprt &size() const
   {
     return static_cast<const exprt &>(find(ID_size));
@@ -1828,12 +1873,18 @@ inline vector_typet &to_vector_type(typet &type)
 class complex_typet:public type_with_subtypet
 {
 public:
+  DEPRECATED("use complex_typet(type) instead")
   complex_typet():type_with_subtypet(ID_complex)
   {
   }
 
   explicit complex_typet(const typet &_subtype):
     type_with_subtypet(ID_complex, _subtype)
+  {
+  }
+
+  explicit complex_typet(typet &&_subtype):
+    type_with_subtypet(ID_complex, std::move(_subtype))
   {
   }
 };
