@@ -210,11 +210,44 @@ irept &irept::add(const irep_namet &name, const irept &irep)
 
   return it->second;
 #else
-  std::pair<named_subt::iterator, bool> entry=
-    s.insert(std::make_pair(name, irep));
+  std::pair<named_subt::iterator, bool> entry = s.emplace(
+    std::piecewise_construct,
+    std::forward_as_tuple(name),
+    std::forward_as_tuple(irep));
 
   if(!entry.second)
     entry.first->second=irep;
+
+  return entry.first->second;
+#endif
+}
+
+irept &irept::add(const irep_namet &name, irept &&irep)
+{
+  named_subt &s = get_named_sub();
+
+#ifdef NAMED_SUB_IS_FORWARD_LIST
+  named_subt::iterator it = named_subt_lower_bound(s, name);
+
+  if(it == s.end() || it->first != name)
+  {
+    named_subt::iterator before = s.before_begin();
+    while(std::next(before) != it)
+      ++before;
+    it = s.emplace_after(before, name, std::move(irep));
+  }
+  else
+    it->second.swap(irep);
+
+  return it->second;
+#else
+  std::pair<named_subt::iterator, bool> entry = s.emplace(
+    std::piecewise_construct,
+    std::forward_as_tuple(name),
+    std::forward_as_tuple(irep));
+
+  if(!entry.second)
+    entry.first->second.swap(irep);
 
   return entry.first->second;
 #endif
