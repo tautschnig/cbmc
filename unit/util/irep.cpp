@@ -172,6 +172,11 @@ SCENARIO("irept_memory", "[core][utils][irept]")
       irept irep4;
       irep.move_to_named_sub("#another_comment", irep4);
       REQUIRE(irep.get_comments().size() == 2);
+
+      irept irep5("moved_irep");
+      irep.add("a_moved_element", std::move(irep5));
+      REQUIRE(irep.find("a_moved_element").id() == "moved_irep");
+      REQUIRE(irep.get_named_sub().size() == 2);
     }
 
     THEN("Setting and getting works")
@@ -200,6 +205,10 @@ SCENARIO("irept_memory", "[core][utils][irept]")
       REQUIRE(irep.get_int("numeric_id") == 42);
       REQUIRE(irep.get_size_t("numeric_id") == 42u);
       REQUIRE(irep.get_long_long("numeric_id") == 42);
+
+      irept irep3("move me");
+      irep.set("another_moved_element", std::move(irep3));
+      REQUIRE(irep.find("another_moved_element").id() == "move me");
 
       irep.clear();
       REQUIRE(irep.id().empty());

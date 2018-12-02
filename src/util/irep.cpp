@@ -346,6 +346,34 @@ irept &irept::add(const irep_namet &name, const irept &irep)
   #endif
 }
 
+#ifdef USE_MOVE
+irept &irept::add(const irep_namet &name, irept &&irep)
+{
+  named_subt &s=
+    is_comment(name)?get_comments():get_named_sub();
+
+  #ifdef SUB_IS_LIST
+  named_subt::iterator it=named_subt_lower_bound(s, name);
+
+  if(it==s.end() ||
+     it->first!=name)
+    it=s.insert(it, std::make_pair(name, std::move(irep)));
+  else
+    it->second=std::move(irep);
+
+  return it->second;
+  #else
+  std::pair<named_subt::iterator, bool> entry=
+    s.emplace(name, std::move(irep));
+
+  if(!entry.second)
+    entry.first->second=std::move(irep);
+
+  return entry.first->second;
+  #endif
+}
+#endif
+
 #ifdef IREP_HASH_STATS
 unsigned long long irep_cmp_cnt=0;
 unsigned long long irep_cmp_ne_cnt=0;
