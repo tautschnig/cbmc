@@ -30,9 +30,10 @@ public:
   typet() { }
 
   explicit typet(const irep_idt &_id):irept(_id) { }
-  typet(const irep_idt &_id, const typet &_subtype):irept(_id)
+
+  typet(irep_idt _id, typet _subtype)
+    : irept(std::move(_id), {}, {std::move(_subtype)})
   {
-    subtype()=_subtype;
   }
 
   const typet &subtype() const
@@ -138,10 +139,9 @@ public:
   DEPRECATED("use type_with_subtypet(id, subtype) instead")
   explicit type_with_subtypet(const irep_idt &_id):typet(_id) { }
 
-  type_with_subtypet(const irep_idt &_id, const typet &_subtype):
-    typet(_id)
+  type_with_subtypet(irep_idt _id, typet _subtype)
+    : typet(std::move(_id), std::move(_subtype))
   {
-    subtype()=_subtype;
   }
 
   #if 0
