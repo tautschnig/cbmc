@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "goto_symex.h"
 
 #include <algorithm>
+#include <iostream>
 
 #include <util/exception_utils.h>
 #include <util/expr_util.h>
@@ -19,6 +20,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/pointer_offset_size.h>
 #include <util/range.h>
 #include <util/std_expr.h>
+#include <util/format_expr.h>
 
 #include <analyses/dirty.h>
 
@@ -460,8 +462,45 @@ void goto_symext::phi_function(
     }
     else
     {
-      rhs=if_exprt(diff_guard.as_expr(), goto_state_rhs, dest_state_rhs);
+      exprt dg = diff_guard.as_expr();
+      exprt t = goto_state_rhs;
+      exprt f = dest_state_rhs;
+      if(dg.id() == ID_not)
+      {
+        dg = to_not_expr(dg).op();
+        t.swap(f);
+      }
+      if(t == f)
+      {
+        rhs = t;
+      }
+      else if(t.is_true())
+      {
+        if(f.is_false())
+          rhs = dg;
+        else
+          rhs = or_exprt(dg, f);
+      }
+      else if(t.is_false() && dg == f)
+      {
+        rhs = false_exprt();
+      }
+      else if(f.is_false())
+      {
+        rhs = and_exprt(dg, t);
+      }
+      else
+      {
+        rhs=if_exprt(dg, t, f);
+      }
+      exprt rhs_before = rhs;
       do_simplify(rhs);
+      if(rhs != rhs_before && (rhs_before.id() != ID_or || rhs_before.operands().size() != 2 || rhs_before.op0() != rhs.op1()))
+      {
+        std::cerr << "rhs_before: " << format(rhs_before) << std::endl;
+        std::cerr << "rhs: " << format(rhs) << std::endl;
+        assert(false);
+      }
     }
 
     ssa_exprt new_lhs = ssa;
