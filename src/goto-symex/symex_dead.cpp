@@ -56,7 +56,7 @@ void goto_symext::symex_dead(statet &state)
     const irep_idt &l1_identifier = ssa_lhs.get_identifier();
 
     // prevent propagation
-    state.propagation.remove(l1_identifier);
+    state.propagation.erase(l1_identifier);
 
     // TODO: not sure why the rest below is necessary
     // L2 renaming

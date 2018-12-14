@@ -379,8 +379,8 @@ void goto_symex_statet::rename(
       if(is_ssa_expr(expr))
       {
         auto const_it =
-          propagation.values.find(to_ssa_expr(expr).get_l1_object_identifier());
-        if(const_it != propagation.values.end())
+          propagation.find(to_ssa_expr(expr).get_l1_object_identifier());
+        if(const_it != propagation.end())
           expr = const_it->second;
       }
     }
