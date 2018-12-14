@@ -378,7 +378,19 @@ void goto_symex_statet::rename(
       "if_exprt");
 
     if(level == L2)
+    {
       field_sensitivity.apply(expr, false);
+
+      // This might have introduced a new SSA expression we should look up in
+      // the constant propagator:
+      if(is_ssa_expr(expr))
+      {
+        auto const_it =
+          propagation.find(to_ssa_expr(expr).get_l1_object_identifier());
+        if(const_it != propagation.end())
+          expr = const_it->second;
+      }
+    }
   }
 }
 
