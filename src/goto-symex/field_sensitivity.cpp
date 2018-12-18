@@ -16,6 +16,8 @@ Author: Michael Tautschnig
 #include "goto_symex_state.h"
 #include "symex_target.h"
 
+// #define ENABLE_ARRAY_FIELD_SENSITIVITY
+
 field_sensitivityt::field_sensitivityt(
   const namespacet &ns,
   symex_targett &target)
@@ -42,12 +44,14 @@ void field_sensitivityt::apply(exprt &expr, bool write) const
   {
     simplify(expr, ns);
   }
+#ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(
     !write && expr.id() == ID_index &&
     to_index_expr(expr).array().id() == ID_array)
   {
     simplify(expr, ns);
   }
+#endif // ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(expr.id() == ID_member)
   {
     // turn a member-of-an-SSA-expression into a single SSA expression, thus
@@ -70,6 +74,7 @@ void field_sensitivityt::apply(exprt &expr, bool write) const
       expr.swap(tmp);
     }
   }
+#ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(expr.id() == ID_index)
   {
     // turn a index-of-an-SSA-expression into a single SSA expression, thus
@@ -93,6 +98,7 @@ void field_sensitivityt::apply(exprt &expr, bool write) const
       expr.swap(tmp);
     }
   }
+#endif // ENABLE_ARRAY_FIELD_SENSITIVITY
 }
 
 exprt field_sensitivityt::get_fields(
@@ -119,6 +125,7 @@ exprt field_sensitivityt::get_fields(
 
     return result;
   }
+#ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(
     ssa_expr.type().id() == ID_array &&
     to_array_type(ssa_expr.type()).size().id() == ID_constant)
@@ -142,6 +149,7 @@ exprt field_sensitivityt::get_fields(
 
     return result;
   }
+#endif // ENABLE_ARRAY_FIELD_SENSITIVITY
   else
     return ssa_expr;
 }
@@ -212,6 +220,7 @@ void field_sensitivityt::field_assignments_rec(
       ++fs_it;
     }
   }
+#ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(const auto &type = type_try_dynamic_cast<array_typet>(lhs.type()))
   {
     const std::size_t array_size =
@@ -229,6 +238,7 @@ void field_sensitivityt::field_assignments_rec(
       ++fs_it;
     }
   }
+#endif // ENABLE_ARRAY_FIELD_SENSITIVITY
   else if(lhs_fs.has_operands())
   {
     PRECONDITION(
