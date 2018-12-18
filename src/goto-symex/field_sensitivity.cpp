@@ -25,18 +25,21 @@ field_sensitivityt::field_sensitivityt(
 {
 }
 
-void field_sensitivityt::apply(exprt &expr, bool write) const
+void field_sensitivityt::apply(
+  goto_symex_statet &state,
+  exprt &expr,
+  bool write) const
 {
   if(!run_apply)
     return;
 
   if(expr.id() != ID_address_of)
     Forall_operands(it, expr)
-      apply(*it, write);
+      apply(state, *it, write);
 
   if(expr.id() == ID_symbol && expr.get_bool(ID_C_SSA_symbol) && !write)
   {
-    expr = get_fields(ns, to_ssa_expr(expr));
+    expr = get_fields(state, to_ssa_expr(expr));
   }
   else if(
     !write && expr.id() == ID_member &&
@@ -68,8 +71,13 @@ void field_sensitivityt::apply(exprt &expr, bool write) const
       // place the entire member expression, not just the struct operand, in an
       // SSA expression
       ssa_exprt tmp = to_ssa_expr(member.struct_op());
+      bool was_l2 = !tmp.get_level_2().empty();
+
+      tmp.remove_level_2();
       member.struct_op() = tmp.get_original_expr();
       tmp.set_expression(member);
+      if(was_l2)
+        state.rename(tmp, ns, *this);
 
       expr.swap(tmp);
     }
@@ -102,8 +110,8 @@ void field_sensitivityt::apply(exprt &expr, bool write) const
 }
 
 exprt field_sensitivityt::get_fields(
-  const namespacet &ns,
-  const ssa_exprt &ssa_expr)
+  goto_symex_statet &state,
+  const ssa_exprt &ssa_expr) const
 {
   if(ssa_expr.type().id() == ID_struct || ssa_expr.type().id() == ID_struct_tag)
   {
@@ -119,8 +127,12 @@ exprt field_sensitivityt::get_fields(
     {
       const member_exprt member(struct_op, comp.get_name(), comp.type());
       ssa_exprt tmp = ssa_expr;
+      bool was_l2 = !tmp.get_level_2().empty();
+      tmp.remove_level_2();
       tmp.set_expression(member);
-      result.copy_to_operands(get_fields(ns, tmp));
+      if(was_l2)
+        state.rename(tmp, ns, *this);
+      result.copy_to_operands(get_fields(state, tmp));
     }
 
     return result;
@@ -144,7 +156,7 @@ exprt field_sensitivityt::get_fields(
       const index_exprt index(array, from_integer(i, index_type()));
       ssa_exprt tmp = ssa_expr;
       tmp.set_expression(index);
-      result.copy_to_operands(get_fields(ns, tmp));
+      result.copy_to_operands(get_fields(state, tmp));
     }
 
     return result;
@@ -159,7 +171,7 @@ void field_sensitivityt::field_assignments(
   const exprt &lhs)
 {
   exprt lhs_fs = lhs;
-  apply(lhs_fs, false);
+  apply(state, lhs_fs, false);
 
   bool run_apply_bak = run_apply;
   run_apply = false;
@@ -258,8 +270,8 @@ void field_sensitivityt::field_assignments_rec(
 }
 
 bool field_sensitivityt::is_divisible(
-  const namespacet &ns,
-  const ssa_exprt &expr)
+  goto_symex_statet &state,
+  const ssa_exprt &expr) const
 {
-  return expr != get_fields(ns, expr);
+  return expr != get_fields(state, expr);
 }
