@@ -200,6 +200,7 @@ void goto_symext::symex_assign_rec(
 }
 
 static void rewrite_with_to_field_symbols(
+  goto_symext::statet &state,
   exprt &ssa_rhs,
   ssa_exprt &lhs_mod,
   const field_sensitivityt &field_sensitivity)
@@ -223,7 +224,7 @@ static void rewrite_with_to_field_symbols(
         to_member_designator(designator).get_component_name(),
         update.new_value().type());
 
-    field_sensitivity.apply(field_sensitive_lhs, true);
+    field_sensitivity.apply(state, field_sensitive_lhs, true);
 
     if(field_sensitive_lhs.id() != ID_symbol)
       break;
@@ -247,7 +248,7 @@ static void rewrite_with_to_field_symbols(
         with_expr.where().get(ID_component_name),
         with_expr.new_value().type());
 
-    field_sensitivity.apply(field_sensitive_lhs, true);
+    field_sensitivity.apply(state, field_sensitive_lhs, true);
 
     if(field_sensitive_lhs.id() != ID_symbol)
       break;
@@ -259,6 +260,7 @@ static void rewrite_with_to_field_symbols(
 }
 
 static void shift_indexed_access_to_lhs(
+  goto_symext::statet &state,
   exprt &ssa_rhs,
   ssa_exprt &lhs_mod,
   const namespacet &ns,
@@ -310,7 +312,7 @@ static void shift_indexed_access_to_lhs(
     }
   }
 
-  rewrite_with_to_field_symbols(ssa_rhs, lhs_mod, field_sensitivity);
+  rewrite_with_to_field_symbols(state, ssa_rhs, lhs_mod, field_sensitivity);
 }
 
 void goto_symext::symex_assign_symbol(
@@ -335,7 +337,7 @@ void goto_symext::symex_assign_symbol(
   ssa_exprt lhs_mod = lhs;
 
   shift_indexed_access_to_lhs(
-    ssa_rhs, lhs_mod, ns, field_sensitivity, symex_config.simplify_opt);
+    state, ssa_rhs, lhs_mod, ns, field_sensitivity, symex_config.simplify_opt);
 
   do_simplify(ssa_rhs);
 

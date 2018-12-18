@@ -41,7 +41,7 @@ void goto_symext::symex_dead(statet &state)
     state.value_set.assign(ssa, rhs, ns, true, false);
   }
 
-  const exprt l2_fields = field_sensitivityt::get_fields(ns, ssa);
+  const exprt l2_fields = field_sensitivity.get_fields(state, ssa);
   std::set<exprt> l2_fields_set;
   find_symbols(l2_fields, l2_fields_set);
 

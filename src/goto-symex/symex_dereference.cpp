@@ -361,7 +361,7 @@ void goto_symext::dereference(exprt &expr, statet &state)
   // symbols whose address is taken.
   PRECONDITION(!state.call_stack().empty());
   state.rename(expr, ns, field_sensitivity, goto_symex_statet::L1);
-  field_sensitivity.apply(expr, write);
+  field_sensitivity.apply(state, expr, write);
 
   // start the recursion!
   dereference_rec(expr, state);
@@ -388,5 +388,5 @@ void goto_symext::dereference(exprt &expr, statet &state)
   INVARIANT(
     !has_subexpr(expr, ID_dereference), "simplify re-introduced dereferencing");
 
-  field_sensitivity.apply(expr, write);
+  field_sensitivity.apply(state, expr, write);
 }

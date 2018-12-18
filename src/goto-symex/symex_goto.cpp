@@ -431,7 +431,7 @@ static void merge_names(
   }
 
   // field sensitivity: only merge on individual fields
-  if(field_sensitivityt::is_divisible(ns, ssa))
+  if(field_sensitivity.is_divisible(dest_state, ssa))
     return;
 
   // shared variables are renamed on every access anyway, we don't need to

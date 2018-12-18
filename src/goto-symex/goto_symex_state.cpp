@@ -210,7 +210,7 @@ void goto_symex_statet::assignment(
   set_l2_indices(lhs, ns);
 
   // in case we happen to be multi-threaded, record the memory access
-  bool is_shared=l2_thread_write_encoding(lhs, ns);
+  bool is_shared = l2_thread_write_encoding(lhs, ns, field_sensitivity);
 
   if(run_validation_checks)
   {
@@ -379,7 +379,7 @@ void goto_symex_statet::rename(
 
     if(level == L2)
     {
-      field_sensitivity.apply(expr, false);
+      field_sensitivity.apply(*this, expr, false);
 
       // This might have introduced a new SSA expression we should look up in
       // the constant propagator:
@@ -414,7 +414,7 @@ bool goto_symex_statet::l2_thread_read_encoding(
   }
 
   // only continue if an indivisible object is being accessed
-  if(field_sensitivityt::is_divisible(ns, expr))
+  if(field_sensitivity.is_divisible(*this, expr))
     return false;
 
   ssa_exprt ssa_l1=expr;
@@ -541,7 +541,8 @@ bool goto_symex_statet::l2_thread_read_encoding(
 /// thread encoding
 bool goto_symex_statet::l2_thread_write_encoding(
   const ssa_exprt &expr,
-  const namespacet &ns)
+  const namespacet &ns,
+  const field_sensitivityt &field_sensitivity)
 {
   if(!record_events)
     return false;
@@ -556,7 +557,7 @@ bool goto_symex_statet::l2_thread_write_encoding(
   }
 
   // only continue if an indivisible object is being accessed
-  if(field_sensitivityt::is_divisible(ns, expr))
+  if(field_sensitivity.is_divisible(*this, expr))
     return false;
 
   // see whether we are within an atomic section
