@@ -22,7 +22,11 @@ public:
   /// Constructor.
   /// \param ns: a namespace to resolve type symbols/tag types
   /// \param target: symbolic execution equation store
-  field_sensitivityt(const namespacet &ns, symex_targett &target);
+  /// \param allow_pointer_unsoundness: allow pointer unsoundness
+  field_sensitivityt(
+    const namespacet &ns,
+    symex_targett &target,
+    bool allow_pointer_unsoundness);
 
   /// Assign to the individual fields of a non-expanded symbol \p lhs. This is
   /// required whenever prior steps have updated the full object rather than
@@ -68,6 +72,7 @@ public:
 private:
   const namespacet &ns;
   symex_targett &target;
+  bool allow_pointer_unsoundness;
 
   /// whether or not to invoke \ref field_sensitivityt::apply
   bool run_apply = true;
