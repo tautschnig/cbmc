@@ -20,8 +20,9 @@ Author: Michael Tautschnig
 
 field_sensitivityt::field_sensitivityt(
   const namespacet &ns,
-  symex_targett &target)
-  : ns(ns), target(target)
+  symex_targett &target,
+  bool allow_pointer_unsoundness)
+  : ns(ns), target(target), allow_pointer_unsoundness(allow_pointer_unsoundness)
 {
 }
 
@@ -201,7 +202,8 @@ void field_sensitivityt::field_assignments_rec(
     simplify(ssa_rhs, ns);
 
     ssa_exprt ssa_lhs = to_ssa_expr(lhs_fs);
-    state.assignment(ssa_lhs, ssa_rhs, ns, *this, true, true);
+    state.assignment(
+      ssa_lhs, ssa_rhs, ns, *this, true, true, allow_pointer_unsoundness);
 
     // do the assignment
     target.assignment(

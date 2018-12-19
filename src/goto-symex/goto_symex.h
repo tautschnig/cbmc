@@ -84,7 +84,7 @@ public:
       ns(outer_symbol_table),
       target(_target),
       atomic_section_counter(0),
-      field_sensitivity(ns, target),
+      field_sensitivity(ns, target, symex_config.allow_pointer_unsoundness),
       log(mh),
       path_storage(path_storage),
       path_segment_vccs(0),
