@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/byte_operators.h>
 #include <util/c_types.h>
 #include <util/exception_utils.h>
+#include <util/expr_util.h>
 #include <util/invariant.h>
 #include <util/pointer_offset_size.h>
 
@@ -364,4 +365,23 @@ void goto_symext::dereference(exprt &expr, statet &state)
   // dereferencing may introduce new symbol_exprt
   // (like __CPROVER_memory)
   state.rename(expr, ns, goto_symex_statet::L1);
+
+  // dereferencing is likely to introduce new member-of-if constructs --
+  // for example, "x->field" may have become "(x == &o1 ? o1 : o2).field"
+  // Simplify (which converts that to (x == &o1 ? o1.field : o2.field)) before
+  // applying field sensitivity, which can turn such field-of-symbol expressions
+  // into atomic SSA expressions, but would have to rewrite all of 'o1'
+  // otherwise.
+  // make the structure of the lhs as simple as possible to avoid,
+  // Similarly, (b ? s1 : s2).member=X results in
+  // (b ? s1 : s2)=(b ? s1 : s2) with member:=X and then
+  // s1=b ? ((b ? s1 : s2) with member:=X) : s1
+  // when all we need is
+  // s1=s1 with member:=X [and guard b]
+  // s2=s2 with member:=X [and guard !b]
+  do_simplify(expr);
+  // make sure simplify has not re-introduced any dereferencing that
+  // had previously been cleaned away
+  INVARIANT(
+    !has_subexpr(expr, ID_dereference), "simplify re-introduced dereferencing");
 }
