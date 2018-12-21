@@ -147,6 +147,26 @@ protected:
       */
       return false;
     }
+    else if(expr.id() == ID_if)
+    {
+      // don't treat nested if_exprt as constant (even when they are!) as this
+      // may give rise to large expressions that we repeatedly pass to the
+      // simplifier; this is observable on regression/cbmc-library/memmove-01
+      const if_exprt &if_expr = to_if_expr(expr);
+      if(
+        if_expr.true_case().id() == ID_if || if_expr.false_case().id() == ID_if)
+      {
+        return false;
+      }
+    }
+    else if(expr.id() == ID_nondet_symbol)
+      return true;
+    else if(expr.id() == ID_symbol)
+    {
+      // we only ever assign to a single guard once, we can treat it as constant
+      return to_ssa_expr(expr).get_object_name() ==
+             goto_symex_statet::guard_identifier();
+    }
 
     return is_constantt::is_constant(expr);
   }
