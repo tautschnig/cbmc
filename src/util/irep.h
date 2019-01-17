@@ -20,6 +20,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #define SHARING
 #define HASH_CODE
 #define NAMED_SUB_IS_FORWARD_LIST
+#define IS_CANONICAL_BIT
 
 #ifdef NAMED_SUB_IS_FORWARD_LIST
 #include <forward_list>
@@ -143,6 +144,10 @@ public:
   mutable std::size_t hash_code = 0;
 #endif
 
+#ifdef IS_CANONICAL_BIT
+  bool is_canonical = true;
+#endif
+
   void clear()
   {
     data.clear();
@@ -150,6 +155,9 @@ public:
     named_sub.clear();
 #ifdef HASH_CODE
     hash_code = 0;
+#endif
+#ifdef IS_CANONICAL_BIT
+    is_canonical = true;
 #endif
   }
 
@@ -160,6 +168,9 @@ public:
     d.named_sub.swap(named_sub);
 #ifdef HASH_CODE
     std::swap(d.hash_code, hash_code);
+#endif
+#ifdef IS_CANONICAL_BIT
+    std::swap(d.is_canonical, is_canonical);
 #endif
   }
 
@@ -173,6 +184,10 @@ public:
     : data(std::move(_data)),
       named_sub(std::move(_named_sub)),
       sub(std::move(_sub))
+#ifdef IS_CANONICAL_BIT
+      ,
+      is_canonical(false)
+#endif
   {
   }
 };
@@ -283,6 +298,9 @@ public:
 #ifdef HASH_CODE
     data->hash_code = 0;
 #endif
+#ifdef IS_CANONICAL_BIT
+    data->is_canonical = false;
+#endif
     return *data;
   }
 };
@@ -323,6 +341,9 @@ public:
   {
 #ifdef HASH_CODE
     data.hash_code = 0;
+#endif
+#ifdef IS_CANONICAL_BIT
+    data.is_canonical = false;
 #endif
     return data;
   }
@@ -494,6 +515,22 @@ public:
 
   /// count the number of named_sub elements that are not comments
   static std::size_t number_of_non_comments(const named_subt &);
+
+#ifdef IS_CANONICAL_BIT
+  bool get_is_canonical() const
+  {
+    return read().is_canonical;
+  }
+
+  void set_is_canonical()
+  {
+#ifdef SHARING
+    data->is_canonical = true;
+#else
+    data.is_canonical = true;
+#endif
+  }
+#endif
 };
 
 // NOLINTNEXTLINE(readability/identifiers)

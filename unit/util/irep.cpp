@@ -59,9 +59,17 @@ SCENARIO("irept_memory", "[core][utils][irept]")
       const std::size_t hash_code_size = 0;
 #endif
 
+#ifdef HASH_CODE
+      const std::size_t is_canonical_size = sizeof(bool);
+#else
+      const std::size_t is_canonical_size = 0;
+#endif
+
       REQUIRE(
         sizeof(irept::dt) ==
-        ref_count_size + data_size + sub_size + named_size + hash_code_size);
+        ((ref_count_size + data_size + sub_size + named_size + hash_code_size +
+          is_canonical_size + (alignof(irept::dt) - 1)) &
+         ~(alignof(irept::dt) - 1)));
     }
 
     THEN("get_nil_irep yields ID_nil")

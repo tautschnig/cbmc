@@ -2464,9 +2464,14 @@ bool simplify_exprt::simplify_node(exprt &expr)
 /// \return returns true if expression unchanged; returns false if changed
 bool simplify_exprt::simplify_rec(exprt &expr)
 {
-  // look up in cache
+#ifdef IS_CANONICAL_BIT
+  if(expr.get_is_canonical())
+    return true;
+#endif
 
-  #ifdef USE_CACHE
+    // look up in cache
+
+#ifdef USE_CACHE
   std::pair<simplify_expr_cachet::containert::iterator, bool>
     cache_result=simplify_expr_cache.container().
       insert(std::pair<exprt, exprt>(expr, exprt()));
@@ -2514,11 +2519,19 @@ bool simplify_exprt::simplify_rec(exprt &expr)
   {
     expr.swap(tmp);
 
-    #ifdef USE_CACHE
+#ifdef IS_CANONICAL_BIT
+    expr.set_is_canonical();
+#endif
+
+#ifdef USE_CACHE
     // save in cache
     cache_result.first->second=expr;
     #endif
   }
+#ifdef IS_CANONICAL_BIT
+  else
+    expr.set_is_canonical();
+#endif
 
   return result;
 }
