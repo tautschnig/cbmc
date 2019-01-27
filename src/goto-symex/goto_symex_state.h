@@ -149,9 +149,6 @@ public:
 
   symex_target_equationt *symex_target;
 
-  // we remember all L1 renamings
-  std::set<irep_idt> l1_history;
-
   symex_level0t level0;
   symex_level1t level1;
 
@@ -269,6 +266,14 @@ public:
   void pop_frame() { call_stack().pop_back(); }
 
   const framet &previous_frame() { return *(--(--call_stack().end())); }
+
+  /// Turn L0-renamed \p ssa into an L1-renamed SSA expression with an L1 index
+  /// \p l1_index that must not have previously been used.
+  void add_object(
+    ssa_exprt &ssa,
+    std::size_t l1_index,
+    const namespacet &ns,
+    const field_sensitivityt &field_sensitivity);
 
   void print_backtrace(std::ostream &) const;
 

@@ -34,11 +34,14 @@ void goto_symext::symex_decl(statet &state)
 
 void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
 {
-  // We increase the L2 renaming to make these non-deterministic.
-  // We also prevent propagation of old values.
+  // each declaration introduces a new object, which we record as a fresh L1
+  // index
 
   ssa_exprt ssa(expr);
-  state.rename(ssa, ns, field_sensitivity, goto_symex_statet::L1);
+  state.rename(ssa, ns, field_sensitivity, goto_symex_statet::L0);
+  const std::size_t fresh_l1_index =
+    path_storage.get_unique_index(ssa.get_identifier(), 1);
+  state.add_object(ssa, fresh_l1_index, ns, field_sensitivity);
   const irep_idt &l1_identifier=ssa.get_identifier();
 
   // rename type to L2
@@ -58,16 +61,11 @@ void goto_symext::symex_decl(statet &state, const symbol_exprt &expr)
     state.value_set.assign(ssa, rhs, ns, true, false);
   }
 
-  // prevent propagation
-  state.propagation.erase(l1_identifier);
-
   // L2 renaming
-  // inlining may yield multiple declarations of the same identifier
-  // within the same L1 context
-  const auto level2_it =
-    state.level2.current_names.emplace(l1_identifier, std::make_pair(ssa, 0))
-      .first;
-  symex_renaming_levelt::increase_counter(level2_it);
+  bool is_new =
+    state.level2.current_names.emplace(l1_identifier, std::make_pair(ssa, 1))
+      .second;
+  CHECK_RETURN(is_new);
   const bool record_events=state.record_events;
   state.record_events=false;
   state.rename(ssa, ns, field_sensitivity);

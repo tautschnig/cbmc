@@ -66,6 +66,9 @@ void goto_symext::symex_start_thread(statet &state)
 
     // get L0 name for current thread
     lhs.set_level_0(t);
+    const irep_idt &l0_name = lhs.get_identifier();
+    std::size_t l1_index = path_storage.get_unique_index(l0_name, 0);
+    CHECK_RETURN(l1_index == 0);
 
     // setup L1 name
     // with field sensitivity this insert may happen multiple times
@@ -77,7 +80,6 @@ void goto_symext::symex_start_thread(statet &state)
     state.rename(lhs, ns, field_sensitivity, goto_symex_statet::L1);
     const irep_idt l1_name=lhs.get_l1_object_identifier();
     // store it
-    state.l1_history.insert(l1_name);
     new_thread.call_stack.back().local_objects.insert(l1_name);
 
     // make copy

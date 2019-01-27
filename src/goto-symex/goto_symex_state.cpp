@@ -831,3 +831,35 @@ void goto_statet::output_propagation_map(std::ostream &out)
     out << name_value.first << " <- " << format(name_value.second) << "\n";
   }
 }
+
+void goto_symex_statet::add_object(
+  ssa_exprt &ssa,
+  std::size_t l1_index,
+  const namespacet &ns,
+  const field_sensitivityt &field_sensitivity)
+{
+  framet &frame = top();
+
+  const irep_idt l0_name = ssa.get_identifier();
+
+  // save old L1 name, if any
+  auto c_it = level1.current_names.find(l0_name);
+
+  if(c_it != level1.current_names.end())
+  {
+    frame.old_level1.emplace(l0_name, c_it->second);
+    c_it->second = std::make_pair(ssa, l1_index);
+  }
+  else
+  {
+    c_it = level1.current_names.emplace(l0_name, std::make_pair(ssa, l1_index))
+             .first;
+  }
+
+  rename(ssa, ns, field_sensitivity, goto_symex_statet::L1);
+  const irep_idt &l1_name = ssa.get_identifier();
+
+  // unique -- store
+  if(!frame.local_objects.insert(l1_name).second)
+    PRECONDITION(false);
+}
