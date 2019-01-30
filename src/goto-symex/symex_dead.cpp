@@ -22,9 +22,6 @@ void goto_symext::symex_dead(statet &state)
 
   const code_deadt &code = instruction.get_dead();
 
-  // We increase the L2 renaming to make these non-deterministic.
-  // We also prevent propagation of old values.
-
   ssa_exprt ssa(code.symbol());
   state.rename(ssa, ns, field_sensitivity, goto_symex_statet::L1);
 
@@ -47,14 +44,15 @@ void goto_symext::symex_dead(statet &state)
 
   for(const exprt &l2_field_set : l2_fields_set)
   {
-    ssa_exprt ssa_lhs = to_ssa_expr(l2_field_set);
-    const irep_idt &l1_identifier = ssa_lhs.get_identifier();
+    const irep_idt &l1_identifier = to_ssa_expr(l2_field_set).get_identifier();
 
-    // prevent propagation
+    // we cannot remove the object from the L1 renaming map, because L1 renaming
+    // information is not local to a path, but removing it from the propagation
+    // map is safe as 1) it is local to a path and 2) this instance can no longer
+    // appear
     state.propagation.erase(l1_identifier);
-
-    // TODO: not sure why the rest below is necessary
-    // L2 renaming
+    // increment the L2 index to ensure a merge on join points will propagate the
+    // value for branches that are still live
     auto level2_it = state.level2.current_names.find(l1_identifier);
     if(level2_it != state.level2.current_names.end())
       symex_renaming_levelt::increase_counter(level2_it);
