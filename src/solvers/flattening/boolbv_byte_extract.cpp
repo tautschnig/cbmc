@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/arith_tools.h>
 #include <util/byte_operators.h>
+#include <util/expr_util.h>
 #include <util/pointer_offset_size.h>
 #include <util/std_expr.h>
 #include <util/throw_with_nested.h>
@@ -40,8 +41,12 @@ bvt map_bv(const bv_endianness_mapt &map, const bvt &src)
 
 bvt boolbvt::convert_byte_extract(const byte_extract_exprt &expr)
 {
-  // if we extract from an unbounded array, call the flattening code
-  if(is_unbounded_array(expr.op().type()))
+  // if we extract from an unbounded array or a data type that
+  // includes pointers, call the flattening code
+  if(
+    is_unbounded_array(expr.op().type()) ||
+    has_subtype(expr.type(), ID_pointer, ns) ||
+    has_subtype(expr.op().type(), ID_pointer, ns))
   {
     try
     {
