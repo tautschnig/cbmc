@@ -15,8 +15,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <memory>
 #include <unordered_set>
 
-#include <analyses/dirty.h>
-
 #include <util/invariant.h>
 #include <util/guard.h>
 #include <util/std_expr.h>
@@ -27,7 +25,10 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/goto_function.h>
 
 #include "renaming_level.h"
-#include "symex_target_equation.h"
+#include "symex_target.h"
+
+class incremental_dirtyt;
+class symex_target_equationt;
 
 /// Container for data that varies per program point, e.g. the constant
 /// propagator state, when state needs to branch. This is copied out of
@@ -142,7 +143,8 @@ public:
   /// for error traces even after symbolic execution has finished.
   symbol_tablet symbol_table;
 
-  symex_target_equationt *symex_target;
+  symex_target_equationt *symex_target = nullptr;
+  const incremental_dirtyt *dirty = nullptr;
 
   // we remember all L1 renamings
   std::set<irep_idt> l1_history;
@@ -279,10 +281,6 @@ public:
   bool l2_thread_write_encoding(const ssa_exprt &expr, const namespacet &ns);
 
   bool record_events;
-
-  // Local variables are considered 'dirty' if they've had an address taken and
-  // therefore may be referred to by a pointer.
-  incremental_dirtyt dirty;
 
   goto_programt::const_targett saved_target;
 

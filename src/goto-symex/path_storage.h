@@ -10,6 +10,7 @@
 #include <util/message.h>
 #include <util/options.h>
 
+#include <analyses/dirty.h>
 #include <analyses/local_safe_pointers.h>
 
 #include <memory>
@@ -97,6 +98,8 @@ public:
   /// execution context, thus helping to avoid symex to follow spurious
   /// error-handling paths.
   std::unordered_map<irep_idt, local_safe_pointerst> safe_pointers;
+
+  incremental_dirtyt dirty;
 
 private:
   // Derived classes should override these methods, allowing the base class to

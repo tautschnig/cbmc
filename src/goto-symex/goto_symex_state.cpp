@@ -25,10 +25,12 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <analyses/dirty.h>
 
+#include "symex_target_equation.h"
+
 static void get_l1_name(exprt &expr);
 
 goto_symex_statet::goto_symex_statet(const symex_targett::sourcet &_source)
-  : goto_statet(_source), symex_target(nullptr), record_events(true), dirty()
+  : goto_statet(_source), symex_target(nullptr), record_events(true)
 {
   threads.resize(1);
   new_frame();
@@ -364,10 +366,11 @@ bool goto_symex_statet::l2_thread_read_encoding(
     return false;
 
   // is it a shared object?
+  PRECONDITION(dirty != nullptr);
   const irep_idt &obj_identifier=expr.get_object_name();
   if(
     obj_identifier == guard_identifier() ||
-    (!ns.lookup(obj_identifier).is_shared() && !(dirty)(obj_identifier)))
+    (!ns.lookup(obj_identifier).is_shared() && !(*dirty)(obj_identifier)))
   {
     return false;
   }
@@ -502,10 +505,11 @@ bool goto_symex_statet::l2_thread_write_encoding(
     return false;
 
   // is it a shared object?
+  PRECONDITION(dirty != nullptr);
   const irep_idt &obj_identifier=expr.get_object_name();
   if(
     obj_identifier == guard_identifier() ||
-    (!ns.lookup(obj_identifier).is_shared() && !(dirty)(obj_identifier)))
+    (!ns.lookup(obj_identifier).is_shared() && !(*dirty)(obj_identifier)))
   {
     return false; // not shared
   }

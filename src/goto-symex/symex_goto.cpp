@@ -19,7 +19,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/pointer_offset_size.h>
 #include <util/std_expr.h>
 
-#include <analyses/dirty.h>
 #include <util/simplify_expr.h>
 
 void goto_symext::symex_goto(statet &state)
@@ -385,6 +384,7 @@ static void for_each2(
 /// \param do_simplify: should the right-hand-side of the assignment that is
 ///   added to the target be simplified
 /// \param [out] target: equation that will receive the resulting assignment
+/// \param dirty: dirty-object analysis
 /// \param ssa: SSA expression to merge
 /// \param goto_count: current level 2 count in \p goto_state of
 ///   \p l1_identifier
@@ -397,6 +397,7 @@ static void merge_names(
   messaget &log,
   const bool do_simplify,
   symex_target_equationt &target,
+  const incremental_dirtyt &dirty,
   const ssa_exprt &ssa,
   const unsigned goto_count,
   const unsigned dest_count)
@@ -426,8 +427,10 @@ static void merge_names(
   // shared?
   if(
     dest_state.atomic_section_id == 0 && dest_state.threads.size() >= 2 &&
-    (symbol.is_shared() || (dest_state.dirty)(symbol.name)))
+    (symbol.is_shared() || dirty(symbol.name)))
+  {
     return; // no phi nodes for shared stuff
+  }
 
   // don't merge (thread-)locals across different threads, which
   // may have been introduced by symex_start_thread (and will
@@ -532,6 +535,7 @@ void goto_symext::phi_function(
         log,
         symex_config.simplify_opt,
         target,
+        path_storage.dirty,
         ssa,
         goto_count,
         dest_count);

@@ -237,7 +237,7 @@ void goto_symext::symex_function_call_code(
   const goto_functionst::goto_functiont &goto_function =
     get_goto_function(identifier);
 
-  state.dirty.populate_dirty_for_function(identifier, goto_function);
+  path_storage.dirty.populate_dirty_for_function(identifier, goto_function);
 
   auto emplace_safe_pointers_result =
     path_storage.safe_pointers.emplace(identifier, local_safe_pointerst{});
@@ -331,7 +331,8 @@ void goto_symext::symex_function_call_code(
 }
 
 /// pop one call frame
-static void pop_frame(goto_symext::statet &state)
+static void
+pop_frame(goto_symext::statet &state, const path_storaget &path_storage)
 {
   PRECONDITION(!state.call_stack().empty());
 
@@ -354,7 +355,7 @@ static void pop_frame(goto_symext::statet &state)
       if(
         frame.local_objects.find(l1_o_id) == frame.local_objects.end() ||
         (state.threads.size() > 1 &&
-         state.dirty(c_it->second.first.get_object_name())))
+         path_storage.dirty(c_it->second.first.get_object_name())))
       {
         ++c_it;
         continue;
@@ -377,7 +378,7 @@ void goto_symext::symex_end_of_function(statet &state)
   target.function_return(state.guard.as_expr(), state.source, hidden);
 
   // then get rid of the frame
-  pop_frame(state);
+  pop_frame(state, path_storage);
 }
 
 /// preserves locality of local variables of a given function by applying L1
