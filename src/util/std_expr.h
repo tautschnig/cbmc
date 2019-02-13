@@ -2422,11 +2422,6 @@ inline bool can_cast_expr<and_exprt>(const exprt &base)
   return base.id() == ID_and;
 }
 
-// inline void validate_expr(const and_exprt &value)
-// {
-//   validate_operands(value, 2, "And must have two or more operands", true);
-// }
-
 /// \brief Cast an exprt to a \ref and_exprt
 ///
 /// \a expr must be known to be \ref and_exprt.
@@ -2436,9 +2431,6 @@ inline bool can_cast_expr<and_exprt>(const exprt &base)
 inline const and_exprt &to_and_expr(const exprt &expr)
 {
   PRECONDITION(expr.id()==ID_and);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "And must have two or more operands");
   return static_cast<const and_exprt &>(expr);
 }
 
@@ -2446,9 +2438,6 @@ inline const and_exprt &to_and_expr(const exprt &expr)
 inline and_exprt &to_and_expr(exprt &expr)
 {
   PRECONDITION(expr.id()==ID_and);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "And must have two or more operands");
   return static_cast<and_exprt &>(expr);
 }
 
@@ -2547,11 +2536,6 @@ inline bool can_cast_expr<or_exprt>(const exprt &base)
   return base.id() == ID_or;
 }
 
-// inline void validate_expr(const or_exprt &value)
-// {
-//   validate_operands(value, 2, "Or must have two or more operands", true);
-// }
-
 /// \brief Cast an exprt to a \ref or_exprt
 ///
 /// \a expr must be known to be \ref or_exprt.
@@ -2561,9 +2545,6 @@ inline bool can_cast_expr<or_exprt>(const exprt &base)
 inline const or_exprt &to_or_expr(const exprt &expr)
 {
   PRECONDITION(expr.id()==ID_or);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Or must have two or more operands");
   return static_cast<const or_exprt &>(expr);
 }
 
@@ -2571,9 +2552,6 @@ inline const or_exprt &to_or_expr(const exprt &expr)
 inline or_exprt &to_or_expr(exprt &expr)
 {
   PRECONDITION(expr.id()==ID_or);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Or must have two or more operands");
   return static_cast<or_exprt &>(expr);
 }
 
@@ -2598,15 +2576,6 @@ inline bool can_cast_expr<xor_exprt>(const exprt &base)
 {
   return base.id() == ID_xor;
 }
-
-// inline void validate_expr(const bitxor_exprt &value)
-// {
-//   validate_operands(
-//     value,
-//     2,
-//     "Bit-wise xor must have two or more operands",
-//     true);
-// }
 
 /// \brief Cast an exprt to a \ref xor_exprt
 ///
@@ -2698,15 +2667,6 @@ inline bool can_cast_expr<bitor_exprt>(const exprt &base)
   return base.id() == ID_bitor;
 }
 
-// inline void validate_expr(const bitor_exprt &value)
-// {
-//   validate_operands(
-//     value,
-//     2,
-//     "Bit-wise or must have two or more operands",
-//     true);
-// }
-
 /// \brief Cast an exprt to a \ref bitor_exprt
 ///
 /// \a expr must be known to be \ref bitor_exprt.
@@ -2716,9 +2676,6 @@ inline bool can_cast_expr<bitor_exprt>(const exprt &base)
 inline const bitor_exprt &to_bitor_expr(const exprt &expr)
 {
   PRECONDITION(expr.id()==ID_bitor);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Bit-wise or must have two or more operands");
   return static_cast<const bitor_exprt &>(expr);
 }
 
@@ -2726,9 +2683,6 @@ inline const bitor_exprt &to_bitor_expr(const exprt &expr)
 inline bitor_exprt &to_bitor_expr(exprt &expr)
 {
   PRECONDITION(expr.id()==ID_bitor);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Bit-wise or must have two or more operands");
   return static_cast<bitor_exprt &>(expr);
 }
 
@@ -2754,15 +2708,6 @@ inline bool can_cast_expr<bitxor_exprt>(const exprt &base)
   return base.id() == ID_bitxor;
 }
 
-// inline void validate_expr(const bitxor_exprt &value)
-// {
-//   validate_operands(
-//     value,
-//     2,
-//     "Bit-wise xor must have two or more operands",
-//     true);
-// }
-
 /// \brief Cast an exprt to a \ref bitxor_exprt
 ///
 /// \a expr must be known to be \ref bitxor_exprt.
@@ -2772,9 +2717,6 @@ inline bool can_cast_expr<bitxor_exprt>(const exprt &base)
 inline const bitxor_exprt &to_bitxor_expr(const exprt &expr)
 {
   PRECONDITION(expr.id()==ID_bitxor);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Bit-wise xor must have two or more operands");
   return static_cast<const bitxor_exprt &>(expr);
 }
 
@@ -2782,9 +2724,6 @@ inline const bitxor_exprt &to_bitxor_expr(const exprt &expr)
 inline bitxor_exprt &to_bitxor_expr(exprt &expr)
 {
   PRECONDITION(expr.id()==ID_bitxor);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Bit-wise xor must have two or more operands");
   return static_cast<bitxor_exprt &>(expr);
 }
 
@@ -2810,15 +2749,6 @@ inline bool can_cast_expr<bitand_exprt>(const exprt &base)
   return base.id() == ID_bitand;
 }
 
-// inline void validate_expr(const bitand_exprt &value)
-// {
-//   validate_operands(
-//     value,
-//     2,
-//     "Bit-wise and must have two or more operands",
-//     true);
-// }
-
 /// \brief Cast an exprt to a \ref bitand_exprt
 ///
 /// \a expr must be known to be \ref bitand_exprt.
@@ -2828,9 +2758,6 @@ inline bool can_cast_expr<bitand_exprt>(const exprt &base)
 inline const bitand_exprt &to_bitand_expr(const exprt &expr)
 {
   PRECONDITION(expr.id()==ID_bitand);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Bit-wise and must have two or more operands");
   return static_cast<const bitand_exprt &>(expr);
 }
 
@@ -2838,9 +2765,6 @@ inline const bitand_exprt &to_bitand_expr(const exprt &expr)
 inline bitand_exprt &to_bitand_expr(exprt &expr)
 {
   PRECONDITION(expr.id()==ID_bitand);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Bit-wise and must have two or more operands");
   return static_cast<bitand_exprt &>(expr);
 }
 
@@ -4542,17 +4466,6 @@ inline bool can_cast_expr<concatenation_exprt>(const exprt &base)
   return base.id() == ID_concatenation;
 }
 
-// template<>
-// inline void validate_expr<concatenation_exprt>(
-//   const concatenation_exprt &value)
-// {
-//   validate_operands(
-//     value,
-//     2,
-//     "Concatenation must have two or more operands",
-//     true);
-// }
-
 /// \brief Cast an exprt to a \ref concatenation_exprt
 ///
 /// \a expr must be known to be \ref concatenation_exprt.
@@ -4562,9 +4475,6 @@ inline bool can_cast_expr<concatenation_exprt>(const exprt &base)
 inline const concatenation_exprt &to_concatenation_expr(const exprt &expr)
 {
   PRECONDITION(expr.id()==ID_concatenation);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Concatenation must have two or more operands");
   return static_cast<const concatenation_exprt &>(expr);
 }
 
@@ -4572,9 +4482,6 @@ inline const concatenation_exprt &to_concatenation_expr(const exprt &expr)
 inline concatenation_exprt &to_concatenation_expr(exprt &expr)
 {
   PRECONDITION(expr.id()==ID_concatenation);
-  // DATA_INVARIANT(
-  //   expr.operands().size()>=2,
-  //   "Concatenation must have two or more operands");
   return static_cast<concatenation_exprt &>(expr);
 }
 
