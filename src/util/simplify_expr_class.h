@@ -167,6 +167,7 @@ public:
   NODISCARD resultt<> simplify_if(const if_exprt &);
   NODISCARD resultt<> simplify_bitnot(const bitnot_exprt &);
   NODISCARD resultt<> simplify_not(const not_exprt &);
+  NODISCARD resultt<> simplify_not_preorder(const not_exprt &expr);
   NODISCARD resultt<> simplify_boolean(const exprt &);
   NODISCARD resultt<> simplify_inequality(const binary_relation_exprt &);
   NODISCARD resultt<>
