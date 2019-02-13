@@ -159,18 +159,20 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
 
 bool simplify_exprt::simplify_not(exprt &expr)
 {
-  if(expr.operands().size()!=1)
+  const exprt &const_expr = expr;
+
+  if(const_expr.operands().size() != 1)
     return true;
 
-  exprt &op=expr.op0();
+  exprt &op = expr.op0();
+  const exprt &const_op = op;
 
-  if(expr.type().id()!=ID_bool ||
-     op.type().id()!=ID_bool)
+  if(const_expr.type().id() != ID_bool || const_op.type().id() != ID_bool)
     return true;
 
   if(op.id()==ID_not) // (not not a) == a
   {
-    if(op.operands().size()==1)
+    if(const_op.operands().size() == 1)
     {
       exprt tmp;
       tmp.swap(op.op0());
@@ -237,17 +239,20 @@ bool simplify_exprt::simplify_not(exprt &expr)
 
 bool simplify_exprt::simplify_not_preorder(exprt &expr)
 {
-  if(expr.operands().size() != 1)
+  const exprt &const_expr = expr;
+
+  if(const_expr.operands().size() != 1)
     return true;
 
   exprt &op = expr.op0();
+  const exprt &const_op = op;
 
-  if(expr.type().id() != ID_bool || op.type().id() != ID_bool)
+  if(const_expr.type().id() != ID_bool || const_op.type().id() != ID_bool)
     return true;
 
   if(op.id() == ID_not) // (not not a) == a
   {
-    if(op.operands().size() == 1)
+    if(const_op.operands().size() == 1)
     {
       exprt tmp;
       tmp.swap(op.op0());
