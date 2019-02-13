@@ -2315,6 +2315,8 @@ bool simplify_exprt::simplify_node_preorder(exprt &expr)
   }
   else if(expr.id()==ID_if)
     result=simplify_if_preorder(to_if_expr(expr));
+  else if(expr.id() == ID_not)
+    result = simplify_not_preorder(expr);
   else
   {
     if(expr.has_operands())

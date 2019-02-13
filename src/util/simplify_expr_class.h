@@ -82,6 +82,7 @@ public:
   bool simplify_if_preorder(if_exprt &expr);
   bool simplify_if(if_exprt &expr);
   bool simplify_bitnot(exprt &expr);
+  bool simplify_not_preorder(exprt &expr);
   bool simplify_not(exprt &expr);
   bool simplify_boolean(exprt &expr);
   bool simplify_inequality(exprt &expr);
