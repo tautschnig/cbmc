@@ -169,7 +169,7 @@ exprt field_sensitivityt::get_fields(
 
 void field_sensitivityt::field_assignments(
   goto_symex_statet &state,
-  const exprt &lhs)
+  const ssa_exprt &lhs)
 {
   exprt lhs_fs = lhs;
   apply(state, lhs_fs, false);
@@ -178,6 +178,28 @@ void field_sensitivityt::field_assignments(
   run_apply = false;
   field_assignments_rec(state, lhs_fs, lhs);
   run_apply = run_apply_bak;
+}
+
+void field_sensitivityt::post_process_assignment(
+  goto_symex_statet &state,
+  const ssa_exprt &lhs,
+  const namespacet &ns)
+{
+  if(is_divisible(lhs))
+  {
+    // Split composite symbol lhs into its components:
+    field_assignments(state, lhs);
+
+    // Erase the composite symbol from our working state
+    // (otherwise keeping both the composite and field representations risks
+    // the two becoming out of sync).
+    // Note we can't use code_deadt, which would actually try to kill the
+    // components, which we *do* want to keep!
+    state.propagation.erase(lhs.get_l1_object_identifier());
+
+    exprt unknown_expr(ID_unknown, lhs.type());
+    state.value_set.assign(lhs, unknown_expr, ns, true, false);
+  }
 }
 
 /// Assign to the individual fields \p lhs_fs of a non-expanded symbol \p lhs.

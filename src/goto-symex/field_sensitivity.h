@@ -34,7 +34,18 @@ public:
   /// index.
   /// \param state: symbolic execution state
   /// \param lhs: non-expanded symbol
-  void field_assignments(goto_symex_statet &state, const exprt &lhs);
+  void field_assignments(goto_symex_statet &state, const ssa_exprt &lhs);
+
+  /// If `is_divisible(lhs)` then assign indivisible symbols (fields or array
+  /// indices) from the divisible symbol and erase the divisible symbol from
+  /// \p state.
+  /// \param state: symbolic execution state
+  /// \param lhs: non-expanded symbol
+  /// \param ns: symex's working namespace
+  void post_process_assignment(
+    goto_symex_statet &state,
+    const ssa_exprt &lhs,
+    const namespacet &ns);
 
   /// Turn an expression \p expr into a field-sensitive SSA expression.
   /// Field-sensitive SSA expressions have individual symbols for each
