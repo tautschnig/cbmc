@@ -52,7 +52,7 @@ const value_sett::entryt *value_sett::find_entry(const value_sett::idt &id)
   const
 {
   auto found = values.find(id);
-  return found == values.end() ? nullptr : &found->second;
+  return !found.second ? nullptr : &found.first;
 }
 
 value_sett::entryt &value_sett::get_entry(const entryt &e, const typet &type)
@@ -64,10 +64,7 @@ value_sett::entryt &value_sett::get_entry(const entryt &e, const typet &type)
   else
     index=e.identifier;
 
-  std::pair<valuest::iterator, bool> r=
-    values.insert(std::pair<idt, entryt>(index, e));
-
-  return r.first->second;
+  return values.place(index, e).first;
 }
 
 bool value_sett::insert(
@@ -98,7 +95,10 @@ void value_sett::output(
   const namespacet &ns,
   std::ostream &out) const
 {
-  for(const auto &values_entry : values)
+  valuest::viewt view;
+  values.get_view(view);
+
+  for(const auto &values_entry : view)
   {
     irep_idt identifier, display_name;
 
@@ -205,6 +205,7 @@ bool value_sett::make_union(const value_sett::valuest &new_values)
 {
   bool result=false;
 
+#if 0
   valuest::iterator v_it=values.begin();
 
   for(valuest::const_iterator
@@ -236,6 +237,23 @@ bool value_sett::make_union(const value_sett::valuest &new_values)
     v_it++;
     it++;
   }
+#else
+  value_sett::valuest::delta_viewt delta_view;
+
+  new_values.get_delta_view(values, delta_view, false);
+
+  for(const auto &delta_entry : delta_view)
+  {
+    if(delta_entry.in_both)
+      result |= make_union(
+        values.at(delta_entry.k).object_map, delta_entry.m.object_map);
+    else
+    {
+      values.insert(delta_entry.k, delta_entry.m);
+      result = true;
+    }
+  }
+#endif
 
   return result;
 }

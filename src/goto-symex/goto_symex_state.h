@@ -15,11 +15,12 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <memory>
 #include <unordered_set>
 
-#include <util/invariant.h>
 #include <util/guard.h>
-#include <util/std_expr.h>
-#include <util/ssa_expr.h>
+#include <util/invariant.h>
 #include <util/make_unique.h>
+#include <util/sharing_map.h>
+#include <util/ssa_expr.h>
+#include <util/std_expr.h>
 
 #include <pointer-analysis/value_set.h>
 #include <goto-programs/goto_function.h>
@@ -61,7 +62,7 @@ public:
   // "constants" can include symbols, but only in the context of an address-of
   // op (i.e. &x can be propagated), and an address-taken thing should only be
   // L1.
-  std::map<irep_idt, exprt> propagation;
+  sharing_mapt<irep_idt, exprt> propagation;
 
   void output_propagation_map(std::ostream &);
 

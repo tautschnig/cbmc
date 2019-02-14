@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/mp_arith.h>
 #include <util/reference_counting.h>
+#include <util/sharing_map.h>
 
 #include "object_numbering.h"
 #include "value_sets.h"
@@ -290,11 +291,11 @@ public:
   ///
   /// The components of the ID are thus duplicated in the `valuest` key and in
   /// `entryt` fields.
-  #ifdef USE_DSTRING
-  typedef std::map<idt, entryt> valuest;
-  #else
+#ifdef USE_DSTRING
+  typedef sharing_mapt<idt, entryt> valuest;
+#else
   typedef std::unordered_map<idt, entryt, string_hash> valuest;
-  #endif
+#endif
 
   /// Gets values pointed to by `expr`, including following dereference
   /// operators (i.e. this is not a simple lookup in `valuest`).

@@ -307,8 +307,8 @@ void goto_symex_statet::rename(
         // L1 identifiers are used for propagation!
         auto p_it = propagation.find(ssa.get_identifier());
 
-        if(p_it != propagation.end())
-          expr=p_it->second; // already L2
+        if(p_it.second)
+          expr = p_it.first; // already L2
         else
           set_l2_indices(ssa, ns);
       }
@@ -796,7 +796,10 @@ void goto_symex_statet::print_backtrace(std::ostream &out) const
 /// because there aren't any current callers.
 void goto_statet::output_propagation_map(std::ostream &out)
 {
-  for(const auto &name_value : propagation)
+  sharing_mapt<irep_idt, exprt>::viewt view;
+  propagation.get_view(view);
+
+  for(const auto &name_value : view)
   {
     out << name_value.first << " <- " << format(name_value.second) << "\n";
   }
