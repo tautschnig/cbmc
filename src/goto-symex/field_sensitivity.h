@@ -63,11 +63,10 @@ public:
   /// (returns false) or a composite object made of several SSA expressions as
   /// components (such as a struct with each member becoming an individual SSA
   /// expression, return true in this case).
-  /// \param state: symbolic execution state
   /// \param expr: the expression to evaluate
   /// \return False, if and only if, \p expr would be a single field-sensitive
   /// SSA expression.
-  bool is_divisible(goto_symex_statet &state, const ssa_exprt &expr) const;
+  static bool is_divisible(const ssa_exprt &expr);
 
 private:
   const namespacet &ns;

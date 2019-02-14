@@ -271,9 +271,19 @@ void field_sensitivityt::field_assignments_rec(
   }
 }
 
-bool field_sensitivityt::is_divisible(
-  goto_symex_statet &state,
-  const ssa_exprt &expr) const
+bool field_sensitivityt::is_divisible(const ssa_exprt &expr)
 {
-  return expr != get_fields(state, expr);
+  if(expr.type().id() == ID_struct || expr.type().id() == ID_struct_tag)
+    return true;
+
+#ifdef ENABLE_ARRAY_FIELD_SENSITIVITY
+  if(
+    expr.type().id() == ID_array &&
+    to_array_type(expr.type()).size().id() == ID_constant)
+  {
+    return true;
+  }
+#endif
+
+  return false;
 }
