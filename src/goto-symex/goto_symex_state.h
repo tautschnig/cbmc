@@ -294,10 +294,7 @@ public:
     ssa_exprt &expr,
     const namespacet &ns,
     const field_sensitivityt &field_sensitivity);
-  bool l2_thread_write_encoding(
-    const ssa_exprt &expr,
-    const namespacet &ns,
-    const field_sensitivityt &field_sensitivity);
+  bool l2_thread_write_encoding(const ssa_exprt &expr, const namespacet &ns);
 
   bool record_events;
 

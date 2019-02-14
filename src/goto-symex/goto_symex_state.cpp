@@ -210,7 +210,7 @@ void goto_symex_statet::assignment(
   set_l2_indices(lhs, ns);
 
   // in case we happen to be multi-threaded, record the memory access
-  bool is_shared = l2_thread_write_encoding(lhs, ns, field_sensitivity);
+  bool is_shared = l2_thread_write_encoding(lhs, ns);
 
   if(run_validation_checks)
   {
@@ -414,7 +414,7 @@ bool goto_symex_statet::l2_thread_read_encoding(
   }
 
   // only continue if an indivisible object is being accessed
-  if(field_sensitivity.is_divisible(*this, expr))
+  if(field_sensitivityt::is_divisible(expr))
     return false;
 
   ssa_exprt ssa_l1=expr;
@@ -541,8 +541,7 @@ bool goto_symex_statet::l2_thread_read_encoding(
 /// thread encoding
 bool goto_symex_statet::l2_thread_write_encoding(
   const ssa_exprt &expr,
-  const namespacet &ns,
-  const field_sensitivityt &field_sensitivity)
+  const namespacet &ns)
 {
   if(!record_events)
     return false;
@@ -557,7 +556,7 @@ bool goto_symex_statet::l2_thread_write_encoding(
   }
 
   // only continue if an indivisible object is being accessed
-  if(field_sensitivity.is_divisible(*this, expr))
+  if(field_sensitivityt::is_divisible(expr))
     return false;
 
   // see whether we are within an atomic section
