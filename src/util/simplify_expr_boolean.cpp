@@ -37,8 +37,8 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
     // turn a => b into !a || b
 
     expr.id(ID_or);
-    expr.op0() = boolean_negate(expr.op0());
-    simplify_node(expr.op0());
+    expr.op0() = not_exprt(expr.op0());
+    simplify_not(expr.op0());
     simplify_node(expr);
     return false;
   }
@@ -199,8 +199,8 @@ bool simplify_exprt::simplify_not(exprt &expr)
 
     Forall_operands(it, expr)
     {
-      *it = boolean_negate(*it);
-      simplify_node(*it);
+      *it = not_exprt(*it);
+      simplify_not(*it);
     }
 
     expr.id(expr.id()==ID_and?ID_or:ID_and);
