@@ -49,6 +49,7 @@ protected:
   {
     std::size_t number;
     irept irep; // copy to keep addresses stable
+    bool final_number = false;
 
     irep_entryt(std::size_t _number, const irept &_irep)
       : number(_number), irep(_irep)
@@ -72,7 +73,7 @@ protected:
   typedef hash_numbering<packedt, vector_hasht> numberingt;
   numberingt numbering;
 
-  void pack(const irept &irep, packedt &);
+  packedt pack(const irept &irep);
 
   bool full;
 };

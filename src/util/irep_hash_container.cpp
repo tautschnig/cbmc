@@ -18,19 +18,18 @@ size_t irep_hash_container_baset::number(const irept &irep)
 {
   // the ptr-hash provides a speedup of up to 3x
 
-  ptr_hasht::const_iterator it=ptr_hash.find(&irep.read());
-
-  if(it!=ptr_hash.end())
-    return it->second.number;
-
-  packedt packed;
-  pack(irep, packed);
-  size_t id=numbering.number(packed);
-
-  ptr_hash.emplace(
+  auto entry = ptr_hash.emplace(
     std::piecewise_construct,
     std::forward_as_tuple(&irep.read()),
-    std::forward_as_tuple(id, irep));
+    std::forward_as_tuple(0, irep));
+
+  if(!entry.second && entry.first->second.final_number)
+    return entry.first->second.number;
+
+  const size_t id = numbering.number(pack(irep));
+
+  entry.first->second.number = id;
+  entry.first->second.final_number = true;
 
   return id;
 }
@@ -44,9 +43,7 @@ size_t irep_hash_container_baset::vector_hasht::operator()(
   return result;
 }
 
-void irep_hash_container_baset::pack(
-  const irept &irep,
-  packedt &packed)
+irep_hash_container_baset::packedt irep_hash_container_baset::pack(const irept &irep)
 {
   const irept::subt &sub=irep.get_sub();
   const irept::named_subt &named_sub=irep.get_named_sub();
@@ -61,7 +58,7 @@ void irep_hash_container_baset::pack(
 #else
     const std::size_t named_sub_size = named_sub.size();
 #endif
-    packed.reserve(1 + 1 + sub.size() + 1 + named_sub_size * 2);
+    packedt packed(1 + 1 + sub.size() + 1 + named_sub_size * 2);
 
     packed.push_back(irep_id_hash()(irep.id()));
 
@@ -75,6 +72,8 @@ void irep_hash_container_baset::pack(
       packed.push_back(irep_id_hash()(sub_irep.first)); // id
       packed.push_back(number(sub_irep.second));        // sub-irep
     }
+
+    return packed;
   }
   else
   {
@@ -83,7 +82,7 @@ void irep_hash_container_baset::pack(
 
     // we pack: the irep id, the sub size, the subs, the named-sub size, and
     // each of the non-comment named subs with their ids
-    packed.reserve(1 + 1 + sub.size() + 1 + non_comment_count * 2);
+    packedt packed(1 + 1 + sub.size() + 1 + non_comment_count * 2);
 
     packed.push_back(irep_id_hash()(irep.id()));
 
@@ -98,5 +97,7 @@ void irep_hash_container_baset::pack(
         packed.push_back(irep_id_hash()(sub_irep.first)); // id
         packed.push_back(number(sub_irep.second));        // sub-irep
       }
+
+    return packed;
   }
 }
