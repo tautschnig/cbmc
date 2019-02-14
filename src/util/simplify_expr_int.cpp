@@ -1536,8 +1536,8 @@ bool simplify_exprt::simplify_inequality_not_constant(exprt &expr)
   {
     expr.id(ID_equal);
     simplify_inequality_not_constant(expr);
-    expr = boolean_negate(expr);
-    simplify_node(expr);
+    expr = not_exprt(expr);
+    simplify_not(expr);
     return false;
   }
   else if(expr.id()==ID_gt)
@@ -1546,16 +1546,16 @@ bool simplify_exprt::simplify_inequality_not_constant(exprt &expr)
     // swap operands
     expr.op0().swap(expr.op1());
     simplify_inequality_not_constant(expr);
-    expr = boolean_negate(expr);
-    simplify_node(expr);
+    expr = not_exprt(expr);
+    simplify_not(expr);
     return false;
   }
   else if(expr.id()==ID_lt)
   {
     expr.id(ID_ge);
     simplify_inequality_not_constant(expr);
-    expr = boolean_negate(expr);
-    simplify_node(expr);
+    expr = not_exprt(expr);
+    simplify_not(expr);
     return false;
   }
   else if(expr.id()==ID_le)
@@ -1673,8 +1673,8 @@ bool simplify_exprt::simplify_inequality_constant(exprt &expr)
     {
       expr.id(ID_equal);
       simplify_inequality_constant(expr);
-      expr = boolean_negate(expr);
-      simplify_node(expr);
+      expr = not_exprt(expr);
+      simplify_not(expr);
       return false;
     }
 
@@ -1888,8 +1888,8 @@ bool simplify_exprt::simplify_inequality_constant(exprt &expr)
     {
       expr.id(ID_equal);
       simplify_inequality_constant(expr);
-      expr = boolean_negate(expr);
-      simplify_node(expr);
+      expr = not_exprt(expr);
+      simplify_not(expr);
       return false;
     }
     else if(expr.id()==ID_gt)
@@ -1912,8 +1912,8 @@ bool simplify_exprt::simplify_inequality_constant(exprt &expr)
     {
       expr.id(ID_ge);
       simplify_inequality_constant(expr);
-      expr = boolean_negate(expr);
-      simplify_node(expr);
+      expr = not_exprt(expr);
+      simplify_not(expr);
       return false;
     }
     else if(expr.id()==ID_le)
@@ -1930,8 +1930,8 @@ bool simplify_exprt::simplify_inequality_constant(exprt &expr)
       ++i;
       expr.op1()=from_integer(i, expr.op1().type());
       simplify_inequality_constant(expr);
-      expr = boolean_negate(expr);
-      simplify_node(expr);
+      expr = not_exprt(expr);
+      simplify_not(expr);
       return false;
     }
   }
