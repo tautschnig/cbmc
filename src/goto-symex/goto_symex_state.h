@@ -197,7 +197,14 @@ public:
     bool allow_pointer_unsoundness=false);
 
 protected:
-  void rename_address(exprt &expr, const namespacet &ns, levelt level);
+  optionalt<exprt> rename_expr(const exprt &expr, const namespacet &ns, levelt level);
+  optionalt<typet> rename_type(
+    const typet &type,
+    const irep_idt &l1_identifier,
+    const namespacet &ns,
+    levelt level);
+  optionalt<exprt>
+  rename_address(const exprt &expr, const namespacet &ns, levelt level);
 
   /// Update level 0 values.
   void set_l0_indices(ssa_exprt &expr, const namespacet &ns);
