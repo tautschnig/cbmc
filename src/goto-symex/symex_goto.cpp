@@ -247,6 +247,7 @@ void goto_symext::symex_goto(statet &state)
       symbol_exprt guard_symbol_expr =
         symbol_exprt(statet::guard_identifier(), bool_typet());
       exprt new_rhs = boolean_negate(new_guard);
+      do_simplify(new_rhs);
 
       ssa_exprt new_lhs(guard_symbol_expr);
       state.rename(new_lhs, ns, goto_symex_statet::L1);
@@ -267,8 +268,8 @@ void goto_symext::symex_goto(statet &state)
         original_source,
         symex_targett::assignment_typet::GUARD);
 
-      guard_expr = boolean_negate(guard_symbol_expr);
-      state.rename(guard_expr, ns);
+      state.rename(new_lhs, ns);
+      guard_expr = boolean_negate(new_lhs);
     }
 
     if(state.has_saved_jump_target)

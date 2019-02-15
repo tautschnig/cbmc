@@ -103,6 +103,12 @@ void goto_symext::vcc(
 
   state.guard.guard_expr(expr);
 
+  // It would be nice to simplify again to canoncialize the combined guard +
+  // condition expression, but this causes excessive SAT solver runtime on
+  // jbmc/regression/jbmc-strings/StringIndexOf, raising the solver execution
+  // time from 0.004s to 162 seconds.
+  // do_simplify(expr);
+
   state.remaining_vccs++;
   target.assertion(state.guard.as_expr(), expr, msg, state.source);
 }
