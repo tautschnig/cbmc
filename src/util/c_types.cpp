@@ -10,6 +10,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "std_types.h"
 #include "config.h"
 #include "invariant.h"
+#include "singleton_factory.h"
 
 #include "c_types.h"
 
@@ -252,8 +253,7 @@ reference_typet reference_type(const typet &subtype)
 
 empty_typet void_type()
 {
-  static const auto result = empty_typet();
-  return result;
+  return singleton_factory<empty_typet>();
 }
 
 std::string c_type_as_string(const irep_idt &c_type)

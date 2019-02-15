@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "invariant.h"
 #include "mathematical_expr.h"
 #include "namespace.h"
+#include "singleton_factory.h"
 #include "std_expr.h"
 
 bool simplify_exprt::simplify_boolean(exprt &expr)
@@ -106,12 +107,12 @@ bool simplify_exprt::simplify_boolean(exprt &expr)
 
       if(expr.id()==ID_and && is_false)
       {
-        expr=false_exprt();
+        expr = singleton_factory<false_exprt>();
         return false;
       }
       else if(expr.id()==ID_or && is_true)
       {
-        expr=true_exprt();
+        expr = singleton_factory<true_exprt>();
         return false;
       }
 
@@ -182,12 +183,12 @@ bool simplify_exprt::simplify_not(exprt &expr)
   }
   else if(op.is_false())
   {
-    expr=true_exprt();
+    expr = singleton_factory<true_exprt>();
     return false;
   }
   else if(op.is_true())
   {
-    expr=false_exprt();
+    expr = singleton_factory<false_exprt>();
     return false;
   }
   else if(op.id()==ID_and ||
@@ -263,12 +264,12 @@ bool simplify_exprt::simplify_not_preorder(exprt &expr)
   }
   else if(op.is_false())
   {
-    expr = true_exprt();
+    expr = singleton_factory<true_exprt>();
     return false;
   }
   else if(op.is_true())
   {
-    expr = false_exprt();
+    expr = singleton_factory<false_exprt>();
     return false;
   }
   else if(op.id() == ID_and || op.id() == ID_or)

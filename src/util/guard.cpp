@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "expr_util.h"
 #include "invariant.h"
 #include "simplify_utils.h"
+#include "singleton_factory.h"
 #include "std_expr.h"
 
 void guardt::guard_expr(exprt &dest) const
@@ -110,7 +111,7 @@ guardt &operator |= (guardt &g1, const guardt &g2)
     exprt tmp(boolean_negate(g2.as_expr()));
 
     if(tmp == g1.as_expr())
-      g1.expr = true_exprt();
+      g1.expr = singleton_factory<true_exprt>();
     else
       g1.expr = or_exprt(g1.as_expr(), g2.as_expr());
 

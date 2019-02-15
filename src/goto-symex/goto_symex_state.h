@@ -19,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/invariant.h>
 #include <util/make_unique.h>
 #include <util/sharing_map.h>
+#include <util/singleton_factory.h>
 #include <util/ssa_expr.h>
 #include <util/std_expr.h>
 
@@ -51,7 +52,7 @@ public:
   // the if branch will be guarded by the condition of the if (and if there
   // is an else branch then instructions on it will be guarded by the negation
   // of the condition of the if).
-  guardt guard{true_exprt{}};
+  guardt guard{singleton_factory<true_exprt>()};
 
   symex_targett::sourcet source;
 
@@ -270,7 +271,7 @@ public:
   struct threadt
   {
     goto_programt::const_targett pc;
-    guardt guard{true_exprt{}};
+    guardt guard{singleton_factory<true_exprt>()};
     call_stackt call_stack;
     std::map<irep_idt, unsigned> function_frame;
     unsigned atomic_section_id = 0;

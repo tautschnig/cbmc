@@ -20,6 +20,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/invariant.h>
 #include <util/namespace.h>
+#include <util/singleton_factory.h>
 #include <util/source_location.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
@@ -342,7 +343,7 @@ public:
     {
       type=_type;
       targets.clear();
-      guard=true_exprt();
+      guard = singleton_factory<true_exprt>();
       code.make_nil();
     }
 
@@ -478,7 +479,7 @@ public:
       : code(static_cast<const codet &>(get_nil_irep())),
         source_location(static_cast<const source_locationt &>(get_nil_irep())),
         type(_type),
-        guard(true_exprt())
+        guard(singleton_factory<true_exprt>())
     {
     }
 
@@ -965,7 +966,7 @@ public:
     const code_gotot &_code,
     const source_locationt &l = source_locationt::nil())
   {
-    return instructiont(_code, l, INCOMPLETE_GOTO, true_exprt(), {});
+    return instructiont(_code, l, INCOMPLETE_GOTO, singleton_factory<true_exprt>(), {});
   }
 
   static instructiont make_goto(
@@ -976,7 +977,7 @@ public:
       static_cast<const codet &>(get_nil_irep()),
       l,
       GOTO,
-      true_exprt(),
+      singleton_factory<true_exprt>(),
       {_target});
   }
 

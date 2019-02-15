@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "mathematical_types.h"
 #include "pointer_offset_size.h"
 #include "simplify_expr.h"
+#include "singleton_factory.h"
 
 bool constant_exprt::value_is_zero_string() const
 {
@@ -27,7 +28,7 @@ bool constant_exprt::value_is_zero_string() const
 exprt disjunction(const exprt::operandst &op)
 {
   if(op.empty())
-    return false_exprt();
+    return singleton_factory<false_exprt>();
   else if(op.size()==1)
     return op.front();
   else
@@ -49,7 +50,7 @@ unsigned int dynamic_object_exprt::get_instance() const
 exprt conjunction(const exprt::operandst &op)
 {
   if(op.empty())
-    return true_exprt();
+    return singleton_factory<true_exprt>();
   else if(op.size()==1)
     return op.front();
   else

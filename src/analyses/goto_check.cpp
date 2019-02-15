@@ -29,6 +29,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/pointer_offset_size.h>
 #include <util/pointer_predicates.h>
 #include <util/simplify_expr.h>
+#include <util/singleton_factory.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
 
@@ -1275,7 +1276,7 @@ void goto_checkt::bounds_check(
     }
   }
 
-  exprt type_matches_size=true_exprt();
+  exprt type_matches_size = singleton_factory<true_exprt>();
 
   if(ode.root_object().id()==ID_dereference)
   {
@@ -1615,7 +1616,7 @@ void goto_checkt::check_rec(const exprt &expr, guardt &guard, bool address)
 
 void goto_checkt::check(const exprt &expr)
 {
-  guardt guard{true_exprt{}};
+  guardt guard{singleton_factory<true_exprt>()};
   check_rec(expr, guard, false);
 }
 
@@ -1747,7 +1748,7 @@ void goto_checkt::goto_check(
             "pointer dereference",
             i.source_location,
             pointer,
-            guardt(true_exprt()));
+            guardt(singleton_factory<true_exprt>()));
         }
       }
 
@@ -1785,7 +1786,7 @@ void goto_checkt::goto_check(
           "pointer dereference",
           i.source_location,
           pointer,
-          guardt(true_exprt()));
+          guardt(singleton_factory<true_exprt>()));
       }
 
       // this has no successor
@@ -1863,7 +1864,7 @@ void goto_checkt::goto_check(
           "memory-leak",
           source_location,
           eq,
-          guardt(true_exprt()));
+          guardt(singleton_factory<true_exprt>()));
       }
     }
 

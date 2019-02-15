@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/std_expr.h>
 #include <util/ieee_float.h>
 #include <util/invariant.h>
+#include <util/singleton_factory.h>
 
 #include "java_types.h"
 #include "java_utils.h"
@@ -37,8 +38,7 @@ signedbv_typet java_int_type()
 
 empty_typet java_void_type()
 {
-  static const auto result = empty_typet();
-  return result;
+  return singleton_factory<empty_typet>();
 }
 
 signedbv_typet java_long_type()

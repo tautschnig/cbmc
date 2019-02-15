@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/expr_util.h>
 #include <util/invariant.h>
 #include <util/pointer_offset_size.h>
+#include <util/singleton_factory.h>
 #include <util/std_expr.h>
 
 #include <util/simplify_expr.h>
@@ -75,7 +76,7 @@ void goto_symext::symex_goto(statet &state)
       // generate assume(false) or a suitable negation if this
       // instruction is a conditional goto
       if(new_guard.is_true())
-        symex_assume(state, false_exprt());
+        symex_assume(state, singleton_factory<false_exprt>());
       else
         symex_assume(state, not_exprt(new_guard));
 
@@ -227,7 +228,7 @@ void goto_symext::symex_goto(statet &state)
   // adjust guards
   if(new_guard.is_true())
   {
-    state.guard = guardt(false_exprt());
+    state.guard = guardt(singleton_factory<false_exprt>());
   }
   else
   {
@@ -251,8 +252,6 @@ void goto_symext::symex_goto(statet &state)
       state.rename(new_lhs, ns, goto_symex_statet::L1);
       state.assignment(new_lhs, new_rhs, ns, true, false);
 
-      guardt guard{true_exprt{}};
-
       log.conditional_output(
         log.debug(),
         [this, &new_lhs](messaget::mstreamt &mstream) {
@@ -262,7 +261,7 @@ void goto_symext::symex_goto(statet &state)
         });
 
       target.assignment(
-        guard.as_expr(),
+        singleton_factory<true_exprt>(),
         new_lhs, new_lhs, guard_symbol_expr,
         new_rhs,
         original_source,
@@ -501,7 +500,7 @@ static void merge_names(
     });
 
   target.assignment(
-    true_exprt(),
+    singleton_factory<true_exprt>(),
     new_lhs,
     new_lhs,
     new_lhs.get_original_expr(),
@@ -551,7 +550,7 @@ void goto_symext::loop_bound_exceeded(
   exprt negated_cond;
 
   if(guard.is_true())
-    negated_cond=false_exprt();
+    negated_cond = singleton_factory<false_exprt>();
   else
     negated_cond=not_exprt(guard);
 

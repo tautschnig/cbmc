@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/c_types.h>
 #include <util/exception_utils.h>
 #include <util/invariant.h>
+#include <util/singleton_factory.h>
 
 static void locality(
   const irep_idt &function_identifier,
@@ -145,7 +146,7 @@ void goto_symext::parameter_assignments(
       clean_expr(lhs, state, true);
       clean_expr(rhs, state, false);
 
-      guardt guard{true_exprt{}};
+      guardt guard{singleton_factory<true_exprt>()};
       symex_assign_rec(state, lhs, nil_exprt(), rhs, guard, assignment_type);
     }
 
