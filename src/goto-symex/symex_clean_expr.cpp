@@ -159,16 +159,14 @@ static void adjust_byte_extract_rec(exprt &expr, const namespacet &ns)
 static void
 replace_nondet(exprt &expr, symex_nondet_generatort &build_symex_nondet)
 {
-  if(expr.id() == ID_side_effect && expr.get(ID_statement) == ID_nondet)
+  for(auto it = expr.depth_begin(), end = expr.depth_end(); it != end; ++it)
   {
-    nondet_symbol_exprt new_expr = build_symex_nondet(expr.type());
-    new_expr.add_source_location() = expr.source_location();
-    expr.swap(new_expr);
-  }
-  else
-  {
-    Forall_operands(it, expr)
-      replace_nondet(*it, build_symex_nondet);
+    if(it->id() == ID_side_effect && to_side_effect_expr(*it).get_statement() == ID_nondet)
+    {
+      nondet_symbol_exprt new_expr = build_symex_nondet(it->type());
+      new_expr.add_source_location() = it->source_location();
+      it.mutate().swap(new_expr);
+    }
   }
 }
 
