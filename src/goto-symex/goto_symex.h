@@ -208,7 +208,7 @@ protected:
   exprt make_auto_object(const typet &, statet &);
   virtual void dereference(exprt &, statet &);
 
-  void dereference_rec(exprt &, statet &);
+  optionalt<exprt> dereference_rec(const exprt &, statet &);
   exprt address_arithmetic(
     const exprt &,
     statet &,
