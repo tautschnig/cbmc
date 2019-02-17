@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/base_type.h>
 #include <util/byte_operators.h>
 #include <util/c_types.h>
+#include <util/expr_iterator.h>
 #include <util/pointer_offset_size.h>
 #include <util/simplify_expr.h>
 
@@ -133,22 +134,25 @@ void goto_symext::process_array_expr(statet &state, exprt &expr)
 /// Rewrite index/member expressions in byte_extract to offset
 static void adjust_byte_extract_rec(exprt &expr, const namespacet &ns)
 {
-  Forall_operands(it, expr)
-    adjust_byte_extract_rec(*it, ns);
-
-  if(expr.id()==ID_byte_extract_big_endian ||
-     expr.id()==ID_byte_extract_little_endian)
+  for(auto it = expr.depth_begin(), end = expr.depth_end(); it != end; ++it)
   {
-    byte_extract_exprt &be=to_byte_extract_expr(expr);
-    if(be.op().id()==ID_symbol &&
-       to_ssa_expr(be.op()).get_original_expr().get_bool(ID_C_invalid_object))
-      return;
+    if(it->id()==ID_byte_extract_big_endian ||
+       it->id()==ID_byte_extract_little_endian)
+    {
+      const byte_extract_exprt &be=to_byte_extract_expr(*it);
+      if(be.op().id()==ID_symbol &&
+         to_ssa_expr(be.op()).get_original_expr().get_bool(ID_C_invalid_object))
+      {
+        continue;
+      }
 
-    object_descriptor_exprt ode;
-    ode.build(expr, ns);
+      object_descriptor_exprt ode;
+      ode.build(*it, ns);
 
-    be.op()=ode.root_object();
-    be.offset()=ode.offset();
+      byte_extract_exprt &be_modifiable=to_byte_extract_expr(it.mutate());
+      be_modifiable.op()=ode.root_object();
+      be_modifiable.offset()=ode.offset();
+    }
   }
 }
 
