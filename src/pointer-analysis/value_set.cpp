@@ -1152,6 +1152,17 @@ void value_sett::assign(
   if(type.id()==ID_struct ||
      type.id()==ID_union)
   {
+    optionalt<struct_union_typet> rhs_struct_union_type;
+    if(rhs.id() != ID_unknown && rhs.id() != ID_invalid)
+    {
+      rhs_struct_union_type = to_struct_union_type(ns.follow(rhs.type()));
+
+      if(!base_type_eq(*rhs_struct_union_type, type, ns))
+          throw "value_sett::assign type mismatch: "
+                "rhs.type():\n"+rhs_struct_union_type->pretty()+"\n"+
+                "type:\n"+type.pretty();
+    }
+
     for(const auto &c : to_struct_union_type(type).components())
     {
       const typet &subtype = c.type();
@@ -1168,18 +1179,15 @@ void value_sett::assign(
       if(rhs.id()==ID_unknown ||
          rhs.id()==ID_invalid)
       {
+        UNREACHABLE;
         rhs_member=exprt(rhs.id(), subtype);
       }
       else
       {
-        if(!base_type_eq(rhs.type(), type, ns))
-          throw "value_sett::assign type mismatch: "
-                "rhs.type():\n"+rhs.type().pretty()+"\n"+
-                "type:\n"+type.pretty();
+        const typet &rhs_subtype = rhs_struct_union_type->component_type(name);
+        rhs_member = simplify_expr(member_exprt(rhs, name, rhs_subtype), ns);
 
-        rhs_member=make_member(rhs, name, ns);
-
-        assign(lhs_member, rhs_member, ns, false, add_to_sets);
+        assign(lhs_member, rhs_member, ns, true, add_to_sets);
       }
     }
   }
@@ -1603,20 +1611,4 @@ void value_sett::guard(
 
     assign(expr.op0(), address_of, ns, false, false);
   }
-}
-
-exprt value_sett::make_member(
-  const exprt &src,
-  const irep_idt &component_name,
-  const namespacet &ns)
-{
-  const struct_union_typet &struct_union_type=
-    to_struct_union_type(ns.follow(src.type()));
-
-  const typet &subtype = struct_union_type.component_type(component_name);
-  exprt member_expr = member_exprt(src, component_name, subtype);
-
-  simplify(member_expr, ns);
-
-  return member_expr;
 }
