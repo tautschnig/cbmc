@@ -230,7 +230,7 @@ static inline
   typename std::enable_if<std::is_integral<T>::value, dstringt>::type
   to_dstring(T value)
 {
-  if(value >= 0 && value <= DSTRING_NUMBERS_MAX)
+  if(value >= 0 && value <= static_cast<T>(DSTRING_NUMBERS_MAX))
     return get_dstring_number(value);
   else
     return std::to_string(value);
