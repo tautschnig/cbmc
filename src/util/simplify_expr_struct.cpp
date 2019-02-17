@@ -11,6 +11,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "arith_tools.h"
 #include "base_type.h"
 #include "byte_operators.h"
+#include "expr_util.h"
 #include "invariant.h"
 #include "namespace.h"
 #include "pointer_offset_size.h"
@@ -53,9 +54,6 @@ bool simplify_exprt::simplify_member(exprt &expr)
           tmp.swap(op2);
           expr.swap(tmp);
 
-          // do this recursively
-          simplify_rec(expr);
-
           return false;
         }
         else // something else, get rid of it
@@ -82,9 +80,6 @@ bool simplify_exprt::simplify_member(exprt &expr)
         // WITH(s, .m, v).m -> v
         expr=with_expr.new_value();
 
-        // do this recursively
-        simplify_rec(expr);
-
         return false;
       }
     }
@@ -107,9 +102,6 @@ bool simplify_exprt::simplify_member(exprt &expr)
           exprt tmp=update_expr.new_value();
           expr.swap(tmp);
 
-          // do this recursively
-          simplify_rec(expr);
-
           return false;
         }
         // the following optimization only works on structs,
@@ -121,7 +113,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
           op.swap(tmp);
 
           // do this recursively
-          simplify_rec(expr);
+          simplify_member(expr);
 
           return false;
         }
@@ -180,7 +172,7 @@ bool simplify_exprt::simplify_member(exprt &expr)
       byte_extract_exprt result(op.id(), op.op0(), final_offset, expr.type());
       expr.swap(result);
 
-      simplify_rec(expr);
+      simplify_byte_extract(to_byte_extract_expr(expr));
 
       return false;
     }
@@ -282,16 +274,11 @@ bool simplify_exprt::simplify_member(exprt &expr)
   }
   else if(op.id()==ID_if)
   {
-    const if_exprt &if_expr=to_if_expr(op);
-    exprt cond=if_expr.cond();
-
-    member_exprt member_false=to_member_expr(expr);
-    member_false.compound()=if_expr.false_case();
-
-    to_member_expr(expr).compound()=if_expr.true_case();
-
-    expr=if_exprt(cond, expr, member_false, expr.type());
-    simplify_rec(expr);
+    if_exprt if_expr = lift_if(expr, 0);
+    simplify_member(if_expr.true_case());
+    simplify_member(if_expr.false_case());
+    simplify_if(if_expr);
+    expr.swap(if_expr);
 
     return false;
   }
