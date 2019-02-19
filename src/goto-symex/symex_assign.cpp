@@ -260,11 +260,9 @@ static void rewrite_with_to_field_symbols(
 }
 
 static void shift_indexed_access_to_lhs(
-  goto_symext::statet &state,
   exprt &ssa_rhs,
   ssa_exprt &lhs_mod,
   const namespacet &ns,
-  const field_sensitivityt &field_sensitivity,
   bool do_simplify)
 {
   if(
@@ -339,9 +337,7 @@ void goto_symext::symex_assign_symbol(
   // introduced by symex_assign_struct_member, are transformed into member
   // expressions on the LHS. If we add an option to disable field-sensitivity
   // in the future these should be omitted.
-  shift_indexed_access_to_lhs(
-    state, ssa_rhs, lhs_mod, ns, field_sensitivity, symex_config.simplify_opt);
-
+  shift_indexed_access_to_lhs(ssa_rhs, lhs_mod, ns, symex_config.simplify_opt);
   rewrite_with_to_field_symbols(state, ssa_rhs, lhs_mod, field_sensitivity);
 
   do_simplify(ssa_rhs);
