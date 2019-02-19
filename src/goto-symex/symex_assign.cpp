@@ -285,25 +285,46 @@ static void shift_indexed_access_to_lhs(
       ssa_rhs = byte_update.value();
       lhs_mod = to_ssa_expr(byte_extract);
     }
-    else if(byte_extract.id() == ID_index)
+    else if(byte_extract.id() == ID_index || byte_extract.id() == ID_member)
     {
       ssa_rhs = byte_update.value();
 
-      while(byte_extract.id() == ID_index)
+      while(byte_extract.id() == ID_index || byte_extract.id() == ID_member)
       {
-        index_exprt &idx = to_index_expr(byte_extract);
+        if(byte_extract.id() == ID_index)
+        {
+          index_exprt &idx = to_index_expr(byte_extract);
 
 #ifdef USE_UPDATE
-        update_exprt new_rhs(idx.array().type());
-        new_rhs.old() = idx.array();
-        new_rhs.designator().push_back(index_designatort(idx.index()));
-        new_rhs.new_value() = ssa_rhs;
+          update_exprt new_rhs(idx.array().type());
+          new_rhs.old() = idx.array();
+          new_rhs.designator().push_back(index_designatort(idx.index()));
+          new_rhs.new_value() = ssa_rhs;
 #else
-        with_exprt new_rhs(idx.array(), idx.index(), ssa_rhs);
+          with_exprt new_rhs(idx.array(), idx.index(), ssa_rhs);
 #endif
 
-        ssa_rhs = new_rhs;
-        byte_extract = idx.array();
+          ssa_rhs = new_rhs;
+          byte_extract = idx.array();
+        }
+        else
+        {
+          member_exprt &member = to_member_expr(byte_extract);
+          const irep_idt &component_name = member.get_component_name();
+
+#ifdef USE_UPDATE
+          update_exprt new_rhs(member.compound().type());
+          new_rhs.old() = member.compound();
+          new_rhs.designator().push_back(member_designatort(component_name));
+          new_rhs.new_value() = ssa_rhs;
+#else
+          with_exprt new_rhs(member.compound(), exprt(ID_member_name), ssa_rhs);
+          new_rhs.where().set(ID_component_name, component_name);
+#endif
+
+          ssa_rhs = new_rhs;
+          byte_extract = member.compound();
+        }
       }
 
       lhs_mod = to_ssa_expr(byte_extract);
