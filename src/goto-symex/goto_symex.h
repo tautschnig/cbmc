@@ -374,8 +374,10 @@ protected:
   /// \return The resulting expression
   static exprt add_to_lhs(const exprt &lhs, const exprt &what);
 
-  virtual void symex_gcc_builtin_va_arg_next(
-    statet &, const exprt &lhs, const side_effect_exprt &);
+  virtual void symex_gcc_builtin_va_start(
+    statet &,
+    const exprt &lhs,
+    const side_effect_exprt &);
   virtual void symex_allocate(
     statet &, const exprt &lhs, const side_effect_exprt &);
   virtual void symex_cpp_delete(statet &, const codet &);

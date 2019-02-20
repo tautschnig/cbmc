@@ -14,6 +14,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/arith_tools.h>
 #include <util/c_types.h>
 #include <util/expr_initializer.h>
+#include <util/expr_util.h>
+#include <util/fresh_symbol.h>
 #include <util/invariant_utils.h>
 #include <util/optional.h>
 #include <util/pointer_offset_size.h>
@@ -203,24 +205,7 @@ void goto_symext::symex_allocate(
     code_assignt(lhs, typecast_exprt::conditional_cast(rhs, lhs.type())));
 }
 
-irep_idt get_symbol(const exprt &src)
-{
-  if(src.id()==ID_typecast)
-    return get_symbol(to_typecast_expr(src).op());
-  else if(src.id()==ID_address_of)
-  {
-    exprt op=to_address_of_expr(src).object();
-    if(op.id()==ID_symbol &&
-       op.get_bool(ID_C_SSA_symbol))
-      return to_ssa_expr(op).get_object_name();
-    else
-      return irep_idt();
-  }
-  else
-    return irep_idt();
-}
-
-void goto_symext::symex_gcc_builtin_va_arg_next(
+void goto_symext::symex_gcc_builtin_va_start(
   statet &state,
   const exprt &lhs,
   const side_effect_exprt &code)
@@ -230,42 +215,45 @@ void goto_symext::symex_gcc_builtin_va_arg_next(
   if(lhs.is_nil())
     return; // ignore
 
-  exprt tmp=code.op0();
-  state.rename(tmp, ns); // to allow constant propagation
-  do_simplify(tmp);
-  irep_idt id=get_symbol(tmp);
+  // create an array holding pointers to the parameters, starting with the
+  // parameter that the operand points to
+  const exprt &op = skip_typecast(code.op0());
+  // this must be the address of a symbol
+  const irep_idt &start_parameter =
+    to_symbol_expr(to_address_of_expr(op).object()).get_identifier();
 
-  const auto zero = zero_initializer(lhs.type(), code.source_location(), ns);
-  CHECK_RETURN(zero.has_value());
-  exprt rhs(*zero);
-
-  if(!id.empty())
+  exprt::operandst va_arg_operands;
+  bool parameter_id_found = false;
+  for(auto &parameter : state.top().parameter_names)
   {
-    // strip last name off id to get function name
-    std::size_t pos=id2string(id).rfind("::");
-    if(pos!=std::string::npos)
-    {
-      irep_idt function_identifier=std::string(id2string(id), 0, pos);
-      std::string base=id2string(function_identifier)+"::va_arg";
+    if(!parameter_id_found && parameter == start_parameter)
+      parameter_id_found = true;
 
-      if(has_prefix(id2string(id), base))
-        id=base+std::to_string(
-          safe_string2unsigned(
-            std::string(id2string(id), base.size(), std::string::npos))+1);
-      else
-        id=base+"0";
-
-      const symbolt *symbol;
-      if(!ns.lookup(id, symbol))
-      {
-        const symbol_exprt symbol_expr(symbol->name, symbol->type);
-        rhs = typecast_exprt::conditional_cast(
-          address_of_exprt(symbol_expr), lhs.type());
-      }
-    }
+    va_arg_operands.push_back(typecast_exprt::conditional_cast(
+      address_of_exprt{ns.lookup(parameter).symbol_expr()},
+      pointer_type(empty_typet{})));
   }
+  const std::size_t va_arg_size = va_arg_operands.size();
+  array_exprt array{std::move(va_arg_operands),
+                    array_typet{pointer_type(empty_typet{}),
+                                from_integer(va_arg_size, size_type())}};
 
-  symex_assign(state, code_assignt(lhs, rhs));
+  symbolt &va_array = get_fresh_aux_symbol(
+    array.type(),
+    id2string(state.source.function_id),
+    "va_args",
+    state.source.pc->source_location,
+    ns.lookup(state.source.function_id).mode,
+    state.symbol_table);
+  va_array.value = array;
+
+  state.rename(array, ns);
+  do_simplify(array);
+  symex_assign(state, code_assignt{va_array.symbol_expr(), std::move(array)});
+
+  address_of_exprt rhs{index_exprt{va_array.symbol_expr(), from_integer(0, index_type())}};
+  state.rename(rhs, ns);
+  symex_assign(state, code_assignt{lhs, typecast_exprt::conditional_cast(rhs, lhs.type())});
 }
 
 irep_idt get_string_argument_rec(const exprt &src)

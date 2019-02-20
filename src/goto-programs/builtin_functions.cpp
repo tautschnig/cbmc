@@ -1100,26 +1100,20 @@ void goto_convertt::do_function_call_symbol(
 
     exprt list_arg=make_va_list(arguments[0]);
 
-    {
-      side_effect_exprt rhs(
-        ID_gcc_builtin_va_arg_next,
-        list_arg.type(),
-        function.source_location());
-      rhs.copy_to_operands(list_arg);
-      rhs.set(ID_C_va_arg_type, to_code_type(function.type()).return_type());
-      goto_programt::targett t1=dest.add_instruction(ASSIGN);
-      t1->source_location=function.source_location();
-      t1->code=code_assignt(list_arg, rhs);
-    }
+    code_assignt assign{
+      list_arg, plus_exprt{list_arg, from_integer(1, pointer_diff_type())}};
+    assign.rhs().set(
+      ID_C_va_arg_type, to_code_type(function.type()).return_type());
+    dest.add(goto_programt::make_assignment(
+      std::move(assign), function.source_location()));
 
     if(lhs.is_not_nil())
     {
       typet t=pointer_type(lhs.type());
-      dereference_exprt rhs(typecast_exprt(list_arg, t), lhs.type());
+      dereference_exprt rhs{typecast_exprt(dereference_exprt{list_arg}, t)};
       rhs.add_source_location()=function.source_location();
-      goto_programt::targett t2=dest.add_instruction(ASSIGN);
-      t2->source_location=function.source_location();
-      t2->code=code_assignt(lhs, rhs);
+      dest.add(goto_programt::make_assignment(
+        lhs, std::move(rhs), function.source_location()));
     }
   }
   else if(identifier=="__builtin_va_copy")
@@ -1159,8 +1153,6 @@ void goto_convertt::do_function_call_symbol(
     }
 
     exprt dest_expr=make_va_list(arguments[0]);
-    const typecast_exprt src_expr(
-      address_of_exprt(arguments[1]), dest_expr.type());
 
     if(!is_lvalue(dest_expr))
     {
@@ -1169,9 +1161,13 @@ void goto_convertt::do_function_call_symbol(
       throw 0;
     }
 
-    goto_programt::targett t=dest.add_instruction(ASSIGN);
-    t->source_location=function.source_location();
-    t->code=code_assignt(dest_expr, src_expr);
+    side_effect_exprt rhs{
+      ID_gcc_builtin_va_start, dest_expr.type(), function.source_location()};
+    rhs.add_to_operands(
+      typecast_exprt{address_of_exprt{arguments[1]}, dest_expr.type()});
+
+    dest.add(goto_programt::make_assignment(
+      std::move(dest_expr), std::move(rhs), function.source_location()));
   }
   else if(identifier=="__builtin_va_end")
   {
