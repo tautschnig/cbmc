@@ -17,6 +17,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/std_expr.h>
 
 #include <solvers/lowering/expr_lowering.h>
+#include <solvers/lowering/flatten_byte_extract_exceptions.h>
 
 bvt boolbvt::convert_index(const index_exprt &expr)
 {
@@ -50,7 +51,18 @@ bvt boolbvt::convert_index(const index_exprt &expr)
         bv[i]=prop.new_variable();
 
       if(has_byte_operator(expr))
-        record_array_index(to_index_expr(lower_byte_operators(expr, ns)));
+      {
+        exprt lowered_byte_operators;
+        try
+        {
+          lowered_byte_operators = lower_byte_operators(expr, ns);
+        }
+        catch(const flatten_byte_extract_exceptiont &)
+        {
+          return conversion_failed(expr);
+        }
+        record_array_index(to_index_expr(lowered_byte_operators));
+      }
       else
         record_array_index(expr);
 

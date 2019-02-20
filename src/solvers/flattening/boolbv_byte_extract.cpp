@@ -20,7 +20,6 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <solvers/lowering/expr_lowering.h>
 #include <solvers/lowering/flatten_byte_extract_exceptions.h>
 
-#include "bv_conversion_exceptions.h"
 #include "bv_endianness_map.h"
 
 bvt map_bv(const bv_endianness_mapt &map, const bvt &src)
@@ -54,8 +53,7 @@ bvt boolbvt::convert_byte_extract(const byte_extract_exprt &expr)
     }
     catch(const flatten_byte_extract_exceptiont &)
     {
-      util_throw_with_nested(
-        bitvector_conversion_exceptiont("Can't convert byte_extraction", expr));
+      return conversion_failed(expr);
     }
   }
 

@@ -13,6 +13,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/invariant.h>
 
 #include <solvers/lowering/expr_lowering.h>
+#include <solvers/lowering/flatten_byte_extract_exceptions.h>
 
 #include "bv_conversion_exceptions.h"
 
@@ -33,8 +34,18 @@ literalt boolbvt::convert_equality(const equal_exprt &expr)
 
     if(has_byte_operator(expr))
     {
-      return record_array_equality(
-        to_equal_expr(lower_byte_operators(expr, ns)));
+      exprt lowered_byte_operators;
+      try
+      {
+        lowered_byte_operators = lower_byte_operators(expr, ns);
+      }
+      catch(const flatten_byte_extract_exceptiont &byte_extract_flatten_exception)
+      {
+        ignoring(expr);
+        return prop.new_variable();
+      }
+
+      return record_array_equality(to_equal_expr(lowered_byte_operators));
     }
 
     return record_array_equality(expr);
