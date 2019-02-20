@@ -21,6 +21,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <iostream>
 #endif
 
+#include <unordered_set>
+
 arrayst::arrayst(const namespacet &_ns, propt &_prop)
   : equalityt(_prop), ns(_ns)
 {
@@ -505,21 +507,17 @@ void arrayst::add_array_constraints_with(
   const index_sett &index_set,
   const with_exprt &expr)
 {
-  const exprt::operandst &operands = expr.operands();
-  for(std::size_t i = 1; i + 1 < operands.size(); i += 2)
-    add_array_constraints_with(index_set, expr, operands[i], operands[i + 1]);
-}
-
-void arrayst::add_array_constraints_with(
-  const index_sett &index_set,
-  const with_exprt &expr,
-  const exprt &index,
-  const exprt &value)
-{
   // we got x=(y with [i:=v])
   // add constraint x[i]=v
 
+  std::unordered_set<exprt, irep_hash> updated_indices;
+
+  const exprt::operandst &operands = expr.operands();
+  for(std::size_t i = 1; i + 1 < operands.size(); i += 2)
   {
+    const exprt &index = operands[i];
+    const exprt &value = operands[i + 1];
+
     index_exprt index_expr(expr, index, expr.type().subtype());
 
     if(index_expr.type()!=value.type())
@@ -531,8 +529,10 @@ void arrayst::add_array_constraints_with(
     }
 
     lazy_constraintt lazy(
-       lazy_typet::ARRAY_WITH, equal_exprt(index_expr, value));
-     add_array_constraint(lazy, false); // added immediately
+      lazy_typet::ARRAY_WITH, equal_exprt(index_expr, value));
+    add_array_constraint(lazy, false); // added immediately
+
+    updated_indices.insert(index);
   }
 
   // use other array index applications for "else" case
@@ -540,13 +540,18 @@ void arrayst::add_array_constraints_with(
 
   for(auto other_index : index_set)
   {
-    if(other_index!=index)
+    if(updated_indices.find(other_index) == updated_indices.end())
     {
       // we first build the guard
+      exprt::operandst disjuncts;
+      disjuncts.reserve(updated_indices.size());
+      for(const auto &index : updated_indices)
+      {
+        disjuncts.push_back(equal_exprt{
+          index, typecast_exprt::conditional_cast(other_index, index.type())});
+      }
 
-      other_index = typecast_exprt::conditional_cast(other_index, index.type());
-
-      literalt guard_lit=convert(equal_exprt(index, other_index));
+      literalt guard_lit = convert(disjunction(disjuncts));
 
       if(guard_lit!=const_literal(true))
       {
