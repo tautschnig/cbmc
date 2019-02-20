@@ -38,6 +38,7 @@ void __CPROVER_initialize(void);
 void __CPROVER_cover(__CPROVER_bool condition);
 #endif
 
+void __CPROVER_printf(const char *format, ...);
 void __CPROVER_input(const char *id, ...);
 void __CPROVER_output(const char *id, ...);
 

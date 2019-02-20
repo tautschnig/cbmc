@@ -260,15 +260,15 @@ irep_idt get_string_argument_rec(const exprt &src)
 {
   if(src.id()==ID_typecast)
   {
-    PRECONDITION(src.operands().size() == 1);
-    return get_string_argument_rec(src.op0());
+    return get_string_argument_rec(to_typecast_expr(src).op());
   }
   else if(src.id()==ID_address_of)
   {
-    PRECONDITION(src.operands().size() == 1);
-    if(src.op0().id()==ID_index)
+    const exprt &object = to_address_of_expr(src).object();
+
+    if(object.id() == ID_index)
     {
-      const auto &index_expr = to_index_expr(src.op0());
+      const auto &index_expr = to_index_expr(object);
 
       if(
         index_expr.array().id() == ID_string_constant &&
@@ -277,6 +277,10 @@ irep_idt get_string_argument_rec(const exprt &src)
         const exprt &fmt_str = index_expr.array();
         return to_string_constant(fmt_str).get_value();
       }
+    }
+    else if(object.id() == ID_string_constant)
+    {
+      return to_string_constant(object).get_value();
     }
   }
 
@@ -297,14 +301,41 @@ void goto_symext::symex_printf(
   PRECONDITION(!rhs.operands().empty());
 
   exprt tmp_rhs=rhs;
+  clean_expr(tmp_rhs, state, false);
   state.rename(tmp_rhs, ns, field_sensitivity);
   do_simplify(tmp_rhs);
 
   const exprt::operandst &operands=tmp_rhs.operands();
   std::list<exprt> args;
 
-  for(std::size_t i=1; i<operands.size(); i++)
-    args.push_back(operands[i]);
+  // we either have any number of operands or a va_list as second operand
+  if(operands.size() != 2 || operands.back().id() != ID_address_of ||
+     operands.back().type() != pointer_type(pointer_type(empty_typet{})) ||
+     to_address_of_expr(operands.back()).object().id() != ID_index)
+    args.insert(args.end(), std::next(operands.begin()), operands.end());
+  else
+  {
+    const index_exprt &index_expr = to_index_expr(to_address_of_expr(operands.back()).object());
+    PRECONDITION(index_expr.index().is_zero());
+    exprt va_args = index_expr.array();
+    clean_expr(va_args, state, false);
+    state.rename(va_args, ns, field_sensitivity);
+    CHECK_RETURN(va_args.id() == ID_array);
+
+    for(const auto &op : va_args.operands())
+    {
+      exprt parameter = to_address_of_expr(skip_typecast(op)).object();
+      clean_expr(parameter, state, false);
+      state.rename(parameter, ns, field_sensitivity);
+      do_simplify(parameter);
+
+      args.push_back(std::move(parameter));
+    }
+
+    // the first entry in the va_list is the format parameter
+    CHECK_RETURN(!args.empty());
+    args.pop_front();
+  }
 
   const irep_idt format_string=
     get_string_argument(operands[0], ns);
