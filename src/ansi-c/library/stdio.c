@@ -1,3 +1,36 @@
+/* FUNCTION: __CPROVER_init_file_descriptors */
+
+#ifndef __CPROVER_STDIO_H_INCLUDED
+#include <stdio.h>
+#define __CPROVER_STDIO_H_INCLUDED
+#endif
+
+#if defined(__GLIBC__)
+FILE __CPROVER_stdin = { ._fileno = 0 };
+FILE __CPROVER_stdout = { ._fileno = 1 };
+FILE __CPROVER_stderr = { ._fileno = 2 };
+#elif defined(__APPLE__)
+FILE __CPROVER_stdin = { ._file = 0 };
+FILE __CPROVER_stdout = { ._file = 1 };
+FILE __CPROVER_stderr = { ._file = 2 };
+#elif !defined(__linux__)
+char __CPROVER_stdin = 0;
+char __CPROVER_stdout = 1;
+char __CPROVER_stderr = 2;
+#endif
+
+#if !defined(__linux__) || defined(__GLIBC__)
+FILE *stdin = &__CPROVER_stdin;
+FILE *stdout = &__CPROVER_stdout;
+FILE *stderr = &__CPROVER_stderr;
+#endif
+
+inline void __CPROVER_init_file_descriptors()
+{
+__CPROVER_HIDE:;
+  // the procedure itself does nothing, it just brings in the above
+  // initialization of stdin/stdout/stderr.
+}
 
 /* FUNCTION: putchar */
 
@@ -225,10 +258,12 @@ inline FILE *_fdopen(int handle, const char *mode)
 
 __CPROVER_bool __VERIFIER_nondet___CPROVER_bool();
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 char *fgets(char *str, int size, FILE *stream)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   __CPROVER_bool error=__VERIFIER_nondet___CPROVER_bool();
 
   (void)size;
@@ -281,6 +316,7 @@ char *fgets(char *str, int size, FILE *stream)
 #endif
 
 size_t __VERIFIER_nondet_size_t();
+void __CPROVER_init_file_descriptors();
 
 inline size_t fread(
   void *ptr,
@@ -288,7 +324,8 @@ inline size_t fread(
   size_t nitems,
   FILE *stream)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   size_t nread=__VERIFIER_nondet_size_t();
   size_t bytes=nread*size;
   __CPROVER_assume(nread<=nitems);
@@ -324,11 +361,13 @@ inline size_t fread(
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int feof(FILE *stream)
 {
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   // just return nondet
-  __CPROVER_HIDE:;
   int return_value=__VERIFIER_nondet_int();
 
   if(stream != stdin)
@@ -356,11 +395,13 @@ inline int feof(FILE *stream)
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int ferror(FILE *stream)
 {
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   // just return nondet
-  __CPROVER_HIDE:;
   int return_value=__VERIFIER_nondet_int();
 
   if(stream != stdin)
@@ -388,10 +429,12 @@ inline int ferror(FILE *stream)
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int fileno(FILE *stream)
 {
 __CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   if(stream == stdin)
     return 0;
   else if(stream == stdout)
@@ -424,11 +467,13 @@ __CPROVER_HIDE:;
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int fputs(const char *s, FILE *stream)
 {
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   // just return nondet
-  __CPROVER_HIDE:;
   int return_value=__VERIFIER_nondet_int();
 #ifdef __CPROVER_STRING_ABSTRACTION
   __CPROVER_assert(__CPROVER_is_zero_string(s), "fputs zero-termination of 1st argument");
@@ -485,11 +530,13 @@ inline int fflush(FILE *stream)
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int fpurge(FILE *stream)
 {
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   // just return nondet
-  __CPROVER_HIDE:;
   int return_value=__VERIFIER_nondet_int();
 
   if(stream != stdin && stream != stdout && stream != stderr)
@@ -517,10 +564,12 @@ inline int fpurge(FILE *stream)
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int fgetc(FILE *stream)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   int return_value=__VERIFIER_nondet_int();
 
   if(stream != stdin)
@@ -553,10 +602,12 @@ inline int fgetc(FILE *stream)
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int getc(FILE *stream)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   int return_value=__VERIFIER_nondet_int();
 
   if(stream != stdin)
@@ -608,10 +659,12 @@ inline int getchar()
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int getw(FILE *stream)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   int return_value=__VERIFIER_nondet_int();
 
   if(stream != stdin)
@@ -723,6 +776,7 @@ __CPROVER_HIDE:
 #endif
 
 size_t __VERIFIER_nondet_size_t();
+void __CPROVER_init_file_descriptors();
 
 size_t fwrite(
   const void *ptr,
@@ -730,7 +784,8 @@ size_t fwrite(
   size_t nitems,
   FILE *stream)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   (void)*(char*)ptr;
   (void)size;
 
@@ -810,9 +865,12 @@ __CPROVER_HIDE:;
 #define __CPROVER_STDARG_H_INCLUDED
 #endif
 
+void __CPROVER_init_file_descriptors();
+
 inline int scanf(const char *restrict format, ...)
 {
 __CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   va_list list;
   va_start(list, format);
   int result=vfscanf(stdin, format, list);
@@ -855,10 +913,12 @@ __CPROVER_HIDE:;
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int vfscanf(FILE *restrict stream, const char *restrict format, va_list arg)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   int result=__VERIFIER_nondet_int();
 
   if(stream != stdin)
@@ -893,9 +953,12 @@ inline int vfscanf(FILE *restrict stream, const char *restrict format, va_list a
 #define __CPROVER_STDARG_H_INCLUDED
 #endif
 
+void __CPROVER_init_file_descriptors();
+
 inline int vscanf(const char *restrict format, va_list arg)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
   return vfscanf(stdin, format, arg);
 }
 
@@ -958,10 +1021,12 @@ inline int fprintf(FILE *stream, const char *restrict format, ...)
 #endif
 
 int __VERIFIER_nondet_int();
+void __CPROVER_init_file_descriptors();
 
 inline int vfprintf(FILE *stream, const char *restrict format, va_list arg)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_init_file_descriptors();
 
   int result=__VERIFIER_nondet_int();
 
