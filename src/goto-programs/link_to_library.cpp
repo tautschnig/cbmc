@@ -13,6 +13,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "compute_called_functions.h"
 #include "goto_convert_functions.h"
+#include "link_goto_model.h"
 
 /// Complete missing function definitions using the \p library.
 /// \param goto_model: goto model that may contain function calls and symbols
@@ -25,7 +26,7 @@ void link_to_library(
   goto_modelt &goto_model,
   message_handlert &message_handler,
   const std::function<
-    void(const std::set<irep_idt> &, symbol_tablet &, message_handlert &)>
+    void(const std::set<irep_idt> &, const symbol_tablet &, symbol_tablet &, message_handlert &)>
     &library)
 {
   // this needs a fixedpoint, as library functions
@@ -65,23 +66,26 @@ void link_to_library(
     if(missing_functions.empty())
       break;
 
-    library(missing_functions, goto_model.symbol_table, message_handler);
+    goto_modelt library_model;
+    library(missing_functions, goto_model.symbol_table, library_model.symbol_table, message_handler);
 
     // convert to CFG
     for(const auto &id : missing_functions)
     {
       if(
-        goto_model.symbol_table.symbols.find(id) !=
-        goto_model.symbol_table.symbols.end())
+        library_model.symbol_table.symbols.find(id) !=
+        library_model.symbol_table.symbols.end())
       {
         goto_convert(
           id,
-          goto_model.symbol_table,
-          goto_model.goto_functions,
+          library_model.symbol_table,
+          library_model.goto_functions,
           message_handler);
       }
 
       added_functions.insert(id);
     }
+
+    link_goto_model(goto_model, library_model, message_handler);
   }
 }
