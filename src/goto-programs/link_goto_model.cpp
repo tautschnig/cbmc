@@ -58,7 +58,8 @@ static bool link_functions(
   goto_functionst &src_functions,
   const rename_symbolt &rename_symbol,
   const std::unordered_set<irep_idt> &weak_symbols,
-  const replace_symbolt &object_type_updates)
+  const replace_symbolt &object_type_updates,
+  const replace_symbolt &code_type_updates)
 {
   namespacet ns(dest_symbol_table);
   namespacet src_ns(src_symbol_table);
@@ -163,6 +164,19 @@ static bool link_functions(
       }
   }
 
+  if(!code_type_updates.empty())
+  {
+    std::cerr << code_type_updates.get_expr_map().begin()->second.pretty() << std::endl;
+    Forall_goto_functions(dest_it, dest_functions)
+      Forall_goto_program_instructions(iit, dest_it->second.body)
+      {
+        code_type_updates(iit->code);
+
+        if(iit->has_condition())
+          code_type_updates(iit->guard);
+      }
+  }
+
   return false;
 }
 
@@ -194,7 +208,8 @@ void link_goto_model(
        src.goto_functions,
        linking.rename_symbol,
        weak_symbols,
-       linking.object_type_updates))
+       linking.object_type_updates,
+       linking.code_type_updates))
   {
     throw invalid_source_file_exceptiont("linking failed");
   }

@@ -743,6 +743,12 @@ void linkingt::duplicate_code_symbol(
         }
       }
     }
+
+    if(old_symbol.type == new_symbol.type)
+    {
+      code_type_updates.insert(
+        old_symbol.symbol_expr(), old_symbol.symbol_expr());
+    }
   }
 
   if(!new_symbol.value.is_nil())
@@ -757,6 +763,11 @@ void linkingt::duplicate_code_symbol(
       old_symbol.is_weak=new_symbol.is_weak;
       old_symbol.location=new_symbol.location;
       old_symbol.is_macro=new_symbol.is_macro;
+
+      // replace any previous update
+      code_type_updates.erase(old_symbol.name);
+      code_type_updates.insert(
+        old_symbol.symbol_expr(), old_symbol.symbol_expr());
     }
     else if(to_code_type(old_symbol.type).get_inlined())
     {
@@ -1383,6 +1394,8 @@ void linkingt::copy_symbols()
        named_symbol.second.value.is_not_nil())
     {
       object_type_updates(
+        main_symbol_table.get_writeable_ref(named_symbol.first).value);
+      code_type_updates(
         main_symbol_table.get_writeable_ref(named_symbol.first).value);
     }
   }

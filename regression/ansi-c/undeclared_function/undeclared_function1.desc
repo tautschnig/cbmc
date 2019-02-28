@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 fileA.c
 fileB.c --validate-goto-model
 ^EXIT=0$
