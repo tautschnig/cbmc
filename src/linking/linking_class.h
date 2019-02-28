@@ -42,6 +42,7 @@ public:
 
   rename_symbolt rename_symbol;
   casting_replace_symbolt object_type_updates;
+  unchecked_replace_symbolt code_type_updates;
 
 protected:
   bool needs_renaming_type(
