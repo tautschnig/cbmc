@@ -34,6 +34,7 @@ Date: June 2006
 
 #include <goto-programs/goto_convert.h>
 #include <goto-programs/goto_convert_functions.h>
+#include <goto-programs/link_goto_model.h>
 #include <goto-programs/read_goto_binary.h>
 #include <goto-programs/write_goto_binary.h>
 
@@ -359,9 +360,9 @@ bool compilet::compile()
     if(echo_file_name)
       std::cout << get_base_name(file_name, false) << '\n' << std::flush;
 
-    bool r=parse_source(file_name); // don't break the program!
+    auto file_goto_model = parse_source(file_name);
 
-    if(r)
+    if(!file_goto_model.has_value())
     {
       const std::string &debug_outfile=
         cmdline.get_value("print-rejected-preprocessed-source");
@@ -381,7 +382,7 @@ bool compilet::compile()
       // output an object file for every source file
 
       // "compile" functions
-      convert_symbols(goto_model.goto_functions);
+      convert_symbols(file_goto_model->goto_functions);
 
       std::string cfn;
 
@@ -398,13 +399,22 @@ bool compilet::compile()
       else
         cfn = output_file_object;
 
-      if(write_bin_object_file(cfn, goto_model))
+      if(write_bin_object_file(cfn, *file_goto_model))
         return true;
 
-      if(add_written_cprover_symbols(goto_model.symbol_table))
+      if(add_written_cprover_symbols(file_goto_model->symbol_table))
         return true;
-
-      goto_model.clear(); // clean symbol table for next source file.
+    }
+    else
+    {
+      try
+      {
+        link_goto_model(goto_model, *file_goto_model, get_message_handler());
+      }
+      catch(...)
+      {
+        return true;
+      }
     }
   }
 
@@ -579,30 +589,31 @@ bool compilet::write_bin_object_file(
   return false;
 }
 
-/// parses a source file
-/// \return true on error, false otherwise
-bool compilet::parse_source(const std::string &file_name)
+/// Parses and type checks a source file located at \p file_name.
+/// \return A goto model if, and only if, parsing and type checking succeeded.
+optionalt<goto_modelt> compilet::parse_source(const std::string &file_name)
 {
   language_filest language_files;
   language_files.set_message_handler(get_message_handler());
 
   if(parse(file_name, language_files))
-    return true;
+    return {};
 
   // we just typecheck one file here
-  if(language_files.typecheck(goto_model.symbol_table))
+  goto_modelt file_goto_model;
+  if(language_files.typecheck(file_goto_model.symbol_table))
   {
     error() << "CONVERSION ERROR" << eom;
-    return true;
+    return {};
   }
 
-  if(language_files.final(goto_model.symbol_table))
+  if(language_files.final(file_goto_model.symbol_table))
   {
     error() << "CONVERSION ERROR" << eom;
-    return true;
+    return {};
   }
 
-  return false;
+  return std::move(file_goto_model);
 }
 
 /// constructor

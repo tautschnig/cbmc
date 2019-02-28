@@ -71,7 +71,7 @@ public:
   bool compile();
   bool link();
 
-  bool parse_source(const std::string &);
+  optionalt<goto_modelt> parse_source(const std::string &);
 
   bool write_bin_object_file(const std::string &, const goto_modelt &);
 
