@@ -13,7 +13,6 @@ Author: Michael Tautschnig, Daniel Kroening
 
 #include <unordered_set>
 
-#include <util/base_type.h>
 #include <util/symbol.h>
 #include <util/rename_symbol.h>
 
@@ -112,8 +111,9 @@ static bool link_functions(
       {
         // the linking code will have ensured that types match
         rename_symbol(src_func.type);
-        INVARIANT(base_type_eq(in_dest_symbol_table.type, src_func.type, ns),
-                  "linking ensures that types match");
+        INVARIANT(
+          in_dest_symbol_table.type == src_func.type,
+          "linking ensures that types match");
       }
     }
   }
@@ -131,13 +131,12 @@ static bool link_functions(
       const irep_idt &id = to_symbol_expr(symbol.value).get_identifier();
 
       #if 0
-      if(!base_type_eq(symbol.type, ns.lookup(id).type, ns))
+      if(symbol.type != ns.lookup(id).type)
       {
         std::cerr << symbol << '\n';
         std::cerr << ns.lookup(id) << '\n';
       }
-      INVARIANT(base_type_eq(symbol.type, ns.lookup(id).type, ns),
-                "type matches");
+      INVARIANT(symbol.type == ns.lookup(id).type, "type matches");
       #endif
 
       macro_application.insert_expr(symbol.name, id);
