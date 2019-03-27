@@ -55,6 +55,7 @@ public:
   virtual ~value_sett() = default;
 
   value_sett(const value_sett &other) = default;
+  value_sett &operator=(const value_sett &other) = default;
 
   value_sett &operator=(value_sett &&other)
   {
@@ -492,7 +493,7 @@ public:
     const std::string &suffix,
     const namespacet &ns);
 
-  /// const version of /ref get_entry_for_symbol
+  /// const version of \ref get_entry_for_symbol
   const value_sett::entryt *get_entry_for_symbol(
     irep_idt identifier,
     const typet &type,

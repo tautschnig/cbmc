@@ -170,6 +170,7 @@ void goto_symex_statet::assignment(
   {
     DATA_INVARIANT(!check_renaming_l1(lhs), "lhs renaming failed on l1");
   }
+  const ssa_exprt l1_lhs = lhs;
 
 #if 0
   PRECONDITION(l1_identifier != get_original_name(l1_identifier)
@@ -204,6 +205,15 @@ void goto_symex_statet::assignment(
   else
     propagation.erase(l1_identifier);
 
+  const bool is_divisible = field_sensitivityt::is_divisible(l1_lhs);
+  std::vector<irep_idt> value_set_keys_before;
+  if(is_divisible)
+  {
+    value_set_keys_before.reserve(value_set.values.size());
+    for(const auto &pair : value_set.values)
+      value_set_keys_before.push_back(pair.first);
+  }
+
   {
     // update value sets
     exprt l1_rhs(rhs);
@@ -221,11 +231,48 @@ void goto_symex_statet::assignment(
     value_set.assign(l1_lhs, l1_rhs, ns, rhs_is_simplified, is_shared);
   }
 
-  #if 0
+  if(is_divisible)
+  {
+    // Field assignments may add new values to the value set (but also need the
+    // composite values in the value set), so first compute what has been added
+    // so that we can remove it below. If and when we use sharing maps, this
+    // will become much easier, because we can just take the information from
+    // the delta view.
+    std::vector<irep_idt> values_to_remove;
+    values_to_remove.reserve(
+      value_set.values.size() - value_set_keys_before.size());
+    auto before_it = value_set_keys_before.cbegin();
+    for(value_sett::valuest::const_iterator after_it = value_set.values.begin();
+        after_it != value_set.values.end();
+        ++after_it)
+    {
+      if(
+        before_it == value_set_keys_before.cend() ||
+        *before_it != after_it->first)
+      {
+        values_to_remove.push_back(after_it->first);
+      }
+      else
+        ++before_it;
+    }
+
+    // Split composite symbol lhs into its components
+    field_sensitivity.field_assignments(
+      ns, *this, l1_lhs, *symex_target, allow_pointer_unsoundness);
+    // Erase the composite symbol from our working state. Note that we need to
+    // have it in the propagation table and the value set while doing the field
+    // assignments, thus we cannot skip putting it in there above.
+    propagation.erase(l1_identifier);
+
+    for(const auto &id : values_to_remove)
+      value_set.values.erase(id);
+  }
+
+#if 0
   std::cout << "Assigning " << l1_identifier << '\n';
   value_set.output(ns, std::cout);
   std::cout << "**********************\n";
-  #endif
+#endif
 }
 
 template <levelt level>
