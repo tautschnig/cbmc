@@ -860,8 +860,7 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
   }
 
   // we will modify the template map
-  template_mapt old_template_map;
-  old_template_map=template_map;
+  cpp_saved_template_mapt saved_map(template_map);
 
   // check for default arguments
   for(std::size_t i=0; i<parameters.size(); i++)
@@ -898,6 +897,14 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
 
     if(parameter.id()==ID_type)
     {
+      cpp_save_scopet cpp_saved_scope(cpp_scopes);
+      cpp_idt *template_scope=cpp_scopes.id_map[template_symbol.name];
+      INVARIANT_STRUCTURED(
+        template_scope!=nullptr,
+        nullptr_exceptiont,
+        "template_scope is null");
+      cpp_scopes.go_to(*template_scope);
+
       if(arg.id()==ID_type)
       {
         typecheck_type(arg.type());
@@ -958,9 +965,6 @@ cpp_template_args_tct cpp_typecheckt::typecheck_template_args(
 
     template_map.set(parameter, arg);
   }
-
-  // restore template map
-  template_map.swap(old_template_map);
 
   // now the numbers should match
   assert(args.size()==parameters.size());
