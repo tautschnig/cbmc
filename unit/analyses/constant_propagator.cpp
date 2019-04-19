@@ -335,7 +335,7 @@ SCENARIO("constant_propagator", "[core][analyses][constant_propagator]")
 
           REQUIRE(final_domain.values.is_constant(bool_local));
 
-          final_domain.values.replace_const.replace(bool_local);
+          final_domain.values.replace(bool_local);
 
           exprt expected;
           if(bool_expectations[i])
@@ -352,7 +352,7 @@ SCENARIO("constant_propagator", "[core][analyses][constant_propagator]")
 
           REQUIRE(final_domain.values.is_constant(c_bool_local));
 
-          final_domain.values.replace_const.replace(c_bool_local);
+          final_domain.values.replace(c_bool_local);
 
           const exprt expected =
             c_bool_expectations[i] ? c_bool_true : c_bool_false;

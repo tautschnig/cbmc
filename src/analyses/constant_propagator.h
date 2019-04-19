@@ -22,8 +22,7 @@ Author: Peter Schrammel
 #ifndef CPROVER_ANALYSES_CONSTANT_PROPAGATOR_H
 #define CPROVER_ANALYSES_CONSTANT_PROPAGATOR_H
 
-#include <iosfwd>
-#include <util/replace_symbol.h>
+#include <util/constant_propagation_utils.h>
 
 #include "ai.h"
 #include "dirty.h"
@@ -80,71 +79,11 @@ public:
     return values.is_top();
   }
 
-  struct valuest
-  {
-    // maps variables to constants
-    address_of_aware_replace_symbolt replace_const;
-    bool is_bottom = true;
-
-    bool merge(const valuest &src);
-    bool meet(const valuest &src, const namespacet &ns);
-
-    // set whole state
-
-    void set_to_bottom()
-    {
-      replace_const.clear();
-      is_bottom=true;
-    }
-
-    void set_to_top()
-    {
-      replace_const.clear();
-      is_bottom=false;
-    }
-
-    bool is_bot() const
-    {
-      return is_bottom && replace_const.empty();
-    }
-
-    bool is_top() const
-    {
-      return !is_bottom && replace_const.empty();
-    }
-
-    void set_to(const symbol_exprt &lhs, const exprt &rhs)
-    {
-      replace_const.set(lhs, rhs);
-      is_bottom=false;
-    }
-
-    bool set_to_top(const symbol_exprt &expr);
-
-    void set_dirty_to_top(const dirtyt &dirty, const namespacet &ns);
-
-    bool is_constant(const exprt &expr) const;
-
-    bool is_constant(const irep_idt &id) const;
-
-    bool is_empty() const
-    {
-      return replace_const.empty();
-    }
-
-    void output(std::ostream &out, const namespacet &ns) const;
-  };
-
-  valuest values;
-
-  static bool partial_evaluate(
-    const valuest &known_values,
-    exprt &expr,
-    const namespacet &ns);
+  constant_valuest values;
 
 protected:
   static void assign_rec(
-    valuest &dest_values,
+    constant_valuest &dest_values,
     const exprt &lhs,
     const exprt &rhs,
     const namespacet &ns,
@@ -155,16 +94,6 @@ protected:
     const exprt &expr,
     const namespacet &ns,
     const constant_propagator_ait *cp);
-
-  static bool partial_evaluate_with_all_rounding_modes(
-    const valuest &known_values,
-    exprt &expr,
-    const namespacet &ns);
-
-  static bool replace_constants_and_simplify(
-    const valuest &known_values,
-    exprt &expr,
-    const namespacet &ns);
 };
 
 class constant_propagator_ait:public ait<constant_propagator_domaint>
@@ -228,10 +157,6 @@ protected:
   void replace(
     goto_functionst &,
     const namespacet &);
-
-  void replace_types_rec(
-    const replace_symbolt &replace_const,
-    exprt &expr);
 
   should_track_valuet should_track_value;
 };

@@ -7,6 +7,7 @@ SRC = allocate_objects.cpp \
       c_types.cpp \
       cmdline.cpp \
       config.cpp \
+      constant_propagation_utils.cpp \
       cout_message.cpp \
       dstring.cpp \
       endianness_map.cpp \
