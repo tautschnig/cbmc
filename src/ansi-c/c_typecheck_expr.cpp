@@ -715,7 +715,8 @@ void c_typecheck_baset::typecheck_expr_builtin_offsetof(exprt &expr)
 
   // We make an effort to produce a constant,
   // but this may depend on variables
-  simplify(result, *this);
+  constant_propagation.set_dirty_to_top(address_taken_symbols, *this);
+  constant_propagation.partial_evaluate(result, *this);
   result.add_source_location()=expr.source_location();
 
   expr.swap(result);
@@ -1763,6 +1764,9 @@ void c_typecheck_baset::typecheck_expr_address_of(exprt &expr)
   }
 
   expr.type()=pointer_type(op.type());
+
+  if(op.id() == ID_symbol)
+    address_taken_symbols.insert(to_symbol_expr(op).get_identifier());
 }
 
 void c_typecheck_baset::typecheck_expr_dereference(exprt &expr)
@@ -1898,6 +1902,11 @@ void c_typecheck_baset::typecheck_expr_side_effect(side_effect_exprt &expr)
               << to_string(type0) << "'" << eom;
       throw 0;
     }
+
+    if(expr.op0().id() == ID_symbol)
+      constant_propagation.set_to_top(to_symbol_expr(expr.op0()));
+    else
+      constant_propagation.set_to_top();
   }
   else if(has_prefix(id2string(statement), "assign"))
     typecheck_side_effect_assignment(expr);
@@ -2635,7 +2644,8 @@ exprt c_typecheck_baset::do_special_functions(
 
     // try to produce constant
     exprt tmp1=expr.arguments().front();
-    simplify(tmp1, *this);
+    constant_propagation.set_dirty_to_top(address_taken_symbols, *this);
+    constant_propagation.partial_evaluate(tmp1, *this);
 
     bool is_constant=false;
 
@@ -3320,9 +3330,16 @@ void c_typecheck_baset::typecheck_side_effect_assignment(
 
   expr.type()=o_type0;
 
+  if(op0.id() != ID_symbol)
+    constant_propagation.set_to_top();
+  else if(statement != ID_assign)
+    constant_propagation.set_to_top(to_symbol_expr(op0));
+
   if(statement==ID_assign)
   {
     implicit_typecast(op1, o_type0);
+    if(op0.id() == ID_symbol)
+      constant_propagation.set_to(to_symbol_expr(op0), op1);
     return;
   }
   else if(statement==ID_assign_shl ||
@@ -3453,7 +3470,8 @@ void c_typecheck_baset::make_constant(exprt &expr)
     from_integer(ieee_floatt::ROUND_TO_EVEN, signed_int_type());
   adjust_float_expressions(expr, rounding_mode);
 
-  simplify(expr, *this);
+  constant_propagation.set_dirty_to_top(address_taken_symbols, *this);
+  constant_propagation.partial_evaluate(expr, *this);
 
   if(!expr.is_constant() &&
      expr.id()!=ID_infinity)
@@ -3469,7 +3487,8 @@ void c_typecheck_baset::make_constant_index(exprt &expr)
 {
   make_constant(expr);
   make_index_type(expr);
-  simplify(expr, *this);
+  constant_propagation.set_dirty_to_top(address_taken_symbols, *this);
+  constant_propagation.partial_evaluate(expr, *this);
 
   if(!expr.is_constant() &&
      expr.id()!=ID_infinity)

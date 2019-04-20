@@ -36,6 +36,16 @@ void c_typecheck_baset::typecheck_code(codet &code)
 
   const irep_idt &statement=code.get_statement();
 
+  if(
+    !config.ansi_c.enable_optimization ||
+    (statement != ID_assign && statement != ID_block && statement != ID_decl &&
+     statement != ID_decl_block && statement != ID_expression &&
+     statement != ID_ifthenelse && statement != ID_return &&
+     statement != ID_skip))
+  {
+    constant_propagation.set_to_top();
+  }
+
   if(statement==ID_expression)
     typecheck_expression(code);
   else if(statement==ID_label)
@@ -182,6 +192,11 @@ void c_typecheck_baset::typecheck_assign(codet &code)
   typecheck_expr(code.op1());
 
   implicit_typecast(code.op1(), code.op0().type());
+
+  if(code.op0().id() == ID_symbol)
+    constant_propagation.set_to(to_symbol_expr(code.op0()), code.op1());
+  else
+    constant_propagation.set_to_top();
 }
 
 void c_typecheck_baset::typecheck_block(code_blockt &code)
@@ -311,6 +326,8 @@ void c_typecheck_baset::typecheck_decl(codet &code)
       {
         decl.operands().resize(2);
         decl.op1() = symbol.value;
+
+        constant_propagation.set_to(decl.symbol(), symbol.value);
       }
 
       new_code.push_back(decl);
@@ -603,6 +620,7 @@ void c_typecheck_baset::typecheck_ifthenelse(code_ifthenelset &code)
     code.then_case() = code_block;
   }
 
+  constant_valuest constants_bak = constant_propagation;
   typecheck_code(code.then_case());
 
   if(!code.else_case().is_nil())
@@ -614,8 +632,13 @@ void c_typecheck_baset::typecheck_ifthenelse(code_ifthenelset &code)
       code.else_case() = code_block;
     }
 
+    constant_valuest constants_then = constant_propagation;
+    constant_propagation = std::move(constants_bak);
     typecheck_code(code.else_case());
+    constant_propagation.merge(constants_then);
   }
+  else
+    constant_propagation.merge(constants_bak);
 }
 
 void c_typecheck_baset::typecheck_start_thread(codet &code)
@@ -653,6 +676,9 @@ void c_typecheck_baset::typecheck_return(code_returnt &code)
     }
     else
       implicit_typecast(code.return_value(), return_type);
+
+    constant_propagation.set_to(
+      symbol_exprt{current_symbol.name, return_type}, code.return_value());
   }
   else if(
     return_type.id() != ID_empty && return_type.id() != ID_constructor &&
@@ -664,6 +690,9 @@ void c_typecheck_baset::typecheck_return(code_returnt &code)
 
     code.return_value() =
       side_effect_expr_nondett(return_type, code.source_location());
+
+    constant_propagation.set_to_top(
+      symbol_exprt{current_symbol.name, return_type});
   }
 }
 

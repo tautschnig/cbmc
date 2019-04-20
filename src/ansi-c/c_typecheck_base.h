@@ -12,12 +12,13 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_ANSI_C_C_TYPECHECK_BASE_H
 #define CPROVER_ANSI_C_C_TYPECHECK_BASE_H
 
-#include <util/symbol_table.h>
-#include <util/typecheck.h>
+#include <util/constant_propagation_utils.h>
 #include <util/namespace.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
+#include <util/symbol_table.h>
+#include <util/typecheck.h>
 
 #include "ansi_c_declaration.h"
 #include "designator.h"
@@ -270,6 +271,9 @@ protected:
   asm_label_mapt asm_label_map;
 
   void apply_asm_label(const irep_idt &asm_label, symbolt &symbol);
+
+  constant_valuest constant_propagation;
+  std::unordered_set<irep_idt> address_taken_symbols;
 };
 
 #endif // CPROVER_ANSI_C_C_TYPECHECK_BASE_H

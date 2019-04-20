@@ -71,6 +71,14 @@ int ms_cl_modet::doit()
   // get configuration
   config.set(cmdline);
 
+  // optimization settings
+  if(
+    cmdline.isset("O1") || cmdline.isset("O2") || cmdline.isset("Og") ||
+    cmdline.isset("Os") || cmdline.isset("Ot") || cmdline.isset("Ox"))
+  {
+    config.ansi_c.enable_optimization = true;
+  }
+
   if(ms_cl_version.target == ms_cl_versiont::targett::x86)
     config.ansi_c.set_32();
   else if(ms_cl_version.target == ms_cl_versiont::targett::ARM)

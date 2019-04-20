@@ -453,6 +453,15 @@ int gcc_modet::doit()
   // get configuration
   config.set(cmdline);
 
+  // optimization settings
+  if(
+    cmdline.isset('O') || cmdline.isset("O1") || cmdline.isset("O2") ||
+    cmdline.isset("O3") || cmdline.isset("Ofast") || cmdline.isset("Os") ||
+    cmdline.isset("Oz"))
+  {
+    config.ansi_c.enable_optimization = true;
+  }
+
   // Intel-specific
   // in GCC, m16 is 32-bit (!), as documented here:
   // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59672
