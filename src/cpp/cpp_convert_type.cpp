@@ -29,6 +29,7 @@ class cpp_convert_typet : public ansi_c_convert_typet
 {
 public:
   std::size_t wchar_t_count, char16_t_count, char32_t_count;
+  bool is_constexpr;
 
   void write(typet &type) override;
 
@@ -44,6 +45,7 @@ protected:
     wchar_t_count = 0;
     char16_t_count = 0;
     char32_t_count = 0;
+    is_constexpr = false;
 
     ansi_c_convert_typet::clear();
   }
@@ -51,6 +53,7 @@ protected:
   void read_rec(const typet &type) override;
   void read_function_type(const typet &type);
   void read_template(const typet &type);
+  void set_attributes(typet &type) const override;
 };
 
 void cpp_convert_typet::read_rec(const typet &type)
@@ -69,7 +72,10 @@ void cpp_convert_typet::read_rec(const typet &type)
   else if(type.id()==ID_char32_t)
     ++char32_t_count;
   else if(type.id()==ID_constexpr)
+  {
     c_qualifiers.is_constant = true;
+    is_constexpr = true;
+  }
   else if(type.id()==ID_function_type)
   {
     read_function_type(type);
@@ -242,6 +248,14 @@ void cpp_convert_typet::read_function_type(const typet &type)
   // if we just have one parameter of type void, remove it
   if(parameters.size() == 1 && parameters.front().type().id() == ID_empty)
     parameters.clear();
+}
+
+void cpp_convert_typet::set_attributes(typet &type) const
+{
+  ansi_c_convert_typet::set_attributes(type);
+
+  if(is_constexpr)
+    type.set(ID_C_inlined, true);
 }
 
 void cpp_convert_typet::write(typet &type)

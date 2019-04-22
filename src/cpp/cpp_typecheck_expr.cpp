@@ -2002,6 +2002,31 @@ void cpp_typecheckt::typecheck_side_effect_function_call(
       error() << "expecting code as argument" << eom;
       throw 0;
     }
+
+    const code_typet &code_type = to_code_type(expr.function().type());
+    const symbolt *function_symbol = nullptr;
+    if(expr.function().id() == ID_symbol && code_type.get_inlined() &&
+       !lookup(to_symbol_expr(expr.function()).get_identifier(), function_symbol) &&
+       function_symbol->value.is_not_nil() &&
+      inlining_set.find(function_symbol->name) == inlining_set.end() &&
+      expr.arguments().size() ==
+       code_type.parameters().size())
+    {
+      // enter appropriate scope
+      cpp_save_scopet saved_scope(cpp_scopes);
+      cpp_scopet &function_scope=cpp_scopes.set_scope(function_symbol->name);
+
+      // fix the scope's prefix
+      function_scope.prefix=id2string(function_symbol->name)+"::";
+
+      // update parameters and put them in scope, but work on a copy
+      symbolt symbol = *function_symbol;
+      convert_parameters(symbol.mode, to_code_type(symbol.type));
+
+      auto inlined = inline_function_call(symbol, expr, false, symbol.name);
+      expr.swap(inlined);
+      return;
+    }
   }
   else if(expr.function().type().id()==ID_code)
   {

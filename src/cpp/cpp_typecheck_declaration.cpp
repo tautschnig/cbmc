@@ -46,6 +46,7 @@ codet cpp_typecheckt::convert_anonymous_union(cpp_declarationt &declaration)
 
   const symbolt &symbol=
     cpp_declarator_converter.convert(declaration, declarator);
+  current_symbol = symbol;
 
   if(!cpp_is_pod(declaration.type()))
   {
@@ -148,6 +149,7 @@ void cpp_typecheckt::convert_non_template_declaration(
     symbolt &symbol=cpp_declarator_converter.convert(
       declaration_type, declaration.storage_spec(),
       declaration.member_spec(), declarator);
+    current_symbol = symbol;
 
     // any template instance to remember?
     if(declaration.find(ID_C_template).is_not_nil())

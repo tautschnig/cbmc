@@ -31,6 +31,23 @@ cpp_declarator_convertert::cpp_declarator_convertert(
 {
 }
 
+static bool remove_inlined(typet &type)
+{
+  if(type.get_bool(ID_C_inlined))
+  {
+    type.remove(ID_C_inlined);
+    return true;
+  }
+
+  Forall_subtypes(it, type)
+  {
+    if(remove_inlined(*it))
+      return true;
+  }
+
+  return false;
+}
+
 symbolt &cpp_declarator_convertert::convert(
   const typet &declaration_type,
   const cpp_storage_spect &storage_spec,
@@ -87,6 +104,10 @@ symbolt &cpp_declarator_convertert::convert(
 
   is_code=is_code_type(final_type);
 
+  cpp_member_spect final_member_spec = member_spec;
+  if(is_code && remove_inlined(to_code_type(final_type).return_type()))
+    final_member_spec.set_inline(true);
+
   // global-scope arrays must have fixed size
   if(scope->is_global_scope())
     cpp_typecheck.check_fixed_size_array(final_type);
@@ -138,7 +159,7 @@ symbolt &cpp_declarator_convertert::convert(
       if(!maybe_symbol && is_friend)
       {
         symbolt &friend_symbol =
-          convert_new_symbol(final_storage_spec, member_spec, declarator);
+          convert_new_symbol(final_storage_spec, final_member_spec, declarator);
         // mark it as weak so that the full declaration can replace the symbol
         friend_symbol.is_weak = true;
         return friend_symbol;
@@ -220,7 +241,7 @@ symbolt &cpp_declarator_convertert::convert(
     const auto maybe_symbol=
       cpp_typecheck.symbol_table.get_writeable(final_identifier);
     if(!maybe_symbol)
-      return convert_new_symbol(final_storage_spec, member_spec, declarator);
+      return convert_new_symbol(final_storage_spec, final_member_spec, declarator);
     symbolt &symbol=*maybe_symbol;
 
     if(!final_storage_spec.is_extern())

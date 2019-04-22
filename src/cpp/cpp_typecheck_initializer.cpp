@@ -184,6 +184,9 @@ void cpp_typecheckt::convert_initializer(symbolt &symbol)
     else
       symbol.value = nil_exprt();
   }
+
+  if(symbol.value.is_not_nil())
+    constant_propagation.set_to(symbol.symbol_expr(), symbol.value);
 }
 
 void cpp_typecheckt::zero_initializer(
