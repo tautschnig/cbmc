@@ -150,7 +150,6 @@ extern char *yyansi_ctext;
 %token TOK_GCC_ATTRIBUTE_DESTRUCTOR "destructor"
 %token TOK_GCC_ATTRIBUTE_FALLTHROUGH "fallthrough"
 %token TOK_GCC_ATTRIBUTE_USED "used"
-%token TOK_GCC_ATTRIBUTE_ALWAYS_INLINE "always_inline"
 %token TOK_GCC_LABEL   "__label__"
 %token TOK_MSC_ASM     "__asm"
 %token TOK_MSC_BASED   "__based"
@@ -1399,11 +1398,16 @@ storage_class:
           init($$);
           set($$, ID_static);
           set($1, ID_inline);
+          #if 0
+          // enable once always_inline support is reinstantiated
           $1=merge($1, $$);
 
           init($$);
           set($$, ID_always_inline);
           $$=merge($1, $$);
+          #else
+          $$=merge($1, $$);
+          #endif
         }
         ;
 
@@ -1568,8 +1572,6 @@ gcc_type_attribute:
         { $$=$1; set($$, ID_destructor); }
         | TOK_GCC_ATTRIBUTE_USED
         { $$=$1; set($$, ID_used); }
-        | TOK_GCC_ATTRIBUTE_ALWAYS_INLINE
-        { $$=$1; set($$, ID_always_inline); }
         ;
 
 gcc_attribute:
