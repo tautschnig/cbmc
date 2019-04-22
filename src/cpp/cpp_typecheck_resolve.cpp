@@ -22,7 +22,6 @@ Author: Daniel Kroening, kroening@cs.cmu.edu
 #include <util/c_types.h>
 #include <util/mathematical_types.h>
 #include <util/prefix.h>
-#include <util/simplify_expr.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
 #include <util/string_constant.h>
@@ -1052,19 +1051,9 @@ struct_tag_typet cpp_typecheck_resolvet::disambiguate_template_classes(
     {
       if(arg.id() == ID_type)
         continue;
-      if(arg.id() == ID_symbol)
-      {
-        const symbol_exprt &s = to_symbol_expr(arg);
-        const symbolt &symbol = cpp_typecheck.lookup(s.get_identifier());
 
-        if(
-          cpp_typecheck.cpp_is_pod(symbol.type) &&
-          symbol.type.get_bool(ID_C_constant))
-        {
-          arg = symbol.value;
-        }
-      }
-      simplify(arg, cpp_typecheck);
+      cpp_typecheck.constant_propagation.set_dirty_to_top(cpp_typecheck.address_taken_symbols, cpp_typecheck);
+      cpp_typecheck.constant_propagation.partial_evaluate(arg, cpp_typecheck);
     }
 
     // go back to where we used to be
