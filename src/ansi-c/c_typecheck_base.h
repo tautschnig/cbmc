@@ -277,6 +277,19 @@ protected:
 
   typedef std::unordered_set<irep_idt> inlining_sett;
   inlining_sett inlining_set;
+
+  static void replace_returns_rec(
+    codet &code,
+    const exprt &single_return,
+    const irep_idt &out_label);
+  static void make_single_return(
+    const symbolt &func_sym,
+    code_blockt &code,
+    symbol_tablet &symbol_table);
+  exprt inline_function_call(
+    const symbolt &func_sym,
+    const side_effect_expr_function_callt &expr,
+    bool is_asm_alias, const irep_idt &non_asm_name);
 };
 
 #endif // CPROVER_ANSI_C_C_TYPECHECK_BASE_H

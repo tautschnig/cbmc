@@ -1926,7 +1926,7 @@ void c_typecheck_baset::typecheck_expr_side_effect(side_effect_exprt &expr)
   }
 }
 
-static void replace_returns_rec(
+void c_typecheck_baset::replace_returns_rec(
   codet &code,
   const exprt &single_return,
   const irep_idt &out_label)
@@ -1962,7 +1962,7 @@ static void replace_returns_rec(
   }
 }
 
-static void make_single_return(
+void c_typecheck_baset::make_single_return(
   const symbolt &func_sym,
   code_blockt &code,
   symbol_tablet &symbol_table)
@@ -2016,6 +2016,97 @@ static void make_single_return(
     code.add(label_stmt);
     code.add(code_returnt(ret_expr));
   }
+}
+
+exprt c_typecheck_baset::inline_function_call(
+  const symbolt &func_sym,
+  const side_effect_expr_function_callt &expr,
+  bool is_asm_alias,
+  const irep_idt &non_asm_name)
+{
+  const code_typet &func_type = to_code_type(func_sym.type);
+
+  std::map<symbol_exprt, exprt> actuals;
+
+  const code_typet::parameterst &parameters = func_type.parameters();
+  auto p_it = parameters.begin();
+  for(const auto &arg : expr.arguments())
+  {
+    PRECONDITION(p_it != parameters.end());
+
+    irep_idt p_id = p_it->get_identifier();
+    if(p_id.empty())
+    {
+      const std::string base_name = id2string(p_it->get_base_name());
+      p_id = id2string(func_sym.base_name) + "::" + base_name;
+
+      if(is_asm_alias)
+      {
+        constant_propagation.set_to(
+          symbol_exprt{id2string(non_asm_name) + "::" + base_name, p_it->type()},
+          arg);
+      }
+    }
+
+    symbol_exprt p{p_id, p_it->type()};
+    exprt arg_cast = typecast_exprt::conditional_cast(arg, p.type());
+    actuals.emplace(p, arg_cast);
+    constant_propagation.set_to(p, arg_cast);
+
+    ++p_it;
+  }
+
+  // simulates parts of typecheck_function_body
+  typet cur_return_type = return_type;
+  return_type = func_type.return_type();
+  code_blockt body;
+  if(to_code(func_sym.value).get_statement() == ID_block)
+    body = to_code_block(to_code(func_sym.value));
+  else
+    body.add(to_code(func_sym.value));
+  inlining_sett cur_inlining_set = inlining_set;
+  inlining_set.insert(func_sym.name);
+  make_single_return(func_sym, body, symbol_table);
+  bool enable_opt_bak = config.ansi_c.enable_optimization;
+  config.ansi_c.enable_optimization = true;
+  typecheck_code(body);
+  config.ansi_c.enable_optimization = enable_opt_bak;
+  return_type.swap(cur_return_type);
+
+  // replace final return by an ID_expression
+  codet &last = body.find_last_statement();
+
+  if(last.get_statement() == ID_return)
+  {
+    last.set_statement(ID_expression);
+    if(last.op0().is_nil())
+      last.op0() =
+        typecast_exprt(from_integer(0, signed_int_type()), empty_typet());
+
+    constant_propagation.set_dirty_to_top(address_taken_symbols, *this);
+    constant_propagation.partial_evaluate(last.op0(), *this);
+  }
+
+  find_symbols_sett remaining_symbols;
+  find_symbols(body, remaining_symbols);
+  for(const auto &p_pair : actuals)
+  {
+    if(remaining_symbols.count(p_pair.first.get_identifier()) != 0)
+      body.statements().insert(body.statements().begin(), code_assignt{p_pair.first, p_pair.second});
+  }
+
+  if(body.statements().size() == 1 && body.statements().front().get_statement() == ID_expression)
+  {
+    return to_code_expression(body.statements().front()).expression();
+  }
+
+  side_effect_exprt side_effect_expr(
+    ID_statement_expression, func_type.return_type());
+  side_effect_expr.copy_to_operands(body);
+  typecheck_side_effect_statement_expression(side_effect_expr);
+  cur_inlining_set.swap(inlining_set);
+
+  return side_effect_expr;
 }
 
 void c_typecheck_baset::typecheck_side_effect_function_call(
@@ -2099,65 +2190,28 @@ void c_typecheck_baset::typecheck_side_effect_function_call(
       expr.arguments().size() ==
         to_code_type(sym_entry->second.type).parameters().size())
     {
+      // Add the parameter declarations into the symbol table.
+      for(auto &p : to_code_type(sym_entry->second.type).parameters())
+      {
+        const irep_idt &base_name = p.get_base_name();
+        irep_idt identifier = p.get_identifier();
+
+        if(identifier.empty())
+          identifier = id2string(sym_entry->first) +"::"+id2string(base_name);
+
+        parameter_symbolt p_symbol;
+
+        p_symbol.type = p.type();
+        p_symbol.name=identifier;
+        p_symbol.base_name=base_name;
+        p_symbol.location = p.source_location();
+
+        symbol_table.add(p_symbol);
+      }
+
       // calling a function marked as always_inline
-      const symbolt &func_sym = sym_entry->second;
-      const code_typet &func_type = to_code_type(func_sym.type);
-
-      const code_typet::parameterst &parameters = func_type.parameters();
-      auto p_it = parameters.begin();
-      for(const auto &arg : expr.arguments())
-      {
-        PRECONDITION(p_it != parameters.end());
-
-        irep_idt p_id = p_it->get_identifier();
-        if(p_id.empty())
-        {
-          const std::string base_name = id2string(p_it->get_base_name());
-          p_id = id2string(func_sym.base_name) + "::" + base_name;
-
-          if(is_asm_alias)
-          {
-            constant_propagation.set_to(
-              symbol_exprt{id2string(orig_identifier) + "::" + base_name, p_it->type()},
-              arg);
-          }
-        }
-
-        constant_propagation.set_to(symbol_exprt{p_id, p_it->type()}, arg);
-
-        ++p_it;
-      }
-
-      // simulates parts of typecheck_function_body
-      typet cur_return_type = return_type;
-      return_type = func_type.return_type();
-      codet body = to_code(func_sym.value);
-      body.make_block();
-      inlining_sett cur_inlining_set = inlining_set;
-      inlining_set.insert(func_sym.name);
-      typecheck_code(body);
-      make_single_return(func_sym, to_code_block(body), symbol_table);
-      return_type.swap(cur_return_type);
-
-      // replace final return by an ID_expression
-      codet &last = to_code_block(body).find_last_statement();
-
-      if(last.get_statement() == ID_return)
-      {
-        last.set_statement(ID_expression);
-        if(last.op0().is_nil())
-          last.op0() =
-            typecast_exprt(from_integer(0, signed_int_type()), empty_typet());
-      }
-
-      side_effect_exprt side_effect_expr(
-        ID_statement_expression, func_type.return_type());
-      side_effect_expr.copy_to_operands(body);
-      typecheck_side_effect_statement_expression(side_effect_expr);
-      cur_inlining_set.swap(inlining_set);
-
-      expr.swap(side_effect_expr);
-
+      auto inlined = inline_function_call(sym_entry->second, expr, is_asm_alias, orig_identifier);
+      expr.swap(inlined);
       return;
     }
     else if(
