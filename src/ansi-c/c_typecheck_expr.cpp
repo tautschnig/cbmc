@@ -2047,7 +2047,9 @@ void c_typecheck_baset::typecheck_side_effect_function_call(
       identifier=entry->second;
     }
 
-    if(symbol_table.symbols.find(identifier)==symbol_table.symbols.end())
+    symbol_tablet::symbolst::const_iterator sym_entry =
+      symbol_table.symbols.find(identifier);
+    if(sym_entry == symbol_table.symbols.end())
     {
       // This is an undeclared function.
       // Is this a builtin?
