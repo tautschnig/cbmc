@@ -472,6 +472,13 @@ symbolt &cpp_declarator_convertert::convert_new_symbol(
 
     if(member_spec.is_inline())
       symbol.type.set(ID_C_inlined, true);
+
+    if(symbol.value.is_nil())
+    {
+      // we don't need the identifiers
+      for(auto &parameter : to_code_type(symbol.type).parameters())
+        parameter.set_identifier(irep_idt());
+    }
   }
   else
   {
