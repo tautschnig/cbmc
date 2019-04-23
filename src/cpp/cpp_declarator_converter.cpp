@@ -97,7 +97,7 @@ symbolt &cpp_declarator_convertert::convert(
     final_type.set(ID_C_typedef, final_identifier);
 
   // first see if it is a member
-  if(scope->id_class == cpp_idt::id_classt::CLASS)
+  if(is_code && scope->id_class == cpp_idt::id_classt::CLASS)
   {
     // it's a member! it must be declared already, unless it's a friend
 

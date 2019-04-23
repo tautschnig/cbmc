@@ -1682,8 +1682,6 @@ bool Parser::rOtherDeclaration(
   if(!rName(type_name))
     return false;
 
-  merge_types(cv_q, type_name);
-
 #ifdef DEBUG
   std::cout << std::string(__indent, ' ') << "Parser::rOtherDeclaration 2\n";
 #endif
@@ -1741,6 +1739,8 @@ bool Parser::rOtherDeclaration(
 
     type_name=typet("cpp-cast-operator");
 
+    merge_types(cv_q, type_name);
+
     declaration.declarators().push_back(conv_operator_declarator);
   }
   else if(cv_q.is_nil() && is_constructor)
@@ -1783,6 +1783,8 @@ bool Parser::rOtherDeclaration(
     std::cout << std::string(__indent, ' ') << "Parser::rOtherDeclaration 8\n";
 #endif
 
+    merge_types(cv_q, type_name);
+
     // FRIEND name ';'
     // if(Ptree::Length(member_spec)==1 && member_spec->Car()->What()==FRIEND)
     {
@@ -1800,6 +1802,8 @@ bool Parser::rOtherDeclaration(
 #ifdef DEBUG
     std::cout << std::string(__indent, ' ') << "Parser::rOtherDeclaration 9\n";
 #endif
+
+    merge_types(cv_q, type_name);
 
     if(!optCvQualify(cv_q))
       return false;
@@ -4455,6 +4459,17 @@ bool Parser::rClassSpec(typet &spec)
   std::cout << std::string(__indent, ' ') << "Parser::rClassSpec 3\n";
 #endif
 
+  if(!optAlignas(spec))
+    return false;
+
+  if(lex.LookAhead(0)==TOK_GCC_ATTRIBUTE)
+  {
+    lex.get_token(tk);
+
+    if(!rAttribute(spec))
+      return false;
+  }
+
   if(lex.LookAhead(0)=='{')
   {
     // no tag
@@ -4464,17 +4479,6 @@ bool Parser::rClassSpec(typet &spec)
   }
   else
   {
-    if(!optAlignas(spec))
-      return false;
-
-    if(lex.LookAhead(0)==TOK_GCC_ATTRIBUTE)
-    {
-      lex.get_token(tk);
-
-      if(!rAttribute(spec))
-        return false;
-    }
-
     irept name;
 
     if(!rName(name))
@@ -5559,42 +5563,6 @@ bool Parser::rTypeNameOrFunctionType(typet &tname)
   cpp_tokent op;
   lex.get_token(op);
 
-  // TODO -- cruel hack for Clang's type_traits:
-  // struct __member_pointer_traits_imp<_Rp (_Class::*)(_Param..., ...),
-  //                                    true, false>
-  if(lex.LookAhead(0)==TOK_IDENTIFIER &&
-     lex.LookAhead(1)==TOK_SCOPE &&
-     lex.LookAhead(2)=='*' &&
-     lex.LookAhead(3)==')' &&
-     lex.LookAhead(4)=='(')
-  {
-    lex.get_token();
-    lex.get_token();
-    lex.get_token();
-    lex.get_token();
-    lex.get_token();
-  }
-  else if(lex.LookAhead(0)==TOK_IDENTIFIER &&
-          lex.LookAhead(1)==')' &&
-          lex.LookAhead(2)=='(')
-  {
-    lex.get_token(op);
-    type.set(ID_identifier, op.data.get(ID_C_base_name));
-    lex.get_token();
-    lex.get_token();
-  }
-  else if(lex.LookAhead(0)=='*' &&
-          lex.LookAhead(1)==TOK_IDENTIFIER &&
-          lex.LookAhead(2)==')' &&
-          lex.LookAhead(3)=='(')
-  {
-    lex.get_token(op);
-    lex.get_token(op);
-    type.set(ID_identifier, op.data.get(ID_C_base_name));
-    lex.get_token();
-    lex.get_token();
-  }
-
   for(;;)
   {
     // function type parameters
@@ -5610,6 +5578,13 @@ bool Parser::rTypeNameOrFunctionType(typet &tname)
     else if(t==TOK_ELLIPSIS)
     {
       cpp_tokent tk;
+      lex.get_token(tk);
+      type.make_ellipsis();
+    }
+    else if(t == ',' && lex.LookAhead(1) == TOK_ELLIPSIS)
+    {
+      cpp_tokent tk;
+      lex.get_token(tk);
       lex.get_token(tk);
       type.make_ellipsis();
     }
