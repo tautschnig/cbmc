@@ -70,6 +70,7 @@ public:
     BLOCK,
     NON_TYPE_TEMPLATE_PARAMETER,
     TYPE_TEMPLATE_PARAMETER,
+    TYPE_TEMPLATE_PARAMETER_PACK,
     TEMPLATE_TEMPLATE_PARAMETER
   };
 
@@ -80,6 +81,7 @@ public:
   {
     return kind==kindt::TYPEDEF ||
            kind==kindt::TYPE_TEMPLATE_PARAMETER ||
+           kind==kindt::TYPE_TEMPLATE_PARAMETER_PACK ||
            kind==kindt::TAG ||
            kind==kindt::CLASS_TEMPLATE;
   }
@@ -95,7 +97,8 @@ public:
   {
     return kind==kindt::NAMESPACE ||
            kind==kindt::TAG ||
-           kind==kindt::TYPE_TEMPLATE_PARAMETER;
+           kind==kindt::TYPE_TEMPLATE_PARAMETER ||
+           kind==kindt::TYPE_TEMPLATE_PARAMETER_PACK;
   }
 
   static const char *kind2string(kindt kind)
@@ -130,6 +133,8 @@ public:
       return "NON_TYPE_TEMPLATE_PARAMETER";
     case kindt::TYPE_TEMPLATE_PARAMETER:
       return "TYPE_TEMPLATE_PARAMETER";
+    case kindt::TYPE_TEMPLATE_PARAMETER_PACK:
+      return "TYPE_TEMPLATE_PARAMETER_PACK";
     case kindt::TEMPLATE_TEMPLATE_PARAMETER:
       return "TEMPLATE_TEMPLATE_PARAMETER";
     default:
@@ -1194,12 +1199,12 @@ bool Parser::rTempArgDeclaration(cpp_declarationt &declaration)
       declarator.name() = cpp_namet(tk2.data.get(ID_C_base_name));
       set_location(declarator.name(), tk2);
 
-      add_id(declarator.name(), new_scopet::kindt::TYPE_TEMPLATE_PARAMETER);
-
       if(has_ellipsis)
       {
-        // TODO
+        add_id(declarator.name(), new_scopet::kindt::TYPE_TEMPLATE_PARAMETER_PACK);
       }
+      else
+        add_id(declarator.name(), new_scopet::kindt::TYPE_TEMPLATE_PARAMETER);
     }
 
     if(lex.LookAhead(0)=='=')
@@ -5606,6 +5611,7 @@ bool Parser::rTypeNameOrFunctionType(typet &tname)
       }
       else if(t==TOK_ELLIPSIS)
       {
+        XXX check whether parameter is _PACK;
         // TODO -- this is actually ambiguous as it could refer to a
         // template parameter pack or declare a variadic function
         cpp_tokent tk;
