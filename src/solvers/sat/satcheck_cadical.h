@@ -20,7 +20,7 @@ namespace CaDiCaL // NOLINT(readability/namespace)
 class satcheck_cadicalt:public cnf_solvert
 {
 public:
-  satcheck_cadicalt();
+  explicit satcheck_cadicalt(message_handlert &message_handler);
   virtual ~satcheck_cadicalt();
 
   const std::string solver_text() override;
@@ -32,11 +32,11 @@ public:
   void set_assumptions(const bvt &_assumptions) override;
   bool has_set_assumptions() const override
   {
-    return false;
+    return true;
   }
   bool has_is_in_conflict() const override
   {
-    return false;
+    return true;
   }
   bool is_in_conflict(literalt a) const override;
 
@@ -45,6 +45,8 @@ protected:
 
   // NOLINTNEXTLINE(readability/identifiers)
   CaDiCaL::Solver * solver;
+
+  bvt assumptions;
 };
 
 #endif // CPROVER_SOLVERS_SAT_SATCHECK_CADICAL_H

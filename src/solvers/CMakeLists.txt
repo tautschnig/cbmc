@@ -98,6 +98,36 @@ elseif("${sat_impl}" STREQUAL "glucose")
     target_sources(solvers PRIVATE ${glucose_source})
 
     target_link_libraries(solvers glucose-condensed)
+elseif("${sat_impl}" STREQUAL "cadical")
+    message(STATUS "Building solvers with cadical")
+
+    download_project(PROJ cadical
+        URL https://github.com/arminbiere/cadical/archive/sr19.tar.gz
+        PATCH_COMMAND true
+        COMMAND CXX=${CXX_COMPILER} CXXFLAGS=-O3 ./configure --debug
+        URL_MD5 dd9b7c7b88aa769985993e33fbfdfb35
+    )
+
+    message(STATUS "Building CaDiCaL")
+    execute_process(COMMAND make WORKING_DIRECTORY ${cadical_SOURCE_DIR})
+
+    target_compile_definitions(solvers PUBLIC
+        SATCHECK_CADICAL HAVE_CADICAL
+    )
+
+    add_library(cadical STATIC IMPORTED)
+
+    set_target_properties(
+        cadical
+        PROPERTIES IMPORTED_LOCATION ${cadical_SOURCE_DIR}/build/libcadical.a
+    )
+
+    target_include_directories(solvers
+      PUBLIC
+      ${cadical_SOURCE_DIR}/src
+    )
+
+    target_link_libraries(solvers cadical)
 endif()
 
 if(CMAKE_USE_CUDD)

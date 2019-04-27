@@ -23,7 +23,7 @@ tvt satcheck_cadicalt::l_get(literalt a) const
 
   tvt result;
 
-  if(a.var_no() > static_cast<unsigned>(solver->max()))
+  if(a.var_no() > static_cast<unsigned>(solver->vars()))
     return tvt(tvt::tv_enumt::TV_UNKNOWN);
 
   const int val = solver->val(a.dimacs());
@@ -79,6 +79,21 @@ propt::resultt satcheck_cadicalt::do_prop_solve()
   }
   else
   {
+    // if assumptions contains false, we need this to be UNSAT
+    for(const auto &a : assumptions)
+    {
+      if(a.is_false())
+      {
+        log.status() << "got FALSE as assumption: instance is UNSATISFIABLE"
+                     << messaget::eom;
+        status = statust::UNSAT;
+        return resultt::P_UNSATISFIABLE;
+      }
+    }
+
+    for(const auto &a : assumptions)
+      solver->assume(a.dimacs());
+
     switch(solver->solve())
     {
       case 10:
@@ -107,8 +122,8 @@ void satcheck_cadicalt::set_assignment(literalt a, bool value)
   INVARIANT(false, "method not supported");
 }
 
-satcheck_cadicalt::satcheck_cadicalt() :
-  solver(new CaDiCaL::Solver())
+satcheck_cadicalt::satcheck_cadicalt(message_handlert &message_handler)
+  : cnf_solvert(message_handler), solver(new CaDiCaL::Solver())
 {
   solver->set("quiet", 1);
 }
@@ -120,13 +135,21 @@ satcheck_cadicalt::~satcheck_cadicalt()
 
 void satcheck_cadicalt::set_assumptions(const bvt &bv)
 {
-  INVARIANT(false, "method not supported");
+  assumptions = bv;
+
+  for(const auto &a : assumptions)
+  {
+    if(a.is_true())
+    {
+      assumptions.clear();
+      break;
+    }
+  }
 }
 
 bool satcheck_cadicalt::is_in_conflict(literalt a) const
 {
-  INVARIANT(false, "method not supported");
-  return false;
+  return solver->failed(a.dimacs());
 }
 
 #endif

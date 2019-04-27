@@ -149,13 +149,12 @@ glucose-download:
 	@(cd ../glucose-syrup; patch -p1 < ../scripts/glucose-syrup-patch)
 	@rm glucose-syrup.tgz
 
-cadical_release = rel-06w
+cadical_release = sr19
 cadical-download:
 	@echo "Downloading CaDiCaL $(cadical_release)"
 	@curl -L https://github.com/arminbiere/cadical/archive/$(cadical_release).tar.gz | tar xz
 	@rm -Rf ../cadical
 	@mv cadical-$(cadical_release) ../cadical
-	@(cd ../cadical; patch -p1 < ../scripts/cadical-patch)
 	@cd ../cadical && CXX=$(CXX) CXXFLAGS=-O3 ./configure --debug && make
 
 doc :
