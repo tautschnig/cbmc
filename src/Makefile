@@ -19,6 +19,7 @@ DIRS = analyses \
        linking \
        memory-analyzer \
        pointer-analysis \
+	   rust \
        solvers \
        statement-list \
        symtab2gb \
@@ -61,7 +62,12 @@ cpp.dir: ansi-c.dir linking.dir
 
 languages: util.dir langapi.dir \
            cpp.dir ansi-c.dir xmllang.dir assembler.dir \
+<<<<<<< HEAD
            jsil.dir json.dir json-symtab-language.dir statement-list.dir
+=======
+           jsil.dir json.dir json-symtab-language.dir \
+           rust.dir
+>>>>>>>  adding WIP Rust Front End to CBMC
 
 solvers.dir: util.dir
 
