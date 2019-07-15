@@ -21,6 +21,11 @@ extern int yylex(unsigned int* yylval);
 extern void yyerror(char const *s);
 extern void push_back(char c);
 extern char const* yyrusttext;
+
+symbol_exprt symbol_exprt_typeless_empty(irep_idt const& id)
+{
+  return symbol_exprt(id, typet(ID_empty));
+}
 %}
 
 %language "c++"
@@ -872,9 +877,9 @@ named_arg
 ;
 
 ret_ty
-: RARROW '!'         { newstack($$).swap(symbol_exprt::typeless("")); }
+: RARROW '!'         { newstack($$).swap(symbol_exprt_typeless_empty("")); }
 | RARROW ty          { $$ = $2; }
-| %prec IDENT %empty { newstack($$).swap(symbol_exprt::typeless("")); }
+| %prec IDENT %empty { newstack($$).swap(symbol_exprt_typeless_empty("")); }
 ;
 
 generic_params
@@ -2094,12 +2099,12 @@ str
 ;
 
 maybe_ident
-: %empty { newstack($$).swap(symbol_exprt::typeless("")); }
+: %empty { newstack($$).swap(symbol_exprt_typeless_empty("")); }
 | ident
 ;
 
 ident
-: IDENT                      { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
+: IDENT                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
 // Weak keywords that can be used as identifiers
 | CATCH                      { /*{o}$$ = mk_node("ident", 1, mk_atom(yyrusttext));*/ }
 | DEFAULT                    { /*{o}$$ = mk_node("ident", 1, mk_atom(yyrusttext));*/ }
@@ -2117,16 +2122,16 @@ unpaired_token
 | ANDAND                     { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_and))); }
 | OROR                       { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_or))); }
 | LARROW                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| SHLEQ                      { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| SHREQ                      { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| MINUSEQ                    { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| ANDEQ                      { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| OREQ                       { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| PLUSEQ                     { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| STAREQ                     { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| SLASHEQ                    { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| CARETEQ                    { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
-| PERCENTEQ                  { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
+| SHLEQ                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| SHREQ                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| MINUSEQ                    { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| ANDEQ                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| OREQ                       { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| PLUSEQ                     { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| STAREQ                     { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| SLASHEQ                    { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| CARETEQ                    { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| PERCENTEQ                  { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
 | DOTDOT                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | DOTDOTDOT                  { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | MOD_SEP                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2140,7 +2145,7 @@ unpaired_token
 | LIT_STR_RAW                { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIT_BYTE_STR               { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIT_BYTE_STR_RAW           { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| IDENT                      { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
+| IDENT                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
 | UNDERSCORE                 { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIFETIME                   { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | SELF                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2165,7 +2170,7 @@ unpaired_token
 | IMPL                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | IN                         { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LET                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| LOOP                       { newstack($$).swap(symbol_exprt::typeless(yyrusttext)); }
+| LOOP                       { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
 | MACRO                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | MATCH                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | MOD                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2189,7 +2194,7 @@ unpaired_token
 | UNSIZED                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | USE                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | VIRTUAL                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| WHILE                      { newstack($$).swap(symbol_exprt::typeless(yyrusttext));  }
+| WHILE                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext));  }
 | YIELD                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | CONTINUE                   { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | PROC                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2251,9 +2256,9 @@ parens_delimited_token_trees
 {
   /*{o}$$ = mk_node("TTDelim", 3, mk_node("TTTok", 1, mk_atom("(")), $2, mk_node("TTTok", 1, mk_atom(")")));*/
   multi_ary_exprt parenthesized("ID_token_tree", exprt::operandst(), typet());
-  parenthesized.add_to_operands(symbol_exprt::typeless("("));
+  parenthesized.add_to_operands(symbol_exprt_typeless_empty("("));
   parenthesized.add_to_operands(parser_stack($2));
-  parenthesized.add_to_operands(symbol_exprt::typeless(")"));
+  parenthesized.add_to_operands(symbol_exprt_typeless_empty(")"));
   newstack($$).swap(parenthesized);
 }
 ;

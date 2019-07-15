@@ -232,6 +232,11 @@ typet rust_union(const typet &type1, const typet &type2)
   return rust_union_typet(type1).union_with(rust_union_typet(type2)).to_type();
 }
 
+bool is_empty_type(typet const& type)
+{
+  return type.id() == ID_empty || type.id().empty();
+}
+
 bool compare_components(
   const union_typet::componentt &comp1,
   const union_typet::componentt &comp2)

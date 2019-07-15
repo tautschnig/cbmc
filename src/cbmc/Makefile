@@ -42,11 +42,7 @@ OBJ += ../ansi-c/ansi-c$(LIBEXT) \
       ../xmllang/xmllang$(LIBEXT) \
       ../assembler/assembler$(LIBEXT) \
       ../solvers/solvers$(LIBEXT) \
-<<<<<<< HEAD
       ../util/util$(LIBEXT) \
-=======
-      ../util/util$(LIBEXT)
->>>>>>> Update generate_vcxproj to work with current source tree
 
 INCLUDES= -I ..
 

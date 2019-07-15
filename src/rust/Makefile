@@ -1,7 +1,18 @@
-SRC = rust_lex.yy.cpp \
+SRC = expr2rust.cpp \
+      rust_convert.cpp \
+      rust_entry_point.cpp \
+      rust_internal_additions.cpp \
+      rust_language.cpp \
+      rust_lex.yy.cpp \
+      rust_parse_tree.cpp \
+      rust_parseassert.cpp \
       rust_parser.cpp \
+      rust_temporary_node_definitions.cpp \
+      rust_typecheck.cpp \
+      rust_types.cpp \
       rust_y.tab.cpp \
       # Empty last line
+
 	  
 INCLUDES= -I ..
 

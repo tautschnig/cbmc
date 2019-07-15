@@ -39,6 +39,8 @@ bool rust_is_subtype(const typet &type1, const typet &type2);
 bool rust_incompatible_types(const typet &type1, const typet &type2);
 typet rust_union(const typet &type1, const typet &type2);
 
+bool is_empty_type(typet const& type);
+
 class rust_builtin_code_typet:public code_typet
 {
 public:

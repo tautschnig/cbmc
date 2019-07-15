@@ -10,8 +10,6 @@ Author: Brett Schiff, bschiff@amazon.com
 
 /// \file
 /// Rust Language
-#include <iostream>
-
 #include "rust_typecheck.h"
 
 #include <util/prefix.h>
@@ -54,7 +52,7 @@ typet rust_typecheckt::lookup_type(exprt& expr)
     throw 0;
   }
 
-  return typet();
+  return empty_typet();
 }
 
 /// search known symbols from this scope up and return type, returning an empty type if not found
@@ -73,7 +71,7 @@ typet rust_typecheckt::search_known_symbols(irep_idt const &symbol_name)
       return (*result).second;
   }
 
-  return typet();
+  return empty_typet();
 }
 /// search known symbols from this scope up and return type, returning an empty type if not found
 irep_idt
@@ -91,7 +89,7 @@ rust_typecheckt::find_existing_decorated_symbol(irep_idt const &symbol_name)
       return (*result).first;
   }
 
-  return irep_idt();
+  return ID_empty;
 }
 
 /// Prefix parameters and variables with a procedure name
@@ -123,12 +121,12 @@ typet rust_typecheckt::rust_reconcile_types(exprt &a, exprt &b)
 
 
   // Lookup variables from history
-  if(aType.id().empty() || aType == empty_typet())
+  if(is_empty_type(aType))
   {
     aType = lookup_type(a);
     a.type() = aType;
   }
-  if(bType.id().empty() || bType == empty_typet())
+  if(is_empty_type(bType))
   {
     bType = lookup_type(b);
     b.type() = bType;
@@ -136,16 +134,16 @@ typet rust_typecheckt::rust_reconcile_types(exprt &a, exprt &b)
 
   if(aType == bType)
     return aType;
-  else if(aType.id().empty())
+  else if(is_empty_type(aType))
     return bType;
-  else if(bType.id().empty())
+  else if(is_empty_type(bType))
     return aType;
   else
   {
     // Handle differing types
     typet result = rust_resolve_differing_types(a, b);
 
-    if(result.id().empty())
+    if(is_empty_type(result))
     {
       error() << "Unable to resolve types [" << aType.id() << "] and ["
               << bType.id() << "] from expressions:";
@@ -176,7 +174,7 @@ void rust_typecheckt::update_expr_type(exprt &expr, const typet &type)
     }
 
     symbolt &s = *maybe_symbol;
-    if(s.type.id().empty() || s.type.is_nil())
+    if(is_empty_type(s.type) || s.type.is_nil())
       s.type = type;
     else
       s.type = rust_union(s.type, type);
@@ -188,14 +186,14 @@ void rust_typecheckt::make_type_compatible(
   const typet &type,
   bool must)
 {
-  if(type.id().empty() || type.is_nil())
+  if(is_empty_type(type) || type.is_nil())
   {
     error().source_location = expr.source_location();
     error() << "make_type_compatible got empty type: " << expr.pretty() << eom;
     throw 0;
   }
 
-  if(expr.type().id().empty() || expr.type().is_nil())
+  if(is_empty_type(expr.type()) || expr.type().is_nil())
   {
     // Type is not yet set
     update_expr_type(expr, type);
@@ -450,15 +448,15 @@ typet extract_type_side_effect_block(codet& code)
   {
     code_ifthenelset& ifelsestmt = to_code_ifthenelse(code);
     typet a = extract_type_side_effect_block(ifelsestmt.then_case());
-    if (!a.id().empty())
+    if (!is_empty_type(a))
       return a;
     if (ifelsestmt.has_else_case())
     {
       typet a = extract_type_side_effect_block(ifelsestmt.else_case());
-      if (!a.id().empty())
+      if (!is_empty_type(a))
         return a;
     }
-    return typet();
+    return empty_typet();
   }
 
   code_blockt& processed_codeblock = *block_to_process;
@@ -469,12 +467,12 @@ typet extract_type_side_effect_block(codet& code)
     {
       code_ifthenelset& ifelsestmt = to_code_ifthenelse(to_code(op));
       typet a = extract_type_side_effect_block(ifelsestmt.then_case());
-      if (!a.id().empty())
+      if (!is_empty_type(a))
         return a;
       if (ifelsestmt.has_else_case())
       {
         typet a = extract_type_side_effect_block(ifelsestmt.else_case());
-        if (!a.id().empty())
+        if (!is_empty_type(a))
           return a;
       }
     }
@@ -489,7 +487,7 @@ typet extract_type_side_effect_block(codet& code)
     }
   }
 
-  return typet();
+  return empty_typet();
 }
 
 void rust_typecheckt::typecheck_expr_side_effect(side_effect_exprt &expr)
@@ -504,7 +502,7 @@ void rust_typecheckt::typecheck_expr_side_effect(side_effect_exprt &expr)
 
     // create processed code block wrapped in temporary to allow multiple returns via the temporary
     code_blockt processed_codeblock;
-    symbol_exprt temporary("typecheck_var--codeblock_expr_value", typet());
+    symbol_exprt temporary("typecheck_var--codeblock_expr_value", empty_typet());
     processed_codeblock.add(code_declt(temporary));
     processed_codeblock.append(original_codeblock);
 
@@ -603,7 +601,7 @@ void rust_typecheckt::typecheck_expr_index(exprt &expr)
 
   // special case for function identifiers
   if(expr.op1().id() == "fid" || expr.op1().id() == "constructid")
-    expr.type() = code_typet({}, typet());
+    expr.type() = code_typet({}, empty_typet());
   else
     expr.type() = rust_value_type();
 }
@@ -831,7 +829,7 @@ void rust_typecheckt::typecheck_expr_unary_num(exprt &expr)
   }
 
   // get type if unknown
-  if(expr.op0().type().id().empty())
+  if(is_empty_type(expr.op0().type()))
   {
     expr.op0().type() = search_known_symbols(expr.op0().id());
   }
@@ -852,7 +850,7 @@ void rust_typecheckt::typecheck_symbol_expr(symbol_exprt &symbol_expr)
   // if this is a variable, we need to check if we already
   // prefixed it and add to the symbol table if it is not there already
   irep_idt existing_decorated_symbol = find_existing_decorated_symbol(identifier);
-  if(existing_decorated_symbol == "") // if symbol is not already known
+  if(existing_decorated_symbol == ID_empty) // if symbol is not already known
   {
     error() << "Unknown symbol. It is either undeclared or not being added to rust_typecheckt::known_symbols: \n"
             << symbol_expr.pretty() << "\n" << eom;
@@ -1002,7 +1000,7 @@ void rust_typecheckt::typecheck_decl_block(codet &code_decl)
   typecheck_expr(assignment.rhs());
 
   // if type is unspecified
-  if(code_decl.op0().op0().type().id().empty())
+  if(is_empty_type(code_decl.op0().op0().type()))
   {
     // new variable has the type of the assigned expression
     code_decl.op0().op0().type() = code_decl.op1().op1().type();
