@@ -19,7 +19,6 @@
 // Make sure this matches the #define for YY_DECL in scanner.l
 extern int yylex(unsigned int* yylval);
 extern void yyerror(char const *s);
-extern void push_back(char c);
 extern char const* yyrusttext;
 
 symbol_exprt symbol_exprt_typeless_empty(irep_idt const& id)
@@ -886,16 +885,16 @@ generic_params
 : '<' '>'                             { /*{o}$$ = mk_node("Generics", 2, mk_none(), mk_none());*/ }
 | '<' lifetimes '>'                   { /*{o}$$ = mk_node("Generics", 2, $2, mk_none());*/ }
 | '<' lifetimes ',' '>'               { /*{o}$$ = mk_node("Generics", 2, $2, mk_none());*/ }
-| '<' lifetimes SHR                   { push_back('>'); /*{o}$$ = mk_node("Generics", 2, $2, mk_none());*/ }
-| '<' lifetimes ',' SHR               { push_back('>'); /*{o}$$ = mk_node("Generics", 2, $2, mk_none());*/ }
+| '<' lifetimes SHR                   { /*{o}push_back('>'); $$ = mk_node("Generics", 2, $2, mk_none());*/ }
+| '<' lifetimes ',' SHR               { /*{o}push_back('>'); $$ = mk_node("Generics", 2, $2, mk_none());*/ }
 | '<' lifetimes ',' ty_params '>'     { /*{o}$$ = mk_node("Generics", 2, $2, $4);*/ }
 | '<' lifetimes ',' ty_params ',' '>' { /*{o}$$ = mk_node("Generics", 2, $2, $4);*/ }
-| '<' lifetimes ',' ty_params SHR     { push_back('>'); /*{o}$$ = mk_node("Generics", 2, $2, $4);*/ }
-| '<' lifetimes ',' ty_params ',' SHR { push_back('>'); /*{o}$$ = mk_node("Generics", 2, $2, $4);*/ }
+| '<' lifetimes ',' ty_params SHR     { /*{o}push_back('>'); $$ = mk_node("Generics", 2, $2, $4);*/ }
+| '<' lifetimes ',' ty_params ',' SHR { /*{o}push_back('>'); $$ = mk_node("Generics", 2, $2, $4);*/ }
 | '<' ty_params '>'                   { /*{o}$$ = mk_node("Generics", 2, mk_none(), $2);*/ }
 | '<' ty_params ',' '>'               { /*{o}$$ = mk_node("Generics", 2, mk_none(), $2);*/ }
-| '<' ty_params SHR                   { push_back('>'); /*{o}$$ = mk_node("Generics", 2, mk_none(), $2);*/ }
-| '<' ty_params ',' SHR               { push_back('>'); /*{o}$$ = mk_node("Generics", 2, mk_none(), $2);*/ }
+| '<' ty_params SHR                   { /*{o}push_back('>'); $$ = mk_node("Generics", 2, mk_none(), $2);*/ }
+| '<' ty_params ',' SHR               { /*{o}push_back('>'); $$ = mk_node("Generics", 2, mk_none(), $2);*/ }
 | %empty                              { newstack($$); }
 ;
 
@@ -966,17 +965,17 @@ path_generic_args_without_colons
 
 generic_args
 : '<' generic_values '>'   { /*{o}$$ = $2;*/ }
-| '<' generic_values SHR   { push_back('>'); /*{o}$$ = $2;*/ }
-| '<' generic_values GE    { push_back('='); /*{o}$$ = $2;*/ }
-| '<' generic_values SHREQ { push_back('>'); push_back('='); /*{o}$$ = $2;*/ }
+| '<' generic_values SHR   { /*{o}push_back('>'); $$ = $2;*/ }
+| '<' generic_values GE    { /*{o}push_back('='); $$ = $2;*/ }
+| '<' generic_values SHREQ { /*{o}push_back('>'); push_back('='); $$ = $2;*/ }
 // If generic_args starts with "<<", the first arg must be a
 // TyQualifiedPath because that's the only type that can start with a
 // '<'. This rule parses that as the first ty_sum and then continues
 // with the rest of generic_values.
 | SHL ty_qualified_path_and_generic_values '>'   { /*{o}$$ = $2;*/ }
-| SHL ty_qualified_path_and_generic_values SHR   { push_back('>'); /*{o}$$ = $2;*/ }
-| SHL ty_qualified_path_and_generic_values GE    { push_back('='); /*{o}$$ = $2;*/ }
-| SHL ty_qualified_path_and_generic_values SHREQ { push_back('>'); push_back('='); /*{o}$$ = $2;*/ }
+| SHL ty_qualified_path_and_generic_values SHR   { /*{o}push_back('>'); $$ = $2;*/ }
+| SHL ty_qualified_path_and_generic_values GE    { /*{o}push_back('='); $$ = $2;*/ }
+| SHL ty_qualified_path_and_generic_values SHREQ { /*{o}push_back('>'); push_back('='); $$ = $2;*/ }
 ;
 
 generic_values

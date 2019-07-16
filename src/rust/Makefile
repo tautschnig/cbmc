@@ -7,7 +7,6 @@ SRC = expr2rust.cpp \
       rust_parse_tree.cpp \
       rust_parseassert.cpp \
       rust_parser.cpp \
-      rust_temporary_node_definitions.cpp \
       rust_typecheck.cpp \
       rust_types.cpp \
       rust_y.tab.cpp \
