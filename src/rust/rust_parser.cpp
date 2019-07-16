@@ -16,9 +16,9 @@ rust_parsert rust_parser;
 
 extern char const* yyrusttext;
 
-void yyrust::parser::error(const std::string &error)
+void yyrust::parser::error(const std::string &msg)
 {
-  rust_parser.parse_error(error, yyrusttext);
+  rust_parser.parse_error(msg, yyrusttext);
 }
 
 void rust_scanner_init()
