@@ -50,7 +50,7 @@ exprt parse_token_tree(multi_ary_exprt const &tokenTree)
   /*std::cout << "##################### Token String: [" << tokenTreeStream.str()
             << "]" << std::endl;*/
 
-  yyFlexLexer tokTreeScanner(tokenTreeStream, outputStream);
+  yyFlexLexer tokTreeScanner(&tokenTreeStream, &outputStream);
   // use the scanner made for this stream
   UseDifferentScanner(&tokTreeScanner, tokenTreeStream);
 
