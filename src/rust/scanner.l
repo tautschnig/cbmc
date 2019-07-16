@@ -27,7 +27,7 @@ void UseDifferentScanner(yyFlexLexer* newScanner, std::istream& newInStream)
   pastScanners.push_back(currentScanner);
   currentScanner = newScanner;
 
-  yy_buffer_state* newBuffer = currentScanner->yy_create_buffer(newInStream, YY_BUF_SIZE);
+  yy_buffer_state* newBuffer = currentScanner->yy_create_buffer(&newInStream, YY_BUF_SIZE);
   currentScanner->yy_switch_to_buffer(newBuffer);
 }
 
