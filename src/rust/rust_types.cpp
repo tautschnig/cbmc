@@ -37,7 +37,7 @@ public:
       m_uninitialized = false;
     }
 
-    auto &result = m_typeMappings.find(key);
+    auto result = m_typeMappings.find(key);
     if(result != m_typeMappings.end())
     {
       return result->second;

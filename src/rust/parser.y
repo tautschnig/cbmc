@@ -370,12 +370,12 @@ block_item
 
 maybe_ty_ascription
 : ':' ty_sum { $$ = $2; }
-| %empty     { newstack($$).swap(exprt("ID_emptytyascript")); }
+| %empty     { newstack($$) = exprt("ID_emptytyascript"); }
 ;
 
 maybe_init_expr
 : '=' expr { $$ = $2; }
-| %empty   { newstack($$).swap(exprt("ID_emptyinitexpr")); }
+| %empty   { newstack($$) = exprt("ID_emptyinitexpr"); }
 ;
 
 // structs
@@ -802,13 +802,13 @@ fn_anon_params_with_self
 maybe_params
 : params      { $$ = $1; }
 | params ','  { $$ = $1; }
-| %empty      { newstack($$).swap(multi_ary_exprt(ID_parameters, exprt::operandst(), typet())); }
+| %empty      { newstack($$) = multi_ary_exprt(ID_parameters, exprt::operandst(), typet()); }
 ;
 
 params
 : param                { exprt::operandst params;
                          params.push_back(parser_stack($1));
-                         newstack($$).swap(multi_ary_exprt(ID_parameters, params, typet())); }
+                         newstack($$) = multi_ary_exprt(ID_parameters, params, typet()); }
 | params ',' param     { parser_stack($1).operands().push_back(parser_stack($3)); }
 ;
 
@@ -876,9 +876,9 @@ named_arg
 ;
 
 ret_ty
-: RARROW '!'         { newstack($$).swap(symbol_exprt_typeless_empty("")); }
+: RARROW '!'         { newstack($$) = symbol_exprt_typeless_empty(""); }
 | RARROW ty          { $$ = $2; }
-| %prec IDENT %empty { newstack($$).swap(symbol_exprt_typeless_empty("")); }
+| %prec IDENT %empty { newstack($$) = symbol_exprt_typeless_empty(""); }
 ;
 
 generic_params
@@ -1363,7 +1363,7 @@ maybe_stmts
                           a.add(code_expressiont(parser_stack($1)));
                         newstack($$).swap(a); }
 | %empty              { /*{o}$$ = mk_none();*/
-                        newstack($$).swap(code_blockt()); }
+                        newstack($$) = code_blockt(); }
 ;
 
 // There are two sub-grammars within a "stmts: exprs" derivation
@@ -1424,13 +1424,13 @@ maybe_exprs
 : exprs
 | exprs ','
 | %empty { /*{o}$$ = mk_none();*/
-           newstack($$).swap(exprt()); }
+           newstack($$) = exprt(); }
 ;
 
 maybe_expr
 : expr
 | %empty { /*{o}$$ = mk_none();*/ 
-           newstack($$).swap(exprt()); }
+           newstack($$) = exprt(); }
 ;
 
 exprs
@@ -1501,11 +1501,11 @@ nonblock_expr
                                                        params.back().add_to_operands((*it));
                                                      }
                                                      a.type() = code_typet(params, typet());
-                                                     newstack($$).swap(code_expressiont(
+                                                     newstack($$) = code_expressiont(
                                                                        side_effect_expr_function_callt(a,
                                                                                                        parser_stack($3).operands(),
                                                                                                        typet(),
-                                                                                                       source_locationt()))); }
+                                                                                                       source_locationt())); }
 | '[' vec_expr ']'                                { /*{o}$$ = mk_node("ExprVec", 1, $2);*/ }
 | '(' maybe_exprs ')'                             { multi_ary_exprt& a = to_multi_ary_expr(parser_stack($2));
                                                     code_blockt b;
@@ -1527,51 +1527,51 @@ nonblock_expr
                                                       newstack($$).swap(b); }
 | CONTINUE                                        { /*{o}$$ = mk_node("ExprAgain", 0);*/ }
 | CONTINUE lifetime                               { /*{o}$$ = mk_node("ExprAgain", 1, $2);*/ }
-| RETURN                                          { newstack($$).swap(code_returnt()); }
-| RETURN expr                                     { newstack($$).swap(code_returnt(parser_stack($2))); }
-| BREAK                                           { newstack($$).swap(code_breakt()); }
+| RETURN                                          { newstack($$) = code_returnt(); }
+| RETURN expr                                     { newstack($$) = code_returnt(parser_stack($2)); }
+| BREAK                                           { newstack($$) = code_breakt(); }
 | BREAK lifetime                                  { /*{o}$$ = mk_node("ExprBreak", 1, $2);*/ }
 | YIELD                                           { /*{o}$$ = mk_node("ExprYield", 0);*/ }
 | YIELD expr                                      { /*{o}$$ = mk_node("ExprYield", 1, $2);*/ }
-| nonblock_expr '=' expr                          { newstack($$).swap(code_assignt(parser_stack($1), parser_stack($3))); }
+| nonblock_expr '=' expr                          { newstack($$) = code_assignt(parser_stack($1), parser_stack($3)); }
 | nonblock_expr SHLEQ expr                        { shl_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr SHREQ expr                        { lshr_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr MINUSEQ expr                      { minus_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr ANDEQ expr                        { bitand_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr OREQ expr                         { bitor_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr PLUSEQ expr                       { plus_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr STAREQ expr                       { mult_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr SLASHEQ expr                      { div_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr CARETEQ expr                      { bitxor_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
 | nonblock_expr PERCENTEQ expr                    { mod_exprt a(parser_stack($1), parser_stack($3));
-                                                    newstack($$).swap(code_assignt(parser_stack($1), a)); }
-| nonblock_expr OROR expr                         { newstack($$).swap(or_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr ANDAND expr                       { newstack($$).swap(and_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr EQEQ expr                         { newstack($$).swap(equal_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr NE expr                           { newstack($$).swap(notequal_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '<' expr                          { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_lt, parser_stack($3))); }
-| nonblock_expr '>' expr                          { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_gt, parser_stack($3))); }
-| nonblock_expr LE expr                           { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_le, parser_stack($3))); }
-| nonblock_expr GE expr                           { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_ge, parser_stack($3))); }
-| nonblock_expr '|' expr                          { newstack($$).swap(bitor_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '^' expr                          { newstack($$).swap(bitxor_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '&' expr                          { newstack($$).swap(bitand_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr SHL expr                          { newstack($$).swap(shl_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr SHR expr                          { newstack($$).swap(lshr_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '+' expr                          { newstack($$).swap(plus_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '-' expr                          { newstack($$).swap(minus_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '*' expr                          { newstack($$).swap(mult_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '/' expr                          { newstack($$).swap(div_exprt(parser_stack($1), parser_stack($3))); }
-| nonblock_expr '%' expr                          { newstack($$).swap(mod_exprt(parser_stack($1), parser_stack($3))); }
+                                                    newstack($$) = code_assignt(parser_stack($1), a); }
+| nonblock_expr OROR expr                         { newstack($$) = or_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr ANDAND expr                       { newstack($$) = and_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr EQEQ expr                         { newstack($$) = equal_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr NE expr                           { newstack($$) = notequal_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '<' expr                          { newstack($$) = binary_relation_exprt(parser_stack($1), ID_lt, parser_stack($3)); }
+| nonblock_expr '>' expr                          { newstack($$) = binary_relation_exprt(parser_stack($1), ID_gt, parser_stack($3)); }
+| nonblock_expr LE expr                           { newstack($$) = binary_relation_exprt(parser_stack($1), ID_le, parser_stack($3)); }
+| nonblock_expr GE expr                           { newstack($$) = binary_relation_exprt(parser_stack($1), ID_ge, parser_stack($3)); }
+| nonblock_expr '|' expr                          { newstack($$) = bitor_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '^' expr                          { newstack($$) = bitxor_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '&' expr                          { newstack($$) = bitand_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr SHL expr                          { newstack($$) = shl_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr SHR expr                          { newstack($$) = lshr_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '+' expr                          { newstack($$) = plus_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '-' expr                          { newstack($$) = minus_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '*' expr                          { newstack($$) = mult_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '/' expr                          { newstack($$) = div_exprt(parser_stack($1), parser_stack($3)); }
+| nonblock_expr '%' expr                          { newstack($$) = mod_exprt(parser_stack($1), parser_stack($3)); }
 | nonblock_expr DOTDOT                            { /*{o}$$ = mk_node("ExprRange", 2, $1, mk_none());*/ }
 | nonblock_expr DOTDOT expr                       { /*{o}$$ = mk_node("ExprRange", 2, $1, $3);*/ }
 |               DOTDOT expr                       { /*{o}$$ = mk_node("ExprRange", 2, mk_none(), $2);*/ }
@@ -1602,11 +1602,11 @@ expr
                                                  params.back().add_to_operands((*it));
                                                }
                                                a.type() = code_typet(params, typet());
-                                               newstack($$).swap(code_expressiont(
+                                               newstack($$) = code_expressiont(
                                                                  side_effect_expr_function_callt(a,
                                                                                                  parser_stack($3).operands(),
                                                                                                  typet(),
-                                                                                                 source_locationt()))); }
+                                                                                                 source_locationt())); }
 | '(' maybe_exprs ')'                        { //TODO: assumes expressions in parentheses will reduce to a single expression. If not the case, fix this
                                                newstack($$).swap(parser_stack($2).op0()); }
 | '[' vec_expr ']'                           { /*{o}$$ = mk_node("ExprVec", 1, $2);*/ }
@@ -1618,55 +1618,55 @@ expr
 | BREAK ident                                { /*{o}$$ = mk_node("ExprBreak", 1, $2);*/ }
 | YIELD                                      { /*{o}$$ = mk_node("ExprYield", 0);*/ }
 | YIELD expr                                 { /*{o}$$ = mk_node("ExprYield", 1, $2);*/ }
-| expr '=' expr                              { newstack($$).swap(code_assignt(parser_stack($1), parser_stack($3))); }
+| expr '=' expr                              { newstack($$) = code_assignt(parser_stack($1), parser_stack($3)); }
 | expr SHLEQ expr                            { /*{o}$$ = mk_node("ExprAssignShl", 2, $1, $3);*/
                                                shl_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr SHREQ expr                            { /*{o}$$ = mk_node("ExprAssignShr", 2, $1, $3);*/
                                                lshr_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr MINUSEQ expr                          { /*{o}$$ = mk_node("ExprAssignSub", 2, $1, $3);*/
                                                minus_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr ANDEQ expr                            { /*{o}$$ = mk_node("ExprAssignBitAnd", 2, $1, $3);*/ 
                                                bitand_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr OREQ expr                             { /*{o}$$ = mk_node("ExprAssignBitOr", 2, $1, $3);*/ 
                                                bitor_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr PLUSEQ expr                           { /*{o}$$ = mk_node("ExprAssignAdd", 2, $1, $3);*/
                                                plus_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr STAREQ expr                           { /*{o}$$ = mk_node("ExprAssignMul", 2, $1, $3);*/
                                                mult_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr SLASHEQ expr                          { /*{o}$$ = mk_node("ExprAssignDiv", 2, $1, $3);*/
                                                div_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr CARETEQ expr                          { /*{o}$$ = mk_node("ExprAssignBitXor", 2, $1, $3);*/ 
                                                bitxor_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
 | expr PERCENTEQ expr                        { /*{o}$$ = mk_node("ExprAssignRem", 2, $1, $3);*/ 
                                                mod_exprt a(parser_stack($1), parser_stack($3));
-                                               newstack($$).swap(code_assignt(parser_stack($1), a)); }
-| expr OROR expr                             { newstack($$).swap(or_exprt(parser_stack($1), parser_stack($3))); }
-| expr ANDAND expr                           { newstack($$).swap(and_exprt(parser_stack($1), parser_stack($3))); }
-| expr EQEQ expr                             { newstack($$).swap(equal_exprt(parser_stack($1), parser_stack($3))); }
-| expr NE expr                               { newstack($$).swap(notequal_exprt(parser_stack($1), parser_stack($3))); }
-| expr '<' expr                              { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_lt, parser_stack($3))); }
-| expr '>' expr                              { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_gt, parser_stack($3))); }
-| expr LE expr                               { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_le, parser_stack($3))); }
-| expr GE expr                               { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_ge, parser_stack($3))); }
-| expr '|' expr                              { newstack($$).swap(bitor_exprt(parser_stack($1), parser_stack($3))); }
-| expr '^' expr                              { newstack($$).swap(bitxor_exprt(parser_stack($1), parser_stack($3))); }
-| expr '&' expr                              { newstack($$).swap(bitand_exprt(parser_stack($1), parser_stack($3))); }
-| expr SHL expr                              { newstack($$).swap(shl_exprt(parser_stack($1), parser_stack($3))); }
-| expr SHR expr                              { newstack($$).swap(lshr_exprt(parser_stack($1), parser_stack($3))); }
-| expr '+' expr                              { newstack($$).swap(plus_exprt(parser_stack($1), parser_stack($3))); }
-| expr '-' expr                              { newstack($$).swap(minus_exprt(parser_stack($1), parser_stack($3))); }
-| expr '*' expr                              { newstack($$).swap(mult_exprt(parser_stack($1), parser_stack($3))); }
-| expr '/' expr                              { newstack($$).swap(div_exprt(parser_stack($1), parser_stack($3))); }
-| expr '%' expr                              { newstack($$).swap(mod_exprt(parser_stack($1), parser_stack($3))); }
+                                               newstack($$) = code_assignt(parser_stack($1), a); }
+| expr OROR expr                             { newstack($$) = or_exprt(parser_stack($1), parser_stack($3)); }
+| expr ANDAND expr                           { newstack($$) = and_exprt(parser_stack($1), parser_stack($3)); }
+| expr EQEQ expr                             { newstack($$) = equal_exprt(parser_stack($1), parser_stack($3)); }
+| expr NE expr                               { newstack($$) = notequal_exprt(parser_stack($1), parser_stack($3)); }
+| expr '<' expr                              { newstack($$) = binary_relation_exprt(parser_stack($1), ID_lt, parser_stack($3)); }
+| expr '>' expr                              { newstack($$) = binary_relation_exprt(parser_stack($1), ID_gt, parser_stack($3)); }
+| expr LE expr                               { newstack($$) = binary_relation_exprt(parser_stack($1), ID_le, parser_stack($3)); }
+| expr GE expr                               { newstack($$) = binary_relation_exprt(parser_stack($1), ID_ge, parser_stack($3)); }
+| expr '|' expr                              { newstack($$) = bitor_exprt(parser_stack($1), parser_stack($3)); }
+| expr '^' expr                              { newstack($$) = bitxor_exprt(parser_stack($1), parser_stack($3)); }
+| expr '&' expr                              { newstack($$) = bitand_exprt(parser_stack($1), parser_stack($3)); }
+| expr SHL expr                              { newstack($$) = shl_exprt(parser_stack($1), parser_stack($3)); }
+| expr SHR expr                              { newstack($$) = lshr_exprt(parser_stack($1), parser_stack($3)); }
+| expr '+' expr                              { newstack($$) = plus_exprt(parser_stack($1), parser_stack($3)); }
+| expr '-' expr                              { newstack($$) = minus_exprt(parser_stack($1), parser_stack($3)); }
+| expr '*' expr                              { newstack($$) = mult_exprt(parser_stack($1), parser_stack($3)); }
+| expr '/' expr                              { newstack($$) = div_exprt(parser_stack($1), parser_stack($3)); }
+| expr '%' expr                              { newstack($$) = mod_exprt(parser_stack($1), parser_stack($3)); }
 | expr DOTDOT                                { /*{o}$$ = mk_node("ExprRange", 2, $1, mk_none());*/ }
 | expr DOTDOT expr                           { /*{o}$$ = mk_node("ExprRange", 2, $1, $3);*/ }
 |      DOTDOT expr                           { /*{o}$$ = mk_node("ExprRange", 2, mk_none(), $2);*/ }
@@ -1707,52 +1707,52 @@ expr_nostruct
 | expr_nostruct '=' expr_nostruct                     { /*{o}$$ = mk_node("ExprAssign", 2, $1, $3);*/ }
 | expr_nostruct SHLEQ expr_nostruct                   { /*{o}$$ = mk_node("ExprAssignShl", 2, $1, $3);*/
                                                         shl_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct SHREQ expr_nostruct                   { /*{o}$$ = mk_node("ExprAssignShr", 2, $1, $3);*/
                                                         lshr_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct MINUSEQ expr_nostruct                 { /*{o}$$ = mk_node("ExprAssignSub", 2, $1, $3);*/
                                                         minus_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct ANDEQ expr_nostruct                   { /*{o}$$ = mk_node("ExprAssignBitAnd", 2, $1, $3);*/ 
                                                         bitand_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct OREQ expr_nostruct                    { /*{o}$$ = mk_node("ExprAssignBitOr", 2, $1, $3);*/ 
                                                         bitor_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct PLUSEQ expr_nostruct                  { /*{o}$$ = mk_node("ExprAssignAdd", 2, $1, $3);*/
                                                         plus_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct STAREQ expr_nostruct                  { /*{o}$$ = mk_node("ExprAssignMul", 2, $1, $3);*/
                                                         mult_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct SLASHEQ expr_nostruct                 { /*{o}$$ = mk_node("ExprAssignDiv", 2, $1, $3);*/
                                                         div_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct CARETEQ expr_nostruct                 { /*{o}$$ = mk_node("ExprAssignBitXor", 2, $1, $3);*/ 
                                                         bitxor_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
 | expr_nostruct PERCENTEQ expr_nostruct               { /*{o}$$ = mk_node("ExprAssignRem", 2, $1, $3);*/ 
                                                         mod_exprt a(parser_stack($1), parser_stack($3));
-                                                        newstack($$).swap(code_assignt(parser_stack($1), a)); }
-| expr_nostruct OROR expr_nostruct                    { newstack($$).swap(or_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct ANDAND expr_nostruct                  { newstack($$).swap(and_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct EQEQ expr_nostruct                    { newstack($$).swap(equal_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct NE expr_nostruct                      { newstack($$).swap(notequal_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '<' expr_nostruct                     { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_lt, parser_stack($3))); }
-| expr_nostruct '>' expr_nostruct                     { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_gt, parser_stack($3))); }
-| expr_nostruct LE expr_nostruct                      { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_le, parser_stack($3))); }
-| expr_nostruct GE expr_nostruct                      { newstack($$).swap(binary_relation_exprt(parser_stack($1), ID_ge, parser_stack($3))); }
-| expr_nostruct '|' expr_nostruct                     { newstack($$).swap(bitor_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '^' expr_nostruct                     { newstack($$).swap(bitxor_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '&' expr_nostruct                     { newstack($$).swap(bitand_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct SHL expr_nostruct                     { newstack($$).swap(shl_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct SHR expr_nostruct                     { newstack($$).swap(lshr_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '+' expr_nostruct                     { newstack($$).swap(plus_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '-' expr_nostruct                     { newstack($$).swap(minus_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '*' expr_nostruct                     { newstack($$).swap(mult_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '/' expr_nostruct                     { newstack($$).swap(div_exprt(parser_stack($1), parser_stack($3))); }
-| expr_nostruct '%' expr_nostruct                     { newstack($$).swap(mod_exprt(parser_stack($1), parser_stack($3))); }
+                                                        newstack($$) = code_assignt(parser_stack($1), a); }
+| expr_nostruct OROR expr_nostruct                    { newstack($$) = or_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct ANDAND expr_nostruct                  { newstack($$) = and_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct EQEQ expr_nostruct                    { newstack($$) = equal_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct NE expr_nostruct                      { newstack($$) = notequal_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '<' expr_nostruct                     { newstack($$) = binary_relation_exprt(parser_stack($1), ID_lt, parser_stack($3)); }
+| expr_nostruct '>' expr_nostruct                     { newstack($$) = binary_relation_exprt(parser_stack($1), ID_gt, parser_stack($3)); }
+| expr_nostruct LE expr_nostruct                      { newstack($$) = binary_relation_exprt(parser_stack($1), ID_le, parser_stack($3)); }
+| expr_nostruct GE expr_nostruct                      { newstack($$) = binary_relation_exprt(parser_stack($1), ID_ge, parser_stack($3)); }
+| expr_nostruct '|' expr_nostruct                     { newstack($$) = bitor_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '^' expr_nostruct                     { newstack($$) = bitxor_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '&' expr_nostruct                     { newstack($$) = bitand_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct SHL expr_nostruct                     { newstack($$) = shl_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct SHR expr_nostruct                     { newstack($$) = lshr_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '+' expr_nostruct                     { newstack($$) = plus_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '-' expr_nostruct                     { newstack($$) = minus_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '*' expr_nostruct                     { newstack($$) = mult_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '/' expr_nostruct                     { newstack($$) = div_exprt(parser_stack($1), parser_stack($3)); }
+| expr_nostruct '%' expr_nostruct                     { newstack($$) = mod_exprt(parser_stack($1), parser_stack($3)); }
 | expr_nostruct DOTDOT               %prec RANGE      { /*{o}$$ = mk_node("ExprRange", 2, $1, mk_none());*/ }
 | expr_nostruct DOTDOT expr_nostruct                  { /*{o}$$ = mk_node("ExprRange", 2, $1, $3);*/ }
 |               DOTDOT expr_nostruct                  { /*{o}$$ = mk_node("ExprRange", 2, mk_none(), $2);*/ }
@@ -1767,22 +1767,22 @@ expr_nostruct
 ;
 
 nonblock_prefix_expr_nostruct
-: '-' expr_nostruct                         { newstack($$).swap(unary_minus_exprt(parser_stack($2), parser_stack($2).type())); }
-| '!' expr_nostruct                         { newstack($$).swap(bitnot_exprt(parser_stack($2))); }
-| '*' expr_nostruct                         { newstack($$).swap(dereference_exprt(parser_stack($2))); }
+: '-' expr_nostruct                         { newstack($$) = unary_minus_exprt(parser_stack($2), parser_stack($2).type()); }
+| '!' expr_nostruct                         { newstack($$) = bitnot_exprt(parser_stack($2)); }
+| '*' expr_nostruct                         { newstack($$) = dereference_exprt(parser_stack($2)); }
 | '&' maybe_mut expr_nostruct               { //TODO: handle maybe_mut if necessary. It might not be: the actual Rust compiler should stop altering of non-mut things without CBMC
-                                              newstack($$).swap(address_of_exprt(parser_stack($2))); }
+                                              newstack($$) = address_of_exprt(parser_stack($2)); }
 | ANDAND maybe_mut expr_nostruct            { /*{o}$$ = mk_node("ExprAddrOf", 1, mk_node("ExprAddrOf", 2, $2, $3));*/ }
 | lambda_expr_nostruct
 | MOVE lambda_expr_nostruct                 { /*{o}$$ = $2;*/ }
 ;
 
 nonblock_prefix_expr
-: '-' expr                         { newstack($$).swap(unary_minus_exprt(parser_stack($2), parser_stack($2).type())); }
-| '!' expr                         { newstack($$).swap(bitnot_exprt(parser_stack($2))); }
-| '*' expr                         { newstack($$).swap(dereference_exprt(parser_stack($2))); }
+: '-' expr                         { newstack($$) = unary_minus_exprt(parser_stack($2), parser_stack($2).type()); }
+| '!' expr                         { newstack($$) = bitnot_exprt(parser_stack($2)); }
+| '*' expr                         { newstack($$) = dereference_exprt(parser_stack($2)); }
 | '&' maybe_mut expr               { //TODO: handle maybe_mut if necessary. It might not be: the actual Rust compiler should stop altering of non-mut things without CBMC
-                                     newstack($$).swap(address_of_exprt(parser_stack($2))); }
+                                     newstack($$) = address_of_exprt(parser_stack($2)); }
 | ANDAND maybe_mut expr            { /*{o}$$ = mk_node("ExprAddrOf", 1, mk_node("ExprAddrOf", 2, $2, $3));*/ }
 | lambda_expr
 | MOVE lambda_expr                 { /*{o}$$ = $2;*/ }
@@ -1957,9 +1957,9 @@ maybe_guard
 
 expr_if
 : IF expr_nostruct block                    { /*{o}$$ = mk_node("ExprIf", 2, $2, $3);*/
-                                              newstack($$).swap(code_ifthenelset(parser_stack($2), to_code(parser_stack($3)))); }
+                                              newstack($$) = code_ifthenelset(parser_stack($2), to_code(parser_stack($3))); }
 | IF expr_nostruct block ELSE block_or_if   { /*{o}$$ = mk_node("ExprIf", 3, $2, $3, $5);*/
-                                              newstack($$).swap(code_ifthenelset(parser_stack($2), to_code(parser_stack($3)), to_code(parser_stack($5)))); }
+                                              newstack($$) = code_ifthenelset(parser_stack($2), to_code(parser_stack($3)), to_code(parser_stack($5))); }
 ;
 
 expr_if_let
@@ -1975,7 +1975,7 @@ block_or_if
 
 expr_while
 : maybe_label WHILE expr_nostruct block               { /*{o}$$ = mk_node("ExprWhile", 3, $1, $3, $4);*/
-                                                        newstack($$).swap(code_whilet(parser_stack($3), to_code(parser_stack($4))));  }
+                                                        newstack($$) = code_whilet(parser_stack($3), to_code(parser_stack($4)));  }
 ;
 
 expr_while_let
@@ -1984,7 +1984,7 @@ expr_while_let
 
 expr_loop
 : maybe_label LOOP block                              { /*{o}$$ = mk_node("ExprLoop", 2, $1, $3);*/
-                                                        newstack($$).swap(code_whilet(true_exprt(), to_code(parser_stack($3)))); }
+                                                        newstack($$) = code_whilet(true_exprt(), to_code(parser_stack($3))); }
 ;
 
 expr_for
@@ -2074,7 +2074,7 @@ lit
 | LIT_CHAR      { /*{o}$$ = mk_node("LitChar", 1, mk_atom(yyrusttext));*/
                   constant_exprt a(yyrusttext, char_type());
                   newstack($$).swap(a); }
-| LIT_INTEGER   { newstack($$).swap(from_integer(string2integer(yyrusttext), unsigned_int_type())); }
+| LIT_INTEGER   { newstack($$) = from_integer(string2integer(yyrusttext), unsigned_int_type()); }
 | LIT_FLOAT     { /*{o}$$ = mk_node("LitFloat", 1, mk_atom(yyrusttext));*/
                   parse_floatt parsed_float(yyrusttext);
                   floatbv_typet type = float_type();
@@ -2084,9 +2084,9 @@ lit
                   result.type() = type;
                   newstack($$).swap(result); }
 | TRUE          { /*{o}$$ = mk_node("LitBool", 1, mk_atom(yyrusttext));*/
-                  newstack($$).swap(true_exprt()); }
+                  newstack($$) = true_exprt(); }
 | FALSE         { /*{o}$$ = mk_node("LitBool", 1, mk_atom(yyrusttext));*/
-                  newstack($$).swap(false_exprt()); }
+                  newstack($$) = false_exprt(); }
 | str
 ;
 
@@ -2098,12 +2098,12 @@ str
 ;
 
 maybe_ident
-: %empty { newstack($$).swap(symbol_exprt_typeless_empty("")); }
+: %empty { newstack($$) = symbol_exprt_typeless_empty(""); }
 | ident
 ;
 
 ident
-: IDENT                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+: IDENT                      { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
 // Weak keywords that can be used as identifiers
 | CATCH                      { /*{o}$$ = mk_node("ident", 1, mk_atom(yyrusttext));*/ }
 | DEFAULT                    { /*{o}$$ = mk_node("ident", 1, mk_atom(yyrusttext));*/ }
@@ -2112,39 +2112,39 @@ ident
 
 // TODO: IDs to use can be found at line 477 in src/jsil/parser.y
 unpaired_token 
-: SHL                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_shl))); }
-| SHR                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_shr))); }
-| LE                         { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_le))); }
-| EQEQ                       { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_equal))); }
-| NE                         { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_notequal))); }
-| GE                         { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_ge))); }
-| ANDAND                     { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_and))); }
-| OROR                       { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_or))); }
+: SHL                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_shl)); }
+| SHR                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_shr)); }
+| LE                         { newstack($$) = symbol_exprt(yyrusttext, typet(ID_le)); }
+| EQEQ                       { newstack($$) = symbol_exprt(yyrusttext, typet(ID_equal)); }
+| NE                         { newstack($$) = symbol_exprt(yyrusttext, typet(ID_notequal)); }
+| GE                         { newstack($$) = symbol_exprt(yyrusttext, typet(ID_ge)); }
+| ANDAND                     { newstack($$) = symbol_exprt(yyrusttext, typet(ID_and)); }
+| OROR                       { newstack($$) = symbol_exprt(yyrusttext, typet(ID_or)); }
 | LARROW                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| SHLEQ                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| SHREQ                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| MINUSEQ                    { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| ANDEQ                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| OREQ                       { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| PLUSEQ                     { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| STAREQ                     { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| SLASHEQ                    { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| CARETEQ                    { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
-| PERCENTEQ                  { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| SHLEQ                      { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| SHREQ                      { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| MINUSEQ                    { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| ANDEQ                      { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| OREQ                       { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| PLUSEQ                     { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| STAREQ                     { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| SLASHEQ                    { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| CARETEQ                    { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
+| PERCENTEQ                  { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
 | DOTDOT                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | DOTDOTDOT                  { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | MOD_SEP                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | RARROW                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | FAT_ARROW                  { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIT_BYTE                   { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| LIT_CHAR                   { newstack($$).swap(symbol_exprt(yyrusttext, char_type())); }
-| LIT_INTEGER                { newstack($$).swap(symbol_exprt(yyrusttext, signed_int_type())); }
-| LIT_FLOAT                  { newstack($$).swap(symbol_exprt(yyrusttext, float_type())); }
+| LIT_CHAR                   { newstack($$) = symbol_exprt(yyrusttext, char_type()); }
+| LIT_INTEGER                { newstack($$) = symbol_exprt(yyrusttext, signed_int_type()); }
+| LIT_FLOAT                  { newstack($$) = symbol_exprt(yyrusttext, float_type()); }
 | LIT_STR                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIT_STR_RAW                { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIT_BYTE_STR               { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIT_BYTE_STR_RAW           { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| IDENT                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| IDENT                      { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
 | UNDERSCORE                 { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LIFETIME                   { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | SELF                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2153,7 +2153,7 @@ unpaired_token
 | ALIGNOF                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | AS                         { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | BECOME                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| BREAK                      { newstack($$).swap(symbol_exprt(yyrusttext, c_bool_type()));  }
+| BREAK                      { newstack($$) = symbol_exprt(yyrusttext, c_bool_type());  }
 | CATCH                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | CRATE                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | DEFAULT                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2161,7 +2161,7 @@ unpaired_token
 | ELSE                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | ENUM                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | EXTERN                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| FALSE                      { newstack($$).swap(symbol_exprt(yyrusttext, c_bool_type())); }
+| FALSE                      { newstack($$) = symbol_exprt(yyrusttext, c_bool_type()); }
 | FINAL                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | FN                         { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | FOR                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2169,7 +2169,7 @@ unpaired_token
 | IMPL                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | IN                         { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | LET                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| LOOP                       { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext)); }
+| LOOP                       { newstack($$) = symbol_exprt_typeless_empty(yyrusttext); }
 | MACRO                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | MATCH                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | MOD                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2185,7 +2185,7 @@ unpaired_token
 | STRUCT                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | SIZEOF                     { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | SUPER                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| TRUE                       { newstack($$).swap(symbol_exprt(yyrusttext, c_bool_type())); }
+| TRUE                       { newstack($$) = symbol_exprt(yyrusttext, c_bool_type()); }
 | TRAIT                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | TYPE                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | UNION                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2193,7 +2193,7 @@ unpaired_token
 | UNSIZED                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | USE                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | VIRTUAL                    { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| WHILE                      { newstack($$).swap(symbol_exprt_typeless_empty(yyrusttext));  }
+| WHILE                      { newstack($$) = symbol_exprt_typeless_empty(yyrusttext);  }
 | YIELD                      { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | CONTINUE                   { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | PROC                       { /*{o}$$ = mk_atom(yyrusttext);*/ }
@@ -2215,17 +2215,17 @@ unpaired_token
 | '$'                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | '='                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
 | '?'                        { /*{o}$$ = mk_atom(yyrusttext);*/ }
-| '!'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_bitnot))); }
-| '<'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_lt))); }
-| '>'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_gt))); }
-| '-'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_minus))); }
-| '&'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_bitand))); }
-| '|'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_bitor))); }
-| '+'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_plus))); }
-| '*'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_mult))); }
-| '/'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_div))); }
-| '^'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_bitxor))); }
-| '%'                        { newstack($$).swap(symbol_exprt(yyrusttext, typet(ID_mod))); }
+| '!'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_bitnot)); }
+| '<'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_lt)); }
+| '>'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_gt)); }
+| '-'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_minus)); }
+| '&'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_bitand)); }
+| '|'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_bitor)); }
+| '+'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_plus)); }
+| '*'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_mult)); }
+| '/'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_div)); }
+| '^'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_bitxor)); }
+| '%'                        { newstack($$) = symbol_exprt(yyrusttext, typet(ID_mod)); }
 ;
 
 token_trees
