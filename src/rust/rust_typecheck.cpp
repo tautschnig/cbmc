@@ -1081,6 +1081,13 @@ void rust_typecheckt::typecheck_function_call(side_effect_exprt& expr)
   exprt& args = expr.op1();
   for (auto& arg : args.operands())
     typecheck_expr(arg);
+
+  code_typet::parameterst& params = to_code_type(expr.op0().type()).parameters();
+  for (auto& param : params)
+  {
+    typecheck_expr(param.op0());
+    param.type() = param.op0().type();
+  }
 }
 
 void rust_typecheckt::typecheck_ifthenelse(code_ifthenelset &code)
