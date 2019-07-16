@@ -18,29 +18,6 @@ Author: Brett Schiff, bschiff@amazon.com
 
 #include "rust_types.h"
 
-static bool insert_at_label(
-  const codet &code,
-  const irep_idt &label,
-  code_blockt &dest)
-{
-  for(auto &c : dest.statements())
-  {
-    if(c.get_statement()!=ID_label)
-      continue;
-
-    code_labelt &l=to_code_label(c);
-    if(l.get_label()!=label)
-      continue;
-
-    assert(l.code().get_statement()==ID_skip);
-    l.code()=code;
-
-    return false;
-  }
-
-  return true;
-}
-
 void rust_declarationt::to_symbol(symbolt &symbol) const
 {
   symbol.clear();

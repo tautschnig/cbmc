@@ -114,7 +114,7 @@ protected:
 
   typet lookup_type(exprt& expr);
   typet search_known_symbols(irep_idt const& symbol_name);
-  irep_idt rust_typecheckt::find_existing_decorated_symbol(irep_idt const &symbol_name);
+  irep_idt find_existing_decorated_symbol(irep_idt const &symbol_name);
 };
 
 #endif // CPROVER_RUST_RUST_TYPECHECK_H
