@@ -1,7 +1,7 @@
 default: test
 
 test:
-	@../test.pl -e -p -c "../../../src/cbmc/cbmc"
+	@../test.pl -e -p -c "../../../src/cbmc/cbmc --validate-goto-model --validate-ssa-equation"
 
 test-cprover-smt2:
 	@../test.pl -e -p -c "../../../src/cbmc/cbmc --cprover-smt2"

@@ -1076,9 +1076,9 @@ void rust_typecheckt::typecheck_function_call(side_effect_exprt& expr)
   }
 
   expr.type() = lookup_type(expr);
+  to_code_type(expr.op0().type()).return_type() = expr.type();
 
   exprt& args = expr.op1();
-
   for (auto& arg : args.operands())
     typecheck_expr(arg);
 }
