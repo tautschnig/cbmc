@@ -1,3 +1,14 @@
+/*******************************************************************\
+
+Module: Rust Language
+
+Author: Brett Schiff, bschiff@amazon.com
+
+\*******************************************************************/
+
+#ifndef CPROVER_RUST_TOKENS_H
+#define CPROVER_RUST_TOKENS_H
+
 enum Token {
   SHL = 257, // Parser generators reserve 0-256 for char literals
   SHR,
@@ -97,3 +108,5 @@ enum Token {
   SHEBANG_LINE,
   STATIC_LIFETIME
 };
+
+#endif // CPROVER_RUST_TOKENS_H
