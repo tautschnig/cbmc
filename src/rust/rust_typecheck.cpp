@@ -29,26 +29,28 @@ std::string rust_typecheckt::to_string(const typet &type)
   return ""; //type2rust(type, ns);
 }
 
-typet rust_typecheckt::lookup_type(exprt& expr)
+typet rust_typecheckt::lookup_type(exprt &expr)
 {
   // unwrap code_expressiont
-  if (expr.id() == ID_code && to_code(expr).get_statement() == ID_expression)
+  if(expr.id() == ID_code && to_code(expr).get_statement() == ID_expression)
     expr = expr.op0();
 
   if(expr.id() == ID_symbol)
     return search_known_symbols(to_symbol_expr(expr).get_identifier());
-  else if (expr.id() == ID_side_effect)
+  else if(expr.id() == ID_side_effect)
   {
-    side_effect_exprt& seexpr = to_side_effect_expr(expr);
-    if (seexpr.get_statement() == ID_function_call)
+    side_effect_exprt &seexpr = to_side_effect_expr(expr);
+    if(seexpr.get_statement() == ID_function_call)
     {
-      const auto& func = symbol_table.lookup(to_symbol_expr(seexpr.op0()).get_identifier());
+      const auto &func =
+        symbol_table.lookup(to_symbol_expr(seexpr.op0()).get_identifier());
       return to_code_type(func->type).return_type();
     }
   }
   else
   {
-    error() << "Unable to lookup type for expression: \n" << expr.pretty() << eom;
+    error() << "Unable to lookup type for expression: \n"
+            << expr.pretty() << eom;
     throw 0;
   }
 
@@ -64,7 +66,8 @@ typet rust_typecheckt::search_known_symbols(irep_idt const &symbol_name)
 
   for(int currScope = numScopes - 1; currScope >= 0; --currScope)
   {
-    irep_idt prefixed_name = add_prefix(symbol_base_name, known_symbols[currScope].second);
+    irep_idt prefixed_name =
+      add_prefix(symbol_base_name, known_symbols[currScope].second);
 
     auto result = known_symbols[currScope].first.find(prefixed_name);
     if(result != known_symbols[currScope].first.end())
@@ -83,7 +86,8 @@ rust_typecheckt::find_existing_decorated_symbol(irep_idt const &symbol_name)
 
   for(int currScope = numScopes - 1; currScope >= 0; --currScope)
   {
-    irep_idt prefixed_name = add_prefix(symbol_base_name, known_symbols[currScope].second);
+    irep_idt prefixed_name =
+      add_prefix(symbol_base_name, known_symbols[currScope].second);
     auto result = known_symbols[currScope].first.find(prefixed_name);
     if(result != known_symbols[currScope].first.end())
       return (*result).first;
@@ -95,12 +99,14 @@ rust_typecheckt::find_existing_decorated_symbol(irep_idt const &symbol_name)
 /// Prefix parameters and variables with a procedure name
 irep_idt rust_typecheckt::add_prefix(const irep_idt &ds)
 {
-  return id2string(proc_name) + "::" + std::to_string(scope_history.back()) + "::" + id2string(ds);
+  return id2string(proc_name) + "::" + std::to_string(scope_history.back()) +
+         "::" + id2string(ds);
 }
 
 irep_idt rust_typecheckt::add_prefix(const irep_idt &ds, int passed_scope_level)
 {
-   return id2string(proc_name) + "::" + std::to_string(passed_scope_level) + "::" + id2string(ds);
+  return id2string(proc_name) + "::" + std::to_string(passed_scope_level) +
+         "::" + id2string(ds);
 }
 
 irep_idt rust_typecheckt::strip_to_base_name(const irep_idt &original)
@@ -118,7 +124,6 @@ typet rust_typecheckt::rust_reconcile_types(exprt &a, exprt &b)
 {
   typet aType = a.type();
   typet bType = b.type();
-
 
   // Lookup variables from history
   if(is_empty_type(aType))
@@ -244,7 +249,8 @@ void rust_typecheckt::typecheck_type(typet &type)
       else
         new_symbol.type = rust_value_type(); // User defined function*/
 
-      known_symbols.back().first[add_prefix(new_symbol.base_name)] = new_symbol.type;
+      known_symbols.back().first[add_prefix(new_symbol.base_name)] =
+        new_symbol.type;
 
       new_symbol.mode = "rust";
 
@@ -276,7 +282,9 @@ void rust_typecheckt::typecheck_loop(codet &code)
 void rust_typecheckt::typecheck_expr(exprt &expr)
 {
   // first do sub-nodes
-  if(expr.id() != ID_side_effect) // statement expressions must check their own sub-nodes
+  if(
+    expr.id() !=
+    ID_side_effect) // statement expressions must check their own sub-nodes
     typecheck_expr_operands(expr);
 
   // now do case-split
@@ -295,7 +303,7 @@ void rust_typecheckt::typecheck_expr_main(exprt &expr)
   if(expr.id() == ID_code)
   {
     // these are ok to be used as expressions, and they hold the expression in op0, so it's already been typechecked
-    if (to_code(expr).get_statement() == ID_expression)
+    if(to_code(expr).get_statement() == ID_expression)
     {
     }
     else
@@ -312,11 +320,12 @@ void rust_typecheckt::typecheck_expr_main(exprt &expr)
   }
   else
   {
-    if (expr.id() == ID_null || expr.id() == "undefined" || expr.id() == ID_empty)
+    if(
+      expr.id() == ID_null || expr.id() == "undefined" || expr.id() == ID_empty)
     {
       typecheck_expr_constant(expr);
     }
-    else if (
+    else if(
       expr.id() == "null_type" || expr.id() == "undefined_type" ||
       expr.id() == ID_boolean || expr.id() == ID_string ||
       expr.id() == "number" || expr.id() == "builtin_object" ||
@@ -351,13 +360,13 @@ void rust_typecheckt::typecheck_expr_main(exprt &expr)
     }
     else if(expr.id() == ID_equal || expr.id() == ID_notequal)
       typecheck_exp_binary_equal(expr);
-    else if (
+    else if(
       expr.id() == ID_lt || expr.id() == ID_le || expr.id() == ID_gt ||
       expr.id() == ID_ge)
     {
       typecheck_expr_binary_compare(expr);
     }
-    else if (
+    else if(
       expr.id() == ID_plus || expr.id() == ID_minus || expr.id() == ID_mult ||
       expr.id() == ID_div || expr.id() == ID_mod || expr.id() == ID_bitand ||
       expr.id() == ID_bitor || expr.id() == ID_bitxor || expr.id() == ID_shl ||
@@ -404,33 +413,33 @@ void rust_typecheckt::typecheck_expr_main(exprt &expr)
 
 //COMP: assumes all returned types match as is required for Rust to compile
 /// Recursively finds returned expressions, gathers the type, and replaces them with assignment to a temporary
-void process_side_effect_block(codet& code, symbol_exprt& temporary)
+void process_side_effect_block(codet &code, symbol_exprt &temporary)
 {
-  code_blockt* block_to_process = nullptr;
+  code_blockt *block_to_process = nullptr;
 
-  if (code.get_statement() == ID_block)
+  if(code.get_statement() == ID_block)
     block_to_process = &to_code_block(code);
-  else if (code.get_statement() == ID_ifthenelse)
+  else if(code.get_statement() == ID_ifthenelse)
   {
-    code_ifthenelset& ifelsestmt = to_code_ifthenelse(code);
+    code_ifthenelset &ifelsestmt = to_code_ifthenelse(code);
     process_side_effect_block(ifelsestmt.then_case(), temporary);
-    if (ifelsestmt.has_else_case())
+    if(ifelsestmt.has_else_case())
       process_side_effect_block(ifelsestmt.else_case(), temporary);
     return;
   }
 
-  code_blockt& block = *block_to_process;
+  code_blockt &block = *block_to_process;
 
-  for (auto& op : block.operands())
+  for(auto &op : block.operands())
   {
-    if (op.id() == ID_code && to_code(op).get_statement() == ID_ifthenelse)
+    if(op.id() == ID_code && to_code(op).get_statement() == ID_ifthenelse)
     {
       code_ifthenelset &ifelsestmt = to_code_ifthenelse(to_code(op));
       process_side_effect_block(ifelsestmt.then_case(), temporary);
       if(ifelsestmt.has_else_case())
         process_side_effect_block(ifelsestmt.else_case(), temporary);
     }
-    else if (op == block.operands().back())
+    else if(op == block.operands().back())
     {
       if(to_code(op).get_statement() == ID_expression)
         op = code_assignt(temporary, op.op0());
@@ -438,49 +447,52 @@ void process_side_effect_block(codet& code, symbol_exprt& temporary)
   }
 }
 
-typet extract_type_side_effect_block(codet& code)
+typet extract_type_side_effect_block(codet &code)
 {
-  code_blockt* block_to_process = nullptr;
+  code_blockt *block_to_process = nullptr;
 
-  if (code.get_statement() == ID_block)
+  if(code.get_statement() == ID_block)
     block_to_process = &to_code_block(code);
-  else if (code.get_statement() == ID_ifthenelse)
+  else if(code.get_statement() == ID_ifthenelse)
   {
-    code_ifthenelset& ifelsestmt = to_code_ifthenelse(code);
+    code_ifthenelset &ifelsestmt = to_code_ifthenelse(code);
     typet a = extract_type_side_effect_block(ifelsestmt.then_case());
-    if (!is_empty_type(a))
+    if(!is_empty_type(a))
       return a;
-    if (ifelsestmt.has_else_case())
+    if(ifelsestmt.has_else_case())
     {
       typet a = extract_type_side_effect_block(ifelsestmt.else_case());
-      if (!is_empty_type(a))
+      if(!is_empty_type(a))
         return a;
     }
     return empty_typet();
   }
 
-  code_blockt& processed_codeblock = *block_to_process;
+  code_blockt &processed_codeblock = *block_to_process;
 
-  for (auto& op : processed_codeblock.operands())
+  for(auto &op : processed_codeblock.operands())
   {
-    if (op.id() == ID_code && to_code(op).get_statement() == ID_ifthenelse)
+    if(op.id() == ID_code && to_code(op).get_statement() == ID_ifthenelse)
     {
-      code_ifthenelset& ifelsestmt = to_code_ifthenelse(to_code(op));
+      code_ifthenelset &ifelsestmt = to_code_ifthenelse(to_code(op));
       typet a = extract_type_side_effect_block(ifelsestmt.then_case());
-      if (!is_empty_type(a))
+      if(!is_empty_type(a))
         return a;
-      if (ifelsestmt.has_else_case())
+      if(ifelsestmt.has_else_case())
       {
         typet a = extract_type_side_effect_block(ifelsestmt.else_case());
-        if (!is_empty_type(a))
+        if(!is_empty_type(a))
           return a;
       }
     }
     // assign statement to the created variable
-    else if (op.id() == ID_code && to_code(op).get_statement() == ID_assign)
+    else if(op.id() == ID_code && to_code(op).get_statement() == ID_assign)
     {
       code_assignt assign = to_code_assign(to_code(op));
-      if (assign.lhs().id() == ID_symbol && id2string(to_symbol_expr(assign.lhs()).get_identifier()).find("typecheck_var--codeblock_expr_value") != std::string::npos)
+      if(
+        assign.lhs().id() == ID_symbol &&
+        id2string(to_symbol_expr(assign.lhs()).get_identifier())
+            .find("typecheck_var--codeblock_expr_value") != std::string::npos)
       {
         return assign.rhs().type();
       }
@@ -492,22 +504,24 @@ typet extract_type_side_effect_block(codet& code)
 
 void rust_typecheckt::typecheck_expr_side_effect(side_effect_exprt &expr)
 {
-  if (expr.get_statement() == ID_function_call)
+  if(expr.get_statement() == ID_function_call)
   {
     typecheck_function_call(expr);
   }
   else
   {
-    code_blockt& original_codeblock = to_code_block(to_code(expr.op0()));
+    code_blockt &original_codeblock = to_code_block(to_code(expr.op0()));
 
     // create processed code block wrapped in temporary to allow multiple returns via the temporary
     code_blockt processed_codeblock;
-    symbol_exprt temporary("typecheck_var--codeblock_expr_value", empty_typet());
+    symbol_exprt temporary(
+      "typecheck_var--codeblock_expr_value", empty_typet());
     processed_codeblock.add(code_declt(temporary));
     processed_codeblock.append(original_codeblock);
 
     // process the block, getting the type and filling in the temporary
-    process_side_effect_block(processed_codeblock, to_symbol_expr(processed_codeblock.op0().op0()));
+    process_side_effect_block(
+      processed_codeblock, to_symbol_expr(processed_codeblock.op0().op0()));
 
     // add the true "return" of the temporary variable
     processed_codeblock.add(code_expressiont(temporary));
@@ -517,7 +531,8 @@ void rust_typecheckt::typecheck_expr_side_effect(side_effect_exprt &expr)
     typecheck_block(to_code(expr.op0()));
 
     // determine block type
-    typet returnType = extract_type_side_effect_block(to_code_block(to_code(expr.op0())));
+    typet returnType =
+      extract_type_side_effect_block(to_code_block(to_code(expr.op0())));
 
     // set type of declared temp variable and declaration
     expr.op0().op0().op0().type() = returnType;
@@ -733,17 +748,27 @@ void rust_typecheckt::typecheck_expr_binary_arith(exprt &expr)
   }
 
   // if float, use special float exprs
-  if (expr.op0().type().id() == ID_floatbv || expr.op1().type().id() == ID_floatbv)
+  if(
+    expr.op0().type().id() == ID_floatbv ||
+    expr.op1().type().id() == ID_floatbv)
   {
     irep_idt id;
-    if(expr.id() == ID_plus)       id = ID_floatbv_plus;
-    else if(expr.id() == ID_minus) id = ID_floatbv_minus;
-    else if(expr.id() == ID_mult)  id = ID_floatbv_mult;
-    else if(expr.id() == ID_div)   id = ID_floatbv_div;
-    else if(expr.id() == ID_mod)   id = ID_floatbv_rem;
+    if(expr.id() == ID_plus)
+      id = ID_floatbv_plus;
+    else if(expr.id() == ID_minus)
+      id = ID_floatbv_minus;
+    else if(expr.id() == ID_mult)
+      id = ID_floatbv_mult;
+    else if(expr.id() == ID_div)
+      id = ID_floatbv_div;
+    else if(expr.id() == ID_mod)
+      id = ID_floatbv_rem;
 
-    expr = ieee_float_op_exprt(expr.op0(), id, expr.op1(),
-                               symbol_table.get_writeable_ref("__CPROVER_rounding_mode").symbol_expr());
+    expr = ieee_float_op_exprt(
+      expr.op0(),
+      id,
+      expr.op1(),
+      symbol_table.get_writeable_ref("__CPROVER_rounding_mode").symbol_expr());
   }
 
   typet newType = rust_reconcile_types(expr.op0(), expr.op1());
@@ -764,7 +789,9 @@ void rust_typecheckt::typecheck_exp_binary_equal(exprt &expr)
   rust_reconcile_types(expr.op0(), expr.op1());
 
   // if float, use special float exprs
-  if (expr.op0().type().id() == ID_floatbv || expr.op1().type().id() == ID_floatbv)
+  if(
+    expr.op0().type().id() == ID_floatbv ||
+    expr.op1().type().id() == ID_floatbv)
   {
     if(expr.id() == ID_equal)
       expr = ieee_float_equal_exprt(expr.op0(), expr.op1());
@@ -849,11 +876,14 @@ void rust_typecheckt::typecheck_symbol_expr(symbol_exprt &symbol_expr)
   irep_idt identifier = symbol_expr.get_identifier();
   // if this is a variable, we need to check if we already
   // prefixed it and add to the symbol table if it is not there already
-  irep_idt existing_decorated_symbol = find_existing_decorated_symbol(identifier);
+  irep_idt existing_decorated_symbol =
+    find_existing_decorated_symbol(identifier);
   if(existing_decorated_symbol == ID_empty) // if symbol is not already known
   {
-    error() << "Unknown symbol. It is either undeclared or not being added to rust_typecheckt::known_symbols: \n"
-            << symbol_expr.pretty() << "\n" << eom;
+    error() << "Unknown symbol. It is either undeclared or not being added to "
+               "rust_typecheckt::known_symbols: \n"
+            << symbol_expr.pretty() << "\n"
+            << eom;
     throw 0;
   }
   else
@@ -861,7 +891,6 @@ void rust_typecheckt::typecheck_symbol_expr(symbol_exprt &symbol_expr)
     symbol_expr.type() = search_known_symbols(identifier);
     symbol_expr.set_identifier(existing_decorated_symbol);
   }
-
 }
 
 void rust_typecheckt::typecheck_code(codet &code)
@@ -1025,14 +1054,15 @@ void rust_typecheckt::typecheck_decl_block(codet &code_decl)
 
 void rust_typecheckt::typecheck_return(code_returnt &code)
 {
-  if (code.has_return_value())
+  if(code.has_return_value())
   {
     typecheck_expr(code.return_value());
 
     //COMP: assumes return type is typecastable into function return type, or the Rust code wouldn't compile
     //TODO: If proc_name ends up being more than the function name, change this. The if check can be removed entirely, but then unnecessary typecasting would be done
-    typet func_type = to_code_type(symbol_table.lookup_ref(proc_name).type).return_type();
-    if (func_type != code.return_value().type())
+    typet func_type =
+      to_code_type(symbol_table.lookup_ref(proc_name).type).return_type();
+    if(func_type != code.return_value().type())
       code.return_value() = typecast_exprt(code.return_value(), func_type);
   }
 }
@@ -1040,7 +1070,8 @@ void rust_typecheckt::typecheck_return(code_returnt &code)
 void rust_typecheckt::typecheck_block(codet &code)
 {
   scope_history.push_back(++max_scope);
-  known_symbols.push_back(std::make_pair(std::unordered_map<irep_idt, typet>(), scope_history.back()));
+  known_symbols.push_back(std::make_pair(
+    std::unordered_map<irep_idt, typet>(), scope_history.back()));
 
   Forall_operands(it, code)
     typecheck_code(to_code(*it));
@@ -1067,23 +1098,25 @@ void rust_typecheckt::typecheck_try_catch(code_try_catcht &code)
   typecheck_code(code.get_catch_code(0));
 }
 
-void rust_typecheckt::typecheck_function_call(side_effect_exprt& expr)
+void rust_typecheckt::typecheck_function_call(side_effect_exprt &expr)
 {
   if(expr.operands().size() != 2)
   {
-    error() << "function call expected to have two operands\n" << expr.pretty() << eom;
+    error() << "function call expected to have two operands\n"
+            << expr.pretty() << eom;
     throw 0;
   }
 
   expr.type() = lookup_type(expr);
   to_code_type(expr.op0().type()).return_type() = expr.type();
 
-  exprt& args = expr.op1();
-  for (auto& arg : args.operands())
+  exprt &args = expr.op1();
+  for(auto &arg : args.operands())
     typecheck_expr(arg);
 
-  code_typet::parameterst& params = to_code_type(expr.op0().type()).parameters();
-  for (auto& param : params)
+  code_typet::parameterst &params =
+    to_code_type(expr.op0().type()).parameters();
+  for(auto &param : params)
   {
     typecheck_expr(param.op0());
     param.type() = param.op0().type();
@@ -1117,7 +1150,8 @@ void rust_typecheckt::typecheck_assign(code_assignt &code)
 void rust_typecheckt::typecheck_non_type_symbol(symbolt &symbol)
 {
   scope_history.push_back(++max_scope);
-  known_symbols.push_back(std::make_pair(std::unordered_map<irep_idt, typet>(), scope_history.back()));
+  known_symbols.push_back(std::make_pair(
+    std::unordered_map<irep_idt, typet>(), scope_history.back()));
 
   assert(!symbol.is_type);
 
@@ -1166,7 +1200,7 @@ void rust_typecheckt::typecheck()
   for(const irep_idt &id : identifiers)
   {
     symbolt &symbol = symbol_table.get_writeable_ref(id);
-    if (!symbol.is_type)
+    if(!symbol.is_type)
       typecheck_non_type_symbol(symbol);
   }
 }

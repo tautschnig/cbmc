@@ -16,17 +16,17 @@ Author: Brett Schiff, bschiff@amazon.com
 #include <unordered_map>
 
 #include <util/c_types.h>
-#include <util/std_types.h>
 #include <util/std_expr.h>
+#include <util/std_types.h>
 
-#include <util/ieee_float.h>
-#include <ansi-c/literals/convert_float_literal.h>
 #include <ansi-c/gcc_types.h>
+#include <ansi-c/literals/convert_float_literal.h>
 #include <ansi-c/literals/parse_float.h>
+#include <util/ieee_float.h>
 
 //TODO: Possibly do this in a more efficient way
 //TODO: This may have to go to the .h file and have "add type" functionality to support user-created types
-class TypeTranslator
+class type_translatort
 {
 public:
   typet Translate(std::string const &key)
@@ -68,7 +68,7 @@ private:
   std::unordered_map<std::string, typet> m_typeMappings;
 };
 
-TypeTranslator translator;
+type_translatort translator;
 
 typet rusttype_to_ctype(irep_idt name)
 {
@@ -98,21 +98,21 @@ typet rust_resolve_differing_types(exprt &a, exprt &b)
     return signedbv_typet(to_bitvector_type(a.type()).get_width());
 
   // mismatched widths -- pick larger -- will have to be more intelligent if widths > 64 are introduced
-  else if (pair_is(aType, bType, "unsignedbv", "unsignedbv"))
+  else if(pair_is(aType, bType, "unsignedbv", "unsignedbv"))
   {
     // 32 bit ints need to be changed into 64 bit ints
     a = typecast_exprt(a, unsignedbv_typet(64));
     b = typecast_exprt(b, unsignedbv_typet(64));
     return unsignedbv_typet(64);
   }
-  else if (pair_is(aType, bType, "signedbv", "signedbv"))
+  else if(pair_is(aType, bType, "signedbv", "signedbv"))
   {
     // 32 bit ints need to be changed into 64 bit ints
     a = typecast_exprt(a, signedbv_typet(64));
     b = typecast_exprt(b, signedbv_typet(64));
     return signedbv_typet(64);
   }
-  else if (pair_is(aType, bType, "floatbv", "floatbv"))
+  else if(pair_is(aType, bType, "floatbv", "floatbv"))
   {
     // 32 bit floats need to be changed into 64 bit floats
     a = typecast_exprt(a, double_type());
@@ -232,7 +232,7 @@ typet rust_union(const typet &type1, const typet &type2)
   return rust_union_typet(type1).union_with(rust_union_typet(type2)).to_type();
 }
 
-bool is_empty_type(typet const& type)
+bool is_empty_type(typet const &type)
 {
   return type.id() == ID_empty || type.id().empty();
 }

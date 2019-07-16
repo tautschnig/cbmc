@@ -12,8 +12,8 @@ Author: Brett Schiff, bschiff@amazon.com
 
 #include "rust_language.h"
 
-#include <util/symbol_table.h>
 #include <util/get_base_name.h>
+#include <util/symbol_table.h>
 
 #include "expr2rust.h"
 #include "rust_convert.h"
@@ -24,7 +24,7 @@ Author: Brett Schiff, bschiff@amazon.com
 
 std::set<std::string> rust_languaget::extensions() const
 {
-  return { "rs" };
+  return {"rs"};
 }
 
 void rust_languaget::modules_provided(std::set<std::string> &modules)
@@ -52,17 +52,15 @@ bool rust_languaget::preprocess(
   return true;
 }
 
-bool rust_languaget::parse(
-  std::istream &instream,
-  const std::string &path)
+bool rust_languaget::parse(std::istream &instream, const std::string &path)
 {
   // store the path
-  parse_path=path;
+  parse_path = path;
 
   // parsing
   rust_parser.clear();
   rust_parser.set_file(path);
-  rust_parser.in=&instream;
+  rust_parser.in = &instream;
   rust_parser.set_message_handler(get_message_handler());
 
   rust_scanner_init();
@@ -79,9 +77,7 @@ bool rust_languaget::parse(
 }
 
 /// Converting from parse tree and type checking.
-bool rust_languaget::typecheck(
-  symbol_tablet &symbol_table,
-  const std::string &)
+bool rust_languaget::typecheck(symbol_tablet &symbol_table, const std::string &)
 {
   if(rust_typecheck(symbol_table, get_message_handler()))
     return true;
@@ -89,12 +85,9 @@ bool rust_languaget::typecheck(
   return false;
 }
 
-bool rust_languaget::generate_support_functions(
-  symbol_tablet &symbol_table)
+bool rust_languaget::generate_support_functions(symbol_tablet &symbol_table)
 {
-  return rust_entry_point(
-    symbol_table,
-    get_message_handler());
+  return rust_entry_point(symbol_table, get_message_handler());
 }
 
 void rust_languaget::show_parse(std::ostream &out)
@@ -112,7 +105,7 @@ bool rust_languaget::from_expr(
   std::string &code,
   const namespacet &ns)
 {
-  code=expr2rust(expr, ns);
+  code = expr2rust(expr, ns);
   return false;
 }
 
@@ -121,7 +114,7 @@ bool rust_languaget::from_type(
   std::string &code,
   const namespacet &ns)
 {
-  code=type2rust(type, ns);
+  code = type2rust(type, ns);
   return false;
 }
 
@@ -138,29 +131,28 @@ bool rust_languaget::to_expr(
 
   rust_parser.clear();
   rust_parser.set_file(irep_idt());
-  rust_parser.in=&instream;
+  rust_parser.in = &instream;
   rust_parser.set_message_handler(get_message_handler());
   rust_scanner_init();
 
-  bool result=rust_parser.parse();
+  bool result = rust_parser.parse();
 
-  if(rust_parser.parse_tree.items.size()!=1)
-    result=true;
+  if(rust_parser.parse_tree.items.size() != 1)
+    result = true;
   else
   {
     symbol_tablet symbol_table;
-    result=
-      rust_convert(parse_tree, symbol_table, get_message_handler());
+    result = rust_convert(parse_tree, symbol_table, get_message_handler());
 
-    if(symbol_table.symbols.size()!=1)
-      result=true;
+    if(symbol_table.symbols.size() != 1)
+      result = true;
 
     if(!result)
-      expr=symbol_table.symbols.begin()->second.value;
+      expr = symbol_table.symbols.begin()->second.value;
 
     // typecheck it
     if(!result)
-      result=rust_typecheck(expr, get_message_handler(), ns);
+      result = rust_typecheck(expr, get_message_handler(), ns);
   }
 
   // save some memory

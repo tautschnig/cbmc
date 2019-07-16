@@ -14,7 +14,7 @@ Author: Brett Schiff, bschiff@amazon.com
 
 rust_parsert rust_parser;
 
-extern char const* yyrusttext;
+extern char const *yyrusttext;
 
 void yyrust::parser::error(const std::string &msg)
 {

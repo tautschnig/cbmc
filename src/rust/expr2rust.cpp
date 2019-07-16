@@ -14,10 +14,12 @@ Author: Brett Schiff, bschiff@amazon.com
 
 #include <ansi-c/expr2c_class.h>
 
-class expr2rustt:public expr2ct
+class expr2rustt : public expr2ct
 {
 public:
-  explicit expr2rustt(const namespacet &_ns):expr2ct(_ns) { }
+  explicit expr2rustt(const namespacet &_ns) : expr2ct(_ns)
+  {
+  }
 
 protected:
 };

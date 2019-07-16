@@ -34,7 +34,8 @@ void TokenTreeToString(
   }
 }
 
-extern void UseDifferentScanner(yyFlexLexer *newScanner, std::istream& newInStream);
+extern void
+UseDifferentScanner(yyFlexLexer *newScanner, std::istream &newInStream);
 extern void PopToPreviousScanner();
 
 exprt parse_token_tree(multi_ary_exprt const &tokenTree)

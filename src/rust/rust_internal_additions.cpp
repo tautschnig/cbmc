@@ -12,8 +12,8 @@ Author: Brett Schiff, bschiff@amazon.com
 
 #include "rust_internal_additions.h"
 
-#include <util/std_types.h>
 #include <util/cprover_prefix.h>
+#include <util/std_types.h>
 #include <util/symbol_table.h>
 
 #include <util/c_types.h>
@@ -25,14 +25,14 @@ void rust_internal_additions(symbol_tablet &dest)
   {
     symbolt symbol;
     symbol.base_name = CPROVER_PREFIX "rounding_mode";
-    symbol.name=CPROVER_PREFIX "rounding_mode";
-    symbol.type=signed_int_type();
-    symbol.mode=ID_C;
-    symbol.is_lvalue=true;
-    symbol.is_state_var=true;
-    symbol.is_thread_local=true;
+    symbol.name = CPROVER_PREFIX "rounding_mode";
+    symbol.type = signed_int_type();
+    symbol.mode = ID_C;
+    symbol.is_lvalue = true;
+    symbol.is_state_var = true;
+    symbol.is_thread_local = true;
     // mark as already typechecked
-    symbol.is_extern=true;
+    symbol.is_extern = true;
     dest.add(symbol);
   }
 
@@ -41,14 +41,14 @@ void rust_internal_additions(symbol_tablet &dest)
   {
     symbolt symbol;
     symbol.base_name = CPROVER_PREFIX "malloc_object";
-    symbol.name=CPROVER_PREFIX "malloc_object";
-    symbol.type=pointer_type(empty_typet());
-    symbol.mode=ID_C;
-    symbol.is_lvalue=true;
-    symbol.is_state_var=true;
-    symbol.is_thread_local=true;
+    symbol.name = CPROVER_PREFIX "malloc_object";
+    symbol.type = pointer_type(empty_typet());
+    symbol.mode = ID_C;
+    symbol.is_lvalue = true;
+    symbol.is_state_var = true;
+    symbol.is_thread_local = true;
     // mark as already typechecked
-    symbol.is_extern=true;
+    symbol.is_extern = true;
     dest.add(symbol);
   }
 }
