@@ -41,5 +41,8 @@ rust_lex.yy.cpp: scanner.l
 generated_files: rust_lex.yy.cpp rust_y.tab.cpp rust_y.tab.h
 
 # extra dependencies
+rust_parser$(OBJEXT): rust_y.tab.h
+rust_parseassert$(OBJEXT): rust_y.tab.h
+rust_language$(OBJEXT): rust_y.tab.h
 rust_y.tab$(OBJEXT): rust_y.tab.cpp rust_y.tab.h
 rust_lex.yy$(OBJEXT): rust_y.tab.cpp rust_lex.yy.cpp rust_y.tab.h

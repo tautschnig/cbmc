@@ -51,6 +51,7 @@ static int num_hashes;
 static int end_hashes;
 static int saw_non_hash;
 
+#include <util/pragma_wsign_compare.def>
 %}
 
 %option c++

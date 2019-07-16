@@ -237,7 +237,7 @@ bool is_empty_type(typet const& type)
   return type.id() == ID_empty || type.id().empty();
 }
 
-bool compare_components(
+static bool compare_components(
   const union_typet::componentt &comp1,
   const union_typet::componentt &comp2)
 {
