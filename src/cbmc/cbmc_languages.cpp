@@ -15,8 +15,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <ansi-c/ansi_c_language.h>
 #include <cpp/cpp_language.h>
-#include <rust/rust_language.h>
 #include <json-symtab-language/json_symtab_language.h>
+#include <rust/rust_language.h>
 #include <statement-list/statement_list_language.h>
 
 #ifdef HAVE_JSIL
