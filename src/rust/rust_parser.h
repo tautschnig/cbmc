@@ -17,20 +17,20 @@ Author: Brett Schiff, bschiff@amazon.com
 #include "rust_parse_tree.h"
 #include "rust_y.tab.h"
 
-class rust_parsert:public parsert
+class rust_parsert : public parsert
 {
 public:
   rust_parse_treet parse_tree;
 
-  virtual bool parse() override
+  bool parse() override
   {
     yyrust::parser parser;
-    //TODO_Debug: Turn off debug output
-    //parser.set_debug_level(1);
+    // TODO_Debug Turn off debug output
+    // parser.set_debug_level(1);
     return parser.parse() != 0;
   }
 
-  virtual void clear() override
+  void clear() override
   {
     parsert::clear();
     parse_tree.clear();

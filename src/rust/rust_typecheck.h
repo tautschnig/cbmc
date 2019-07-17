@@ -67,7 +67,7 @@ protected:
   void typecheck_symbol_expr(symbol_exprt &symbol_expr);
   void typecheck_decl(codet &code_decl);
   void typecheck_decl_block(codet &code_decl);
-  void typecheck_expr_side_effect(side_effect_exprt & expr);
+  void typecheck_expr_side_effect(side_effect_exprt &expr);
   void typecheck_expr_delete(exprt &expr);
   void typecheck_expr_index(exprt &expr);
   void typecheck_expr_proto_field(exprt &expr);
@@ -89,7 +89,7 @@ protected:
   void typecheck_expr_operands(exprt &expr);
   void typecheck_expr_main(exprt &expr);
   void typecheck_code(codet &code);
-  void typecheck_function_call(side_effect_exprt&function_call);
+  void typecheck_function_call(side_effect_exprt &function_call);
   void typecheck_return(code_returnt &code);
   void typecheck_block(codet &code);
   void typecheck_ifthenelse(code_ifthenelset &code);
@@ -101,19 +101,20 @@ protected:
   irep_idt add_prefix(const irep_idt &ds, int scope_level);
   irep_idt strip_to_base_name(const irep_idt &original);
 
-  typet rust_reconcile_types(exprt& a, exprt& b);
+  typet rust_reconcile_types(exprt &a, exprt &b);
 
   // overload to use language-specific syntax
   virtual std::string to_string(const exprt &expr);
   virtual std::string to_string(const typet &type);
 
   // pair is <map of variables, scope level>
-  std::vector<std::pair<std::unordered_map<irep_idt, typet>, int>> known_symbols;
+  std::vector<std::pair<std::unordered_map<irep_idt, typet>, int>>
+    known_symbols;
   std::vector<int> scope_history;
   int max_scope = 0;
 
-  typet lookup_type(exprt& expr);
-  typet search_known_symbols(irep_idt const& symbol_name);
+  typet lookup_type(exprt &expr);
+  typet search_known_symbols(irep_idt const &symbol_name);
   irep_idt find_existing_decorated_symbol(irep_idt const &symbol_name);
 };
 

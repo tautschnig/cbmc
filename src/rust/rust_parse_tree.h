@@ -15,15 +15,15 @@ Author: Brett Schiff, bschiff@amazon.com
 #include <iosfwd>
 #include <list>
 
-#include <util/std_expr.h>
 #include <util/std_code.h>
+#include <util/std_expr.h>
 
 class symbolt;
 
-class rust_declarationt:public exprt
+class rust_declarationt : public exprt
 {
 public:
-  rust_declarationt():exprt(ID_declaration)
+  rust_declarationt() : exprt(ID_declaration)
   {
   }
 

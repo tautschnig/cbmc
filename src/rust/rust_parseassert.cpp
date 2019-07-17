@@ -47,20 +47,17 @@ exprt parse_token_tree(multi_ary_exprt const &tokenTree)
   tokenTreeStream << "; }";
   std::stringstream outputStream;
 
-  //TODO_Debug: Turn off debug output
-  /*std::cout << "##################### Token String: [" << tokenTreeStream.str()
-            << "]" << std::endl;*/
-
   yyFlexLexer tokTreeScanner(&tokenTreeStream, &outputStream);
   // use the scanner made for this stream
   UseDifferentScanner(&tokTreeScanner, tokenTreeStream);
 
   yyrust::parser tokTreeParser;
   std::istream *oldStream = rust_parser.in;
-  //TODO: Once line numbers are being used, undo the line increase that happens because of the read function on rust_parser
+  // TODO Once line numbers are being used, undo the line increase that
+  //       happens because of the read function on rust_parser
   rust_parser.in = &tokenTreeStream;
-  //TODO_Debug: Turn off debug output
-  //tokTreeParser.set_debug_level(1);
+  // TODO_Debug Turn off debug output
+  // tokTreeParser.set_debug_level(1);
 
   int parseResult = tokTreeParser.parse();
   rust_parser.in = oldStream;

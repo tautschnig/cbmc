@@ -24,8 +24,9 @@ Author: Brett Schiff, bschiff@amazon.com
 #include <ansi-c/literals/parse_float.h>
 #include <util/ieee_float.h>
 
-//TODO: Possibly do this in a more efficient way
-//TODO: This may have to go to the .h file and have "add type" functionality to support user-created types
+// TODO Possibly do this in a more efficient way
+// TODO This may have to go to the .h file and have "add type" functionality
+//   to support user-created types
 class type_translatort
 {
 public:
@@ -51,7 +52,7 @@ public:
 private:
   void Init()
   {
-    //TODO: add all mappings
+    // TODO add all mappings
     // Actual list of mappings
     m_typeMappings[""] = void_type();
     m_typeMappings["i32"] = signedbv_typet(32);
@@ -91,13 +92,15 @@ typet rust_resolve_differing_types(exprt &a, exprt &b)
   std::string aType(a.type().id().c_str());
   std::string bType(b.type().id().c_str());
 
-  //TODO: Add all resolving types
+  // TODO: Add all resolving types
 
-  //COMP: This assumes widths match, as Rust source code would not compile if they don't
+  // COMP: This assumes widths match, as Rust source code would not compile
+  //   if they don't
   if(pair_is(aType, bType, "signedbv", "unsignedbv"))
     return signedbv_typet(to_bitvector_type(a.type()).get_width());
 
-  // mismatched widths -- pick larger -- will have to be more intelligent if widths > 64 are introduced
+  // mismatched widths -- pick larger -- will have to be more intelligent if
+  //   widths > 64 are introduced
   else if(pair_is(aType, bType, "unsignedbv", "unsignedbv"))
   {
     // 32 bit ints need to be changed into 64 bit ints

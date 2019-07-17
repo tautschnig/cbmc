@@ -12,21 +12,22 @@ Author: Brett Schiff, bschiff@amazon.com
 /// Rust Language
 #include "rust_typecheck.h"
 
+#include <util/cprover_prefix.h>
 #include <util/prefix.h>
 #include <util/std_expr.h>
 #include <util/symbol_table.h>
 
-//#include "expr2rust.h"
+// #include "expr2rust.h"
 #include "rust_types.h"
 
 std::string rust_typecheckt::to_string(const exprt &expr)
 {
-  return ""; //expr2rust(expr, ns);
+  return ""; // expr2rust(expr, ns);
 }
 
 std::string rust_typecheckt::to_string(const typet &type)
 {
-  return ""; //type2rust(type, ns);
+  return ""; // type2rust(type, ns);
 }
 
 typet rust_typecheckt::lookup_type(exprt &expr)
@@ -57,7 +58,8 @@ typet rust_typecheckt::lookup_type(exprt &expr)
   return empty_typet();
 }
 
-/// search known symbols from this scope up and return type, returning an empty type if not found
+/// search known symbols from this scope up and return type, returning an
+///   empty type if not found
 typet rust_typecheckt::search_known_symbols(irep_idt const &symbol_name)
 {
   irep_idt symbol_base_name = strip_to_base_name(symbol_name);
@@ -76,7 +78,8 @@ typet rust_typecheckt::search_known_symbols(irep_idt const &symbol_name)
 
   return empty_typet();
 }
-/// search known symbols from this scope up and return type, returning an empty type if not found
+/// search known symbols from this scope up and return type, returning an
+///   empty id if not found
 irep_idt
 rust_typecheckt::find_existing_decorated_symbol(irep_idt const &symbol_name)
 {
@@ -275,7 +278,7 @@ void rust_typecheckt::typecheck_loop(codet &code)
   }
   else if(ID == ID_for)
   {
-    //TODO -- only range based for loops exist, iterators and lists must be done first
+    // TODO only range based for loops, iterators and lists must be done first
   }
 }
 
@@ -302,7 +305,8 @@ void rust_typecheckt::typecheck_expr_main(exprt &expr)
   // unwrap code expressions
   if(expr.id() == ID_code)
   {
-    // these are ok to be used as expressions, and they hold the expression in op0, so it's already been typechecked
+    // these are ok to be used as expressions, and they hold the expression
+    //    in op0, so it's already been typechecked
     if(to_code(expr).get_statement() == ID_expression)
     {
     }
@@ -411,8 +415,9 @@ void rust_typecheckt::typecheck_expr_main(exprt &expr)
   }
 }
 
-//COMP: assumes all returned types match as is required for Rust to compile
-/// Recursively finds returned expressions, gathers the type, and replaces them with assignment to a temporary
+// COMP: assumes all returned types match as is required for Rust to compile
+/// Recursively finds returned expressions, gathers the type, and replaces
+///   them with assignment to a temporary
 void process_side_effect_block(codet &code, symbol_exprt &temporary)
 {
   code_blockt *block_to_process = nullptr;
@@ -768,7 +773,9 @@ void rust_typecheckt::typecheck_expr_binary_arith(exprt &expr)
       expr.op0(),
       id,
       expr.op1(),
-      symbol_table.get_writeable_ref("__CPROVER_rounding_mode").symbol_expr());
+      symbol_table
+        .get_writeable_ref(std::string(CPROVER_PREFIX) + "rounding_mode")
+        .symbol_expr());
   }
 
   typet newType = rust_reconcile_types(expr.op0(), expr.op1());
@@ -861,7 +868,8 @@ void rust_typecheckt::typecheck_expr_unary_num(exprt &expr)
     expr.op0().type() = search_known_symbols(expr.op0().id());
   }
 
-  // Rust Boolean Not and Bitwise Not are the same symbol, so differentiation has to happen here
+  // Rust Boolean Not and Bitwise Not are the same symbol, so
+  //   differentiation has to happen here
   if(expr.id() == ID_bitnot && expr.op0().type().id() == ID_bool)
   {
     expr = not_exprt(expr.op0());
@@ -1002,14 +1010,16 @@ void rust_typecheckt::typecheck_decl(codet &code_decl)
   }
   else
   {
-    //TODO: handle rust variable overwriting
+    // TODO handle rust variable overwriting
     // symbol already exists
-    assert(!s_it->second.is_type);
+    // assert(!s_it->second.is_type);
+    if(!s_it->second.is_type)
+    {
+      const symbolt &symbol = s_it->second;
 
-    const symbolt &symbol = s_it->second;
-
-    // type the expression
-    decl_expr.type() = symbol.type;
+      // type the expression
+      decl_expr.type() = symbol.type;
+    }
   }
 
   known_symbols.back().first[identifier] = decl_expr.op0().type();
@@ -1024,7 +1034,7 @@ void rust_typecheckt::typecheck_decl_block(codet &code_decl)
   }
 
   // typecheck the assigned expression
-  // typecheck rhs of assignment(lhs will be done after the declaration is checked)
+  // typecheck rhs of assignment(lhs done after the declaration is checked)
   code_assignt &assignment = to_code_assign(to_code(code_decl.op1()));
   typecheck_expr(assignment.rhs());
 
@@ -1058,8 +1068,11 @@ void rust_typecheckt::typecheck_return(code_returnt &code)
   {
     typecheck_expr(code.return_value());
 
-    //COMP: assumes return type is typecastable into function return type, or the Rust code wouldn't compile
-    //TODO: If proc_name ends up being more than the function name, change this. The if check can be removed entirely, but then unnecessary typecasting would be done
+    // COMP: assumes return type is typecastable into function return type,
+    //   or the Rust code wouldn't compile
+    // TODO: If proc_name ends up being more than the function name, change
+    //   this. The if check can be removed entirely, but then unnecessary
+    //   typecasting would be done
     typet func_type =
       to_code_type(symbol_table.lookup_ref(proc_name).type).return_type();
     if(func_type != code.return_value().type())
@@ -1153,7 +1166,11 @@ void rust_typecheckt::typecheck_non_type_symbol(symbolt &symbol)
   known_symbols.push_back(std::make_pair(
     std::unordered_map<irep_idt, typet>(), scope_history.back()));
 
-  assert(!symbol.is_type);
+  // assert(!symbol.is_type);
+  if(symbol.is_type)
+  {
+    throw 0;
+  }
 
   proc_name = symbol.name;
   typecheck_type(symbol.type);
