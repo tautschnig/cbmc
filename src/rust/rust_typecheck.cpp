@@ -517,7 +517,8 @@ void rust_typecheckt::typecheck_expr_side_effect(side_effect_exprt &expr)
   {
     code_blockt &original_codeblock = to_code_block(to_code(expr.op0()));
 
-    // create processed code block wrapped in temporary to allow multiple returns via the temporary
+    // create processed code block wrapped in temporary to allow multiple
+    //   returns via the temporary
     code_blockt processed_codeblock;
     symbol_exprt temporary(
       "typecheck_var--codeblock_expr_value", empty_typet());

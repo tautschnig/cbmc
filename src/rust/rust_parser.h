@@ -25,7 +25,7 @@ public:
   bool parse() override
   {
     yyrust::parser parser;
-    // TODO_Debug Turn off debug output
+    // TODO Debug Turn off debug output
     // parser.set_debug_level(1);
     return parser.parse() != 0;
   }

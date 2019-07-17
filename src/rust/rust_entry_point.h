@@ -10,8 +10,8 @@ Author: Brett Schiff, bschiff@amazon.com
 /// \file
 /// Rust Language
 
-#ifndef CPROVER_rust_RUST_ENTRY_POINT_H
-#define CPROVER_rust_RUST_ENTRY_POINT_H
+#ifndef CPROVER_RUST_RUST_ENTRY_POINT_H
+#define CPROVER_RUST_RUST_ENTRY_POINT_H
 
 class message_handlert;
 class symbol_tablet;

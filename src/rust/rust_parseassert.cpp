@@ -56,7 +56,7 @@ exprt parse_token_tree(multi_ary_exprt const &tokenTree)
   // TODO Once line numbers are being used, undo the line increase that
   //       happens because of the read function on rust_parser
   rust_parser.in = &tokenTreeStream;
-  // TODO_Debug Turn off debug output
+  // TODO Debug Turn off debug output
   // tokTreeParser.set_debug_level(1);
 
   int parseResult = tokTreeParser.parse();
