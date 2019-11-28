@@ -3,17 +3,28 @@ generic_flex(ansi_c)
 
 add_executable(converter library/converter.cpp)
 
-file(GLOB ansi_c_library_sources "library/*.c")
-set(converter_input_path "${CMAKE_CURRENT_SOURCE_DIR}/converter_input.txt")
-file(WRITE ${converter_input_path} "")
-foreach(source ${ansi_c_library_sources})
-    file(READ ${source} file_contents)
-    file(APPEND ${converter_input_path} "${file_contents}")
-endforeach()
+file(GLOB ansi_c_library_sources "${CMAKE_CURRENT_SOURCE_DIR}/library/*.c")
+set(converter_input_path "${CMAKE_CURRENT_BINARY_DIR}/converter_input.txt")
+file(WRITE ${CMAKE_BINARY_DIR}/converter_input.cmake
+  "
+  file(WRITE ${converter_input_path} \"\")
+  foreach(source ${ansi_c_library_sources})
+      file(READ \${source} file_contents)
+      file(APPEND ${converter_input_path} \"\${file_contents}\")
+  endforeach()
+  "
+)
+
+add_custom_command(
+  OUTPUT ${converter_input_path}
+  COMMAND ${CMAKE_COMMAND}
+    -P ${CMAKE_BINARY_DIR}/converter_input.cmake
+  DEPENDS ${ansi_c_library_sources}
+)
 
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
     COMMAND converter < ${converter_input_path} > "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
-    DEPENDS converter
+    DEPENDS converter ${converter_input_path}
 )
 
 add_executable(file_converter file_converter.cpp)
