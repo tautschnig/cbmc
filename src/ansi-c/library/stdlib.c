@@ -299,9 +299,15 @@ inline long strtol(const char *nptr, char **endptr, int base)
       break;
 
     in_number=1;
-    long res_before=res;
-    res=res*base+ch-sub;
-    if(res<res_before)
+    _Bool overflow = __CPROVER_overflow_mult(res, (long)base);
+#pragma CPROVER check push
+#pragma CPROVER check disable "signed-overflow"
+    // This is now safe; still do it within the scope of the pragma to avoid an
+    // unnecessary assertion to be generated.
+    if(!overflow)
+      res *= base;
+#pragma CPROVER check pop
+    if(overflow || __CPROVER_overflow_plus(res, (long)(ch - sub)))
     {
       errno=ERANGE;
       if(sign=='-')
@@ -309,6 +315,7 @@ inline long strtol(const char *nptr, char **endptr, int base)
       else
         return LONG_MAX;
     }
+    res += ch - sub;
   }
 
   if(endptr!=0)
