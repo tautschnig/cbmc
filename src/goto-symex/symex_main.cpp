@@ -693,14 +693,12 @@ void goto_symext::execute_next_instruction(
     break;
 
   case DEAD:
-    if(state.reachable)
-      symex_dead(state);
+    symex_dead(state);
     symex_transition(state);
     break;
 
   case START_THREAD:
-    if(state.reachable)
-      symex_start_thread(state);
+    symex_start_thread(state);
     symex_transition(state);
     break;
 
@@ -712,26 +710,22 @@ void goto_symext::execute_next_instruction(
     break;
 
   case ATOMIC_BEGIN:
-    if(state.reachable)
-      symex_atomic_begin(state);
+    symex_atomic_begin(state);
     symex_transition(state);
     break;
 
   case ATOMIC_END:
-    if(state.reachable)
-      symex_atomic_end(state);
+    symex_atomic_end(state);
     symex_transition(state);
     break;
 
   case CATCH:
-    if(state.reachable)
-      symex_catch(state);
+    symex_catch(state);
     symex_transition(state);
     break;
 
   case THROW:
-    if(state.reachable)
-      symex_throw(state);
+    symex_throw(state);
     symex_transition(state);
     break;
 
