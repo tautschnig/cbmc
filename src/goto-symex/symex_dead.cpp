@@ -16,6 +16,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <pointer-analysis/add_failed_symbols.h>
 
+#include <iostream>
+
 void goto_symext::symex_dead(statet &state)
 {
   const goto_programt::instructiont &instruction=*state.source.pc;
@@ -30,12 +32,14 @@ void goto_symext::symex_dead(statet &state, const symbol_exprt &symbol_expr)
                                                  : ssa_exprt{symbol_expr};
   ssa_exprt ssa = state.rename_ssa<L1>(to_rename, ns).get();
 
+  std::cout << "DEAD " << ssa.get_identifier() << std::endl;
   const exprt fields = state.field_sensitivity.get_fields(ns, state, ssa);
   find_symbols_sett fields_set;
   find_symbols_or_nexts(fields, fields_set);
 
   for(const irep_idt &l1_identifier : fields_set)
   {
+    std::cout << "DEAD FIELD " << l1_identifier << std::endl;
     // We cannot remove the object from the L1 renaming map, because L1 renaming
     // information is not local to a path, but removing it from the propagation
     // map and value-set is safe as 1) it is local to a path and 2) this
@@ -48,5 +52,7 @@ void goto_symext::symex_dead(statet &state, const symbol_exprt &symbol_expr)
     // dropped by `goto_symext::merge_goto` on merging with branches where the
     // identifier is still live.
     state.drop_l1_name(l1_identifier);
+    if(l1_identifier == "main::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::node1__m1!0@86")
+      std::cout << "DEAD XXX" << std::endl;
   }
 }

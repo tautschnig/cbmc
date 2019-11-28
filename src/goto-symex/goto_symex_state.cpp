@@ -214,6 +214,11 @@ goto_symex_statet::rename(exprt expr, const namespacet &ns)
       }
       else
       {
+        if(ssa.get_identifier() == "main::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::1::node1__m1!0@86")
+        {
+          std::cout << "Index: " << level2.latest_index(ssa.get_identifier()) << std::endl;
+
+        }
         // We also consider propagation if we go up to L2.
         // L1 identifiers are used for propagation!
         auto p_it = propagation.find(ssa.get_identifier());

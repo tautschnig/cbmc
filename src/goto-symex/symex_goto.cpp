@@ -13,6 +13,8 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "goto_symex_is_constant.h"
 
 #include <algorithm>
+#include <iostream>
+#include <util/format_expr.h>
 
 #include <util/exception_utils.h>
 #include <util/expr_util.h>
@@ -822,14 +824,18 @@ void goto_symext::phi_function(
   guardt diff_guard = goto_state.guard;
   // this gets the diff between the guards
   diff_guard -= dest_state.guard;
+  std::cerr << "DIFF GUARD: " << format(diff_guard.as_expr()) << std::endl;
 
   symex_renaming_levelt::delta_viewt delta_view;
   goto_state.get_level2().current_names.get_delta_view(
     dest_state.get_level2().current_names, delta_view, false);
 
+  std::unordered_map<irep_idt, std::pair<exprt, exprt>> L1_merge;
+
   for(const auto &delta_item : delta_view)
   {
     const ssa_exprt &ssa = delta_item.m.first;
+    std::cerr << "DELTA1: " << ssa.get_identifier() << std::endl;
     unsigned goto_count = delta_item.m.second;
     unsigned dest_count = !delta_item.is_in_both_maps()
                             ? 0
@@ -847,6 +853,13 @@ void goto_symext::phi_function(
       ssa,
       goto_count,
       dest_count);
+
+    if(!delta_item.is_in_both_maps())
+    {
+      L1_merge.insert(
+        std::make_pair(
+          ssa.get_object_name(), std::make_pair(ssa, nil_exprt{})));
+    }
   }
 
   delta_view.clear();
@@ -859,6 +872,7 @@ void goto_symext::phi_function(
       continue;
 
     const ssa_exprt &ssa = delta_item.m.first;
+    std::cerr << "DELTA2: " << ssa.get_identifier() << std::endl;
     unsigned goto_count = 0;
     unsigned dest_count = delta_item.m.second;
 
@@ -874,6 +888,10 @@ void goto_symext::phi_function(
       ssa,
       goto_count,
       dest_count);
+
+    auto entry = L1_merge.find(ssa.get_object_name());
+    if(entry != L1_merge.end())
+      entry->second.second = ssa;
   }
 }
 
