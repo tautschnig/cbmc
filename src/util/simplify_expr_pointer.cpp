@@ -379,7 +379,14 @@ simplify_exprt::simplify_pointer_offset(const unary_exprt &expr)
 
     exprt product = mult_exprt(sum, size_expr);
 
-    product = simplify_node(product);
+    exprt overflow_mult = product;
+    overflow_mult.id(ID_overflow_mult);
+    overflow_mult.type() = bool_typet{};
+
+    product =
+      if_exprt{overflow_mult, from_integer(0, product.type()), product};
+
+    product = simplify_rec(product).expr;
 
     auto new_expr = plus_exprt(pointer_offset_expr, product);
 
