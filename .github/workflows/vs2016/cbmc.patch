@@ -1,0 +1,101 @@
+From 3d19eb5f8148cf95da970698f6dabe4e6fd17a6f Mon Sep 17 00:00:00 2001
+From: "Mark R. Tuttle" <mrtuttle@amazon.com>
+Date: Sun, 19 Apr 2020 11:55:30 -0400
+Subject: [PATCH 1/2] Fix cmake build from VS2019 command prompt
+
+---
+ src/ansi-c/CMakeLists.txt | 14 +++++++++++---
+ src/cpp/CMakeLists.txt    | 14 +++++++++++---
+ src/util/expr_iterator.h  |  6 +++++-
+ 3 files changed, 27 insertions(+), 7 deletions(-)
+
+diff --git a/src/ansi-c/CMakeLists.txt b/src/ansi-c/CMakeLists.txt
+index edf755fdf2f..72c431f2fe7 100644
+--- a/src/ansi-c/CMakeLists.txt
++++ b/src/ansi-c/CMakeLists.txt
+@@ -5,9 +5,17 @@ add_executable(converter library/converter.cpp)
+ 
+ file(GLOB ansi_c_library_sources "library/*.c")
+ 
+-add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
+-    COMMAND cat ${ansi_c_library_sources} | $<TARGET_FILE:converter> > "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
+-    DEPENDS converter ${ansi_c_library_sources})
++# Convert cmake paths to native paths for Windows builds
++file(TO_NATIVE_PATH "${ansi_c_library_sources}"
++     ansi_c_library_sources_paths)
++file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
++     cprover_library_path)
++file(TO_NATIVE_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/converter"
++     converter_path)
++
++add_custom_command(OUTPUT "${cprover_library_path}"
++    COMMAND cat ${ansi_c_library_sources_paths} | ${converter_path} > ${cprover_library_path}
++    DEPENDS converter ${ansi_c_library_sources_paths})
+ 
+ add_executable(file_converter file_converter.cpp)
+ 
+diff --git a/src/cpp/CMakeLists.txt b/src/cpp/CMakeLists.txt
+index a10fa393116..2a9b15df0dc 100644
+--- a/src/cpp/CMakeLists.txt
++++ b/src/cpp/CMakeLists.txt
+@@ -1,8 +1,16 @@
+ file(GLOB cpp_library_sources "library/*.c")
+ 
+-add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
+-        COMMAND cat ${cpp_library_sources} | $<TARGET_FILE:converter> > "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
+-        DEPENDS converter ${cpp_library_sources})
++# Convert cmake paths to native paths for Windows builds
++file(TO_NATIVE_PATH "${cpp_library_sources}"
++     cpp_library_sources_paths)
++file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/cprover_library.inc"
++     cprover_library_path)
++file(TO_NATIVE_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/converter"
++     converter_path)
++
++add_custom_command(OUTPUT "${cprover_library_path}"
++        COMMAND cat ${cpp_library_sources_paths} | "${converter_path}" > "${cprover_library_path}"
++        DEPENDS converter ${cpp_library_sources_paths})
+ 
+ ################################################################################
+ 
+diff --git a/src/util/expr_iterator.h b/src/util/expr_iterator.h
+index 6a2a86ab259..57a89a5c9f5 100644
+--- a/src/util/expr_iterator.h
++++ b/src/util/expr_iterator.h
+@@ -164,7 +164,11 @@ class depth_iterator_baset
+   { m_stack=std::move(other.m_stack); }
+   depth_iterator_baset &operator=(const depth_iterator_baset&)=default;
+   depth_iterator_baset &operator=(depth_iterator_baset &&other)
+-  { m_stack=std::move(other.m_stack); }
++  {
++    m_stack=std::move(other.m_stack);
++    // VS 2019 cl wants this function definition to return a value
++    return *this;
++  }
+ 
+   const exprt &get_root()
+   {
+
+From 4f76ac7e98e6727e732d592f1cef2a218419c1ec Mon Sep 17 00:00:00 2001
+From: "Mark R. Tuttle" <mrtuttle@amazon.com>
+Date: Mon, 20 Apr 2020 07:00:19 -0400
+Subject: [PATCH 2/2] Fix clang-format error.
+
+---
+ src/util/expr_iterator.h | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/util/expr_iterator.h b/src/util/expr_iterator.h
+index 57a89a5c9f5..90fb5516652 100644
+--- a/src/util/expr_iterator.h
++++ b/src/util/expr_iterator.h
+@@ -165,8 +165,7 @@ class depth_iterator_baset
+   depth_iterator_baset &operator=(const depth_iterator_baset&)=default;
+   depth_iterator_baset &operator=(depth_iterator_baset &&other)
+   {
+-    m_stack=std::move(other.m_stack);
+-    // VS 2019 cl wants this function definition to return a value
++    m_stack = std::move(other.m_stack);
+     return *this;
+   }
+ 
