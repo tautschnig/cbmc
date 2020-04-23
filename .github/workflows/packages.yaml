@@ -8,10 +8,11 @@ jobs:
     outputs:
       time: ${{ steps.time.outputs.time }}
       sha: ${{ steps.sha.outputs.sha }}
-      tag: ${{ steps.tag.outputs.tag }}
-      run: ${{ steps.run.outputs.run }}
-      num: ${{ steps.num.outputs.num }}
+      runid: ${{ steps.runid.outputs.runid }}
+      runnum: ${{ steps.runnum.outputs.runnum }}
       version: ${{ steps.version.outputs.version }}
+      opentag: ${{ steps.opentag.outputs.opentag }}
+      closedtag: ${{ steps.closedtag.outputs.closedtag }}
     steps:
 
       - name: Checkout the repository
@@ -27,32 +28,36 @@ jobs:
           SHA=${{ github.sha }}
           echo "::set-output name=sha::${SHA:0:8}"
 
-      - id: tag
-        run: echo "::set-output name=tag::${{ steps.time.outputs.time }}-${{ steps.sha.outputs.sha }}"
-
-      - id: run
+      - id: runid
         run: |
           ID=${{ github.run_id }}
-          echo "::set-output name=run::${ID}"
+          echo "::set-output name=runid::${ID}"
 
-      - id: num
+      - id: runnum
         run: |
           NUM=${{ github.run_number }}
-          echo "::set-output name=num::${NUM}"
+          echo "::set-output name=runnum::${NUM}"
 
       - id: version
         run: |
           VERSION=$(grep CBMC_VERSION src/config.inc | sed 's/.*= *//')
           echo "::set-output name=version::${VERSION}"
 
+      - id: opentag
+        run: echo "::set-output name=opentag::${{ steps.version.outputs.version }} ${{ steps.time.outputs.time }} ${{ steps.sha.outputs.sha }}"
+
+      - id: closedtag
+        run: echo "::set-output name=closedtag::${{ steps.version.outputs.version }}-${{ steps.time.outputs.time }}-${{ steps.sha.outputs.sha }}"
+
       - name: echo
         run: |
           echo TIME = ${{ steps.time.outputs.time }}
           echo SHA = ${{ steps.sha.outputs.sha }}
-          echo TAG = ${{ steps.tag.outputs.tag }}
-          echo RUN ID = ${{ steps.run.outputs.run }}
-          echo RUN NUMBER = ${{ steps.num.outputs.num }}
+          echo RUN ID = ${{ steps.run.outputs.runid }}
+          echo RUN NUMBER = ${{ steps.num.outputs.runnum }}
           echo VERSION = ${{ steps.version.outputs.version }}
+          echo OPEN TAG = ${{ steps.opentag.outputs.opentag }}
+          echo CLOSED TAG = ${{ steps.closedtag.outputs.closedtag }}
 
   Ubuntu16:
     name: Ubuntu 16 package
@@ -60,7 +65,7 @@ jobs:
     needs: Tags
     env:
       OS: ubuntu16
-      PKG: cbmc_5.12-${{ needs.Tags.outputs.tag }}-ubuntu16_amd64.deb
+      PKG: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu16_amd64.deb
       PKGDIR: cbmc
     steps:
 
@@ -71,9 +76,7 @@ jobs:
         run: git submodule update --init
 
       - name: Install bison, flex, and ninja
-        # apt-get update and upgrade usually time out
-        run: |
-          sudo apt-get install bison flex ninja-build
+        run: sudo apt-get install bison flex ninja-build
 
       - name: Configure with cmake
         run: cmake -S. -Bbuild -GNinja
@@ -103,7 +106,7 @@ jobs:
           mkdir ${PKGDIR}/DEBIAN
           set -- `du -ks ${PKGDIR}`
           SIZE=$1
-          VERSION=5.12
+          VERSION=${{ needs.Tags.outputs.version }}
           cat .github/workflows/${OS}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
 
           dpkg-deb --build ${PKGDIR} ${PKG}
@@ -111,207 +114,159 @@ jobs:
       - name: Upload the Debian package
         uses: actions/upload-artifact@v1
         with:
-          name: Ubuntu16 ${{ needs.Tags.outputs.version }} ${{ needs.Tags.outputs.run }} ${{ needs.Tags.outputs.sha }} ${{ needs.Tags.outputs.time }}
+          name: Ubuntu16 ${{ needs.Tags.outputs.opentag }}
           path: ${{ env.PKG }}
 
-#  Ubuntu18:
-#    name: Ubuntu 18 package
-#    runs-on: ubuntu-18.04
-#    needs: Tags
-#    env:
-#      OS: ubuntu18
-#      PKG: cbmc_5.12-${{ needs.Tags.outputs.tag }}-ubuntu18_amd64.deb
-#      PKGDIR: cbmc
-#    steps:
-#
-#      - name: Checkout the repository
-#        uses: actions/checkout@v2
-#
-#      - name: Update the submodules
-#        run: git submodule update --init
-#
-#      - name: Install bison, flex, and ninja
-#        # apt-get update and upgrade usually time out
-#        run: |
-#          sudo apt-get install bison flex ninja-build
-#
-#      - name: Configure with cmake
-#        run: cmake -S. -Bbuild -GNinja
-#
-#      - name: Build with cmake
-#        run: cmake --build build
-#
-#      - name: Create the Debian package
-#        run: |
-#          mkdir -p ${PKGDIR}/usr/bin
-#          cp build/bin/cbmc ${PKGDIR}/usr/bin
-#          cp build/bin/goto-analyzer ${PKGDIR}/usr/bin
-#          cp build/bin/goto-cc ${PKGDIR}/usr/bin
-#          cp build/bin/goto-diff ${PKGDIR}/usr/bin
-#          cp build/bin/goto-gcc ${PKGDIR}/usr/bin
-#          cp build/bin/goto-harness ${PKGDIR}/usr/bin
-#          cp build/bin/goto-instrument ${PKGDIR}/usr/bin
-#          cp build/bin/goto-ld ${PKGDIR}/usr/bin
-#          cp build/bin/janalyzer ${PKGDIR}/usr/bin
-#          cp build/bin/java-unit ${PKGDIR}/usr/bin
-#          cp build/bin/jbmc ${PKGDIR}/usr/bin
-#          cp build/bin/jdiff ${PKGDIR}/usr/bin
-#
-#          mkdir -p ${PKGDIR}/usr/share/man/man1
-#          cp doc/man/cbmc.1 ${PKGDIR}/usr/share/man/man1
-#
-#          mkdir ${PKGDIR}/DEBIAN
-#          set -- `du -ks ${PKGDIR}`
-#          SIZE=$1
-#          VERSION=5.12
-#          cat .github/workflows/${OS}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
-#
-#          dpkg-deb --build ${PKGDIR} ${PKG}
-#
-#      - name: Upload the Debian package
-#        uses: actions/upload-artifact@v1
-#        with:
-#          name: Ubuntu 18 Debian package
-#          path: ${{ env.PKG }}
-#
-#  MacOS:
-#    name: MacOS package
-#    runs-on: macos-10.15
-#    needs: Tags
-#    env:
-#      OS: macos
-#      PKG: cbmc-${{ needs.Tags.outputs.tag }}-macos1015.tar.gz
-#      PKGDIR: cbmc
-#    steps:
-#
-#      - name: Checkout the repository
-#        uses: actions/checkout@v2
-#
-#      - name: Update the submodules
-#        run: git submodule update --init
-#
-#      - name: Install cmake, ninja, jdk, and maven
-#        run: |
-#          brew install cmake
-#          brew install ninja
-#          brew install openjdk
-#          brew install maven
-#
-#      - name: Configure with cmake
-#        # See https://github.com/diffblue/cbmc/issues/4956 for clang issue
-#        run: cmake -S. -Bbuild -DCMAKE_C_COMPILER=/usr/bin/clang -GNinja
-#
-#      - name: Build with cmake
-#        run: cmake --build build
-#
-#      - name: Create the package
-#        run: |
-#          mkdir -p ${PKGDIR}/bin
-#          cp build/bin/cbmc ${PKGDIR}/bin
-#          cp build/bin/goto-analyzer ${PKGDIR}/bin
-#          cp build/bin/goto-cc ${PKGDIR}/bin
-#          cp build/bin/goto-diff ${PKGDIR}/bin
-#          cp build/bin/goto-gcc ${PKGDIR}/bin
-#          cp build/bin/goto-harness ${PKGDIR}/bin
-#          cp build/bin/goto-instrument ${PKGDIR}/bin
-#          cp build/bin/goto-ld ${PKGDIR}/bin
-#          cp build/bin/janalyzer ${PKGDIR}/bin
-#          cp build/bin/java-unit ${PKGDIR}/bin
-#          cp build/bin/jbmc ${PKGDIR}/bin
-#          cp build/bin/jdiff ${PKGDIR}/bin
-#
-#          mkdir -p ${PKGDIR}/man/man1
-#          cp doc/man/cbmc.1 ${PKGDIR}/man/man1
-#
-#          tar fcz ${PKG} ${PKGDIR}
-#
-#      - name: Upload the package
-#        uses: actions/upload-artifact@v1
-#        with:
-#          name: MacOS tar file
-#          path: ${{ env.PKG }}
-#
-##  # Instance is called windows-2016 but compiler is VS2017
-##  # CBMC build fails with
-##  #   Generating cprover_library.inc
-##  #   'D:\a\cbmc\cbmc\build\bin\converter' is not recognized as an
-##  #     internal or external command, operable program or batch file.
-##  #   cat : write error : No space left on device
-##  #     [D:\a\cbmc\cbmc\build\src\ansi-c\ansi-c.vcxproj]
-##  VS2016:
-##    name: Windows VS2016 installer
-##    runs-on: windows-2016
-##    needs: Tags
-##    env:
-##      OS: vs2016
-##      PKG: cbmc_5.12-${{ needs.Tags.outputs.tag }}-vs2016.msi
-##      PKGDIR: cbmc
-##    defaults:
-##      run:
-##         shell: cmd
-##    steps:
-##      - name: Checkout the repository
-##        uses: actions/checkout@v2
-##
-##      - name: Update the submodules
-##        run: git submodule update --init
-##
-##      - name: Install bison and flex
-##        run: .github\workflows\vs2016\install-bison.bat
-##
-##      - name: Patch cbmc
-##        run: .github\workflows\vs2016\patch-cbmc.bat
-##
-##      - name: Build cbmc
-##        run: .github\workflows\vs2016\build-cbmc.bat
-##
-##      - name: Build installer
-##        run: .github\workflows\vs2016\build-installer.bat ${{ env.PKG }}
-##
-##      - name: Show folder
-##        run: echo "folder" && dir
-##
-##      - name: Upload the package
-##        uses: actions/upload-artifact@v1
-##        with:
-##          name: Windows VS2016 installer
-##          path: ${{ env.PKG }}
-#
-#  VS2019:
-#    name: Windows VS2019 installer
-#    runs-on: windows-2019
-#    needs: Tags
-#    env:
-#      OS: vs2019
-#      PKG: cbmc_5.12-${{ needs.Tags.outputs.tag }}-vs2019.msi
-#      PKGDIR: cbmc
-#    defaults:
-#      run:
-#         shell: cmd
-#    steps:
-#
-#      - name: Checkout the repository
-#        uses: actions/checkout@v2
-#
-#      - name: Update the submodules
-#        run: git submodule update --init
-#
-#      - name: Install bison and flex
-#        run: .github\workflows\vs2019\install-bison.bat
-#
-#      - name: Patch cbmc
-#        run: .github\workflows\vs2019\patch-cbmc.bat
-#
-#      - name: Build cbmc
-#        run: .github\workflows\vs2019\build-cbmc.bat
-#
-#      - name: Build the installer
-#        run: .github\workflows\vs2019\build-installer.bat ${{ env.PKG }}
-#
-#      - name: Upload the installer
-#        uses: actions/upload-artifact@v1
-#        with:
-#          name: Windows VS2019 installer
-#          path: ${{ env.PKG }}
-#
-#
+  Ubuntu18:
+    name: Ubuntu 18 package
+    runs-on: ubuntu-18.04
+    needs: Tags
+    env:
+      OS: ubuntu18
+      PKG: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu18_amd64.deb
+      PKGDIR: cbmc
+    steps:
+
+      - name: Checkout the repository
+        uses: actions/checkout@v2
+
+      - name: Update the submodules
+        run: git submodule update --init
+
+      - name: Install bison, flex, and ninja
+        run: sudo apt-get install bison flex ninja-build
+
+      - name: Configure with cmake
+        run: cmake -S. -Bbuild -GNinja
+
+      - name: Build with cmake
+        run: cmake --build build
+
+      - name: Create the Debian package
+        run: |
+          mkdir -p ${PKGDIR}/usr/bin
+          cp build/bin/cbmc ${PKGDIR}/usr/bin
+          cp build/bin/goto-analyzer ${PKGDIR}/usr/bin
+          cp build/bin/goto-cc ${PKGDIR}/usr/bin
+          cp build/bin/goto-diff ${PKGDIR}/usr/bin
+          cp build/bin/goto-gcc ${PKGDIR}/usr/bin
+          cp build/bin/goto-harness ${PKGDIR}/usr/bin
+          cp build/bin/goto-instrument ${PKGDIR}/usr/bin
+          cp build/bin/goto-ld ${PKGDIR}/usr/bin
+          cp build/bin/janalyzer ${PKGDIR}/usr/bin
+          cp build/bin/java-unit ${PKGDIR}/usr/bin
+          cp build/bin/jbmc ${PKGDIR}/usr/bin
+          cp build/bin/jdiff ${PKGDIR}/usr/bin
+
+          mkdir -p ${PKGDIR}/usr/share/man/man1
+          cp doc/man/cbmc.1 ${PKGDIR}/usr/share/man/man1
+
+          mkdir ${PKGDIR}/DEBIAN
+          set -- `du -ks ${PKGDIR}`
+          SIZE=$1
+          VERSION=${{ needs.Tags.outputs.version }}
+          cat .github/workflows/${OS}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
+
+          dpkg-deb --build ${PKGDIR} ${PKG}
+
+      - name: Upload the Debian package
+        uses: actions/upload-artifact@v1
+        with:
+          name: Ubuntu18  ${{ needs.Tags.outputs.opentag }}
+          path: ${{ env.PKG }}
+
+  MacOS:
+    name: MacOS package
+    runs-on: macos-10.15
+    needs: Tags
+    env:
+      OS: macos
+      PKG: cbmc-${{ needs.Tags.outputs.closedtag }}-macos1015.tar.gz
+      PKGDIR: cbmc
+    steps:
+
+      - name: Checkout the repository
+        uses: actions/checkout@v2
+
+      - name: Update the submodules
+        run: git submodule update --init
+
+      - name: Install cmake, ninja, jdk, and maven
+        run: |
+          brew install cmake
+          brew install ninja
+          brew install openjdk
+          brew install maven
+
+      - name: Configure with cmake
+        # See https://github.com/diffblue/cbmc/issues/4956 for clang issue
+        run: cmake -S. -Bbuild -DCMAKE_C_COMPILER=/usr/bin/clang -GNinja
+
+      - name: Build with cmake
+        run: cmake --build build
+
+      - name: Create the package
+        run: |
+          mkdir -p ${PKGDIR}
+          cp build/bin/cbmc ${PKGDIR}
+          cp build/bin/goto-analyzer ${PKGDIR}
+          cp build/bin/goto-cc ${PKGDIR}
+          cp build/bin/goto-diff ${PKGDIR}
+          cp build/bin/goto-gcc ${PKGDIR}
+          cp build/bin/goto-harness ${PKGDIR}
+          cp build/bin/goto-instrument ${PKGDIR}
+          cp build/bin/goto-ld ${PKGDIR}
+          cp build/bin/janalyzer ${PKGDIR}
+          cp build/bin/java-unit ${PKGDIR}
+          cp build/bin/jbmc ${PKGDIR}
+          cp build/bin/jdiff ${PKGDIR}
+
+          mkdir -p ${PKGDIR}/man/man1
+          cp doc/man/cbmc.1 ${PKGDIR}
+
+          tar fcz ${PKG} ${PKGDIR}
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v1
+        with:
+          name: MacOS ${{ needs.Tags.outputs.opentag }}
+          path: ${{ env.PKG }}
+
+  VS2019:
+    name: Windows VS2019 installer
+    runs-on: windows-2019
+    needs: Tags
+    env:
+      OS: vs2019
+      PKG: cbmc_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
+      PKGDIR: cbmc
+    defaults:
+      run:
+         shell: cmd
+    steps:
+
+      - name: Checkout the repository
+        uses: actions/checkout@v2
+
+      - name: Update the submodules
+        run: git submodule update --init
+
+      - name: Install bison and flex
+        run: .github\workflows\vs2019\install-bison.bat
+
+      - name: Patch cbmc
+        run: .github\workflows\vs2019\patch-cbmc.bat
+
+      - name: Build cbmc
+        run: .github\workflows\vs2019\build-cbmc.bat
+
+      - name: Build the installer
+        run: .github\workflows\vs2019\build-installer.bat ${{ env.PKG }}
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v1
+        with:
+          name: Windows VS2019 ${{ needs.Tags.outputs.opentag }}
+          path: ${{ env.PKG }}
+
+
