@@ -18,7 +18,7 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v2
         with:
-          ref: tags/cbmc-5.12
+          ref: d51243d346350127ecb269f1e546cbd850ef6955
 
       - id: time
         run: |
@@ -74,7 +74,7 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v2
         with:
-          ref: tags/cbmc-5.12
+          ref: d51243d346350127ecb269f1e546cbd850ef6955
 
       - name: Update the submodules
         run: git submodule update --init
@@ -134,7 +134,7 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v2
         with:
-          ref: tags/cbmc-5.12
+          ref: d51243d346350127ecb269f1e546cbd850ef6955
 
       - name: Update the submodules
         run: git submodule update --init
@@ -194,7 +194,7 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v2
         with:
-          ref: tags/cbmc-5.12
+          ref: d51243d346350127ecb269f1e546cbd850ef6955
 
       - name: Update the submodules
         run: git submodule update --init
@@ -256,7 +256,7 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v2
         with:
-          ref: tags/cbmc-5.12
+          ref: d51243d346350127ecb269f1e546cbd850ef6955
 
       - name: Update the submodules
         run: git submodule update --init
