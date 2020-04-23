@@ -53,8 +53,8 @@ jobs:
         run: |
           echo TIME = ${{ steps.time.outputs.time }}
           echo SHA = ${{ steps.sha.outputs.sha }}
-          echo RUN ID = ${{ steps.run.outputs.runid }}
-          echo RUN NUMBER = ${{ steps.num.outputs.runnum }}
+          echo RUN ID = ${{ steps.run.idoutputs.runid }}
+          echo RUN NUMBER = ${{ steps.runnum.outputs.runnum }}
           echo VERSION = ${{ steps.version.outputs.version }}
           echo OPEN TAG = ${{ steps.opentag.outputs.opentag }}
           echo CLOSED TAG = ${{ steps.closedtag.outputs.closedtag }}
@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Update the submodules
-        run: git submodule update --init
+        run: git checkout cbmc-5.12 && git checkout update --init
 
       - name: Install bison, flex, and ninja
         run: sudo apt-get install bison flex ninja-build
@@ -131,7 +131,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Update the submodules
-        run: git submodule update --init
+        run: git checkout cbmc-5.12 && git checkout update --init
 
       - name: Install bison, flex, and ninja
         run: sudo apt-get install bison flex ninja-build
@@ -189,7 +189,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Update the submodules
-        run: git submodule update --init
+        run: git checkout cbmc-5.12 && git checkout update --init
 
       - name: Install cmake, ninja, jdk, and maven
         run: |
@@ -249,7 +249,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Update the submodules
-        run: git submodule update --init
+        run: git checkout cbmc-5.12 && git checkout update --init
 
       - name: Install bison and flex
         run: .github\workflows\vs2019\install-bison.bat
