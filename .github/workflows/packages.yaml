@@ -17,6 +17,8 @@ jobs:
 
       - name: Checkout the repository
         uses: actions/checkout@v2
+        with:
+          ref: 'cbmc-5.12'
 
       - id: time
         run: |
@@ -53,7 +55,7 @@ jobs:
         run: |
           echo TIME = ${{ steps.time.outputs.time }}
           echo SHA = ${{ steps.sha.outputs.sha }}
-          echo RUN ID = ${{ steps.run.idoutputs.runid }}
+          echo RUN ID = ${{ steps.runid.outputs.runid }}
           echo RUN NUMBER = ${{ steps.runnum.outputs.runnum }}
           echo VERSION = ${{ steps.version.outputs.version }}
           echo OPEN TAG = ${{ steps.opentag.outputs.opentag }}
@@ -71,9 +73,11 @@ jobs:
 
       - name: Checkout the repository
         uses: actions/checkout@v2
+        with:
+          ref: 'cbmc-5.12'
 
       - name: Update the submodules
-        run: git checkout cbmc-5.12 && git checkout update --init
+        run: git submodule update --init
 
       - name: Install bison, flex, and ninja
         run: sudo apt-get install bison flex ninja-build
@@ -129,9 +133,11 @@ jobs:
 
       - name: Checkout the repository
         uses: actions/checkout@v2
+        with:
+          ref: 'cbmc-5.12'
 
       - name: Update the submodules
-        run: git checkout cbmc-5.12 && git checkout update --init
+        run: git submodule update --init
 
       - name: Install bison, flex, and ninja
         run: sudo apt-get install bison flex ninja-build
@@ -187,9 +193,11 @@ jobs:
 
       - name: Checkout the repository
         uses: actions/checkout@v2
+        with:
+          ref: 'cbmc-5.12'
 
       - name: Update the submodules
-        run: git checkout cbmc-5.12 && git checkout update --init
+        run: git submodule update --init
 
       - name: Install cmake, ninja, jdk, and maven
         run: |
@@ -247,9 +255,11 @@ jobs:
 
       - name: Checkout the repository
         uses: actions/checkout@v2
+        with:
+          ref: 'cbmc-5.12'
 
       - name: Update the submodules
-        run: git checkout cbmc-5.12 && git checkout update --init
+        run: git submodule update --init
 
       - name: Install bison and flex
         run: .github\workflows\vs2019\install-bison.bat
