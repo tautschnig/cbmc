@@ -44,7 +44,7 @@ jobs:
           echo "::set-output name=version::${VERSION}"
 
       - id: opentag
-        run: echo "::set-output name=opentag::${{ steps.version.outputs.version }} ${{ steps.time.outputs.time }} ${{ steps.sha.outputs.sha }}"
+        run: echo "::set-output name=opentag::${{ steps.version.outputs.version }} ${{ steps.time.outputs.time }} ${{ steps.sha.outputs.sha }} ${{ steps.runid.outputs.runid }}"
 
       - id: closedtag
         run: echo "::set-output name=closedtag::${{ steps.version.outputs.version }}-${{ steps.time.outputs.time }}-${{ steps.sha.outputs.sha }}"
