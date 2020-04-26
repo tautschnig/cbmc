@@ -28,9 +28,11 @@
       </Directory>
     </Directory>
 
-    <Feature Id='Complete' Level='1'>
+    <Feature Id='Complete' Title='CBMC' Description='The C Bounded Model Checker' Display='expand' ConfigurableDirectory='INSTALLDIR' Level='1'>
       <ComponentRef Id='MainExecutable' />
     </Feature>
 
+    <UIRef Id="WixUI_Mondo" />
+    <UIRef Id="WixUI_ErrorProgressText" />
   </Product>
 </Wix>
