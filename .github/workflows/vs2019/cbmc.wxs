@@ -38,6 +38,14 @@
       <ComponentRef Id='MainExecutable' />
     </Feature>
 
+    <Upgrade Id='2a813e68-d440-4d6d-a61c-9fadb9754452'>
+      <UpgradeVersion OnlyDetect='yes' Property='NEWERFOUND' Minimum='5.12.0' IncludeMinimum='no' />
+    </Upgrade>
+    <CustomAction Id='NoDowngrade' Error='A later version of [ProductName] is already installed.' />
+    <InstallExecuteSequence>
+      <Custom Action='NoDowngrade' After='FindRelatedProducts'>NEWERFOUND</Custom>
+    </InstallExecuteSequence>
+
     <UIRef Id="WixUI_Mondo" />
     <UIRef Id="WixUI_ErrorProgressText" />
     <WixVariable Id="WixUILicenseRtf" Value=".github\workflows\vs2019\license.rtf" />
