@@ -21,6 +21,12 @@
               <File Id='goto_diff' Name='goto-diff.exe' DiskId='1' Source='build\bin\goto-diff.exe' KeyPath='no'></File>
               <File Id='goto_harness' Name='goto-harness.exe' DiskId='1' Source='build\bin\goto-harness.exe' KeyPath='no'></File>
               <File Id='goto_instrument' Name='goto-instrument.exe' DiskId='1' Source='build\bin\goto-instrument.exe' KeyPath='no'></File>
+
+              <File Id='janalyzer' Name='janalyzer.exe' DiskId='1' Source='build/bin/janalyzer.exe' KeyPath='no'></File>
+              <File Id='java-unit' Name='java-unit.exe' DiskId='1' Source='build/bin/java-unit.exe' KeyPath='no'></File>
+              <File Id='jbmc' Name='jbmc.exe' DiskId='1' Source='build/bin/jbmc.exe' KeyPath='no'></File>
+              <File Id='jdiff' Name='jdiff.exe' DiskId='1' Source='build/bin/jdiff.exe' KeyPath='no'></File>
+
               <RemoveFolder Id='DiffBlue' On='uninstall' />
             </Component>
           </Directory>
