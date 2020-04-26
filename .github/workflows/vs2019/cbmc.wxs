@@ -34,5 +34,6 @@
 
     <UIRef Id="WixUI_Mondo" />
     <UIRef Id="WixUI_ErrorProgressText" />
+    <WixVariable Id="WixUILicenseRtf" Value=".github\workflows\vs2019\license.rtf" />
   </Product>
 </Wix>
