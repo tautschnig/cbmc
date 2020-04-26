@@ -11,7 +11,7 @@ echo "Build installer: run candle"
 candle -o cbmc.wixobj -arch x64 .github\workflows\vs2019\cbmc.wxs
 
 echo "Build installer: run light"
-light -o %PKG% cbmc.wixobj
+light -o %PKG% -ext WixUIExtension cbmc.wixobj
 
 echo "Package is %PKG%"
 echo %PKG%
