@@ -3,6 +3,11 @@ on: [push]
 
 jobs:
   Tags:
+    #
+    # Generate a set of values (like a single timestamp and package name)
+    # that can be used consistently by the subsequent jobs building
+    # the packages.
+    #
     name: Generate package tag
     runs-on: ubuntu-latest
     outputs:
@@ -44,9 +49,26 @@ jobs:
           echo "::set-output name=version::${VERSION}"
 
       - id: opentag
+        #
+        # This is the string used to name the package artifact
+        # uploaded to GitHub.  The javascript on the web page scanning
+        # the list of stored package artifacts assumes the artifact
+        # name has the form
+        #   OS VERSION TIMESTAMP SHA RUNID
+        # and parses these names to identify the stable and latest
+        # packages for a given operating system, and to identify the
+        # workflow run that generated them.
+        #
         run: echo "::set-output name=opentag::${{ steps.version.outputs.version }} ${{ steps.time.outputs.time }} ${{ steps.sha.outputs.sha }} ${{ steps.runid.outputs.runid }}"
 
       - id: closedtag
+        #
+        # This is the string used to name the package itself that is
+        # included in the package artifact uploaded to GitHub.  It is
+        # probably enough to include just the version and sha, but
+        # including the timestamp makes them sort into a reasonable
+        # order in directory listings.
+        #
         run: echo "::set-output name=closedtag::${{ steps.version.outputs.version }}-${{ steps.time.outputs.time }}-${{ steps.sha.outputs.sha }}"
 
       - name: echo
