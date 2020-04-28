@@ -10,3 +10,9 @@ Left to do:
   that increments with each build.  A good candidate is `github.run_id` or
   `github.run_num`.
 * Can we automate the generation of repository packages (eg, homebrew)?
+
+Plans:
+* Wait for Michael's Debian builds and fit them into the workflow
+* Refactor the workflow to invoke Makefiles
+* Prepare PR
+* Do remaining items as PR refinements.
