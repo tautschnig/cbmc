@@ -75,6 +75,8 @@ ifneq (,$(LATEST))
 	echo "\ttrue" >> cbmc-$(VERSION)/debian/rules
 	echo "override_dh_dwz:" >> cbmc-$(VERSION)/debian/rules
 	echo "\ttrue" >> cbmc-$(VERSION)/debian/rules
+	$(RM) cbmc-$(VERSION)/debian/manpages
+	sed -i "/share\/man\/man1/d" cbmc-$(VERSION)/debian/links
 endif
 	PLUGIN_VERSION=`dpkg -l libmaven-compiler-plugin-java | tail -n1 | awk '{print $$3}' | cut -f1 -d-` ; \
 		sed -i "s/^\(+[[:space:]]*<version>\).*<\/version>/\1$$PLUGIN_VERSION<\/version>/" \
