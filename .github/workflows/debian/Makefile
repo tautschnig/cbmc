@@ -59,6 +59,10 @@ cbmc-$(VERSION)/debian/changelog: cbmc-$(VERSION)/debian
 	$(RM) cbmc-$(VERSION)/debian/changelog.orig
 
 build: cbmc-$(VERSION)/debian/changelog cbmc-$(VERSION)/java-models-library
+	sudo apt-get -y install quilt
+	cd cbmc-$(VERSION) && export QUILT_PATCHES=debian/patches && \
+		while quilt push; do quilt refresh; done && quilt pop -a
+	$(RM) cbmc-$(VERSION)/debian/patches/*~
 	sudo apt-get -y install \
 		debhelper minisat zlib1g-dev flex bison default-jdk-headless \
 		maven maven-repo-helper maven-debian-helper libmaven-compiler-plugin-java
