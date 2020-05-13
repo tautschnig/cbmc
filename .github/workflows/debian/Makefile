@@ -4,7 +4,7 @@
 # Package version number (cbmc version number)
 VERSION=5.12
 
-# Suffix to use to distinguish a develop/HEAD build from a release 
+# Suffix to use to distinguish a develop/HEAD build from a release
 LATEST=-latest
 
 # Debian package version to fetch debian/ folder from
@@ -42,6 +42,13 @@ cbmc-$(VERSION)/debian: cbmc-$(VERSION)
 	cd $< && tar xJf ../debian.tar.xz
 	$(RM) debian.tar.xz
 
+cbmc-$(VERSION)/debian/compat: cbmc-$(VERSION)/debian
+	# fakeroot debian/rules clean complains about a missing debian/compat
+	# debian/control gives debhelper-compat = 13
+	# debian/compat maximum value accepted is 10 on Ubuntu16
+	# confirm this will not overwrite a preexisting debian/compat
+	echo "10" > $@
+
 cbmc-$(VERSION)/debian/changelog: cbmc-$(VERSION)/debian
 	cd cbmc-$(VERSION) && \
 	if dpkg --compare-versions `dpkg-parsechangelog -S Version` lt $(VERSION) ; then \
@@ -58,7 +65,7 @@ cbmc-$(VERSION)/debian/changelog: cbmc-$(VERSION)/debian
 	cat cbmc-$(VERSION)/debian/changelog.orig >> $@
 	$(RM) cbmc-$(VERSION)/debian/changelog.orig
 
-build: cbmc-$(VERSION)/debian/changelog cbmc-$(VERSION)/java-models-library
+build: cbmc-$(VERSION)/debian/compat cbmc-$(VERSION)/debian/changelog cbmc-$(VERSION)/java-models-library
 	sudo apt-get -y install quilt
 	cd cbmc-$(VERSION) && export QUILT_PATCHES=debian/patches && \
 		while quilt push; do quilt refresh; done && quilt pop -a
