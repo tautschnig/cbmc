@@ -192,7 +192,7 @@ jobs:
         run: ${{ env.SCRIPT_DIR }}\build-cbmc.bat
 
       - name: Build the installer
-        run: ${{ env.SCRIPT_DIR }}\build-installer.bat %%PACKAGE_NAME%%
+        run: ${{ env.SCRIPT_DIR }}\build-installer.bat ${{ env.PACKAGE_NAME }}
 
       - name: Upload the installer
         uses: actions/upload-artifact@v1
