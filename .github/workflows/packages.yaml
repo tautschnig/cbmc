@@ -234,6 +234,7 @@ jobs:
       ARTIFACT_NAME: Windows VS2019 ${{ needs.Tags.outputs.opentag }}
       PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
       SCRIPT_DIR: .github\workflows\vs2019
+      # TODO: Figure out how to use %SCRIPT_DIR% as the Windows environment variable in the command shell
     defaults:
       run:
          shell: cmd
@@ -246,16 +247,16 @@ jobs:
         run: git submodule update --init
 
       - name: Install bison and flex
-        run: %%SCRIPT_DIR%%\install-bison.bat
+        run: $env:SCRIPT_DIR\install-bison.bat
 
       - name: Patch cbmc
-        run: %%SCRIPT_DIR%%\patch-cbmc.bat
+        run: $env:SCRIPT_DIR\patch-cbmc.bat
 
       - name: Build cbmc
-        run: %%SCRIPT_DIR%%\build-cbmc.bat
+        run: $env:SCRIPT_DIR\build-cbmc.bat
 
       - name: Build the installer
-        run: %%SCRIPT_DIR%%\build-installer.bat %%PACKAGE_NAME%%
+        run: $env:SCRIPT_DIR\build-installer.bat %%PACKAGE_NAME%%
 
       - name: Upload the installer
         uses: actions/upload-artifact@v1
