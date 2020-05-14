@@ -10,6 +10,8 @@ jobs:
     #
     name: Generate package tag
     runs-on: ubuntu-latest
+    env:
+      VERSION_SCRIPT: .github/workflows/version.py
     outputs:
       time: ${{ steps.time.outputs.time }}
       sha: ${{ steps.sha.outputs.sha }}
@@ -45,7 +47,8 @@ jobs:
 
       - id: version
         run: |
-          VERSION=$(grep CBMC_VERSION src/config.inc | sed 's/.*= *//')
+          CBMC_VERSION=$(grep CBMC_VERSION src/config.inc | sed 's/.*= *//')
+          VERSION=$(${VERSION_SCRIPT} ${CBMC_VERSION} ${{ github.run_number }})
           echo "::set-output name=version::${VERSION}"
 
       - id: opentag
