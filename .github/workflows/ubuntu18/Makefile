@@ -1,8 +1,9 @@
 VERSION?=5.12
 
-PKGDIR?=cbmc
+PKGDIR?=cbmc-latest
 BLDDIR?=build
 PACKAGE_NAME?=cbmc_${VERSION}_amd64.deb
+PREFIX?=/usr/local/${PKGDIR}
 
 ################################################################
 # Force SCRIPT_DIR to be explicitly set on command line
@@ -21,22 +22,22 @@ ${BLDDIR}/bin/cbmc: dependencies
 
 # Install CBMC
 ${PKGDIR}: ${BLDDIR}/bin/cbmc
-	mkdir -p ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/cbmc ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-analyzer ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-cc ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-diff ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-gcc ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-harness ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-instrument ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/goto-ld ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/janalyzer ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/java-unit ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/jbmc ${PKGDIR}/usr/bin
-	cp ${BLDDIR}/bin/jdiff ${PKGDIR}/usr/bin
+	mkdir -p ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/cbmc ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-analyzer ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-cc ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-diff ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-gcc ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-harness ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-instrument ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/goto-ld ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/janalyzer ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/java-unit ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/jbmc ${PKGDIR}${PREFIX}/bin
+	cp ${BLDDIR}/bin/jdiff ${PKGDIR}${PREFIX}/bin
 
-	mkdir -p ${PKGDIR}/usr/share/man/man1
-	cp doc/man/cbmc.1 ${PKGDIR}/usr/share/man/man1
+	mkdir -p ${PKGDIR}${PREFIX}/share/man/man1
+	cp doc/man/cbmc.1 ${PKGDIR}${PREFIX}/share/man/man1
 
 # Package CBMC
 ${PACKAGE_NAME}: ${PKGDIR}

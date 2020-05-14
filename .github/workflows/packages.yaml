@@ -82,6 +82,7 @@ jobs:
           echo SHA = ${{ steps.sha.outputs.sha }}
           echo RUN ID = ${{ steps.runid.outputs.runid }}
           echo RUN NUMBER = ${{ steps.runnum.outputs.runnum }}
+          echo NAME = ${{ steps.closedtag.outputs.name }}
           echo VERSION = ${{ steps.version.outputs.version }}
           echo OPEN TAG = ${{ steps.opentag.outputs.opentag }}
           echo CLOSED TAG = ${{ steps.closedtag.outputs.closedtag }}
@@ -92,8 +93,8 @@ jobs:
     needs: Tags
     env:
       VERSION: ${{ needs.Tags.outputs.version }}
-      ARTIFACT_NAME: Ubuntu16 ${{ needs.Tags.outputs.opentag }}
-      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.closedtag }}-ubuntu16_amd64.deb
+      ARTIFACT_NAME: Ubuntu16 ${{ needs.Tags.outputs.name }} ${{ needs.Tags.outputs.version }}
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.version }}-ubuntu16_amd64.deb
       PKGDIR: cbmc
       SCRIPT_DIR: .github/workflows/ubuntu16
     steps:
@@ -119,8 +120,8 @@ jobs:
     needs: Tags
     env:
       VERSION: ${{ needs.Tags.outputs.version }}
-      ARTIFACT_NAME: Ubuntu18 ${{ needs.Tags.outputs.opentag }}
-      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.closedtag }}-ubuntu18_amd64.deb
+      ARTIFACT_NAME: Ubuntu18 ${{ needs.Tags.outputs.name }} ${{ needs.Tags.outputs.version }}
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.version }}-ubuntu18_amd64.deb
       PKGDIR: cbmc
       SCRIPT_DIR: .github/workflows/ubuntu18
     steps:
@@ -145,8 +146,8 @@ jobs:
     runs-on: macos-10.15
     needs: Tags
     env:
-      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}-${{ needs.Tags.outputs.closedtag }}-macos1015.tar.gz
-      ARTIFACT_NAME: MacOS ${{ needs.Tags.outputs.opentag }}
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.version }}_macos1015.tar.gz
+      ARTIFACT_NAME: MacOS ${{ needs.Tags.outputs.name }} ${{ needs.Tags.outputs.version }}
       SCRIPT_DIR: .github/workflows/macos15
     steps:
 
@@ -172,10 +173,10 @@ jobs:
     runs-on: windows-2019
     needs: Tags
     env:
-      ARTIFACT_NAME: Windows VS2019 ${{ needs.Tags.outputs.opentag }}
-      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
+      ARTIFACT_NAME: Windows VS2019 ${{ needs.Tags.outputs.name }} ${{ needs.Tags.outputs.version }}
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.version }}_vs2019.msi
       SCRIPT_DIR: .github\workflows\vs2019
-      # TODO: Figure out how to use %SCRIPT_DIR% as the Windows environment variable in the command shell
+
     defaults:
       run:
          shell: cmd
