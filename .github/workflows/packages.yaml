@@ -11,12 +11,14 @@ jobs:
     name: Generate package tag
     runs-on: ubuntu-latest
     env:
+      PACKAGE_NAME: cbmc-latest
       VERSION_SCRIPT: .github/workflows/version.py
     outputs:
       time: ${{ steps.time.outputs.time }}
       sha: ${{ steps.sha.outputs.sha }}
       runid: ${{ steps.runid.outputs.runid }}
       runnum: ${{ steps.runnum.outputs.runnum }}
+      name: ${{ env.PACKAGE_NAME }}
       version: ${{ steps.version.outputs.version }}
       opentag: ${{ steps.opentag.outputs.opentag }}
       closedtag: ${{ steps.closedtag.outputs.closedtag }}
@@ -72,7 +74,7 @@ jobs:
         # including the timestamp makes them sort into a reasonable
         # order in directory listings.
         #
-        run: echo "::set-output name=closedtag::${{ steps.version.outputs.version }}-${{ steps.time.outputs.time }}-${{ steps.sha.outputs.sha }}"
+        run: echo "::set-output name=closedtag::${{ steps.version.outputs.version }}"
 
       - name: echo
         run: |
@@ -91,7 +93,7 @@ jobs:
     env:
       VERSION: ${{ needs.Tags.outputs.version }}
       ARTIFACT_NAME: Ubuntu16 ${{ needs.Tags.outputs.opentag }}
-      PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu16_amd64.deb
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.closedtag }}-ubuntu16_amd64.deb
       PKGDIR: cbmc
       SCRIPT_DIR: .github/workflows/ubuntu16
     steps:
@@ -118,7 +120,7 @@ jobs:
     env:
       VERSION: ${{ needs.Tags.outputs.version }}
       ARTIFACT_NAME: Ubuntu18 ${{ needs.Tags.outputs.opentag }}
-      PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu18_amd64.deb
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.closedtag }}-ubuntu18_amd64.deb
       PKGDIR: cbmc
       SCRIPT_DIR: .github/workflows/ubuntu18
     steps:
@@ -143,7 +145,7 @@ jobs:
     runs-on: macos-10.15
     needs: Tags
     env:
-      PACKAGE_NAME: cbmc-${{ needs.Tags.outputs.closedtag }}-macos1015.tar.gz
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}-${{ needs.Tags.outputs.closedtag }}-macos1015.tar.gz
       ARTIFACT_NAME: MacOS ${{ needs.Tags.outputs.opentag }}
       SCRIPT_DIR: .github/workflows/macos15
     steps:
@@ -171,7 +173,7 @@ jobs:
     needs: Tags
     env:
       ARTIFACT_NAME: Windows VS2019 ${{ needs.Tags.outputs.opentag }}
-      PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
+      PACKAGE_NAME: ${{ needs.Tags.outputs.name }}_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
       SCRIPT_DIR: .github\workflows\vs2019
       # TODO: Figure out how to use %SCRIPT_DIR% as the Windows environment variable in the command shell
     defaults:
