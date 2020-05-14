@@ -247,16 +247,16 @@ jobs:
         run: git submodule update --init
 
       - name: Install bison and flex
-        run: $env:SCRIPT_DIR\install-bison.bat
+        run: ${{ env.SCRIPT_DIR }}\install-bison.bat
 
       - name: Patch cbmc
-        run: $env:SCRIPT_DIR\patch-cbmc.bat
+        run: ${{ env.SCRIPT_DIR }}\patch-cbmc.bat
 
       - name: Build cbmc
-        run: $env:SCRIPT_DIR\build-cbmc.bat
+        run: ${{ env.SCRIPT_DIR }}\build-cbmc.bat
 
       - name: Build the installer
-        run: $env:SCRIPT_DIR\build-installer.bat %%PACKAGE_NAME%%
+        run: ${{ env.SCRIPT_DIR }}\build-installer.bat %%PACKAGE_NAME%%
 
       - name: Upload the installer
         uses: actions/upload-artifact@v1
