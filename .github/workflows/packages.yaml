@@ -86,9 +86,11 @@ jobs:
     runs-on: ubuntu-16.04
     needs: Tags
     env:
-      OS: ubuntu16
-      PKG: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu16_amd64.deb
+      VERSION: ${{ needs.Tags.outputs.version }}
+      ARTIFACT_NAME: Ubuntu16 ${{ needs.Tags.outputs.opentag }}
+      PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu16_amd64.deb
       PKGDIR: cbmc
+      SCRIPT_DIR: .github/workflows/ubuntu16
     steps:
 
       - name: Checkout the repository
@@ -128,25 +130,26 @@ jobs:
           mkdir ${PKGDIR}/DEBIAN
           set -- `du -ks ${PKGDIR}`
           SIZE=$1
-          VERSION=${{ needs.Tags.outputs.version }}
-          cat .github/workflows/${OS}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
+          cat ${SCRIPT_DIR}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
 
-          dpkg-deb --build ${PKGDIR} ${PKG}
+          dpkg-deb --build ${PKGDIR} ${PACKAGE_NAME}
 
       - name: Upload the Debian package
         uses: actions/upload-artifact@v1
         with:
-          name: Ubuntu16 ${{ needs.Tags.outputs.opentag }}
-          path: ${{ env.PKG }}
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.PACKAGE_NAME }}
 
   Ubuntu18:
     name: Ubuntu 18 package
     runs-on: ubuntu-18.04
     needs: Tags
     env:
-      OS: ubuntu18
-      PKG: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu18_amd64.deb
+      VERSION: ${{ needs.Tags.outputs.version }}
+      ARTIFACT_NAME: Ubuntu18 ${{ needs.Tags.outputs.opentag }}
+      PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-ubuntu18_amd64.deb
       PKGDIR: cbmc
+      SCRIPT_DIR: .github/workflows/ubuntu18
     steps:
 
       - name: Checkout the repository
@@ -186,26 +189,24 @@ jobs:
           mkdir ${PKGDIR}/DEBIAN
           set -- `du -ks ${PKGDIR}`
           SIZE=$1
-          VERSION=${{ needs.Tags.outputs.version }}
-          cat .github/workflows/${OS}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
+          cat ${SCRIPT_DIR}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
 
-          dpkg-deb --build ${PKGDIR} ${PKG}
+          dpkg-deb --build ${PKGDIR} ${PACKAGE_NAME}
 
       - name: Upload the Debian package
         uses: actions/upload-artifact@v1
         with:
-          name: Ubuntu18 ${{ needs.Tags.outputs.opentag }}
-          path: ${{ env.PKG }}
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.PACKAGE_NAME }}
 
   MacOS:
     name: MacOS package
     runs-on: macos-10.15
     needs: Tags
     env:
-      OS: macos
-      PKG: cbmc-${{ needs.Tags.outputs.closedtag }}-macos1015.tar.gz
-      PKGDIR: cbmc
-      BLDDIR: macos15
+      PACKAGE_NAME: cbmc-${{ needs.Tags.outputs.closedtag }}-macos1015.tar.gz
+      ARTIFACT_NAME: MacOS ${{ needs.Tags.outputs.opentag }}
+      SCRIPT_DIR: .github/workflows/macos15
     steps:
 
       - name: Checkout the repository
@@ -216,23 +217,23 @@ jobs:
 
       - name: Build the package
         run: |
-          make -C ${{ env.BLDDIR }}
-          mv ${{ env.BLDDIR }}/cbmc-latest.tar.gz ${{ env.PKG }}
+          make -C ${SCRIPT_DIR}
+          mv ${SCRIPT_DIR}/cbmc-latest.tar.gz ${PACKAGE_NAME}
 
       - name: Upload the package
         uses: actions/upload-artifact@v1
         with:
-          name: MacOS ${{ needs.Tags.outputs.opentag }}
-          path: ${{ env.PKG }}
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.PACKAGE_NAME }}
 
   VS2019:
     name: Windows VS2019 installer
     runs-on: windows-2019
     needs: Tags
     env:
-      OS: vs2019
-      PKG: cbmc_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
-      PKGDIR: cbmc
+      ARTIFACT_NAME: Windows VS2019 ${{ needs.Tags.outputs.opentag }}
+      PACKAGE_NAME: cbmc_${{ needs.Tags.outputs.closedtag }}-vs2019.msi
+      SCRIPT_DIR: .github\workflows\vs2019
     defaults:
       run:
          shell: cmd
@@ -245,19 +246,19 @@ jobs:
         run: git submodule update --init
 
       - name: Install bison and flex
-        run: .github\workflows\vs2019\install-bison.bat
+        run: ${SCRIPT_DIR}\install-bison.bat
 
       - name: Patch cbmc
-        run: .github\workflows\vs2019\patch-cbmc.bat
+        run: ${SCRIPT_DIR}\patch-cbmc.bat
 
       - name: Build cbmc
-        run: .github\workflows\vs2019\build-cbmc.bat
+        run: ${SCRIPT_DIR}\build-cbmc.bat
 
       - name: Build the installer
-        run: .github\workflows\vs2019\build-installer.bat ${{ env.PKG }}
+        run: ${SCRIPT_DIR}\build-installer.bat %PACKAGE_NAME%
 
       - name: Upload the installer
         uses: actions/upload-artifact@v1
         with:
-          name: Windows VS2019 ${{ needs.Tags.outputs.opentag }}
-          path: ${{ env.PKG }}
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.PACKAGE_NAME }}
