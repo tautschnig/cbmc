@@ -217,8 +217,8 @@ jobs:
 
       - name: Build the package
         run: |
-          make -C ${SCRIPT_DIR}
-          mv ${SCRIPT_DIR}/cbmc-latest.tar.gz ${PACKAGE_NAME}
+          make -f ${SCRIPT_DIR}/Makefile
+          mv cbmc-latest.tar.gz ${PACKAGE_NAME}
 
       - name: Upload the package
         uses: actions/upload-artifact@v1
