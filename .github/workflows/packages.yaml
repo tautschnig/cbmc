@@ -99,40 +99,8 @@ jobs:
       - name: Update the submodules
         run: git submodule update --init
 
-      - name: Install bison, flex, and ninja
-        run: sudo apt-get install bison flex ninja-build
-
-      - name: Configure with cmake
-        run: cmake -S. -Bbuild -GNinja
-
-      - name: Build with cmake
-        run: cmake --build build
-
-      - name: Create the Debian package
-        run: |
-          mkdir -p ${PKGDIR}/usr/bin
-          cp build/bin/cbmc ${PKGDIR}/usr/bin
-          cp build/bin/goto-analyzer ${PKGDIR}/usr/bin
-          cp build/bin/goto-cc ${PKGDIR}/usr/bin
-          cp build/bin/goto-diff ${PKGDIR}/usr/bin
-          cp build/bin/goto-gcc ${PKGDIR}/usr/bin
-          cp build/bin/goto-harness ${PKGDIR}/usr/bin
-          cp build/bin/goto-instrument ${PKGDIR}/usr/bin
-          cp build/bin/goto-ld ${PKGDIR}/usr/bin
-          cp build/bin/janalyzer ${PKGDIR}/usr/bin
-          cp build/bin/java-unit ${PKGDIR}/usr/bin
-          cp build/bin/jbmc ${PKGDIR}/usr/bin
-          cp build/bin/jdiff ${PKGDIR}/usr/bin
-
-          mkdir -p ${PKGDIR}/usr/share/man/man1
-          cp doc/man/cbmc.1 ${PKGDIR}/usr/share/man/man1
-
-          mkdir ${PKGDIR}/DEBIAN
-          set -- `du -ks ${PKGDIR}`
-          SIZE=$1
-          cat ${SCRIPT_DIR}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
-
-          dpkg-deb --build ${PKGDIR} ${PACKAGE_NAME}
+      - name: Create the package
+        run: make -f ${SCRIPT_DIR}/Makefile SCRIPT_DIR=${SCRIPT_DIR} PACKAGE_NAME=${PACKAGE_NAME}
 
       - name: Upload the Debian package
         uses: actions/upload-artifact@v1
@@ -158,40 +126,8 @@ jobs:
       - name: Update the submodules
         run: git submodule update --init
 
-      - name: Install bison, flex, and ninja
-        run: sudo apt-get install bison flex ninja-build
-
-      - name: Configure with cmake
-        run: cmake -S. -Bbuild -GNinja
-
-      - name: Build with cmake
-        run: cmake --build build
-
-      - name: Create the Debian package
-        run: |
-          mkdir -p ${PKGDIR}/usr/bin
-          cp build/bin/cbmc ${PKGDIR}/usr/bin
-          cp build/bin/goto-analyzer ${PKGDIR}/usr/bin
-          cp build/bin/goto-cc ${PKGDIR}/usr/bin
-          cp build/bin/goto-diff ${PKGDIR}/usr/bin
-          cp build/bin/goto-gcc ${PKGDIR}/usr/bin
-          cp build/bin/goto-harness ${PKGDIR}/usr/bin
-          cp build/bin/goto-instrument ${PKGDIR}/usr/bin
-          cp build/bin/goto-ld ${PKGDIR}/usr/bin
-          cp build/bin/janalyzer ${PKGDIR}/usr/bin
-          cp build/bin/java-unit ${PKGDIR}/usr/bin
-          cp build/bin/jbmc ${PKGDIR}/usr/bin
-          cp build/bin/jdiff ${PKGDIR}/usr/bin
-
-          mkdir -p ${PKGDIR}/usr/share/man/man1
-          cp doc/man/cbmc.1 ${PKGDIR}/usr/share/man/man1
-
-          mkdir ${PKGDIR}/DEBIAN
-          set -- `du -ks ${PKGDIR}`
-          SIZE=$1
-          cat ${SCRIPT_DIR}/control | sed "s/VERSION/${VERSION}/" | sed "s/SIZE/${SIZE}/" > ${PKGDIR}/DEBIAN/control
-
-          dpkg-deb --build ${PKGDIR} ${PACKAGE_NAME}
+      - name: Create the package
+        run: make -f ${SCRIPT_DIR}/Makefile SCRIPT_DIR=${SCRIPT_DIR} PACKAGE_NAME=${PACKAGE_NAME}
 
       - name: Upload the Debian package
         uses: actions/upload-artifact@v1
