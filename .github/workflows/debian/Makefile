@@ -42,13 +42,6 @@ cbmc-$(VERSION)/debian: cbmc-$(VERSION)
 	cd $< && tar xJf ../debian.tar.xz
 	$(RM) debian.tar.xz
 
-cbmc-$(VERSION)/debian/compat: cbmc-$(VERSION)/debian
-	# fakeroot debian/rules clean complains about a missing debian/compat
-	# debian/control gives debhelper-compat = 13
-	# debian/compat maximum value accepted is 10 on Ubuntu16
-	# confirm this will not overwrite a preexisting debian/compat
-	echo "10" > $@
-
 cbmc-$(VERSION)/debian/changelog: cbmc-$(VERSION)/debian
 	cd cbmc-$(VERSION) && \
 	if dpkg --compare-versions `dpkg-parsechangelog -S Version` lt $(VERSION) ; then \
@@ -65,7 +58,7 @@ cbmc-$(VERSION)/debian/changelog: cbmc-$(VERSION)/debian
 	cat cbmc-$(VERSION)/debian/changelog.orig >> $@
 	$(RM) cbmc-$(VERSION)/debian/changelog.orig
 
-build: cbmc-$(VERSION)/debian/compat cbmc-$(VERSION)/debian/changelog cbmc-$(VERSION)/java-models-library
+build: cbmc-$(VERSION)/debian/changelog cbmc-$(VERSION)/java-models-library
 	sudo apt-get -y install quilt
 	cd cbmc-$(VERSION) && export QUILT_PATCHES=debian/patches && \
 		while quilt push; do quilt refresh; done && quilt pop -a
@@ -85,10 +78,22 @@ ifneq (,$(LATEST))
 	$(RM) cbmc-$(VERSION)/debian/manpages
 	sed -i "/share\/man\/man1/d" cbmc-$(VERSION)/debian/links
 endif
+	DEBHELPER_VERSION=`dpkg -l debhelper | tail -n1 | awk '{print $$3}' | cut -f1 -d.` ; \
+		if [ $$DEBHELPER_VERSION -lt 12 ] ; then \
+			echo $$DEBHELPER_VERSION > cbmc-$(VERSION)/debian/compat ; \
+			if [ $$DEBHELPER_VERSION -lt 10 ] ; then \
+			  sed -i 's/^\tdh $$@/\tdh $$@ --parallel/' cbmc-$(VERSION)/debian/rules ; \
+			fi ; \
+		fi
 	PLUGIN_VERSION=`dpkg -l libmaven-compiler-plugin-java | tail -n1 | awk '{print $$3}' | cut -f1 -d-` ; \
 		sed -i "s/^\(+[[:space:]]*<version>\).*<\/version>/\1$$PLUGIN_VERSION<\/version>/" \
 		cbmc-$(VERSION)/debian/patches/maven*
-	cd cbmc-$(VERSION) && dpkg-buildpackage -b -jauto -uc -d
+	# the following to changes should really become part of the standard Debian
+	# build rules
+	sed -i '11s/^$$/parallel = $$(patsubst parallel=\%,\%,$$(filter parallel=\%,$$(DEB_BUILD_OPTIONS)))/' \
+		cbmc-$(VERSION)/debian/rules
+	sed -i 's/$$(MAKE)/$$(MAKE) -j$$(parallel)/' cbmc-$(VERSION)/debian/rules
+	cd cbmc-$(VERSION) && dpkg-buildpackage -b -Jauto -uc -d
 	# upload new artifacts
 
 clean:
