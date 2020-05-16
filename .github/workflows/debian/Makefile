@@ -70,7 +70,7 @@ ifneq (,$(LATEST))
 	sed -i "s/^Package: cbmc.*/Package: cbmc$(LATEST)/" cbmc-$(VERSION)/debian/control
 	sed -i "s#usr/bin#usr/local/cbmc$(LATEST)/bin#" cbmc-$(VERSION)/debian/dirs
 	sed -i "s#usr/bin#usr/local/cbmc$(LATEST)/bin#" cbmc-$(VERSION)/debian/install
-	sed -i "s#usr/bin#usr/local/cbmc$(LATEST)/bin#" cbmc-$(VERSION)/debian/links
+	sed -i "s#usr/bin#usr/local/cbmc$(LATEST)/bin#g" cbmc-$(VERSION)/debian/links
 	echo "override_dh_usrlocal:" >> cbmc-$(VERSION)/debian/rules
 	echo "\ttrue" >> cbmc-$(VERSION)/debian/rules
 	echo "override_dh_dwz:" >> cbmc-$(VERSION)/debian/rules
