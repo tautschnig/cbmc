@@ -289,7 +289,10 @@ union_typet::find_widest_union_component(const namespacet &ns) const
   {
     auto element_width = pointer_offset_bits(comp.type(), ns);
 
-    if(!element_width.has_value() || *element_width <= max_width)
+    if(!element_width.has_value())
+      return {};
+
+    if(*element_width <= max_width)
       continue;
 
     max_width = *element_width;
