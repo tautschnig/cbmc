@@ -99,6 +99,21 @@ void symex_assignt::assign_rec(
 
     assign_rec(complex_imag_expr.op(), full_lhs, new_rhs, guard);
   }
+  else if(lhs.id() == ID_struct)
+  {
+    const auto &struct_type = to_struct_type(ns.follow(lhs.type()));
+
+    exprt::operandst::const_iterator it = lhs.operands().begin();
+    for(const auto &component : struct_type.components())
+    {
+      member_exprt new_rhs{
+        rhs,
+          component.get_name(),
+          component.type()};
+      assign_rec(*it, full_lhs, new_rhs, guard);
+      ++it;
+    }
+  }
   else
     throw unsupported_operation_exceptiont(
       "assignment to '" + lhs.id_string() + "' not handled");

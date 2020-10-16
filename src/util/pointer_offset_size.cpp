@@ -156,12 +156,12 @@ pointer_offset_bits(const typet &type, const namespacet &ns)
     const union_typet &union_type=to_union_type(type);
 
     if(union_type.components().empty())
-      return 0;
+      return mp_integer{0};
 
     const auto widest_member = union_type.find_widest_union_component(ns);
 
     if(widest_member.has_value())
-      return widest_member.second;
+      return widest_member->second;
     else
       return {};
   }

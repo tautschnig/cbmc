@@ -2032,6 +2032,62 @@ simplify_exprt::simplify_byte_extract(const byte_extract_exprt &expr)
       return std::move(*tmp);
   }
 
+  if((expr.type().id() == ID_struct || expr.type().id() == ID_struct_tag) &&
+     !struct_has_flexible_array_member)
+  {
+    const struct_typet &struct_type=
+      to_struct_type(ns.follow(expr.type()));
+    const struct_typet::componentst &components=
+      struct_type.components();
+
+    exprt::operandst operands;
+    operands.reserve(components.size());
+
+    for(const auto &component : components)
+    {
+      auto m_offset = member_offset(struct_type, component.get_name(), ns);
+
+      // can we determine the current offset?
+      if(!m_offset.has_value())
+        break;
+
+      auto m_size_bits = pointer_offset_bits(component.type(), ns);
+
+      // is it a byte-sized member?
+      if(!m_size_bits.has_value() || *m_size_bits == 0 || (*m_size_bits) % 8 != 0)
+        break;
+
+      byte_extract_exprt component_extract = expr;
+      component_extract.type() = component.type();
+      component_extract.offset() = plus_exprt{
+        component_extract.offset(),
+          from_integer(*m_offset, component_extract.offset().type())};
+
+      operands.push_back(component_extract);
+    }
+
+    if(operands.size() == components.size())
+      return changed(simplify_rec(struct_exprt{operands, expr.type()}));
+  }
+  else if(expr.type().id() == ID_union || expr.type().id() == ID_union_tag)
+  {
+    const union_typet &type = to_union_type(ns.follow(expr.type()));
+    const auto widest_member = type.find_widest_union_component(ns);
+
+    if(widest_member.has_value())
+    {
+      byte_extract_exprt component_extract = expr;
+      component_extract.type() = widest_member->first.type();
+
+      union_exprt union_expr{
+        widest_member->first.get_name(),
+          component_extract,
+          expr.type()};
+
+      return changed(simplify_rec(union_expr)); // recursive call
+    }
+  }
+
   // try to refine it down to extracting from a member or an index in an array
   auto subexpr =
     get_subexpression_at_offset(expr.op(), *offset, expr.type(), ns);

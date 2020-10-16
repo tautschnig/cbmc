@@ -139,11 +139,11 @@ renamedt<ssa_exprt, L2> goto_symex_statet::assignment(
     value_set.assign(l1_lhs, l1_rhs, ns, rhs_is_simplified, is_shared);
   }
 
-#ifdef DEBUG
+//#ifdef DEBUG
   std::cout << "Assigning " << l1_identifier << '\n';
   value_set.output(std::cout);
   std::cout << "**********************\n";
-#endif
+//#endif
 
   return l2_lhs;
 }
@@ -339,6 +339,11 @@ exprt goto_symex_statet::l2_rename_rvalues(exprt lvalue, const namespacet &ns)
   {
     auto &complex_imag_lvalue = to_complex_imag_expr(lvalue);
     complex_imag_lvalue.op() = l2_rename_rvalues(complex_imag_lvalue.op(), ns);
+  }
+  else if(lvalue.id() == ID_struct)
+  {
+    Forall_operands(it, lvalue)
+      *it = l2_rename_rvalues(*it, ns);
   }
   else
   {
