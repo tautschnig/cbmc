@@ -8,7 +8,7 @@ main.c
 ^\[.*\] line 15 arithmetic overflow on signed shl in .*: SUCCESS$
 ^\[.*\] line 18 arithmetic overflow on signed shl in .*: FAILURE$
 ^\[.*\] line 24 arithmetic overflow on signed shl in .*: FAILURE$
-^\*\* 3 of 6 failed
+^\*\* 3 of 7 failed
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

@@ -208,6 +208,12 @@ void ansi_c_internal_additions(std::string &code)
     "int " CPROVER_PREFIX "thread_local " CPROVER_PREFIX "rounding_mode="+
       std::to_string(config.ansi_c.rounding_mode)+";\n"
 
+    // atexit
+    CPROVER_PREFIX "thread_local void (*" CPROVER_PREFIX "atexit_table[32])"
+      "(void);\n"
+    CPROVER_PREFIX "thread_local int " CPROVER_PREFIX "atexit_table_use;\n"
+    "void exit(int);\n"
+
     // pipes, write, read, close
     "struct " CPROVER_PREFIX "pipet {\n"
     "  _Bool widowed;\n"

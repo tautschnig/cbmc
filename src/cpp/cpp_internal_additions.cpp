@@ -111,6 +111,13 @@ void cpp_internal_additions(std::ostream &out)
   out << "int " CPROVER_PREFIX "rounding_mode = "
       << std::to_string(config.ansi_c.rounding_mode) << ';' << '\n';
 
+  // atexit
+  out << CPROVER_PREFIX "thread_local void (*"
+      << CPROVER_PREFIX "atexit_table[32])(void);" << '\n';
+  out << CPROVER_PREFIX "thread_local int "
+      << CPROVER_PREFIX "atexit_table_use;" << '\n';
+  out << "void exit(int);" << '\n';
+
   // pipes, write, read, close
   out << "struct " CPROVER_PREFIX "pipet {\n"
       << "  bool widowed;\n"
