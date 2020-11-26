@@ -21,7 +21,6 @@ Author: Daniel Kroening
 #include <util/format_expr.h>
 #include <util/merge_irep.h>
 #include <util/range.h>
-#include <util/std_expr.h>
 #include <util/string_utils.h>
 #include <util/symbol.h>
 
@@ -29,16 +28,29 @@ Author: Daniel Kroening
 
 #include "printf_formatter.h"
 
-optionalt<symbol_exprt>
-goto_trace_stept::get_lhs_object(const namespacet &ns) const
+static optionalt<symbol_exprt> get_object_rec(const exprt &src)
 {
-  object_descriptor_exprt ode;
-  ode.build(full_lhs, ns);
-
-  if(ode.root_object().id() == ID_symbol)
-    return to_symbol_expr(ode.root_object());
+  if(src.id()==ID_symbol)
+    return to_symbol_expr(src);
+  else if(src.id()==ID_member)
+    return get_object_rec(to_member_expr(src).struct_op());
+  else if(src.id()==ID_index)
+    return get_object_rec(to_index_expr(src).array());
+  else if(src.id()==ID_typecast)
+    return get_object_rec(to_typecast_expr(src).op());
+  else if(
+    src.id() == ID_byte_extract_little_endian ||
+    src.id() == ID_byte_extract_big_endian)
+  {
+    return get_object_rec(to_byte_extract_expr(src).op());
+  }
   else
-    return {};
+    return {}; // give up
+}
+
+optionalt<symbol_exprt> goto_trace_stept::get_lhs_object() const
+{
+  return get_object_rec(full_lhs);
 }
 
 void goto_tracet::output(
@@ -49,7 +61,9 @@ void goto_tracet::output(
     step.output(ns, out);
 }
 
-void goto_trace_stept::output(const namespacet &ns, std::ostream &out) const
+void goto_trace_stept::output(
+  const namespacet &,
+  std::ostream &out) const
 {
   out << "*** ";
 
@@ -427,7 +441,7 @@ void show_compact_goto_trace(
       trace_value(
         out,
         ns,
-        step.get_lhs_object(ns),
+        step.get_lhs_object(),
         step.full_lhs,
         step.full_lhs_value,
         options);
@@ -572,7 +586,7 @@ void show_full_goto_trace(
         trace_value(
           out,
           ns,
-          step.get_lhs_object(ns),
+          step.get_lhs_object(),
           step.full_lhs,
           step.full_lhs_value,
           options);
@@ -589,12 +603,7 @@ void show_full_goto_trace(
 
       out << "  ";
       trace_value(
-        out,
-        ns,
-        step.get_lhs_object(ns),
-        step.full_lhs,
-        step.full_lhs_value,
-        options);
+        out, ns, step.get_lhs_object(), step.full_lhs, step.full_lhs_value, options);
       break;
 
     case goto_trace_stept::typet::OUTPUT:

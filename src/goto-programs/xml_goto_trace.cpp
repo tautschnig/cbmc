@@ -65,7 +65,7 @@ xmlt full_lhs_value(const goto_trace_stept &step, const namespacet &ns)
   if(value.is_nil())
     return value_xml;
 
-  const auto &lhs_object = step.get_lhs_object(ns);
+  const auto &lhs_object = step.get_lhs_object();
   const irep_idt identifier =
     lhs_object.has_value() ? lhs_object->get_identifier() : irep_idt();
   value_xml.data = get_printable_xml(ns, identifier, value);
@@ -125,7 +125,7 @@ void convert(
     case goto_trace_stept::typet::ASSIGNMENT:
     case goto_trace_stept::typet::DECL:
     {
-      auto lhs_object = step.get_lhs_object(ns);
+      auto lhs_object = step.get_lhs_object();
       irep_idt identifier =
         lhs_object.has_value() ? lhs_object->get_identifier() : irep_idt();
       xmlt &xml_assignment = dest.new_element("assignment");
