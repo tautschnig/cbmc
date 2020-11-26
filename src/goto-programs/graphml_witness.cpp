@@ -443,7 +443,7 @@ void graphml_witnesst::operator()(const goto_tracet &goto_trace)
         data_t.data = std::to_string(it->thread_nr);
       }
 
-      const auto lhs_object = it->get_lhs_object();
+      const auto lhs_object = it->get_lhs_object(ns);
       if(
         it->type == goto_trace_stept::typet::ASSIGNMENT &&
         lhs_object.has_value())

@@ -90,7 +90,7 @@ void output_vcd(
   {
     if(step.is_assignment())
     {
-      auto lhs_object=step.get_lhs_object();
+      auto lhs_object = step.get_lhs_object(ns);
       if(lhs_object.has_value())
       {
         irep_idt identifier=lhs_object->get_identifier();
@@ -117,7 +117,7 @@ void output_vcd(
   {
     if(step.is_assignment())
     {
-      auto lhs_object = step.get_lhs_object();
+      auto lhs_object = step.get_lhs_object(ns);
       if(lhs_object.has_value())
       {
         irep_idt identifier = lhs_object->get_identifier();
