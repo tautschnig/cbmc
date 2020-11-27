@@ -99,6 +99,10 @@ __CPROVER_HIDE:;
       "max allocation may fail");
     __CPROVER_assume(!__CPROVER_malloc_may_fail || !should_malloc_fail);
   }
+  else
+  {
+    __CPROVER_assume(alloc_size <= __CPROVER_max_malloc_size);
+  }
 
   void *malloc_res;
   // realistically, calloc may return NULL,
@@ -166,6 +170,10 @@ __CPROVER_HIDE:;
       "max allocation may fail");
     __CPROVER_assume(!__CPROVER_malloc_may_fail || !should_malloc_fail);
   }
+  else
+  {
+    __CPROVER_assume(malloc_size <= __CPROVER_max_malloc_size);
+  }
 
   void *malloc_res;
   malloc_res = __CPROVER_allocate(malloc_size, 0);
@@ -200,7 +208,8 @@ extern void *__CPROVER_alloca_object;
 
 inline void *__builtin_alloca(__CPROVER_size_t alloca_size)
 {
-  __CPROVER_HIDE:;
+__CPROVER_HIDE:;
+  __CPROVER_assume(alloca_size <= __CPROVER_max_malloc_size);
   void *res;
   res = __CPROVER_allocate(alloca_size, 0);
 
