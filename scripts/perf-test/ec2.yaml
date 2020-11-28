@@ -14,6 +14,12 @@ Parameters:
     AvailabilityZone:
         Type: String
 
+    DefaultVPC:
+        Type: String
+
+    Subnet:
+        Type: String
+
     S3Bucket:
         Type: String
 
@@ -42,6 +48,9 @@ Parameters:
         Type: String
 
     CompareTo:
+        Type: String
+
+    UsePerf:
         Type: String
 
 Conditions:
@@ -123,6 +132,7 @@ Resources:
         DependsOn: EC2Role
         Properties:
             GroupDescription: SSH access
+            VpcId: !Ref DefaultVPC
             SecurityGroupIngress:
                 - IpProtocol: tcp
                   FromPort: 22
@@ -132,12 +142,13 @@ Resources:
     LaunchConfiguration:
         Type: "AWS::AutoScaling::LaunchConfiguration"
         Properties:
+            AssociatePublicIpAddress: True
             BlockDeviceMappings:
                 - DeviceName: "/dev/sdf"
                   Ebs:
                       DeleteOnTermination: True
                       SnapshotId: !Ref SnapshotId
-                      VolumeSize: 64
+                      VolumeSize: 400
             IamInstanceProfile: !Ref EC2InstanceProfile
             ImageId: !Ref Ami
             InstanceType: !Ref InstanceType
@@ -177,6 +188,7 @@ Resources:
                     sed -i 's#:PERFTESTID:#${PerfTestId}#g' /root/run-on-ec2.sh
                     sed -i 's#:INSTANCETYPE:#${InstanceType}#g' /root/run-on-ec2.sh
                     sed -i 's#:COMPARETO:#${CompareTo}#g' /root/run-on-ec2.sh
+                    sed -i 's#:USE_PERF:#${UsePerf}#g' /root/run-on-ec2.sh
                     . /root/run-on-ec2.sh
 
     AutoScalingGroup:
@@ -184,6 +196,8 @@ Resources:
         Properties:
             AvailabilityZones:
                 - !Ref AvailabilityZone
+            VPCZoneIdentifier:
+                - !Ref Subnet
             DesiredCapacity: !Ref FleetSize
             LaunchConfigurationName: !Ref LaunchConfiguration
             MaxSize: !Ref FleetSize

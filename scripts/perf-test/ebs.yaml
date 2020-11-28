@@ -8,13 +8,17 @@ Parameters:
     AvailabilityZone:
         Type: String
 
+    Subnet:
+        Type: String
+
 Resources:
     EC2Instance:
         Type: "AWS::EC2::Instance"
         Properties:
-            InstanceType: t2.micro
+            InstanceType: c5.large
             ImageId: !Ref Ami
             AvailabilityZone: !Ref AvailabilityZone
+            SubnetId: !Ref Subnet
             Volumes:
                 - Device: "/dev/sdf"
                   VolumeId: !Ref BaseVolume
@@ -28,7 +32,7 @@ Resources:
                 apt-get -y update
                 apt-get install git
                 cd /mnt
-                git clone --depth 1 --branch svcomp19 \
+                git clone --depth 1 --branch svcomp20 \
                         https://github.com/sosy-lab/sv-benchmarks.git
                 git clone --depth 1 \
                         https://github.com/sosy-lab/benchexec.git
@@ -38,7 +42,7 @@ Resources:
                         https://github.com/diffblue/cprover-sv-comp.git
                 git clone --depth 1 \
                         https://github.com/tautschnig/fshell-w2t.git
-                halt
+                poweroff
 
     BaseVolume:
         Type: "AWS::EC2::Volume"
