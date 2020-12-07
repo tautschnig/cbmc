@@ -93,7 +93,10 @@ protected:
   /// \return L1-renamed identifier
   irep_idt address(event_it event) const
   {
-    return remove_level_2(event->ssa_lhs).get_identifier();
+    if(event->ssa_lhs.id() == ID_address_of)
+      return remove_level_2(event->ssa_lhs).get_identifier();
+    else
+      return ID_nil;
   }
 
   typet clock_type;
