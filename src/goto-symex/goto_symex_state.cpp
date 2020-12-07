@@ -486,7 +486,7 @@ bool goto_symex_statet::l2_thread_read_encoding(
   // and record that
   INVARIANT_STRUCTURED(
     symex_target!=nullptr, nullptr_exceptiont, "symex_target is null");
-  symex_target->shared_read(guard_as_expr, address_of_exprt{remove_level_2(expr)}, atomic_section_id, source);
+  symex_target->shared_read(guard_as_expr, expr, atomic_section_id, source);
 
   return true;
 }
@@ -539,7 +539,7 @@ bool goto_symex_statet::l2_thread_write_encoding(
   // record a shared write
   symex_target->shared_write(
     guard.as_expr(),
-    address_of_exprt{remove_level_2(expr)},
+    expr,
     atomic_section_id,
     source);
 

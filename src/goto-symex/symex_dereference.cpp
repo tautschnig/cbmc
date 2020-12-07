@@ -315,47 +315,6 @@ void goto_symext::dereference_rec(
 
     tmp1 = state.field_sensitivity.apply(ns, state, std::move(tmp1), false);
 
-    if(threads.size() > 1)
-    {
-      bool is_shared = false;
-      for(const symbol_exprt &s : find_symbols(tmp1))
-      {
-        const ssa_exprt &ssa_s = to_ssa_expr(s);
-        const irep_idt &obj_identifier = ssa_s.get_object_name();
-        if(
-          obj_identifier != guard_identifier() &&
-          (ns.lookup(obj_identifier).is_shared() || path_storage.dirty(obj_identifier)))
-        {
-          is_shared = true;
-          break;
-        }
-      }
-
-      if(is_shared)
-      {
-        expr = make_fresh_symbol;
-
-        if(write)
-        {
-          target.shared_write(
-            write_guard_expr,
-            tmp1,
-            atomic_section_id,
-            state.source);
-        }
-        else
-        {
-          target.shared_read(
-            read_guard_expr,
-            tmp1,
-            atomic_section_id,
-            state.source);
-        }
-
-        return;
-      }
-    }
-
     // we need to set up some elaborate call-backs
     symex_dereference_statet symex_dereference_state(state, ns);
 

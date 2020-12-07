@@ -62,7 +62,7 @@ void goto_symext::symex_atomic_end(statet &state)
 
     target.shared_read(
       read_guard_expr,
-      address_of_exprt{r},
+      r,
       atomic_section_id,
       state.source);
   }
@@ -84,7 +84,7 @@ void goto_symext::symex_atomic_end(statet &state)
 
     target.shared_write(
       write_guard_expr,
-      address_of_exprt{w},
+      w,
       atomic_section_id,
       state.source);
   }
