@@ -26,17 +26,21 @@ ui_message_handlert::ui_message_handlert(
   uit __ui,
   const std::string &program,
   bool always_flush,
-  timestampert::clockt clock_type)
+  timestampert::clockt clock_type,
+  std::ostream &os)
   : message_handler(_message_handler),
     _ui(__ui),
     always_flush(always_flush),
     time(timestampert::make(clock_type)),
-    out(std::cout),
+    out(os),
     json_stream(nullptr)
 {
   switch(_ui)
   {
   case uit::PLAIN:
+    console_message_handler =
+      util_make_unique<console_message_handlert>(always_flush);
+    message_handler = &*console_message_handler;
     break;
 
   case uit::XML_UI:
@@ -81,19 +85,19 @@ ui_message_handlert::ui_message_handlert(
                                      : cmdline.get_value("timestamp") == "wall"
                                          ? timestampert::clockt::WALL_CLOCK
                                          : timestampert::clockt::NONE
-                                 : timestampert::clockt::NONE)
+                                 : timestampert::clockt::NONE,
+      std::cout)
 {
-  if(get_ui() == uit::PLAIN)
-  {
-    console_message_handler =
-      util_make_unique<console_message_handlert>(always_flush);
-    message_handler = &*console_message_handler;
-  }
 }
 
 ui_message_handlert::ui_message_handlert(message_handlert &message_handler)
   : ui_message_handlert(
-      &message_handler, uit::PLAIN, "", false, timestampert::clockt::NONE)
+      &message_handler,
+      uit::PLAIN,
+      "",
+      false,
+      timestampert::clockt::NONE,
+      std::cout)
 {
 }
 

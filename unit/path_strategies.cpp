@@ -6,6 +6,7 @@ Author: Kareem Khazem <karkhaz@karkhaz.com>, 2018
 
 \*******************************************************************/
 
+#include <testing-utils/message.h>
 #include <testing-utils/use_catch.h>
 
 #include <path_strategies.h>
@@ -393,10 +394,8 @@ void _check_with_strategy(
   REQUIRE(is_valid_path_strategy(strategy));
   opts_callback(options);
 
-  ui_message_handlert ui_message_handler(cmdline, "path-explore");
+  ui_message_handlert ui_message_handler(null_message_handler);
   ui_message_handler.set_verbosity(0);
-  messaget log(ui_message_handler);
-
   goto_modelt goto_model;
   int ret;
   ret = cbmc_parse_optionst::get_goto_program(

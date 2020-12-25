@@ -37,7 +37,22 @@ parse_options_baset::parse_options_baset(
       argc,
       argv,
       (std::string("?h(help)") + _optstring).c_str())),
-    ui_message_handler(cmdline, program),
+    ui_message_handler(
+      nullptr,
+      cmdline.isset("xml-ui") || cmdline.isset("xml-interface")
+        ? ui_message_handlert::uit::XML_UI
+        : cmdline.isset("json-ui") || cmdline.isset("json-interface")
+            ? ui_message_handlert::uit::JSON_UI
+            : ui_message_handlert::uit::PLAIN,
+      program,
+      cmdline.isset("flush"),
+      cmdline.isset("timestamp") ? cmdline.get_value("timestamp") == "monotonic"
+                                     ? timestampert::clockt::MONOTONIC
+                                     : cmdline.get_value("timestamp") == "wall"
+                                         ? timestampert::clockt::WALL_CLOCK
+                                         : timestampert::clockt::NONE
+                                 : timestampert::clockt::NONE,
+      std::cout),
     log(ui_message_handler)
 {
 }

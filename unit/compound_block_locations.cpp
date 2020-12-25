@@ -8,6 +8,7 @@ Author: Kareem Khazem <karkhaz@karkhaz.com>, 2018
 
 #include "compound_block_locations.h"
 
+#include <testing-utils/message.h>
 #include <testing-utils/use_catch.h>
 
 #include <fstream>
@@ -282,10 +283,8 @@ void compound_block_locationst::check_compound_block_locations(
   optionst opts;
   cbmc_parse_optionst::set_default_options(opts);
 
-  ui_message_handlert mh(cmdline, "compound-block-locations");
+  ui_message_handlert mh(null_message_handler);
   mh.set_verbosity(0);
-  messaget log(mh);
-
   goto_modelt gm;
   int ret;
   ret = cbmc_parse_optionst::get_goto_program(gm, opts, cmdline, mh);

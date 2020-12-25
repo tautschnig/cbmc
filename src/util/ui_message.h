@@ -10,6 +10,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_UTIL_UI_MESSAGE_H
 #define CPROVER_UTIL_UI_MESSAGE_H
 
+#include <iosfwd>
 #include <memory>
 
 #include "message.h"
@@ -23,8 +24,20 @@ class ui_message_handlert : public message_handlert
 public:
   enum class uit { PLAIN, XML_UI, JSON_UI };
 
+  DEPRECATED(SINCE(
+    2020,
+    12,
+    25,
+    "use ui_message_handlert(message_handlert *, uit, ...) instead"))
   ui_message_handlert(const class cmdlinet &, const std::string &program);
 
+  ui_message_handlert(
+    message_handlert *,
+    uit,
+    const std::string &program,
+    const bool always_flush,
+    timestampert::clockt clock_type,
+    std::ostream &os);
   explicit ui_message_handlert(message_handlert &);
   ui_message_handlert(ui_message_handlert &&) = default;
 
@@ -52,13 +65,6 @@ protected:
   std::unique_ptr<const timestampert> time;
   std::ostream &out;
   std::unique_ptr<json_stream_arrayt> json_stream;
-
-  ui_message_handlert(
-    message_handlert *,
-    uit,
-    const std::string &program,
-    const bool always_flush,
-    timestampert::clockt clock_type);
 
   virtual void print(
     unsigned level,

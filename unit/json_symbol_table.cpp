@@ -20,27 +20,6 @@
 
 #include <iosfwd>
 
-class test_ui_message_handlert : public ui_message_handlert
-{
-public:
-  explicit test_ui_message_handlert(std::ostream &out)
-    : ui_message_handlert(cmdlinet(), ""), json_stream_array(out, 0)
-  {
-  }
-
-  uit get_ui() const
-  {
-    return uit::JSON_UI;
-  }
-
-  json_stream_arrayt &get_json_stream()
-  {
-    return json_stream_array;
-  }
-
-  json_stream_arrayt json_stream_array;
-};
-
 TEST_CASE("json symbol table read/write consistency")
 {
   // Get symbol table associated with goto program
@@ -54,8 +33,13 @@ TEST_CASE("json symbol table read/write consistency")
   std::ostringstream out;
 
   {
-    test_ui_message_handlert ui_message_handler(out);
-    REQUIRE(ui_message_handler.get_ui() == ui_message_handlert::uit::JSON_UI);
+    ui_message_handlert ui_message_handler(
+      &null_message_handler,
+      ui_message_handlert::uit::JSON_UI,
+      "",
+      false,
+      timestampert::clockt::NONE,
+      out);
 
     show_symbol_table(symbol_table1, ui_message_handler);
   }
@@ -74,7 +58,7 @@ TEST_CASE("json symbol table read/write consistency")
     REQUIRE(json.is_array());
 
     const json_arrayt &json_array = to_json_array(json);
-    const jsont &json_symbol_table = *json_array.begin();
+    const jsont &json_symbol_table = *(json_array.begin() + 1);
 
     symbol_table_from_json(json_symbol_table, symbol_table2);
   }
