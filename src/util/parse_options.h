@@ -33,17 +33,18 @@ public:
   virtual int doit()=0;
 
   virtual int main();
-  virtual ~parse_options_baset() { }
+  virtual ~parse_options_baset() { delete ui_message_handler_ptr; }
 
   /// Write version and system architecture to log.status().
   void log_version_and_architecture(const std::string &front_end);
 
 private:
   bool parse_result;
+  ui_message_handlert *ui_message_handler_ptr;
 
 protected:
-  ui_message_handlert ui_message_handler;
-  messaget log;
+  ui_message_handlert &ui_message_handler;
+  messaget log; // should be private
 
 private:
   void unknown_option_msg();

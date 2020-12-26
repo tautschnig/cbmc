@@ -33,10 +33,6 @@ public:
 
   virtual void print(unsigned level, const std::string &message)=0;
 
-  virtual void print(unsigned level, const xmlt &xml) = 0;
-
-  virtual void print(unsigned level, const jsont &json) = 0;
-
   virtual void print(unsigned level, const structured_datat &data);
 
   virtual void print(
@@ -86,14 +82,6 @@ public:
     message_handlert::print(level, message);
   }
 
-  void print(unsigned, const xmlt &) override
-  {
-  }
-
-  void print(unsigned, const jsont &) override
-  {
-  }
-
   void print(
     unsigned level,
     const std::string &message,
@@ -120,14 +108,6 @@ public:
 
     if(verbosity>=level)
       out << message << '\n';
-  }
-
-  void print(unsigned, const xmlt &) override
-  {
-  }
-
-  void print(unsigned, const jsont &) override
-  {
   }
 
   void flush(unsigned) override
@@ -246,7 +226,8 @@ public:
     messaget &message;
     source_locationt source_location;
 
-    mstreamt &operator << (const xmlt &data)
+    mstreamt &operator << (const xmlt &data) = delete;
+    /*mstreamt &operator << (const xmlt &data)
     {
       if(this->tellp() > 0)
         *this << eom; // force end of previous message
@@ -256,8 +237,9 @@ public:
       }
       return *this;
     }
+    */
 
-    mstreamt &operator<<(const json_objectt &data);
+    mstreamt &operator<<(const json_objectt &data) = delete;
 
     mstreamt &operator<<(const structured_datat &data)
     {

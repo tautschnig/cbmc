@@ -51,7 +51,7 @@ SCENARIO("get_cover_config is called", "[core]")
 
   goto_functiont dummy_function;
 
-  ui_message_handlert message_handler(null_message_handler);
+  console_ui_message_handlert message_handler(false, timestampert::clockt::NONE);
 
   GIVEN("cover-only set to an unrecognised value")
   {

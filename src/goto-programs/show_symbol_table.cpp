@@ -145,7 +145,7 @@ void show_symbol_table_plain(
 
 static void show_symbol_table_json_ui(
   const symbol_tablet &symbol_table,
-  ui_message_handlert &message_handler)
+  json_ui_message_handlert &message_handler)
 {
   json_stream_arrayt &out = message_handler.get_json_stream();
 
@@ -219,7 +219,7 @@ static void show_symbol_table_json_ui(
 
 static void show_symbol_table_brief_json_ui(
   const symbol_tablet &symbol_table,
-  ui_message_handlert &message_handler)
+  json_ui_message_handlert &message_handler)
 {
   json_stream_arrayt &out = message_handler.get_json_stream();
 
@@ -282,8 +282,12 @@ void show_symbol_table(
     break;
 
   case ui_message_handlert::uit::JSON_UI:
-    show_symbol_table_json_ui(symbol_table, ui);
+    {
+    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui);
+    PRECONDITION(json_ui != 0);
+    show_symbol_table_json_ui(symbol_table, *json_ui);
     break;
+    }
   }
 }
 
@@ -309,8 +313,12 @@ void show_symbol_table_brief(
     break;
 
   case ui_message_handlert::uit::JSON_UI:
-    show_symbol_table_brief_json_ui(symbol_table, ui);
+    {
+    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui);
+    PRECONDITION(json_ui != 0);
+    show_symbol_table_brief_json_ui(symbol_table, *json_ui);
     break;
+    }
   }
 }
 

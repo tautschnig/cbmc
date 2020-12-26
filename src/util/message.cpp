@@ -150,7 +150,7 @@ void messaget::conditional_output(
   }
 }
 
-messaget::mstreamt &messaget::mstreamt::operator<<(const json_objectt &data)
+/*messaget::mstreamt &messaget::mstreamt::operator<<(const json_objectt &data)
 {
   if(this->tellp() > 0)
     *this << eom; // force end of previous message
@@ -159,4 +159,4 @@ messaget::mstreamt &messaget::mstreamt::operator<<(const json_objectt &data)
     message.message_handler->print(message_level, data);
   }
   return *this;
-}
+}*/

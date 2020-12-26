@@ -28,6 +28,47 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "string_utils.h"
 #include "version.h"
 
+static timestampert::clockt cmdline_to_clock(const cmdlinet &cmdline)
+{
+  if(cmdline.isset("timestamp"))
+  {
+    if(cmdline.get_value("timestamp") == "monotonic")
+      return timestampert::clockt::MONOTONIC;
+    else if(cmdline.get_value("timestamp") == "wall")
+      return timestampert::clockt::WALL_CLOCK;
+  }
+
+  return timestampert::clockt::NONE;
+}
+
+static ui_message_handlert * cmdline_to_message_handler(const std::string &program, const cmdlinet &cmdline)
+{
+  if(cmdline.isset("xml-ui") || cmdline.isset("xml-interface"))
+  {
+    return new xml_ui_message_handlert(
+      nullptr,
+      program,
+      cmdline.isset("flush"),
+      cmdline_to_clock(cmdline),
+      std::cout);
+  }
+  else if(cmdline.isset("json-ui") || cmdline.isset("json-interface"))
+  {
+    return new json_ui_message_handlert(
+      nullptr,
+      program,
+      cmdline.isset("flush"),
+      cmdline_to_clock(cmdline),
+      std::cout);
+  }
+  else
+  {
+    return new console_ui_message_handlert(
+      cmdline.isset("flush"),
+      cmdline_to_clock(cmdline));
+  }
+}
+
 parse_options_baset::parse_options_baset(
   const std::string &_optstring,
   int argc,
@@ -37,22 +78,8 @@ parse_options_baset::parse_options_baset(
       argc,
       argv,
       (std::string("?h(help)") + _optstring).c_str())),
-    ui_message_handler(
-      nullptr,
-      cmdline.isset("xml-ui") || cmdline.isset("xml-interface")
-        ? ui_message_handlert::uit::XML_UI
-        : cmdline.isset("json-ui") || cmdline.isset("json-interface")
-            ? ui_message_handlert::uit::JSON_UI
-            : ui_message_handlert::uit::PLAIN,
-      program,
-      cmdline.isset("flush"),
-      cmdline.isset("timestamp") ? cmdline.get_value("timestamp") == "monotonic"
-                                     ? timestampert::clockt::MONOTONIC
-                                     : cmdline.get_value("timestamp") == "wall"
-                                         ? timestampert::clockt::WALL_CLOCK
-                                         : timestampert::clockt::NONE
-                                 : timestampert::clockt::NONE,
-      std::cout),
+    ui_message_handler_ptr(cmdline_to_message_handler(program, cmdline)),
+    ui_message_handler(*ui_message_handler_ptr),
     log(ui_message_handler)
 {
 }

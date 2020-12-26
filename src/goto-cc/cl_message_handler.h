@@ -14,13 +14,13 @@ Author: Michael Tautschnig
 class cl_message_handlert : public console_message_handlert
 {
 public:
-  void print(unsigned, const xmlt &) override
+  /*void print(unsigned, const xmlt &) override
   {
   }
 
   void print(unsigned, const jsont &) override
   {
-  }
+  }*/
 
   // aims to imitate the messages CL prints
   void print(

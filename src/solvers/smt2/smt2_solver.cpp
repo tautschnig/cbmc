@@ -395,13 +395,13 @@ public:
       std::cout << "; " << message << '\n';
   }
 
-  void print(unsigned, const xmlt &) override
+  /*void print(unsigned, const xmlt &) override
   {
   }
 
   void print(unsigned, const jsont &) override
   {
-  }
+  }*/
 
   void flush(unsigned) override
   {

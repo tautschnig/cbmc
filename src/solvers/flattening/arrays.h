@@ -24,6 +24,7 @@ class array_of_exprt;
 class equal_exprt;
 class if_exprt;
 class index_exprt;
+class labelt;
 class with_exprt;
 class update_exprt;
 
@@ -128,7 +129,7 @@ protected:
   typedef std::map<constraint_typet, size_t> array_constraint_countt;
   array_constraint_countt array_constraint_count;
   void display_array_constraint_count();
-  std::string enum_to_string(constraint_typet);
+  static labelt enum_to_label(constraint_typet);
 
   // adds all the constraints eagerly
   void add_array_constraints();

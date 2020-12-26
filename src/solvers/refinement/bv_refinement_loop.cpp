@@ -8,8 +8,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "bv_refinement.h"
 
-#include <util/xml.h>
-
 bv_refinementt::bv_refinementt(const infot &info)
   : bv_pointerst(*info.ns, *info.prop, *info.message_handler),
     progress(false),
@@ -41,9 +39,10 @@ decision_proceduret::resultt bv_refinementt::dec_solve()
     // output the very same information in a structured fashion
     if(config_.output_xml)
     {
-      xmlt xml("refinement-iteration");
-      xml.data=std::to_string(iteration);
-      log.status() << xml << '\n';
+      structured_datat iteration_xml{
+        {{labelt{{"refinement", "iteration"}},
+          structured_data_entryt::data_node(json_numbert(std::to_string(iteration)))}}};
+      log.status() << iteration_xml << messaget::eom;
     }
 
     switch(prop_solve())

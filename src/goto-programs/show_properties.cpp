@@ -66,19 +66,21 @@ void show_properties(
     {
     case ui_message_handlert::uit::XML_UI:
       {
-        // use me instead
-        xmlt xml_property(
-          "property",
-          {{"name", id2string(property_id)},
-           {"class", id2string(property_class)}},
-          {});
-
-        xmlt &property_l=xml_property.new_element();
-        property_l=xml(source_location);
-
-        xml_property.new_element("description").data=id2string(description);
-        xml_property.new_element("expression").data =
-          from_expr(ns, identifier, ins.get_condition());
+        structured_datat xml_property{{
+          {labelt{{"property"}},
+            structured_data_entryt::entry(
+              {
+              {labelt{{"name"}},
+              structured_data_entryt::data_node(json_stringt{property_id})},
+              {labelt{{"class"}},
+              structured_data_entryt::data_node(json_stringt{property_class})},
+              {labelt{{"location"}},
+              structured_data(source_location)},
+              {labelt{{"description"}},
+              structured_data_entryt::data_node(json_stringt{description})},
+              {labelt{{"expression"}},
+              structured_data_entryt::data_node(json_stringt{
+                                                from_expr(ns, identifier, ins.get_condition())})}})}}};
 
         msg.result() << xml_property;
       }
@@ -152,8 +154,8 @@ void show_properties_json(
   for(const auto &fct : goto_functions.function_map)
     convert_properties_json(json_properties, ns, fct.first, fct.second.body);
 
-  json_objectt json_result{{"properties", json_properties}};
-  msg.result() << json_result;
+  structured_datat result{{{labelt{{"properties"}}, structured_data_entryt::data_node(json_properties)}}};
+  msg.result() << result;
 }
 
 void show_properties(

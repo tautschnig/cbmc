@@ -89,8 +89,10 @@ static void output_goals_json(
 {
   if(log.status().tellp() > 0)
     log.status() << messaget::eom; // force end of previous message
+  json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
+  PRECONDITION(json_ui != 0);
   json_stream_objectt &json_result =
-    ui_message_handler.get_json_stream().push_back_stream_object();
+    json_ui->get_json_stream().push_back_stream_object();
   json_stream_arrayt &goals_array = json_result.push_back_stream_array("goals");
   for(const auto &property_pair : properties)
   {

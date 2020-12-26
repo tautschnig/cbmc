@@ -148,8 +148,10 @@ void c_test_input_generatort::operator()(const goto_trace_storaget &traces)
   {
     if(log.status().tellp() > 0)
       log.status() << messaget::eom; // force end of previous message
+    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
+    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-      ui_message_handler.get_json_stream().push_back_stream_object();
+      json_ui->get_json_stream().push_back_stream_object();
     json_stream_arrayt &tests_array =
       json_result.push_back_stream_array("tests");
 

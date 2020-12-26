@@ -283,7 +283,7 @@ void compound_block_locationst::check_compound_block_locations(
   optionst opts;
   cbmc_parse_optionst::set_default_options(opts);
 
-  ui_message_handlert mh(null_message_handler);
+  console_ui_message_handlert mh(false, timestampert::clockt::NONE);
   mh.set_verbosity(0);
   goto_modelt gm;
   int ret;
