@@ -329,37 +329,9 @@ std::string expr2ct::convert_rec(
              integer2string(width) + "]" + d;
     }
   }
-  else if(src.id()==ID_struct)
+  else if(src.id() == ID_struct || src.id() == ID_union)
   {
-    return convert_struct_type(src, q, d);
-  }
-  else if(src.id()==ID_union)
-  {
-    const union_typet &union_type=to_union_type(src);
-
-    std::string dest=q+"union";
-
-    const irep_idt &tag=union_type.get_tag();
-    if(!tag.empty())
-      dest+=" "+id2string(tag);
-
-    if(!union_type.is_incomplete())
-    {
-      dest += " {";
-
-      for(const auto &c : union_type.components())
-      {
-        dest += ' ';
-        dest += convert_rec(c.type(), c_qualifierst(), id2string(c.get_name()));
-        dest += ';';
-      }
-
-      dest += " }";
-    }
-
-    dest+=d;
-
-    return dest;
+    return convert_struct_union_type(src, q, d);
   }
   else if(src.id()==ID_c_enum)
   {
@@ -618,18 +590,19 @@ std::string expr2ct::convert_rec(
   }
 }
 
-/// To generate C-like string for defining the given struct
-/// \param src: the struct type being converted
+/// To generate C-like string for defining the given struct or union.
+/// \param src: the struct or union type being converted
 /// \param qualifiers_str: any qualifiers on the type
 /// \param declarator_str: the declarator on the type
-/// \return Returns a type declaration for a struct, containing the body of the
-///   struct and in that body the padding parameters.
-std::string expr2ct::convert_struct_type(
+/// \return Returns a type declaration for a struct/union, containing the body
+///   of the struct/union and in that body any padding components (if \c
+///   include_padding_components is set to to \c true).
+std::string expr2ct::convert_struct_union_type(
   const typet &src,
   const std::string &qualifiers_str,
   const std::string &declarator_str)
 {
-  return convert_struct_type(
+  return convert_struct_union_type(
     src,
     qualifiers_str,
     declarator_str,
@@ -637,17 +610,18 @@ std::string expr2ct::convert_struct_type(
     configuration.include_struct_padding_components);
 }
 
-/// To generate C-like string for declaring (or defining) the given struct
-/// \param src: the struct type being converted
+/// To generate C-like string for declaring (or defining) the given struct or
+/// union.
+/// \param src: the struct or union type being converted
 /// \param qualifiers: any qualifiers on the type
 /// \param declarator: the declarator on the type
 /// \param inc_struct_body: when generating the code, should we include a
-///   complete definition of the struct
-/// \param inc_padding_components: should the padding parameters be included
-///   Note this only makes sense if inc_struct_body
+///   complete definition of the struct/union
+/// \param inc_padding_components: whether or not the padding components
+///   should be included. Only makes sense if inc_struct_body is set to \c true.
 /// \return Returns a type declaration for a struct, optionally containing the
 ///   body of the struct (and in that body, optionally the padding parameters).
-std::string expr2ct::convert_struct_type(
+std::string expr2ct::convert_struct_union_type(
   const typet &src,
   const std::string &qualifiers,
   const std::string &declarator,
@@ -656,24 +630,26 @@ std::string expr2ct::convert_struct_type(
 {
   // Either we are including the body (in which case it makes sense to include
   // or exclude the parameters) or there is no body so therefore we definitely
-  // shouldn't be including the parameters
-  assert(inc_struct_body || !inc_padding_components);
+  // shouldn't be including the padding.
+  INVARIANT(
+    inc_struct_body || !inc_padding_components,
+    "Padding cannot be printed without struct/union bodies");
 
-  const struct_typet &struct_type=to_struct_type(src);
+  const struct_union_typet &struct_union_type = to_struct_union_type(src);
 
-  std::string dest=qualifiers+"struct";
+  std::string dest = qualifiers + (src.id() == ID_struct ? "struct" : "union");
 
-  const irep_idt &tag=struct_type.get_tag();
+  const irep_idt &tag = struct_union_type.get_tag();
   if(!tag.empty())
     dest+=" "+id2string(tag);
 
-  if(inc_struct_body && !struct_type.is_incomplete())
+  if(inc_struct_body && !struct_union_type.is_incomplete())
   {
     dest+=" {";
 
-    for(const auto &component : struct_type.components())
+    for(const auto &component : struct_union_type.components())
     {
-      // Skip padding parameters unless we including them
+      // Skip padding components unless we including them
       if(component.get_is_padding() && !inc_padding_components)
       {
         continue;

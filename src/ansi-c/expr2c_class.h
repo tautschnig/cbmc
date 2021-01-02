@@ -53,12 +53,12 @@ protected:
     const qualifierst &qualifiers,
     const std::string &declarator);
 
-  virtual std::string convert_struct_type(
+  virtual std::string convert_struct_union_type(
     const typet &src,
     const std::string &qualifiers_str,
     const std::string &declarator_str);
 
-  std::string convert_struct_type(
+  std::string convert_struct_union_type(
     const typet &src,
     const std::string &qualifer_str,
     const std::string &declarator_str,
