@@ -388,8 +388,7 @@ void linkingt::link_error(
 {
   error().source_location=new_symbol.location;
 
-  error() << "error: " << msg << " '" << old_symbol.display_name() << "'"
-          << '\n';
+  error() << msg << " '" << old_symbol.display_name() << "'" << '\n';
   error() << "old definition in module '" << old_symbol.module << "' "
           << old_symbol.location << '\n'
           << type_to_string_verbose(old_symbol) << '\n';
@@ -405,7 +404,7 @@ void linkingt::link_warning(
 {
   warning().source_location=new_symbol.location;
 
-  warning() << "warning: " << msg << " " << quote_begin
+  warning() << msg << " " << quote_begin
             << old_symbol.display_name() << quote_end << '\n';
   warning() << "old definition in module " << old_symbol.module << " "
             << old_symbol.location << '\n'
@@ -1059,7 +1058,7 @@ void linkingt::duplicate_object_symbol(
       {
         warning().source_location=new_symbol.location;
 
-        warning() << "warning: conflicting initializers for"
+        warning() << "conflicting initializers for"
                   << " variable " << quote_begin << old_symbol.name << quote_end
                   << '\n';
         warning() << "using old value in module " << old_symbol.module << " "
