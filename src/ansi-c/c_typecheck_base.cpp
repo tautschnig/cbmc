@@ -69,7 +69,7 @@ void c_typecheck_baset::typecheck_symbol(symbolt &symbol)
     new_name=root_name;
     symbol.is_static_lifetime=true;
 
-    if(symbol.value.is_not_nil())
+    if(symbol.value.is_not_nil() && !symbol.is_macro)
     {
       // According to the C standard this should be an error, but at least some
       // versions of Visual Studio insist to use this in their C library, and
