@@ -27,7 +27,6 @@ extern char *yyansi_ctext;
 #include "ansi_c_y.tab.h"
 
 #include <util/mathematical_expr.h>
-#include <iostream>
 
 #ifdef _MSC_VER
 // possible loss of data
@@ -473,24 +472,20 @@ offsetof_member_designator:
         ;
           
 quantifier_expression:
-          TOK_FORALL '{' declaration ';' comma_expression '}'
+          TOK_FORALL compound_scope '{' declaration comma_expression '}'
         {
-          unsigned prefix=++PARSER.current_scope().compound_counter;
-          PARSER.new_scope(std::to_string(prefix)+"::");
           $$=$1;
           set($$, ID_forall);
-          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($3)) } ));
-          mto($$, $4);
+          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($4)) } ));
+          mto($$, $5);
           PARSER.pop_scope();
         }
-        | TOK_EXISTS '{' declaration ';' comma_expression '}'
+        | TOK_EXISTS compound_scope '{' declaration comma_expression '}'
         {
-          unsigned prefix=++PARSER.current_scope().compound_counter;
-          PARSER.new_scope(std::to_string(prefix)+"::");
           $$=$1;
           set($$, ID_exists);
-          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($3)) } ));
-          mto($$, $4);
+          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($4)) } ));
+          mto($$, $5);
           PARSER.pop_scope();
         }
         ;
@@ -804,24 +799,20 @@ logical_equivalence_expression:
 /* Non-standard, defined by ACSL. Lowest precedence of all operators. */
 ACSL_binding_expression:
           conditional_expression
-        | TOK_ACSL_FORALL declaration ';' ACSL_binding_expression
+        | TOK_ACSL_FORALL compound_scope declaration ACSL_binding_expression
         {
-          unsigned prefix=++PARSER.current_scope().compound_counter;
-          PARSER.new_scope(std::to_string(prefix)+"::");
           $$=$1;
           set($$, ID_forall);
-          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($2)) } ));
-          mto($$, $3);
+          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($3)) } ));
+          mto($$, $4);
           PARSER.pop_scope();
         }
-        | TOK_ACSL_EXISTS declaration ';' ACSL_binding_expression
+        | TOK_ACSL_EXISTS compound_scope declaration ACSL_binding_expression
         {
-          unsigned prefix=++PARSER.current_scope().compound_counter;
-          PARSER.new_scope(std::to_string(prefix)+"::");
           $$=$1;
           set($$, ID_exists);
-          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($2)) } ));
-          mto($$, $3);
+          parser_stack($$).add_to_operands(tuple_exprt( { std::move(parser_stack($3)) } ));
+          mto($$, $4);
           PARSER.pop_scope();
         }
         | TOK_ACSL_LAMBDA compound_scope declaration ACSL_binding_expression
@@ -897,21 +888,21 @@ comma_expression_opt:
 /*** Declarations *******************************************************/
 
 declaration:
-          declaration_specifier
+          declaration_specifier ';'
         {
           // type only, no declarator!
           init($$, ID_declaration);
           parser_stack($$).type().swap(parser_stack($1));
         }
-        | type_specifier
+        | type_specifier ';'
         {
           // type only, no identifier!
           init($$, ID_declaration);
           parser_stack($$).type().swap(parser_stack($1));
         }
-        | static_assert_declaration
-        | declaring_list
-        | default_declaring_list
+        | static_assert_declaration ';'
+        | declaring_list ';'
+        | default_declaring_list ';'
         ;
         
 static_assert_declaration:
@@ -2264,36 +2255,8 @@ designator:
 
 /*** Statements *********************************************************/
 
-statements:
-        /* nothing */
-        {
-          init($$);
-        }
-        | statements statement
-        {
-          std::cerr << "statements: " << parser_stack($1).pretty() << std::endl;
-          std::cerr << "statement: " << parser_stack($2).pretty() << std::endl;
-          if(parser_stack($1).is_nil() && !parser_stack($1).has_operands())
-          {
-            $$=$2;
-          }
-          else if(parser_stack($1).get(ID_statement) == ID_switch_case &&
-          parser_stack($1).operands().size() == 1)
-          {
-            $$=$1;
-            mto($$, $2);
-          }
-          else
-          {
-            assert(false);
-            $$=$1;
-            mto($$, $2);
-          }
-        }
-        ;
-
 statement:
-        labeled_statement
+          labeled_statement
         | compound_statement
         | declaration_statement
         | expression_statement
@@ -2309,7 +2272,7 @@ statement:
         ;
 
 declaration_statement:
-        declaration ';'
+          declaration
         {
           init($$);
           statement($$, ID_decl);
@@ -2324,27 +2287,30 @@ labeled_statement:
           statement($$, ID_label);
           irep_idt identifier=PARSER.lookup_label(parser_stack($1).get(ID_C_base_name));
           parser_stack($$).set(ID_label, identifier);
-          parser_stack($$).add_to_operands(nil_exprt{});
+          mto($$, $3);
         }
-        | TOK_CASE constant_expression ':'
+        | TOK_CASE constant_expression ':' statement
         {
           $$=$1;
           statement($$, ID_switch_case);
           mto($$, $2);
+          mto($$, $4);
         }
-        | TOK_CASE constant_expression TOK_ELLIPSIS constant_expression ':'
+        | TOK_CASE constant_expression TOK_ELLIPSIS constant_expression ':' statement
         {
           // this is a GCC extension
           $$=$1;
           statement($$, ID_gcc_switch_case_range);
           mto($$, $2);
           mto($$, $4);
+          mto($$, $6);
         }
-        | TOK_DEFAULT ':'
+        | TOK_DEFAULT ':' statement
         {
           $$=$1;
           statement($$, ID_switch_case);
           parser_stack($$).operands().push_back(nil_exprt());
+          mto($$, $3);
           parser_stack($$).set(ID_default, true);
         }
         ;
@@ -2362,40 +2328,63 @@ statement_attribute:
         ;
 
 compound_statement:
-        '{' statements '}'
+          compound_scope '{' '}'
         {
-          unsigned prefix=++PARSER.current_scope().compound_counter;
-          PARSER.new_scope(std::to_string(prefix)+"::");
-          $$=$1;
+          $$=$2;
           statement($$, ID_block);
           parser_stack($$).set(ID_C_end_location, parser_stack($3).source_location());
-          parser_stack($$).operands().swap(parser_stack($2).operands());
           PARSER.pop_scope();
         }
-        | '{' TOK_ASM_STRING '}'
+        | compound_scope '{' statement_list '}'
         {
-          unsigned prefix=++PARSER.current_scope().compound_counter;
-          PARSER.new_scope(std::to_string(prefix)+"::");
-          $$=$1;
+          $$=$2;
+          statement($$, ID_block);
+          parser_stack($$).set(ID_C_end_location, parser_stack($4).source_location());
+          parser_stack($$).operands().swap(parser_stack($3).operands());
+          PARSER.pop_scope();
+        }
+        | compound_scope '{' TOK_ASM_STRING '}'
+        {
+          $$=$2;
           statement($$, ID_asm);
-          parser_stack($$).set(ID_C_end_location, parser_stack($3).source_location());
-          mto($$, $2);
+          parser_stack($$).set(ID_C_end_location, parser_stack($4).source_location());
+          mto($$, $3);
           PARSER.pop_scope();
         }
         ;
 
-expression_statement:
-        ';'
+compound_scope:
+        /* nothing */
         {
-          $$=$1;
-          statement($$, ID_skip);
+          unsigned prefix=++PARSER.current_scope().compound_counter;
+          PARSER.new_scope(std::to_string(prefix)+"::");
         }
-        | comma_expression ';'
+        ;
+
+statement_list:
+          statement
+        {
+          init($$);
+          mto($$, $1);
+        }
+        | statement_list statement
+        {
+          mto($$, $2);
+        }
+        ;
+
+expression_statement:
+          comma_expression_opt ';'
         {
           $$=$2;
 
-          statement($$, ID_expression);
-          mto($$, $1);
+          if(parser_stack($1).is_nil())
+            statement($$, ID_skip);
+          else
+          {
+            statement($$, ID_expression);
+            mto($$, $1);
+          }
         }
         ;
 
@@ -2414,11 +2403,11 @@ selection_statement:
           parser_stack($$).add_to_operands(
             std::move(parser_stack($3)), std::move(parser_stack($5)), std::move(parser_stack($7)));
         }
-        | TOK_SWITCH '(' comma_expression ')'
+        | TOK_SWITCH '(' comma_expression ')' statement
         {
           $$=$1;
           statement($$, ID_switch);
-          parser_stack($$).add_to_operands(std::move(parser_stack($3)));
+          parser_stack($$).add_to_operands(std::move(parser_stack($3)), std::move(parser_stack($5)));
         }
         ;
 
@@ -2428,12 +2417,12 @@ declaration_or_expression_statement:
         ;
 
 iteration_statement:
-        TOK_WHILE '(' comma_expression ')'
-          loop_invariant_opt
+        TOK_WHILE '(' comma_expression_opt ')'
+          loop_invariant_opt statement
         {
           $$=$1;
           statement($$, ID_while);
-          parser_stack($$).add_to_operands(std::move(parser_stack($3)));
+          parser_stack($$).add_to_operands(std::move(parser_stack($3)), std::move(parser_stack($6)));
 
           if(parser_stack($5).is_not_nil())
             parser_stack($$).add(ID_C_spec_loop_invariant).swap(parser_stack($5));
@@ -2461,6 +2450,7 @@ iteration_statement:
               comma_expression_opt ';'
               comma_expression_opt ')'
               loop_invariant_opt
+          statement
         {
           $$=$1;
           statement($$, ID_for);
@@ -2468,6 +2458,7 @@ iteration_statement:
           mto($$, $4);
           mto($$, $5);
           mto($$, $7);
+          mto($$, $10);
 
           if(parser_stack($9).is_not_nil())
             parser_stack($$).add(ID_C_spec_loop_invariant).swap(parser_stack($9));
@@ -2845,7 +2836,7 @@ external_definition:
           // put into global list of items
           PARSER.copy_item(to_ansi_c_declaration(parser_stack($1)));
         }
-        | declaration ';'
+        | declaration
         {
           PARSER.copy_item(to_ansi_c_declaration(parser_stack($1)));
         }
