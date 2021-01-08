@@ -1596,16 +1596,23 @@ void c_typecheck_baset::typecheck_expr_trinary(if_exprt &expr)
     exprt tmp1=simplify_expr(operands[1], *this);
     exprt tmp2=simplify_expr(operands[2], *this);
 
-    // is one of them void * AND null? Convert that to the other.
-    // (at least that's how GCC behaves)
-    if(operands[1].type().subtype().id()==ID_empty &&
-       tmp1.is_constant() &&
-       to_constant_expr(tmp1).get_value()==ID_NULL)
+    // Is one of them void * AND null? Convert that to the other.
+    // (At least that's how GCC, Clang, and Visual Studio behave. Presence of
+    // symbols blocks them from simplifying the expression to NULL.)
+    if(
+      operands[1].type().subtype().id() == ID_empty && tmp1.is_constant() &&
+      to_constant_expr(tmp1).get_value() == ID_NULL &&
+      find_symbols(operands[1]).empty())
+    {
       implicit_typecast(operands[1], operands[2].type());
-    else if(operands[2].type().subtype().id()==ID_empty &&
-            tmp2.is_constant() &&
-            to_constant_expr(tmp2).get_value()==ID_NULL)
+    }
+    else if(
+      operands[2].type().subtype().id() == ID_empty && tmp2.is_constant() &&
+      to_constant_expr(tmp2).get_value() == ID_NULL &&
+      find_symbols(operands[2]).empty())
+    {
       implicit_typecast(operands[2], operands[1].type());
+    }
     else if(operands[1].type().subtype().id()!=ID_code ||
             operands[2].type().subtype().id()!=ID_code)
     {
