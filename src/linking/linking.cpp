@@ -404,8 +404,8 @@ void linkingt::link_warning(
 {
   warning().source_location=new_symbol.location;
 
-  warning() << msg << " " << quote_begin
-            << old_symbol.display_name() << quote_end << '\n';
+  warning() << msg << " " << quote_begin << old_symbol.display_name()
+            << quote_end << '\n';
   warning() << "old definition in module " << old_symbol.module << " "
             << old_symbol.location << '\n'
             << type_to_string_verbose(old_symbol) << '\n';
