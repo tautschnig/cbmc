@@ -160,9 +160,16 @@ void remove_internal_symbols(
         is_file_local=false;
     }
 
-    if(is_type || symbol.is_macro)
+    if(is_type)
     {
       // never EXPORTED by itself
+    }
+    else if(
+      symbol.is_macro &&
+      static_cast<const exprt &>(symbol.value).type() != typet{})
+    {
+      // only (typeless) export macros that do renaming, e.g., section renaming
+      // as implemented in the C front-end
     }
     else if(is_function)
     {

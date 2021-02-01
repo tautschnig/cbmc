@@ -739,6 +739,28 @@ void c_typecheck_baset::typecheck_declaration(
         else
           asm_name+=id2string(symbol.name);
 
+        if(!symbol.is_file_local)
+        {
+          // create a macro to apply section renaming across translation units
+          symbolt section_macro = symbol;
+          section_macro.value = symbol_exprt::typeless(asm_name);
+          section_macro.is_macro = true;
+
+          // replace a preceding "extern" declaration, or try to insert a new
+          // symbol
+          auto dest = symbol_table.get_writeable(symbol.name);
+          if(dest && dest->value.is_nil())
+          {
+            *dest = section_macro;
+          }
+          else if(!symbol_table.insert(section_macro).second)
+          {
+            warning().source_location = symbol.location;
+            warning() << "symbol '" << symbol.name
+                      << "' exists in multiple sections" << eom;
+          }
+        }
+
         apply_asm_label(asm_name, symbol);
       }
 

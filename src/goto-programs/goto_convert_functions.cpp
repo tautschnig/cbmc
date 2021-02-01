@@ -159,9 +159,11 @@ void goto_convert_functionst::convert_function(
   f.set_parameter_identifiers(code_type);
 
   if(
-    symbol.value.is_nil() ||
+    symbol.is_macro || symbol.value.is_nil() ||
     symbol.is_compiled()) /* goto_inline may have removed the body */
+  {
     return;
+  }
 
   // we have a body, make sure all parameter names are valid
   for(const auto &p : f.parameter_identifiers)
