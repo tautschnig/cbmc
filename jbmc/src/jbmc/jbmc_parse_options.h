@@ -70,7 +70,7 @@ class optionst;
   "(show-parse-tree)" \
   OPT_SHOW_PROPERTIES \
   "(drop-unused-functions)" \
-  "(property):(stop-on-fail)(trace)" \
+  "(property):(stop-on-fail)(trace)(no-trace)" \
   "(verbosity):" \
   "(nondet-static)" \
   OPT_JAVA_TRACE_VALIDATION \

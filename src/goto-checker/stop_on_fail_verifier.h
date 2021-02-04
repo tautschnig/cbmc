@@ -50,6 +50,12 @@ public:
 
     case resultt::FAIL:
     {
+      if(!options.get_bool_option("trace"))
+      {
+        report_failure(ui_message_handler);
+        break;
+      }
+
       message_building_error_trace(log);
       goto_tracet goto_trace = incremental_goto_checker.build_shortest_trace();
       output_error_trace(

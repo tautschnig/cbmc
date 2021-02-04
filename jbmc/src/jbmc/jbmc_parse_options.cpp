@@ -177,7 +177,8 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(
     cmdline.isset("trace") || cmdline.isset("compact-trace") ||
-    cmdline.isset("stack-trace") || cmdline.isset("stop-on-fail") ||
+    cmdline.isset("stack-trace") ||
+    (cmdline.isset("stop-on-fail") && !cmdline.isset("no-trace")) ||
     (ui_message_handler.get_ui() != ui_message_handlert::uit::PLAIN &&
      !cmdline.isset("cover")))
   {
@@ -1066,7 +1067,8 @@ void jbmc_parse_optionst::help()
     " --property id                only check one specific property\n"
     " --trace                      give a counterexample trace for failed properties\n" //NOLINT(*)
     " --stop-on-fail               stop analysis once a failed property is detected\n" // NOLINT(*)
-    "                              (implies --trace)\n"
+    "                              (implies --trace, unless --no-trace is given)\n"
+    " --no-trace                   disable counterexample trace with --stop-on-fail\n" //NOLINT(*)
     HELP_JAVA_TRACE_VALIDATION
     "\n"
     "Program representations:\n"
