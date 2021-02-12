@@ -1160,6 +1160,179 @@ void bv_pointerst::do_postponed(
     UNREACHABLE;
 }
 
+void bv_pointerst::encode_object_bounds(bounds_mapt &dest)
+{
+  const auto &objects = pointer_logic.objects;
+  std::size_t number = 0;
+
+  const bvt null_pointer = pointer_bits.at(pointer_logic.get_null_object());
+  const bvt &invalid_object =
+    pointer_bits.at(pointer_logic.get_invalid_object());
+
+  bvt conj;
+  conj.reserve(objects.size());
+
+  for(const exprt &expr : objects)
+  {
+    const auto size_expr = size_of_expr(expr.type(), ns);
+
+    if(!size_expr.has_value())
+    {
+      ++number;
+      continue;
+    }
+
+    bvt size_bv = convert_bv(*size_expr);
+
+    // NULL, INVALID have no size
+    DATA_INVARIANT(
+      number != pointer_logic.get_null_object(),
+      "NULL object cannot have a size");
+    DATA_INVARIANT(
+      number != pointer_logic.get_invalid_object(),
+      "INVALID object cannot have a size");
+
+    bvt object_bv;
+    encode(number, object_bv);
+
+    // prepare comparison over integers
+    bvt bv = object_bv;
+    address_bv(bv, pointer_type(expr.type()));
+    DATA_INVARIANT(
+      bv.size() == null_pointer.size(),
+      "NULL pointer encoding does not have matching width");
+    DATA_INVARIANT(
+      bv.size() == invalid_object.size(),
+      "INVALID pointer encoding does not have matching width");
+    DATA_INVARIANT(
+      size_bv.size() == bv.size(),
+      "pointer encoding does not have matching width");
+
+    // NULL, INVALID must not be within object bounds
+    literalt null_lower_bound = bv_utils.rel(
+      null_pointer, ID_lt, bv, bv_utilst::representationt::UNSIGNED);
+
+    literalt inv_obj_lower_bound = bv_utils.rel(
+      invalid_object, ID_lt, bv, bv_utilst::representationt::UNSIGNED);
+
+    // compute the upper bound with the side effect of enforcing the
+    // object addresses not to wrap around/overflow
+    bvt obj_upper_bound = bv_utils.add_sub_no_overflow(
+      bv, size_bv, false, bv_utilst::representationt::UNSIGNED);
+
+    literalt null_upper_bound = bv_utils.rel(
+      null_pointer,
+      ID_ge,
+      obj_upper_bound,
+      bv_utilst::representationt::UNSIGNED);
+
+    literalt inv_obj_upper_bound = bv_utils.rel(
+      invalid_object,
+      ID_ge,
+      obj_upper_bound,
+      bv_utilst::representationt::UNSIGNED);
+
+    // store bounds for re-use
+    dest.insert({number, {bv, obj_upper_bound}});
+
+    conj.push_back(prop.lor(null_lower_bound, null_upper_bound));
+    conj.push_back(prop.lor(inv_obj_lower_bound, inv_obj_upper_bound));
+
+    ++number;
+  }
+
+  if(!conj.empty())
+    prop.l_set_to_true(prop.land(conj));
+}
+
+void bv_pointerst::do_postponed_typecast(
+  const postponedt &postponed,
+  const bounds_mapt &bounds)
+{
+  if(postponed.expr.id() != ID_typecast)
+    return;
+
+  const pointer_typet &type = to_pointer_type(postponed.expr.type());
+  const std::size_t bits = boolbv_width.get_offset_width(type) +
+                           boolbv_width.get_object_width(type) +
+                           boolbv_width.get_address_width(type);
+
+  // given an integer (possibly representing an address) postponed.op,
+  // compute the object and offset that it may refer to
+  bvt saved_bv = postponed.op;
+
+  bvt conj, oob_conj;
+  conj.reserve(bounds.size() + 3);
+  oob_conj.reserve(bounds.size());
+
+  for(const auto &bounds_entry : bounds)
+  {
+    std::size_t number = bounds_entry.first;
+
+    // pointer must be within object bounds
+    const bvt &lb = bounds_entry.second.first;
+    const bvt &ub = bounds_entry.second.second;
+
+    literalt lower_bound =
+      bv_utils.rel(saved_bv, ID_ge, lb, bv_utilst::representationt::UNSIGNED);
+
+    literalt upper_bound =
+      bv_utils.rel(saved_bv, ID_lt, ub, bv_utilst::representationt::UNSIGNED);
+
+    // compute the offset within the object, and the corresponding
+    // pointer bv
+    bvt offset = bv_utils.sub(saved_bv, lb);
+
+    bvt bv;
+    encode(number, bv);
+    object_bv(bv, type);
+    DATA_INVARIANT(
+      offset.size() == boolbv_width.get_offset_width(type),
+      "pointer encoding does not have matching width");
+    bv.insert(bv.end(), offset.begin(), offset.end());
+    bv.insert(bv.end(), saved_bv.begin(), saved_bv.end());
+    DATA_INVARIANT(
+      bv.size() == bits, "pointer encoding does not have matching width");
+
+    // if the integer address is within the object bounds, return an
+    // adjusted offset
+    literalt in_bounds = prop.land(lower_bound, upper_bound);
+    conj.push_back(prop.limplies(in_bounds, bv_utils.equal(bv, postponed.bv)));
+    oob_conj.push_back(!in_bounds);
+  }
+
+  // append integer address as both offset and address
+  bvt invalid_bv, null_bv;
+  encode(pointer_logic.get_invalid_object(), invalid_bv);
+  object_bv(invalid_bv, type);
+  invalid_bv.insert(invalid_bv.end(), saved_bv.begin(), saved_bv.end());
+  invalid_bv.insert(invalid_bv.end(), saved_bv.begin(), saved_bv.end());
+  encode(pointer_logic.get_null_object(), null_bv);
+  object_bv(null_bv, type);
+  null_bv.insert(null_bv.end(), saved_bv.begin(), saved_bv.end());
+  null_bv.insert(null_bv.end(), saved_bv.begin(), saved_bv.end());
+
+  // NULL is always NULL
+  conj.push_back(prop.limplies(
+    bv_utils.equal(saved_bv, pointer_bits.at(pointer_logic.get_null_object())),
+    bv_utils.equal(null_bv, postponed.bv)));
+
+  // INVALID is always INVALID
+  conj.push_back(prop.limplies(
+    bv_utils.equal(
+      saved_bv, pointer_bits.at(pointer_logic.get_invalid_object())),
+    bv_utils.equal(invalid_bv, postponed.bv)));
+
+  // one of the objects or NULL or INVALID with an offset
+  conj.push_back(prop.limplies(
+    prop.land(oob_conj),
+    prop.lor(
+      bv_utils.equal(null_bv, postponed.bv),
+      bv_utils.equal(invalid_bv, postponed.bv))));
+
+  prop.l_set_to_true(prop.land(conj));
+}
+
 void bv_pointerst::post_process()
 {
   // post-processing arrays may yield further objects, do this first
@@ -1169,7 +1342,19 @@ void bv_pointerst::post_process()
       it=postponed_list.begin();
       it!=postponed_list.end();
       it++)
-    do_postponed(*it);
+    do_postponed_non_typecast(*it);
+
+  if(need_address_bounds)
+  {
+    // make sure NULL and INVALID are unique addresses
+    bounds_mapt bounds;
+    encode_object_bounds(bounds);
+
+    for(postponed_listt::const_iterator it = postponed_list.begin();
+        it != postponed_list.end();
+        it++)
+      do_postponed_typecast(*it, bounds);
+  }
 
   // Clear the list to avoid re-doing in case of incremental usage.
   postponed_list.clear();
