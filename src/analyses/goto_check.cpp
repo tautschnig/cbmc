@@ -2092,30 +2092,6 @@ void goto_checkt::goto_check(
         i.turn_into_skip();
         did_something = true;
       }
-
-      if(
-        (mode == ID_C || mode == ID_cpp) && function_identifier == "exit" &&
-        enable_memory_leak_check)
-      {
-        const symbolt &leak = ns.lookup(CPROVER_PREFIX "memory_leak");
-        const symbol_exprt leak_expr = leak.symbol_expr();
-
-        // add self-assignment to get helpful counterexample output
-        new_code.add(goto_programt::make_assignment(leak_expr, leak_expr));
-
-        source_locationt source_location;
-        source_location.set_function(function_identifier);
-
-        equal_exprt eq(
-          leak_expr, null_pointer_exprt(to_pointer_type(leak.type)));
-        add_guarded_property(
-          eq,
-          "dynamically allocated memory never freed",
-          "memory-leak",
-          source_location,
-          eq,
-          guardt(true_exprt(), guard_manager));
-      }
     }
     else if(i.is_dead())
     {
@@ -2144,7 +2120,6 @@ void goto_checkt::goto_check(
     else if(i.is_end_function())
     {
       if(
-        mode != ID_C && mode != ID_cpp &&
         function_identifier == goto_functionst::entry_point() &&
         enable_memory_leak_check)
       {

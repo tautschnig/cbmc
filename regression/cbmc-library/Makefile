@@ -4,7 +4,7 @@ include ../../src/config.inc
 include ../../src/common
 
 ifeq ($(BUILD_ENV_),MSVC)
-	no_pthread = -X pthread -X destructor
+	no_pthread = -X pthread
 	gcc_only = -X gcc-only
 endif
 

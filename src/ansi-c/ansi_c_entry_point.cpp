@@ -241,8 +241,6 @@ bool generate_ansi_c_start_function(
   const code_typet::parameterst &parameters=
     to_code_type(symbol.type).parameters();
 
-  const namespacet ns(symbol_table);
-
   if(symbol.name==ID_main)
   {
     if(parameters.empty())
@@ -251,6 +249,8 @@ bool generate_ansi_c_start_function(
     }
     else if(parameters.size()==2 || parameters.size()==3)
     {
+      namespacet ns(symbol_table);
+
       {
         symbolt argc_symbol;
 
@@ -498,14 +498,6 @@ bool generate_ansi_c_start_function(
   }
 
   init_code.add(std::move(call_main));
-
-  const symbolt &exit_symbol = ns.lookup("exit");
-  const typet &arg_type = to_code_type(exit_symbol.type).parameters()[0].type();
-  code_function_callt call_exit{exit_symbol.symbol_expr(),
-                                {from_integer(0, arg_type)}};
-  call_exit.add_source_location() = symbol.location;
-  call_exit.function().add_source_location() = symbol.location;
-  init_code.add(std::move(call_exit));
 
   // TODO: add read/modified (recursively in call graph) globals as INPUT/OUTPUT
 
