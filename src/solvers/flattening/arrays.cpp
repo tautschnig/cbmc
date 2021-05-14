@@ -851,26 +851,26 @@ void arrayst::add_array_constraints_if(
   }
 }
 
-labelt arrayst::enum_to_label(constraint_typet type)
+std::string arrayst::enum_to_string(constraint_typet type)
 {
   switch(type)
   {
   case constraint_typet::ARRAY_ACKERMANN:
-    return labelt{{"array", "ackermann"}};
+    return "arrayAckermann";
   case constraint_typet::ARRAY_WITH:
-    return labelt{{"array", "with"}};
+    return "arrayWith";
   case constraint_typet::ARRAY_IF:
-    return labelt{{"array", "if"}};
+    return "arrayIf";
   case constraint_typet::ARRAY_OF:
-    return labelt{{"array", "of"}};
+    return "arrayOf";
   case constraint_typet::ARRAY_TYPECAST:
-    return labelt{{"array", "typecast"}};
+    return "arrayTypecast";
   case constraint_typet::ARRAY_CONSTANT:
-    return labelt{{"array", "constant"}};
+    return "arrayConstant";
   case constraint_typet::ARRAY_COMPREHENSION:
-    return labelt{{"array", "comprehension"}};
+    return "arrayComprehension";
   case constraint_typet::ARRAY_EQUALITY:
-    return labelt{{"array", "equality"}};
+    return "arrayEquality";
   default:
     UNREACHABLE;
   }
@@ -878,23 +878,24 @@ labelt arrayst::enum_to_label(constraint_typet type)
 
 void arrayst::display_array_constraint_count()
 {
-  std::map<labelt, structured_data_entryt> constraint_numbers;
+  json_objectt json_result;
+  json_objectt &json_array_theory =
+    json_result["arrayConstraints"].make_object();
+
   size_t num_constraints = 0;
 
-  for(const auto &count_entry : array_constraint_count)
+  array_constraint_countt::iterator it = array_constraint_count.begin();
+  while(it != array_constraint_count.end())
   {
-    constraint_numbers.insert({enum_to_label(count_entry.first),
-      structured_data_entryt::data_node(json_numbert(std::to_string(count_entry.second)))});
+    std::string contraint_type_string = enum_to_string(it->first);
+    json_array_theory[contraint_type_string] =
+      json_numbert(std::to_string(it->second));
 
-    num_constraints += count_entry.second;
+    num_constraints += it->second;
+    it++;
   }
 
-  structured_datat result{
-    {{
-      labelt{{"array", "constraints"}},
-      structured_data_entryt::entry(std::move(constraint_numbers))},
-      {labelt{{"num", "of", "constraints"}},
-           structured_data_entryt::data_node(json_numbert(std::to_string(num_constraints)))}}};
-
-  log.status() << result << messaget::eom;
+  json_result["numOfConstraints"] =
+    json_numbert(std::to_string(num_constraints));
+  log.status() << ",\n" << json_result;
 }

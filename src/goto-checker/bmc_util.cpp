@@ -90,22 +90,11 @@ void output_error_trace(
 
   case ui_message_handlert::uit::JSON_UI:
   {
-    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
-    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-<<<<<<< HEAD
       ui_message_handler.get_json_stream().push_back_stream_object();
     const goto_trace_stept &step = goto_trace.get_last_step();
     json_result["property"] = json_stringt(step.property_id);
     json_result["description"] = json_stringt(step.comment);
-=======
-      json_ui->get_json_stream().push_back_stream_object();
-    const goto_trace_stept &step = goto_trace.steps.back();
-    json_result["property"] =
-      json_stringt(step.pc->source_location.get_property_id());
-    json_result["description"] =
-      json_stringt(step.pc->source_location.get_comment());
->>>>>>> 6c86cc53da... WIP: introduce {console,json,xml}_ui_message_handlert
     json_result["status"] = json_stringt("failed");
     json_stream_arrayt &json_trace =
       json_result.push_back_stream_array("trace");

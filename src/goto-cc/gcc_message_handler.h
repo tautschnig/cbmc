@@ -14,13 +14,13 @@ Author: Daniel Kroening, kroening@kroening.com
 class gcc_message_handlert : public console_message_handlert
 {
 public:
-  /*void print(unsigned, const xmlt &) override
+  void print(unsigned, const xmlt &) override
   {
   }
 
   void print(unsigned, const jsont &) override
   {
-  }*/
+  }
 
   // aims to imitate the messages gcc prints
   void print(unsigned level, const std::string &message) override;

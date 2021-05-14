@@ -33,8 +33,9 @@ TEST_CASE("json symbol table read/write consistency")
   std::ostringstream out;
 
   {
-    json_ui_message_handlert ui_message_handler(
+    ui_message_handlert ui_message_handler(
       &null_message_handler,
+      ui_message_handlert::uit::JSON_UI,
       "",
       false,
       timestampert::clockt::NONE,

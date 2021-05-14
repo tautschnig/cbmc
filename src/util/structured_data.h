@@ -13,8 +13,6 @@ Author: Thomas Kiley
 #include <string>
 #include <vector>
 
-#include "json.h"
-
 struct labelt
 {
 public:
@@ -90,30 +88,5 @@ private:
 ///    My string: hi
 /// ```
 std::string to_pretty(const structured_datat &);
-
-#if 0
-class json_irept
-{
-public:
-  explicit json_irept(bool include_comments);
-  json_objectt convert_from_irep(const irept &) const;
-  irept convert_from_json(const jsont &) const;
-
-private:
-  void convert_sub_tree(
-    const std::string &sub_tree_id,
-    const irept::subt &sub_trees,
-    json_objectt &parent) const;
-
-  void convert_named_sub_tree(
-    const std::string &sub_tree_id,
-    const irept::named_subt &sub_trees,
-    json_objectt &parent) const;
-
-  bool include_comments;
-};
-#endif
-
-structured_data_entryt structured_data(const class source_locationt &);
 
 #endif // CPROVER_UTIL_STRUCTURED_DATA_H

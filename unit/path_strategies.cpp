@@ -394,7 +394,7 @@ void _check_with_strategy(
   REQUIRE(is_valid_path_strategy(strategy));
   opts_callback(options);
 
-  console_ui_message_handlert ui_message_handler(false, timestampert::clockt::NONE);
+  ui_message_handlert ui_message_handler(null_message_handler);
   ui_message_handler.set_verbosity(0);
   goto_modelt goto_model;
   int ret;

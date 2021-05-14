@@ -330,10 +330,8 @@ void output_properties(
   }
   case ui_message_handlert::uit::JSON_UI:
   {
-    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
-    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-      json_ui->get_json_stream().push_back_stream_object();
+      ui_message_handler.get_json_stream().push_back_stream_object();
     json_stream_arrayt &result_array =
       json_result.push_back_stream_array("result");
     for(const auto &property_pair : properties)
@@ -389,22 +387,14 @@ void output_properties_with_traces(
           traces[property_pair.first],
           xml_result.new_element());
       }
-      XXX log.result() << xml_result;
-      if(this->tellp() > 0)
-        *this << eom; // force end of previous message
-      if(message.message_handler)
-      {
-        message.message_handler->print(message_level, data);
-      }
+      log.result() << xml_result;
     }
     break;
   }
   case ui_message_handlert::uit::JSON_UI:
   {
-    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
-    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-      json_ui->get_json_stream().push_back_stream_object();
+      ui_message_handler.get_json_stream().push_back_stream_object();
     json_stream_arrayt &result_array =
       json_result.push_back_stream_array("result");
     for(const auto &property_pair : properties)
@@ -559,10 +549,8 @@ void output_properties_with_fault_localization(
   }
   case ui_message_handlert::uit::JSON_UI:
   {
-    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
-    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-      json_ui->get_json_stream().push_back_stream_object();
+      ui_message_handler.get_json_stream().push_back_stream_object();
     json_stream_arrayt &result_array =
       json_result.push_back_stream_array("result");
     for(const auto &property_pair : properties)
@@ -607,10 +595,8 @@ void output_properties_with_traces_and_fault_localization(
   }
   case ui_message_handlert::uit::JSON_UI:
   {
-    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
-    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-      json_ui->get_json_stream().push_back_stream_object();
+      ui_message_handler.get_json_stream().push_back_stream_object();
     json_stream_arrayt &result_array =
       json_result.push_back_stream_array("result");
     for(const auto &property_pair : properties)
@@ -661,10 +647,8 @@ void output_error_trace_with_fault_localization(
 
   case ui_message_handlert::uit::JSON_UI:
   {
-    json_ui_message_handlert *json_ui = dynamic_cast<json_ui_message_handlert*>(&ui_message_handler);
-    PRECONDITION(json_ui != 0);
     json_stream_objectt &json_result =
-      json_ui->get_json_stream().push_back_stream_object();
+      ui_message_handler.get_json_stream().push_back_stream_object();
     const goto_trace_stept &step = goto_trace.get_last_step();
     json_result["property"] = json_stringt(step.property_id);
     json_result["description"] = json_stringt(step.comment);

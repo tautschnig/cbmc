@@ -71,7 +71,7 @@ bool constant_simplification_mockt::ai_simplify(
 SCENARIO("ai_domain_baset::ai_simplify_lhs",
   "[core][analyses][ai][ai_simplify_lhs]")
 {
-  console_ui_message_handlert message_handler(false, timestampert::clockt::NONE);
+  ui_message_handlert message_handler(null_message_handler);
   ansi_c_languaget language;
   language.set_message_handler(message_handler);
 

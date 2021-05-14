@@ -7,12 +7,9 @@ Author: Thomas Kiley
 \*******************************************************************/
 
 #include "structured_data.h"
-
-#include <algorithm>
-
 #include "range.h"
-#include "source_location.h"
 #include "string_utils.h"
+#include <algorithm>
 
 labelt::labelt(std::vector<std::string> components) : components(components)
 {
@@ -172,32 +169,4 @@ std::string to_pretty(const structured_datat &data)
 const std::map<labelt, structured_data_entryt> &structured_datat::data() const
 {
   return _data;
-}
-
-structured_data_entryt structured_data(const source_locationt &location)
-{
-  std::map<labelt, structured_data_entryt> result;
-
-  if(!location.get_working_directory().empty())
-  {
-    result.insert({labelt{{"working", "directory"}},
-      structured_data_entryt::data_node(json_stringt{location.get_working_directory()})});
-  }
-
-  if(!location.get_file().empty())
-    { result.insert({labelt{{"file"}}, structured_data_entryt::data_node(json_stringt{location.get_file()})}); }
-
-  if(!location.get_line().empty())
-    { result.insert({labelt{{"line"}}, structured_data_entryt::data_node(json_stringt{location.get_line()})}); }
-
-  if(!location.get_column().empty())
-    { result.insert({labelt{{"column"}}, structured_data_entryt::data_node(json_stringt{location.get_column()})}); }
-
-  if(!location.get_function().empty())
-    { result.insert({labelt{{"function"}}, structured_data_entryt::data_node(json_stringt{location.get_function()})}); }
-
-  if(!location.get_java_bytecode_index().empty())
-    { result.insert({labelt{{"bytecode", "index"}}, structured_data_entryt::data_node(json_stringt{location.get_java_bytecode_index()})}); }
-
-  return structured_data_entryt::entry(std::move(result));
 }
