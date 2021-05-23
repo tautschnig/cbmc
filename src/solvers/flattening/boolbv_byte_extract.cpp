@@ -16,6 +16,9 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <solvers/lowering/expr_lowering.h>
 
+#include <iostream>
+#include <util/format_expr.h>
+
 bvt map_bv(const endianness_mapt &map, const bvt &src)
 {
   PRECONDITION(map.number_of_bits() == src.size());
@@ -38,8 +41,11 @@ bvt boolbvt::convert_byte_extract(const byte_extract_exprt &expr)
   // unbounded arrays
   if(is_unbounded_array(expr.op().type()))
   {
+    std::cerr << "IN: " << format(expr) << std::endl;
+    std::cerr << "OUT: " << format(lower_byte_extract(expr, ns)) << std::endl;
     return convert_bv(lower_byte_extract(expr, ns));
   }
+  std::cerr << "OK: " << format(expr) << std::endl;
 
   const std::size_t width = boolbv_width(expr.type());
 

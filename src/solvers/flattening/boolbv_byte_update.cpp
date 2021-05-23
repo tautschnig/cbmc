@@ -14,6 +14,9 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <solvers/lowering/expr_lowering.h>
 
+#include <iostream>
+#include <util/format_expr.h>
+
 bvt boolbvt::convert_byte_update(const byte_update_exprt &expr)
 {
   // if we update (from) an unbounded array, lower the expression as the array
@@ -22,8 +25,11 @@ bvt boolbvt::convert_byte_update(const byte_update_exprt &expr)
     is_unbounded_array(expr.op().type()) ||
     is_unbounded_array(expr.value().type()))
   {
+    std::cerr << "IN: " << format(expr) << std::endl;
+    std::cerr << "OUT: " << format(lower_byte_update(expr, ns)) << std::endl;
     return convert_bv(lower_byte_update(expr, ns));
   }
+  std::cerr << "OK: " << format(expr) << std::endl;
 
   const exprt &op = expr.op();
   const exprt &offset_expr=expr.offset();
