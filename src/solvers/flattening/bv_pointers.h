@@ -52,11 +52,14 @@ protected:
   };
   bv_pointers_widtht bv_pointers_width;
 
+  typedef std::map<std::size_t, bvt> pointer_bitst;
+  pointer_bitst pointer_bits;
+
   // NOLINTNEXTLINE(readability/identifiers)
   typedef boolbvt SUB;
 
   NODISCARD
-  bvt encode(std::size_t object, const pointer_typet &type) const;
+  bvt encode(std::size_t object, const pointer_typet &type);
 
   virtual bvt convert_pointer_type(const exprt &expr);
 
@@ -117,12 +120,10 @@ protected:
   /// \return Vector of literals identifying the object part of \p bv
   bvt object_literals(const bvt &bv, const pointer_typet &type) const
   {
-    const std::size_t offset_width = bv_pointers_width.get_offset_width(type);
     const std::size_t object_width = bv_pointers_width.get_object_width(type);
-    PRECONDITION(bv.size() >= offset_width + object_width);
+    PRECONDITION(bv.size() >= object_width);
 
-    return bvt(
-      bv.begin() + offset_width, bv.begin() + offset_width + object_width);
+    return bvt(bv.begin(), bv.begin() + object_width);
   }
 
   /// Given a pointer encoded in \p bv, extract the literals representing the
@@ -132,23 +133,48 @@ protected:
   /// \return Vector of literals identifying the offset part of \p bv
   bvt offset_literals(const bvt &bv, const pointer_typet &type) const
   {
+    const std::size_t object_width = bv_pointers_width.get_object_width(type);
     const std::size_t offset_width = bv_pointers_width.get_offset_width(type);
-    PRECONDITION(bv.size() >= offset_width);
+    PRECONDITION(bv.size() >= object_width + offset_width);
 
-    return bvt(bv.begin(), bv.begin() + offset_width);
+    return bvt(
+      bv.begin() + object_width, bv.begin() + object_width + offset_width);
   }
 
-  /// Construct a pointer encoding from given encodings of \p object and \p
-  /// offset.
+  /// Given a pointer encoded in \p bv, extract the literals representing the
+  /// integer address.
+  /// \param bv: Encoded pointer
+  /// \param type: Type of the encoded pointer
+  /// \return Vector of literals identifying the integer address part of \p bv
+  bvt address_literals(const bvt &bv, const pointer_typet &type) const
+  {
+    const std::size_t object_width = bv_pointers_width.get_object_width(type);
+    const std::size_t offset_width = bv_pointers_width.get_offset_width(type);
+    const std::size_t address_width = bv_pointers_width.get_address_width(type);
+    PRECONDITION(bv.size() >= object_width + offset_width + address_width);
+
+    return bvt(
+      bv.begin() + object_width + offset_width,
+      bv.begin() + object_width + offset_width + address_width);
+  }
+
+  /// Construct a pointer encoding from given encodings of \p object, \p
+  /// offset, and \p integer address.
   /// \param object: Encoded object
   /// \param offset: Encoded offset
+  /// \param address: Encoded integer address
   /// \return Pointer encoding
-  static bvt object_offset_encoding(const bvt &object, const bvt &offset)
+  static bvt object_offset_address_encoding(
+    const bvt &object,
+    const bvt &offset,
+    const bvt &address)
   {
     bvt result;
-    result.reserve(offset.size() + object.size());
-    result.insert(result.end(), offset.begin(), offset.end());
+    result.reserve(offset.size() + object.size() + address.size());
+
     result.insert(result.end(), object.begin(), object.end());
+    result.insert(result.end(), offset.begin(), offset.end());
+    result.insert(result.end(), address.begin(), address.end());
 
     return result;
   }

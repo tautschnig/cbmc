@@ -1,4 +1,4 @@
-KNOWNBUG broken-smt-backend
+CORE broken-smt-backend
 main.c
 --arch none --little-endian
 (Starting CEGAR Loop|^Generated 2 VCC\(s\), 2 remaining after simplification$)
