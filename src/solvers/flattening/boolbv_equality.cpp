@@ -13,9 +13,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <solvers/lowering/expr_lowering.h>
 
-#include <iostream>
-#include <util/format_expr.h>
-
 literalt boolbvt::convert_equality(const equal_exprt &expr)
 {
   const bool equality_types_match = expr.lhs().type() == expr.rhs().type();
@@ -32,9 +29,6 @@ literalt boolbvt::convert_equality(const equal_exprt &expr)
 
     if(has_byte_operator(expr))
     {
-      std::cerr << "IN: " << format(expr) << std::endl;
-      std::cerr << "OUT: " << format(lower_byte_operators(expr, ns))
-                << std::endl;
       return record_array_equality(
         to_equal_expr(lower_byte_operators(expr, ns)));
     }
