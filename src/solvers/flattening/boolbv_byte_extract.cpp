@@ -10,7 +10,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/arith_tools.h>
 #include <util/byte_operators.h>
-#include <util/expr_util.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_offset_size.h>
 #include <util/std_expr.h>
@@ -36,12 +35,8 @@ bvt map_bv(const endianness_mapt &map, const bvt &src)
 bvt boolbvt::convert_byte_extract(const byte_extract_exprt &expr)
 {
   // array logic does not handle byte operators, thus lower when operating on
-  // unbounded arrays; similarly, byte extracts over pointers are not to be
-  // handled here
-  if(
-    is_unbounded_array(expr.op().type()) ||
-    has_subtype(expr.type(), ID_pointer, ns) ||
-    has_subtype(expr.op().type(), ID_pointer, ns))
+  // unbounded arrays
+  if(is_unbounded_array(expr.op().type()))
   {
     return convert_bv(lower_byte_extract(expr, ns));
   }
