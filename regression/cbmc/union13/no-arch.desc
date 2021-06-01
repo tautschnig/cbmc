@@ -1,9 +1,11 @@
-CORE broken-smt-backend
+KNOWNBUG broken-smt-backend
 main.c
 --arch none --little-endian
-(Starting CEGAR Loop|^Generated 1 VCC\(s\), 1 remaining after simplification$)
-^EXIT=0$
+(Starting CEGAR Loop|^Generated 2 VCC\(s\), 2 remaining after simplification$)
+^\[main.assertion.2\] line 12 assertion u.p == \(int \*\)0: FAILURE$
+^\*\* 1 of 2 failed
+^VERIFICATION FAILED$
+^EXIT=10$
 ^SIGNAL=0$
-^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
