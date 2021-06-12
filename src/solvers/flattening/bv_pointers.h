@@ -112,6 +112,10 @@ protected:
   postponed_listt postponed_list;
 
   void do_postponed(const postponedt &postponed);
+  void do_postponed_typecast(const typecast_exprt &expr, const bvt &bv);
+
+  typedef std::map<std::size_t, std::pair<bvt, bvt>> bounds_mapt;
+  bounds_mapt object_bounds;
 
   /// Given a pointer encoded in \p bv, extract the literals identifying the
   /// object that the pointer points to.

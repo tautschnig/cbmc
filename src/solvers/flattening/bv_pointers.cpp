@@ -888,55 +888,6 @@ bvt bv_pointerst::encode(std::size_t addr, const pointer_typet &type)
     else
     {
       entry.first->second = prop.new_variables(address_bits);
-
-      // NULL is distinct from any other object
-      auto null_address_entry =
-        pointer_bits.find(pointer_logic.get_null_object());
-      if(null_address_entry == pointer_bits.end())
-      {
-        (void)encode(pointer_logic.get_null_object(), type);
-        null_address_entry = pointer_bits.find(pointer_logic.get_null_object());
-      }
-
-      prop.l_set_to_false(
-        bv_utils.equal(null_address_entry->second, entry.first->second));
-
-      // actual objects are not INVALID
-      if(addr != pointer_logic.get_invalid_object())
-      {
-        auto invalid_address_entry =
-          pointer_bits.find(pointer_logic.get_invalid_object());
-        if(invalid_address_entry == pointer_bits.end())
-        {
-          (void)encode(pointer_logic.get_invalid_object(), type);
-          invalid_address_entry =
-            pointer_bits.find(pointer_logic.get_invalid_object());
-        }
-
-        prop.l_set_to_false(
-          bv_utils.equal(invalid_address_entry->second, entry.first->second));
-
-        const exprt &expr = pointer_logic.objects[addr];
-        if(expr.id() == ID_symbol || expr.id() == ID_string_constant)
-        {
-          const auto size_expr = size_of_expr(expr.type(), ns);
-
-          if(size_expr.has_value())
-          {
-            bvt size_bv = bv_utils.zero_extension(
-              convert_bv(*size_expr), entry.first->second.size());
-            // TODO: we may need to find some way to warn that creating objects
-            // of a size close to max(uintptr_t) can result is spurious
-            // successful verification as the following may create an
-            // unsatisfiable constraint
-            (void)bv_utils.add_sub_no_overflow(
-              entry.first->second,
-              size_bv,
-              false,
-              bv_utilst::representationt::UNSIGNED);
-          }
-        }
-      }
     }
   }
 
@@ -1093,75 +1044,133 @@ void bv_pointerst::do_postponed(
   }
   else if(postponed.expr.id() == ID_typecast)
   {
-    const auto &type = to_pointer_type(postponed.expr.type());
-    const bvt object_bv = object_literals(postponed.bv, type);
-    const bvt offset_bv = offset_literals(postponed.bv, type);
-    const bvt integer_address = address_literals(postponed.bv, type);
-
-    const auto &objects = pointer_logic.objects;
-    std::size_t number = 0;
-
-    bvt not_null_object;
-    not_null_object.reserve(objects.size());
-    bvt at_least_one = prop.new_variables(objects.size());
-    for(auto it = objects.begin(); it != objects.end(); ++it, ++number)
-    {
-      const exprt &expr = *it;
-
-      // postponed.bv is <object vars>, <offset vars>, <fixed integer>
-      // find offset such that address_bits[number] + offset == fixed integer
-      // with an offset within object bounds
-      pointer_typet pt = pointer_type(expr.type());
-      bvt bv = encode(number, pt);
-      bvt this_object_bv = object_literals(bv, pt);
-      bvt this_address_bv = address_literals(bv, pt);
-
-      literalt upper_bound = const_literal(true);
-      if(expr.id() == ID_symbol || expr.id() == ID_string_constant)
-      {
-        const auto size_expr = size_of_expr(expr.type(), ns);
-
-        if(size_expr.has_value())
-        {
-          bvt size_bv = bv_utils.zero_extension(
-            convert_bv(*size_expr), this_address_bv.size());
-          upper_bound = bv_utils.rel(
-            integer_address,
-            ID_lt,
-            bv_utils.add_sub(this_address_bv, size_bv, false),
-            bv_utilst::representationt::UNSIGNED);
-        }
-      }
-
-      literalt in_address_bounds = prop.land(
-        bv_utils.rel(
-          this_address_bv,
-          ID_le,
-          integer_address,
-          bv_utilst::representationt::UNSIGNED),
-        upper_bound);
-      if(number != pointer_logic.get_null_object())
-        not_null_object.push_back(in_address_bounds);
-      prop.l_set_to_true(prop.limplies(
-        at_least_one[number],
-        prop.land({in_address_bounds,
-                   bv_utils.equal(
-                     bv_utils.add_sub(this_address_bv, offset_bv, false),
-                     integer_address),
-                   bv_utils.equal(object_bv, this_object_bv)})));
-    }
-    PRECONDITION(objects.size() > pointer_logic.get_null_object());
-    prop.l_set_to_true(prop.lor(at_least_one));
-    prop.l_set_to_true(prop.lxor(
-      prop.lor(not_null_object),
-      at_least_one[pointer_logic.get_null_object()]));
+    do_postponed_typecast(to_typecast_expr(postponed.expr), postponed.bv);
   }
   else
     UNREACHABLE;
 }
 
+void bv_pointerst::do_postponed_typecast(const typecast_exprt &expr, const bvt &bv)
+{
+  do_postponed_typecast(to_typecast_expr(postponed.expr), postponed.bv);
+  const auto &type = to_pointer_type(postponed.expr.type());
+  const bvt object_bv = object_literals(postponed.bv, type);
+  const bvt offset_bv = offset_literals(postponed.bv, type);
+  const bvt integer_address = address_literals(postponed.bv, type);
+
+  const auto &objects = pointer_logic.objects;
+  std::size_t number = 0;
+
+  bvt not_null_object;
+  not_null_object.reserve(objects.size());
+  bvt at_least_one = prop.new_variables(objects.size());
+  for(auto it = objects.begin(); it != objects.end(); ++it, ++number)
+  {
+    const exprt &expr = *it;
+
+    // postponed.bv is <object vars>, <offset vars>, <fixed integer>
+    // find offset such that address_bits[number] + offset == fixed integer
+    // with an offset within object bounds
+    pointer_typet pt = pointer_type(expr.type());
+    bvt bv = encode(number, pt);
+    bvt this_object_bv = object_literals(bv, pt);
+    bvt this_address_bv = address_literals(bv, pt);
+
+    literalt upper_bound = const_literal(true);
+    if(expr.id() == ID_symbol || expr.id() == ID_string_constant)
+    {
+      const auto size_expr = size_of_expr(expr.type(), ns);
+
+      if(size_expr.has_value())
+      {
+        bvt size_bv = bv_utils.zero_extension(
+          convert_bv(*size_expr), this_address_bv.size());
+        upper_bound = bv_utils.rel(
+          integer_address,
+          ID_lt,
+          bv_utils.add(this_address_bv, size_bv),
+          bv_utilst::representationt::UNSIGNED);
+      }
+    }
+
+    literalt in_address_bounds = prop.land(
+      bv_utils.rel(
+        this_address_bv,
+        ID_le,
+        integer_address,
+        bv_utilst::representationt::UNSIGNED),
+      upper_bound);
+    if(number != pointer_logic.get_null_object())
+      not_null_object.push_back(in_address_bounds);
+    prop.l_set_to_true(prop.limplies(
+      at_least_one[number],
+      prop.land({in_address_bounds,
+                 bv_utils.equal(
+                   bv_utils.add(this_address_bv, offset_bv),
+                   integer_address),
+                 bv_utils.equal(object_bv, this_object_bv)})));
+  }
+  PRECONDITION(objects.size() > pointer_logic.get_null_object());
+  prop.l_set_to_true(prop.lor(at_least_one));
+  prop.l_set_to_true(prop.lxor(
+    prop.lor(not_null_object),
+    at_least_one[pointer_logic.get_null_object()]));
+}
+
 void bv_pointerst::encode_object_bounds(bounds_mapt &dest)
 {
+
+      // NULL is distinct from any other object
+      auto null_address_entry =
+        pointer_bits.find(pointer_logic.get_null_object());
+      if(null_address_entry == pointer_bits.end())
+      {
+        (void)encode(pointer_logic.get_null_object(), type);
+        null_address_entry = pointer_bits.find(pointer_logic.get_null_object());
+      }
+
+      prop.l_set_to_false(
+        bv_utils.equal(null_address_entry->second, entry.first->second));
+
+      // actual objects are not INVALID
+      if(addr != pointer_logic.get_invalid_object())
+      {
+        auto invalid_address_entry =
+          pointer_bits.find(pointer_logic.get_invalid_object());
+        if(invalid_address_entry == pointer_bits.end())
+        {
+          (void)encode(pointer_logic.get_invalid_object(), type);
+          invalid_address_entry =
+            pointer_bits.find(pointer_logic.get_invalid_object());
+        }
+
+        prop.l_set_to_false(
+          bv_utils.equal(invalid_address_entry->second, entry.first->second));
+
+        const exprt &expr = pointer_logic.objects[addr];
+        if(expr.id() == ID_symbol || expr.id() == ID_string_constant)
+        {
+          const auto size_expr = size_of_expr(expr.type(), ns);
+
+          if(size_expr.has_value())
+          {
+            bvt size_bv = bv_utils.zero_extension(
+              convert_bv(*size_expr), entry.first->second.size());
+            // TODO: we may need to find some way to warn that creating objects
+            // of a size close to max(uintptr_t) can result is spurious
+            // successful verification as the following may create an
+            // unsatisfiable constraint
+            (void)bv_utils.add_sub_no_overflow(
+              entry.first->second,
+              size_bv,
+              false,
+              bv_utilst::representationt::UNSIGNED);
+          }
+        }
+      }
+
+
+
   const auto &objects = pointer_logic.objects;
   std::size_t number = 0;
 
@@ -1342,19 +1351,7 @@ void bv_pointerst::post_process()
       it=postponed_list.begin();
       it!=postponed_list.end();
       it++)
-    do_postponed_non_typecast(*it);
-
-  if(need_address_bounds)
-  {
-    // make sure NULL and INVALID are unique addresses
-    bounds_mapt bounds;
-    encode_object_bounds(bounds);
-
-    for(postponed_listt::const_iterator it = postponed_list.begin();
-        it != postponed_list.end();
-        it++)
-      do_postponed_typecast(*it, bounds);
-  }
+    do_postponed(*it);
 
   // Clear the list to avoid re-doing in case of incremental usage.
   postponed_list.clear();
