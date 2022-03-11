@@ -1,4 +1,4 @@
-CORE
+CORE full-slice-expected-failure
 main.c
 --trace
 activate-multi-line-match

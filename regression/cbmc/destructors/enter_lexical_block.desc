@@ -1,4 +1,4 @@
-CORE
+CORE full-slice-expected-failure
 main.c
 --unwind 10 --show-goto-functions
 activate-multi-line-match

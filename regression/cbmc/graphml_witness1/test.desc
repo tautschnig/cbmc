@@ -1,4 +1,4 @@
-CORE
+CORE full-slice-expected-failure
 main.c
 --graphml-witness -
 ^EXIT=10$

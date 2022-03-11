@@ -1,4 +1,4 @@
-CORE paths-lifo-expected-failure
+CORE paths-lifo-expected-failure full-slice-expected-failure
 access.c
 --program-only
 ^EXIT=0$

@@ -1,4 +1,4 @@
-CORE
+CORE full-slice-expected-failure
 main.c
 --json-ui --function test --trace
 activate-multi-line-match

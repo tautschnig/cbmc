@@ -1,4 +1,4 @@
-CORE
+CORE full-slice-expected-failure
 main.i
 --win32 --xml-ui
 ^EXIT=10$

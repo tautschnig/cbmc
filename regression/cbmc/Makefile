@@ -34,6 +34,12 @@ test-new-smt-backend:
 					  -I new-smt-backend \
 					  -s new-smt-backend $(GCC_ONLY)
 
+test-full-slice:
+	@../test.pl -e -p -c "../../../src/cbmc/cbmc --validate-goto-model --validate-ssa-equation --full-slice" \
+		-X smt-backend $(GCC_ONLY) \
+		-X broken-full-slice -X full-slice-expected-failure
+		-s full-slice
+
 tests.log: ../test.pl test
 
 clean:

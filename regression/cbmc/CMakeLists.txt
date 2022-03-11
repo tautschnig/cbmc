@@ -32,6 +32,13 @@ add_test_pl_profile(
   "CORE"
 )
 
+add_test_pl_profile(
+    "cbmc-full-slice"
+    "$<TARGET_FILE:cbmc> --validate-goto-model --validate-ssa-equation --full-slice"
+    "-C;-X;smt-backend;-X;broken-full-slice;-X;full-slice-expected-failure;${gcc_only_string}-s;full-slice"
+    "CORE"
+)
+
 # solver appears on the PATH in Windows already
 if(NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
   set_property(

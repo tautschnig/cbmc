@@ -1,4 +1,4 @@
-CORE
+CORE full-slice-expected-failure
 test.c
 --show-vcc
 main::1::array!0@1#2\[\[1\]\] = main::1::array!0@1#1\[1\]

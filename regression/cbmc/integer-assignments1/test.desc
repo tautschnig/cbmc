@@ -1,4 +1,4 @@
-CORE smt-backend broken-smt-backend
+CORE smt-backend broken-smt-backend full-slice-expected-failure
 main.c
 --trace --smt2
 ^EXIT=10$

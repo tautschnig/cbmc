@@ -1,4 +1,4 @@
-CORE paths-lifo-expected-failure
+CORE paths-lifo-expected-failure full-slice-expected-failure
 main.c
 --show-vcc
 ^EXIT=0$
