@@ -10,11 +10,12 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_UTIL_FIND_SYMBOLS_H
 #define CPROVER_UTIL_FIND_SYMBOLS_H
 
+#include "deprecate.h"
+#include "irep.h"
+
 #include <algorithm>
 #include <set>
 #include <unordered_set>
-
-#include "irep.h"
 
 class exprt;
 class symbol_exprt;
@@ -59,6 +60,7 @@ std::set<symbol_exprt> find_symbols(const exprt &src);
 /// Find identifiers of the sub expressions with id ID_symbol
 std::unordered_set<irep_idt> find_symbol_identifiers(const exprt &src);
 
+DEPRECATED(SINCE(2022, 3, 14, "pick a specific implementation of find_symbols"))
 /// \return true if one of the symbols in \p src is present in \p symbols
 bool has_symbol(
   const exprt &src,
