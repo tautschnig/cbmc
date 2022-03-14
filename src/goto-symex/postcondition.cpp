@@ -164,12 +164,13 @@ bool postconditiont::is_used(
   else if(expr.id()==ID_dereference)
   {
     // aliasing may happen here
-    const std::vector<exprt> expr_set =
-      value_set.get_value_set(to_dereference_expr(expr).pointer(), ns);
-    const auto original_names = make_range(expr_set).map(
-      [](const exprt &e) { return get_original_name(e); });
-    const std::unordered_set<irep_idt> symbols =
-      find_symbols_or_nexts(original_names.begin(), original_names.end());
+    find_symbols_sett symbols;
+    for(const exprt &e :
+        value_set.get_value_set(to_dereference_expr(expr).pointer(), ns))
+    {
+      find_symbols(get_original_name(e), symbols);
+    }
+
     return symbols.find(identifier)!=symbols.end();
   }
   else

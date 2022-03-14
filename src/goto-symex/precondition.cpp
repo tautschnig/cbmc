@@ -113,10 +113,12 @@ void preconditiont::compute_rec(exprt &dest)
 
     // aliasing may happen here
 
-    const std::vector<exprt> expr_set = value_sets.get_values(
-      SSA_step.source.function_id, target, deref_expr.pointer());
-    const std::unordered_set<irep_idt> symbols =
-      find_symbols_or_nexts(expr_set.begin(), expr_set.end());
+    find_symbols_sett symbols;
+    for(const exprt &e : value_sets.get_values(
+          SSA_step.source.function_id, target, deref_expr.pointer()))
+    {
+      find_symbols(e, symbols);
+    }
 
     if(symbols.find(lhs_identifier)!=symbols.end())
     {
