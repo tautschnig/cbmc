@@ -195,11 +195,17 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
       "unexpected array expression: member with '" + struct_op.id_string() +
         "'");
   }
-  else if(a.id() == ID_array || a.id() == ID_string_constant)
+  else if(
+    a.id() == ID_array || a.id() == ID_string_constant || a.id() == ID_array_of)
   {
-  }
-  else if(a.id()==ID_array_of)
-  {
+    // These are array constructors -- create a type-specific dummy node that
+    // the constructor can apply a store to.
+    nil_exprt dummy;
+    dummy.type() = a.type();
+    const wegt::node_indext dummy_index = arrays.number(dummy);
+    expand_weg(dummy_index);
+
+    add_weg_edge(a_index, dummy_index, a);
   }
   else if(a.id()==ID_typecast)
   {
@@ -237,11 +243,12 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
   return a_index;
 }
 
-void arrayst::weg_path_condition(
-  const weg_patht &path,
-  const exprt &index_a,
-  exprt::operandst &cond) const
+exprt arrayst::weg_path_condition(const weg_patht &path, const exprt &index_a)
+  const
 {
+  exprt::operandst cond;
+  cond.reserve(path.size());
+
   for(const auto &pn : path)
   {
     if(!pn.edge.has_value())
@@ -259,12 +266,25 @@ void arrayst::weg_path_condition(
     // included
     if(weg_edge.id() == ID_with)
     {
+      PRECONDITION(index_a.is_not_nil());
       const auto &with_expr = to_with_expr(weg_edge);
       for(std::size_t i = 1; i + 1 < with_expr.operands().size(); i += 2)
       {
         notequal_exprt inequality(with_expr.operands()[i], index_a);
         cond.push_back(std::move(inequality));
       }
+    }
+    else if(weg_edge.id() == ID_array)
+    {
+      UNIMPLEMENTED;
+    }
+    else if(weg_edge.id() == ID_array_of)
+    {
+      UNIMPLEMENTED;
+    }
+    else if(weg_edge.id() == ID_string_constant)
+    {
+      UNIMPLEMENTED;
     }
     else if(
       weg_edge.id() == ID_literal &&
@@ -275,6 +295,8 @@ void arrayst::weg_path_condition(
     else
       UNIMPLEMENTED;
   }
+
+  return conjunction(cond);
 }
 
 void arrayst::process_weg_path(const weg_patht &path)
@@ -290,20 +312,105 @@ void arrayst::process_weg_path(const weg_patht &path)
   std::cout << '\n';
 #endif
 
-#if 0
+#if 1
   // extensional array encoding -- do this first as it may add to the index sets
-  exprt::operandst cond;
-  cond.reserve(path.size());
-  // collect all indices in with expressions along this path
-  // record the first and last with expression
-  // compute the path condition from a to first and last to b
-  //weg_path_condition(path, nil_exprt{}, cond);
+  const auto &edge_it = weg[a].out.find(b);
+  if(edge_it != weg[a].out.end() && edge_it->second.id() == ID_literal)
+  {
+    // collect all indices in "with" expressions along this path
+    index_sett updated_indices;
+    // record the first and last with expression
+    weg_patht p_prime;
+    weg_patht p_double_prime;
+    wegt::node_indext first = a;
+    optionalt<wegt::node_indext> last;
+    for(const auto &path_node : path)
+    {
+      if(arrays[path_node.n].id() == ID_with)
+      {
+        if(last.has_value())
+          p_double_prime.clear();
 
-  implies_exprt implication(conjunction(cond), equal_exprt(arrays[a], arrays[b]));
+        last = path_node.n;
+
+        const auto &with_expr = to_with_expr(arrays[path_node.n]);
+        for(std::size_t i = 1; i + 1 < with_expr.operands().size(); i += 2)
+          updated_indices.insert(with_expr.operands()[i]);
+      }
+      else if(arrays[path_node.n].id() == ID_array)
+      {
+        if(last.has_value())
+          p_double_prime.clear();
+
+        last = path_node.n;
+
+        UNIMPLEMENTED;
+
+        const auto &with_expr = to_with_expr(arrays[path_node.n]);
+        for(std::size_t i = 1; i + 1 < with_expr.operands().size(); i += 2)
+          updated_indices.insert(with_expr.operands()[i]);
+      }
+      else if(arrays[path_node.n].id() == ID_array_of)
+      {
+        if(last.has_value())
+          p_double_prime.clear();
+
+        last = path_node.n;
+
+        UNIMPLEMENTED;
+
+        const auto &with_expr = to_with_expr(arrays[path_node.n]);
+        for(std::size_t i = 1; i + 1 < with_expr.operands().size(); i += 2)
+          updated_indices.insert(with_expr.operands()[i]);
+      }
+      else if(arrays[path_node.n].id() == ID_string_constant)
+      {
+        if(last.has_value())
+          p_double_prime.clear();
+
+        last = path_node.n;
+
+        UNIMPLEMENTED;
+      }
+      else if(!last.has_value())
+      {
+        p_prime.push_back(path_node);
+        first = path_node.n;
+      }
+
+      if(last.has_value())
+        p_double_prime.push_back(path_node);
+    }
+    // compute the path condition from a to first and last to b
+    if(p_prime.size() == 1)
+      p_prime.clear();
+    if(p_double_prime.size() == 1)
+      p_double_prime.clear();
+    // conjunction over all possibly updated indices
+    exprt::operandst conjuncts;
+    if(last.has_value())
+    {
+      conjuncts.reserve(3 * updated_indices.size());
+      for(const auto &index : updated_indices)
+      {
+        conjuncts.push_back(weg_path_condition(p_prime, index));
+        index_exprt first_i{arrays[first], index};
+        index_map[first].insert(index);
+        index_exprt last_i{arrays[*last], index};
+        index_map[*last].insert(index);
+        conjuncts.push_back(equal_exprt{std::move(first_i), std::move(last_i)});
+        conjuncts.push_back(weg_path_condition(p_double_prime, index));
+      }
+    }
+    else
+      conjuncts.push_back(weg_path_condition(p_prime, nil_exprt{}));
+    // add array equality constraint
+    implies_exprt implication{conjunction(conjuncts), edge_it->second};
 #  ifdef DEBUG_ARRAYST
-  std::cout << "E1: " << format(implication) << '\n';
+    std::cout << "E1: " << format(implication) << '\n';
 #  endif
-  set_to_true(implication);
+    set_to_true(implication);
+  }
 #endif
 
   // do constraints
@@ -435,10 +542,8 @@ void arrayst::process_weg_path(const weg_patht &path)
     }
 
     const index_exprt a_i{arrays[a], index_a};
-    exprt::operandst cond;
-    cond.reserve(path.size());
-    weg_path_condition(path, index_a, cond);
-    const exprt negated_path_cond = not_exprt{conjunction(cond)};
+    const exprt negated_path_cond =
+      not_exprt{weg_path_condition(path, index_a)};
 
     // we handle same-array-different index in add_array_Ackermann_constraints
     for(const auto &index_b : index_set_b)
