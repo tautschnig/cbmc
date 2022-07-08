@@ -351,12 +351,10 @@ void build_goto_trace(
       goto_trace_step.io_id = SSA_step.io_id;
       goto_trace_step.formatted = SSA_step.formatted;
       goto_trace_step.called_function = SSA_step.called_function;
+      goto_trace_step.function_arguments = SSA_step.converted_function_arguments;
 
-      for(const auto &arg : SSA_step.converted_function_arguments)
-      {
-        goto_trace_step.function_arguments.push_back(
-          simplify_expr(decision_procedure.get(arg), ns));
-      }
+      for(auto &arg : goto_trace_step.function_arguments)
+        arg = decision_procedure.get(arg);
 
       // update internal field for specific variables in the counterexample
       update_internal_field(SSA_step, goto_trace_step, ns);
@@ -393,8 +391,15 @@ void build_goto_trace(
 
       for(const auto &j : SSA_step.converted_io_args)
       {
-        goto_trace_step.io_args.push_back(
-          simplify_expr(decision_procedure.get(j), ns));
+        if(j.is_constant() || j.id() == ID_string_constant)
+        {
+          goto_trace_step.io_args.push_back(j);
+        }
+        else
+        {
+          exprt tmp = decision_procedure.get(j);
+          goto_trace_step.io_args.push_back(tmp);
+        }
       }
 
       if(SSA_step.is_assert() || SSA_step.is_assume() || SSA_step.is_goto())
