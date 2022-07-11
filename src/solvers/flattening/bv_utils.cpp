@@ -1189,7 +1189,11 @@ literalt bv_utilst::equal(const bvt &op0, const bvt &op1)
   equal_bv.resize(op0.size());
 
   for(std::size_t i=0; i<op0.size(); i++)
+  {
     equal_bv[i]=prop.lequal(op0[i], op1[i]);
+    if(equal_bv[i].is_false())
+      return equal_bv[i];
+  }
 
   return prop.land(equal_bv);
 }
