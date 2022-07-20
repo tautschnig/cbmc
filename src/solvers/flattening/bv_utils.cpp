@@ -251,6 +251,12 @@ literalt bv_utilst::carry(literalt a, literalt b, literalt c)
     // the below yields fewer clauses and variables,
     // but doesn't propagate anything at all
 
+    auto cache_entry =
+      circuit_cache[{"carry", representationt::UNSIGNED}].insert(
+        {{{a, b, c}}, {bvt{}}});
+    if(!cache_entry.second)
+      return cache_entry.first->second[0][0];
+
     bvt clause;
 
     literalt x=prop.new_variable();
@@ -274,6 +280,7 @@ literalt bv_utilst::carry(literalt a, literalt b, literalt c)
     prop.lcnf(!a,  b, !c,  x);
     prop.lcnf(!a, !b,      x);
 
+    cache_entry.first->second[0] = {x};
     return x;
   }
   else
@@ -295,6 +302,11 @@ bv_utilst::adder(const bvt &op0, const bvt &op1, literalt carry_in)
 {
   PRECONDITION(op0.size() == op1.size());
 
+  auto cache_entry = circuit_cache[{ID_plus, representationt::UNSIGNED}].insert(
+    {{op0, op1, {carry_in}}, {}});
+  if(!cache_entry.second)
+    return {cache_entry.first->second[0], cache_entry.first->second[1][0]};
+
   std::pair<bvt, literalt> result{bvt{}, carry_in};
   result.first.reserve(op0.size());
   literalt &carry_out = result.second;
@@ -304,6 +316,8 @@ bv_utilst::adder(const bvt &op0, const bvt &op1, literalt carry_in)
     result.first.push_back(full_adder(op0[i], op1[i], carry_out, carry_out));
   }
 
+  cache_entry.first->second.push_back(result.first);
+  cache_entry.first->second.push_back({result.second});
   return result;
 }
 
@@ -857,13 +871,23 @@ bvt bv_utilst::multiplier(
   const bvt &op1,
   representationt rep)
 {
+  auto cache_entry =
+    circuit_cache[{ID_mult, rep}].insert({{op0, op1}, {bvt{}}});
+  if(!cache_entry.second)
+    return cache_entry.first->second[0];
+
   switch(rep)
   {
-  case representationt::SIGNED: return signed_multiplier(op0, op1);
-  case representationt::UNSIGNED: return unsigned_multiplier(op0, op1);
+  case representationt::SIGNED:
+    cache_entry.first->second[0] = signed_multiplier(op0, op1);
+  case representationt::UNSIGNED:
+    cache_entry.first->second[0] = unsigned_multiplier(op0, op1);
   }
 
-  UNREACHABLE;
+  // multiplication is commutative
+  circuit_cache[{ID_mult, rep}][{op1, op0}] = {cache_entry.first->second};
+
+  return cache_entry.first->second[0];
 }
 
 bvt bv_utilst::multiplier_no_overflow(
@@ -926,6 +950,15 @@ void bv_utilst::divider(
 {
   PRECONDITION(prop.has_set_to());
 
+  auto cache_entry =
+    circuit_cache[{ID_div, rep}].insert({{op0, op1}, {bvt{}, bvt{}}});
+  if(!cache_entry.second)
+  {
+    result = cache_entry.first->second[0];
+    remainer = cache_entry.first->second[1];
+    return;
+  }
+
   switch(rep)
   {
   case representationt::SIGNED:
@@ -933,6 +966,9 @@ void bv_utilst::divider(
   case representationt::UNSIGNED:
     unsigned_divider(op0, op1, result, remainer); break;
   }
+
+  cache_entry.first->second[0] = result;
+  cache_entry.first->second[1] = remainer;
 }
 
 void bv_utilst::unsigned_divider(
@@ -1190,6 +1226,11 @@ literalt bv_utilst::lt_or_le(
 {
   PRECONDITION(bv0.size() == bv1.size());
 
+  auto cache_entry = circuit_cache[{or_equal ? ID_le : ID_lt, rep}].insert(
+    {{bv0, bv1}, {bvt{}}});
+  if(!cache_entry.second)
+    return cache_entry.first->second[0][0];
+
   literalt top0=bv0[bv0.size()-1],
     top1=bv1[bv1.size()-1];
 
@@ -1273,6 +1314,7 @@ literalt bv_utilst::lt_or_le(
     prop.lcnf(!compareBelow[0], !bv0[0], !bv1[0], (or_equal)?result:!result);
     prop.lcnf(!compareBelow[0],  bv0[0],  bv1[0], (or_equal)?result:!result);
 
+    cache_entry.first->second[0] = {result};
     return result;
   }
   else
@@ -1296,6 +1338,7 @@ literalt bv_utilst::lt_or_le(
     if(or_equal)
       result=prop.lor(result, equal(bv0, bv1));
 
+    cache_entry.first->second[0] = {result};
     return result;
   }
 }
