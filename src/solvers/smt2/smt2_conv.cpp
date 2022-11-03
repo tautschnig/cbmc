@@ -4556,7 +4556,7 @@ void smt2_convt::flatten2bv(const exprt &expr)
   }
   else if(type.id()==ID_array)
   {
-    convert_expr(expr);
+    flatten_array(expr);
   }
   else if(type.id() == ID_struct || type.id() == ID_struct_tag)
   {

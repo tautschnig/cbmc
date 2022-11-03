@@ -1,4 +1,4 @@
-CORE broken-smt-backend
+CORE
 union_initialization.c
 
 ^EXIT=10$
@@ -8,6 +8,3 @@ union_initialization.c
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
---
-This fails when using the SMT backend with Z3 with the error message
-"invalid function/constant definition, sort mismatch".
