@@ -137,6 +137,11 @@ satcheck_cadicalt::satcheck_cadicalt(message_handlert &message_handler)
   : cnf_solvert(message_handler), solver(new CaDiCaL::Solver())
 {
   solver->set("quiet", 1);
+  bool ok;
+  ok = solver->set("walk", 0);
+  CHECK_RETURN(ok);
+  ok = solver->set("stabilize", 0);
+  CHECK_RETURN(ok);
 }
 
 satcheck_cadicalt::~satcheck_cadicalt()
