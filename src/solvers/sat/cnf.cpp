@@ -172,6 +172,9 @@ literalt cnft::land(const bvt &bv)
     return const_literal(true);
 
   bvt new_bv=eliminate_duplicates(bv);
+  auto cache_entry = tseitin_cache[ID_and].emplace(new_bv, literalt{});
+  if(!cache_entry.second)
+    return cache_entry.first->second;
 
   bvt lits(2);
   literalt literal=new_variable();
@@ -192,6 +195,7 @@ literalt cnft::land(const bvt &bv)
   lits.push_back(pos(literal));
   lcnf(lits);
 
+  cache_entry.first->second = literal;
   return literal;
 }
 
@@ -215,6 +219,9 @@ literalt cnft::lor(const bvt &bv)
     return const_literal(false);
 
   bvt new_bv=eliminate_duplicates(bv);
+  auto cache_entry = tseitin_cache[ID_or].emplace(new_bv, literalt{});
+  if(!cache_entry.second)
+    return cache_entry.first->second;
 
   bvt lits(2);
   literalt literal=new_variable();
@@ -235,6 +242,7 @@ literalt cnft::lor(const bvt &bv)
   lits.push_back(neg(literal));
   lcnf(lits);
 
+  cache_entry.first->second = literal;
   return literal;
 }
 
@@ -269,8 +277,17 @@ literalt cnft::land(literalt a, literalt b)
   if(a==b)
     return a;
 
+  bvt cache_bv(2);
+  cache_bv[0] = a < b ? a : b;
+  cache_bv[1] = a < b ? b : a;
+  auto cache_entry =
+    tseitin_cache[ID_and].emplace(std::move(cache_bv), literalt{});
+  if(!cache_entry.second)
+    return cache_entry.first->second;
+
   literalt o=new_variable();
   gate_and(a, b, o);
+  cache_entry.first->second = o;
   return o;
 }
 
@@ -285,8 +302,17 @@ literalt cnft::lor(literalt a, literalt b)
   if(a==b)
     return a;
 
+  bvt cache_bv(2);
+  cache_bv[0] = a < b ? a : b;
+  cache_bv[1] = a < b ? b : a;
+  auto cache_entry =
+    tseitin_cache[ID_or].emplace(std::move(cache_bv), literalt{});
+  if(!cache_entry.second)
+    return cache_entry.first->second;
+
   literalt o=new_variable();
   gate_or(a, b, o);
+  cache_entry.first->second = o;
   return o;
 }
 
@@ -307,8 +333,17 @@ literalt cnft::lxor(literalt a, literalt b)
   if(a==!b)
     return const_literal(true);
 
+  bvt cache_bv(2);
+  cache_bv[0] = a < b ? a : b;
+  cache_bv[1] = a < b ? b : a;
+  auto cache_entry =
+    tseitin_cache[ID_xor].emplace(std::move(cache_bv), literalt{});
+  if(!cache_entry.second)
+    return cache_entry.first->second;
+
   literalt o=new_variable();
   gate_xor(a, b, o);
+  cache_entry.first->second = o;
   return o;
 }
 
@@ -357,6 +392,11 @@ literalt cnft::lselect(literalt a, literalt b, literalt c)
   #ifdef COMPACT_ITE
 
   // (a+c'+o) (a+c+o') (a'+b'+o) (a'+b+o')
+  bvt cache_bv = {a, b, c};
+  auto cache_entry =
+    tseitin_cache[ID_ifthenelse].emplace(std::move(cache_bv), literalt{});
+  if(!cache_entry.second)
+    return cache_entry.first->second;
 
   literalt o=new_variable();
 
@@ -373,6 +413,7 @@ literalt cnft::lselect(literalt a, literalt b, literalt c)
   lcnf(!b, !c,  o);
   #endif
 
+  cache_entry.first->second = o;
   return o;
 
   #else

@@ -14,6 +14,8 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <solvers/prop/prop.h>
 
+#include <map>
+
 class cnft:public propt
 {
 public:
@@ -67,6 +69,8 @@ protected:
     }
     return true;
   }
+
+  std::unordered_map<irep_idt, std::map<bvt, literalt>> tseitin_cache;
 };
 
 class cnf_solvert:public cnft
