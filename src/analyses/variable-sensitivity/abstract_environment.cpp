@@ -203,7 +203,7 @@ bool abstract_environmentt::assign(
     // to be none of that.
     if(s.id() != ID_symbol)
     {
-      throw std::runtime_error("invalid l-value");
+      throw std::runtime_error("invalid l-value " + id2string(s.id()));
     }
     // We can assign the AO directly to the symbol
     final_value = value;
