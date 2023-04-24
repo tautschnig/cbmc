@@ -31,7 +31,7 @@ class index_exprt;
 class with_exprt;
 class update_exprt;
 
-#define DEBUG_ARRAYST
+// #define DEBUG_ARRAYST
 #ifdef DEBUG_ARRAYST
 #  include <util/format_expr.h>
 #endif
@@ -108,6 +108,8 @@ protected:
   void
   add_weg_edge(wegt::node_indext a1, wegt::node_indext a2, const exprt &cond)
   {
+    // TODO -- we're not always adding a condition here it seems, it's mixed up
+    // with the literal encoding the equality over arrays
     weg.edge(a1, a2) = cond;
     weg.edge(a2, a1) = cond;
   }
@@ -153,8 +155,10 @@ protected:
   using weg_patht = std::vector<stack_entryt>;
   void process_weg_path(const weg_patht &);
 
-  /// Compute Cond_i(p) for \p index_a as i on path \p path as p.
-  exprt weg_path_condition(const weg_patht &path, const exprt &index_a) const;
+  void weg_path_condition(
+    const weg_patht &,
+    const exprt &index_a,
+    exprt::operandst &cond) const;
 
   // bool incremental_cache;
 
