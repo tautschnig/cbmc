@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/graph.h>
 #include <util/numbering.h>
 #include <util/std_expr.h>
+#include <util/union_find.h>
 
 #include "equality.h"
 
@@ -64,7 +65,6 @@ public:
 
 protected:
   const namespacet &ns;
-  messaget log;
   message_handlert &message_handler;
 
   virtual void finish_eager_conversion_arrays()
@@ -72,8 +72,17 @@ protected:
     add_array_constraints();
   }
 
+  /// The weak equivalence graph. Based on J Christ, J Hoenicke: Weakly
+  /// Equivalent Arrays, FroCos 2015. Also described in D Kroening, O Strichman:
+  /// Decision Procedures, Section 7.4.
   /// A node of the weak equivalence graph. Each node uniquely corresponds to an
   /// array term.
+  /// An edge of the weak equivalence graph is annotated with either a Boolean
+  /// condition recording the equality of the nodes the edge connects, or the
+  /// store operation that one of the nodes performs.
+  /// Note that we use a directed graph to capture if-then-else expression like
+  /// (a = cond ? b : c), where we add directed edges from a to b and a to c,
+  /// respectively.
   struct weg_nodet : public graph_nodet<exprt>
   {
 #ifdef DEBUG_ARRAYST
@@ -84,13 +93,6 @@ protected:
     }
 #endif
   };
-
-  /// The weak equivalence graph. Based on J Christ, J Hoenicke: Weakly
-  /// Equivalent Arrays, FroCos 2015. Also described in D Kroening, O Strichman:
-  /// Decision Procedures, Section 7.4.
-  /// An edge of the weak equivalence graph is annotated with either a literal
-  /// recording the equality of the nodes the edge connects, or the store
-  /// operation that one of the nodes performs.
   using wegt = grapht<weg_nodet>;
   wegt weg;
 
@@ -105,60 +107,77 @@ protected:
     }
   }
 
+  /// Create an undirected edge between nodes \p a1 and \p a2 labelled with
+  /// either the update expression or the literal representing the equality
+  /// between arrays. Note that, in contrast to the textbook version, we may
+  /// have multiple indices in an array update (store), so we just attach the
+  /// full update expression.
+  /// TODO: 1) we will need to parse the update expression repeatedly, which is
+  /// inefficient. 2) Do we really have conditional equalities between arrays?
+  /// Is this perhaps self-referential in that we are to decide the equality of
+  /// these arrays?
   void
-  add_weg_edge(wegt::node_indext a1, wegt::node_indext a2, const exprt &cond)
+  add_weg_edge(wegt::node_indext a1, wegt::node_indext a2, const exprt &update_or_equality)
   {
-    // TODO -- we're not always adding a condition here it seems, it's mixed up
-    // with the literal encoding the equality over arrays
-    weg.edge(a1, a2) = cond;
-    weg.edge(a2, a1) = cond;
+    weg.add_undirected_edge(a1, a2);
+
+    weg[a2].in[a1] = update_or_equality;
+    weg[a1].out[a2] = update_or_equality;
+    weg[a1].in[a2] = update_or_equality;
+    weg[a2].out[a1] = update_or_equality;
   }
 
   /// Adds all the constraints eagerly by implementing preprocessing and
   /// Algorithms 7.4.1 and 7.4.2 of Section 7.4 of Kroening and Strichman (which
   /// describe how to instantiate Lemmas 1 and 2 of Christ and Hoenicke).
   void add_array_constraints();
+  std::set<wegt::node_indext> needs_Ackermann_constraints;
   void add_array_Ackermann_constraints();
   /// Extend the weak equivalence graph with an array term \p a and return its
   /// graph node.
   wegt::node_indext collect_arrays(const exprt &a);
   /// Collect all indices of index expressions contained within \p i (which may
-  /// itself be an index expression.
+  /// itself be an index expression).
   void collect_indices(const exprt &i);
 
-  // Map array terms to node indices in the weak equivalence graph.
+  /// Map array terms to node indices in the weak equivalence graph.
   using array_numberingt = numberingt<exprt, irep_hash>;
   array_numberingt arrays;
   static_assert(
     std::is_same<wegt::node_indext, array_numberingt::number_type>::value,
     "node index type and numbering type must match");
+  using array_uf_numberingt = union_find<exprt, irep_hash>;
+  array_uf_numberingt arrays_uf;
+  static_assert(
+    std::is_same<wegt::node_indext, array_numberingt::size_type>::value,
+    "node index type and numbering type must match");
 
-  // this tracks the array indices for each array
+  /// Track the array indices for each array.
   typedef std::set<exprt> index_sett;
   using index_mapt = std::map<wegt::node_indext, index_sett>;
   index_mapt index_map;
 
-  // path search
+  /// Path search: each entry represents a node or an edge along a path.
   struct stack_entryt
   {
     wegt::node_indext n;
     optionalt<wegt::edgest::const_iterator> edge;
-    std::set<wegt::node_indext> path_nodes;
-    explicit stack_entryt(
-      wegt::node_indext _n,
-      const std::set<wegt::node_indext> &_path_nodes)
-      : n(_n), path_nodes(_path_nodes)
+    explicit stack_entryt(wegt::node_indext _n)
+      : n(_n)
     {
-      path_nodes.insert(n);
     }
   };
   using weg_patht = std::vector<stack_entryt>;
   void process_weg_path(const weg_patht &);
+void process_weg_path(
+  wegt::node_indext a,
+  wegt::node_indext b,
+  const std::unordered_map<exprt, exprt, irep_hash> &path_conditions
+  );
 
-  void weg_path_condition(
+  exprt weg_path_condition(
     const weg_patht &,
-    const exprt &index_a,
-    exprt::operandst &cond) const;
+    const exprt &index_a) const;
 
   // bool incremental_cache;
 
