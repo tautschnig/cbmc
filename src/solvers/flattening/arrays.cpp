@@ -672,6 +672,7 @@ void arrayst::process_weg_path(
         arrays[b].pretty());
 
 #if 0
+#if 0
       const exprt &array_b_size = to_array_type(arrays[b].type()).size();
 #endif
 
@@ -709,6 +710,13 @@ void arrayst::process_weg_path(
         set_to_true(implication);
         // candidate_for_index_not_found.erase(index_a);
       }
+#else
+      equal_exprt eq{a_i, index_exprt{arrays[b], index_a}};
+#ifdef DEBUG_ARRAYST
+    std::cout << "C2h: " << format(eq) << '\n';
+#endif
+    set_to_true(eq);
+#endif
     }
   }
 }
@@ -818,6 +826,18 @@ void arrayst::add_array_constraints()
       for(const auto &index : maybe_index_set)
         collect_indices(array_comprehension.instantiate({index}));
     }
+  }
+
+  std::vector<wegt::node_indext> scc_mapping;
+  auto n_sccs = weg.SCCs(scc_mapping);
+#ifdef DEBUG_ARRAYST
+  std::cout << "WEG has " << n_sccs << " SCCs" << std::endl;
+#endif
+  index_mapt scc_index_map;
+  for(const auto &index_entry : index_map)
+  {
+    auto &scc_index_map_entry = scc_index_map[scc_mapping[index_entry.first]];
+    scc_index_map_entry.insert(index_entry.second.begin(), index_entry.second.end());
   }
 
 #ifdef DEBUG_ARRAYST
@@ -997,6 +1017,7 @@ void arrayst::add_array_constraints()
     std::cout << "a is: " << format(arrays[a]) << '\n';
 #endif
 
+#if 0
     const auto &index_set_a = index_map[a];
 
     // BFS from a to anything reachable in 'weg'
@@ -1106,6 +1127,57 @@ void arrayst::add_array_constraints()
     {
       needs_Ackermann_constraints.insert(a);
     }
+#else
+    // if a has a non-empty index set and is an array constructor, we need to
+    // add constraints that might otherwise be created by preprocessing
+    const index_sett &index_set_a = scc_index_map[scc_mapping[a]];
+    using pc_mapt = std::unordered_map<exprt, exprt, irep_hash>;
+    pc_mapt local_conditions;
+    for(const auto &index_a : index_set_a)
+      local_conditions.insert({index_a, true_exprt{}});
+    process_weg_path(a, a, local_conditions);
+
+    for(const auto &edge : weg[a].out)
+    {
+#ifdef DEBUG_ARRAYST
+      std::cout << "EDGE " << a << " --> " << edge.first << std::endl;
+#endif
+      // do undirected edges only once
+      auto entry_it = weg[a].in.find(edge.first);
+      if(entry_it != weg[a].in.end() && entry_it->second == edge.second && a > entry_it->first)
+      {
+#ifdef DEBUG_ARRAYST
+      std::cout << "SKIPPING UDE" << std::endl;
+#endif
+        continue;
+      }
+
+      pc_mapt edge_conditions;
+      for(const auto &index_a : index_set_a)
+      {
+        if(arrays[a].id() == ID_with)
+        {
+          const auto &with_expr = to_with_expr(arrays[a]);
+          const auto &operands = with_expr.operands();
+          exprt::operandst conjuncts;
+          conjuncts.reserve(operands.size() / 2);
+
+          for(std::size_t i = 1; i + 1 < operands.size(); i += 2)
+            conjuncts.push_back(notequal_exprt{operands[i], index_a});
+
+          edge_conditions.insert({index_a, conjunction(conjuncts)});
+        }
+        else
+        {
+          DATA_INVARIANT_WITH_DIAGNOSTICS(edge.second.is_boolean(), "path condition component should be ID_with or Boolean, found", edge.second.id());
+          edge_conditions.insert({index_a, edge.second});
+        }
+      }
+      process_weg_path(a, edge.first, edge_conditions);
+    }
+
+    needs_Ackermann_constraints.insert(a);
+#endif
   }
 
   // add the Ackermann constraints
