@@ -855,6 +855,131 @@ void arrayst::add_array_constraints()
   std::cout << "}" << std::endl;
 #endif
 
+#if 0
+  // disconnect non-store nodes with empty index sets
+  for(wegt::node_indext a = 0; a < arrays.size(); ++a)
+  {
+    if(!index_map[a].empty() || weg[a].in.empty() || weg[a].out.empty())
+      continue;
+    if(arrays[a].id() == ID_array || arrays[a].id() == ID_array_comprehension ||
+       arrays[a].id() == ID_array_of || arrays[a].id() == ID_with)
+    {
+      continue;
+    }
+
+    bool non_trival_loop = false;
+    std::set<std::pair<wegt::node_indext, wegt::node_indext>> undirected_pairs_done;
+    for(const auto &in_edge : weg[a].in)
+    {
+      if(non_trival_loop)
+        break;
+
+      const bool directed_in_edge = weg[a].out.find(in_edge.first) == weg[a].out.end();
+
+      for(const auto &out_edge : weg[a].out)
+      {
+        if(in_edge.first == out_edge.first)
+        {
+          if(in_edge.second != out_edge.second)
+          {
+            non_trival_loop = true;
+            break;
+          }
+
+#if 0
+          DATA_INVARIANT_WITH_DIAGNOSTICS(in_edge.second == out_edge.second,
+                         "no directed back&forth edge expected", in_edge.second.pretty(), out_edge.second.pretty());
+#endif
+          continue;
+        }
+
+        const bool directed_edge = directed_in_edge || weg[a].in.find(out_edge.first) == weg[a].in.end();
+        if(!directed_edge && undirected_pairs_done.find({in_edge.first, out_edge.first}) != undirected_pairs_done.end())
+        {
+          continue;
+        }
+
+        const and_exprt cond{in_edge.second, out_edge.second};
+
+        auto entry_out = weg[in_edge.first].out.insert({out_edge.first, cond});
+        if(!entry_out.second)
+        {
+          or_exprt updated_cond{entry_out.first->second, cond};
+          entry_out.first->second = updated_cond;
+          weg[out_edge.first].in[in_edge.first] = updated_cond;
+        }
+        else
+        {
+          weg[out_edge.first].in.insert({in_edge.first, cond});
+        }
+
+        if(!directed_edge)
+        {
+          undirected_pairs_done.insert({in_edge.first, out_edge.first});
+          undirected_pairs_done.insert({out_edge.first, in_edge.first});
+          auto entry_reverse = weg[out_edge.first].out.insert({in_edge.first, cond});
+          if(!entry_reverse.second)
+          {
+            or_exprt updated_cond{entry_reverse.first->second, cond};
+            entry_reverse.first->second = updated_cond;
+            weg[in_edge.first].in[out_edge.first] = updated_cond;
+          }
+          else
+          {
+            weg[in_edge.first].in.insert({out_edge.first, cond});
+          }
+        }
+      }
+    }
+
+    if(non_trival_loop)
+      continue;
+
+    // disconnect the node
+    for(const auto &in_edge : weg[a].in)
+      weg[in_edge.first].erase_out(a);
+    for(const auto &out_edge : weg[a].out)
+      weg[out_edge.first].erase_in(a);
+    weg[a].in.clear();
+    weg[a].out.clear();
+  }
+
+#ifdef DEBUG_ARRAYST
+  std::cout << "digraph G2 {\n";
+  for(wegt::node_indext i = 0; i < weg.size(); ++i)
+  {
+    std::cout << i
+      << " [label=\"" << i << ": " << escape(format_to_string(arrays[i]));
+    if(!index_map[i].empty())
+    {
+      std::cout << " with index set ";
+    for(const auto &ind : index_map[i])
+      std::cout << escape(format_to_string(ind)) << ", ";
+    }
+    std::cout << "\"];\n";
+    for(const auto &edge : weg[i].out)
+    {
+      auto entry_it = weg[i].in.find(edge.first);
+      std::string dir_annotation = "";
+      if(entry_it != weg[i].in.end() && entry_it->second == edge.second)
+      {
+        if(edge.first < i)
+          continue;
+        else
+          dir_annotation="dir=none, ";
+      }
+      std::cout << i << " -> " << edge.first << " [" << dir_annotation;
+      if(!edge.second.is_true())
+      {
+        std::cout << "label=\"" << escape(format_to_string(edge.second)) << "\"";
+      }
+      std::cout << "];\n";
+    }
+  }
+  std::cout << "}" << std::endl;
+#endif
+#endif
+
   // Implement Algorithms 7.4.1 and 7.4.2 by collecting path conditions for all
   // simple paths instead of iterating over all pairs of arrays and indices.
   // Path conditions are computed via a breadth-first search from each node.
