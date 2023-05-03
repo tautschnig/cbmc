@@ -671,7 +671,7 @@ void arrayst::process_weg_path(
         "expected symbol, if, or index; got ",
         arrays[b].pretty());
 
-#if 0
+#if 1
 #if 0
       const exprt &array_b_size = to_array_type(arrays[b].type()).size();
 #endif
@@ -1011,13 +1011,14 @@ void arrayst::add_array_constraints()
 #endif
 
   log.status() << "Traversing weak equivalence graph" << messaget::eom;
+  assert(weg.is_dag());
   for(wegt::node_indext a = 0; a < arrays.size(); ++a)
   {
 #ifdef DEBUG_ARRAYST
     std::cout << "a is: " << format(arrays[a]) << '\n';
 #endif
 
-#if 0
+#if 1
     const auto &index_set_a = index_map[a];
 
     // BFS from a to anything reachable in 'weg'
