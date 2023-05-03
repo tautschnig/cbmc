@@ -16,7 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <solvers/prop/literal_expr.h>
 #include <solvers/prop/prop.h>
 
-#define DEBUG_ARRAYST
+// #define DEBUG_ARRAYST
 #ifdef DEBUG_ARRAYST
 #  include <util/format_expr.h>
 #  include <util/string_utils.h>
@@ -78,6 +78,7 @@ literalt arrayst::record_array_equality(
   // one undirected edge for each array equality
   // TODO: we shouldn't later clean this up but instead use union-find from the
   // start
+#if 1
 	if((op0.id() == ID_array || op0.id() == ID_array_comprehension || op0.id() == ID_array_of || op0.id() == ID_with) && op1.id() == ID_symbol)
   {
     weg.add_edge(a2, a1);
@@ -91,6 +92,7 @@ literalt arrayst::record_array_equality(
     weg[a1].out[a2] = literal_exprt{l};
   }
   else
+#endif
   {
     add_weg_edge(a1, a2, literal_exprt{l});
   }
@@ -175,9 +177,13 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
     wegt::node_indext expr_old_index = collect_arrays(with_expr.old());
 
     // directed edge for each array update
+#if 1
     weg.add_edge(a_index, expr_old_index);
     weg[expr_old_index].in[a_index] = true_exprt{}; // with_expr;
     weg[a_index].out[expr_old_index] = true_exprt{}; // with_expr;
+#else
+    add_weg_edge(a_index, expr_old_index, true_exprt{});
+#endif
   }
   else if(a.id()==ID_update)
   {
@@ -209,6 +215,7 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
     const wegt::node_indext expr_false_index =
       collect_arrays(if_expr.false_case());
 
+#if 1
     // add two directed edges
     weg.add_edge(a_index, expr_true_index);
     weg[expr_true_index].in[a_index] = if_expr.cond();
@@ -216,6 +223,10 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
     weg.add_edge(a_index, expr_false_index);
     weg[expr_false_index].in[a_index] = not_exprt{if_expr.cond()};
     weg[a_index].out[expr_false_index] = not_exprt{if_expr.cond()};
+#else
+    add_weg_edge(a_index, expr_true_index, if_expr.cond());
+    add_weg_edge(a_index, expr_false_index, not_exprt{if_expr.cond()});
+#endif
   }
   else if(a.id()==ID_symbol)
   {
@@ -648,10 +659,16 @@ void arrayst::process_weg_path(
       }
 
       // compare all updates if no exact match was found
+#if 0
+      exprt::operandst none_equal;
+      none_equal.reserve(with_expr.operands().size() / 2);
+#endif
       for(std::size_t i = 1; !match_found && i < with_expr.operands().size(); i += 2)
       {
         const exprt &index_b = with_expr.operands()[i];
         const exprt &value_b = with_expr.operands()[i + 1];
+
+        notequal_exprt index_not_equal{index_a, index_b};
 
         or_exprt implication{
           negated_path_cond,
@@ -661,7 +678,25 @@ void arrayst::process_weg_path(
         std::cout << "C2f: " << format(implication) << '\n';
 #  endif
         set_to_true(implication);
+
+#if 0
+        none_equal.push_back(index_not_equal);
+#endif
       }
+
+#if 0
+			if(!match_found)
+      {
+        or_exprt implication{
+          negated_path_cond,
+            not_exprt{conjunction(none_equal)},
+            equal_exprt{a_i, index_exprt{with_expr.old(), index_a}}};
+#  ifdef DEBUG_ARRAYST
+        std::cout << "C2g: " << format(implication) << '\n';
+#  endif
+        set_to_true(implication);
+      }
+#endif
     }
     else if(a != b)
     {
@@ -671,7 +706,7 @@ void arrayst::process_weg_path(
         "expected symbol, if, or index; got ",
         arrays[b].pretty());
 
-#if 0
+#if 1
 #if 0
       const exprt &array_b_size = to_array_type(arrays[b].type()).size();
 #endif
@@ -705,17 +740,19 @@ void arrayst::process_weg_path(
             notequal_exprt{index_a, index_b},
             equal_exprt{a_i, index_exprt{arrays[b], index_b}}};
 #ifdef DEBUG_ARRAYST
-        std::cout << "C2g: " << format(implication) << '\n';
+        std::cout << "C2h: " << format(implication) << '\n';
 #endif
         set_to_true(implication);
         // candidate_for_index_not_found.erase(index_a);
       }
 #else
-      equal_exprt eq{a_i, index_exprt{arrays[b], index_a}};
+        or_exprt implication{
+          negated_path_cond,
+          equal_exprt{a_i, index_exprt{arrays[b], index_a}}};
 #ifdef DEBUG_ARRAYST
-    std::cout << "C2h: " << format(eq) << '\n';
+    std::cout << "C2i: " << format(implication) << '\n';
 #endif
-    set_to_true(eq);
+    set_to_true(implication);
 #endif
     }
   }
@@ -832,6 +869,8 @@ void arrayst::add_array_constraints()
   auto n_sccs = weg.SCCs(scc_mapping);
 #ifdef DEBUG_ARRAYST
   std::cout << "WEG has " << n_sccs << " SCCs" << std::endl;
+#else
+  (void)n_sccs;
 #endif
   index_mapt scc_index_map;
   for(const auto &index_entry : index_map)
@@ -963,6 +1002,40 @@ void arrayst::add_array_constraints()
     weg[a].in.clear();
     weg[a].out.clear();
   }
+#endif
+
+  // Heuristics: find left-hand side nodes and make them right-hand sides for
+  // all previously undirected edges. This ensures progress towards stores
+  for(wegt::node_indext a = 0; a < arrays.size(); ++a)
+  {
+    if(arrays[a].id() != ID_array && arrays[a].id() != ID_array_comprehension &&
+       arrays[a].id() != ID_array_of && arrays[a].id() != ID_with)
+    {
+      continue;
+    }
+
+    for(const auto &in_edge : weg[a].in)
+    {
+      // make sure this is a directed edge
+      if(weg[a].out.find(in_edge.first) != weg[a].out.end())
+        continue;
+
+      auto &lhs_node = weg[in_edge.first];
+      if(!index_map[in_edge.first].empty() || lhs_node.in.empty())
+        continue;
+
+      for(const auto &lhs_in_edge : lhs_node.in)
+      {
+        // search for undirected edges
+        auto entry_it = lhs_node.out.find(lhs_in_edge.first);
+        if(entry_it != lhs_node.out.end() && entry_it->second == lhs_in_edge.second)
+        {
+          lhs_node.out.erase(entry_it);
+          weg[lhs_in_edge.first].erase_in(in_edge.first);
+        }
+      }
+    }
+  }
 
 #ifdef DEBUG_ARRAYST
   std::cout << "digraph G2 {\n";
@@ -998,7 +1071,6 @@ void arrayst::add_array_constraints()
   }
   std::cout << "}" << std::endl;
 #endif
-#endif
 
   // Implement Algorithms 7.4.1 and 7.4.2 by collecting path conditions for all
   // simple paths instead of iterating over all pairs of arrays and indices.
@@ -1010,14 +1082,14 @@ void arrayst::add_array_constraints()
   std::map<wegt::node_indext, std::set<wegt::node_indext>> paths_done;
 #endif
 
-  log.status() << "Traversing weak equivalence graph" << messaget::eom;
+  log.status() << "Traversing weak equivalence graph with " << weg.size() << " nodes" << messaget::eom;
   for(wegt::node_indext a = 0; a < arrays.size(); ++a)
   {
 #ifdef DEBUG_ARRAYST
     std::cout << "a is: " << format(arrays[a]) << '\n';
 #endif
 
-#if 0
+#if 1
     const auto &index_set_a = index_map[a];
 
     // BFS from a to anything reachable in 'weg'
@@ -1144,12 +1216,25 @@ void arrayst::add_array_constraints()
 #endif
       // do undirected edges only once
       auto entry_it = weg[a].in.find(edge.first);
-      if(entry_it != weg[a].in.end() && entry_it->second == edge.second && a > entry_it->first)
+      if(entry_it != weg[a].in.end() && entry_it->second == edge.second)
       {
+        if(arrays[a].id() == ID_with && arrays[edge.first] == to_with_expr(arrays[a]).old())
+        {
+          // ok, edge from store to array having been updated
+        }
+        else if(arrays[a].id() != ID_with && arrays[edge.first].id() == ID_with &&
+                to_with_expr(arrays[edge.first]).old() != arrays[a])
+        {
+          // ok, edge into some store
+        }
+        else if(arrays[a].id() == ID_with || arrays[edge.first].id() == ID_with ||
+        a > entry_it->first)
+        {
 #ifdef DEBUG_ARRAYST
       std::cout << "SKIPPING UDE" << std::endl;
 #endif
         continue;
+        }
       }
 
       pc_mapt edge_conditions;
