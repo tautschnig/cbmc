@@ -312,6 +312,7 @@ var hierarchy =
     [ "recursive_initializationt::constructor_keyt", "structrecursive__initializationt_1_1constructor__keyt.html", null ],
     [ "constructor_oft< constructedt >", "classconstructor__oft.html", null ],
     [ "generic_parameter_specialization_mapt::container_paramt", "structgeneric__parameter__specialization__mapt_1_1container__paramt.html", null ],
+    [ "contract_clausest", "structcontract__clausest.html", null ],
     [ "conversion_dependenciest", "structconversion__dependenciest.html", null ],
     [ "ci_lazy_methodst::convert_method_resultt", "structci__lazy__methodst_1_1convert__method__resultt.html", null ],
     [ "java_bytecode_convert_methodt::converted_instructiont", "structjava__bytecode__convert__methodt_1_1converted__instructiont.html", null ],
@@ -422,19 +423,22 @@ var hierarchy =
     [ "destructor_treet", "classdestructor__treet.html", null ],
     [ "destructt< I, pointee_baset, Ts >", "structdestructt.html", null ],
     [ "destructt< 0, pointee_baset, Ts... >", "structdestructt_3_010_00_01pointee__baset_00_01_ts_8_8_8_01_4.html", null ],
+    [ "dfcc_cfg_infot", "classdfcc__cfg__infot.html", null ],
     [ "dfcc_contract_clauses_codegent", "classdfcc__contract__clauses__codegent.html", null ],
     [ "dfcc_contract_functionst", "classdfcc__contract__functionst.html", null ],
     [ "dfcc_contract_handlert", "classdfcc__contract__handlert.html", null ],
+    [ "dfcc_instrument_loopt", "classdfcc__instrument__loopt.html", null ],
     [ "dfcc_instrumentt", "classdfcc__instrumentt.html", null ],
     [ "dfcc_is_freeablet", "classdfcc__is__freeablet.html", null ],
     [ "dfcc_is_fresht", "classdfcc__is__fresht.html", null ],
     [ "dfcc_libraryt", "classdfcc__libraryt.html", null ],
     [ "dfcc_lift_memory_predicatest", "classdfcc__lift__memory__predicatest.html", null ],
+    [ "dfcc_loop_infot", "classdfcc__loop__infot.html", null ],
     [ "dfcc_obeys_contractt", "classdfcc__obeys__contractt.html", null ],
     [ "dfcc_pointer_in_ranget", "classdfcc__pointer__in__ranget.html", null ],
     [ "dfcc_spec_functionst", "classdfcc__spec__functionst.html", null ],
     [ "dfcc_swap_and_wrapt", "classdfcc__swap__and__wrapt.html", null ],
-    [ "dfcc_utilst", "classdfcc__utilst.html", null ],
+    [ "dfcc_utilst", "structdfcc__utilst.html", null ],
     [ "dfcc_wrapper_programt", "classdfcc__wrapper__programt.html", null ],
     [ "dfcct", "classdfcct.html", null ],
     [ "diagnostics_helpert< T >", "structdiagnostics__helpert.html", null ],
@@ -764,7 +768,8 @@ var hierarchy =
       [ "abstract_eventt", "classabstract__eventt.html", null ],
       [ "cfg_base_nodet< T, I >", "structcfg__base__nodet.html", null ],
       [ "class_hierarchy_graph_nodet", "classclass__hierarchy__graph__nodet.html", null ],
-      [ "destructor_treet::destructor_nodet", "classdestructor__treet_1_1destructor__nodet.html", null ]
+      [ "destructor_treet::destructor_nodet", "classdestructor__treet_1_1destructor__nodet.html", null ],
+      [ "dfcc_loop_nesting_graph_nodet", "structdfcc__loop__nesting__graph__nodet.html", null ]
     ] ],
     [ "graph_nodet< vs_dep_edget >", "classgraph__nodet.html", [
       [ "vs_dep_nodet", "structvs__dep__nodet.html", null ]
@@ -1010,6 +1015,7 @@ var hierarchy =
     [ "linear_functiont", "classlinear__functiont.html", null ],
     [ "document_propertiest::linet", "structdocument__propertiest_1_1linet.html", null ],
     [ "linker_script_merget", "classlinker__script__merget.html", null ],
+    [ "linkingt", "classlinkingt.html", null ],
     [ "literalt", "classliteralt.html", null ],
     [ "local_may_aliast::loc_infot", "classlocal__may__aliast_1_1loc__infot.html", null ],
     [ "local_bitvector_analysist", "classlocal__bitvector__analysist.html", null ],
@@ -1042,6 +1048,7 @@ var hierarchy =
     [ "loop_templatet< T >", "classloop__templatet.html", [
       [ "loop_with_parent_analysis_templatet< T >", "classloop__with__parent__analysis__templatet.html", null ]
     ] ],
+    [ "loop_templatet< goto_programt::targett >", "classloop__templatet.html", null ],
     [ "main_function_resultt", "structmain__function__resultt.html", null ],
     [ "detail::make_voidt< typest >", "structdetail_1_1make__voidt.html", null ],
     [ "boolbv_mapt::map_entryt", "classboolbv__mapt_1_1map__entryt.html", null ],
@@ -1101,7 +1108,6 @@ var hierarchy =
         ] ],
         [ "java_bytecode_typecheckt", "classjava__bytecode__typecheckt.html", null ],
         [ "jsil_typecheckt", "classjsil__typecheckt.html", null ],
-        [ "linkingt", "classlinkingt.html", null ],
         [ "statement_list_typecheckt", "classstatement__list__typecheckt.html", null ]
       ] ]
     ] ],
@@ -1199,6 +1205,7 @@ var hierarchy =
       [ "goto_analyzer_parse_optionst", "classgoto__analyzer__parse__optionst.html", null ],
       [ "goto_diff_parse_optionst", "classgoto__diff__parse__optionst.html", null ],
       [ "goto_harness_parse_optionst", "classgoto__harness__parse__optionst.html", null ],
+      [ "goto_inspect_parse_optionst", "structgoto__inspect__parse__optionst.html", null ],
       [ "goto_instrument_parse_optionst", "classgoto__instrument__parse__optionst.html", null ],
       [ "goto_synthesizer_parse_optionst", "classgoto__synthesizer__parse__optionst.html", null ],
       [ "janalyzer_parse_optionst", "classjanalyzer__parse__optionst.html", null ],
@@ -1368,6 +1375,7 @@ var hierarchy =
     [ "rename_symbolt", "classrename__symbolt.html", null ],
     [ "smt_bit_vector_theoryt::repeatt", "structsmt__bit__vector__theoryt_1_1repeatt.html", null ],
     [ "replace_callst", "classreplace__callst.html", null ],
+    [ "replace_history_parametert", "structreplace__history__parametert.html", null ],
     [ "replace_symbolt", "classreplace__symbolt.html", [
       [ "casting_replace_symbolt", "classcasting__replace__symbolt.html", null ],
       [ "unchecked_replace_symbolt", "classunchecked__replace__symbolt.html", [
@@ -2151,6 +2159,8 @@ var hierarchy =
     ] ],
     [ "irep_hash_container_baset::vector_hasht", "structirep__hash__container__baset_1_1vector__hasht.html", null ],
     [ "custom_bitvector_domaint::vectorst", "structcustom__bitvector__domaint_1_1vectorst.html", null ],
+    [ "verification_resultt::verification_result_implt", "classverification__resultt_1_1verification__result__implt.html", null ],
+    [ "verification_resultt", "structverification__resultt.html", null ],
     [ "java_bytecode_parse_treet::methodt::verification_type_infot", "structjava__bytecode__parse__treet_1_1methodt_1_1verification__type__infot.html", null ],
     [ "configt::verilogt", "structconfigt_1_1verilogt.html", null ],
     [ "vs_dep_edget", "classvs__dep__edget.html", null ],

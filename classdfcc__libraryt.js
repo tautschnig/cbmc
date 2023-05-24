@@ -1,6 +1,6 @@
 var classdfcc__libraryt =
 [
-    [ "dfcc_libraryt", "classdfcc__libraryt.html#abf2a449239d88bc96d09b89d1830019e", null ],
+    [ "dfcc_libraryt", "classdfcc__libraryt.html#a26e8e66b60d6a9242a48819d6ef423e8", null ],
     [ "add_instrumented_functions_map_init_instructions", "classdfcc__libraryt.html#a78e6b7048b19c4e405370f1b40eec91c", null ],
     [ "check_replace_ensures_was_freed_preconditions_call", "classdfcc__libraryt.html#add4c897b142d77ba60e5e31f86d5050b", null ],
     [ "disable_checks", "classdfcc__libraryt.html#adbd1ff30e88053a0738af9c7508349d3", null ],
@@ -21,7 +21,6 @@ var classdfcc__libraryt =
     [ "load", "classdfcc__libraryt.html#afdd1a9fe8bc51d3eb63055a72471a527", null ],
     [ "obj_set_create_indexed_by_object_id_call", "classdfcc__libraryt.html#a1c5c016b7f0975d13353b21f3742b0ab", null ],
     [ "obj_set_release_call", "classdfcc__libraryt.html#aa2a78515fd797aaef1ae37e36ae9f0f0", null ],
-    [ "set_hide", "classdfcc__libraryt.html#a52b01a3df22b1804205880e9ce122c43", null ],
     [ "specialize", "classdfcc__libraryt.html#ae057439f126bef5eecd419ff9df56075", null ],
     [ "write_set_add_allocated_call", "classdfcc__libraryt.html#a725ab26d920ff6ee58bff0843e0f2211", null ],
     [ "write_set_add_decl_call", "classdfcc__libraryt.html#a55f8822b61366418b694ab405fee60db", null ],
@@ -35,6 +34,7 @@ var classdfcc__libraryt =
     [ "write_set_check_frees_clause_inclusion_call", "classdfcc__libraryt.html#ad604d4ec783223dadf04042d3063a66c", null ],
     [ "write_set_check_havoc_object_call", "classdfcc__libraryt.html#ad9fe8921c2a5042ca752a536bf4fc259", null ],
     [ "write_set_create_call", "classdfcc__libraryt.html#aced76510f1eaf5bb86c4f8d9a0b0884e", null ],
+    [ "write_set_create_call", "classdfcc__libraryt.html#aeaa5632cca9aa35abccfba47f523e839", null ],
     [ "write_set_deallocate_freeable_call", "classdfcc__libraryt.html#adf614c1913728f7cc9e0f41977ec8dae", null ],
     [ "write_set_record_dead_call", "classdfcc__libraryt.html#a041b03574be0b6e0f64665ae32a7fbb3", null ],
     [ "write_set_record_deallocated_call", "classdfcc__libraryt.html#a5120019db5fa6364f70566d9e0103453", null ],
@@ -54,6 +54,5 @@ var classdfcc__libraryt =
     [ "log", "classdfcc__libraryt.html#a8e589ae7ea0688a409970d5156f80e4c", null ],
     [ "malloc_free_fixed", "classdfcc__libraryt.html#a3ca4a065624478d4cd6d4d38ed5e4351", null ],
     [ "message_handler", "classdfcc__libraryt.html#ac48e1d14e81745c5914ad2f954e75009", null ],
-    [ "specialized", "classdfcc__libraryt.html#afe679d91ee7da0b0e3f39d499a9a9e5a", null ],
-    [ "utils", "classdfcc__libraryt.html#ac9dfbc39c66fef48e6a9bd795e38299b", null ]
+    [ "specialized", "classdfcc__libraryt.html#afe679d91ee7da0b0e3f39d499a9a9e5a", null ]
 ];

@@ -8,6 +8,6 @@ var structapi__sessiont =
     [ "load_model_from_files", "structapi__sessiont.html#a646b35f758870049c73c30b523ed7134", null ],
     [ "set_message_callback", "structapi__sessiont.html#a9f46c4d48b00c26c4e87555d76dd24ac", null ],
     [ "validate_goto_model", "structapi__sessiont.html#aa8a7742671eed31e88a14c44c0dfe8a5", null ],
-    [ "verify_model", "structapi__sessiont.html#a1ee17cafc7f24ea628e65f767d15d91d", null ],
+    [ "verify_model", "structapi__sessiont.html#a82e5c6217f2ee63844e12a5cc6130518", null ],
     [ "implementation", "structapi__sessiont.html#aaa3cafffc780ab20bd764e319871a4a3", null ]
 ];
