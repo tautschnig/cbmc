@@ -32,9 +32,11 @@ class index_exprt;
 class with_exprt;
 class update_exprt;
 
-// #define DEBUG_ARRAYST
+#define DEBUG_ARRAYST
 #ifdef DEBUG_ARRAYST
 #  include <util/format_expr.h>
+
+#  include <iosfwd>
 #endif
 
 class arrayst:public equalityt
@@ -60,6 +62,9 @@ public:
   /// Notify array theory about the equality constraint \p expr over array-typed
   /// operands.
   literalt record_array_equality(const equal_exprt &expr);
+  /// Notify array theory about two arrays (the operands of \p expr) necessarily
+  /// being equal.
+  void set_arrays_equal(const equal_exprt &expr);
   /// Notify array theory about the index expression \p expr.
   void record_array_index(const index_exprt &expr);
 
@@ -96,16 +101,9 @@ protected:
   using wegt = grapht<weg_nodet>;
   wegt weg;
 
-  void expand_weg(wegt::node_indext index)
-  {
-    if(index >= weg.size())
-    {
-      weg.resize(index + 1);
 #ifdef DEBUG_ARRAYST
-      weg[index].array = arrays[index];
+  std::ostream &print_weg(std::ostream &os) const;
 #endif
-    }
-  }
 
   /// Create an undirected edge between nodes \p a1 and \p a2 labelled with
   /// either the update expression or the literal representing the equality
@@ -116,8 +114,10 @@ protected:
   /// inefficient. 2) Do we really have conditional equalities between arrays?
   /// Is this perhaps self-referential in that we are to decide the equality of
   /// these arrays?
-  void
-  add_weg_edge(wegt::node_indext a1, wegt::node_indext a2, const exprt &update_or_equality)
+  void add_weg_edge(
+    wegt::node_indext a1,
+    wegt::node_indext a2,
+    const exprt &update_or_equality)
   {
     weg.add_undirected_edge(a1, a2);
 
@@ -126,6 +126,17 @@ protected:
     weg[a1].in[a2] = update_or_equality;
     weg[a2].out[a1] = update_or_equality;
   }
+
+  /// Make \p dest the representative node for \p src and \p dest when their
+  /// associated arrays are known to be equal.
+  void merge_nodes(wegt::node_indext src, wegt::node_indext dest);
+
+  /// Disconnect non-store nodes with empty index sets.
+  void remove_aliases();
+
+  /// Split all edges into update nodes into ones where the update took place
+  /// and those where no update was done.
+  void adjust_update_edges();
 
   /// Adds all the constraints eagerly by implementing preprocessing and
   /// Algorithms 7.4.1 and 7.4.2 of Section 7.4 of Kroening and Strichman (which
@@ -146,11 +157,11 @@ protected:
   static_assert(
     std::is_same<wegt::node_indext, array_numberingt::number_type>::value,
     "node index type and numbering type must match");
-  using array_uf_numberingt = union_find<exprt, irep_hash>;
+  using array_uf_numberingt = unsigned_union_find;
   array_uf_numberingt arrays_uf;
   static_assert(
-    std::is_same<wegt::node_indext, array_numberingt::size_type>::value,
-    "node index type and numbering type must match");
+    std::is_same<wegt::node_indext, array_uf_numberingt::size_type>::value,
+    "node index type and union find type must match");
 
   /// Track the array indices for each array.
   typedef std::set<exprt> index_sett;
@@ -162,22 +173,18 @@ protected:
   {
     wegt::node_indext n;
     optionalt<wegt::edgest::const_iterator> edge;
-    explicit stack_entryt(wegt::node_indext _n)
-      : n(_n)
+    explicit stack_entryt(wegt::node_indext _n) : n(_n)
     {
     }
   };
   using weg_patht = std::vector<stack_entryt>;
   void process_weg_path(const weg_patht &);
-void process_weg_path(
-  wegt::node_indext a,
-  wegt::node_indext b,
-  const std::unordered_map<exprt, exprt, irep_hash> &path_conditions
-  );
+  void process_weg_path(
+    wegt::node_indext a,
+    wegt::node_indext b,
+    const std::unordered_map<exprt, exprt, irep_hash> &path_conditions);
 
-  exprt weg_path_condition(
-    const weg_patht &,
-    const exprt &index_a) const;
+  exprt weg_path_condition(const weg_patht &, const exprt &index_a) const;
 
   // bool incremental_cache;
 

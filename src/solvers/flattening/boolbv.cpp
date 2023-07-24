@@ -500,17 +500,27 @@ bool boolbvt::boolbv_set_equality_to_true(const equal_exprt &expr)
   {
     // see if it is an unbounded array
     if(is_unbounded_array(type))
-      return true;
+    {
+      // flatten byte_update/byte_extract operators if needed
 
-    const bvt &bv1=convert_bv(expr.rhs());
+      if(has_byte_operator(expr))
+      {
+        set_arrays_equal(to_equal_expr(lower_byte_operators(expr, ns)));
+      }
+      else
+        set_arrays_equal(expr);
+    }
+    else
+    {
+      const bvt &bv1 = convert_bv(expr.rhs());
 
-    const irep_idt &identifier=
-      to_symbol_expr(expr.lhs()).get_identifier();
+      const irep_idt &identifier = to_symbol_expr(expr.lhs()).get_identifier();
 
-    map.set_literals(identifier, type, bv1);
+      map.set_literals(identifier, type, bv1);
 
-    if(freeze_all)
-      set_frozen(bv1);
+      if(freeze_all)
+        set_frozen(bv1);
+    }
 
     return false;
   }
