@@ -194,6 +194,10 @@ void arrayst::merge_nodes(wegt::node_indext src, wegt::node_indext dest)
   weg[src].in.clear();
   weg[src].out.clear();
 
+  // TODO: we lose the inverse mapping from values to ARRAY[index] expressions
+  // when the ARRAY node is not the root, add constraints to fix this
+  // (iterating over all non-trivial union-find entries; use instantiate() in
+  // this process)
   index_map[dest].insert(index_map[src].begin(), index_map[src].end());
 }
 
@@ -869,6 +873,7 @@ void arrayst::process_weg_path(
 
 static exprt instantiate(const exprt &array, const exprt &index)
 {
+  // TODO: we should check array bounds once for each SCC and each index
   if(array.id() == ID_array)
   {
     // we got array=[x, y, z, ...]
@@ -887,16 +892,16 @@ static exprt instantiate(const exprt &array, const exprt &index)
     }
 
     // not a constant, compare to all indices in b
-    for(std::size_t i = 0; i < array_expr.operands().size(); ++i)
+    PRECONDITION(!array_expr.operands().empty());
+    exprt result = array_expr.operands().front();
+    for(std::size_t i = 1; i < array_expr.operands().size(); ++i)
     {
-      // const exprt index_a = from_integer(i, index.type());
-      // const exprt &value = array_expr.operands()[i];
+      const exprt index_i = from_integer(i, index.type());
+      const exprt &value = array_expr.operands()[i];
 
-      assert(
-        false); // we really need to do this in the context of the implication
+      result = if_exprt{equal_exprt{index, index_i}, value, result};
     }
-
-    return nil_exprt{};
+    return result;
   }
   else if(array.id() == ID_array_comprehension)
   {
@@ -1053,7 +1058,18 @@ void arrayst::remove_aliases()
 
 void arrayst::adjust_update_edges()
 {
-  // XXX fix bugs for update sequences as seen in regression/cbmc/Unbounded_Array5
+  struct update_infot
+  {
+    wegt::node_indext old_n;
+    exprt any_update;
+
+    update_infot(wegt::node_indext old_n, exprt any_update)
+      : old_n(old_n), any_update(std::move(any_update))
+    {
+    }
+  };
+  std::map<wegt::node_indext, update_infot> update_to_old_map;
+
   for(wegt::node_indext n = 0; n < weg.size(); ++n)
   {
     if(arrays[n].id() != ID_with)
@@ -1063,9 +1079,7 @@ void arrayst::adjust_update_edges()
     const auto old_n = arrays_uf.find(arrays.number(with_expr.old()));
     auto update_edge_it = weg[n].out.find(old_n);
     CHECK_RETURN(update_edge_it != weg[n].out.end());
-    const exprt update_edge_cond = update_edge_it->second;
-    weg[n].out.erase(update_edge_it);
-    weg[old_n].in.erase(n);
+    CHECK_RETURN(update_edge_it->second.is_true());
 
     exprt::operandst equalities;
     for(std::size_t i = 1; i < with_expr.operands().size(); i += 2)
@@ -1074,7 +1088,15 @@ void arrayst::adjust_update_edges()
       equalities.push_back(
         equal_exprt{symbol_exprt{"#index_dummy#", where.type()}, where});
     }
-    exprt any_update = disjunction(equalities);
+
+    update_to_old_map.insert({n, {old_n, disjunction(equalities)}});
+  }
+
+  for(const auto &updates : update_to_old_map)
+  {
+    const auto n = updates.first;
+
+    std::set<wegt::node_indext> to_erase;
 
     for(auto &in_edge : weg[n].in)
     {
@@ -1082,65 +1104,87 @@ void arrayst::adjust_update_edges()
       const exprt previous_cond = in_edge.second;
       PRECONDITION(weg[other].out[n] == previous_cond);
 
-      in_edge.second = and_exprt{previous_cond, any_update};
+      in_edge.second = and_exprt{previous_cond, updates.second.any_update};
       weg[other].out[n] = in_edge.second;
 
-      const bool undirected_edge = weg[other].in.find(n) != weg[other].in.end();
-      if(undirected_edge)
+      const bool was_undirected_edge = weg[other].in.find(n) != weg[other].in.end();
+      if(was_undirected_edge)
       {
         PRECONDITION(weg[n].out[other] == previous_cond);
         PRECONDITION(weg[other].in[n] == previous_cond);
-
-        weg[n].out[other] = in_edge.second;
-        weg[other].in[n] = in_edge.second;
       }
+      else
+        weg.add_edge(n, other);
 
-      auto no_update_it = weg[old_n].in.find(other);
-      if(no_update_it == weg[old_n].in.end())
+      weg[n].out[other] = in_edge.second;
+      weg[other].in[n] = in_edge.second;
+
+      update_infot old = updates.second;
+      exprt no_update_cond = previous_cond;
+
+      while(true)
       {
-        and_exprt no_update_cond{previous_cond, not_exprt{any_update}};
-        if(!update_edge_cond.is_true())
-          no_update_cond.copy_to_operands(update_edge_cond);
+        const auto old_n = old.old_n;
+        const exprt &any_update = old.any_update;
 
-        if(undirected_edge)
+        to_erase.insert(old_n);
+
+        if(no_update_cond.id() == ID_and)
+          no_update_cond.copy_to_operands(not_exprt{any_update});
+        else
+          no_update_cond = and_exprt{no_update_cond, not_exprt{any_update}};
+
+        auto further_update_entry = update_to_old_map.find(old_n);
+        and_exprt this_cond = to_and_expr(no_update_cond);
+        if(further_update_entry != update_to_old_map.end())
+          this_cond.copy_to_operands(further_update_entry->second.any_update);
+
+        auto no_update_it = weg[old_n].in.find(other);
+        if(no_update_it == weg[old_n].in.end())
         {
-          add_weg_edge(other, old_n, no_update_cond);
+          add_weg_edge(other, old_n, this_cond);
         }
         else
         {
-          weg.add_edge(other, old_n);
-          weg[old_n].in[other] = no_update_cond;
-          weg[other].out[old_n] = no_update_cond;
-        }
-      }
-      else
-      {
-        PRECONDITION(weg[other].out[old_n] == no_update_it->second);
+          PRECONDITION(weg[other].out[old_n] == no_update_it->second);
 
-        no_update_it->second = or_exprt{
-          no_update_it->second,
-          and_exprt{previous_cond, not_exprt{any_update}}};
-        weg[other].out[old_n] = no_update_it->second;
+          if(was_undirected_edge)
+          {
+            XXX eventually fails on regression/cbmc/Unbounded_Array5/main.c;
+            PRECONDITION(weg[old_n].out[other] == no_update_it->second);
+            PRECONDITION(weg[other].in[old_n] == no_update_it->second);
+          }
+          else
+            weg.add_edge(old_n, other);
 
-        if(undirected_edge)
-        {
-          PRECONDITION(weg[old_n].out[other] == no_update_it->second);
-          PRECONDITION(weg[other].in[old_n] == no_update_it->second);
+          no_update_it->second = or_exprt{
+            no_update_it->second,
+              this_cond};
+          weg[other].out[old_n] = no_update_it->second;
 
           weg[old_n].out[other] = no_update_it->second;
           weg[other].in[old_n] = no_update_it->second;
         }
+
+        if(further_update_entry == update_to_old_map.end())
+          break;
+
+        old = further_update_entry->second;
+      }
+
+      const auto &index_map_entry = index_map.find(n);
+      if(index_map_entry == index_map.end() || index_map_entry->second.empty())
+      {
+        for(const auto old_n : to_erase)
+        {
+          weg[n].out.erase(old_n);
+          weg[old_n].in.erase(n);
+        }
       }
     }
 
-    const auto &index_map_entry = index_map.find(n);
-    if(index_map_entry != index_map.end() && !index_map_entry->second.empty())
-    {
-      PRECONDITION(weg[n].in.find(n) == weg[n].in.end());
-      add_weg_edge(n, n, any_update);
-      PRECONDITION(weg[old_n].in.find(n) == weg[old_n].in.end());
-      add_weg_edge(n, old_n, not_exprt{any_update});
-    }
+    std::cout << "Transformed " << n << std::endl;
+    print_weg(std::cout);
   }
 }
 

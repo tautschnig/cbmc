@@ -135,7 +135,9 @@ protected:
   void remove_aliases();
 
   /// Split all edges into update nodes into ones where the update took place
-  /// and those where no update was done.
+  /// and those where no update was done. This turns the graph into an equality
+  /// graph: the conditions attached to edges describe when the arrays are
+  /// equal, including the results of updates.
   void adjust_update_edges();
 
   /// Adds all the constraints eagerly by implementing preprocessing and
