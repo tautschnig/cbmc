@@ -76,12 +76,6 @@ literalt arrayst::record_array_equality(
     op0.type().id() == ID_array,
     "record_array_equality parameter should be array-typed");
 
-  literalt l = SUB::equality(op0, op1);
-
-#ifdef DEBUG_ARRAYST
-  std::cout << "LIT " << l.get() << " == " << format(equality) << '\n';
-#endif
-
   const wegt::node_indext a1 = collect_arrays(op0);
   const wegt::node_indext a2 = collect_arrays(op1);
 
@@ -90,9 +84,24 @@ literalt arrayst::record_array_equality(
   // do not need to add any edge.
   if(a1 == a2)
   {
+    literalt l = SUB::equality(op0, op1);
     CHECK_RETURN(l.is_true());
     return l;
   }
+
+  auto edge_it = weg[a1].out.find(a2);
+  if(edge_it != weg[a1].out.end())
+  {
+    DATA_INVARIANT(edge_it->second.id() == ID_literal,
+                   "edge should be annotated with literal");
+
+    return to_literal_expr(edge_it->second).get_literal();
+  }
+
+  literalt l = SUB::equality(op0, op1);
+#ifdef DEBUG_ARRAYST
+  std::cout << "LIT " << l.get() << " == " << format(equality) << '\n';
+#endif
 
   // one undirected edge for each array equality
   add_weg_edge(a1, a2, literal_exprt{l});
@@ -193,12 +202,6 @@ void arrayst::merge_nodes(wegt::node_indext src, wegt::node_indext dest)
 
   weg[src].in.clear();
   weg[src].out.clear();
-
-  // TODO: we lose the inverse mapping from values to ARRAY[index] expressions
-  // when the ARRAY node is not the root, add constraints to fix this
-  // (iterating over all non-trivial union-find entries; use instantiate() in
-  // this process)
-  index_map[dest].insert(index_map[src].begin(), index_map[src].end());
 }
 
 void arrayst::collect_indices(const exprt &expr)
@@ -239,7 +242,10 @@ void arrayst::collect_indices(const exprt &expr)
 #ifdef DEBUG_ARRAYST
         std::cout << "RAI: " << format(e) << '\n';
 #endif
-        wegt::node_indext number = collect_arrays(e.array());
+        collect_arrays(e.array());
+        // We do not use the return value of collect_arrays here to get the
+        // array-specific index and not the merged index computed via arrays_uf.
+        wegt::node_indext number = *arrays.get_number(e.array());
         index_map[number].insert(e.index());
       }
     }
@@ -271,6 +277,7 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
       array_type == with_expr.old().type(),
       "collect_arrays got 'with' without matching types",
       irep_pretty_diagnosticst{a});
+    collect_arrays(with_expr.old());
 
     for(std::size_t i = 1; i < with_expr.operands().size(); i += 2)
     {
@@ -874,7 +881,7 @@ void arrayst::process_weg_path(
   }
 }
 
-static exprt instantiate(const exprt &array, const exprt &index)
+exprt arrayst::instantiate(const exprt &array, const exprt &index) const
 {
   // TODO: we should check array bounds once for each SCC and each index
   if(array.id() == ID_array)
@@ -930,7 +937,7 @@ static exprt instantiate(const exprt &array, const exprt &index)
 
     // compare all updates if no syntactic match was found
     PRECONDITION(with_expr.operands().size() >= 3);
-    exprt result = with_expr.operands()[2];
+    exprt result = instantiate(arrays[arrays_uf.find(*arrays.get_number(with_expr.old()))], index);
     for(std::size_t i = 3; i < with_expr.operands().size(); i += 2)
     {
       const exprt &index_cand = with_expr.operands()[i];
@@ -988,32 +995,62 @@ std::ostream &arrayst::print_weg(std::ostream &os) const
 
 void arrayst::add_node_equalities()
 {
-  XXX collect indices must also attach index set to actual node, not just merged root;
+  // we will iterate while possibly adding keys to the map, so iterate on a copy
+  auto index_map_copy = index_map;
+  for(const auto &index_entry : index_map_copy)
+  {
+    if(index_entry.second.empty())
+      continue;
+
+    auto n = index_entry.first;
+    auto root = arrays_uf.find(n);
+    if(root != n)
+    {
+      PRECONDITION(arrays[n].id() == ID_symbol);
+      for(const auto &index : index_entry.second)
+      {
+        const index_exprt rhs{arrays[root], index};
+        CHECK_RETURN(rhs.type().id() != ID_array ||
+               arrays.get_number(rhs).has_value());
+        equal_exprt equality{index_exprt{arrays[n], index}, rhs};
+#ifdef DEBUG_ARRAYST
+        std::cout << "N1: " << format(equality) << '\n';
+#endif
+        set_to_true(equality);
+      }
+    }
+  }
+
   for(auto &index_entry : index_map)
   {
     if(index_entry.second.empty())
       continue;
 
     auto n = index_entry.first;
+    auto root = arrays_uf.find(n);
     if(arrays[n].id() == ID_with)
     {
-      DATA_INVARIANT(arrays_uf.find(n) == n,
+      DATA_INVARIANT(n == root,
                      "update node expected to be root");
-      add equalities for all matching indices and remove from index set;
-    }
-    else
-    {
-      PRECONDITION(arrays[n].id() == ID_symbol);
-      auto root = arrays_uf.find(n);
-      if(root != n)
+
+      const with_exprt &with_expr = to_with_expr(arrays[n]);
+
+      for(std::size_t i = 1; i < with_expr.operands().size(); i += 2)
       {
-        for(const auto &index : index_entry.second)
+        const exprt &update_index = with_expr.operands()[i];
+        auto index_set_it = index_entry.second.find(update_index);
+        if(index_set_it != index_entry.second.end())
         {
-          set_to_true(instantiate equalities);
+          set_to_true(equal_exprt{index_exprt{arrays[n], *index_set_it}, with_expr.operands()[i + 1]});
+          index_entry.second.erase(index_set_it);
         }
       }
     }
   }
+
+  // TODO add constraints for WITH with index that cannot be syntactically
+  // resolved:
+  // set_to_true(index == with-index ==> value)
 }
 
 void arrayst::adjust_update_edges()
@@ -1079,7 +1116,7 @@ void arrayst::adjust_update_edges()
       continue;
 
     const with_exprt &with_expr = to_with_expr(arrays[n]);
-    const auto old_n = arrays_uf.find(arrays.number(with_expr.old()));
+    const auto old_n = arrays_uf.find(*arrays.get_number(with_expr.old()));
     PRECONDITION(weg[n].out.find(old_n) == weg[n].out.end());
 
     exprt::operandst equalities;
@@ -1124,8 +1161,10 @@ void arrayst::adjust_update_edges()
       add_no_update_edges(updates.second, true_exprt{}, n);
     }
 
+#  ifdef DEBUG_ARRAYST
     std::cout << "Transformed " << n << std::endl;
     print_weg(std::cout);
+#endif
   }
 }
 
@@ -1351,7 +1390,8 @@ void arrayst::add_array_constraints()
 #endif
 
   // TODO: we actually need a fixed point here, and we should do this after all
-  // the graph transforms
+  // the graph transforms -- but some of the transforms depend on the index set
+  // being (non-)empty?!
   for(std::size_t i = 0; i < arrays.size(); ++i)
   {
     if(arrays[i].id() == ID_array_comprehension)
@@ -1390,14 +1430,23 @@ void arrayst::add_array_constraints()
     const index_sett &index_set = scc_index_map[scc_mapping[n]];
     for(const auto &index : index_set)
     {
-      exprt n_indexed = instantiate(arrays[n], index);
+      index_exprt n_indexed{arrays[n], index};
 
       for(const auto &in_edge : weg[n].in)
       {
         if(in_edge.first > n)
           continue;
 
+        // TODO: instantiate blindly assumes that preconditions ensure there is
+        // at least one valid case
         exprt other_indexed = instantiate(arrays[in_edge.first], index);
+        CHECK_RETURN(other_indexed.type().id() != ID_array ||
+               arrays.get_number(other_indexed).has_value());
+
+        // TODO: this might not hold for multi-dimensional arrays
+        PRECONDITION(n_indexed.type().id() != ID_array ||
+                     weg[arrays_uf.find(*arrays.get_number(n_indexed))].out.count(
+                       arrays_uf.find(*arrays.get_number(other_indexed))) != 0);
 
         exprt cond = in_edge.second;
         replace_symbolt replace_dummy;
@@ -1409,6 +1458,9 @@ void arrayst::add_array_constraints()
 #ifdef DEBUG_ARRAYST
         std::cout << "E1: " << format(implication) << '\n';
 #endif
+        // TODO: these instantiations should _not_ affect the graph or the index
+        // map as these are constraints valid for a particular index only! Which
+        // would also address the above TODO about multi-dimensional arrays.
         set_to_true(implication);
       }
     }
@@ -1607,12 +1659,12 @@ void arrayst::add_array_constraints()
     needs_Ackermann_constraints.insert(a);
 #  endif
   }
+#endif
 
   // add the Ackermann constraints
   log.status() << "Adding Ackermann constraints" << messaget::eom;
   add_array_Ackermann_constraints();
 
-#endif
   log.status() << "Completed array post-processing" << messaget::eom;
 }
 
@@ -1628,9 +1680,12 @@ void arrayst::add_array_Ackermann_constraints()
   // iterate over arrays
   // We need these constraints whenever two indices may be the same but there
   // was no recorded write at that index. This also happens with array literals.
-  // for(std::size_t i = 0; i < arrays.size(); i++)
-  for(auto i : needs_Ackermann_constraints)
+  for(std::size_t i = 0; i < arrays.size(); i++)
+  // for(auto i : needs_Ackermann_constraints)
   {
+    if(arrays_uf.find(i) != i)
+      continue;
+
     const index_sett &index_set = index_map[i];
 
 #  ifdef DEBUG_ARRAYST

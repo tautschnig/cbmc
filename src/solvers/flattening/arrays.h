@@ -32,7 +32,7 @@ class index_exprt;
 class with_exprt;
 class update_exprt;
 
-#define DEBUG_ARRAYST
+// #define DEBUG_ARRAYST
 #ifdef DEBUG_ARRAYST
 #  include <util/format_expr.h>
 
@@ -131,14 +131,23 @@ protected:
   /// associated arrays are known to be equal.
   void merge_nodes(wegt::node_indext src, wegt::node_indext dest);
 
-  /// Disconnect non-store nodes with empty index sets.
-  void remove_aliases();
+  /// Index into \p array at \p index.
+  exprt instantiate(const exprt &array, const exprt &index) const;
+
+  /// Add equalities over indexed accesses to arrays in the same equivalence
+  /// class. Also expand the index map of all representatives of equivalence
+  /// classes to contain indices that cannot be resolved within the equivalence
+  /// class.
+  void add_node_equalities();
 
   /// Split all edges into update nodes into ones where the update took place
   /// and those where no update was done. This turns the graph into an equality
   /// graph: the conditions attached to edges describe when the arrays are
   /// equal, including the results of updates.
   void adjust_update_edges();
+
+  /// Disconnect non-store nodes with empty index sets.
+  void remove_aliases();
 
   /// Adds all the constraints eagerly by implementing preprocessing and
   /// Algorithms 7.4.1 and 7.4.2 of Section 7.4 of Kroening and Strichman (which
