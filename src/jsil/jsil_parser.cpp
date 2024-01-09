@@ -11,6 +11,8 @@ Author: Michael Tautschnig, tautschn@amazon.com
 
 #include "jsil_parser.h"
 
+int jsil_parsert::instance_count = 0;
+
 int yyjsillex_init_extra(jsil_parsert *, void **);
 int yyjsillex_destroy(void *);
 int yyjsilparse(jsil_parsert &, void *);

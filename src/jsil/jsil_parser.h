@@ -22,6 +22,16 @@ public:
   explicit jsil_parsert(message_handlert &message_handler)
     : parsert(message_handler)
   {
+    // Simplistic check that we don't attempt to do reentrant parsing as the
+    // Bison-generated parser has global state.
+    PRECONDITION(++instance_count == 1);
+  }
+
+  jsil_parsert(const jsil_parsert &) = delete;
+
+  ~jsil_parsert() override
+  {
+    --instance_count;
   }
 
   jsil_parse_treet parse_tree;
@@ -39,6 +49,9 @@ public:
 
   // internal state of the scanner
   std::string string_literal;
+
+protected:
+  static int instance_count;
 };
 
 #endif // CPROVER_JSIL_JSIL_PARSER_H

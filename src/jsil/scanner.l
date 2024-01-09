@@ -5,7 +5,6 @@
 %option stack
 %option noyywrap
 %option reentrant
-%option bison-bridge
 %option extra-type="jsil_parsert *"
 
 %{
@@ -29,7 +28,6 @@
 // extern int yyjsildebug;
 
 int yyjsilerror(jsil_parsert &, void *, const std::string &);
-#define yyjsillval (*yylval_param)
 
 #define loc() \
   { newstack(yyjsillval); PARSER.set_source_location(parser_stack(yyjsillval)); }
@@ -37,7 +35,7 @@ int yyjsilerror(jsil_parsert &, void *, const std::string &);
 jsil_parsert *yyjsilget_extra(void *);
 char *yyjsilget_text(void *);
 
-static int make_identifier(YYSTYPE *yylval_param, void *yyscanner)
+static int make_identifier(void *yyscanner)
 {
   loc();
 
@@ -142,65 +140,65 @@ string_lit      ["]{s_char}*["]
 }
 
 <GRAMMAR,STATEMENTS>{
-  "#global_is_nan" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#global_is_finite" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#boolean_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#boolean_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#boolean_prototype_to_string" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#boolean_prototype_value_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#object_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#object_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#object_prototype_to_string" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#object_prototype_value_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#object_prototype_is_prototype_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#object_get_prototype_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#number_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#number_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#number_prototype_to_string" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#number_prototype_value_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#string_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#string_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#string_prototype_to_string" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#string_prototype_value_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#error_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#terror_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#rerror_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#serror_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#evalerror_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#rangeerror_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#urierror_call_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#function_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#function_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#function_protottype_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#array_call" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
-  "#array_construct" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#global_is_nan" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#global_is_finite" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#boolean_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#boolean_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#boolean_prototype_to_string" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; } 
+  "#boolean_prototype_value_of" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#object_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#object_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#object_prototype_to_string" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#object_prototype_value_of" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#object_prototype_is_prototype_of" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#object_get_prototype_of" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#number_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#number_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#number_prototype_to_string" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#number_prototype_value_of" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#string_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#string_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#string_prototype_to_string" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#string_prototype_value_of" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#error_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#terror_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#rerror_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#serror_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#evalerror_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#rangeerror_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#urierror_call_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#function_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#function_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#function_protottype_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#array_call" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
+  "#array_construct" { make_identifier(yyscanner); return TOK_BUILTIN_IDENTIFIER; }
 
-  "#[[GetOwnPropertyDefault]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[GetOwnPropertyString]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#GetValue"   { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#PutValue"   { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[Get]]"    { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[GetDefault]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[GetFunction]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[Put]]"    { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[HasProperty]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[DefaultValue]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[DefineOwnPropery]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[DefineOwnProperyDefault]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#[[DefineOwnProperyArray]]" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToPrimitive" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToBoolean"  { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToNumber"   { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToNumberPrim" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToUint32"   { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToString"   { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToStringPrim" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#ToObject"   { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#CheckObjectCoercible" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#IsCallable" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#AbstractRelation" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#StrictEquality" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
-  "#StrictEqualitySameType" { make_identifier(yylval_param, yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[GetOwnPropertyDefault]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[GetOwnPropertyString]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#GetValue"   { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#PutValue"   { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[Get]]"    { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[GetDefault]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[GetFunction]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[Put]]"    { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[HasProperty]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[DefaultValue]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[DefineOwnPropery]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[DefineOwnProperyDefault]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#[[DefineOwnProperyArray]]" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToPrimitive" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToBoolean"  { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToNumber"   { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToNumberPrim" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToUint32"   { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToString"   { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToStringPrim" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#ToObject"   { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#CheckObjectCoercible" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; } 
+  "#IsCallable" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#AbstractRelation" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#StrictEquality" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
+  "#StrictEqualitySameType" { make_identifier(yyscanner); return TOK_SPEC_IDENTIFIER; }
 }
 
 <GRAMMAR>{
@@ -216,7 +214,7 @@ string_lit      ["]{s_char}*["]
 
   /*** scanner parsed tokens (these have a value!) ***/
 
-  {identifier}  { return make_identifier(yylval_param, yyscanner); }
+  {identifier}  { return make_identifier(yyscanner); }
 
   "{"           { loc(); BEGIN(STATEMENTS); return '{'; }
   /* This catches all one-character operators */
@@ -286,7 +284,7 @@ string_lit      ["]{s_char}*["]
 
   /*** scanner parsed tokens (these have a value!) ***/
 
-  {identifier}  { return make_identifier(yylval_param, yyscanner); }
+  {identifier}  { return make_identifier(yyscanner); }
 
   {float}|{integer}  {
                        newstack(yyjsillval); 
@@ -295,48 +293,48 @@ string_lit      ["]{s_char}*["]
                        return TOK_FLOATING;
                      }
 
-  "#lg"         { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lg_isNan"   { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lg_isFinite" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lop"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lop_toString" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lop_valueOf" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lop_isPrototypeOf" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lfunction"  { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lfp"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#leval"      { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lerror"     { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lep"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lrerror"    { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lrep"       { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lterror"    { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#ltep"       { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lserror"    { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lsep"       { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#levalerror" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#levalerrorp" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lrangeerror" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lrangeerrorp" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lurierror"  { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lurierrorp" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lobject"    { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lobject_get_prototype_of" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lboolean"   { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lbp"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lbp_toString" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lbp_valueOf" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lnumber"    { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lnp"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lnp_toString" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lnp_valueOf" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lmath"      { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lstring"    { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lsp"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lsp_toString" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lsp_valueOf" { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#larray"     { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#lap"        { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
-  "#ljson"      { make_identifier(yylval_param, yyscanner); return TOK_BUILTIN_LOC; }
+  "#lg"         { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lg_isNan"   { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lg_isFinite" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lop"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lop_toString" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lop_valueOf" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; } 
+  "#lop_isPrototypeOf" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lfunction"  { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lfp"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#leval"      { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lerror"     { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lep"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lrerror"    { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lrep"       { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lterror"    { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#ltep"       { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lserror"    { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lsep"       { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#levalerror" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#levalerrorp" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lrangeerror" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lrangeerrorp" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lurierror"  { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lurierrorp" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lobject"    { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lobject_get_prototype_of" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lboolean"   { make_identifier(yyscanner); return TOK_BUILTIN_LOC; } 
+  "#lbp"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lbp_toString" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lbp_valueOf" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lnumber"    { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lnp"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lnp_toString" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lnp_valueOf" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lmath"      { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lstring"    { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lsp"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lsp_toString" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lsp_valueOf" { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#larray"     { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#lap"        { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
+  "#ljson"      { make_identifier(yyscanner); return TOK_BUILTIN_LOC; }
 
   "}"           { loc(); BEGIN(GRAMMAR); return '}'; }
   /* This catches all one-character operators */

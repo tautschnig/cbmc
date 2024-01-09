@@ -5,7 +5,7 @@
 
 #include "jsil_parser.h"
 
-int yyjsillex(unsigned *, void *);
+int yyjsillex(void *);
 char *yyjsilget_text(void *);
 
 int yyjsilerror(
@@ -38,18 +38,8 @@ int yyjsilerror(
 // unreachable code
 #pragma warning(disable:4702)
 #endif
-
-// yynerrs may never be used. Will be fixed when bison > 3.8.2 is released (see
-// http://git.savannah.gnu.org/cgit/bison.git/commit/?id=a166d5450e3f47587b98f6005f9f5627dbe21a5b)
-#ifdef __clang__
-#  pragma clang diagnostic ignored "-Wunused-but-set-variable"
-#endif
 %}
 
-// Should be "%define api.pure full" instead of "%pure-parser", but macOS ships
-// bison 2.3, which doesn't yet support this. We have to invoke bison with
-// -Wno-deprecated on all platforms other than macOS.
-%pure-parser
 %parse-param {jsil_parsert &jsil_parser}
 %parse-param {void *scanner}
 %lex-param {void *scanner}
