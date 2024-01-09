@@ -1,24 +1,19 @@
 %{
 
 // #define YYDEBUG 1
-#define PARSER (*jsil_parser)
+#define PARSER jsil_parser
 
 #include "jsil_parser.h"
 
-int yyjsillex();
-extern char *yyjsiltext;
+int yyjsillex(unsigned *, void *);
+char *yyjsilget_text(void *);
 
-static jsil_parsert *jsil_parser;
-int yyjsilparse(void);
-int yyjsilparse(jsil_parsert &_jsil_parser)
+int yyjsilerror(
+  jsil_parsert &jsil_parser,
+  void *scanner,
+  const std::string &error)
 {
-  jsil_parser = &_jsil_parser;
-  return yyjsilparse();
-}
-
-int yyjsilerror(const std::string &error)
-{
-  jsil_parser->parse_error(error, yyjsiltext);
+  jsil_parser.parse_error(error, yyjsilget_text(scanner));
   return 0;
 }
 
@@ -44,8 +39,22 @@ int yyjsilerror(const std::string &error)
 #pragma warning(disable:4702)
 #endif
 
-/*** token declaration **************************************************/
+// yynerrs may never be used. Will be fixed when bison > 3.8.2 is released (see
+// http://git.savannah.gnu.org/cgit/bison.git/commit/?id=a166d5450e3f47587b98f6005f9f5627dbe21a5b)
+#ifdef __clang__
+#  pragma clang diagnostic ignored "-Wunused-but-set-variable"
+#endif
 %}
+
+// Should be "%define api.pure full" instead of "%pure-parser", but macOS ships
+// bison 2.3, which doesn't yet support this. We have to invoke bison with
+// -Wno-deprecated on all platforms other than macOS.
+%pure-parser
+%parse-param {jsil_parsert &jsil_parser}
+%parse-param {void *scanner}
+%lex-param {void *scanner}
+
+/*** token declaration **************************************************/
 
 /*** special scanner reports ***/
 

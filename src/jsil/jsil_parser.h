@@ -16,10 +16,6 @@ Author: Michael Tautschnig, tautschn@amazon.com
 
 #include "jsil_parse_tree.h"
 
-class jsil_parsert;
-int yyjsilparse(jsil_parsert &);
-void jsil_scanner_init(jsil_parsert &);
-
 class jsil_parsert:public parsert
 {
 public:
@@ -30,13 +26,9 @@ public:
 
   jsil_parse_treet parse_tree;
 
-  virtual bool parse() override
-  {
-    jsil_scanner_init(*this);
-    return yyjsilparse(*this) != 0;
-  }
+  bool parse() override;
 
-  virtual void clear() override
+  void clear() override
   {
     parsert::clear();
     parse_tree.clear();
