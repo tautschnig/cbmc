@@ -30,7 +30,7 @@ macro(generic_bison name)
     endif()
 
     if(${BISON_VERSION} VERSION_GREATER "2.3")
-      set(bison_warnings_as_errors "-Werror -Wno-deprecated")
+      set(bison_warnings_as_errors "-Werror")
     endif()
     bison_target(
         parser

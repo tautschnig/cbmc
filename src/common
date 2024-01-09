@@ -77,7 +77,7 @@ else ifeq ($(filter-out FreeBSD OpenBSD,$(BUILD_ENV_)),)
   ifeq ($(origin CXX),default)
     CXX    = clang++
   endif
-  YFLAGS ?= -v -Werror -Wno-deprecated
+  YFLAGS ?= -v -Werror
 else
   LINKLIB = ar rcT $@ $^
   LINKBIN = $(CXX) $(LINKFLAGS) -o $@ -Wl,--start-group $^ -Wl,--end-group $(LIBS)
@@ -90,7 +90,7 @@ else
     CXX    = g++
     #CXX    = icpc
   endif
-  YFLAGS ?= -v -Werror -Wno-deprecated
+  YFLAGS ?= -v -Werror
 endif
 ifeq ($(origin YACC),default)
   YACC   = bison
@@ -127,7 +127,7 @@ endif
 ifeq ($(origin YACC),default)
   YACC   = bison -y -Wno-error=yacc
 endif
-  YFLAGS ?= -v -Werror -Wno-deprecated
+  YFLAGS ?= -v -Werror
 ifeq ($(origin LEX),default)
   LEX    = flex
 endif
@@ -155,7 +155,7 @@ endif
 ifeq ($(origin YACC),default)
   YACC   = win_bison -y -Wno-error=yacc
 endif
-  YFLAGS ?= -v -Werror -Wno-deprecated
+  YFLAGS ?= -v -Werror
 ifeq ($(origin LEX),default)
   LEX    = win_flex
 endif
