@@ -66,6 +66,10 @@ void goto_symext::havoc_rec(
   {
     havoc_rec(state, guard, to_member_expr(dest).struct_op());
   }
+  else if(dest.id() == ID_constant || dest.id() == ID_string_constant)
+  {
+    // we don't havoc constants
+  }
   else
   {
     INVARIANT_WITH_DIAGNOSTICS(
