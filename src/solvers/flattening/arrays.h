@@ -32,7 +32,7 @@ class index_exprt;
 class with_exprt;
 class update_exprt;
 
-// #define DEBUG_ARRAYST
+#define DEBUG_ARRAYST
 #ifdef DEBUG_ARRAYST
 #  include <util/format_expr.h>
 
@@ -183,7 +183,7 @@ protected:
   struct stack_entryt
   {
     wegt::node_indext n;
-    optionalt<wegt::edgest::const_iterator> edge;
+    std::optional<wegt::edgest::const_iterator> edge;
     explicit stack_entryt(wegt::node_indext _n) : n(_n)
     {
     }

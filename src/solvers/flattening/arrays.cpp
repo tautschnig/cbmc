@@ -143,13 +143,13 @@ void arrayst::set_arrays_equal(const equal_exprt &equality)
     op0.id() == ID_array || op0.id() == ID_array_comprehension ||
     op0.id() == ID_array_of || op0.id() == ID_with)
   {
-    assert(op1.id() == ID_symbol);
+    PRECONDITION(op1.id() == ID_symbol);
     arrays_uf.make_union(a1, a2);
-    assert(arrays_uf.is_root(a1)); // TODO: need to use re_root if this fails
+    CHECK_RETURN(arrays_uf.is_root(a1)); // TODO: need to use re_root if this fails
 #if 0
     like this:
     const auto &root_expr = arrays[root];
-    assert(root_expr.id() == ID_symbol);
+    PRECONDITION(root_expr.id() == ID_symbol);
     arrays_uf.re_root(a1, a2);
 #endif
     merge_nodes(a2, a1);
@@ -158,9 +158,9 @@ void arrayst::set_arrays_equal(const equal_exprt &equality)
     op1.id() == ID_array || op1.id() == ID_array_comprehension ||
     op1.id() == ID_array_of || op1.id() == ID_with)
   {
-    assert(op0.id() == ID_symbol);
+    PRECONDITION(op0.id() == ID_symbol);
     arrays_uf.make_union(a2, a1);
-    assert(arrays_uf.is_root(a2));
+    CHECK_RETURN(arrays_uf.is_root(a2));
     merge_nodes(a1, a2);
   }
   else
@@ -380,7 +380,7 @@ arrayst::wegt::node_indext arrayst::collect_arrays(const exprt &a)
 
     // TODO: not clear what the semantics should be for element types could be
     // different
-    assert(false);
+    PRECONDITION(false);
     add_weg_edge(a_index, op_index, literal_exprt{const_literal(true)});
   }
   else if(a.id()==ID_index)
