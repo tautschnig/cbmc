@@ -324,7 +324,7 @@ void arrayst::add_array_constraints()
   }
 
   // add the Ackermann constraints
-  add_array_Ackermann_constraints();
+  // add_array_Ackermann_constraints();
 }
 
 void arrayst::add_array_Ackermann_constraints()
@@ -448,11 +448,29 @@ void arrayst::add_array_constraints_equality(
   {
     const typet &element_type1 =
       to_array_type(array_equality.f1.type()).element_type();
-    index_exprt index_expr1(array_equality.f1, index, element_type1);
+    exprt index_expr1 = index_exprt(array_equality.f1, index, element_type1);
+    if(auto with_expr = expr_try_dynamic_cast<with_exprt>(array_equality.f1))
+    {
+      index_expr1 = index_exprt{with_expr->old(), index};
+
+      for(std::size_t i = 1; i < with_expr->operands().size(); i += 2)
+      {
+        index_expr1 = if_exprt{equal_exprt{with_expr->operands()[i], index}, with_expr->operands()[i + 1], index_expr1};
+      }
+    }
 
     const typet &element_type2 =
       to_array_type(array_equality.f2.type()).element_type();
-    index_exprt index_expr2(array_equality.f2, index, element_type2);
+    exprt index_expr2 = index_exprt(array_equality.f2, index, element_type2);
+    if(auto with_expr = expr_try_dynamic_cast<with_exprt>(array_equality.f2))
+    {
+      index_expr2 = index_exprt{with_expr->old(), index};
+
+      for(std::size_t i = 1; i < with_expr->operands().size(); i += 2)
+      {
+        index_expr2 = if_exprt{equal_exprt{with_expr->operands()[i], index}, with_expr->operands()[i + 1], index_expr2};
+      }
+    }
 
     DATA_INVARIANT(
       index_expr1.type()==index_expr2.type(),
