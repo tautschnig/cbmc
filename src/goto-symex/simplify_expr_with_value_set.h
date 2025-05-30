@@ -27,6 +27,8 @@ public:
   [[nodiscard]] resultt<>
   simplify_inequality(const binary_relation_exprt &) override;
   [[nodiscard]] resultt<>
+  simplify_inequality_pointer_object(const binary_relation_exprt &) override;
+  [[nodiscard]] resultt<>
   simplify_pointer_offset(const pointer_offset_exprt &) override;
 
 protected:
