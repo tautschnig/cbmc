@@ -685,7 +685,7 @@ static bool is_multiplication_by_constant(const exprt &expr)
   if(expr.operands().size() != 2)
     return false;
   return to_multi_ary_expr(expr).op0().is_constant() ||
-    to_multi_ary_expr(expr).op1().is_constant();
+         to_multi_ary_expr(expr).op1().is_constant();
 }
 
 std::optional<exprt> get_subexpression_at_offset(
@@ -756,12 +756,10 @@ std::optional<exprt> get_subexpression_at_offset(
         const plus_exprt &offset_plus = to_plus_expr(offset);
         const mult_exprt &mul = to_mult_expr(offset_plus.op0());
         const exprt &remaining_offset = offset_plus.op1();
-        const auto &const_factor = numeric_cast_v<mp_integer>(to_constant_expr(
-          mul.op0().is_constant() ? mul.op0()
-                                          : mul.op1()));
-        const exprt &other_factor = mul.op0().is_constant()
-                                      ? mul.op1()
-                                      : mul.op0();
+        const auto &const_factor = numeric_cast_v<mp_integer>(
+          to_constant_expr(mul.op0().is_constant() ? mul.op0() : mul.op1()));
+        const exprt &other_factor =
+          mul.op0().is_constant() ? mul.op1() : mul.op0();
 
         if(const_factor % (*elem_size_bits / config.ansi_c.char_width) != 0)
           return {};
