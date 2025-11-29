@@ -8,6 +8,7 @@
 #include <util/expr_cast.h>
 #include <util/floatbv_expr.h>
 #include <util/mathematical_expr.h>
+#include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/pointer_predicates.h>
 #include <util/range.h>
@@ -19,6 +20,7 @@
 #include <solvers/smt2_incremental/theories/smt_array_theory.h>
 #include <solvers/smt2_incremental/theories/smt_bit_vector_theory.h>
 #include <solvers/smt2_incremental/theories/smt_core_theory.h>
+#include <solvers/smt2_incremental/theories/smt_integer_theory.h>
 
 #include <algorithm>
 #include <functional>
@@ -96,6 +98,11 @@ static smt_sortt convert_type_to_smt_sort(const array_typet &type)
     convert_type_to_smt_sort(type.element_type())};
 }
 
+static smt_sortt convert_type_to_smt_sort(const integer_typet &type)
+{
+  return smt_int_sortt{};
+}
+
 smt_sortt convert_type_to_smt_sort(const typet &type)
 {
   if(const auto bool_type = type_try_dynamic_cast<bool_typet>(type))
@@ -109,6 +116,10 @@ smt_sortt convert_type_to_smt_sort(const typet &type)
   if(const auto array_type = type_try_dynamic_cast<array_typet>(type))
   {
     return convert_type_to_smt_sort(*array_type);
+  }
+  if(const auto integer_type = type_try_dynamic_cast<integer_typet>(type))
+  {
+    return convert_type_to_smt_sort(*integer_type);
   }
   UNIMPLEMENTED_FEATURE("Generation of SMT formula for type: " + type.pretty());
 }
@@ -237,6 +248,13 @@ struct sort_based_cast_to_bit_vector_convertert final
       "Generation of SMT formula for type cast to bit vector from type: " +
       from_type.pretty());
   }
+
+  void visit(const smt_int_sortt &) override
+  {
+    UNIMPLEMENTED_FEATURE(
+      "Generation of SMT formula for type cast to bit vector from integer "
+      "type");
+  }
 };
 
 static smt_termt convert_bit_vector_cast(
@@ -324,6 +342,21 @@ struct sort_based_literal_convertert : public smt_sort_const_downcast_visitort
     UNIMPLEMENTED_FEATURE(
       "Conversion of array SMT literal " + array_sort.pretty());
   }
+
+  void visit(const smt_int_sortt &) override
+  {
+    if(can_cast_type<integer_typet>(member_input.type()))
+    {
+      const auto value = numeric_cast_v<mp_integer>(member_input);
+      result = smt_int_constant_termt{value};
+    }
+    else
+    {
+      UNIMPLEMENTED_FEATURE(
+        "Conversion of non-integer constant to integer SMT sort: " +
+        member_input.type().pretty());
+    }
+  }
 };
 
 static smt_termt convert_expr_to_smt(const constant_exprt &constant_literal)
@@ -336,15 +369,6 @@ static smt_termt convert_expr_to_smt(const constant_exprt &constant_literal)
     // and an offset of 0 into the object.
     const auto address = 0;
     return smt_bit_vector_constant_termt{address, bit_width};
-  }
-  if(constant_literal.type() == integer_typet{})
-  {
-    // This is converting integer constants into bit vectors for use with
-    // bit vector based smt logics. As bit vector widths are not specified for
-    // non bit vector types, this chooses a width based on the minimum needed
-    // to hold the integer constant value.
-    const auto value = numeric_cast_v<mp_integer>(constant_literal);
-    return smt_bit_vector_constant_termt{value, address_bits(value + 1)};
   }
   const auto sort = convert_type_to_smt_sort(constant_literal.type());
   sort_based_literal_convertert converter(constant_literal);
@@ -639,9 +663,19 @@ static smt_termt convert_expr_to_smt(
   const type_size_mapt &pointer_sizes)
 {
   if(std::all_of(
-       plus.operands().cbegin(), plus.operands().cend(), [](exprt operand) {
-         return can_cast_type<integer_bitvector_typet>(operand.type());
-       }))
+       plus.operands().cbegin(),
+       plus.operands().cend(),
+       [](exprt operand)
+       { return can_cast_type<integer_typet>(operand.type()); }))
+  {
+    return convert_multiary_operator_to_terms(
+      plus, converted, smt_integer_theoryt::add);
+  }
+  else if(std::all_of(
+            plus.operands().cbegin(),
+            plus.operands().cend(),
+            [](exprt operand)
+            { return can_cast_type<integer_bitvector_typet>(operand.type()); }))
   {
     return convert_multiary_operator_to_terms(
       plus, converted, smt_bit_vector_theoryt::add);
@@ -840,9 +874,17 @@ static smt_termt convert_expr_to_smt(
   if(std::all_of(
        multiply.operands().cbegin(),
        multiply.operands().cend(),
-       [](exprt operand) {
-         return can_cast_type<integer_bitvector_typet>(operand.type());
-       }))
+       [](exprt operand)
+       { return can_cast_type<integer_typet>(operand.type()); }))
+  {
+    return convert_multiary_operator_to_terms(
+      multiply, converted, smt_integer_theoryt::mul);
+  }
+  else if(std::all_of(
+            multiply.operands().cbegin(),
+            multiply.operands().cend(),
+            [](exprt operand)
+            { return can_cast_type<integer_bitvector_typet>(operand.type()); }))
   {
     return convert_multiary_operator_to_terms(
       multiply, converted, smt_bit_vector_theoryt::multiply);

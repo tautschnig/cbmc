@@ -240,6 +240,25 @@ valid_smt_bit_vector_constant(const irept &parse_tree)
   return {};
 }
 
+static std::optional<smt_termt> valid_smt_int_constant(const irept &parse_tree)
+{
+  if(!parse_tree.get_sub().empty() || parse_tree.id().empty())
+    return {};
+  const auto value_string = id2string(parse_tree.id());
+  // SMT integer literals are sequences of digits, optionally preceded by '-'
+  if(value_string.empty())
+    return {};
+  const auto start = (value_string[0] == '-') ? 1u : 0u;
+  if(start >= value_string.size())
+    return {};
+  if(!std::all_of(value_string.begin() + start, value_string.end(), ::isdigit))
+  {
+    return {};
+  }
+  const auto value = string2integer(value_string);
+  return {smt_int_constant_termt{value}};
+}
+
 static std::optional<response_or_errort<smt_termt>> try_select_validation(
   const irept &parse_tree,
   const std::unordered_map<irep_idt, smt_identifier_termt> &identifier_table)
@@ -272,6 +291,8 @@ static response_or_errort<smt_termt> validate_term(
     return response_or_errort<smt_termt>{*smt_bool};
   if(const auto bit_vector_constant = valid_smt_bit_vector_constant(parse_tree))
     return response_or_errort<smt_termt>{*bit_vector_constant};
+  if(const auto int_constant = valid_smt_int_constant(parse_tree))
+    return response_or_errort<smt_termt>{*int_constant};
   const auto find_result = identifier_table.find(parse_tree.id());
   if(find_result != identifier_table.end())
     return response_or_errort<smt_termt>{find_result->second};
