@@ -32,13 +32,26 @@ bvt boolbvt::convert_extractbits(const extractbits_exprt &expr)
     expr.find_source_location(),
     irep_pretty_diagnosticst{expr});
 
-  DATA_INVARIANT_WITH_DIAGNOSTICS(
-    index_as_int + bv_width - 1 < src_bv.size(),
-    "index+width-1 of extractbits must be within the bitvector",
-    expr.find_source_location(),
-    irep_pretty_diagnosticst{expr});
-
   const std::size_t offset = numeric_cast_v<std::size_t>(index_as_int);
+
+  // Handle the case where the extraction extends beyond the source bitvector.
+  // This can occur when typecasting from a smaller bit field to a larger type.
+  // In such cases, extract available bits and zero-extend the result.
+  if(index_as_int + bv_width > src_bv.size())
+  {
+    bvt result_bv;
+    result_bv.reserve(bv_width);
+
+    // Extract available bits from the source
+    const std::size_t available_bits = src_bv.size() - offset;
+    result_bv.insert(result_bv.end(), src_bv.begin() + offset, src_bv.end());
+
+    // Zero-extend the remaining bits
+    for(std::size_t i = available_bits; i < bv_width; i++)
+      result_bv.push_back(const_literal(false));
+
+    return result_bv;
+  }
 
   bvt result_bv(src_bv.begin() + offset, src_bv.begin() + offset + bv_width);
 

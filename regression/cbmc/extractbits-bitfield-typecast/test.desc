@@ -1,0 +1,13 @@
+CORE
+main.c
+--bounds-check --pointer-check
+^\[main\.assertion\.[1-6]\] line [0-9]+ assertion .+: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+^EXIT=0$
+^SIGNAL=0$
+--
+--
+Regression test for extractbits assertion failure when typecasting c_bit_field
+to larger integer types.  Bug fixed: assertion "index+width-1 of extractbits
+must be within the bitvector" would fail when extracting bits from a 28-bit
+c_bit_field being typecast to 32-bit bitvector.
