@@ -12,7 +12,9 @@ void *thread1(void * arg)
 void *thread2(void *arg)
 {
   assert(v == &g);
+#ifndef NO_DEREF
   *v = 1;
+#endif
 }
 
 int main()
@@ -26,7 +28,9 @@ int main()
   pthread_join(t2, 0);
 
   assert(v == &g);
+#ifndef NO_DEREF
   assert(*v == 1);
+#endif
 
   return 0;
 }
