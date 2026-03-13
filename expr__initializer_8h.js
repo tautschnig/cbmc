@@ -1,5 +1,7 @@
 var expr__initializer_8h =
 [
-    [ "nondet_initializer", "expr__initializer_8h.html#a7a8db7d5f5394eaba1653fd8cb4b9bbc", null ],
-    [ "zero_initializer", "expr__initializer_8h.html#a66d4e2cbac65c3a8f2ba76b11848aed0", null ]
+    [ "duplicate_per_byte", "expr__initializer_8h.html#a35df199a917b890a21425fe2fe1aaad8", null ],
+    [ "expr_initializer", "expr__initializer_8h.html#a7e18bdbda57473d23d15ece58bde53f0", null ],
+    [ "nondet_initializer", "expr__initializer_8h.html#ae6274b0c5dd2660e065f85d1719ca6c5", null ],
+    [ "zero_initializer", "expr__initializer_8h.html#ad00e17a681f384b4034307548d738a27", null ]
 ];

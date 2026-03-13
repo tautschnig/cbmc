@@ -1,7 +1,7 @@
 var classexpr__initializert =
 [
-    [ "expr_initializert", "classexpr__initializert.html#ada0f53440e2cdcd6ad25c2a122839fa3", null ],
-    [ "expr_initializer_rec", "classexpr__initializert.html#a1bdcc00ff2c6896218f6c0f5678e501c", null ],
-    [ "operator()", "classexpr__initializert.html#a88e8160ac037ab5b1b94f9025f251c0a", null ],
-    [ "ns", "classexpr__initializert.html#aa9f89f7e7e41821ef7c94122e50bd977", null ]
+    [ "expr_initializert", "classexpr__initializert.html#adcdcb45ef33e2634ad85411a19d24789", null ],
+    [ "expr_initializer_rec", "classexpr__initializert.html#a2cfcdd0bfe5b1c2a451c644a0ae20edf", null ],
+    [ "operator()", "classexpr__initializert.html#ae1baf5ec56cade12469eec28e3f92b30", null ],
+    [ "ns", "classexpr__initializert.html#ad79b2d3bb8cc333d6ca007ebff8337c4", null ]
 ];

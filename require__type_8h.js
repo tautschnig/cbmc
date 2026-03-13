@@ -1,6 +1,6 @@
 var require__type_8h =
 [
-    [ "expected_type_argumentt", "structrequire__type_1_1expected__type__argumentt.html", "structrequire__type_1_1expected__type__argumentt" ],
+    [ "require_type::expected_type_argumentt", "structrequire__type_1_1expected__type__argumentt.html", "structrequire__type_1_1expected__type__argumentt" ],
     [ "expected_type_argumentst", "require__type_8h.html#a5900d1bbcd30965f7b26713a744ef690", null ],
     [ "java_lambda_method_handlest", "require__type_8h.html#a676721b0d74262be085f8d95e252437c", null ],
     [ "type_argument_kindt", "require__type_8h.html#af2a04dc283f58952d8e792b52697fafa", [
@@ -31,10 +31,10 @@ var require__type_8h =
     [ "require_java_method", "require__type_8h.html#aeb68328ea57e2665c76d6a9ffcbc9613", null ],
     [ "require_java_method", "require__type_8h.html#aaa8eb5c4363788d40c96d0397760e089", null ],
     [ "require_java_non_generic_class", "require__type_8h.html#ac82db56221874a2bb23e46da3ed0b5bf", null ],
-    [ "require_java_non_generic_type", "require__type_8h.html#a3cd16ad374dc241a1e4199a88a9858ca", null ],
+    [ "require_java_non_generic_type", "require__type_8h.html#ab719d39e30f228105b16e72db62a7606", null ],
     [ "require_lambda_method_handles", "require__type_8h.html#a22769013256cd9d7982872d74853364a", null ],
     [ "require_parameter", "require__type_8h.html#a1b909e6ec9265020577d3279037eafb1", null ],
-    [ "require_pointer", "require__type_8h.html#a24630c7a1c3d7b73ba0f103bc2d0b6b6", null ],
+    [ "require_pointer", "require__type_8h.html#aef2a760b36a5a7dade5b7d7f1f827331", null ],
     [ "require_pointer_to_tag", "require__type_8h.html#a1234b1c25cfaf68e83678a3e2ed131a4", null ],
     [ "require_struct_tag", "require__type_8h.html#a0968181a61d770947f983bbfec29fc0c", null ]
 ];

@@ -1,6 +1,6 @@
 var sentinel__dll_8cpp =
 [
-    [ "sentinel_dll_member", "sentinel__dll_8cpp.html#a16e667d26972edee83e68bac7843e52f", null ],
-    [ "sentinel_dll_next", "sentinel__dll_8cpp.html#a71f3a982f89866cc5ae7acf802d02403", null ],
-    [ "sentinel_dll_prev", "sentinel__dll_8cpp.html#a0e72a4cc1f5f23f79910684be421543a", null ]
+    [ "sentinel_dll_member", "sentinel__dll_8cpp.html#a14060d70f0faa691b04ee67c390a20ec", null ],
+    [ "sentinel_dll_next", "sentinel__dll_8cpp.html#aa73a2b7d83b59a09e4a9909934c9be01", null ],
+    [ "sentinel_dll_prev", "sentinel__dll_8cpp.html#a8ef4baeee62a5c34ae79609fb3788bd1", null ]
 ];

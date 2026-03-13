@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['solvers_45503',['solvers',['../group__solvers.html',1,'']]]
+  ['miniz_0',['miniz',['../group__miniz.html',1,'']]]
 ];

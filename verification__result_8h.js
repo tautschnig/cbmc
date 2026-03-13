@@ -1,7 +1,6 @@
 var verification__result_8h =
 [
     [ "verification_resultt", "structverification__resultt.html", "structverification__resultt" ],
-    [ "USE_DSTRING", "verification__result_8h.html#a1118e74e831941c3f34213d262571e06", null ],
     [ "irep_idt", "verification__result_8h.html#a1ad4faefa9ca542d481e74be9cc01c2c", null ],
     [ "propertiest", "verification__result_8h.html#abd2cd2c17d94e0ef7640da993da898e1", null ],
     [ "prop_statust", "verification__result_8h.html#aad5ef57ee262e5fca2f042a94bc3d7ae", [
@@ -17,5 +16,6 @@ var verification__result_8h =
       [ "PASS", "verification__result_8h.html#a968c86fa056ac6fd9150ef96f64fcd37a7a95bf926a0333f57705aeac07a362a2", null ],
       [ "FAIL", "verification__result_8h.html#a968c86fa056ac6fd9150ef96f64fcd37ac2759effffc94bb9acc71d69fe3e8a1f", null ],
       [ "ERROR", "verification__result_8h.html#a968c86fa056ac6fd9150ef96f64fcd37abb1ca97ec761fc37101737ba0aa2e7c5", null ]
-    ] ]
+    ] ],
+    [ "verifier_result_to_exit_code", "verification__result_8h.html#acb31d5d19813d50dd09ffe4927768b2d", null ]
 ];
