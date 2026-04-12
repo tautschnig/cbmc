@@ -10,4 +10,5 @@ main.c
 Checks that the weak equivalence optimisation reduces Ackermann constraints.
 With 5 stores to the same unbounded array, the old code produced 110 Ackermann
 constraints (one per pair of indices per array term). The optimised code skips
-derived arrays (with, if, etc.) and produces only 60.
+derived arrays (with, if, etc.) and produces only 60. Extensionality diff
+indices are not added here because all array equalities are asserted true.

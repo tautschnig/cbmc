@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 read5.smt2
 
 ^EXIT=0$
@@ -6,4 +6,3 @@ read5.smt2
 ^unsat$
 --
 --
-Array theory incompleteness: expected unsat but solver reports sat.

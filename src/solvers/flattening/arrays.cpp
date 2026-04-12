@@ -9,6 +9,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "arrays.h"
 
 #include <util/arith_tools.h>
+#include <util/bitvector_types.h>
 #include <util/json.h>
 #include <util/message.h>
 #include <util/replace_expr.h>
@@ -84,6 +85,8 @@ void arrayst::record_array_let_binding(
 
   const equal_exprt eq{symbol, value};
   const literalt eq_lit = record_array_equality(eq);
+  array_equalities.back().asserted_true = true;
+  asserted_true_literals.insert(eq_lit.get());
   prop.l_set_to_true(eq_lit);
 }
 
@@ -288,6 +291,73 @@ void arrayst::add_array_constraints()
   collect_indices();
   // at this point all indices should in the index set
 
+  // Extensionality: for each non-trivial array equality l <-> (f1 = f2),
+  // add two forms of the extensionality axiom:
+  //
+  // 1. Index-set extensionality (no new indices, incomplete but cheap):
+  //    (f1[i1]=f2[i1]) /\ (f1[i2]=f2[i2]) /\ ... -> l
+  //    for all indices in the current index set.
+  //
+  // 2. Skolem diff index (one per equivalence class, complete but adds
+  //    to the index set): f1[diff]=f2[diff] -> l
+  {
+    std::map<std::size_t, symbol_exprt> class_diff_index;
+
+    for(auto &equality : array_equalities)
+    {
+      if(equality.l == const_literal(true))
+        continue;
+
+      // Skip extensionality for equalities that are asserted true
+      // (e.g., from let-bindings or top-level assertions). The forward
+      // direction (l -> a[i] = b[i]) suffices when l is known true.
+      if(
+        equality.asserted_true ||
+        asserted_true_literals.count(equality.l.get()))
+      {
+        continue;
+      }
+
+      const array_typet &array_type = to_array_type(equality.f1.type());
+
+      // Prefer index_type() which respects the C type system. Fall back
+      // to the size expression's type when index_type() returns a
+      // zero-width bitvector (e.g., in the standalone smt2_solver where
+      // no C configuration is present).
+      typet index_type = array_type.index_type();
+      if(
+        can_cast_type<bitvector_typet>(index_type) &&
+        to_bitvector_type(index_type).get_width() == 0)
+      {
+        index_type = array_type.size().type();
+      }
+
+      const typet &element_type = array_type.element_type();
+      const std::size_t root = arrays.find_number(equality.f1);
+
+      // Skolem diff index: one per equivalence class
+      auto [it, inserted] = class_diff_index.emplace(
+        root,
+        symbol_exprt{
+          "array_theory::diff#" + std::to_string(extensionality_counter),
+          index_type});
+      if(inserted)
+      {
+        diff_indices.insert(it->second.get_identifier());
+        index_map[root].insert(it->second);
+        extensionality_counter++;
+      }
+
+      const symbol_exprt &diff_index = it->second;
+      const index_exprt elem1{equality.f1, diff_index, element_type};
+      const index_exprt elem2{equality.f2, diff_index, element_type};
+
+      // f1[diff] = f2[diff] -> l
+      const literalt elem_eq_lit = convert(equal_exprt{elem1, elem2});
+      prop.lcnf(!elem_eq_lit, equality.l);
+    }
+  }
+
   // reduce initial index map
   update_index_map(true);
 
@@ -323,10 +393,7 @@ void arrayst::add_array_constraints()
   for(const auto &equality : array_equalities)
   {
     add_array_constraints_equality(
-      index_map[arrays.find_number(equality.f1)],
-      equality);
-
-    // update_index_map should not be necessary here
+      index_map[arrays.find_number(equality.f1)], equality);
   }
 
   // add the Ackermann constraints
@@ -381,6 +448,18 @@ void map_theoryt::add_array_Ackermann_constraints()
         if(i1!=i2)
         {
           if(i1->is_constant() && i2->is_constant())
+            continue;
+
+          // Skip Ackermann constraints between two extensionality diff
+          // indices. Each diff index is a fresh Skolem symbol; constraints
+          // between two such symbols are redundant.
+          const bool i1_is_diff =
+            i1->id() == ID_symbol &&
+            diff_indices.count(to_symbol_expr(*i1).get_identifier());
+          const bool i2_is_diff =
+            i2->id() == ID_symbol &&
+            diff_indices.count(to_symbol_expr(*i2).get_identifier());
+          if(i1_is_diff && i2_is_diff)
             continue;
 
           // index equality
@@ -469,6 +548,10 @@ void map_theoryt::add_array_constraints_equality(
 {
   // add constraints x=y => x[i]=y[i]
 
+  // Also collect element-equality literals for the reverse direction
+  // (index-set extensionality): /\(x[i]=y[i]) => x=y
+  bvt elem_eq_lits;
+
   for(const auto &index : index_set)
   {
     const typet &element_type1 =
@@ -483,17 +566,31 @@ void map_theoryt::add_array_constraints_equality(
       index_expr1.type()==index_expr2.type(),
       "array elements should all have same type");
 
-    array_equalityt equal;
-    equal.f1 = index_expr1;
-    equal.f2 = index_expr2;
-    equal.l = array_equality.l;
     equal_exprt equality_expr(index_expr1, index_expr2);
 
-    // add constraint
-    // equality constraints are not added lazily
+    // add constraint: l -> x[i]=y[i]
     // convert must be done to guarantee correct update of the index_set
-    prop.lcnf(!array_equality.l, convert(equality_expr));
+    literalt eq_lit = convert(equality_expr);
+    prop.lcnf(!array_equality.l, eq_lit);
     array_constraint_count[constraint_typet::ARRAY_EQUALITY]++;
+
+    elem_eq_lits.push_back(eq_lit);
+  }
+
+  // Index-set extensionality (reverse direction):
+  // /\(x[i]=y[i]) -> l, i.e., !x[i1]=y[i1] \/ !x[i2]=y[i2] \/ ... \/ l
+  // This is incomplete (arrays might differ at indices not in the set)
+  // but combined with the Skolem diff index it provides a complete
+  // encoding while allowing the SAT solver to use this cheaper clause
+  // for propagation.
+  if(array_equality.l != const_literal(true) && !elem_eq_lits.empty())
+  {
+    bvt clause;
+    clause.reserve(elem_eq_lits.size() + 1);
+    for(const auto &lit : elem_eq_lits)
+      clause.push_back(!lit);
+    clause.push_back(array_equality.l);
+    prop.lcnf(clause);
   }
 }
 
