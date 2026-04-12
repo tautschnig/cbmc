@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 swap_t1_np_nf_ai_00002_005.cvc.smt2
 
 ^EXIT=0$
@@ -6,4 +6,3 @@ swap_t1_np_nf_ai_00002_005.cvc.smt2
 ^unsat$
 --
 --
-Array theory incompleteness: expected unsat but solver reports sat.
