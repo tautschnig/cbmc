@@ -12,6 +12,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/symbol_table.h>
 
 #include <solvers/flattening/boolbv.h>
+#include <solvers/refinement/bv_refinement.h>
 #include <solvers/sat/satcheck.h>
 
 #include "smt2_format.h"

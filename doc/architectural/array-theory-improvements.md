@@ -95,10 +95,13 @@ union-find but adds targeted bug fixes and the Ackermann skip optimisation.
   `(∀i. a[i] = b[i]) → a = b`
 - The theory only had the forward direction: `a = b → a[i] = b[i]`
 - **Fix implemented:** Skolemized extensionality via diff indices
-- **Optimizations explored:** 6 different approaches (see below)
-- **Conclusion:** current architecture fundamentally limited by the
-  interaction between diff indices and quadratic Ackermann constraints
-- TODO: conditional extensionality — only add diff indices when needed
+- **Optimizations explored:** 7 different approaches (see below)
+- **Conditional extensionality:** skip diff indices for asserted-true
+  equalities — zero overhead for typical CBMC usage
+- **Full CBMC regression suite:** 1173/1173 pass, zero regressions
+- **Lazy extensionality for --refine-arrays:** implemented but slower
+  than eager for QF_AX benchmarks; useful for CBMC where most formulas
+  don't need extensionality
 
 ### Phase 4: Map abstraction layer (future)
 - Introduce a `map_theoryt` class separating map concepts from array concepts
@@ -231,7 +234,8 @@ only checks indices in `Stores(P)`.
 4. `89b089d430` — Handle array typecast with different element sizes
 5. `200e6d6a9b` — Skip Ackermann constraints for derived arrays
 6. `83cb744b41` — Fix array theory: add with-constraints for SSA-renamed indices
-7. `ce6366ccdc` — Add extensionality support via Skolem diff indices
+7. `405d24568e` — Add extensionality support via Skolem diff indices
+8. `7e3a648375` — Add lazy extensionality refinement for --refine-arrays
 
 ## Files Modified
 

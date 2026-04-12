@@ -292,14 +292,12 @@ void arrayst::add_array_constraints()
   // at this point all indices should in the index set
 
   // Extensionality: for each non-trivial array equality l <-> (f1 = f2),
-  // add two forms of the extensionality axiom:
+  // add Skolem diff index (one per equivalence class) and assert
+  // f1[diff]=f2[diff] -> l.
   //
-  // 1. Index-set extensionality (no new indices, incomplete but cheap):
-  //    (f1[i1]=f2[i1]) /\ (f1[i2]=f2[i2]) /\ ... -> l
-  //    for all indices in the current index set.
-  //
-  // 2. Skolem diff index (one per equivalence class, complete but adds
-  //    to the index set): f1[diff]=f2[diff] -> l
+  // When lazy_arrays is set (--refine-arrays), skip eager extensionality;
+  // it will be added on demand in the refinement loop.
+  if(!lazy_arrays)
   {
     std::map<std::size_t, symbol_exprt> class_diff_index;
 
@@ -356,7 +354,7 @@ void arrayst::add_array_constraints()
       const literalt elem_eq_lit = convert(equal_exprt{elem1, elem2});
       prop.lcnf(!elem_eq_lit, equality.l);
     }
-  }
+  } // if(!lazy_arrays)
 
   // reduce initial index map
   update_index_map(true);
