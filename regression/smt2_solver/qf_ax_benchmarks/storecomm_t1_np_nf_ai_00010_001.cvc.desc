@@ -1,0 +1,9 @@
+KNOWNBUG
+storecomm_t1_np_nf_ai_00010_001.cvc.smt2
+
+^EXIT=0$
+^SIGNAL=0$
+^unsat$
+--
+--
+Array theory incompleteness: expected unsat but solver reports sat.

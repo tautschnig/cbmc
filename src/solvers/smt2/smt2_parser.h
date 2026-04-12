@@ -9,13 +9,14 @@ Author: Daniel Kroening, kroening@kroening.com
 #ifndef CPROVER_SOLVERS_SMT2_SMT2_PARSER_H
 #define CPROVER_SOLVERS_SMT2_SMT2_PARSER_H
 
-#include <map>
-#include <unordered_map>
-
 #include <util/mathematical_types.h>
+#include <util/replace_symbol.h>
 #include <util/std_expr.h>
 
 #include "smt2_tokenizer.h"
+
+#include <map>
+#include <unordered_map>
 
 class smt2_parsert
 {

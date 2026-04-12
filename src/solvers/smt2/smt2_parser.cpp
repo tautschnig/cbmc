@@ -195,14 +195,15 @@ exprt smt2_parsert::let_expression()
   if(next_token() != smt2_tokenizert::CLOSE)
     throw error("expected ')' after let");
 
-  binding_exprt::variablest variables;
-  exprt::operandst values;
-
+  // Substitute bindings into the where-expression directly rather than
+  // creating a let_exprt. This avoids an abstraction barrier that
+  // prevents the array theory from seeing through element-typed
+  // let bindings (the array theory generates constraints after
+  // convert_let erases the temporary bitvector mappings).
+  replace_symbolt replace;
   for(const auto &b : bindings)
-  {
-    variables.push_back(symbol_exprt(b.first, b.second.type()));
-    values.push_back(b.second);
-  }
+    replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+  replace(where);
 
   // delete the bindings from the id_map
   for(const auto &binding : bindings)
@@ -212,7 +213,7 @@ exprt smt2_parsert::let_expression()
   for(auto &saved_id : saved_ids)
     id_map.insert(std::move(saved_id));
 
-  return let_exprt(variables, values, where);
+  return where;
 }
 
 std::pair<binding_exprt::variablest, exprt> smt2_parsert::binding(irep_idt id)
@@ -1692,6 +1693,25 @@ void smt2_parsert::setup_commands()
   // declare-var appears to be a synonym for declare-const that is
   // accepted by Z3 and CVC4
   commands["declare-var"] = commands["declare-const"];
+
+  commands["declare-sort"] = [this]()
+  {
+    if(next_token() != smt2_tokenizert::SYMBOL)
+      throw error("expected a symbol after declare-sort");
+
+    const std::string id = smt2_tokenizer.get_buffer();
+
+    if(next_token() != smt2_tokenizert::NUMERAL)
+      throw error("expected a numeral after sort name");
+
+    const auto arity = std::stoll(smt2_tokenizer.get_buffer());
+
+    if(arity != 0)
+      throw error("only uninterpreted sorts of arity 0 are supported");
+
+    // Map uninterpreted sorts to a 32-bit bitvector.
+    sorts[id] = [] { return unsignedbv_typet{32}; };
+  };
 
   commands["declare-fun"] = [this]() {
     if(next_token() != smt2_tokenizert::SYMBOL)
