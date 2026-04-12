@@ -1693,6 +1693,25 @@ void smt2_parsert::setup_commands()
   // accepted by Z3 and CVC4
   commands["declare-var"] = commands["declare-const"];
 
+  commands["declare-sort"] = [this]()
+  {
+    if(next_token() != smt2_tokenizert::SYMBOL)
+      throw error("expected a symbol after declare-sort");
+
+    const std::string id = smt2_tokenizer.get_buffer();
+
+    if(next_token() != smt2_tokenizert::NUMERAL)
+      throw error("expected a numeral after sort name");
+
+    const auto arity = std::stoll(smt2_tokenizer.get_buffer());
+
+    if(arity != 0)
+      throw error("only uninterpreted sorts of arity 0 are supported");
+
+    // Map uninterpreted sorts to a 32-bit bitvector.
+    sorts[id] = [] { return unsignedbv_typet{32}; };
+  };
+
   commands["declare-fun"] = [this]() {
     if(next_token() != smt2_tokenizert::SYMBOL)
       throw error("expected a symbol after declare-fun");

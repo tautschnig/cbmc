@@ -1,0 +1,7 @@
+CORE
+swap_t2_np_sf_ai_00002_001.cvc.smt2
+
+^EXIT=0$
+^SIGNAL=0$
+^unsat$
+--

@@ -1,0 +1,9 @@
+KNOWNBUG
+swap_t2_np_nf_ai_00002_002.cvc.smt2
+
+^EXIT=0$
+^SIGNAL=0$
+^unsat$
+--
+--
+Array theory incompleteness: expected unsat but solver reports sat.

@@ -1,0 +1,7 @@
+CORE
+storeinv_invalid_t3_np_nf_ai_00002_001.cvc.smt2
+
+^EXIT=0$
+^SIGNAL=0$
+^sat$
+--
