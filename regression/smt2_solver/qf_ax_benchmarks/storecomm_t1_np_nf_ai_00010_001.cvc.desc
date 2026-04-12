@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 storecomm_t1_np_nf_ai_00010_001.cvc.smt2
 
 ^EXIT=0$
@@ -6,4 +6,3 @@ storecomm_t1_np_nf_ai_00010_001.cvc.smt2
 ^unsat$
 --
 --
-Array theory incompleteness: expected unsat but solver reports sat.

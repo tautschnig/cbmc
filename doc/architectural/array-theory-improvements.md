@@ -107,10 +107,64 @@ union-find but adds targeted bug fixes and the Ackermann skip optimisation.
 - Introduce a `map_theoryt` class separating map concepts from array concepts
 - Move index tracking and Ackermann generation into it
 
-### Phase 5: Full weak equivalence graph (future)
-- Replace union-find with proper WEG data structure
-- Implement read-over-weakeq lemma generation (Lemma 1)
-- Implement weakeq-ext for extensionality (Lemma 2)
+### Phase 5: Weak equivalence graph ✅
+- Forest-based WEG data structure implemented (primary/secondary edges,
+  `get_rep`, `get_rep_mod`, `add_store`, `add_equality`, `path_store_indices`)
+- Built alongside existing union-find during `collect_arrays` and
+  `record_array_equality`
+- **weakeq-ext extensionality (Lemma 2):** replaces Skolem diff indices with
+  targeted path-based extensionality. For each array equality `l ↔ (f1 = f2)`,
+  collect store indices on the WEG path and assert:
+  `∧(f1[i]=f2[i] for i ∈ Stores(path)) → l`
+- Falls back to diff indices when path has no store indices (equality edges only)
+- **Results:**
+  - QF_AX 30s: 500 → 526 correct (90.7% → 95.4%), CPU time -14%
+  - QF_AX 180s: **551/551 correct (100%), 0 wrong, 0 timeouts**
+  - CBMC regression: 1173/1173 pass, **8% faster** (114s → 105s)
+  - Clause reductions: storeinv 88%, swap 48%, storecomm 2-6%
+  - Zero overhead on individual CBMC tests (WEG build cost negligible)
+
+#### Failed approaches during WEG development
+- **BFS-based WEG:** Simple adjacency list with BFS queries. Worked for
+  data structure but `weakly_equivalent_mod` was incorrect (treated equality
+  and store edges identically). Led to unsound read-over-weakeq.
+- **Read-over-weakeq replacing Ackermann only:** Over-constrains when combined
+  with element-wise constraints (together they force arrays to agree at ALL
+  indices, which is extensionality — only valid when arrays ARE equal).
+- **Read-over-weakeq replacing both element-wise and Ackermann:** Under-constrains
+  (missing store axiom `store(a,i,v)[i]=v`). Even with store axiom, extensionality
+  diff indices over-constrain because they assume element-wise constraints are present.
+- **Forest-based WEG with `make_rep`:** First attempt had infinite loops due to
+  edge inversion creating cycles. Fixed with cycle detection guard.
+- **Store-index Ackermann skip:** Attempted to skip Ackermann for index pairs
+  where both are store indices. Too aggressive — store indices from DIFFERENT
+  chains in the same equivalence class still need Ackermann on the base array.
+- **Key insight:** weakeq-ext (Lemma 2) is compatible with the existing
+  element-wise + Ackermann architecture. It replaces ONLY the extensionality
+  encoding, not the constraint generation. This is the correct integration point.
+
+#### Analysis: read-over-weakeq soundness
+
+The soundness issues encountered are NOT fundamental — the paper proves
+read-over-weakeq is sound and complete (Lemmas 3 and 4). The issues were
+implementation errors:
+
+1. BFS-based `weakly_equivalent_mod` was wrong (fixed by forest-based WEG)
+2. Mixing read-over-weakeq WITH element-wise constraints over-constrains
+   (usage error — they're alternatives, not complements)
+3. Read-over-weakeq WITHOUT element-wise but WITH diff-index extensionality
+   over-constrains (diff indices assume element-wise constraints are present)
+
+The correct combination per the paper is:
+- Store axiom (idx): `store(a, i, v)[i] = v` ✓
+- Read-over-weakeq (Lemma 1): replaces element-wise "else" + Ackermann
+- Weakeq-ext (Lemma 2): replaces diff-index extensionality ✓
+- array_of/comprehension/if constraints ✓
+
+All components exist. The remaining task is implementing read-over-weakeq
+using the forest-based `get_rep_mod` with proper select-term filtering
+(only generate constraints for select terms that appear in the formula,
+not all (array, index) combinations).
 
 ## QF_AX Benchmark Results
 
@@ -125,7 +179,25 @@ Zero wrong `unsat` (theory is sound).
 | 1. Baseline (declare-sort only) | 211 | 202 | 138 | 38.2% | 4688s |
 | 2. +Bug fixes + Ackermann skip | 247 | 236 | 68 | 44.8% | 3245s |
 | 3. +Extensionality | 378 | 72 | 101 | 68.6% | 4608s |
-| 4. +Inline let bindings | **449** | **0** | 102 | **81.4%** | 4863s |
+| 4. +Inline let bindings | 449 | 0 | 102 | 81.4% | 4863s |
+| 5. +Derived-symbol Ackermann skip | **500** | **0** | **51** | **90.7%** | 3450s |
+| 6. +WEG weakeq-ext extensionality | **526** | **0** | **25** | **95.4%** | 2978s |
+
+### Definitive results (CaDiCaL 3.0.0)
+
+| Timeout | Jobs | Correct | Wrong | Timeout | Rate |
+|---------|------|---------|-------|---------|------|
+| 30s | 8 | 500 | 0 | 51 | 90.7% |
+| 60s | 8 | 530 | 0 | 21 | 96.1% |
+| 120s | 4 | 549 | 0 | 2 | 99.6% |
+| 120s | seq | 551 | 0 | 0 | 100% |
+| 180s | 8 | **551** | **0** | **0** | **100%** |
+
+All 551 benchmarks solve correctly given sufficient time. The remaining
+timeouts at shorter limits are the largest `storecomm` instances (50-60
+stores, 2-4.5M clauses) where the SAT solver needs 60-106s.
+
+Standard benchmark configuration: **180s timeout, 8 parallel jobs.**
 
 Key observations:
 - Stage 2 halves timeouts (138→68) and reduces CPU time 31% via Ackermann skip
@@ -135,6 +207,44 @@ Key observations:
 - **Zero wrong answers** in the final stage — theory is complete for all
   benchmarks that finish within the timeout
 - 102 remaining timeouts are purely performance (storecomm family dominates)
+
+### Timeout Characterization (Stage 5)
+
+At 30s timeout: 51 remaining timeouts, all `storecomm` family.
+At 60s timeout: 21 remaining timeouts, all `storecomm` family.
+
+The 21 remaining timeouts at 60s:
+- 9 × `nf_00060` (120 inline stores, 3.3M clauses, solve in ~86s)
+- 6 × `sf_00060` (120 named stores, 4.5M clauses, solve in ~106s)
+- 1 × `sf_00050` (100 named stores, 3.1M clauses, solve in ~61s)
+- 1 × `nf_00050` (100 inline stores, 2.3M clauses, solve in ~61s)
+- All expected `unsat`
+
+The bottleneck is **SAT solver time**, not constraint generation (post-processing
+completes in ~1s even for the largest). These are genuinely hard SAT instances:
+proving that 50-60 stores with all-distinct indices commute requires the SAT
+solver to reason about a 2-4.5M clause formula.
+
+### SAT Solver Comparison (CaDiCaL vs MiniSat)
+
+| Benchmark | Stores | Expected | CaDiCaL | MiniSat |
+|-----------|--------|----------|---------|---------|
+| nf_00010 (unsat) | 20 | unsat | 0.7s | >60s |
+| nf_00020 (unsat) | 40 | unsat | 4.8s | >60s |
+| nf_00040 (unsat) | 80 | unsat | 18s | >60s |
+| nf_00060 (unsat) | 120 | unsat | 86s | >180s |
+| sf_00060 (unsat) | 120 | unsat | 106s | >180s |
+| invalid_nf_00010 (sat) | 20 | sat | 0.4s | **0.1s** |
+| invalid_nf_00050 (sat) | 100 | sat | 14s | **4.4s** |
+
+CaDiCaL is dramatically better for unsat storecomm instances (MiniSat cannot
+solve even the smallest within 60s). MiniSat is 3× faster for sat instances.
+This suggests the unsat proof requires CDCL techniques that CaDiCaL excels at.
+
+**Transitive derived-symbol detection:** Implemented (follow symbol=symbol
+chains to find transitively derived symbols) but did not help the QF_AX
+benchmarks since each symbol is directly equated to a store expression.
+May help CBMC cases with more complex SSA chains.
 
 ### 2-second timeout (quick iteration results)
 
@@ -266,7 +376,323 @@ only checks indices in `Stores(P)`.
 6. `83cb744b41` — Fix array theory: add with-constraints for SSA-renamed indices
 7. `405d24568e` — Add extensionality support via Skolem diff indices
 8. `eb7b8b63e3` — Add lazy extensionality refinement for --refine-arrays
-9. `f338775869` — Inline let bindings in SMT2 parser to fix array theory
+9. `3372f0fe2f` — Inline let bindings in SMT2 parser to fix array theory
+10. `acd6d8f700` — Skip Ackermann for symbols defined as equal to derived arrays
+11. `623b83df27` — Add weak equivalence graph and weakeq-ext extensionality
+12. `51101b023a` — Skip adding store index to index set (Yices2 optimization)
+13. `8bda725cd6` — Replace inner SAT solver with model evaluation in --refine-arrays
+14. `717a10681b` — Implement weak congruence in weakeq-ext extensionality
+    **BUG:** Over-constrains when store indices overlap (wchains QF_ABV).
+    Fixed in commit 23.
+15. `862b02995b` — Assumption-based lazy constraints for --refine-arrays
+16. `992e3963e0` — Encode read-over-write as bitvector ITE (documentation)
+17. `34654ccdac` — Encode read-over-write as bitvector ITE for unbounded arrays
+18. `a73d786edf` — Flatten multi-dimensional array index registration
+19. `ffc56451ac` — Revert multi-dimensional array index flattening
+20. `f68a9c2049` — Inline array-of-arrays definitions for 2D ITE encoding
+21. `fe3e968ad1` — Flatten nested arrays as goto-program transformation
+22. `ad81adea63` — Update tracking document
+23. `ba03e55d20` — Fix unsound weak congruence in weakeq-ext extensionality
+24. `376cff3551` — Fix 2D definition inlining crash on SMT2 nested arrays
+
+## Key Architectural Findings
+
+1. **Element-wise constraints are the main bottleneck** (35% of clauses)
+   **but cannot be removed.** The ITE encoding handles direct read-over-write
+   (`store(a,j,v)[i]` = `ITE(j==i, v, a[i])`) but element-wise constraints
+   handle CROSS-ARRAY propagation (connecting reads on different arrays in
+   the same equivalence class). Removing element-wise causes 208/551 wrong
+   on QF_AX and 3 CBMC failures. The ITE and element-wise are complementary.
+
+2. **The ITE encoding gives 33% CPU speedup** by providing better SAT
+   propagation structure (bitvector mux vs conditional clause). It works
+   alongside element-wise constraints, not as a replacement.
+
+3. **Ackermann is only needed for pure functional consistency** — arrays
+   with ≥2 selects and no store chain. Removing Ackermann entirely passes
+   1171/1173 CBMC tests (only Unbounded_Array1 fails).
+
+4. **CaDiCaL's incremental solving works well with assumptions** but poorly
+   with permanent clause addition. The assumption-based --refine-arrays
+   achieves 100% on QF_AX (was 51.7% with permanent clauses).
+
+5. **Multi_Dimensional_Array6 was a red herring.** It hangs without
+   `--unwind 3` on ALL versions (including develop) due to infinite loop
+   unwinding, not due to the ITE encoding.
+
+## Performance Progression (QF_AX, 551 benchmarks, 180s, 4 jobs)
+
+| Stage | CPU time | vs baseline |
+|-------|----------|-------------|
+| Baseline (no changes) | ~4700s | — |
+| +All optimizations (pre-ITE) | 2470s | 1.9× faster |
+| +ITE encoding | 1642s | 2.9× faster |
+| +Weak congruence fix (commit 23) | **2075s** | **2.3× faster** |
+| +2D inlining fix (commit 24) | 2070s | 2.3× faster |
+
+## Future Directions
+
+### Multi-dimensional array flattening
+
+CBMC encodes `T[M][N]` as an array of arrays, creating nested store/select
+structures: `a[i][j] = v` becomes `store(a, i, store(select(a, i), j, v))`.
+This nesting is the root cause of the ITE encoding's inability to replace
+element-wise constraints — the ITE handles single-level stores but not the
+cross-array propagation needed for nested arrays.
+
+**Implemented:** `flatten_nested_arrays` goto-program pass (commit 21) rewrites
+`array(array(T, M), N)` to `array(T, N*M)` with linearized indices `i*M + j`.
+Handles stores, reads, array constants, and non-literal array elements.
+
+Key design decisions:
+- Top-down pattern matching (bottom-up breaks type consistency)
+- 3D+ arrays skipped (partial flattening causes type mismatches)
+- `address_of` sub-arrays skipped (pointer arithmetic depends on layout)
+- `simplify_expr` NOT called during rewriting (sees inconsistent types)
+- Multiplication operands sorted for canonical index form
+
+Results: CBMC 1174/1174, QF_AX 551/551, QF_ABV 0 new wrong answers.
+Performance: neutral on CBMC regression suite (106s with and without).
+Clause count unchanged for symbolic-dimension arrays (the solver handles
+`int a[n*m]` the same as `int a[n][m]`). For constant dimensions, the
+back-end ITE encoding already handles the 2D case, so flattening is
+redundant.
+
+Remaining gaps (documented, not blocking):
+- 3D+ arrays skipped (partial flattening causes type mismatches between
+  inner and outer dimensions; need iterative flattening with full tracking)
+- `address_of` sub-arrays skipped (pointer arithmetic depends on inner
+  array dimension; `&A[i]` stride changes after flattening)
+- Counterexample traces show flat indices (e.g., `a[6]` instead of
+  `a[1][2]`); would need original dimension metadata in the flattened type
+- 2D definition inlining restricted to constant inner sizes (commit 24)
+  to prevent crashes on SMT2 nested arrays with symbolic sizes
+
+### References
+
+Remaining gaps:
+- 3D+ arrays skipped (partial flattening causes type mismatches between
+  inner and outer dimensions; need iterative flattening with full tracking)
+- `address_of` sub-arrays skipped (pointer arithmetic depends on inner
+  array dimension; `&A[i]` stride changes after flattening)
+- Counterexample traces show flat indices (e.g., `a[6]` instead of `a[1][2]`)
+- Symbolic multiplication adds clauses for variable-length arrays
+
+- Christ, Hoenicke: "Weakly Equivalent Arrays" (arXiv:1405.6939, FroCos 2015)
+- Irfan, Graham-Lengrand: "Arrays Reasoning in MCSat" (SMT 2024)
+  — Yices2 MCSat array integration using WEG
+- Niemetz, Preiner: "Bitwuzla" (CAV 2023, LNCS 13965)
+  — Lemmas-on-demand architecture, bit-vector abstraction of arrays
+- Niemetz, Preiner, Zohar: "Scalable Bit-Blasting with Abstractions"
+  (CAV 2024, LNCS 14681) — CEGAR for bit-vector arithmetic
+
+## SAT Solver Comparison
+
+| Config | QF_AX (551) | CPU time |
+|--------|-------------|----------|
+| CaDiCaL eager | 551/551 | 2470s |
+| CaDiCaL + refine (assumptions) | 551/551 | 3889s |
+| CaDiCaL + refine (permanent clauses) | 285/551 | — (hung) |
+| MiniSat eager | 526/551 | 8929s |
+| MiniSat + refine | 522/551 | 10808s |
+
+CaDiCaL is 3.6× faster than MiniSat on eager solving. MiniSat can't solve
+the hardest storecomm benchmarks. CaDiCaL's incremental re-solve was slow
+with permanent clause addition but works well with assumptions.
+
+CaDiCaL's `constrain` API (temporary clause for one solve) is too limited
+for our use case (only one clause at a time, designed for IC3).
+
+#### Read-over-weakeq as Ackermann replacement (attempted, not landed)
+
+Attempted replacing Ackermann with read-over-weakeq (Lemma 1). Multiple
+approaches tried:
+
+1. **Unconditional read-over-weakeq** (a ≈ᵢ b → a[i]=b[j]): UNSOUND.
+   Over-constrains sat instances because the static `weakly_equivalent_mod`
+   check doesn't account for the runtime path condition.
+
+2. **Path-conditioned read-over-weakeq** (Cond_i(path) ∧ i=j → a[i]=b[j]
+   where Cond_i includes i≠k for each store index k on the path): SOUND
+   but INCOMPLETE. For storecomm benchmarks where read indices ARE store
+   indices, the condition i≠k₁∧...∧i≠kₙ is always false, making the
+   constraint vacuously true. The paper handles this via **weak congruence**
+   (Definition 3), which chains through store values when the read index
+   equals a store index. Without weak congruence, read-over-weakeq cannot
+   replace element-wise constraints.
+
+3. **Ackermann + cross-array read-over-weakeq**: Adding cross-array
+   constraints on top of element-wise + Ackermann is pure overhead (the
+   element-wise constraints already handle cross-array propagation).
+   Generated 1.17M redundant constraints on address_space_size_limit3.
+
+**Key finding:** Read-over-weakeq (Lemma 1) requires weak congruence
+(Definition 3) to be complete. Weak congruence was implemented but is
+still incomplete for storecomm benchmarks: the per-edge condition
+`beforeₘ[i] = afterₘ[i]` doesn't chain through multiple stores
+correctly. The paper's Definition 3 uses an existential (`∃a'b'`) that
+requires finding the right intermediate arrays for each store index,
+which is complex in a bit-blasting architecture.
+
+**Architectural conclusion:** In CBMC's bit-blasting architecture:
+- **Element-wise constraints** = propositional encoding of read-over-write
+  (handles cross-array propagation through store chains)
+- **Ackermann on base arrays** = functional consistency for uninterpreted
+  arrays (`i=j → a[i]=a[j]`)
+- **Derived-array Ackermann skip** = propositional equivalent of
+  read-over-weakeq (derived arrays don't need Ackermann because
+  element-wise constraints already propagate through the store chain)
+- **weakeq-ext extensionality** = Lemma 2 from the paper
+
+Verified: removing Ackermann entirely passes 1171/1173 CBMC tests.
+The 2 failures are Array_UF23 (count test) and Unbounded_Array1 which
+tests exactly `i=j → a[i]=a[j]` — pure functional consistency that
+only Ackermann provides. Element-wise constraints handle everything else.
+
+The current architecture IS the correct propositional encoding of the
+paper's approach. No further changes needed.
+
+#### --refine-arrays evaluation
+
+Tested using `bv_refinementt` with `refine_arrays=true` in smt2_solver:
+- QF_AX: 285/551 correct, 0 wrong, 266 timeout (51.7%) — much worse
+  than eager (551/551). Sat instances get stuck in the refinement loop
+  because CaDiCaL's incremental solving is slow after adding clauses.
+- CBMC: 1173/1173 pass, 104s — same as eager (105s). CBMC formulas are
+  mostly unsat so the refinement converges in 1-2 iterations.
+
+Improvements applied:
+- Replaced inner SAT solver checks with direct model evaluation
+  (Bitwuzla-style): no performance change because the bottleneck is
+  the SAT re-solve, not the constraint checking.
+- Added max-activations bound per iteration (Yices2-style).
+
+The refinement approach is sound but not beneficial for QF_AX benchmarks.
+For CBMC, it's neutral. The eager approach with derived-symbol skip
+remains the better default.
+
+#### Yices2/Bitwuzla analysis (SMT-COMP 2024 winners)
+
+**Yices2** (QF_AX winner, CDCL(T)):
+- Uses E-graph with array extensions, WEG for conflict detection
+- Key optimizations: "may conflict" filtering, max_update_conflicts
+  bound, stratified extensionality, separation of update conflicts
+  and extensionality
+- "May conflict" filter: attempted in CBMC but unsound — the pre-merge
+  index count doesn't reliably indicate which arrays have direct selects
+
+**Bitwuzla** (QF_ABV winner):
+- No WEG. Model-guided DAG traversal with lazy lemma generation.
+- Bidirectional traversal (down through stores, up through parents)
+- Path condition collection for lemma generation
+- No Ackermann — congruence conflicts detected lazily
+
+**Key insight:** The bottleneck for `--refine-arrays` is CaDiCaL's
+incremental SAT re-solve performance, not the constraint checking.
+Both Yices2 and Bitwuzla use native theory solvers that avoid this
+issue entirely. CBMC's bit-blasting architecture fundamentally limits
+the effectiveness of lazy approaches.
+
+## CBMC Performance Impact
+
+Full CBMC regression suite (1173 tests, 60s timeout):
+- Without WEG (diff-index extensionality): 114s
+- With WEG (weakeq-ext extensionality): **105s (8% faster)**
+
+Individual array-heavy tests show negligible overhead from WEG construction:
+- Array_UF8: 37ms → 36ms
+- Array_operations4: 66ms → 66ms
+- bounds_check1: 4410ms → 4379ms
+
+The WEG-based weakeq-ext is a pure win: same or better performance on
+standard CBMC benchmarks, with correct extensionality when needed.
+
+## QF_ABV Benchmark Results
+
+15,148 benchmarks from SMT-LIB 2025 (arrays + bitvectors). Tested 1,000
+across multiple families.
+
+### Wrong answers (44 total — soundness bug in weak congruence)
+
+All 44 wrong answers return `unsat` when `sat` expected. Root cause: the
+weak congruence implementation (commit 14, `717a10681b`) over-constrains
+when store indices overlap. Bisection confirmed: develop returns `sat`
+(correct), the regression starts at that commit.
+
+| Family | Wrong | Pattern |
+|--------|-------|---------|
+| wchains*se | 43 | Write chain permutations with overlapping byte indices |
+| matrixmultcomm | 1 | Matrix multiplication commutativity |
+
+See "Weak congruence soundness bug" section for analysis.
+
+### Errors (227 → 0, fixed in commit 24)
+
+All errors are invariant violations in `bv_utils.cpp:99`:
+`a.size() == b.size()` precondition failure (bitvector width mismatch).
+
+| Family | Errors | Notes |
+|--------|--------|-------|
+| UltimateAutomizer | ~50 | Complex multi-sort formulas |
+| cs_* (concurrency) | ~20 | Dekker, Peterson, Lamport, etc. |
+| kbfiltr, parport, s3* | ~60 | Device driver verification |
+| 20200415-Yurichev | ~60 | Reverse engineering formulas |
+| Other | ~37 | Various |
+
+Root cause: 2D definition inlining applied to SMT2 nested arrays with
+symbolic inner sizes, causing width mismatch in bv_utils::select.
+Fixed by restricting 2D definitions to constant inner sizes (commit 24).
+These benchmarks now run out of memory (same as develop) instead of crashing.
+
+### Timeouts (107 total — performance)
+
+Large formulas where the SAT solver needs more than 60s. Not correctness
+issues.
+
+### Correct (622 of 1000 tested)
+
+| Family | Tested | Correct | Wrong | Timeout | Error |
+|--------|--------|---------|-------|---------|-------|
+| 2018-Mann (egt) | ~200 | ~200 | 0 | 0 | 0 |
+| 20200415-Yurichev | ~100 | ~40 | 0 | 0 | ~60 |
+| brummayerbiere | ~200 | ~90 | 44 | ~30 | ~36 |
+| UltimateAutomizer | ~100 | ~10 | 0 | ~40 | ~50 |
+| Other families | ~400 | ~282 | 0 | ~37 | ~81 |
+
+### Weak congruence soundness bug
+
+**Symptom:** 44 QF_ABV benchmarks return `unsat` when `sat` expected.
+
+**Minimal example (wchains002se):** Two store chains writing 4 bytes each
+at addresses `v6..v6+3` and `v7..v7+3` to the same base array, in different
+order. The benchmark asserts the chains are NOT equal. Expected: `sat`
+(they differ when `v6 == v7` because the last store wins differently).
+
+**Root cause:** The weak congruence path condition for weakeq-ext
+extensionality generates conditions like `before[i] = after[i]` for each
+store edge on the WEG path. When store indices overlap (e.g., `v6 == v7`),
+these conditions incorrectly force array equality by not accounting for
+the fact that the "last store wins" semantics differs between the two
+chains.
+
+**Bisection:** develop → `sat` (correct). Commit `717a10681b` → `unsat`
+(wrong). All prior commits → `sat` (correct).
+
+**Status:** Fixed in commit 23. The weak congruence optimization was removed
+from weakeq-ext extensionality. The correct condition per Lemma 2 is
+`f1[k] = f2[k]` for all store indices k. Weak congruence (Definition 3)
+applies only to read-over-weakeq (Lemma 1), not extensionality.
+
+The fix costs 27% QF_AX CPU time (2075s vs 1635s) because comparing full
+store chain expressions `f1[k]` and `f2[k]` is harder for the SAT solver
+than comparing intermediate sub-expressions. This is the cost of correctness.
+
+**Lesson learned:** The weak congruence condition `after_a[k] = after_b[k]`
+is WEAKER than `f1[k] = f2[k]` (easier to satisfy), which makes the
+extensionality clause fire MORE often. This is unsound because it proves
+array equality even when the final arrays differ. The correct condition
+`f1[k] = f2[k]` is STRONGER (harder to satisfy), making extensionality
+fire only when the arrays truly agree at all store indices.
 
 ## Files Modified
 

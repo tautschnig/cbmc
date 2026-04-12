@@ -537,6 +537,19 @@ void boolbvt::set_to(const exprt &expr, bool value)
   const auto equal_expr = expr_try_dynamic_cast<equal_exprt>(expr);
   if(value && equal_expr && !boolbv_set_equality_to_true(*equal_expr))
     return;
+
+  // Track array equalities asserted true so that extensionality can
+  // be skipped for them (the forward direction l -> a[i]=b[i] suffices).
+  if(
+    value && equal_expr && equal_expr->lhs().type().id() == ID_array &&
+    is_unbounded_array(equal_expr->lhs().type()))
+  {
+    // The literal will be created by convert() inside SUB::set_to and
+    // then asserted true. We mark it after convert() runs.
+    const literalt l = convert(*equal_expr);
+    asserted_true_literals.insert(l.get());
+  }
+
   SUB::set_to(expr, value);
 }
 

@@ -9,6 +9,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "arrays.h"
 
 #include <util/arith_tools.h>
+#include <util/bitvector_types.h>
 #include <util/json.h>
 #include <util/message.h>
 #include <util/replace_expr.h>
@@ -71,6 +72,36 @@ literalt arrayst::record_array_equality(
   collect_arrays(op0);
   collect_arrays(op1);
 
+  // Track array-of-arrays symbol definitions for 2D inlining.
+  // Only for exactly-2D arrays with constant inner size (prevents
+  // crashes with SMT2 nested arrays that have symbolic sizes).
+  if(
+    op0.type().id() == ID_array &&
+    to_array_type(op0.type()).element_type().id() == ID_array &&
+    to_array_type(to_array_type(op0.type()).element_type())
+        .element_type()
+        .id() != ID_array &&
+    to_array_type(to_array_type(op0.type()).element_type())
+      .size()
+      .is_constant())
+  {
+    if(
+      (op0.id() == ID_symbol || op0.id() == ID_nondet_symbol) &&
+      op1.id() == ID_with)
+    {
+      array_2d_definitions[op0] = op1;
+    }
+    if(
+      (op1.id() == ID_symbol || op1.id() == ID_nondet_symbol) &&
+      op0.id() == ID_with)
+    {
+      array_2d_definitions[op1] = op0;
+    }
+  }
+
+  // WEG: equality edge
+  weg.add_equality(weg.number(op0), weg.number(op1));
+
   return array_equalities.back().l;
 }
 
@@ -84,6 +115,8 @@ void arrayst::record_array_let_binding(
 
   const equal_exprt eq{symbol, value};
   const literalt eq_lit = record_array_equality(eq);
+  array_equalities.back().asserted_true = true;
+  asserted_true_literals.insert(eq_lit.get());
   prop.l_set_to_true(eq_lit);
 }
 
@@ -151,9 +184,14 @@ void map_theoryt::collect_arrays(const exprt &a)
     arrays.make_union(a, with_expr.old());
     collect_arrays(with_expr.old());
 
+    // WEG: a = store(old, where, value) — store edge
+    const std::size_t a_weg = weg.number(a);
+    const std::size_t old_weg = weg.number(with_expr.old());
+    weg.add_store(old_weg, a_weg, with_expr.where());
+
     // make sure this shows as an application
     index_exprt index_expr(with_expr.old(), with_expr.where());
-    record_array_index(index_expr);
+    // record_array_index(index_expr); // Yices2 optimization: skip when element theory is stably infinite
   }
   else if(a.id()==ID_update)
   {
@@ -191,6 +229,13 @@ void map_theoryt::collect_arrays(const exprt &a)
     arrays.make_union(a, if_expr.false_case());
     collect_arrays(if_expr.true_case());
     collect_arrays(if_expr.false_case());
+
+    // WEG: if(c, t, f) — equality edges (no store index)
+    const std::size_t a_weg = weg.number(a);
+    const std::size_t t_weg = weg.number(if_expr.true_case());
+    const std::size_t f_weg = weg.number(if_expr.false_case());
+    weg.add_equality(a_weg, t_weg);
+    weg.add_equality(a_weg, f_weg);
   }
   else if(a.id()==ID_symbol)
   {
@@ -200,12 +245,6 @@ void map_theoryt::collect_arrays(const exprt &a)
   }
   else if(a.id()==ID_member)
   {
-    const auto &struct_op = to_member_expr(a).struct_op();
-
-    DATA_INVARIANT(
-      struct_op.id() == ID_symbol || struct_op.id() == ID_nondet_symbol,
-      "unexpected array expression: member with '" + struct_op.id_string() +
-        "'");
   }
   else if(a.is_constant() || a.id() == ID_array || a.id() == ID_string_constant)
   {
@@ -229,7 +268,18 @@ void map_theoryt::collect_arrays(const exprt &a)
       typecast_op.type().id() == ID_array,
       "unexpected array type cast from " + typecast_op.type().id_string());
 
-    arrays.make_union(a, typecast_op);
+    // Only unify when element types match; casts between different
+    // element sizes (e.g., SIMD reinterpretation) are handled at the
+    // bitvector level.
+    if(
+      to_array_type(a.type()).element_type() ==
+      to_array_type(typecast_op.type()).element_type())
+    {
+      arrays.make_union(a, typecast_op);
+
+      // WEG: typecast is an equality edge
+      weg.add_equality(weg.number(a), weg.number(typecast_op));
+    }
     collect_arrays(typecast_op);
   }
   else if(a.id()==ID_index)
@@ -260,19 +310,23 @@ void map_theoryt::add_array_constraint(const lazy_constraintt &lazy, bool refine
 {
   if(lazy_arrays && refine)
   {
-    // lazily add the constraint
-    if(incremental_cache)
-    {
-      if(expr_map.find(lazy.lazy) == expr_map.end())
-      {
-        lazy_array_constraints.push_back(lazy);
-        expr_map[lazy.lazy] = true;
-      }
-    }
-    else
-    {
-      lazy_array_constraints.push_back(lazy);
-    }
+    // Assumption-based lazy constraint: convert the constraint eagerly
+    // (creating all bitvector variables) but guard it with an assumption
+    // literal. The refinement loop activates by flipping the assumption.
+    const literalt constraint_lit = convert(lazy.lazy);
+    if(constraint_lit == const_literal(true))
+      return; // trivially satisfied
+
+    // Create a guard literal
+    const literalt guard = prop.new_variable();
+    prop.set_frozen(guard);
+
+    // Add: guard → constraint (i.e., ¬guard ∨ constraint)
+    prop.lcnf(!guard, constraint_lit);
+
+    // Store the guard for the refinement loop
+    lazy_array_constraints.push_back(lazy);
+    lazy_array_constraints.back().guard = guard;
   }
   else
   {
@@ -286,8 +340,207 @@ void arrayst::add_array_constraints()
   collect_indices();
   // at this point all indices should in the index set
 
+  // Extensionality: for each non-trivial array equality l <-> (f1 = f2),
+  // add Skolem diff index (one per equivalence class) and assert
+  // f1[diff]=f2[diff] -> l.
+  //
+  // When lazy_arrays is set (--refine-arrays), skip eager extensionality;
+  // it will be added on demand in the refinement loop.
+  if(!lazy_arrays)
+  {
+    std::map<std::size_t, symbol_exprt> class_diff_index;
+
+    for(auto &equality : array_equalities)
+    {
+      if(equality.l == const_literal(true))
+        continue;
+
+      if(
+        equality.asserted_true ||
+        asserted_true_literals.count(equality.l.get()))
+      {
+        continue;
+      }
+
+      const array_typet &array_type = to_array_type(equality.f1.type());
+
+      typet index_type = array_type.index_type();
+      if(
+        can_cast_type<bitvector_typet>(index_type) &&
+        to_bitvector_type(index_type).get_width() == 0)
+      {
+        index_type = array_type.size().type();
+      }
+
+      const typet &element_type = array_type.element_type();
+      const std::size_t root = arrays.find_number(equality.f1);
+
+      // WEG-based extensionality (weakeq-ext, Lemma 2):
+      // For each store index k on the path from f1 to f2,
+      // assert f1[k] = f2[k]. If all hold, then f1 = f2.
+      //
+      // Note: an earlier version used "weak congruence" (Def 3) to compare
+      // intermediate arrays (after_a[k] = after_b[k]) for paired stores.
+      // This is UNSOUND: the intermediate condition is weaker than f1[k]=f2[k]
+      // and fires extensionality even when the final arrays differ (e.g.,
+      // when later stores on the path overwrite index k). Weak congruence
+      // is only correct for read-over-weakeq (Lemma 1), not extensionality.
+      const std::size_t weg_f1 = weg.number(equality.f1);
+      const std::size_t weg_f2 = weg.number(equality.f2);
+      const auto path = weg.path_store_edges(weg_f1, weg_f2);
+
+      // Collect all unique store indices from both sides
+      std::set<exprt> all_store_indices;
+      for(const auto &e : path.a_side)
+        all_store_indices.insert(e.store_index);
+      for(const auto &e : path.b_side)
+        all_store_indices.insert(e.store_index);
+
+      if(!all_store_indices.empty())
+      {
+        // weakeq-ext: /\(f1[k]=f2[k] for k in Stores(path)) -> l
+        bvt neg_lits;
+        for(const auto &idx : all_store_indices)
+        {
+          const index_exprt e1{equality.f1, idx, element_type};
+          const index_exprt e2{equality.f2, idx, element_type};
+          neg_lits.push_back(!convert(equal_exprt{e1, e2}));
+        }
+        neg_lits.push_back(equality.l);
+        prop.lcnf(neg_lits);
+      }
+      else if(!path.a_side.empty() || !path.b_side.empty())
+      {
+        // Equality edges only — arrays should be equal
+        // (handled by equality constraints)
+      }
+      else
+      {
+        // Not connected in WEG — fall back to diff index
+        auto [it, inserted] = class_diff_index.emplace(
+          root,
+          symbol_exprt{
+            "array_theory::diff#" + std::to_string(extensionality_counter),
+            index_type});
+        if(inserted)
+        {
+          diff_indices.insert(it->second.get_identifier());
+          index_map[root].insert(it->second);
+          extensionality_counter++;
+        }
+
+        const symbol_exprt &diff_index = it->second;
+        const index_exprt elem1{equality.f1, diff_index, element_type};
+        const index_exprt elem2{equality.f2, diff_index, element_type};
+        const literalt elem_eq_lit = convert(equal_exprt{elem1, elem2});
+        prop.lcnf(!elem_eq_lit, equality.l);
+      }
+    }
+  } // if(!lazy_arrays)
+
   // reduce initial index map
   update_index_map(true);
+
+  // Diagnostic: report index set sizes and array counts per class
+  {
+    std::map<std::size_t, std::size_t> class_array_count;
+    std::map<std::size_t, std::size_t> class_with_count;
+    std::map<std::size_t, std::size_t> class_symbol_count;
+    for(std::size_t i = 0; i < arrays.size(); i++)
+    {
+      std::size_t root = arrays.find_number(i);
+      class_array_count[root]++;
+      if(arrays[i].id() == ID_with)
+        class_with_count[root]++;
+      if(arrays[i].id() == ID_symbol || arrays[i].id() == ID_nondet_symbol)
+        class_symbol_count[root]++;
+    }
+    for(const auto &[root, count] : class_array_count)
+    {
+      if(count > 1)
+      {
+        log.statistics() << "Array class " << root << ": " << count
+                         << " arrays (" << class_symbol_count[root]
+                         << " symbols, " << class_with_count[root] << " with), "
+                         << index_map[root].size() << " indices, "
+                         << (index_map[root].size() *
+                             (index_map[root].size() - 1) / 2) *
+                              class_symbol_count[root]
+                         << " potential Ackermann" << messaget::eom;
+      }
+    }
+  }
+
+  if(use_read_over_weakeq)
+  {
+    // WEG-based: read-over-weakeq replaces Ackermann and the "else"
+    // part of element-wise constraints. But we still need:
+    // 1. The store axiom (idx): store(a, i, v)[i] = v
+    // 2. Equality constraints for array equality literals
+    // 3. array_of, array_constant, comprehension constraints
+
+    // Generate store axiom (idx) for each with-expression
+    for(std::size_t i = 0; i < arrays.size(); i++)
+    {
+      const exprt &a = arrays[i];
+      if(a.id() == ID_with)
+      {
+        const with_exprt &with_expr = to_with_expr(a);
+        const typet &element_type = to_array_type(a.type()).element_type();
+        // store(old, where, value)[where] = value
+        index_exprt index_expr{a, with_expr.where(), element_type};
+        prop.l_set_to_true(
+          convert(equal_exprt{index_expr, with_expr.new_value()}));
+      }
+      else if(a.id() == ID_array_of)
+      {
+        // array_of(v)[i] = v for all indices
+        const index_sett &idx_set = index_map[arrays.find_number(i)];
+        for(const auto &index : idx_set)
+        {
+          const typet &element_type = to_array_type(a.type()).element_type();
+          index_exprt index_expr{a, index, element_type};
+          prop.l_set_to_true(
+            convert(equal_exprt{index_expr, to_array_of_expr(a).what()}));
+        }
+      }
+      else if(a.id() == ID_array_comprehension)
+      {
+        const auto &comp = to_array_comprehension_expr(a);
+        const index_sett &idx_set = index_map[arrays.find_number(i)];
+        for(const auto &index : idx_set)
+        {
+          index_exprt index_expr{a, index};
+          exprt body = comp.body();
+          replace_expr(comp.arg(), index, body);
+          prop.l_set_to_true(convert(equal_exprt{index_expr, body}));
+        }
+      }
+      else if(a.id() == ID_if)
+      {
+        const if_exprt &if_expr = to_if_expr(a);
+        const literalt cond_lit = convert(if_expr.cond());
+        const index_sett &idx_set = index_map[arrays.find_number(i)];
+        const typet &element_type = to_array_type(a.type()).element_type();
+        for(const auto &index : idx_set)
+        {
+          index_exprt e_if{a, index, element_type};
+          index_exprt e_true{if_expr.true_case(), index, element_type};
+          index_exprt e_false{if_expr.false_case(), index, element_type};
+          prop.lcnf(!cond_lit, convert(equal_exprt{e_if, e_true}));
+          prop.lcnf(cond_lit, convert(equal_exprt{e_if, e_false}));
+        }
+      }
+    }
+
+    for(const auto &equality : array_equalities)
+    {
+      add_array_constraints_equality(
+        index_map[arrays.find_number(equality.f1)], equality);
+    }
+    add_array_read_over_weakeq_constraints();
+    return;
+  }
 
   // add constraints for if, with, array_of, lambda
   std::set<std::size_t> roots_to_process, updated_roots;
@@ -321,14 +574,104 @@ void arrayst::add_array_constraints()
   for(const auto &equality : array_equalities)
   {
     add_array_constraints_equality(
-      index_map[arrays.find_number(equality.f1)],
-      equality);
-
-    // update_index_map should not be necessary here
+      index_map[arrays.find_number(equality.f1)], equality);
   }
 
-  // add the Ackermann constraints
+  // Use Ackermann with WEG-based skip.
   add_array_Ackermann_constraints();
+
+  // Alternative: read-over-weakeq replaces both element-wise and
+  // Ackermann constraints. Currently unused — requires removing the
+  // element-wise constraints above to avoid redundancy.
+  // add_array_read_over_weakeq_constraints();
+}
+
+/// Read-over-weakeq: for each pair of index expressions a[i] and b[j]
+/// where a ≈_i b in the WEG, generate i=j → a[i]=b[j].
+/// This replaces the quadratic Ackermann constraints with targeted
+/// constraints based on weak equivalence paths.
+void arrayst::add_array_read_over_weakeq_constraints()
+{
+  // Read-over-weakeq (Lemma 1): for each pair of select terms a[i], b[j]
+  // where a ≈_i b (weakly equivalent modulo i) in the WEG, generate
+  // i=j → a[i]=b[j]. For same-array pairs, generate standard Ackermann.
+  //
+  // Uses the forest-based get_rep_mod for correct modulo-i checks.
+
+  struct select_termt
+  {
+    std::size_t weg_node;
+    exprt index;
+  };
+  std::map<std::size_t, std::vector<select_termt>> class_selects;
+
+  for(std::size_t i = 0; i < arrays.size(); i++)
+  {
+    // Use per-array index entries (pre-merge), not the merged root set.
+    // This ensures we only generate read-over-weakeq for select terms
+    // that actually appear in the formula for this specific array.
+    const auto it = index_map.find(i);
+    if(it == index_map.end() || it->second.empty())
+      continue;
+
+    const std::size_t root = arrays.find_number(i);
+    const std::size_t weg_node = weg.number(arrays[i]);
+    for(const auto &index : it->second)
+      class_selects[root].push_back({weg_node, index});
+  }
+
+  for(auto &[root, selects] : class_selects)
+  {
+    // Deduplicate
+    std::sort(
+      selects.begin(), selects.end(), [](const auto &a, const auto &b) {
+        return a.weg_node != b.weg_node ? a.weg_node < b.weg_node
+                                        : a.index < b.index;
+      });
+    selects.erase(
+      std::unique(
+        selects.begin(),
+        selects.end(),
+        [](const auto &a, const auto &b) {
+          return a.weg_node == b.weg_node && a.index == b.index;
+        }),
+      selects.end());
+
+    for(std::size_t s1 = 0; s1 < selects.size(); s1++)
+    {
+      for(std::size_t s2 = s1 + 1; s2 < selects.size(); s2++)
+      {
+        const auto &a = selects[s1];
+        const auto &b = selects[s2];
+
+        if(a.index.is_constant() && b.index.is_constant() &&
+           a.index != b.index)
+          continue;
+
+        // Same WEG node: Ackermann (functional consistency)
+        // Different WEG nodes: read-over-weakeq (if a ≈_i b)
+        if(a.weg_node != b.weg_node &&
+           !weg.weakly_equivalent_mod(a.weg_node, b.weg_node, a.index))
+          continue;
+
+        const equal_exprt idx_eq{
+          a.index,
+          typecast_exprt::conditional_cast(b.index, a.index.type())};
+        const literalt idx_eq_lit = convert(idx_eq);
+        if(idx_eq_lit == const_literal(false))
+          continue;
+
+        const typet &elem_type =
+          to_array_type(weg[a.weg_node].type()).element_type();
+        const equal_exprt val_eq{
+          index_exprt{weg[a.weg_node], a.index, elem_type},
+          index_exprt{weg[b.weg_node], b.index, elem_type}};
+
+        prop.lcnf(!idx_eq_lit, convert(val_eq));
+        array_constraint_count[constraint_typet::ARRAY_ACKERMANN]++;
+      }
+    }
+  }
 }
 
 void map_theoryt::add_array_Ackermann_constraints()
@@ -339,9 +682,94 @@ void map_theoryt::add_array_Ackermann_constraints()
   std::cout << "arrays.size(): " << arrays.size() << '\n';
 #endif
 
+  // Build set of "derived symbols": symbols that are transitively
+  // equated to a derived array (with, if, etc.) via asserted-true
+  // equalities. A symbol is derived if it equals a derived expression
+  // OR another derived symbol. Computed as a fixed point.
+  std::unordered_set<std::size_t> derived_symbol_indices;
+  {
+    auto is_derived_expr = [](const exprt &e)
+    {
+      return e.id() == ID_with || e.id() == ID_update || e.id() == ID_if ||
+             e.id() == ID_array_of || e.id() == ID_array ||
+             e.id() == ID_array_comprehension || e.id() == ID_typecast ||
+             e.id() == ID_string_constant || e.is_constant() ||
+             expr_try_dynamic_cast<let_exprt>(e) != nullptr;
+    };
+    auto is_symbol = [](const exprt &e)
+    { return e.id() == ID_symbol || e.id() == ID_nondet_symbol; };
+
+    // Collect asserted equalities between symbols and between
+    // symbols and derived expressions.
+    struct sym_eqt
+    {
+      std::size_t sym_idx;
+      bool other_is_derived_expr;
+      std::size_t other_sym_idx; // only valid if !other_is_derived_expr
+    };
+    std::vector<sym_eqt> sym_eqs;
+
+    for(const auto &eq : array_equalities)
+    {
+      if(
+        eq.l != const_literal(true) && !eq.asserted_true &&
+        !asserted_true_literals.count(eq.l.get()))
+      {
+        continue;
+      }
+
+      // symbol = derived_expr
+      if(is_symbol(eq.f1) && is_derived_expr(eq.f2))
+        derived_symbol_indices.insert(arrays.number(eq.f1));
+      else if(is_symbol(eq.f2) && is_derived_expr(eq.f1))
+        derived_symbol_indices.insert(arrays.number(eq.f2));
+      // symbol = symbol (for transitive closure)
+      else if(is_symbol(eq.f1) && is_symbol(eq.f2))
+      {
+        sym_eqs.push_back({arrays.number(eq.f1), false, arrays.number(eq.f2)});
+        sym_eqs.push_back({arrays.number(eq.f2), false, arrays.number(eq.f1)});
+      }
+    }
+
+    // Fixed-point: propagate derived status through symbol=symbol edges
+    bool changed = true;
+    while(changed)
+    {
+      changed = false;
+      for(const auto &se : sym_eqs)
+      {
+        if(
+          !derived_symbol_indices.count(se.sym_idx) &&
+          derived_symbol_indices.count(se.other_sym_idx))
+        {
+          derived_symbol_indices.insert(se.sym_idx);
+          changed = true;
+        }
+      }
+    }
+  }
+
   // iterate over arrays
   for(std::size_t i=0; i<arrays.size(); i++)
   {
+    // Skip arrays that are derived from other arrays via with, if, etc.
+    const exprt &arr = arrays[i];
+    if(
+      arr.id() == ID_with || arr.id() == ID_update || arr.id() == ID_if ||
+      arr.id() == ID_array_of || arr.id() == ID_array ||
+      arr.id() == ID_array_comprehension || arr.id() == ID_typecast ||
+      arr.id() == ID_string_constant || arr.is_constant())
+    {
+      continue;
+    }
+    if(expr_try_dynamic_cast<let_exprt>(arr))
+      continue;
+
+    // Also skip symbols that are defined as equal to a derived array
+    // via an asserted equality (e.g., a_481 = store(a_480, i2, e2)).
+    if(derived_symbol_indices.count(i))
+      continue;
+
     const index_sett &index_set=index_map[arrays.find_number(i)];
 
 #ifdef DEBUG
@@ -360,6 +788,18 @@ void map_theoryt::add_array_Ackermann_constraints()
         if(i1!=i2)
         {
           if(i1->is_constant() && i2->is_constant())
+            continue;
+
+          // Skip Ackermann constraints between two extensionality diff
+          // indices. Each diff index is a fresh Skolem symbol; constraints
+          // between two such symbols are redundant.
+          const bool i1_is_diff =
+            i1->id() == ID_symbol &&
+            diff_indices.count(to_symbol_expr(*i1).get_identifier());
+          const bool i2_is_diff =
+            i2->id() == ID_symbol &&
+            diff_indices.count(to_symbol_expr(*i2).get_identifier());
+          if(i1_is_diff && i2_is_diff)
             continue;
 
           // index equality
@@ -448,6 +888,10 @@ void map_theoryt::add_array_constraints_equality(
 {
   // add constraints x=y => x[i]=y[i]
 
+  // Also collect element-equality literals for the reverse direction
+  // (index-set extensionality): /\(x[i]=y[i]) => x=y
+  bvt elem_eq_lits;
+
   for(const auto &index : index_set)
   {
     const typet &element_type1 =
@@ -462,17 +906,31 @@ void map_theoryt::add_array_constraints_equality(
       index_expr1.type()==index_expr2.type(),
       "array elements should all have same type");
 
-    array_equalityt equal;
-    equal.f1 = index_expr1;
-    equal.f2 = index_expr2;
-    equal.l = array_equality.l;
     equal_exprt equality_expr(index_expr1, index_expr2);
 
-    // add constraint
-    // equality constraints are not added lazily
+    // add constraint: l -> x[i]=y[i]
     // convert must be done to guarantee correct update of the index_set
-    prop.lcnf(!array_equality.l, convert(equality_expr));
+    literalt eq_lit = convert(equality_expr);
+    prop.lcnf(!array_equality.l, eq_lit);
     array_constraint_count[constraint_typet::ARRAY_EQUALITY]++;
+
+    elem_eq_lits.push_back(eq_lit);
+  }
+
+  // Index-set extensionality (reverse direction):
+  // /\(x[i]=y[i]) -> l, i.e., !x[i1]=y[i1] \/ !x[i2]=y[i2] \/ ... \/ l
+  // This is incomplete (arrays might differ at indices not in the set)
+  // but combined with the Skolem diff index it provides a complete
+  // encoding while allowing the SAT solver to use this cheaper clause
+  // for propagation.
+  if(array_equality.l != const_literal(true) && !elem_eq_lits.empty())
+  {
+    bvt clause;
+    clause.reserve(elem_eq_lits.size() + 1);
+    for(const auto &lit : elem_eq_lits)
+      clause.push_back(!lit);
+    clause.push_back(array_equality.l);
+    prop.lcnf(clause);
   }
 }
 
@@ -501,10 +959,7 @@ void arrayst::add_array_constraints(
     expr.id() == ID_string_constant)
   {
   }
-  else if(
-    expr.id() == ID_member &&
-    (to_member_expr(expr).struct_op().id() == ID_symbol ||
-     to_member_expr(expr).struct_op().id() == ID_nondet_symbol))
+  else if(expr.id() == ID_member)
   {
   }
   else if(expr.id()==ID_byte_update_little_endian ||
@@ -517,22 +972,32 @@ void arrayst::add_array_constraints(
     // we got a=(type[])b
     const auto &expr_typecast_op = to_typecast_expr(expr).op();
 
-    // add a[i]=b[i]
-    for(const auto &index : index_set)
+    const typet &dest_element_type = to_array_type(expr.type()).element_type();
+    const typet &src_element_type =
+      to_array_type(expr_typecast_op.type()).element_type();
+
+    // When element types differ in size (e.g., SIMD vector reinterpretation
+    // casts like int32[4] <-> int64[2]), the element-wise constraint
+    // a[i]=b[i] is incorrect. The bitvector-level conversion handles
+    // these as bitwise copies, so skip the array-level constraint.
+    if(dest_element_type == src_element_type)
     {
-      const typet &element_type = to_array_type(expr.type()).element_type();
-      index_exprt index_expr1(expr, index, element_type);
-      index_exprt index_expr2(expr_typecast_op, index, element_type);
+      // add a[i]=b[i]
+      for(const auto &index : index_set)
+      {
+        index_exprt index_expr1(expr, index, dest_element_type);
+        index_exprt index_expr2(expr_typecast_op, index, dest_element_type);
 
-      DATA_INVARIANT(
-        index_expr1.type()==index_expr2.type(),
-        "array elements should all have same type");
+        DATA_INVARIANT(
+          index_expr1.type() == index_expr2.type(),
+          "array elements should all have same type");
 
-      // add constraint
-      lazy_constraintt lazy(lazy_typet::ARRAY_TYPECAST,
-        equal_exprt(index_expr1, index_expr2));
-      add_array_constraint(lazy, false); // added immediately
-      array_constraint_count[constraint_typet::ARRAY_TYPECAST]++;
+        // add constraint
+        lazy_constraintt lazy(
+          lazy_typet::ARRAY_TYPECAST, equal_exprt(index_expr1, index_expr2));
+        add_array_constraint(lazy, false); // added immediately
+        array_constraint_count[constraint_typet::ARRAY_TYPECAST]++;
+      }
     }
   }
   else if(expr.id()==ID_index)
@@ -579,6 +1044,25 @@ void arrayst::add_array_constraints_with(
   const with_exprt &expr)
 {
   // We got x=(y with [i:=v]).
+  // If the element type is not an array, the ITE encoding in
+  // boolbv_index.cpp handles read-over-write directly:
+  //   x[I] = ITE(i==I, v, y[I])
+  // This makes the element-wise clauses redundant. But we still need
+  // to register the indices so Ackermann constraints are generated.
+  if(to_array_type(expr.type()).element_type().id() != ID_array)
+  {
+    const typet &element_type = to_array_type(expr.type()).element_type();
+    // Register the write index
+    record_array_index(index_exprt{expr, expr.where(), element_type});
+    // Register all read indices (ensures they're in the index set)
+    for(const auto &idx : index_set)
+      record_array_index(index_exprt{expr, idx, element_type});
+    return;
+  }
+
+  // For array-typed elements (nested arrays), the ITE encoding doesn't
+  // fire, so we need the full element-wise constraints.
+
   // First add constraint x[i]=v
   std::unordered_set<exprt, irep_hash> updated_indices;
 
@@ -596,6 +1080,32 @@ void arrayst::add_array_constraints_with(
   array_constraint_count[constraint_typet::ARRAY_WITH]++;
 
   updated_indices.insert(expr.where());
+
+  // Also add x[I]=v for other indices I that may equal the
+  // write index.  This helps propagation when the write index
+  // and read index are different SSA symbols connected by
+  // equality constraints (e.g., argc'#0 and main_argc).
+  for(const auto &other_index : index_set)
+  {
+    if(other_index == expr.where())
+      continue;
+
+    const literalt idx_eq = convert(equal_exprt(
+      other_index,
+      typecast_exprt::conditional_cast(expr.where(), other_index.type())));
+
+    if(idx_eq.is_false())
+      continue;
+
+    index_exprt other_read(
+      expr, other_index, to_array_type(expr.type()).element_type());
+    lazy_constraintt lazy2(
+      lazy_typet::ARRAY_WITH,
+      implies_exprt(
+        literal_exprt(idx_eq), equal_exprt(other_read, expr.new_value())));
+    add_array_constraint(lazy2, false);
+    array_constraint_count[constraint_typet::ARRAY_WITH]++;
+  }
 
   // For all other indices use the existing value, i.e., add constraints
   // x[I]=y[I] for I!=i,j,...

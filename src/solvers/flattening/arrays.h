@@ -38,6 +38,10 @@ public:
 
   literalt record_array_equality(const equal_exprt &expr);
 
+  /// When true, use read-over-weakeq (WEG-based) instead of
+  /// element-wise + Ackermann constraints.
+  bool use_read_over_weakeq = false;
+
   /// Record that \p symbol is equal to \p value for the purposes of the
   /// array theory. For unbounded-array-typed bindings this connects the
   /// two expressions in the union-find so that element-wise constraints
@@ -57,6 +61,10 @@ protected:
   // elements are added while references are held
 
   // this is used to find the clusters of arrays being compared
+
+  /// Weak equivalence graph (Christ & Hoenicke). Built alongside the
+  /// union-find; used for read-over-weakeq constraint generation.
+  weak_equivalence_grapht weg;
 
   // this tracks the array indicies for each array
   // references to values in this container need to be stable as
