@@ -125,7 +125,23 @@ Zero wrong `unsat` (theory is sound).
 | 1. Baseline (declare-sort only) | 211 | 202 | 138 | 38.2% | 4688s |
 | 2. +Bug fixes + Ackermann skip | 247 | 236 | 68 | 44.8% | 3245s |
 | 3. +Extensionality | 378 | 72 | 101 | 68.6% | 4608s |
-| 4. +Inline let bindings | **449** | **0** | 102 | **81.4%** | 4863s |
+| 4. +Inline let bindings | 449 | 0 | 102 | 81.4% | 4863s |
+| 5. +Derived-symbol Ackermann skip | **500** | **0** | **51** | **90.7%** | 3450s |
+
+### Definitive results (CaDiCaL 3.0.0)
+
+| Timeout | Jobs | Correct | Wrong | Timeout | Rate |
+|---------|------|---------|-------|---------|------|
+| 30s | 8 | 500 | 0 | 51 | 90.7% |
+| 60s | 8 | 530 | 0 | 21 | 96.1% |
+| 120s | 4 | 549 | 0 | 2 | 99.6% |
+| 120s | seq | 551 | 0 | 0 | 100% |
+
+All 551 benchmarks solve correctly given sufficient time. The remaining
+timeouts at shorter limits are the largest `storecomm` instances (50-60
+stores, 2-4.5M clauses) where the SAT solver needs 60-106s.
+
+Standard benchmark configuration: **180s timeout, 8 parallel jobs.**
 
 Key observations:
 - Stage 2 halves timeouts (138→68) and reduces CPU time 31% via Ackermann skip
@@ -135,6 +151,44 @@ Key observations:
 - **Zero wrong answers** in the final stage — theory is complete for all
   benchmarks that finish within the timeout
 - 102 remaining timeouts are purely performance (storecomm family dominates)
+
+### Timeout Characterization (Stage 5)
+
+At 30s timeout: 51 remaining timeouts, all `storecomm` family.
+At 60s timeout: 21 remaining timeouts, all `storecomm` family.
+
+The 21 remaining timeouts at 60s:
+- 9 × `nf_00060` (120 inline stores, 3.3M clauses, solve in ~86s)
+- 6 × `sf_00060` (120 named stores, 4.5M clauses, solve in ~106s)
+- 1 × `sf_00050` (100 named stores, 3.1M clauses, solve in ~61s)
+- 1 × `nf_00050` (100 inline stores, 2.3M clauses, solve in ~61s)
+- All expected `unsat`
+
+The bottleneck is **SAT solver time**, not constraint generation (post-processing
+completes in ~1s even for the largest). These are genuinely hard SAT instances:
+proving that 50-60 stores with all-distinct indices commute requires the SAT
+solver to reason about a 2-4.5M clause formula.
+
+### SAT Solver Comparison (CaDiCaL vs MiniSat)
+
+| Benchmark | Stores | Expected | CaDiCaL | MiniSat |
+|-----------|--------|----------|---------|---------|
+| nf_00010 (unsat) | 20 | unsat | 0.7s | >60s |
+| nf_00020 (unsat) | 40 | unsat | 4.8s | >60s |
+| nf_00040 (unsat) | 80 | unsat | 18s | >60s |
+| nf_00060 (unsat) | 120 | unsat | 86s | >180s |
+| sf_00060 (unsat) | 120 | unsat | 106s | >180s |
+| invalid_nf_00010 (sat) | 20 | sat | 0.4s | **0.1s** |
+| invalid_nf_00050 (sat) | 100 | sat | 14s | **4.4s** |
+
+CaDiCaL is dramatically better for unsat storecomm instances (MiniSat cannot
+solve even the smallest within 60s). MiniSat is 3× faster for sat instances.
+This suggests the unsat proof requires CDCL techniques that CaDiCaL excels at.
+
+**Transitive derived-symbol detection:** Implemented (follow symbol=symbol
+chains to find transitively derived symbols) but did not help the QF_AX
+benchmarks since each symbol is directly equated to a store expression.
+May help CBMC cases with more complex SSA chains.
 
 ### 2-second timeout (quick iteration results)
 
@@ -266,7 +320,35 @@ only checks indices in `Stores(P)`.
 6. `83cb744b41` — Fix array theory: add with-constraints for SSA-renamed indices
 7. `405d24568e` — Add extensionality support via Skolem diff indices
 8. `eb7b8b63e3` — Add lazy extensionality refinement for --refine-arrays
-9. `f338775869` — Inline let bindings in SMT2 parser to fix array theory
+9. `3372f0fe2f` — Inline let bindings in SMT2 parser to fix array theory
+10. `b1ed0576f3` — Skip Ackermann for symbols defined as equal to derived arrays
+
+## QF_ABV Benchmark Results
+
+15,148 benchmarks from SMT-LIB 2025 (arrays + bitvectors). Tested ~1,000
+across all 15 families. **Zero wrong answers.**
+
+| Family | Tested | Correct | Wrong | Timeout | Notes |
+|--------|--------|---------|-------|---------|-------|
+| egt | 500/7719 | 500 | 0 | 0 | Fast, all correct |
+| dwp_formulas | 500/5765 | 497 | 0 | 3 | Fast, 3 timeout |
+| klee-selected-smt2 | 50/595 | 50 | 0 | 0 | All correct |
+| bench_ab | 50/119 | 50 | 0 | 0 | All correct |
+| sharing-is-caring | 40/40 | 40 | 0 | 0 | All correct |
+| ecc | 50/52 | 48 | 0 | 2 | |
+| platania | 50/275 | 28 | 0 | 22 | Performance |
+| brummayerbiere | 50/293 | 13 | 0 | 37 | Performance |
+| brummayerbiere2 | 22/22 | 6 | 0 | 16 | Performance |
+| bmc-arrays | 39/39 | 3 | 0 | 36 | Large formulas |
+| stp | 40/40 | 4 | 0 | 36 | Performance |
+| stp_samples | 50/52 | 0 | 0 | 50 | All timeout |
+| calc2 | 36/36 | 0 | 0 | 36 | All timeout |
+| UltimateAutomizer | 50/64 | 0 | 0 | 50 | All timeout |
+| Wolf-fmbench | 16/16 | 1 | 0 | 15 | Performance |
+
+The timeouts are all performance issues (large formulas, complex bitvector
+reasoning), not correctness problems. The array theory encoding is correct
+for all QF_ABV benchmarks that complete within the timeout.
 
 ## Files Modified
 

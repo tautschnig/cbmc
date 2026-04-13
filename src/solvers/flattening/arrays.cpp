@@ -359,6 +359,36 @@ void arrayst::add_array_constraints()
   // reduce initial index map
   update_index_map(true);
 
+  // Diagnostic: report index set sizes and array counts per class
+  {
+    std::map<std::size_t, std::size_t> class_array_count;
+    std::map<std::size_t, std::size_t> class_with_count;
+    std::map<std::size_t, std::size_t> class_symbol_count;
+    for(std::size_t i = 0; i < arrays.size(); i++)
+    {
+      std::size_t root = arrays.find_number(i);
+      class_array_count[root]++;
+      if(arrays[i].id() == ID_with)
+        class_with_count[root]++;
+      if(arrays[i].id() == ID_symbol || arrays[i].id() == ID_nondet_symbol)
+        class_symbol_count[root]++;
+    }
+    for(const auto &[root, count] : class_array_count)
+    {
+      if(count > 1)
+      {
+        log.statistics() << "Array class " << root << ": " << count
+                         << " arrays (" << class_symbol_count[root]
+                         << " symbols, " << class_with_count[root] << " with), "
+                         << index_map[root].size() << " indices, "
+                         << (index_map[root].size() *
+                             (index_map[root].size() - 1) / 2) *
+                              class_symbol_count[root]
+                         << " potential Ackermann" << messaget::eom;
+      }
+    }
+  }
+
   // add constraints for if, with, array_of, lambda
   std::set<std::size_t> roots_to_process, updated_roots;
   for(std::size_t i=0; i<arrays.size(); i++)
@@ -406,16 +436,77 @@ void map_theoryt::add_array_Ackermann_constraints()
   std::cout << "arrays.size(): " << arrays.size() << '\n';
 #endif
 
+  // Build set of "derived symbols": symbols that are transitively
+  // equated to a derived array (with, if, etc.) via asserted-true
+  // equalities. A symbol is derived if it equals a derived expression
+  // OR another derived symbol. Computed as a fixed point.
+  std::unordered_set<std::size_t> derived_symbol_indices;
+  {
+    auto is_derived_expr = [](const exprt &e)
+    {
+      return e.id() == ID_with || e.id() == ID_update || e.id() == ID_if ||
+             e.id() == ID_array_of || e.id() == ID_array ||
+             e.id() == ID_array_comprehension || e.id() == ID_typecast ||
+             e.id() == ID_string_constant || e.is_constant() ||
+             expr_try_dynamic_cast<let_exprt>(e) != nullptr;
+    };
+    auto is_symbol = [](const exprt &e)
+    { return e.id() == ID_symbol || e.id() == ID_nondet_symbol; };
+
+    // Collect asserted equalities between symbols and between
+    // symbols and derived expressions.
+    struct sym_eqt
+    {
+      std::size_t sym_idx;
+      bool other_is_derived_expr;
+      std::size_t other_sym_idx; // only valid if !other_is_derived_expr
+    };
+    std::vector<sym_eqt> sym_eqs;
+
+    for(const auto &eq : array_equalities)
+    {
+      if(
+        eq.l != const_literal(true) && !eq.asserted_true &&
+        !asserted_true_literals.count(eq.l.get()))
+      {
+        continue;
+      }
+
+      // symbol = derived_expr
+      if(is_symbol(eq.f1) && is_derived_expr(eq.f2))
+        derived_symbol_indices.insert(arrays.number(eq.f1));
+      else if(is_symbol(eq.f2) && is_derived_expr(eq.f1))
+        derived_symbol_indices.insert(arrays.number(eq.f2));
+      // symbol = symbol (for transitive closure)
+      else if(is_symbol(eq.f1) && is_symbol(eq.f2))
+      {
+        sym_eqs.push_back({arrays.number(eq.f1), false, arrays.number(eq.f2)});
+        sym_eqs.push_back({arrays.number(eq.f2), false, arrays.number(eq.f1)});
+      }
+    }
+
+    // Fixed-point: propagate derived status through symbol=symbol edges
+    bool changed = true;
+    while(changed)
+    {
+      changed = false;
+      for(const auto &se : sym_eqs)
+      {
+        if(
+          !derived_symbol_indices.count(se.sym_idx) &&
+          derived_symbol_indices.count(se.other_sym_idx))
+        {
+          derived_symbol_indices.insert(se.sym_idx);
+          changed = true;
+        }
+      }
+    }
+  }
+
   // iterate over arrays
   for(std::size_t i=0; i<arrays.size(); i++)
   {
     // Skip arrays that are derived from other arrays via with, if, etc.
-    // Their Ackermann constraints are implied by the combination of:
-    // (1) the with/if/array_of/etc. constraints already generated, and
-    // (2) the Ackermann constraints on the underlying base arrays.
-    // This is the "weak equivalence" optimisation: arrays connected by
-    // store chains are weakly equivalent, and read-over-weakeq follows
-    // from the read-over-write constraints plus Ackermann on base arrays.
     const exprt &arr = arrays[i];
     if(
       arr.id() == ID_with || arr.id() == ID_update || arr.id() == ID_if ||
@@ -426,6 +517,11 @@ void map_theoryt::add_array_Ackermann_constraints()
       continue;
     }
     if(expr_try_dynamic_cast<let_exprt>(arr))
+      continue;
+
+    // Also skip symbols that are defined as equal to a derived array
+    // via an asserted equality (e.g., a_481 = store(a_480, i2, e2)).
+    if(derived_symbol_indices.count(i))
       continue;
 
     const index_sett &index_set=index_map[arrays.find_number(i)];

@@ -1,7 +1,7 @@
 CORE broken-smt-backend no-new-smt
 main.c
 --arrays-uf-always --unwind 1 --show-array-constraints --json-ui
-"arrayAckermann": 60
+"arrayAckermann": 10
 ^EXIT=10$
 ^SIGNAL=0$
 --
@@ -9,6 +9,5 @@ main.c
 --
 Checks that the weak equivalence optimisation reduces Ackermann constraints.
 With 5 stores to the same unbounded array, the old code produced 110 Ackermann
-constraints (one per pair of indices per array term). The optimised code skips
-derived arrays (with, if, etc.) and produces only 60. Extensionality diff
-indices are not added here because all array equalities are asserted true.
+constraints. The optimised code skips derived arrays (with, if, etc.) and
+symbols defined as equal to derived arrays, producing only 10.
