@@ -72,6 +72,9 @@ literalt arrayst::record_array_equality(
   collect_arrays(op0);
   collect_arrays(op1);
 
+  // WEG: equality edge
+  weg.add_equality(weg.number(op0), weg.number(op1));
+
   return array_equalities.back().l;
 }
 
@@ -154,6 +157,11 @@ void map_theoryt::collect_arrays(const exprt &a)
     arrays.make_union(a, with_expr.old());
     collect_arrays(with_expr.old());
 
+    // WEG: a = store(old, where, value) — store edge
+    const std::size_t a_weg = weg.number(a);
+    const std::size_t old_weg = weg.number(with_expr.old());
+    weg.add_store(old_weg, a_weg, with_expr.where());
+
     // make sure this shows as an application
     index_exprt index_expr(with_expr.old(), with_expr.where());
     record_array_index(index_expr);
@@ -194,6 +202,13 @@ void map_theoryt::collect_arrays(const exprt &a)
     arrays.make_union(a, if_expr.false_case());
     collect_arrays(if_expr.true_case());
     collect_arrays(if_expr.false_case());
+
+    // WEG: if(c, t, f) — equality edges (no store index)
+    const std::size_t a_weg = weg.number(a);
+    const std::size_t t_weg = weg.number(if_expr.true_case());
+    const std::size_t f_weg = weg.number(if_expr.false_case());
+    weg.add_equality(a_weg, t_weg);
+    weg.add_equality(a_weg, f_weg);
   }
   else if(a.id()==ID_symbol)
   {
@@ -234,6 +249,9 @@ void map_theoryt::collect_arrays(const exprt &a)
       to_array_type(typecast_op.type()).element_type())
     {
       arrays.make_union(a, typecast_op);
+
+      // WEG: typecast is an equality edge
+      weg.add_equality(weg.number(a), weg.number(typecast_op));
     }
     collect_arrays(typecast_op);
   }
@@ -306,9 +324,6 @@ void arrayst::add_array_constraints()
       if(equality.l == const_literal(true))
         continue;
 
-      // Skip extensionality for equalities that are asserted true
-      // (e.g., from let-bindings or top-level assertions). The forward
-      // direction (l -> a[i] = b[i]) suffices when l is known true.
       if(
         equality.asserted_true ||
         asserted_true_literals.count(equality.l.get()))
@@ -318,10 +333,6 @@ void arrayst::add_array_constraints()
 
       const array_typet &array_type = to_array_type(equality.f1.type());
 
-      // Prefer index_type() which respects the C type system. Fall back
-      // to the size expression's type when index_type() returns a
-      // zero-width bitvector (e.g., in the standalone smt2_solver where
-      // no C configuration is present).
       typet index_type = array_type.index_type();
       if(
         can_cast_type<bitvector_typet>(index_type) &&
@@ -333,26 +344,49 @@ void arrayst::add_array_constraints()
       const typet &element_type = array_type.element_type();
       const std::size_t root = arrays.find_number(equality.f1);
 
-      // Skolem diff index: one per equivalence class
-      auto [it, inserted] = class_diff_index.emplace(
-        root,
-        symbol_exprt{
-          "array_theory::diff#" + std::to_string(extensionality_counter),
-          index_type});
-      if(inserted)
+      // WEG-based extensionality (weakeq-ext): use store indices on
+      // the WEG path instead of a global diff index. If the arrays
+      // agree at all store indices on the path, they must be equal.
+      const std::size_t weg_f1 = weg.number(equality.f1);
+      const std::size_t weg_f2 = weg.number(equality.f2);
+      const auto path_indices = weg.path_store_indices(weg_f1, weg_f2);
+
+      if(!path_indices.empty())
       {
-        diff_indices.insert(it->second.get_identifier());
-        index_map[root].insert(it->second);
-        extensionality_counter++;
+        // weakeq-ext: /\(f1[i]=f2[i] for i in Stores(path)) -> l
+        bvt neg_lits;
+        for(const auto &idx : path_indices)
+        {
+          const index_exprt e1{equality.f1, idx, element_type};
+          const index_exprt e2{equality.f2, idx, element_type};
+          neg_lits.push_back(!convert(equal_exprt{e1, e2}));
+        }
+        neg_lits.push_back(equality.l);
+        prop.lcnf(neg_lits);
       }
+      else
+      {
+        // No store indices on path (equality edges only) — the arrays
+        // should be equal. But we still need a diff index as fallback
+        // for cases where the WEG path doesn't capture all constraints.
+        auto [it, inserted] = class_diff_index.emplace(
+          root,
+          symbol_exprt{
+            "array_theory::diff#" + std::to_string(extensionality_counter),
+            index_type});
+        if(inserted)
+        {
+          diff_indices.insert(it->second.get_identifier());
+          index_map[root].insert(it->second);
+          extensionality_counter++;
+        }
 
-      const symbol_exprt &diff_index = it->second;
-      const index_exprt elem1{equality.f1, diff_index, element_type};
-      const index_exprt elem2{equality.f2, diff_index, element_type};
-
-      // f1[diff] = f2[diff] -> l
-      const literalt elem_eq_lit = convert(equal_exprt{elem1, elem2});
-      prop.lcnf(!elem_eq_lit, equality.l);
+        const symbol_exprt &diff_index = it->second;
+        const index_exprt elem1{equality.f1, diff_index, element_type};
+        const index_exprt elem2{equality.f2, diff_index, element_type};
+        const literalt elem_eq_lit = convert(equal_exprt{elem1, elem2});
+        prop.lcnf(!elem_eq_lit, equality.l);
+      }
     }
   } // if(!lazy_arrays)
 
@@ -387,6 +421,77 @@ void arrayst::add_array_constraints()
                          << " potential Ackermann" << messaget::eom;
       }
     }
+  }
+
+  if(use_read_over_weakeq)
+  {
+    // WEG-based: read-over-weakeq replaces Ackermann and the "else"
+    // part of element-wise constraints. But we still need:
+    // 1. The store axiom (idx): store(a, i, v)[i] = v
+    // 2. Equality constraints for array equality literals
+    // 3. array_of, array_constant, comprehension constraints
+
+    // Generate store axiom (idx) for each with-expression
+    for(std::size_t i = 0; i < arrays.size(); i++)
+    {
+      const exprt &a = arrays[i];
+      if(a.id() == ID_with)
+      {
+        const with_exprt &with_expr = to_with_expr(a);
+        const typet &element_type = to_array_type(a.type()).element_type();
+        // store(old, where, value)[where] = value
+        index_exprt index_expr{a, with_expr.where(), element_type};
+        prop.l_set_to_true(
+          convert(equal_exprt{index_expr, with_expr.new_value()}));
+      }
+      else if(a.id() == ID_array_of)
+      {
+        // array_of(v)[i] = v for all indices
+        const index_sett &idx_set = index_map[arrays.find_number(i)];
+        for(const auto &index : idx_set)
+        {
+          const typet &element_type = to_array_type(a.type()).element_type();
+          index_exprt index_expr{a, index, element_type};
+          prop.l_set_to_true(
+            convert(equal_exprt{index_expr, to_array_of_expr(a).what()}));
+        }
+      }
+      else if(a.id() == ID_array_comprehension)
+      {
+        const auto &comp = to_array_comprehension_expr(a);
+        const index_sett &idx_set = index_map[arrays.find_number(i)];
+        for(const auto &index : idx_set)
+        {
+          index_exprt index_expr{a, index};
+          exprt body = comp.body();
+          replace_expr(comp.arg(), index, body);
+          prop.l_set_to_true(convert(equal_exprt{index_expr, body}));
+        }
+      }
+      else if(a.id() == ID_if)
+      {
+        const if_exprt &if_expr = to_if_expr(a);
+        const literalt cond_lit = convert(if_expr.cond());
+        const index_sett &idx_set = index_map[arrays.find_number(i)];
+        const typet &element_type = to_array_type(a.type()).element_type();
+        for(const auto &index : idx_set)
+        {
+          index_exprt e_if{a, index, element_type};
+          index_exprt e_true{if_expr.true_case(), index, element_type};
+          index_exprt e_false{if_expr.false_case(), index, element_type};
+          prop.lcnf(!cond_lit, convert(equal_exprt{e_if, e_true}));
+          prop.lcnf(cond_lit, convert(equal_exprt{e_if, e_false}));
+        }
+      }
+    }
+
+    for(const auto &equality : array_equalities)
+    {
+      add_array_constraints_equality(
+        index_map[arrays.find_number(equality.f1)], equality);
+    }
+    add_array_read_over_weakeq_constraints();
+    return;
   }
 
   // add constraints for if, with, array_of, lambda
@@ -424,8 +529,101 @@ void arrayst::add_array_constraints()
       index_map[arrays.find_number(equality.f1)], equality);
   }
 
-  // add the Ackermann constraints
+  // Use Ackermann with WEG-based skip.
   add_array_Ackermann_constraints();
+
+  // Alternative: read-over-weakeq replaces both element-wise and
+  // Ackermann constraints. Currently unused — requires removing the
+  // element-wise constraints above to avoid redundancy.
+  // add_array_read_over_weakeq_constraints();
+}
+
+/// Read-over-weakeq: for each pair of index expressions a[i] and b[j]
+/// where a ≈_i b in the WEG, generate i=j → a[i]=b[j].
+/// This replaces the quadratic Ackermann constraints with targeted
+/// constraints based on weak equivalence paths.
+void arrayst::add_array_read_over_weakeq_constraints()
+{
+  // Read-over-weakeq (Lemma 1): for each pair of select terms a[i], b[j]
+  // where a ≈_i b (weakly equivalent modulo i) in the WEG, generate
+  // i=j → a[i]=b[j]. For same-array pairs, generate standard Ackermann.
+  //
+  // Uses the forest-based get_rep_mod for correct modulo-i checks.
+
+  struct select_termt
+  {
+    std::size_t weg_node;
+    exprt index;
+  };
+  std::map<std::size_t, std::vector<select_termt>> class_selects;
+
+  for(std::size_t i = 0; i < arrays.size(); i++)
+  {
+    // Use per-array index entries (pre-merge), not the merged root set.
+    // This ensures we only generate read-over-weakeq for select terms
+    // that actually appear in the formula for this specific array.
+    const auto it = index_map.find(i);
+    if(it == index_map.end() || it->second.empty())
+      continue;
+
+    const std::size_t root = arrays.find_number(i);
+    const std::size_t weg_node = weg.number(arrays[i]);
+    for(const auto &index : it->second)
+      class_selects[root].push_back({weg_node, index});
+  }
+
+  for(auto &[root, selects] : class_selects)
+  {
+    // Deduplicate
+    std::sort(
+      selects.begin(), selects.end(), [](const auto &a, const auto &b) {
+        return a.weg_node != b.weg_node ? a.weg_node < b.weg_node
+                                        : a.index < b.index;
+      });
+    selects.erase(
+      std::unique(
+        selects.begin(),
+        selects.end(),
+        [](const auto &a, const auto &b) {
+          return a.weg_node == b.weg_node && a.index == b.index;
+        }),
+      selects.end());
+
+    for(std::size_t s1 = 0; s1 < selects.size(); s1++)
+    {
+      for(std::size_t s2 = s1 + 1; s2 < selects.size(); s2++)
+      {
+        const auto &a = selects[s1];
+        const auto &b = selects[s2];
+
+        if(a.index.is_constant() && b.index.is_constant() &&
+           a.index != b.index)
+          continue;
+
+        // Same WEG node: Ackermann (functional consistency)
+        // Different WEG nodes: read-over-weakeq (if a ≈_i b)
+        if(a.weg_node != b.weg_node &&
+           !weg.weakly_equivalent_mod(a.weg_node, b.weg_node, a.index))
+          continue;
+
+        const equal_exprt idx_eq{
+          a.index,
+          typecast_exprt::conditional_cast(b.index, a.index.type())};
+        const literalt idx_eq_lit = convert(idx_eq);
+        if(idx_eq_lit == const_literal(false))
+          continue;
+
+        const typet &elem_type =
+          to_array_type(weg[a.weg_node].type()).element_type();
+        const equal_exprt val_eq{
+          index_exprt{weg[a.weg_node], a.index, elem_type},
+          index_exprt{weg[b.weg_node], b.index, elem_type}};
+
+        prop.lcnf(!idx_eq_lit, convert(val_eq));
+        array_constraint_count[constraint_typet::ARRAY_ACKERMANN]++;
+      }
+    }
+  }
 }
 
 void map_theoryt::add_array_Ackermann_constraints()

@@ -19,6 +19,7 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <util/union_find.h>
 
+#include "arrays_weg.h"
 #include "equality.h"
 
 class equal_exprt;
@@ -61,8 +62,9 @@ protected:
   typedef std::list<array_equalityt> array_equalitiest;
   array_equalitiest array_equalities;
 
-  // -- Arrays union-find --
+  // -- Arrays union-find and WEG --
   union_find<exprt, irep_hash> arrays;
+  weak_equivalence_grapht weg;
 
   // -- Index tracking --
   typedef std::set<exprt> index_sett;
@@ -111,8 +113,9 @@ protected:
 
   void add_array_constraint(const lazy_constraintt &lazy, bool refine = true);
 
-  // -- Ackermann constraints --
+  // -- Ackermann and read-over-weakeq --
   void add_array_Ackermann_constraints();
+  void add_array_read_over_weakeq_constraints();
   void add_array_constraints_equality(
     const index_sett &index_set,
     const array_equalityt &array_equality);

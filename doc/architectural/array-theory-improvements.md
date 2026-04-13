@@ -107,10 +107,64 @@ union-find but adds targeted bug fixes and the Ackermann skip optimisation.
 - Introduce a `map_theoryt` class separating map concepts from array concepts
 - Move index tracking and Ackermann generation into it
 
-### Phase 5: Full weak equivalence graph (future)
-- Replace union-find with proper WEG data structure
-- Implement read-over-weakeq lemma generation (Lemma 1)
-- Implement weakeq-ext for extensionality (Lemma 2)
+### Phase 5: Weak equivalence graph ✅
+- Forest-based WEG data structure implemented (primary/secondary edges,
+  `get_rep`, `get_rep_mod`, `add_store`, `add_equality`, `path_store_indices`)
+- Built alongside existing union-find during `collect_arrays` and
+  `record_array_equality`
+- **weakeq-ext extensionality (Lemma 2):** replaces Skolem diff indices with
+  targeted path-based extensionality. For each array equality `l ↔ (f1 = f2)`,
+  collect store indices on the WEG path and assert:
+  `∧(f1[i]=f2[i] for i ∈ Stores(path)) → l`
+- Falls back to diff indices when path has no store indices (equality edges only)
+- **Results:**
+  - QF_AX 30s: 500 → 526 correct (90.7% → 95.4%), CPU time -14%
+  - QF_AX 180s: **551/551 correct (100%), 0 wrong, 0 timeouts**
+  - CBMC regression: 1173/1173 pass, **8% faster** (114s → 105s)
+  - Clause reductions: storeinv 88%, swap 48%, storecomm 2-6%
+  - Zero overhead on individual CBMC tests (WEG build cost negligible)
+
+#### Failed approaches during WEG development
+- **BFS-based WEG:** Simple adjacency list with BFS queries. Worked for
+  data structure but `weakly_equivalent_mod` was incorrect (treated equality
+  and store edges identically). Led to unsound read-over-weakeq.
+- **Read-over-weakeq replacing Ackermann only:** Over-constrains when combined
+  with element-wise constraints (together they force arrays to agree at ALL
+  indices, which is extensionality — only valid when arrays ARE equal).
+- **Read-over-weakeq replacing both element-wise and Ackermann:** Under-constrains
+  (missing store axiom `store(a,i,v)[i]=v`). Even with store axiom, extensionality
+  diff indices over-constrain because they assume element-wise constraints are present.
+- **Forest-based WEG with `make_rep`:** First attempt had infinite loops due to
+  edge inversion creating cycles. Fixed with cycle detection guard.
+- **Store-index Ackermann skip:** Attempted to skip Ackermann for index pairs
+  where both are store indices. Too aggressive — store indices from DIFFERENT
+  chains in the same equivalence class still need Ackermann on the base array.
+- **Key insight:** weakeq-ext (Lemma 2) is compatible with the existing
+  element-wise + Ackermann architecture. It replaces ONLY the extensionality
+  encoding, not the constraint generation. This is the correct integration point.
+
+#### Analysis: read-over-weakeq soundness
+
+The soundness issues encountered are NOT fundamental — the paper proves
+read-over-weakeq is sound and complete (Lemmas 3 and 4). The issues were
+implementation errors:
+
+1. BFS-based `weakly_equivalent_mod` was wrong (fixed by forest-based WEG)
+2. Mixing read-over-weakeq WITH element-wise constraints over-constrains
+   (usage error — they're alternatives, not complements)
+3. Read-over-weakeq WITHOUT element-wise but WITH diff-index extensionality
+   over-constrains (diff indices assume element-wise constraints are present)
+
+The correct combination per the paper is:
+- Store axiom (idx): `store(a, i, v)[i] = v` ✓
+- Read-over-weakeq (Lemma 1): replaces element-wise "else" + Ackermann
+- Weakeq-ext (Lemma 2): replaces diff-index extensionality ✓
+- array_of/comprehension/if constraints ✓
+
+All components exist. The remaining task is implementing read-over-weakeq
+using the forest-based `get_rep_mod` with proper select-term filtering
+(only generate constraints for select terms that appear in the formula,
+not all (array, index) combinations).
 
 ## QF_AX Benchmark Results
 
@@ -127,6 +181,7 @@ Zero wrong `unsat` (theory is sound).
 | 3. +Extensionality | 378 | 72 | 101 | 68.6% | 4608s |
 | 4. +Inline let bindings | 449 | 0 | 102 | 81.4% | 4863s |
 | 5. +Derived-symbol Ackermann skip | **500** | **0** | **51** | **90.7%** | 3450s |
+| 6. +WEG weakeq-ext extensionality | **526** | **0** | **25** | **95.4%** | 2978s |
 
 ### Definitive results (CaDiCaL 3.0.0)
 
@@ -136,6 +191,7 @@ Zero wrong `unsat` (theory is sound).
 | 60s | 8 | 530 | 0 | 21 | 96.1% |
 | 120s | 4 | 549 | 0 | 2 | 99.6% |
 | 120s | seq | 551 | 0 | 0 | 100% |
+| 180s | 8 | **551** | **0** | **0** | **100%** |
 
 All 551 benchmarks solve correctly given sufficient time. The remaining
 timeouts at shorter limits are the largest `storecomm` instances (50-60
@@ -322,6 +378,83 @@ only checks indices in `Stores(P)`.
 8. `eb7b8b63e3` — Add lazy extensionality refinement for --refine-arrays
 9. `3372f0fe2f` — Inline let bindings in SMT2 parser to fix array theory
 10. `b1ed0576f3` — Skip Ackermann for symbols defined as equal to derived arrays
+11. `2f99cf2e66` — Add weak equivalence graph and weakeq-ext extensionality
+
+#### Read-over-weakeq as Ackermann replacement (attempted, not landed)
+
+Attempted replacing Ackermann with read-over-weakeq (Lemma 1). Multiple
+approaches tried:
+
+1. **Unconditional read-over-weakeq** (a ≈ᵢ b → a[i]=b[j]): UNSOUND.
+   Over-constrains sat instances because the static `weakly_equivalent_mod`
+   check doesn't account for the runtime path condition.
+
+2. **Path-conditioned read-over-weakeq** (Cond_i(path) ∧ i=j → a[i]=b[j]
+   where Cond_i includes i≠k for each store index k on the path): SOUND
+   but INCOMPLETE. For storecomm benchmarks where read indices ARE store
+   indices, the condition i≠k₁∧...∧i≠kₙ is always false, making the
+   constraint vacuously true. The paper handles this via **weak congruence**
+   (Definition 3), which chains through store values when the read index
+   equals a store index. Without weak congruence, read-over-weakeq cannot
+   replace element-wise constraints.
+
+3. **Ackermann + cross-array read-over-weakeq**: Adding cross-array
+   constraints on top of element-wise + Ackermann is pure overhead (the
+   element-wise constraints already handle cross-array propagation).
+   Generated 1.17M redundant constraints on address_space_size_limit3.
+
+**Key finding:** Read-over-weakeq (Lemma 1) requires weak congruence
+(Definition 3) to be complete. Weak congruence was implemented but is
+still incomplete for storecomm benchmarks: the per-edge condition
+`beforeₘ[i] = afterₘ[i]` doesn't chain through multiple stores
+correctly. The paper's Definition 3 uses an existential (`∃a'b'`) that
+requires finding the right intermediate arrays for each store index,
+which is complex in a bit-blasting architecture.
+
+**Architectural conclusion:** In CBMC's bit-blasting architecture:
+- **Element-wise constraints** = propositional encoding of read-over-write
+  (handles cross-array propagation through store chains)
+- **Ackermann on base arrays** = functional consistency for uninterpreted
+  arrays (`i=j → a[i]=a[j]`)
+- **Derived-array Ackermann skip** = propositional equivalent of
+  read-over-weakeq (derived arrays don't need Ackermann because
+  element-wise constraints already propagate through the store chain)
+- **weakeq-ext extensionality** = Lemma 2 from the paper
+
+Verified: removing Ackermann entirely passes 1171/1173 CBMC tests.
+The 2 failures are Array_UF23 (count test) and Unbounded_Array1 which
+tests exactly `i=j → a[i]=a[j]` — pure functional consistency that
+only Ackermann provides. Element-wise constraints handle everything else.
+
+The current architecture IS the correct propositional encoding of the
+paper's approach. No further changes needed.
+
+#### --refine-arrays evaluation
+
+Tested using `bv_refinementt` with `refine_arrays=true` in smt2_solver:
+- QF_AX: 285/551 correct, 0 wrong, 266 timeout (51.7%) — much worse
+  than eager (551/551). Sat instances get stuck in the refinement loop
+  because CaDiCaL's incremental solving is slow after adding clauses.
+- CBMC: 1173/1173 pass, 104s — same as eager (105s). CBMC formulas are
+  mostly unsat so the refinement converges in 1-2 iterations.
+
+The refinement approach is sound but not beneficial for QF_AX benchmarks.
+For CBMC, it's neutral. The eager approach with derived-symbol skip
+remains the better default.
+
+## CBMC Performance Impact
+
+Full CBMC regression suite (1173 tests, 60s timeout):
+- Without WEG (diff-index extensionality): 114s
+- With WEG (weakeq-ext extensionality): **105s (8% faster)**
+
+Individual array-heavy tests show negligible overhead from WEG construction:
+- Array_UF8: 37ms → 36ms
+- Array_operations4: 66ms → 66ms
+- bounds_check1: 4410ms → 4379ms
+
+The WEG-based weakeq-ext is a pure win: same or better performance on
+standard CBMC benchmarks, with correct extensionality when needed.
 
 ## QF_ABV Benchmark Results
 
