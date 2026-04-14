@@ -344,31 +344,69 @@ void arrayst::add_array_constraints()
       const typet &element_type = array_type.element_type();
       const std::size_t root = arrays.find_number(equality.f1);
 
-      // WEG-based extensionality (weakeq-ext): use store indices on
-      // the WEG path instead of a global diff index. If the arrays
-      // agree at all store indices on the path, they must be equal.
+      // WEG-based extensionality with weak congruence (Lemma 2 + Def 3).
+      // For each store index k on the path:
+      // - If k appears on BOTH sides (a-side and b-side): the weak
+      //   congruence condition is after_a[k] = after_b[k] (both stores
+      //   wrote the same value at k).
+      // - If k appears on ONE side only: the condition is f1[k] = f2[k]
+      //   (standard weakeq-ext).
       const std::size_t weg_f1 = weg.number(equality.f1);
       const std::size_t weg_f2 = weg.number(equality.f2);
-      const auto path_indices = weg.path_store_indices(weg_f1, weg_f2);
+      const auto path = weg.path_store_edges(weg_f1, weg_f2);
 
-      if(!path_indices.empty())
+      // Build a map from store index to edge info for each side
+      std::map<exprt, weak_equivalence_grapht::path_edge_infot> a_stores,
+        b_stores;
+      for(const auto &e : path.a_side)
+        a_stores.emplace(e.store_index, e);
+      for(const auto &e : path.b_side)
+        b_stores.emplace(e.store_index, e);
+
+      // Collect all unique store indices
+      std::set<exprt> all_store_indices;
+      for(const auto &[idx, _] : a_stores)
+        all_store_indices.insert(idx);
+      for(const auto &[idx, _] : b_stores)
+        all_store_indices.insert(idx);
+
+      if(!all_store_indices.empty())
       {
-        // weakeq-ext: /\(f1[i]=f2[i] for i in Stores(path)) -> l
         bvt neg_lits;
-        for(const auto &idx : path_indices)
+        for(const auto &idx : all_store_indices)
         {
-          const index_exprt e1{equality.f1, idx, element_type};
-          const index_exprt e2{equality.f2, idx, element_type};
-          neg_lits.push_back(!convert(equal_exprt{e1, e2}));
+          auto a_it = a_stores.find(idx);
+          auto b_it = b_stores.find(idx);
+
+          if(a_it != a_stores.end() && b_it != b_stores.end())
+          {
+            // Paired stores: weak congruence — compare the stored arrays
+            // at the store index. after_a[k] = after_b[k].
+            const index_exprt ea{
+              weg[a_it->second.node_after], idx, element_type};
+            const index_exprt eb{
+              weg[b_it->second.node_after], idx, element_type};
+            neg_lits.push_back(!convert(equal_exprt{ea, eb}));
+          }
+          else
+          {
+            // Unpaired store: standard weakeq-ext — f1[k] = f2[k]
+            const index_exprt e1{equality.f1, idx, element_type};
+            const index_exprt e2{equality.f2, idx, element_type};
+            neg_lits.push_back(!convert(equal_exprt{e1, e2}));
+          }
         }
         neg_lits.push_back(equality.l);
         prop.lcnf(neg_lits);
       }
+      else if(!path.a_side.empty() || !path.b_side.empty())
+      {
+        // Equality edges only — arrays should be equal
+        // (handled by equality constraints)
+      }
       else
       {
-        // No store indices on path (equality edges only) — the arrays
-        // should be equal. But we still need a diff index as fallback
-        // for cases where the WEG path doesn't capture all constraints.
+        // Not connected in WEG — fall back to diff index
         auto [it, inserted] = class_diff_index.emplace(
           root,
           symbol_exprt{

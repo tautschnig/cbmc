@@ -119,24 +119,48 @@ public:
     nodes[b].pi = nil_exprt{};
   }
 
-  /// Collect store indices on the path from a to b via the representative.
-  std::vector<exprt> path_store_indices(std::size_t a, std::size_t b) const
+  /// Info about a store edge on the WEG path.
+  struct path_edge_infot
   {
+    exprt store_index;
+    std::size_t node_before; // base array
+    std::size_t node_after;  // store(base, index, value)
+  };
+
+  /// Collect store edges on the path from a to b, separated by side.
+  struct path_edgest
+  {
+    std::vector<path_edge_infot> a_side; // a to representative
+    std::vector<path_edge_infot> b_side; // b to representative
+  };
+
+  path_edgest path_store_edges(std::size_t a, std::size_t b) const
+  {
+    path_edgest result;
     if(!weakly_equivalent(a, b))
-      return {};
-    std::vector<exprt> indices;
-    // Collect from a to rep
+      return result;
     for(std::size_t n = a; nodes[n].p.has_value(); n = *nodes[n].p)
     {
       if(nodes[n].pi.is_not_nil())
-        indices.push_back(nodes[n].pi);
+        result.a_side.push_back({nodes[n].pi, *nodes[n].p, n});
     }
-    // Collect from b to rep
     for(std::size_t n = b; nodes[n].p.has_value(); n = *nodes[n].p)
     {
       if(nodes[n].pi.is_not_nil())
-        indices.push_back(nodes[n].pi);
+        result.b_side.push_back({nodes[n].pi, *nodes[n].p, n});
     }
+    return result;
+  }
+
+  /// Collect just the store indices (convenience wrapper).
+  std::vector<exprt> path_store_indices(std::size_t a, std::size_t b) const
+  {
+    auto edges = path_store_edges(a, b);
+    std::vector<exprt> indices;
+    for(const auto &e : edges.a_side)
+      indices.push_back(e.store_index);
+    for(const auto &e : edges.b_side)
+      indices.push_back(e.store_index);
     return indices;
   }
 
