@@ -99,6 +99,10 @@ protected:
     lazy_typet type;
     exprt lazy;
 
+    /// Guard literal for assumption-based lazy solving.
+    /// When set, the constraint is guard → lazy.
+    literalt guard = const_literal(false);
+
     lazy_constraintt(lazy_typet _type, const exprt &_lazy)
       : type(_type), lazy(_lazy)
     {
@@ -112,6 +116,7 @@ protected:
   std::map<exprt, bool> expr_map;
 
   void add_array_constraint(const lazy_constraintt &lazy, bool refine = true);
+  void freeze_lazy_constraints();
 
   // -- Ackermann and read-over-weakeq --
   void add_array_Ackermann_constraints();

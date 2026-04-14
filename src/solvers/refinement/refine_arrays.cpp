@@ -90,27 +90,18 @@ void bv_refinementt::arrays_overapproximated()
     to_check.push_back({current, get_value(current), it});
   }
 
-  // Now check each evaluated constraint using a local solver and activate
-  // violated ones. This phase may modify the main solver (prop).
+  // Check each evaluated constraint against the model.
+  // If violated, activate by adding its guard to the active set.
+  static const unsigned MAX_ACTIVATIONS = 100;
   for(auto &entry : to_check)
   {
-    satcheck_no_simplifiert sat_check{log.get_message_handler()};
-    bv_pointerst solver{ns, sat_check, log.get_message_handler()};
-    solver.unbounded_array = bv_pointerst::unbounded_arrayt::U_ALL;
-
-    solver << entry.simplified;
-
-    switch(static_cast<decision_proceduret::resultt>(sat_check.prop_solve()))
+    if(entry.simplified == false_exprt())
     {
-    case decision_proceduret::resultt::D_SATISFIABLE:
-      break;
-    case decision_proceduret::resultt::D_UNSATISFIABLE:
-      prop.l_set_to_true(convert(entry.constraint));
+      active_array_guards.push_back(entry.list_it->guard);
       nb_active++;
       lazy_array_constraints.erase(entry.list_it);
-      break;
-    case decision_proceduret::resultt::D_ERROR:
-      INVARIANT(false, "error in array over approximation check");
+      if(nb_active >= MAX_ACTIVATIONS)
+        break;
     }
   }
 

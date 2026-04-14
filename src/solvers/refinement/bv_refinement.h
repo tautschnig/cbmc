@@ -105,6 +105,7 @@ private:
   // MEMBERS
 
   bool progress;
+  std::vector<literalt> active_array_guards;
   std::list<approximationt> approximations;
 
 protected:
