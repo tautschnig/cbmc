@@ -438,9 +438,37 @@ Tested using `bv_refinementt` with `refine_arrays=true` in smt2_solver:
 - CBMC: 1173/1173 pass, 104s — same as eager (105s). CBMC formulas are
   mostly unsat so the refinement converges in 1-2 iterations.
 
+Improvements applied:
+- Replaced inner SAT solver checks with direct model evaluation
+  (Bitwuzla-style): no performance change because the bottleneck is
+  the SAT re-solve, not the constraint checking.
+- Added max-activations bound per iteration (Yices2-style).
+
 The refinement approach is sound but not beneficial for QF_AX benchmarks.
 For CBMC, it's neutral. The eager approach with derived-symbol skip
 remains the better default.
+
+#### Yices2/Bitwuzla analysis (SMT-COMP 2024 winners)
+
+**Yices2** (QF_AX winner, CDCL(T)):
+- Uses E-graph with array extensions, WEG for conflict detection
+- Key optimizations: "may conflict" filtering, max_update_conflicts
+  bound, stratified extensionality, separation of update conflicts
+  and extensionality
+- "May conflict" filter: attempted in CBMC but unsound — the pre-merge
+  index count doesn't reliably indicate which arrays have direct selects
+
+**Bitwuzla** (QF_ABV winner):
+- No WEG. Model-guided DAG traversal with lazy lemma generation.
+- Bidirectional traversal (down through stores, up through parents)
+- Path condition collection for lemma generation
+- No Ackermann — congruence conflicts detected lazily
+
+**Key insight:** The bottleneck for `--refine-arrays` is CaDiCaL's
+incremental SAT re-solve performance, not the constraint checking.
+Both Yices2 and Bitwuzla use native theory solvers that avoid this
+issue entirely. CBMC's bit-blasting architecture fundamentally limits
+the effectiveness of lazy approaches.
 
 ## CBMC Performance Impact
 
