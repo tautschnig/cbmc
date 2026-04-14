@@ -164,7 +164,7 @@ void map_theoryt::collect_arrays(const exprt &a)
 
     // make sure this shows as an application
     index_exprt index_expr(with_expr.old(), with_expr.where());
-    record_array_index(index_expr);
+    // record_array_index(index_expr); // Yices2 optimization: skip when element theory is stably infinite
   }
   else if(a.id()==ID_update)
   {
