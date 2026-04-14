@@ -90,15 +90,14 @@ void bv_refinementt::arrays_overapproximated()
     to_check.push_back({current, get_value(current), it});
   }
 
-  // Check each evaluated constraint against the model (Bitwuzla-style).
-  // If the constraint evaluates to false, it's violated — activate it.
-  // Limit activations per iteration (Yices2 max_update_conflicts).
+  // Check each evaluated constraint against the model.
+  // If violated, activate by adding its guard to the active set.
   static const unsigned MAX_ACTIVATIONS = 100;
   for(auto &entry : to_check)
   {
     if(entry.simplified == false_exprt())
     {
-      prop.l_set_to_true(convert(entry.constraint));
+      active_array_guards.push_back(entry.list_it->guard);
       nb_active++;
       lazy_array_constraints.erase(entry.list_it);
       if(nb_active >= MAX_ACTIVATIONS)

@@ -377,8 +377,29 @@ only checks indices in `Stores(P)`.
 7. `405d24568e` — Add extensionality support via Skolem diff indices
 8. `eb7b8b63e3` — Add lazy extensionality refinement for --refine-arrays
 9. `3372f0fe2f` — Inline let bindings in SMT2 parser to fix array theory
-10. `b1ed0576f3` — Skip Ackermann for symbols defined as equal to derived arrays
-11. `2f99cf2e66` — Add weak equivalence graph and weakeq-ext extensionality
+10. `acd6d8f700` — Skip Ackermann for symbols defined as equal to derived arrays
+11. `623b83df27` — Add weak equivalence graph and weakeq-ext extensionality
+12. `51101b023a` — Skip adding store index to index set (Yices2 optimization)
+13. `8bda725cd6` — Replace inner SAT solver with model evaluation in --refine-arrays
+14. `717a10681b` — Implement weak congruence in weakeq-ext extensionality
+15. `125e48c9b6` — Assumption-based lazy constraints for --refine-arrays
+
+## SAT Solver Comparison
+
+| Config | QF_AX (551) | CPU time |
+|--------|-------------|----------|
+| CaDiCaL eager | 551/551 | 2470s |
+| CaDiCaL + refine (assumptions) | 551/551 | 3889s |
+| CaDiCaL + refine (permanent clauses) | 285/551 | — (hung) |
+| MiniSat eager | 526/551 | 8929s |
+| MiniSat + refine | 522/551 | 10808s |
+
+CaDiCaL is 3.6× faster than MiniSat on eager solving. MiniSat can't solve
+the hardest storecomm benchmarks. CaDiCaL's incremental re-solve was slow
+with permanent clause addition but works well with assumptions.
+
+CaDiCaL's `constrain` API (temporary clause for one solve) is too limited
+for our use case (only one clause at a time, designed for IC3).
 
 #### Read-over-weakeq as Ackermann replacement (attempted, not landed)
 
