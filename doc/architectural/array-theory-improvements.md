@@ -382,7 +382,78 @@ only checks indices in `Stores(P)`.
 12. `51101b023a` — Skip adding store index to index set (Yices2 optimization)
 13. `8bda725cd6` — Replace inner SAT solver with model evaluation in --refine-arrays
 14. `717a10681b` — Implement weak congruence in weakeq-ext extensionality
-15. `125e48c9b6` — Assumption-based lazy constraints for --refine-arrays
+15. `862b02995b` — Assumption-based lazy constraints for --refine-arrays
+16. `992e3963e0` — Documentation update for ITE encoding
+17. `51aafc40d7` — Encode read-over-write as bitvector ITE + flattening plan
+
+## Key Architectural Findings
+
+1. **Element-wise constraints are the main bottleneck** (35% of clauses)
+   **but cannot be removed.** The ITE encoding handles direct read-over-write
+   (`store(a,j,v)[i]` = `ITE(j==i, v, a[i])`) but element-wise constraints
+   handle CROSS-ARRAY propagation (connecting reads on different arrays in
+   the same equivalence class). Removing element-wise causes 208/551 wrong
+   on QF_AX and 3 CBMC failures. The ITE and element-wise are complementary.
+
+2. **The ITE encoding gives 33% CPU speedup** by providing better SAT
+   propagation structure (bitvector mux vs conditional clause). It works
+   alongside element-wise constraints, not as a replacement.
+
+3. **Ackermann is only needed for pure functional consistency** — arrays
+   with ≥2 selects and no store chain. Removing Ackermann entirely passes
+   1171/1173 CBMC tests (only Unbounded_Array1 fails).
+
+4. **CaDiCaL's incremental solving works well with assumptions** but poorly
+   with permanent clause addition. The assumption-based --refine-arrays
+   achieves 100% on QF_AX (was 51.7% with permanent clauses).
+
+5. **Multi_Dimensional_Array6 was a red herring.** It hangs without
+   `--unwind 3` on ALL versions (including develop) due to infinite loop
+   unwinding, not due to the ITE encoding.
+
+## Performance Progression (QF_AX, 551 benchmarks, 180s, 4 jobs)
+
+| Stage | CPU time | vs baseline |
+|-------|----------|-------------|
+| Baseline (no changes) | ~4700s | — |
+| +All optimizations (pre-ITE) | 2470s | 1.9× faster |
+| +ITE encoding | **1642s** | **2.9× faster** |
+
+## Future Directions
+
+### Multi-dimensional array flattening
+
+CBMC encodes `T[M][N]` as an array of arrays, creating nested store/select
+structures: `a[i][j] = v` becomes `store(a, i, store(select(a, i), j, v))`.
+This nesting is the root cause of the ITE encoding's inability to replace
+element-wise constraints — the ITE handles single-level stores but not the
+cross-array propagation needed for nested arrays.
+
+Flattening `T[M][N]` to `T[M*N]` with linearized indices `i*N + j` would
+eliminate nesting entirely. Benefits:
+- Single-level stores → ITE encoding could fully replace element-wise
+- Simpler WEG (no nested array equivalence classes)
+- Better Ackermann filtering (arithmetic on constant indices)
+- Aligns with how Bitwuzla and Yices2 handle arrays (flat)
+
+This can be done entirely in the solver back-end (transparent to the user):
+when `convert_index` sees `a[i]` returning an array type, rewrite as a
+reference to a flattened array with offset `i * inner_size`. Counterexample
+traces map back through the flattening. The SSA remains unchanged.
+
+The key challenge: tracking the flattening mapping throughout the solver,
+especially for `with` expressions on nested arrays where the stored value
+is itself an array.
+
+### References
+
+- Christ, Hoenicke: "Weakly Equivalent Arrays" (arXiv:1405.6939, FroCos 2015)
+- Irfan, Graham-Lengrand: "Arrays Reasoning in MCSat" (SMT 2024)
+  — Yices2 MCSat array integration using WEG
+- Niemetz, Preiner: "Bitwuzla" (CAV 2023, LNCS 13965)
+  — Lemmas-on-demand architecture, bit-vector abstraction of arrays
+- Niemetz, Preiner, Zohar: "Scalable Bit-Blasting with Abstractions"
+  (CAV 2024, LNCS 14681) — CEGAR for bit-vector arithmetic
 
 ## SAT Solver Comparison
 
