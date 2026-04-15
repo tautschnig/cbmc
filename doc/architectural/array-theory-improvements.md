@@ -382,8 +382,9 @@ only checks indices in `Stores(P)`.
 12. `51101b023a` — Skip adding store index to index set (Yices2 optimization)
 13. `8bda725cd6` — Replace inner SAT solver with model evaluation in --refine-arrays
 14. `717a10681b` — Implement weak congruence in weakeq-ext extensionality
-15. `125e48c9b6` — Assumption-based lazy constraints for --refine-arrays
-16. `c3f4d833fd` — Encode read-over-write as bitvector ITE for unbounded arrays
+15. `862b02995b` — Assumption-based lazy constraints for --refine-arrays
+16. `992e3963e0` — Documentation update for ITE encoding
+17. `51aafc40d7` — Encode read-over-write as bitvector ITE + flattening plan
 
 ## Key Architectural Findings
 

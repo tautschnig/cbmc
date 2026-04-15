@@ -89,6 +89,39 @@ bvt boolbvt::convert_index(const index_exprt &expr)
       }
       else
       {
+        // ITE encoding for stores: encode read-over-write as bitvector
+        // mux. Only for element-typed results (not array-of-arrays).
+        if(
+          array.id() == ID_with &&
+          bv_width.get_width_opt(expr.type()).has_value())
+        {
+          const with_exprt &with_expr = to_with_expr(array);
+          const literalt idx_eq = convert(equal_exprt{
+            index,
+            typecast_exprt::conditional_cast(with_expr.where(), index.type())});
+          const bvt bv_val = convert_bv(with_expr.new_value());
+          const bvt bv_old =
+            convert_bv(index_exprt{with_expr.old(), index, expr.type()});
+          bv = bv_utils.select(idx_eq, bv_val, bv_old);
+          record_array_index(expr);
+          return bv;
+        }
+
+        if(
+          array.id() == ID_if &&
+          bv_width.get_width_opt(expr.type()).has_value())
+        {
+          const if_exprt &if_expr = to_if_expr(array);
+          const literalt cond = convert(if_expr.cond());
+          const bvt bv_true =
+            convert_bv(index_exprt{if_expr.true_case(), index, expr.type()});
+          const bvt bv_false =
+            convert_bv(index_exprt{if_expr.false_case(), index, expr.type()});
+          bv = bv_utils.select(cond, bv_true, bv_false);
+          record_array_index(expr);
+          return bv;
+        }
+
         // free variables
         bv = prop.new_variables(boolbv_width(expr.type()));
 
