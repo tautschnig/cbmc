@@ -185,3 +185,29 @@ This rewrite can be done as a preprocessing pass in `finish_eager_conversion`
 before `add_array_constraints`, or in `set_to`/`convert` when expressions
 are first seen. The key requirement: ALL references to the array must be
 rewritten consistently (stores, reads, equalities, let-bindings).
+
+## Implementation Attempt: Coordinated Back-End Flattening
+
+Attempted coordinated flattening in `collect_indices` (reads) and
+`collect_arrays` (stores) using shared `linearize_2d_read` and
+`linearize_2d_index` helpers with normalized index computation.
+
+**Results:**
+- Skipping outer element-wise constraints for 2D stores gives massive
+  clause reduction: 6711 → 1547 (77%) and 73405 → 6894 (91%)
+- BUT the store-read connection breaks because SSA symbols hide the
+  `with` expression: `a#2[1][0]` where `a#2` is a symbol defined as
+  `with(a#1, 1, with(a#1[1], 0, 42))`. The ITE encoding sees the
+  symbol, not the `with` definition.
+- Element-wise constraints are needed to connect SSA symbols to their
+  definitions. Skipping them breaks this connection.
+
+**Root cause:** The bitvector encoding (`convert_index`) sees SSA symbols,
+not their definitions. The array theory's element-wise constraints bridge
+this gap. The 2D flattening can't bypass element-wise without also
+resolving SSA symbols to their definitions.
+
+**Conclusion:** 2D flattening requires an expression-level preprocessing
+pass that resolves SSA symbol definitions and rewrites the expression tree
+BEFORE the solver sees it. This is a goto-symex or preprocessing change,
+not a solver back-end change.

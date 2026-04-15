@@ -135,45 +135,6 @@ void map_theoryt::collect_indices(const exprt &expr)
 
       if(is_unbounded_array(array_type))
       {
-        // Multi-dimensional flattening: if this is a[i][j] where a[i]
-        // has array type, register as a flat read on the outer array
-        // with linearized index, skipping the intermediate array level.
-        if(
-          e.array().id() == ID_index && e.array().type().id() == ID_array &&
-          to_array_type(to_index_expr(e.array()).array().type())
-              .element_type()
-              .id() == ID_array)
-        {
-          const index_exprt &outer = to_index_expr(e.array());
-          const array_typet &inner_type = to_array_type(outer.array().type());
-          const array_typet &elem_array =
-            to_array_type(inner_type.element_type());
-          const exprt &inner_size = elem_array.size();
-          const typet &idx_type = e.index().type();
-
-          // Linearize: outer_idx * inner_size + inner_idx
-          // Normalize: sort multiplication operands for syntactic equality
-          const exprt oi =
-            typecast_exprt::conditional_cast(outer.index(), idx_type);
-          const exprt sz =
-            typecast_exprt::conditional_cast(inner_size, idx_type);
-          const mult_exprt product{oi < sz ? oi : sz, oi < sz ? sz : oi};
-          const plus_exprt flat_idx{product, e.index()};
-
-          record_array_index(index_exprt{outer.array(), flat_idx});
-          collect_indices(outer.index());
-          return;
-        }
-
-        // Skip array-typed index expressions (intermediate level of
-        // multi-dimensional arrays). These are handled by the flattening
-        // above or by the with-constraint generation.
-        if(array_type.element_type().id() == ID_array)
-        {
-          collect_indices(e.index());
-          return;
-        }
-
         record_array_index(e);
       }
     }
