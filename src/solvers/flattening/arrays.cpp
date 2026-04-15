@@ -72,6 +72,25 @@ literalt arrayst::record_array_equality(
   collect_arrays(op0);
   collect_arrays(op1);
 
+  // Track array-of-arrays symbol definitions for 2D inlining
+  if(
+    op0.type().id() == ID_array &&
+    to_array_type(op0.type()).element_type().id() == ID_array)
+  {
+    if(
+      (op0.id() == ID_symbol || op0.id() == ID_nondet_symbol) &&
+      op1.id() == ID_with)
+    {
+      array_2d_definitions[op0] = op1;
+    }
+    if(
+      (op1.id() == ID_symbol || op1.id() == ID_nondet_symbol) &&
+      op0.id() == ID_with)
+    {
+      array_2d_definitions[op1] = op0;
+    }
+  }
+
   // WEG: equality edge
   weg.add_equality(weg.number(op0), weg.number(op1));
 

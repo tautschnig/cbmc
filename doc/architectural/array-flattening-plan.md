@@ -211,3 +211,28 @@ resolving SSA symbols to their definitions.
 pass that resolves SSA symbol definitions and rewrites the expression tree
 BEFORE the solver sees it. This is a goto-symex or preprocessing change,
 not a solver back-end change.
+
+## Implementation Attempt: Goto-Program Transformation
+
+Implemented `flatten_nested_arrays` as a goto-program pass (like
+`remove_vector`). For constant inner dimensions, it successfully
+produced flat SSA: `a[0][0] = 0` became `a[0] = 0` (with `0*3+0`
+simplified to `0`).
+
+**Results:**
+- Constant inner dims: correct, very compact encoding (751 vars, 1160 clauses)
+- Symbolic inner dims: multiplication overhead makes it worse (25K vs 6.7K)
+- 3 CBMC regression failures from type inconsistencies
+
+**Root cause of failures:** The type rewriting is incomplete — some
+expression nodes retain the nested array type while others have the
+flat type, causing simplifier invariant violations. A thorough
+implementation needs to rewrite types in ALL expression nodes, symbol
+table entries, and type annotations, similar to how `remove_vector`
+handles vector types.
+
+**Conclusion:** The goto-program approach works for constant inner
+dimensions but needs more thorough type rewriting. The back-end
+approach (definition inlining + 2D ITE) is the safe choice for now,
+giving 18-39% reduction. The goto-program approach is deferred for
+future work with proper type system handling.

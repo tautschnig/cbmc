@@ -91,6 +91,11 @@ protected:
     const index_sett &index_set,
     const array_comprehension_exprt &expr);
 
+  /// For array-of-arrays symbols defined as with-expressions, maps
+  /// the symbol to its definition. Used by convert_index to inline
+  /// definitions for the 2D ITE encoding.
+  std::unordered_map<exprt, exprt, irep_hash> array_2d_definitions;
+
     // (maybe this function should be partially moved here from boolbv)
 };
 

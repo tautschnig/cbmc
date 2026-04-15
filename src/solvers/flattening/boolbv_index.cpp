@@ -1,3 +1,4 @@
+#include <functional>
 /*******************************************************************\
 
 Module:
@@ -89,6 +90,96 @@ bvt boolbvt::convert_index(const index_exprt &expr)
       }
       else
       {
+        // 2D inlining: for a[i][j] where a is a symbol with a known
+        // with-expression definition, substitute the definition so the
+        // ITE encoding can walk the store chain directly.
+        if(
+          array.id() == ID_index &&
+          bv_width.get_width_opt(expr.type()).has_value())
+        {
+          const index_exprt &outer = to_index_expr(array);
+          auto def_it = array_2d_definitions.find(outer.array());
+          if(def_it != array_2d_definitions.end())
+          {
+            // Replace symbol with its with-expression definition
+            const index_exprt inlined_outer{
+              def_it->second, outer.index(), outer.type()};
+            const index_exprt inlined{inlined_outer, index, expr.type()};
+            bv = convert_bv(inlined);
+            record_array_index(expr);
+            return bv;
+          }
+        }
+
+        // 2D ITE encoding: for a[i][j] where a is a with-expression
+        // on an array-of-arrays, walk the store chain with compound
+        // conditions (outer_idx==k && inner_idx==l → v).
+        if(
+          array.id() == ID_index &&
+          to_index_expr(array).array().id() == ID_with &&
+          bv_width.get_width_opt(expr.type()).has_value())
+        {
+          const index_exprt &outer = to_index_expr(array);
+          const exprt &outer_idx = outer.index();
+          const exprt &inner_idx = index;
+
+          std::function<bvt(const exprt &)> flatten_2d =
+            [&](const exprt &arr) -> bvt
+          {
+            if(arr.id() == ID_with)
+            {
+              const with_exprt &w = to_with_expr(arr);
+              if(
+                w.new_value().id() == ID_with &&
+                to_with_expr(w.new_value()).old().id() == ID_index &&
+                to_index_expr(to_with_expr(w.new_value()).old()).array() ==
+                  w.old() &&
+                to_index_expr(to_with_expr(w.new_value()).old()).index() ==
+                  w.where())
+              {
+                const with_exprt &iw = to_with_expr(w.new_value());
+                const literalt both = prop.land(
+                  convert(equal_exprt{
+                    outer_idx,
+                    typecast_exprt::conditional_cast(
+                      w.where(), outer_idx.type())}),
+                  convert(equal_exprt{
+                    inner_idx,
+                    typecast_exprt::conditional_cast(
+                      iw.where(), inner_idx.type())}));
+                return bv_utils.select(
+                  both, convert_bv(iw.new_value()), flatten_2d(w.old()));
+              }
+              const literalt oeq = convert(equal_exprt{
+                outer_idx,
+                typecast_exprt::conditional_cast(w.where(), outer_idx.type())});
+              return bv_utils.select(
+                oeq,
+                convert_bv(index_exprt{w.new_value(), inner_idx, expr.type()}),
+                flatten_2d(w.old()));
+            }
+            if(arr.id() == ID_if)
+            {
+              return bv_utils.select(
+                convert(to_if_expr(arr).cond()),
+                flatten_2d(to_if_expr(arr).true_case()),
+                flatten_2d(to_if_expr(arr).false_case()));
+            }
+            // Base: use definition inlining or free variables
+            auto dit = array_2d_definitions.find(arr);
+            if(dit != array_2d_definitions.end())
+              return flatten_2d(dit->second);
+            // Free variables for base symbol
+            bvt base_bv =
+              prop.new_variables(bv_width.get_width_opt(expr.type()).value());
+            record_array_index(expr);
+            return base_bv;
+          };
+
+          bv = flatten_2d(outer.array());
+          return bv;
+        }
+
         // ITE encoding for stores: encode read-over-write as bitvector
         // mux. Only for element-typed results (not array-of-arrays).
         if(
