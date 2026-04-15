@@ -429,21 +429,25 @@ This nesting is the root cause of the ITE encoding's inability to replace
 element-wise constraints — the ITE handles single-level stores but not the
 cross-array propagation needed for nested arrays.
 
-Flattening `T[M][N]` to `T[M*N]` with linearized indices `i*N + j` would
-eliminate nesting entirely. Benefits:
-- Single-level stores → ITE encoding could fully replace element-wise
-- Simpler WEG (no nested array equivalence classes)
-- Better Ackermann filtering (arithmetic on constant indices)
-- Aligns with how Bitwuzla and Yices2 handle arrays (flat)
+**Implemented:** `flatten_nested_arrays` goto-program pass (commit 21) rewrites
+`array(array(T, M), N)` to `array(T, N*M)` with linearized indices `i*M + j`.
+Handles stores, reads, array constants, and non-literal array elements.
 
-This can be done entirely in the solver back-end (transparent to the user):
-when `convert_index` sees `a[i]` returning an array type, rewrite as a
-reference to a flattened array with offset `i * inner_size`. Counterexample
-traces map back through the flattening. The SSA remains unchanged.
+Key design decisions:
+- Top-down pattern matching (bottom-up breaks type consistency)
+- 3D+ arrays skipped (partial flattening causes type mismatches)
+- `address_of` sub-arrays skipped (pointer arithmetic depends on layout)
+- `simplify_expr` NOT called during rewriting (sees inconsistent types)
+- Multiplication operands sorted for canonical index form
 
-The key challenge: tracking the flattening mapping throughout the solver,
-especially for `with` expressions on nested arrays where the stored value
-is itself an array.
+Results: CBMC 1174/1174, QF_AX 551/551, QF_ABV 0 new wrong answers.
+Performance is neutral for constant dimensions (back-end ITE already handles
+them). Symbolic dimensions add bitvector multiplication overhead.
+
+Remaining gaps:
+- 3D+ arrays not flattened (need iterative flattening with full type tracking)
+- Counterexample traces show flat indices (e.g., `a[6]` instead of `a[1][2]`)
+- Symbolic multiplication adds clauses for variable-length arrays
 
 ### References
 

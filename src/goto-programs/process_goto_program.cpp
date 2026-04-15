@@ -15,6 +15,7 @@ Author: Martin Brain, martin.brain@cs.ox.ac.uk
 #include <util/options.h>
 
 #include <goto-programs/adjust_float_expressions.h>
+#include <goto-programs/flatten_nested_arrays.h>
 #include <goto-programs/goto_inline.h>
 #include <goto-programs/goto_model.h>
 #include <goto-programs/instrument_preconditions.h>
@@ -66,6 +67,7 @@ bool process_goto_program(
   }
 
   remove_vector(goto_model);
+  flatten_nested_arrays(goto_model);
   remove_complex(goto_model);
 
   if(options.get_bool_option("rewrite-union"))
