@@ -383,7 +383,7 @@ only checks indices in `Stores(P)`.
 13. `8bda725cd6` — Replace inner SAT solver with model evaluation in --refine-arrays
 14. `717a10681b` — Implement weak congruence in weakeq-ext extensionality
     **BUG:** Over-constrains when store indices overlap (wchains QF_ABV).
-    See "Weak congruence soundness bug" section below.
+    Fixed in commit 23.
 15. `862b02995b` — Assumption-based lazy constraints for --refine-arrays
 16. `992e3963e0` — Encode read-over-write as bitvector ITE (documentation)
 17. `34654ccdac` — Encode read-over-write as bitvector ITE for unbounded arrays
@@ -391,6 +391,8 @@ only checks indices in `Stores(P)`.
 19. `ffc56451ac` — Revert multi-dimensional array index flattening
 20. `f68a9c2049` — Inline array-of-arrays definitions for 2D ITE encoding
 21. `fe3e968ad1` — Flatten nested arrays as goto-program transformation
+22. `ad81adea63` — Update tracking document
+23. `fcc9d51ea8` — Fix unsound weak congruence in weakeq-ext extensionality
 
 ## Key Architectural Findings
 
@@ -423,7 +425,8 @@ only checks indices in `Stores(P)`.
 |-------|----------|-------------|
 | Baseline (no changes) | ~4700s | — |
 | +All optimizations (pre-ITE) | 2470s | 1.9× faster |
-| +ITE encoding | **1642s** | **2.9× faster** |
+| +ITE encoding | 1642s | 2.9× faster |
+| +Weak congruence fix (commit 23) | **2075s** | **2.3× faster** |
 
 ## Future Directions
 
@@ -658,8 +661,21 @@ chains.
 **Bisection:** develop → `sat` (correct). Commit `717a10681b` → `unsat`
 (wrong). All prior commits → `sat` (correct).
 
-**Status:** Under investigation. The weakeq-ext without weak congruence
-(commit 11) is sound and gives 551/551 on QF_AX.
+**Status:** Fixed in commit 23. The weak congruence optimization was removed
+from weakeq-ext extensionality. The correct condition per Lemma 2 is
+`f1[k] = f2[k]` for all store indices k. Weak congruence (Definition 3)
+applies only to read-over-weakeq (Lemma 1), not extensionality.
+
+The fix costs 27% QF_AX CPU time (2075s vs 1635s) because comparing full
+store chain expressions `f1[k]` and `f2[k]` is harder for the SAT solver
+than comparing intermediate sub-expressions. This is the cost of correctness.
+
+**Lesson learned:** The weak congruence condition `after_a[k] = after_b[k]`
+is WEAKER than `f1[k] = f2[k]` (easier to satisfy), which makes the
+extensionality clause fire MORE often. This is unsound because it proves
+array equality even when the final arrays differ. The correct condition
+`f1[k] = f2[k]` is STRONGER (harder to satisfy), making extensionality
+fire only when the arrays truly agree at all store indices.
 
 ## Files Modified
 
