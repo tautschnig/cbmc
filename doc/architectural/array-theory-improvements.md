@@ -382,9 +382,15 @@ only checks indices in `Stores(P)`.
 12. `51101b023a` — Skip adding store index to index set (Yices2 optimization)
 13. `8bda725cd6` — Replace inner SAT solver with model evaluation in --refine-arrays
 14. `717a10681b` — Implement weak congruence in weakeq-ext extensionality
+    **BUG:** Over-constrains when store indices overlap (wchains QF_ABV).
+    See "Weak congruence soundness bug" section below.
 15. `862b02995b` — Assumption-based lazy constraints for --refine-arrays
-16. `992e3963e0` — Documentation update for ITE encoding
-17. `51aafc40d7` — Encode read-over-write as bitvector ITE + flattening plan
+16. `992e3963e0` — Encode read-over-write as bitvector ITE (documentation)
+17. `34654ccdac` — Encode read-over-write as bitvector ITE for unbounded arrays
+18. `a73d786edf` — Flatten multi-dimensional array index registration
+19. `ffc56451ac` — Revert multi-dimensional array index flattening
+20. `f68a9c2049` — Inline array-of-arrays definitions for 2D ITE encoding
+21. `fe3e968ad1` — Flatten nested arrays as goto-program transformation
 
 ## Key Architectural Findings
 
@@ -445,7 +451,10 @@ Performance is neutral for constant dimensions (back-end ITE already handles
 them). Symbolic dimensions add bitvector multiplication overhead.
 
 Remaining gaps:
-- 3D+ arrays not flattened (need iterative flattening with full type tracking)
+- 3D+ arrays skipped (partial flattening causes type mismatches between
+  inner and outer dimensions; need iterative flattening with full tracking)
+- `address_of` sub-arrays skipped (pointer arithmetic depends on inner
+  array dimension; `&A[i]` stride changes after flattening)
 - Counterexample traces show flat indices (e.g., `a[6]` instead of `a[1][2]`)
 - Symbolic multiplication adds clauses for variable-length arrays
 
@@ -582,30 +591,75 @@ standard CBMC benchmarks, with correct extensionality when needed.
 
 ## QF_ABV Benchmark Results
 
-15,148 benchmarks from SMT-LIB 2025 (arrays + bitvectors). Tested ~1,000
-across all 15 families. **Zero wrong answers.**
+15,148 benchmarks from SMT-LIB 2025 (arrays + bitvectors). Tested 1,000
+across multiple families.
 
-| Family | Tested | Correct | Wrong | Timeout | Notes |
+### Wrong answers (44 total — soundness bug in weak congruence)
+
+All 44 wrong answers return `unsat` when `sat` expected. Root cause: the
+weak congruence implementation (commit 14, `717a10681b`) over-constrains
+when store indices overlap. Bisection confirmed: develop returns `sat`
+(correct), the regression starts at that commit.
+
+| Family | Wrong | Pattern |
+|--------|-------|---------|
+| wchains*se | 43 | Write chain permutations with overlapping byte indices |
+| matrixmultcomm | 1 | Matrix multiplication commutativity |
+
+See "Weak congruence soundness bug" section for analysis.
+
+### Errors (227 total — parser/encoding limitations)
+
+All errors are invariant violations in `bv_utils.cpp:99`:
+`a.size() == b.size()` precondition failure (bitvector width mismatch).
+
+| Family | Errors | Notes |
+|--------|--------|-------|
+| UltimateAutomizer | ~50 | Complex multi-sort formulas |
+| cs_* (concurrency) | ~20 | Dekker, Peterson, Lamport, etc. |
+| kbfiltr, parport, s3* | ~60 | Device driver verification |
+| 20200415-Yurichev | ~60 | Reverse engineering formulas |
+| Other | ~37 | Various |
+
+Root cause: bitvector width mismatch when processing complex SMT2
+expressions. These are parser/encoding limitations, not array theory issues.
+
+### Timeouts (107 total — performance)
+
+Large formulas where the SAT solver needs more than 60s. Not correctness
+issues.
+
+### Correct (622 of 1000 tested)
+
+| Family | Tested | Correct | Wrong | Timeout | Error |
 |--------|--------|---------|-------|---------|-------|
-| egt | 500/7719 | 500 | 0 | 0 | Fast, all correct |
-| dwp_formulas | 500/5765 | 497 | 0 | 3 | Fast, 3 timeout |
-| klee-selected-smt2 | 50/595 | 50 | 0 | 0 | All correct |
-| bench_ab | 50/119 | 50 | 0 | 0 | All correct |
-| sharing-is-caring | 40/40 | 40 | 0 | 0 | All correct |
-| ecc | 50/52 | 48 | 0 | 2 | |
-| platania | 50/275 | 28 | 0 | 22 | Performance |
-| brummayerbiere | 50/293 | 13 | 0 | 37 | Performance |
-| brummayerbiere2 | 22/22 | 6 | 0 | 16 | Performance |
-| bmc-arrays | 39/39 | 3 | 0 | 36 | Large formulas |
-| stp | 40/40 | 4 | 0 | 36 | Performance |
-| stp_samples | 50/52 | 0 | 0 | 50 | All timeout |
-| calc2 | 36/36 | 0 | 0 | 36 | All timeout |
-| UltimateAutomizer | 50/64 | 0 | 0 | 50 | All timeout |
-| Wolf-fmbench | 16/16 | 1 | 0 | 15 | Performance |
+| 2018-Mann (egt) | ~200 | ~200 | 0 | 0 | 0 |
+| 20200415-Yurichev | ~100 | ~40 | 0 | 0 | ~60 |
+| brummayerbiere | ~200 | ~90 | 44 | ~30 | ~36 |
+| UltimateAutomizer | ~100 | ~10 | 0 | ~40 | ~50 |
+| Other families | ~400 | ~282 | 0 | ~37 | ~81 |
 
-The timeouts are all performance issues (large formulas, complex bitvector
-reasoning), not correctness problems. The array theory encoding is correct
-for all QF_ABV benchmarks that complete within the timeout.
+### Weak congruence soundness bug
+
+**Symptom:** 44 QF_ABV benchmarks return `unsat` when `sat` expected.
+
+**Minimal example (wchains002se):** Two store chains writing 4 bytes each
+at addresses `v6..v6+3` and `v7..v7+3` to the same base array, in different
+order. The benchmark asserts the chains are NOT equal. Expected: `sat`
+(they differ when `v6 == v7` because the last store wins differently).
+
+**Root cause:** The weak congruence path condition for weakeq-ext
+extensionality generates conditions like `before[i] = after[i]` for each
+store edge on the WEG path. When store indices overlap (e.g., `v6 == v7`),
+these conditions incorrectly force array equality by not accounting for
+the fact that the "last store wins" semantics differs between the two
+chains.
+
+**Bisection:** develop → `sat` (correct). Commit `717a10681b` → `unsat`
+(wrong). All prior commits → `sat` (correct).
+
+**Status:** Under investigation. The weakeq-ext without weak congruence
+(commit 11) is sound and gives 551/551 on QF_AX.
 
 ## Files Modified
 
