@@ -72,10 +72,18 @@ literalt arrayst::record_array_equality(
   collect_arrays(op0);
   collect_arrays(op1);
 
-  // Track array-of-arrays symbol definitions for 2D inlining
+  // Track array-of-arrays symbol definitions for 2D inlining.
+  // Only for exactly-2D arrays with constant inner size (prevents
+  // crashes with SMT2 nested arrays that have symbolic sizes).
   if(
     op0.type().id() == ID_array &&
-    to_array_type(op0.type()).element_type().id() == ID_array)
+    to_array_type(op0.type()).element_type().id() == ID_array &&
+    to_array_type(to_array_type(op0.type()).element_type())
+        .element_type()
+        .id() != ID_array &&
+    to_array_type(to_array_type(op0.type()).element_type())
+      .size()
+      .is_constant())
   {
     if(
       (op0.id() == ID_symbol || op0.id() == ID_nondet_symbol) &&

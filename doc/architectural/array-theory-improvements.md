@@ -392,7 +392,8 @@ only checks indices in `Stores(P)`.
 20. `f68a9c2049` — Inline array-of-arrays definitions for 2D ITE encoding
 21. `fe3e968ad1` — Flatten nested arrays as goto-program transformation
 22. `ad81adea63` — Update tracking document
-23. `fcc9d51ea8` — Fix unsound weak congruence in weakeq-ext extensionality
+23. `ba03e55d20` — Fix unsound weak congruence in weakeq-ext extensionality
+24. `376cff3551` — Fix 2D definition inlining crash on SMT2 nested arrays
 
 ## Key Architectural Findings
 
@@ -427,6 +428,7 @@ only checks indices in `Stores(P)`.
 | +All optimizations (pre-ITE) | 2470s | 1.9× faster |
 | +ITE encoding | 1642s | 2.9× faster |
 | +Weak congruence fix (commit 23) | **2075s** | **2.3× faster** |
+| +2D inlining fix (commit 24) | 2070s | 2.3× faster |
 
 ## Future Directions
 
@@ -450,8 +452,23 @@ Key design decisions:
 - Multiplication operands sorted for canonical index form
 
 Results: CBMC 1174/1174, QF_AX 551/551, QF_ABV 0 new wrong answers.
-Performance is neutral for constant dimensions (back-end ITE already handles
-them). Symbolic dimensions add bitvector multiplication overhead.
+Performance: neutral on CBMC regression suite (106s with and without).
+Clause count unchanged for symbolic-dimension arrays (the solver handles
+`int a[n*m]` the same as `int a[n][m]`). For constant dimensions, the
+back-end ITE encoding already handles the 2D case, so flattening is
+redundant.
+
+Remaining gaps (documented, not blocking):
+- 3D+ arrays skipped (partial flattening causes type mismatches between
+  inner and outer dimensions; need iterative flattening with full tracking)
+- `address_of` sub-arrays skipped (pointer arithmetic depends on inner
+  array dimension; `&A[i]` stride changes after flattening)
+- Counterexample traces show flat indices (e.g., `a[6]` instead of
+  `a[1][2]`); would need original dimension metadata in the flattened type
+- 2D definition inlining restricted to constant inner sizes (commit 24)
+  to prevent crashes on SMT2 nested arrays with symbolic sizes
+
+### References
 
 Remaining gaps:
 - 3D+ arrays skipped (partial flattening causes type mismatches between
@@ -460,8 +477,6 @@ Remaining gaps:
   array dimension; `&A[i]` stride changes after flattening)
 - Counterexample traces show flat indices (e.g., `a[6]` instead of `a[1][2]`)
 - Symbolic multiplication adds clauses for variable-length arrays
-
-### References
 
 - Christ, Hoenicke: "Weakly Equivalent Arrays" (arXiv:1405.6939, FroCos 2015)
 - Irfan, Graham-Lengrand: "Arrays Reasoning in MCSat" (SMT 2024)
@@ -611,7 +626,7 @@ when store indices overlap. Bisection confirmed: develop returns `sat`
 
 See "Weak congruence soundness bug" section for analysis.
 
-### Errors (227 total — parser/encoding limitations)
+### Errors (227 → 0, fixed in commit 24)
 
 All errors are invariant violations in `bv_utils.cpp:99`:
 `a.size() == b.size()` precondition failure (bitvector width mismatch).
@@ -624,8 +639,10 @@ All errors are invariant violations in `bv_utils.cpp:99`:
 | 20200415-Yurichev | ~60 | Reverse engineering formulas |
 | Other | ~37 | Various |
 
-Root cause: bitvector width mismatch when processing complex SMT2
-expressions. These are parser/encoding limitations, not array theory issues.
+Root cause: 2D definition inlining applied to SMT2 nested arrays with
+symbolic inner sizes, causing width mismatch in bv_utils::select.
+Fixed by restricting 2D definitions to constant inner sizes (commit 24).
+These benchmarks now run out of memory (same as develop) instead of crashing.
 
 ### Timeouts (107 total — performance)
 
