@@ -18,6 +18,9 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include <solvers/prop/literal_expr.h>
 #include <solvers/prop/prop.h>
+#include <solvers/sat/satcheck_cadical.h>
+
+#include "array_propagator.h"
 
 #ifdef DEBUG
 #  include <util/format_expr.h>
@@ -310,27 +313,42 @@ void map_theoryt::add_array_constraint(const lazy_constraintt &lazy, bool refine
 {
   if(lazy_arrays && refine)
   {
-    // Assumption-based lazy constraint: convert the constraint eagerly
-    // (creating all bitvector variables) but guard it with an assumption
-    // literal. The refinement loop activates by flipping the assumption.
-    const literalt constraint_lit = convert(lazy.lazy);
-    if(constraint_lit == const_literal(true))
-      return; // trivially satisfied
-
-    // Create a guard literal
-    const literalt guard = prop.new_variable();
-    prop.set_frozen(guard);
-
-    // Add: guard → constraint (i.e., ¬guard ∨ constraint)
-    prop.lcnf(!guard, constraint_lit);
-
-    // Store the guard for the refinement loop
     lazy_array_constraints.push_back(lazy);
-    lazy_array_constraints.back().guard = guard;
+  }
+  else if(
+    cdclt_propagator && refine && lazy.type == lazy_typet::ARRAY_ACKERMANN)
+  {
+    // CDCL(T): store the constraint for lazy evaluation.
+    // Only convert the guard (cheap). The conclusion expression is
+    // stored and converted only when the refinement loop detects
+    // a violation.
+    if(lazy.lazy.id() == ID_implies)
+    {
+      const auto &imp = to_implies_expr(lazy.lazy);
+      if(imp.op0().id() == ID_literal)
+      {
+        const literalt guard = to_literal_expr(imp.op0()).get_literal();
+        if(!guard.is_constant())
+        {
+          // Register guard with propagator for model checking
+          cdclt_propagator->add_ackermann_clause(guard.dimacs(), 0);
+          auto *cadical = dynamic_cast<satcheck_cadical_baset *>(&prop);
+          if(cadical)
+          {
+            cadical->observe_var(guard.var_no());
+            prop.set_frozen(guard);
+          }
+          // Store the full constraint for lazy conversion
+          lazy_array_constraints.push_back(lazy);
+          return;
+        }
+      }
+    }
+    // Fallback: add eagerly
+    prop.l_set_to_true(convert(lazy.lazy));
   }
   else
   {
-    // add the constraint eagerly
     prop.l_set_to_true(convert(lazy.lazy));
   }
 }
@@ -578,7 +596,14 @@ void arrayst::add_array_constraints()
   }
 
   // Use Ackermann with WEG-based skip.
-  add_array_Ackermann_constraints();
+  // When lazy_arrays is set, defer Ackermann to the refinement loop
+  // (checked on demand via model-based congruence detection).
+  if(!lazy_arrays)
+  {
+    if(lazy_arrays)
+      setup_cdclt_propagator();
+    add_array_Ackermann_constraints();
+  }
 
   // Alternative: read-over-weakeq replaces both element-wise and
   // Ackermann constraints. Currently unused — requires removing the
@@ -911,6 +936,7 @@ void map_theoryt::add_array_constraints_equality(
     // add constraint: l -> x[i]=y[i]
     // convert must be done to guarantee correct update of the index_set
     literalt eq_lit = convert(equality_expr);
+
     prop.lcnf(!array_equality.l, eq_lit);
     array_constraint_count[constraint_typet::ARRAY_EQUALITY]++;
 
@@ -1444,4 +1470,14 @@ void map_theoryt::display_array_constraint_count()
   json_result["numOfConstraints"] =
     json_numbert(std::to_string(num_constraints));
   log.status() << ",\n" << json_result;
+}
+
+void arrayst::setup_cdclt_propagator()
+{
+  auto *cadical = dynamic_cast<satcheck_cadical_baset *>(&prop);
+  if(!cadical)
+    return;
+
+  cdclt_propagator = new array_propagatort();
+  cadical->connect_propagator(cdclt_propagator);
 }

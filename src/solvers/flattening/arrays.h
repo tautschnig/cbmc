@@ -71,6 +71,13 @@ protected:
   // elements are added while references are held
 
   // adds array constraints lazily
+  struct lazy_selectt
+  {
+    bvt bv;
+    index_exprt expr;
+  };
+  std::vector<lazy_selectt> lazy_selects;
+
 
   // adds all the constraints eagerly
   void add_array_constraints();

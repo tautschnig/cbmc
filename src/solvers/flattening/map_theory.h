@@ -22,6 +22,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "arrays_weg.h"
 #include "equality.h"
 
+class array_propagatort;
 class equal_exprt;
 class index_exprt;
 class symbol_exprt;
@@ -117,6 +118,10 @@ protected:
 
   void add_array_constraint(const lazy_constraintt &lazy, bool refine = true);
   void freeze_lazy_constraints();
+
+  // -- CDCL(T) propagator --
+  class array_propagatort *cdclt_propagator = nullptr;
+  void setup_cdclt_propagator();
 
   // -- Ackermann and read-over-weakeq --
   void add_array_Ackermann_constraints();

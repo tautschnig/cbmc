@@ -1,3 +1,7 @@
+#include <solvers/sat/satcheck_cadical.h>
+
+#include "array_propagator.h"
+
 #include <functional>
 /*******************************************************************\
 
@@ -90,6 +94,79 @@ bvt boolbvt::convert_index(const index_exprt &expr)
       }
       else
       {
+        // CDCL(T) lazy select (disabled by default — opt-in via
+        // --refine-arrays with CaDiCaL).
+        if(
+          false && cdclt_propagator &&
+          bv_width.get_width_opt(expr.type()).has_value() &&
+          expr.type().id() != ID_array && array.id() == ID_with)
+        {
+          const auto width = bv_width.get_width_opt(expr.type()).value();
+          bv = prop.new_variables(width);
+          for(const auto &lit : bv)
+            prop.set_frozen(lit);
+
+          // Walk the store chain and register axioms
+          // For store(old, j, v)[i]:
+          //   (j == i) → bv == convert_bv(v)
+          //   (j != i) → bv == convert_bv(old[i])
+          // The old[i] recursively creates another lazy select.
+          const exprt lazy_sym = symbol_exprt{
+            "array_theory::lazy#" + std::to_string(lazy_selects.size()),
+            expr.type()};
+          // Map the lazy BV so get_value can read it
+          map.set_literals(
+            to_symbol_expr(lazy_sym).get_identifier(), expr.type(), bv);
+
+          exprt arr = array;
+          bvt current_bv = bv;
+          while(arr.id() == ID_with)
+          {
+            const with_exprt &w = to_with_expr(arr);
+            const literalt idx_eq = convert(equal_exprt{
+              index,
+              typecast_exprt::conditional_cast(w.where(), index.type())});
+
+            if(!idx_eq.is_constant())
+            {
+              // (j == i) → current_bv == v
+              const literalt val_eq =
+                convert(equal_exprt{lazy_sym, w.new_value()});
+              if(!val_eq.is_constant())
+              {
+                cdclt_propagator->add_implication(
+                  idx_eq.dimacs(), val_eq.dimacs());
+                cdclt_propagator->add_ackermann_clause(
+                  idx_eq.dimacs(), val_eq.dimacs());
+                auto *cad = dynamic_cast<satcheck_cadical_baset *>(&prop);
+                if(cad)
+                {
+                  cad->observe_var(idx_eq.var_no());
+                  cad->observe_var(val_eq.var_no());
+                }
+              }
+            }
+            else if(idx_eq == const_literal(true))
+            {
+              // Index definitely matches — assert directly
+              const bvt val_bv = convert_bv(w.new_value());
+              for(std::size_t k = 0; k < current_bv.size() && k < val_bv.size();
+                  k++)
+              {
+                prop.lcnf(!current_bv[k], val_bv[k]);
+                prop.lcnf(current_bv[k], !val_bv[k]);
+              }
+              break; // definite match, no need to continue
+            }
+
+            arr = w.old();
+          }
+
+          lazy_selects.push_back({bv, expr});
+          record_array_index(expr);
+          return bv;
+        }
+
         // 2D inlining: for a[i][j] where a is a symbol with a known
         // with-expression definition, substitute the definition so the
         // ITE encoding can walk the store chain directly.

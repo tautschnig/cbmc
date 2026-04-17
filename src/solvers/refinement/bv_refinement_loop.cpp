@@ -103,11 +103,6 @@ decision_proceduret::resultt bv_refinementt::prop_solve()
 
   push(assumptions);
 
-  // Add positive assumptions for ACTIVE array constraints
-  // (activated constraints have their guards assumed true)
-  for(const auto &guard : active_array_guards)
-    assumption_stack.push_back(guard);
-
   propt::resultt result = prop.prop_solve(assumption_stack);
   pop();
 

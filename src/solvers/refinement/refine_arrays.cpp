@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/bitvector_types.h>
 #include <util/find_symbols.h>
 #include <util/format_expr.h>
+#include <util/simplify_expr.h>
 #include <util/std_expr.h>
 
 #include <solvers/sat/satcheck.h>
@@ -42,11 +43,12 @@ void bv_refinementt::arrays_overapproximated()
 
   unsigned nb_active=0;
 
-  // Evaluate all lazy constraints while the solver is still in SAT state.
-  // We must not interleave get_value() calls with modifications to the
-  // main solver (prop) because some SAT solvers (e.g., CaDiCaL) only
-  // permit reading model values while in the satisfied state, and adding
-  // clauses invalidates that state.
+  // ============================================================
+  // PHASE 1: Collect all model values (no clause modifications)
+  // CaDiCaL requires satisfied state for model queries.
+  // ============================================================
+
+  // 1a. Element-wise constraint violations
   struct evaluated_constraintt
   {
     exprt constraint;
@@ -55,116 +57,145 @@ void bv_refinementt::arrays_overapproximated()
   };
   std::vector<evaluated_constraintt> to_check;
   to_check.reserve(lazy_array_constraints.size());
-
   for(auto it = lazy_array_constraints.begin();
       it != lazy_array_constraints.end();
       ++it)
   {
     const exprt &current = it->lazy;
-
-    // some minor simplifications
-    // check if they are worth having
-    if(current.id()==ID_implies)
+    if(current.id() == ID_implies)
     {
-      implies_exprt imp=to_implies_expr(current);
-      exprt implies_simplified = get_value(imp.op0());
-      if(implies_simplified==false_exprt())
-      {
+      if(get_value(to_implies_expr(current).op0()) == false_exprt())
         continue;
-      }
     }
-
-    if(current.id()==ID_or)
+    if(current.id() == ID_or)
     {
-      or_exprt orexp=to_or_expr(current);
-      INVARIANT(
-        orexp.operands().size() == 2, "only treats the case of a binary or");
-      exprt o1 = get_value(orexp.op0());
-      exprt o2 = get_value(orexp.op1());
-      if(o1==true_exprt() || o2 == true_exprt())
-      {
+      const or_exprt &orexp = to_or_expr(current);
+      INVARIANT(orexp.operands().size() == 2, "binary or");
+      if(
+        get_value(orexp.op0()) == true_exprt() ||
+        get_value(orexp.op1()) == true_exprt())
         continue;
-      }
     }
-
-    to_check.push_back({current, get_value(current), it});
+    to_check.push_back({current, simplify_expr(get_value(current), ns), it});
   }
 
-  // Check each evaluated constraint against the model.
-  // If violated, activate by adding its guard to the active set.
-  static const unsigned MAX_ACTIVATIONS = 100;
-  for(auto &entry : to_check)
+  // 1c. Ackermann violations
+  struct ackermann_violationt
   {
-    if(entry.simplified == false_exprt())
+    exprt idx1, idx2, arr;
+    typet element_type;
+  };
+  std::vector<ackermann_violationt> ackermann_violations;
+  for(std::size_t i = 0; i < arrays.size(); i++)
+  {
+    if(arrays.find_number(i) != i)
+      continue;
+    const index_sett &idx_set = index_map[i];
+    if(idx_set.size() < 2)
+      continue;
+    const typet &et = to_array_type(arrays[i].type()).element_type();
+    std::map<exprt, std::vector<exprt>> val_to_idx;
+    for(const auto &idx : idx_set)
+      val_to_idx[get_value(idx)].push_back(idx);
+    for(const auto &[val, indices] : val_to_idx)
     {
-      active_array_guards.push_back(entry.list_it->guard);
-      nb_active++;
-      lazy_array_constraints.erase(entry.list_it);
-      if(nb_active >= MAX_ACTIVATIONS)
-        break;
+      if(indices.size() < 2)
+        continue;
+      for(std::size_t a = 0; a < arrays.size(); a++)
+      {
+        if(arrays.find_number(a) != i)
+          continue;
+        const exprt v0 = get_value(index_exprt{arrays[a], indices[0], et});
+        for(std::size_t k = 1; k < indices.size(); k++)
+        {
+          if(get_value(index_exprt{arrays[a], indices[k], et}) != v0)
+            ackermann_violations.push_back(
+              {indices[0], indices[k], arrays[a], et});
+        }
+      }
     }
   }
 
-  log.debug() << "BV-Refinement: " << nb_active
-              << " array expressions become active" << messaget::eom;
-  log.debug() << "BV-Refinement: " << lazy_array_constraints.size()
-              << " inactive array expressions" << messaget::eom;
-  if(nb_active > 0)
-    progress=true;
-
-  // Extensionality refinement: check if any array equality literal is
-  // false while all element equalities at known indices are true.
-  // If so, the extensionality axiom is violated — add a Skolem diff
-  // index for that equality and generate constraints for it.
-  unsigned nb_ext = 0;
-
-  // First pass: evaluate all equality literals while solver is in SAT state.
+  // 1d. Extensionality candidates
   struct ext_candidatet
   {
     literalt l;
     exprt f1, f2;
   };
   std::vector<ext_candidatet> ext_candidates;
-
   for(const auto &equality : array_equalities)
   {
     if(equality.l == const_literal(true))
       continue;
     if(equality.asserted_true || asserted_true_literals.count(equality.l.get()))
-    {
       continue;
-    }
-
-    // Check if the equality literal is false in the current model
-    const tvt l_val = prop.l_get(equality.l);
-    if(l_val.is_true())
+    if(prop.l_get(equality.l).is_true())
       continue;
-
-    // The equality is false — check if all elements at known indices agree
     const std::size_t root = arrays.find_number(equality.f1);
     const index_sett &idx_set = index_map[root];
-    const typet &element_type =
-      to_array_type(equality.f1.type()).element_type();
-
-    bool all_elements_equal = true;
+    const typet &et = to_array_type(equality.f1.type()).element_type();
+    bool all_eq = true;
     for(const auto &index : idx_set)
     {
-      const index_exprt e1{equality.f1, index, element_type};
-      const index_exprt e2{equality.f2, index, element_type};
-      const exprt v1 = get_value(e1);
-      const exprt v2 = get_value(e2);
-      if(v1 != v2)
+      if(
+        get_value(index_exprt{equality.f1, index, et}) !=
+        get_value(index_exprt{equality.f2, index, et}))
       {
-        all_elements_equal = false;
+        all_eq = false;
         break;
       }
     }
-
-    if(all_elements_equal)
+    if(all_eq)
       ext_candidates.push_back({equality.l, equality.f1, equality.f2});
   }
 
-  // Second pass: add diff indices (modifies the solver).
+  // ============================================================
+  // PHASE 2: Add clauses (model is now invalidated)
+  // ============================================================
+
+  // 2a. Element-wise constraints
+  static const unsigned MAX_ACTIVATIONS = 100;
+  for(auto &entry : to_check)
+  {
+    if(entry.simplified == false_exprt())
+    {
+      prop.l_set_to_true(convert(entry.constraint));
+      nb_active++;
+      lazy_array_constraints.erase(entry.list_it);
+      if(nb_active >= MAX_ACTIVATIONS)
+        break;
+    }
+  }
+  log.debug() << "BV-Refinement: " << nb_active
+              << " array expressions become active" << messaget::eom;
+  log.debug() << "BV-Refinement: " << lazy_array_constraints.size()
+              << " inactive array expressions" << messaget::eom;
+  if(nb_active > 0)
+    progress = true;
+
+  // 2c. Ackermann constraints
+  unsigned nb_ackermann = 0;
+  for(const auto &v : ackermann_violations)
+  {
+    prop.l_set_to_true(convert(implies_exprt{
+      equal_exprt{
+        v.idx1, typecast_exprt::conditional_cast(v.idx2, v.idx1.type())},
+      equal_exprt{
+        index_exprt{v.arr, v.idx1, v.element_type},
+        index_exprt{v.arr, v.idx2, v.element_type}}}));
+    nb_ackermann++;
+    if(nb_ackermann >= MAX_ACTIVATIONS)
+      break;
+  }
+  if(nb_ackermann > 0)
+  {
+    log.debug() << "BV-Refinement: " << nb_ackermann
+                << " Ackermann constraints added" << messaget::eom;
+    progress = true;
+  }
+
+  // 2d. Extensionality diff indices
+  unsigned nb_ext = 0;
   for(const auto &cand : ext_candidates)
   {
     const array_typet &array_type = to_array_type(cand.f1.type());
@@ -172,55 +203,38 @@ void bv_refinementt::arrays_overapproximated()
     if(
       can_cast_type<bitvector_typet>(index_type) &&
       to_bitvector_type(index_type).get_width() == 0)
-    {
       index_type = array_type.size().type();
-    }
-    const typet &element_type = array_type.element_type();
-
-    const irep_idt diff_id =
-      "array_theory::diff#" + std::to_string(extensionality_counter++);
-    const symbol_exprt diff_index{diff_id, index_type};
-
-    // Add diff to index set
+    const typet &et = array_type.element_type();
+    const symbol_exprt diff_index{
+      "array_theory::diff#" + std::to_string(extensionality_counter++),
+      index_type};
     const std::size_t root = arrays.find_number(cand.f1);
     index_map[root].insert(diff_index);
     update_index_map(true);
-
-    // Generate element-wise constraints for the diff index
     for(std::size_t i = 0; i < arrays.size(); i++)
     {
       if(arrays.find_number(i) != root)
         continue;
-      const index_sett diff_set{diff_index};
-      add_array_constraints(diff_set, arrays[i]);
+      add_array_constraints(index_sett{diff_index}, arrays[i]);
     }
-
-    // Extensionality constraint: f1[diff] = f2[diff] -> l
-    const index_exprt elem1{cand.f1, diff_index, element_type};
-    const index_exprt elem2{cand.f2, diff_index, element_type};
-    const literalt elem_eq_lit = convert(equal_exprt{elem1, elem2});
-    prop.lcnf(!elem_eq_lit, cand.l);
-
-    // Equality propagation: l -> f1[diff] = f2[diff]
-    prop.lcnf(!cand.l, elem_eq_lit);
-
-    // Freeze the new variables
+    const literalt eq_lit = convert(equal_exprt{
+      index_exprt{cand.f1, diff_index, et},
+      index_exprt{cand.f2, diff_index, et}});
+    prop.lcnf(!eq_lit, cand.l);
+    prop.lcnf(!cand.l, eq_lit);
     for(const auto &sym : find_symbols(diff_index))
     {
       if(!bv_width.get_width_opt(sym.type()).has_value())
         continue;
-      const bvt bv = convert_bv(sym);
-      for(const auto &lit : bv)
+      for(const auto &lit : convert_bv(sym))
         if(!lit.is_constant())
           prop.set_frozen(lit);
     }
-
     nb_ext++;
     log.debug() << "BV-Refinement: extensionality diff index added for "
                 << format(cand.f1) << " vs " << format(cand.f2)
                 << messaget::eom;
   }
-
   if(nb_ext > 0)
   {
     log.debug() << "BV-Refinement: " << nb_ext
@@ -236,24 +250,22 @@ void bv_refinementt::freeze_lazy_constraints()
   if(!lazy_arrays)
     return;
 
+  // Convert all array index expressions in lazy constraints so the
+  // SAT model has meaningful values for them. This bit-blasts the
+  // select expressions (creating ITE muxes) without asserting the
+  // constraints that connect them.
   for(const auto &constraint : lazy_array_constraints)
   {
-    // Freeze all symbols in the constraint
-    for(const auto &symbol : find_symbols(constraint.lazy))
-    {
-      if(!bv_width.get_width_opt(symbol.type()).has_value())
-        continue;
-      const bvt bv=convert_bv(symbol);
-      for(const auto &literal : bv)
-        if(!literal.is_constant())
-          prop.set_frozen(literal);
-    }
-
-    // Also freeze the full constraint literal and its sub-expressions
-    // so that convert() during refinement does not hit eliminated
-    // variables.
-    literalt constraint_lit = convert(constraint.lazy);
-    if(!constraint_lit.is_constant())
-      prop.set_frozen(constraint_lit);
+    constraint.lazy.visit_pre(
+      [&](const exprt &e)
+      {
+        if(e.id() == ID_index && bv_width.get_width_opt(e.type()).has_value())
+        {
+          const bvt bv = convert_bv(e);
+          for(const auto &lit : bv)
+            if(!lit.is_constant())
+              prop.set_frozen(lit);
+        }
+      });
   }
 }
