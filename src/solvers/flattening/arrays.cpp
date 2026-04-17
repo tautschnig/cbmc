@@ -1044,6 +1044,25 @@ void arrayst::add_array_constraints_with(
   const with_exprt &expr)
 {
   // We got x=(y with [i:=v]).
+  // If the element type is not an array, the ITE encoding in
+  // boolbv_index.cpp handles read-over-write directly:
+  //   x[I] = ITE(i==I, v, y[I])
+  // This makes the element-wise clauses redundant. But we still need
+  // to register the indices so Ackermann constraints are generated.
+  if(to_array_type(expr.type()).element_type().id() != ID_array)
+  {
+    const typet &element_type = to_array_type(expr.type()).element_type();
+    // Register the write index
+    record_array_index(index_exprt{expr, expr.where(), element_type});
+    // Register all read indices (ensures they're in the index set)
+    for(const auto &idx : index_set)
+      record_array_index(index_exprt{expr, idx, element_type});
+    return;
+  }
+
+  // For array-typed elements (nested arrays), the ITE encoding doesn't
+  // fire, so we need the full element-wise constraints.
+
   // First add constraint x[i]=v
   std::unordered_set<exprt, irep_hash> updated_indices;
 
