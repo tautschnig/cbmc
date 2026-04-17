@@ -310,23 +310,10 @@ void map_theoryt::add_array_constraint(const lazy_constraintt &lazy, bool refine
 {
   if(lazy_arrays && refine)
   {
-    // Assumption-based lazy constraint: convert the constraint eagerly
-    // (creating all bitvector variables) but guard it with an assumption
-    // literal. The refinement loop activates by flipping the assumption.
-    const literalt constraint_lit = convert(lazy.lazy);
-    if(constraint_lit == const_literal(true))
-      return; // trivially satisfied
-
-    // Create a guard literal
-    const literalt guard = prop.new_variable();
-    prop.set_frozen(guard);
-
-    // Add: guard → constraint (i.e., ¬guard ∨ constraint)
-    prop.lcnf(!guard, constraint_lit);
-
-    // Store the guard for the refinement loop
+    // Truly lazy: store the constraint expression without converting.
+    // The refinement loop will convert and assert only when the model
+    // violates this constraint.
     lazy_array_constraints.push_back(lazy);
-    lazy_array_constraints.back().guard = guard;
   }
   else
   {

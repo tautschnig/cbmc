@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/bitvector_types.h>
 #include <util/find_symbols.h>
 #include <util/format_expr.h>
+#include <util/simplify_expr.h>
 #include <util/std_expr.h>
 
 #include <solvers/sat/satcheck.h>
@@ -87,17 +88,18 @@ void bv_refinementt::arrays_overapproximated()
       }
     }
 
-    to_check.push_back({current, get_value(current), it});
+    to_check.push_back({current, simplify_expr(get_value(current), ns), it});
   }
 
   // Check each evaluated constraint against the model.
-  // If violated, activate by adding its guard to the active set.
+  // If violated, convert and assert it (truly lazy: first time bit-blasting).
   static const unsigned MAX_ACTIVATIONS = 100;
   for(auto &entry : to_check)
   {
     if(entry.simplified == false_exprt())
     {
-      active_array_guards.push_back(entry.list_it->guard);
+      // Convert and permanently assert the violated constraint
+      prop.l_set_to_true(convert(entry.constraint));
       nb_active++;
       lazy_array_constraints.erase(entry.list_it);
       if(nb_active >= MAX_ACTIVATIONS)
@@ -236,24 +238,22 @@ void bv_refinementt::freeze_lazy_constraints()
   if(!lazy_arrays)
     return;
 
+  // Convert all array index expressions in lazy constraints so the
+  // SAT model has meaningful values for them. This bit-blasts the
+  // select expressions (creating ITE muxes) without asserting the
+  // constraints that connect them.
   for(const auto &constraint : lazy_array_constraints)
   {
-    // Freeze all symbols in the constraint
-    for(const auto &symbol : find_symbols(constraint.lazy))
-    {
-      if(!bv_width.get_width_opt(symbol.type()).has_value())
-        continue;
-      const bvt bv=convert_bv(symbol);
-      for(const auto &literal : bv)
-        if(!literal.is_constant())
-          prop.set_frozen(literal);
-    }
-
-    // Also freeze the full constraint literal and its sub-expressions
-    // so that convert() during refinement does not hit eliminated
-    // variables.
-    literalt constraint_lit = convert(constraint.lazy);
-    if(!constraint_lit.is_constant())
-      prop.set_frozen(constraint_lit);
+    constraint.lazy.visit_pre(
+      [&](const exprt &e)
+      {
+        if(e.id() == ID_index && bv_width.get_width_opt(e.type()).has_value())
+        {
+          const bvt bv = convert_bv(e);
+          for(const auto &lit : bv)
+            if(!lit.is_constant())
+              prop.set_frozen(lit);
+        }
+      });
   }
 }
