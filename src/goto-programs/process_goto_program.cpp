@@ -67,7 +67,7 @@ bool process_goto_program(
   }
 
   remove_vector(goto_model);
-  flatten_nested_arrays(goto_model);
+  // flatten_nested_arrays(goto_model); // disabled: increases clauses for 2D arrays
   remove_complex(goto_model);
 
   if(options.get_bool_option("rewrite-union"))
