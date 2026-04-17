@@ -394,6 +394,7 @@ only checks indices in `Stores(P)`.
 22. `ad81adea63` — Update tracking document
 23. `ba03e55d20` — Fix unsound weak congruence in weakeq-ext extensionality
 24. `376cff3551` — Fix 2D definition inlining crash on SMT2 nested arrays
+25. `45f333f440` — Add QF_ABV head-to-head comparison vs develop
 
 ## Key Architectural Findings
 
@@ -612,7 +613,7 @@ standard CBMC benchmarks, with correct extensionality when needed.
 15,148 benchmarks from SMT-LIB 2025 (arrays + bitvectors). Tested 1,000
 across multiple families.
 
-### Wrong answers (44 total — soundness bug in weak congruence)
+### Wrong answers (44 → 0, fixed in commit 23)
 
 All 44 wrong answers return `unsat` when `sat` expected. Root cause: the
 weak congruence implementation (commit 14, `717a10681b`) over-constrains
@@ -659,7 +660,27 @@ issues.
 | UltimateAutomizer | ~100 | ~10 | 0 | ~40 | ~50 |
 | Other families | ~400 | ~282 | 0 | ~37 | ~81 |
 
-### Weak congruence soundness bug
+### Head-to-head vs develop (1000 benchmarks, 60s timeout)
+
+|                | Our branch | develop | Delta |
+|----------------|-----------|---------|-------|
+| Correct        | 631       | 586     | +45 (+7.7%) |
+| Wrong          | 0         | 106     | -106 (all fixed) |
+| Timeout        | 0         | 0       | |
+| Error          | 369       | 308     | +61 |
+
+- **Both correct:** 548 benchmarks. Our branch is **1.95× faster** (140s vs
+  272s CPU on a 114-benchmark sample).
+- **Our branch only:** 83 benchmarks. Extensionality fixes develop's wrong
+  answers (develop returns `sat` for `unsat` benchmarks due to missing
+  extensionality).
+- **Develop only:** 38 benchmarks. Performance regressions on `swapmem*se`,
+  `matrixmultcomm*`, and `ft-out*` families. These are sat benchmarks where
+  the extensionality overhead causes timeouts on our branch.
+- **Extra errors:** 61 benchmarks that develop solves but our branch errors
+  on. These are SMT2 nested arrays with symbolic sizes that hit memory limits
+  during propositional reduction (same root cause as develop, but develop
+  reaches the memory limit later because it doesn't attempt 2D inlining).
 
 **Symptom:** 44 QF_ABV benchmarks return `unsat` when `sat` expected.
 
