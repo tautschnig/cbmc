@@ -157,6 +157,41 @@ across iterations (incremental solving may help or hurt).
 - ITE arrays (conditional stores)
 The Bitwuzla source code provides a reference implementation.
 
+**Phase B implementation findings (attempted):**
+
+Three approaches were tried:
+
+1. **Simple store chain walk:** Walk `with` expressions directly from the
+   select's array. Failed: doesn't follow equality edges in the WEG, so
+   misses stores on arrays connected through equalities. Result: 88 wrong
+   answers on QF_AX.
+
+2. **WEG BFS traversal:** BFS through the entire equivalence class using
+   parent/child edges. Correctly finds matching stores across equality
+   edges. Key bugs found and fixed:
+   - Must check for matching store BEFORE the visited-set check (otherwise
+     nodes visited going UP are missed going DOWN)
+   - Must clear `bv_cache` before `convert_bv` (otherwise returns cached
+     lazy BV instead of ITE chain)
+   - Must set `lazy_arrays=false` during ITE bit-blasting (prevents
+     recursive lazy selects)
+   - Model-based violation detection is incomplete: SAT solver assigns
+     lazy BVs to match store chain, so violations are never detected.
+
+3. **Class-level store check:** Bit-blast ALL selects in equivalence
+   classes that have any store edges. Correct (4/6 benchmarks) but
+   equivalent to eager for QF_AX (every class has stores). Sat benchmarks
+   timeout due to refinement loop overhead.
+
+**Conclusion:** Lazy selects require CaDiCaL ExternalPropagator (Phase E)
+to be effective. Without theory propagation, the refinement loop either:
+- Misses violations (model-based check is incomplete), or
+- Bit-blasts everything in iteration 1 (class-level check), adding
+  overhead without benefit.
+
+The ExternalPropagator would allow checking array axioms DURING the SAT
+search, catching violations immediately without a full re-solve.
+
 **Prerequisite:** Phase A (lazy Ackermann) should be done first to
 avoid generating quadratic constraints for the fresh variables.
 
@@ -256,8 +291,6 @@ class array_propagatort : public CaDiCaL::ExternalPropagator {
 };
 ```
 
-## Priority and Dependencies
-
 **Alternative:** Use CaDiCaL's `connect_external_propagator` API
 (added in CaDiCaL 2.0) which provides external propagation callbacks.
 This is designed exactly for CDCL(T) integration. Need to verify
@@ -274,6 +307,29 @@ Phase C (lazy equalities)     ← moderate impact, easy after B
   ↓
 Phase E (theory propagation)  ← closes the gap, needs SAT solver work
 ```
+
+**Phase E implementation findings (attempted):**
+
+A lazy `ExternalPropagator` was implemented with `is_lazy=true`. Key findings:
+
+1. **Cannot call `convert()` during callbacks.** CaDiCaL's `add()` method
+   cannot be called during `cb_check_found_model`. All clauses must be
+   returned via `cb_add_external_clause_lit` over pre-existing variables.
+
+2. **Pre-converted guards work for lazy selects.** ITE chains pre-converted
+   with guard literals during setup. Propagator activates guards via unit
+   clauses. CaDiCaL backtracks internally (no re-solve overhead).
+
+3. **Sat benchmarks dramatically faster:** `swap_00010` 0.062s (was 0.226s,
+   3.6×), `storecomm_00040` 0.44s (was 2.34s, 5.3×).
+
+4. **Unsat benchmarks incomplete:** Ackermann and extensionality require
+   `convert()` (creates new variables/clauses) which can't be called during
+   callbacks. These still need the refinement loop.
+
+5. **Full CDCL(T) (`cb_propagate`)** would require maintaining backtrackable
+   array theory state synchronized with CaDiCaL's trail. Significantly
+   larger engineering effort.
 
 ## Expected Performance Progression
 

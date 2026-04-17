@@ -565,7 +565,10 @@ void arrayst::add_array_constraints()
   }
 
   // Use Ackermann with WEG-based skip.
-  add_array_Ackermann_constraints();
+  // When lazy_arrays is set, defer Ackermann to the refinement loop
+  // (checked on demand via model-based congruence detection).
+  if(!lazy_arrays)
+    add_array_Ackermann_constraints();
 
   // Alternative: read-over-weakeq replaces both element-wise and
   // Ackermann constraints. Currently unused — requires removing the
