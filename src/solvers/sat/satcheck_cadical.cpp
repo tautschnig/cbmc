@@ -197,3 +197,18 @@ bool satcheck_cadical_baset::is_in_conflict(literalt a) const
 }
 
 #endif
+
+void satcheck_cadical_baset::connect_propagator(CaDiCaL::ExternalPropagator *p)
+{
+  solver->connect_external_propagator(p);
+}
+
+void satcheck_cadical_baset::disconnect_propagator()
+{
+  solver->disconnect_external_propagator();
+}
+
+void satcheck_cadical_baset::observe_var(int var)
+{
+  solver->add_observed_var(var);
+}

@@ -17,6 +17,7 @@ Author: Michael Tautschnig
 namespace CaDiCaL // NOLINT(readability/namespace)
 {
   class Solver; // NOLINT(readability/identifiers)
+  class ExternalPropagator; // NOLINT(readability/identifiers)
 }
 
 class satcheck_cadical_baset : public cnf_solvert, public hardness_collectort
@@ -54,6 +55,11 @@ protected:
 
   // NOLINTNEXTLINE(readability/identifiers)
   CaDiCaL::Solver *solver;
+
+public:
+  void connect_propagator(CaDiCaL::ExternalPropagator *p);
+  void disconnect_propagator();
+  void observe_var(int var);
   int preprocessing_limit = 0, localsearch_limit = 0;
 };
 
