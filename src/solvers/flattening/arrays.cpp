@@ -933,7 +933,27 @@ void map_theoryt::add_array_constraints_equality(
     // add constraint: l -> x[i]=y[i]
     // convert must be done to guarantee correct update of the index_set
     literalt eq_lit = convert(equality_expr);
-    prop.lcnf(!array_equality.l, eq_lit);
+
+    if(
+      cdclt_propagator && !array_equality.l.is_constant() &&
+      !eq_lit.is_constant())
+    {
+      // Route through propagator: watch l, propagate eq_lit
+      cdclt_propagator->add_implication(
+        array_equality.l.dimacs(), eq_lit.dimacs());
+      cdclt_propagator->add_ackermann_clause(
+        array_equality.l.dimacs(), eq_lit.dimacs());
+      auto *cadical = dynamic_cast<satcheck_cadical_baset *>(&prop);
+      if(cadical)
+      {
+        cadical->observe_var(array_equality.l.var_no());
+        cadical->observe_var(eq_lit.var_no());
+      }
+    }
+    else
+    {
+      prop.lcnf(!array_equality.l, eq_lit);
+    }
     array_constraint_count[constraint_typet::ARRAY_EQUALITY]++;
 
     elem_eq_lits.push_back(eq_lit);
