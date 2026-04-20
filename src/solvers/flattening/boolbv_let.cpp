@@ -94,15 +94,10 @@ bvt boolbvt::convert_let(const let_exprt &expr)
   // recursive call
   bvt result_bv = convert_bv(where_renamed);
 
-  // the mapping can now be deleted
-  for(const auto &entry : fresh_variables)
-  {
-    const auto &type = entry.type();
-    if(type.id() == ID_bool)
-      symbols.erase(entry.get_identifier());
-    else
-      map.erase_literals(entry.get_identifier(), type);
-  }
+  // Keep the mappings alive — the array theory may reference
+  // these fresh symbols when generating constraints later
+  // (after convert_let returns). Fresh symbols have unique names
+  // from fresh_binding(), so there is no collision risk.
 
   return result_bv;
 }

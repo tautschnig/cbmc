@@ -162,13 +162,12 @@ exprt smt2_parsert::let_expression()
     irep_idt identifier = smt2_tokenizer.get_buffer();
 
     // note that the previous bindings are _not_ visible yet
-    exprt value=expression();
+    exprt value = expression();
 
     if(next_token() != smt2_tokenizert::CLOSE)
       throw error("expected ')' after value in binding");
 
-    bindings.push_back(
-      std::pair<irep_idt, exprt>(identifier, value));
+    bindings.push_back(std::pair<irep_idt, exprt>(identifier, value));
   }
 
   if(next_token() != smt2_tokenizert::CLOSE)
@@ -195,15 +194,17 @@ exprt smt2_parsert::let_expression()
   if(next_token() != smt2_tokenizert::CLOSE)
     throw error("expected ')' after let");
 
-  // Substitute bindings into the where-expression directly rather than
-  // creating a let_exprt. This avoids an abstraction barrier that
-  // prevents the array theory from seeing through element-typed
-  // let bindings (the array theory generates constraints after
-  // convert_let erases the temporary bitvector mappings).
-  replace_symbolt replace;
-  for(const auto &b : bindings)
-    replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
-  replace(where);
+  if(!bindings.empty())
+  {
+    binding_exprt::variablest vars;
+    exprt::operandst vals;
+    for(const auto &b : bindings)
+    {
+      vars.push_back(symbol_exprt{b.first, b.second.type()});
+      vals.push_back(b.second);
+    }
+    where = let_exprt{std::move(vars), std::move(vals), where};
+  }
 
   // delete the bindings from the id_map
   for(const auto &binding : bindings)
@@ -486,126 +487,134 @@ exprt smt2_parsert::function_application_fp(const exprt::operandst &op)
     fp_type);
 }
 
+exprt smt2_parsert::function_application_with_id(const irep_idt &id)
+{
+  if(id == "_") // indexed identifier
+  {
+    // indexed identifier
+    if(next_token() != smt2_tokenizert::SYMBOL)
+      throw error("expected symbol after '_'");
+
+    // copy, the reference won't be stable
+    const auto inner_id = smt2_tokenizer.get_buffer();
+
+    if(has_prefix(inner_id, "bv"))
+    {
+      mp_integer i = string2integer(
+        std::string(smt2_tokenizer.get_buffer(), 2, std::string::npos));
+
+      if(next_token() != smt2_tokenizert::NUMERAL)
+        throw error("expected numeral as bitvector literal width");
+
+      auto width = std::stoll(smt2_tokenizer.get_buffer());
+
+      if(next_token() != smt2_tokenizert::CLOSE)
+        throw error("expected ')' after bitvector literal");
+
+      return from_integer(i, unsignedbv_typet(width));
+    }
+    else if(inner_id == "+oo" || inner_id == "-oo" || inner_id == "NaN")
+    {
+      // These are the "plus infinity", "minus infinity" and NaN
+      // floating-point literals.
+      if(next_token() != smt2_tokenizert::NUMERAL)
+        throw error() << "expected number after " << inner_id;
+
+      auto width_e = std::stoll(smt2_tokenizer.get_buffer());
+
+      if(next_token() != smt2_tokenizert::NUMERAL)
+        throw error() << "expected second number after " << inner_id;
+
+      auto width_f = std::stoll(smt2_tokenizer.get_buffer());
+
+      if(next_token() != smt2_tokenizert::CLOSE)
+        throw error() << "expected ')' after " << id;
+
+      // width_f *includes* the hidden bit
+      const ieee_float_spect spec(width_f - 1, width_e);
+
+      if(inner_id == "+oo")
+        return ieee_floatt::plus_infinity(spec).to_expr();
+      else if(inner_id == "-oo")
+        return ieee_floatt::minus_infinity(spec).to_expr();
+      else // NaN
+        return ieee_floatt::NaN(spec).to_expr();
+    }
+    else
+    {
+      throw error() << "unknown indexed identifier " << inner_id;
+    }
+  }
+  else if(id == "!")
+  {
+    // these are "term attributes"
+    const auto term = expression();
+
+    while(smt2_tokenizer.peek() == smt2_tokenizert::KEYWORD)
+    {
+      next_token(); // eat the keyword
+      if(smt2_tokenizer.get_buffer() == "named")
+      {
+        // 'named terms' must be Boolean
+        if(!term.is_boolean())
+          throw error("named terms must be Boolean");
+
+        if(next_token() == smt2_tokenizert::SYMBOL)
+        {
+          const symbol_exprt symbol_expr(
+            smt2_tokenizer.get_buffer(), bool_typet());
+          named_terms.emplace(
+            symbol_expr.get_identifier(), named_termt(term, symbol_expr));
+        }
+        else
+          throw error("invalid name attribute, expected symbol");
+      }
+      else
+        throw error("unknown term attribute");
+    }
+
+    if(next_token() != smt2_tokenizert::CLOSE)
+      throw error("expected ')' at end of term attribute");
+    else
+      return term;
+  }
+  else
+  {
+    // non-indexed symbol, look up in expression table
+    const auto e_it = expressions.find(id2string(id));
+    if(e_it != expressions.end())
+      return e_it->second();
+
+    // get the operands
+    auto op = operands();
+
+    // rummage through id_map
+    auto id_it = id_map.find(id);
+    if(id_it != id_map.end())
+    {
+      if(id_it->second.type.id() == ID_mathematical_function)
+      {
+        return function_application(symbol_exprt(id, id_it->second.type), op);
+      }
+      else
+        return symbol_exprt(id, id_it->second.type);
+    }
+    else
+      throw error() << "unknown function symbol '" << id << '\'';
+  }
+
+  UNREACHABLE;
+}
+
 exprt smt2_parsert::function_application()
 {
   switch(next_token())
   {
   case smt2_tokenizert::SYMBOL:
-    if(smt2_tokenizer.get_buffer() == "_") // indexed identifier
-    {
-      // indexed identifier
-      if(next_token() != smt2_tokenizert::SYMBOL)
-        throw error("expected symbol after '_'");
-
-      // copy, the reference won't be stable
-      const auto id = smt2_tokenizer.get_buffer();
-
-      if(has_prefix(id, "bv"))
-      {
-        mp_integer i = string2integer(
-          std::string(smt2_tokenizer.get_buffer(), 2, std::string::npos));
-
-        if(next_token() != smt2_tokenizert::NUMERAL)
-          throw error("expected numeral as bitvector literal width");
-
-        auto width = std::stoll(smt2_tokenizer.get_buffer());
-
-        if(next_token() != smt2_tokenizert::CLOSE)
-          throw error("expected ')' after bitvector literal");
-
-        return from_integer(i, unsignedbv_typet(width));
-      }
-      else if(id == "+oo" || id == "-oo" || id == "NaN")
-      {
-        // These are the "plus infinity", "minus infinity" and NaN
-        // floating-point literals.
-        if(next_token() != smt2_tokenizert::NUMERAL)
-          throw error() << "expected number after " << id;
-
-        auto width_e = std::stoll(smt2_tokenizer.get_buffer());
-
-        if(next_token() != smt2_tokenizert::NUMERAL)
-          throw error() << "expected second number after " << id;
-
-        auto width_f = std::stoll(smt2_tokenizer.get_buffer());
-
-        if(next_token() != smt2_tokenizert::CLOSE)
-          throw error() << "expected ')' after " << id;
-
-        // width_f *includes* the hidden bit
-        const ieee_float_spect spec(width_f - 1, width_e);
-
-        if(id == "+oo")
-          return ieee_floatt::plus_infinity(spec).to_expr();
-        else if(id == "-oo")
-          return ieee_floatt::minus_infinity(spec).to_expr();
-        else // NaN
-          return ieee_floatt::NaN(spec).to_expr();
-      }
-      else
-      {
-        throw error() << "unknown indexed identifier " << id;
-      }
-    }
-    else if(smt2_tokenizer.get_buffer() == "!")
-    {
-      // these are "term attributes"
-      const auto term = expression();
-
-      while(smt2_tokenizer.peek() == smt2_tokenizert::KEYWORD)
-      {
-        next_token(); // eat the keyword
-        if(smt2_tokenizer.get_buffer() == "named")
-        {
-          // 'named terms' must be Boolean
-          if(!term.is_boolean())
-            throw error("named terms must be Boolean");
-
-          if(next_token() == smt2_tokenizert::SYMBOL)
-          {
-            const symbol_exprt symbol_expr(
-              smt2_tokenizer.get_buffer(), bool_typet());
-            named_terms.emplace(
-              symbol_expr.get_identifier(), named_termt(term, symbol_expr));
-          }
-          else
-            throw error("invalid name attribute, expected symbol");
-        }
-        else
-          throw error("unknown term attribute");
-      }
-
-      if(next_token() != smt2_tokenizert::CLOSE)
-        throw error("expected ')' at end of term attribute");
-      else
-        return term;
-    }
-    else
-    {
-      // non-indexed symbol, look up in expression table
-      const auto id = smt2_tokenizer.get_buffer();
-      const auto e_it = expressions.find(id);
-      if(e_it != expressions.end())
-        return e_it->second();
-
-      // get the operands
-      auto op = operands();
-
-      // rummage through id_map
-      auto id_it = id_map.find(id);
-      if(id_it != id_map.end())
-      {
-        if(id_it->second.type.id() == ID_mathematical_function)
-        {
-          return function_application(symbol_exprt(id, id_it->second.type), op);
-        }
-        else
-          return symbol_exprt(id, id_it->second.type);
-      }
-      else
-        throw error() << "unknown function symbol '" << id << '\'';
-    }
-    break;
+  {
+    const auto id = smt2_tokenizer.get_buffer();
+    return function_application_with_id(id);
+  }
 
   case smt2_tokenizert::OPEN: // likely indexed identifier
     if(smt2_tokenizer.peek() == smt2_tokenizert::SYMBOL)
@@ -1011,6 +1020,135 @@ exprt smt2_parsert::bv_mod(const exprt::operandst &operands, bool is_signed)
 
 exprt smt2_parsert::expression()
 {
+  struct let_framet
+  {
+    std::vector<std::pair<irep_idt, exprt>> bindings;
+    std::vector<std::pair<irep_idt, idt>> saved_ids;
+  };
+  std::vector<let_framet> let_stack;
+
+  // Accumulate nested lets iteratively
+  while(smt2_tokenizer.peek() == smt2_tokenizert::OPEN)
+  {
+    next_token(); // consume (
+    if(smt2_tokenizer.peek() == smt2_tokenizert::SYMBOL)
+    {
+      next_token(); // consume symbol
+      if(smt2_tokenizer.get_buffer() == "let")
+      {
+        let_framet frame;
+        if(next_token() != smt2_tokenizert::OPEN)
+          throw error("expected bindings after let");
+        while(smt2_tokenizer.peek() == smt2_tokenizert::OPEN)
+        {
+          next_token();
+          if(next_token() != smt2_tokenizert::SYMBOL)
+            throw error("expected symbol in binding");
+          irep_idt bind_id = smt2_tokenizer.get_buffer();
+          exprt value = expression();
+          if(next_token() != smt2_tokenizert::CLOSE)
+            throw error("expected \')\' after value in binding");
+          frame.bindings.push_back({bind_id, value});
+        }
+        if(next_token() != smt2_tokenizert::CLOSE)
+          throw error("expected \')\' at end of bindings");
+        for(auto &b : frame.bindings)
+        {
+          auto ins = id_map.insert({b.first, idt{idt::BINDING, b.second}});
+          if(!ins.second)
+          {
+            frame.saved_ids.emplace_back(
+              ins.first->first, std::move(ins.first->second));
+            ins.first->second = idt{idt::BINDING, b.second};
+          }
+        }
+        let_stack.push_back(std::move(frame));
+        continue; // check if body is another let
+      }
+      // Not let — we consumed ( and a symbol.
+      // Delegate to function_application_with_id which handles
+      // expressions table lookup and user functions.
+      const auto id = smt2_tokenizer.get_buffer();
+      exprt result = function_application_with_id(id);
+      for(auto it = let_stack.rbegin(); it != let_stack.rend(); ++it)
+      {
+        if(next_token() != smt2_tokenizert::CLOSE)
+          throw error("expected \')\' after let");
+        // Check if any binding is array-typed
+        bool has_array_binding = false;
+        for(const auto &b : it->bindings)
+        {
+          if(b.second.type().id() == ID_array)
+          {
+            has_array_binding = true;
+            break;
+          }
+        }
+        if(has_array_binding)
+        {
+          // Array-typed bindings need replace_symbolt for correct
+          // interaction with the array theory.
+          replace_symbolt replace;
+          for(const auto &b : it->bindings)
+            replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+          replace(result);
+        }
+        else if(!it->bindings.empty())
+        {
+          binding_exprt::variablest vars;
+          exprt::operandst vals;
+          for(const auto &b : it->bindings)
+          {
+            vars.push_back(symbol_exprt{b.first, b.second.type()});
+            vals.push_back(b.second);
+          }
+          result = let_exprt{std::move(vars), std::move(vals), result};
+        }
+        for(const auto &binding : it->bindings)
+          id_map.erase(binding.first);
+        for(auto &saved_id : it->saved_ids)
+          id_map.insert(std::move(saved_id));
+      }
+      return result;
+    }
+    // ( followed by non-symbol — call function_application()
+    exprt result = function_application();
+    for(auto it = let_stack.rbegin(); it != let_stack.rend(); ++it)
+    {
+      if(next_token() != smt2_tokenizert::CLOSE)
+        throw error("expected \')\' after let");
+      replace_symbolt replace;
+      for(const auto &b : it->bindings)
+        replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+      replace(result);
+      for(const auto &binding : it->bindings)
+        id_map.erase(binding.first);
+      for(auto &saved_id : it->saved_ids)
+        id_map.insert(std::move(saved_id));
+    }
+    return result;
+  }
+
+  // Not ( — parse as atom via expression_impl()
+  exprt result = expression_impl();
+  for(auto it = let_stack.rbegin(); it != let_stack.rend(); ++it)
+  {
+    if(next_token() != smt2_tokenizert::CLOSE)
+      throw error("expected \')\' after let");
+    replace_symbolt replace;
+    for(const auto &b : it->bindings)
+      replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+    replace(result);
+    for(const auto &binding : it->bindings)
+      id_map.erase(binding.first);
+    for(auto &saved_id : it->saved_ids)
+      id_map.insert(std::move(saved_id));
+  }
+  return result;
+}
+
+exprt smt2_parsert::expression_impl()
+{
   switch(next_token())
   {
   case smt2_tokenizert::SYMBOL:
@@ -1262,7 +1400,8 @@ void smt2_parsert::setup_expressions()
     }
   };
 
-  expressions["ite"] = [this] {
+  expressions["ite"] = [this]
+  {
     auto op = operands();
 
     if(op.size() != 3)
@@ -1294,20 +1433,52 @@ void smt2_parsert::setup_expressions()
     return index_exprt(op[0], op[1]);
   };
 
-  expressions["store"] = [this] {
-    auto op = operands();
-
-    // array update
-    if(op.size() != 3)
-      throw error("store takes three operands");
-
-    if(op[0].type().id() != ID_array)
-      throw error("store expects array operand");
-
-    if(to_array_type(op[0].type()).element_type() != op[2].type())
-      throw error("store expects value that matches array element type");
-
-    return with_exprt(op[0], op[1], op[2]);
+  expressions["store"] = [this]
+  {
+    std::size_t depth = 0;
+    while(smt2_tokenizer.peek() == smt2_tokenizert::OPEN)
+    {
+      next_token();
+      if(smt2_tokenizer.peek() != smt2_tokenizert::SYMBOL)
+        throw error("expected symbol after '('");
+      next_token();
+      if(smt2_tokenizer.get_buffer() != "store")
+      {
+        const auto &sym = smt2_tokenizer.get_buffer();
+        const auto e_it = expressions.find(sym);
+        if(e_it == expressions.end())
+          throw error() << "unknown expression '" << sym << "'";
+        exprt base = e_it->second();
+        for(std::size_t i = 0; i <= depth; i++)
+        {
+          exprt index = expression();
+          exprt value = expression();
+          if(next_token() != smt2_tokenizert::CLOSE)
+            throw error("expected ')' after store");
+          if(base.type().id() != ID_array)
+            throw error("store expects array operand");
+          if(to_array_type(base.type()).element_type() != value.type())
+            throw error("store: value type mismatch");
+          base = with_exprt(base, index, value);
+        }
+        return base;
+      }
+      depth++;
+    }
+    exprt base = expression();
+    for(std::size_t i = 0; i <= depth; i++)
+    {
+      exprt index = expression();
+      exprt value = expression();
+      if(next_token() != smt2_tokenizert::CLOSE)
+        throw error("expected ')' after store");
+      if(base.type().id() != ID_array)
+        throw error("store expects array operand");
+      if(to_array_type(base.type()).element_type() != value.type())
+        throw error("store: value type mismatch");
+      base = with_exprt(base, index, value);
+    }
+    return base;
   };
 
   expressions["fp.abs"] = [this] {
