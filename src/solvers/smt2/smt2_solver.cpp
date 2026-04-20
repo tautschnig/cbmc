@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <solvers/flattening/boolbv.h>
 #include <solvers/refinement/bv_refinement.h>
 #include <solvers/sat/satcheck.h>
+#include <sys/resource.h>
 
 #include "smt2_format.h"
 #include "smt2_parser.h"
@@ -449,6 +450,14 @@ int solver(std::istream &in)
 
 int main(int argc, const char *argv[])
 {
+  // Increase stack size to 256MB for deeply nested SMT2 expressions
+  struct rlimit rl;
+  getrlimit(RLIMIT_STACK, &rl);
+  if(rl.rlim_cur < 256 * 1024 * 1024)
+  {
+    rl.rlim_cur = 256 * 1024 * 1024;
+    setrlimit(RLIMIT_STACK, &rl);
+  }
   if(argc==1)
     return solver(std::cin);
 
