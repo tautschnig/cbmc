@@ -395,6 +395,14 @@ only checks indices in `Stores(P)`.
 23. `ba03e55d20` — Fix unsound weak congruence in weakeq-ext extensionality
 24. `376cff3551` — Fix 2D definition inlining crash on SMT2 nested arrays
 25. `45f333f440` — Add QF_ABV head-to-head comparison vs develop
+26. `1216acc98c` — Skip redundant element-wise constraints when ITE handles stores
+27. `27e1a00a39` — Disable goto-program array flattening (increases clauses)
+28. `dadaa53d9f` — Add solver comparison: smt2_solver vs Yices2 vs Bitwuzla
+29. `d4c718cac1` — Truly lazy array constraints: defer bit-blasting to refinement
+30. `caee98f75d` — Phase A: Lazy Ackermann + clean 2-phase model evaluation
+31. `7071da1672` — Phase E: CDCL(T) array theory propagator via ExternalPropagator
+32. `d2a1a147a9` — Extend propagator: lazy selects + equality constraints
+33. `98b3540329` — Make propagator opt-in, keep eager as default
 
 ## Key Architectural Findings
 
@@ -428,8 +436,9 @@ only checks indices in `Stores(P)`.
 | Baseline (no changes) | ~4700s | — |
 | +All optimizations (pre-ITE) | 2470s | 1.9× faster |
 | +ITE encoding | 1642s | 2.9× faster |
-| +Weak congruence fix (commit 23) | **2075s** | **2.3× faster** |
+| +Weak congruence fix (commit 23) | 2075s | 2.3× faster |
 | +2D inlining fix (commit 24) | 2070s | 2.3× faster |
+| **+Element-wise skip (commit 26)** | **1372s** | **3.4× faster** |
 
 ## Future Directions
 
@@ -758,3 +767,38 @@ fire only when the arrays truly agree at all store indices.
 - `regression/cbmc/Array_UF23/` — Ackermann constraint count test (updated)
 - `doc/architectural/array-theory-improvements.md` — this document
 - `scripts/bench_array_theory.sh` — benchmark runner (not committed)
+
+## Profiling Analysis (storecomm_00060, 6.33s total)
+
+| Phase | Time | % |
+|-------|------|---|
+| Constraint generation | 0.57s | 9% |
+| CaDiCaL inprocessing (elim, subsume, gates) | ~2.2s | 35% |
+| CaDiCaL CDCL search | ~0.9s | 15% |
+| CaDiCaL clause management + memory | ~2.7s | 41% |
+| **Yices2 total** | **0.04s** | — |
+
+91% of time is in CaDiCaL. The array theory constraint generation is
+only 9%. CaDiCaL's inprocessing (variable elimination) is the single
+largest cost. Disabling it speeds up large benchmarks 3.5× but slows
+small benchmarks. The pure CDCL search (0.9s) is still 22× slower
+than Yices2 (0.04s) due to the bit-blasting overhead.
+
+The CDCL(T) propagator (Phase E) correctly replaces eager Ackermann
+with on-demand model checking but is 9% slower due to callback overhead.
+The propagator infrastructure is preserved for future use but disabled
+by default.
+
+## Architecture Summary
+
+The final configuration (eager + element-wise skip) achieves:
+- **3.4× faster** than baseline on QF_AX (1372s vs ~4700s)
+- **100% correct** on QF_AX (551/551) and CBMC (1174/1174)
+- **0 wrong answers** on QF_ABV (vs 60 for Yices2, 50 for Bitwuzla)
+- **1.95× faster** than develop on QF_ABV (shared benchmarks)
+
+The remaining 255× gap to Yices2 is fundamental to the bit-blasting
+architecture. Closing it would require a native array theory solver
+(CDCL(T) with E-graph), which the ExternalPropagator infrastructure
+enables but the current implementation doesn't fully exploit due to
+CaDiCaL's callback overhead.
