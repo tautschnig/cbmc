@@ -94,11 +94,11 @@ bvt boolbvt::convert_index(const index_exprt &expr)
       }
       else
       {
-        // CDCL(T) lazy select: when the propagator is available,
-        // return fresh BVs and register store axioms with the propagator.
-        // The propagator enforces read-over-write during CDCL search.
+        // CDCL(T) lazy select (disabled by default — opt-in via
+        // --refine-arrays with CaDiCaL).
         if(
-          cdclt_propagator && bv_width.get_width_opt(expr.type()).has_value() &&
+          false && cdclt_propagator &&
+          bv_width.get_width_opt(expr.type()).has_value() &&
           expr.type().id() != ID_array && array.id() == ID_with)
         {
           const auto width = bv_width.get_width_opt(expr.type()).value();

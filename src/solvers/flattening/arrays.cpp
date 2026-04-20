@@ -598,7 +598,6 @@ void arrayst::add_array_constraints()
   // (checked on demand via model-based congruence detection).
   if(!lazy_arrays)
   {
-    setup_cdclt_propagator();
     add_array_Ackermann_constraints();
   }
 
@@ -934,26 +933,7 @@ void map_theoryt::add_array_constraints_equality(
     // convert must be done to guarantee correct update of the index_set
     literalt eq_lit = convert(equality_expr);
 
-    if(
-      cdclt_propagator && !array_equality.l.is_constant() &&
-      !eq_lit.is_constant())
-    {
-      // Route through propagator: watch l, propagate eq_lit
-      cdclt_propagator->add_implication(
-        array_equality.l.dimacs(), eq_lit.dimacs());
-      cdclt_propagator->add_ackermann_clause(
-        array_equality.l.dimacs(), eq_lit.dimacs());
-      auto *cadical = dynamic_cast<satcheck_cadical_baset *>(&prop);
-      if(cadical)
-      {
-        cadical->observe_var(array_equality.l.var_no());
-        cadical->observe_var(eq_lit.var_no());
-      }
-    }
-    else
-    {
-      prop.lcnf(!array_equality.l, eq_lit);
-    }
+    prop.lcnf(!array_equality.l, eq_lit);
     array_constraint_count[constraint_typet::ARRAY_EQUALITY]++;
 
     elem_eq_lits.push_back(eq_lit);
