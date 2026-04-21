@@ -1018,6 +1018,109 @@ exprt smt2_parsert::bv_mod(const exprt::operandst &operands, bool is_signed)
 
 exprt smt2_parsert::expression()
 {
+  struct let_framet
+  {
+    std::vector<std::pair<irep_idt, exprt>> bindings;
+    std::vector<std::pair<irep_idt, idt>> saved_ids;
+  };
+  std::vector<let_framet> let_stack;
+
+  // Accumulate nested lets iteratively
+  while(smt2_tokenizer.peek() == smt2_tokenizert::OPEN)
+  {
+    next_token(); // consume (
+    if(smt2_tokenizer.peek() == smt2_tokenizert::SYMBOL)
+    {
+      next_token(); // consume symbol
+      if(smt2_tokenizer.get_buffer() == "let")
+      {
+        let_framet frame;
+        if(next_token() != smt2_tokenizert::OPEN)
+          throw error("expected bindings after let");
+        while(smt2_tokenizer.peek() == smt2_tokenizert::OPEN)
+        {
+          next_token();
+          if(next_token() != smt2_tokenizert::SYMBOL)
+            throw error("expected symbol in binding");
+          irep_idt bind_id = smt2_tokenizer.get_buffer();
+          exprt value = expression();
+          if(next_token() != smt2_tokenizert::CLOSE)
+            throw error("expected \')\' after value in binding");
+          frame.bindings.push_back({bind_id, value});
+        }
+        if(next_token() != smt2_tokenizert::CLOSE)
+          throw error("expected \')\' at end of bindings");
+        for(auto &b : frame.bindings)
+        {
+          auto ins = id_map.insert({b.first, idt{idt::BINDING, b.second}});
+          if(!ins.second)
+          {
+            frame.saved_ids.emplace_back(
+              ins.first->first, std::move(ins.first->second));
+            ins.first->second = idt{idt::BINDING, b.second};
+          }
+        }
+        let_stack.push_back(std::move(frame));
+        continue; // check if body is another let
+      }
+      // Not let — we consumed ( and a symbol.
+      // Delegate to function_application_with_id which handles
+      // expressions table lookup and user functions.
+      const auto id = smt2_tokenizer.get_buffer();
+      exprt result = function_application_with_id(id);
+      for(auto it = let_stack.rbegin(); it != let_stack.rend(); ++it)
+      {
+        if(next_token() != smt2_tokenizert::CLOSE)
+          throw error("expected \')\' after let");
+        replace_symbolt replace;
+        for(const auto &b : it->bindings)
+          replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+        replace(result);
+        for(const auto &binding : it->bindings)
+          id_map.erase(binding.first);
+        for(auto &saved_id : it->saved_ids)
+          id_map.insert(std::move(saved_id));
+      }
+      return result;
+    }
+    // ( followed by non-symbol — call function_application()
+    exprt result = function_application();
+    for(auto it = let_stack.rbegin(); it != let_stack.rend(); ++it)
+    {
+      if(next_token() != smt2_tokenizert::CLOSE)
+        throw error("expected \')\' after let");
+      replace_symbolt replace;
+      for(const auto &b : it->bindings)
+        replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+      replace(result);
+      for(const auto &binding : it->bindings)
+        id_map.erase(binding.first);
+      for(auto &saved_id : it->saved_ids)
+        id_map.insert(std::move(saved_id));
+    }
+    return result;
+  }
+
+  // Not ( — parse as atom via expression_impl()
+  exprt result = expression_impl();
+  for(auto it = let_stack.rbegin(); it != let_stack.rend(); ++it)
+  {
+    if(next_token() != smt2_tokenizert::CLOSE)
+      throw error("expected \')\' after let");
+    replace_symbolt replace;
+    for(const auto &b : it->bindings)
+      replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+    replace(result);
+    for(const auto &binding : it->bindings)
+      id_map.erase(binding.first);
+    for(auto &saved_id : it->saved_ids)
+      id_map.insert(std::move(saved_id));
+  }
+  return result;
+}
+
+exprt smt2_parsert::expression_impl()
+{
   switch(next_token())
   {
   case smt2_tokenizert::SYMBOL:

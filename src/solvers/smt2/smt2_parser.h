@@ -16,6 +16,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "smt2_tokenizer.h"
 
 #include <map>
+#include <optional>
 #include <unordered_map>
 
 class smt2_parsert
@@ -150,6 +151,7 @@ protected:
   std::unordered_map<std::string, std::function<exprt()>> expressions;
   void setup_expressions();
   exprt expression();
+  exprt expression_impl();
   exprt function_application();
   exprt function_application_with_id(const irep_idt &id);
   exprt function_application_ieee_float_op(
@@ -158,6 +160,7 @@ protected:
   exprt function_application_ieee_float_eq(const exprt::operandst &);
   exprt function_application_fp(const exprt::operandst &);
   exprt::operandst operands();
+  std::optional<exprt::operandst> precollected_operands;
   typet function_signature_declaration();
   signature_with_parameter_idst function_signature_definition();
   void check_matching_operand_types(const exprt::operandst &) const;
