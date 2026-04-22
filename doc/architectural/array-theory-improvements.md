@@ -861,3 +861,23 @@ Lazy equality constraints were attempted but don't help because
 `convert()` must still be called to register indices in the index set.
 The Ackermann lazy approach works because Ackermann is generated AFTER
 index collection.
+
+### WEG analysis for equality constraint optimization
+
+The WEG was analyzed to identify redundant equality constraints.
+For equalities `sym == store(a, k, v)`, the ITE encoding handles
+`store(a,k,v)[i]` but the equality constraint is still needed to
+connect `sym[i]` to `store(a,k,v)[i]`. Skipping these equalities
+is unsound (189 wrong answers on QF_AX).
+
+In picorv32, 29 of 58 equalities have a with-expression on one side.
+Skipping them reduces clauses by 1.7× but breaks correctness.
+
+The equality constraints serve a fundamentally different purpose
+than the element-wise constraints: they connect SYMBOLS to store
+expressions across the equivalence class. The ITE encoding only
+handles direct read-over-write within a single store chain.
+
+The WEG's main contribution remains the lazy Ackermann optimization:
+identifying which arrays need Ackermann (via the derived-symbol skip)
+and deferring the expensive conclusion conversion (via the propagator).
