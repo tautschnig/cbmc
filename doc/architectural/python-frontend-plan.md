@@ -14,6 +14,13 @@
 | 8 | Exception handling | Not started |
 | 9 | Advanced features | Not started |
 
+### Cross-cutting features
+
+| Feature | Status |
+|---------|--------|
+| `--function` mode | **Complete** |
+| `expr2python` traces | **Complete** |
+
 ## 1. Goals
 
 Add a Python front-end to CBMC that can verify Python programs by:
@@ -237,7 +244,7 @@ operation that can raise sets this variable and jumps to the handler.
 
 ## 6. Next Steps (Priority Order)
 
-### 6.1 Pointer-based class instances (architectural fix)
+### 6.1 Pointer-based class instances (DONE)
 
 The current by-value model for `self` means method calls that mutate
 instance state don't propagate changes back to the caller. This is the
@@ -250,7 +257,7 @@ naturally through the pointer. This also unblocks:
 - List/dict mutation (append, pop, `__setitem__`)
 - Inheritance (vtable-like dispatch via pointer indirection)
 
-### 6.2 Clear the KNOWNBUG backlog
+### 6.2 Clear the KNOWNBUG backlog (DONE — except list append)
 
 Before adding new features, fix the gaps in features already started:
 - **Tuple unpacking** (`a, b, c = t`): detect Tuple target in Assign,
@@ -259,14 +266,14 @@ Before adding new features, fix the gaps in features already started:
   length = left.length + right.length, copy data arrays.
 - **List append**: needs the pointer model from 6.1.
 
-### 6.3 `--function` mode with nondet harness generation
+### 6.3 `--function` mode with nondet harness generation (DONE)
 
 Users should be able to run `cbmc program.py --function my_function` and
 have CBMC generate a harness calling `my_function` with nondet arguments
 of the annotated types. This is how ESBMC-Python found the Ethereum bug.
 Implement in `generate_support_functions` when `--function` is set.
 
-### 6.4 Readable counterexample traces (`expr2python`)
+### 6.4 Readable counterexample traces (DONE)
 
 Implement proper `from_expr` and `from_type` so counterexample traces
 show Python syntax instead of `(python expression)`. Critical for
@@ -297,3 +304,5 @@ correct semantics of operations that can raise.
 | 2026-04-22 | 846357ad40 | Plan: added Next Steps section |
 | 2026-04-22 | 3d229e6f56 | Pointer-based class model — fixes method mutation, enables inheritance |
 | 2026-04-22 | 4646d2ca8c | KNOWNBUG fixes: tuple unpack, string concat (36 CORE tests) |
+| 2026-04-22 | 239a3c1025 | --function mode with nondet harness generation (38 CORE tests) |
+| 2026-04-22 | 7e753225a0 | expr2python: readable counterexample traces |
