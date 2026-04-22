@@ -362,11 +362,41 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
 
   if(op == "Add")
+  {
+    if(
+      left.type().id() == ID_signedbv && !left.is_constant() &&
+      !right.is_constant())
+      add_check(
+        not_exprt{plus_overflow_exprt{left, right}},
+        "overflow",
+        "integer overflow on addition",
+        get_location(expr));
     return plus_exprt{left, right};
+  }
   else if(op == "Sub")
+  {
+    if(
+      left.type().id() == ID_signedbv && !left.is_constant() &&
+      !right.is_constant())
+      add_check(
+        not_exprt{minus_overflow_exprt{left, right}},
+        "overflow",
+        "integer overflow on subtraction",
+        get_location(expr));
     return minus_exprt{left, right};
+  }
   else if(op == "Mult")
+  {
+    if(
+      left.type().id() == ID_signedbv && !left.is_constant() &&
+      !right.is_constant())
+      add_check(
+        not_exprt{mult_overflow_exprt{left, right}},
+        "overflow",
+        "integer overflow on multiplication",
+        get_location(expr));
     return mult_exprt{left, right};
+  }
   else if(op == "FloorDiv")
   {
     add_check(
@@ -712,8 +742,13 @@ exprt python_convertert::convert_call(const jsont &expr)
   const symbolt *sym = symbol_table.lookup(symbol_id);
   if(sym == nullptr)
   {
-    log.error() << "Unknown function: " << func_name << messaget::eom;
-    return nil_exprt{};
+    // Unknown function — return nondet value (sound overapproximation).
+    // This handles snippets with missing function definitions and
+    // unresolved imports.
+    log.warning() << "Unknown function '" << func_name
+                  << "', returning nondet value" << messaget::eom;
+    side_effect_expr_nondett nondet{signedbv_typet{64}, get_location(expr)};
+    return std::move(nondet);
   }
 
   const code_typet &func_type = to_code_type(sym->type);
