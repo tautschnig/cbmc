@@ -144,6 +144,10 @@ exprt python_convertert::convert_expression(const jsont &expr)
     return convert_if_exp(expr);
   else if(node_type == "Subscript")
     return convert_subscript(expr);
+  else if(node_type == "Tuple")
+    return convert_tuple(expr);
+  else if(node_type == "List")
+    return convert_list(expr);
   else
   {
     log.error() << "Unsupported Python expression type: " << node_type
@@ -458,14 +462,18 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "len")
   {
-    // len(s) → s.length
+    // len(s) → s.length for strings and lists
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
-      if(!arg.is_nil() && is_python_string_type(arg.type()))
+      if(
+        !arg.is_nil() &&
+        (is_python_string_type(arg.type()) || is_python_list_type(arg.type())))
+      {
         return member_exprt{arg, "length", signedbv_typet{64}};
+      }
     }
-    log.error() << "len() requires a string argument" << messaget::eom;
+    log.error() << "len() requires a string or list argument" << messaget::eom;
     return nil_exprt{};
   }
 
@@ -538,9 +546,110 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     return std::move(result);
   }
 
-  // Array/list indexing (future)
+  // Array/list indexing
+  if(is_python_list_type(value.type()))
+  {
+    const auto &st = to_struct_type(value.type());
+    const auto &data_type = to_array_type(st.components()[1].type());
+    member_exprt data{value, "data", data_type};
+    return index_exprt{data, slice};
+  }
+
+  // Tuple indexing with constant index
+  if(is_python_tuple_type(value.type()))
+  {
+    if(slice.is_constant())
+    {
+      mp_integer idx;
+      if(!to_integer(to_constant_expr(slice), idx))
+      {
+        const auto &st = to_struct_type(value.type());
+        std::string field = "_" + integer2string(idx);
+        if(st.has_component(field))
+          return member_exprt{value, field, st.get_component(field).type()};
+      }
+    }
+    log.error() << "Tuple indexing requires a constant index" << messaget::eom;
+    return nil_exprt{};
+  }
+
   log.error() << "Subscript not yet supported for this type" << messaget::eom;
   return nil_exprt{};
+}
+
+exprt python_convertert::convert_tuple(const jsont &expr)
+{
+  const jsont &elts = json_member(expr, "elts");
+  if(!elts.is_array())
+    return nil_exprt{};
+
+  exprt::operandst elements;
+  std::vector<typet> element_types;
+  for(const auto &elt : as_array(elts))
+  {
+    exprt e = convert_expression(elt);
+    if(e.is_nil())
+      return nil_exprt{};
+    element_types.push_back(e.type());
+    elements.push_back(e);
+  }
+
+  struct_typet tuple_type = python_tuple_type(element_types);
+  return struct_exprt{std::move(elements), tuple_type};
+}
+
+exprt python_convertert::convert_list(const jsont &expr)
+{
+  const jsont &elts = json_member(expr, "elts");
+  if(!elts.is_array())
+    return nil_exprt{};
+
+  // Collect elements and determine element type from first element
+  exprt::operandst elements;
+  for(const auto &elt : as_array(elts))
+  {
+    exprt e = convert_expression(elt);
+    if(e.is_nil())
+      return nil_exprt{};
+    elements.push_back(e);
+  }
+
+  if(elements.empty())
+  {
+    // Empty list — default to int element type
+    struct_typet list_type = python_list_type(signedbv_typet{64});
+    exprt length = from_integer(0, signedbv_typet{64});
+    array_typet data_type{
+      signedbv_typet{64},
+      from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+    exprt::operandst zeros;
+    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      zeros.push_back(from_integer(0, signedbv_typet{64}));
+    array_exprt data{std::move(zeros), data_type};
+    return struct_exprt{{length, data}, list_type};
+  }
+
+  typet elem_type = elements[0].type();
+  struct_typet list_type = python_list_type(elem_type);
+  array_typet data_type{
+    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+
+  // Build data array: elements followed by zeros
+  exprt::operandst data_elems;
+  for(auto &e : elements)
+  {
+    if(e.type() != elem_type)
+      e = typecast_exprt{e, elem_type};
+    data_elems.push_back(e);
+  }
+  while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
+    data_elems.push_back(from_integer(0, elem_type));
+
+  array_exprt data{std::move(data_elems), data_type};
+  exprt length =
+    from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
+
+  return struct_exprt{{length, data}, list_type};
 }
 
 // --- Statement conversion ---

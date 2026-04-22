@@ -75,6 +75,8 @@ private:
   exprt convert_call(const jsont &expr);
   exprt convert_if_exp(const jsont &expr);
   exprt convert_subscript(const jsont &expr);
+  exprt convert_tuple(const jsont &expr);
+  exprt convert_list(const jsont &expr);
 
   // --- Helpers ---
 
