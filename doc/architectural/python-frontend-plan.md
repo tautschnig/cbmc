@@ -9,9 +9,9 @@
 | 3 | Control flow | **Complete** |
 | 4 | Type inference | **Complete** |
 | 5 | Strings | **Complete** (concat tracks length, not content) |
-| 6 | Collections | **Partial** (list append KNOWNBUG) |
+| 6 | Collections | **Complete** (list, tuple; dict KNOWNBUG) |
 | 7 | Classes and objects | **Complete** (pointer-based model) |
-| 8 | Exception handling | Not started |
+| 8 | Exception handling | **Partial** (raise-as-failure; try/except KNOWNBUG) |
 | 9 | Advanced features | Not started |
 
 ### Cross-cutting features
@@ -23,6 +23,7 @@
 | Division-by-zero checks | **Complete** |
 | Index-out-of-bounds checks | **Complete** |
 | `raise` as verification failure | **Complete** |
+| ESBMC failure pattern tests | **Complete** (7 tests from evaluation) |
 
 ## 1. Goals
 
@@ -247,47 +248,48 @@ operation that can raise sets this variable and jumps to the handler.
 
 ## 6. Next Steps (Priority Order)
 
-### 6.1 Pointer-based class instances (DONE)
+### 6.1 Parameterized type annotations (NEXT)
 
-The current by-value model for `self` means method calls that mutate
-instance state don't propagate changes back to the caller. This is the
-biggest architectural gap — almost any useful class has mutating methods.
+`list[int]`, `dict[str, int]`, `Optional[T]` — these appear as `Subscript`
+AST nodes in annotation position. Currently causes a crash. Fix: extract
+the base type name from the Subscript node. Prevents crashes on real-world
+Python code which uses these annotations pervasively.
 
-**Fix:** Model class instances as pointers to heap-allocated structs,
-following JBMC's approach for Java objects. `self` becomes a pointer,
-attribute access becomes dereference + member, and mutations propagate
-naturally through the pointer. This also unblocks:
-- List/dict mutation (append, pop, `__setitem__`)
-- Inheritance (vtable-like dispatch via pointer indirection)
+### 6.2 Global variables accessed from functions
 
-### 6.2 Clear the KNOWNBUG backlog (DONE — except list append)
+Functions that read module-level variables get "Unknown variable" errors.
+Fix: fall back to global scope in `convert_name` when the variable is not
+found in the current function scope. Common pattern, easy fix.
 
-Before adding new features, fix the gaps in features already started:
-- **Tuple unpacking** (`a, b, c = t`): detect Tuple target in Assign,
-  generate one assignment per element.
-- **String concatenation** (`s1 + s2`): allocate new string, set
-  length = left.length + right.length, copy data arrays.
-- **List append**: needs the pointer model from 6.1.
+### 6.3 Dict literals and access
 
-### 6.3 `--function` mode with nondet harness generation (DONE)
+`{"key": 42}` and `d["key"]` — dicts are the third most common Python
+data structure. Model as a struct with parallel key/value arrays (similar
+to the list model). Clears a KNOWNBUG and enables AWS SDK patterns where
+dict access is central.
 
-Users should be able to run `cbmc program.py --function my_function` and
-have CBMC generate a harness calling `my_function` with nondet arguments
-of the annotated types. This is how ESBMC-Python found the Ethereum bug.
-Implement in `generate_support_functions` when `--function` is set.
+### 6.4 `with` statement
 
-### 6.4 Readable counterexample traces (DONE)
+Desugar `with expr as x: body` to `x = expr.__enter__(); body;
+expr.__exit__()`. Mechanical transformation, doesn't require exception
+handling. File I/O, database connections, locks all use `with`.
 
-Implement proper `from_expr` and `from_type` so counterexample traces
-show Python syntax instead of `(python expression)`. Critical for
-usability.
+### 6.5 `try`/`except` (Phase 8 full)
 
-### 6.5 Exception handling (Phase 8)
+Staged approach:
+- **Stage A**: Execute try body, skip except handlers. Handles defensive
+  exception handling around code that doesn't raise.
+- **Stage B**: Full exception propagation following JBMC's
+  `remove_exceptions.cpp` pattern.
 
-Model Python exceptions following JBMC's `remove_exceptions.cpp` pattern:
-a global "in-flight exception" variable, `try`/`except` lowered to GOTO
-with catch dispatch tables. Needed for `--python-check-exceptions` and
-correct semantics of operations that can raise.
+### Previous items (DONE)
+
+- Pointer-based class instances ✓
+- KNOWNBUG backlog (tuple unpack, string concat, list append) ✓
+- `--function` mode with nondet harness ✓
+- Readable counterexample traces ✓
+- Division-by-zero and bounds checks ✓
+- `raise` as verification failure ✓
 
 ## 7. Build Record
 
@@ -311,3 +313,4 @@ correct semantics of operations that can raise.
 | 2026-04-22 | 7e753225a0 | expr2python: readable counterexample traces |
 | 2026-04-22 | b175f3da8f | List append, div-by-zero and bounds checks (43 CORE tests) |
 | 2026-04-22 | a4e03b5dac | raise statements as verification failures (45 CORE tests) |
+| 2026-04-22 | 85f8bc2b36 | ESBMC failure pattern regression tests (48 CORE, 4 KNOWNBUG) |
