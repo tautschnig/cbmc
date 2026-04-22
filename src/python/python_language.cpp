@@ -32,30 +32,25 @@ void python_languaget::set_language_options(
 {
 }
 
-/// Find the ast_to_json.py script by searching relative to the source tree
-/// and relative to the CBMC binary.
-/// \return path to the script, or empty string if not found.
-static std::string find_ast_script()
-{
-  // Search relative to CWD (for development)
-  const std::vector<std::string> search_paths = {
-    "src/python/scripts/ast_to_json.py",
-    "../src/python/scripts/ast_to_json.py",
-    "../../src/python/scripts/ast_to_json.py",
-    "../../../src/python/scripts/ast_to_json.py",
-    "../../../../src/python/scripts/ast_to_json.py",
-    "../../../../../src/python/scripts/ast_to_json.py",
-  };
-
-  for(const auto &candidate : search_paths)
-  {
-    std::ifstream test{candidate};
-    if(test.good())
-      return candidate;
-  }
-
-  return "";
-}
+/// The Python code that converts a .py file to a JSON AST.
+/// Invoked as: python3 -c '<this code>' <input.py> <output.json>
+// clang-format off
+#define PYTHON_AST_TO_JSON_CODE \
+  "import ast,json,sys\n" \
+  "def c(n):\n" \
+  " if isinstance(n,ast.AST):\n" \
+  "  r={'_type':n.__class__.__name__}\n" \
+  "  for f,v in ast.iter_fields(n):r[f]=c(v)\n" \
+  "  for a in('lineno','col_offset','end_lineno','end_col_offset'):\n" \
+  "   v=getattr(n,a,None)\n" \
+  "   if v is not None:r[a]=v\n" \
+  "  return r\n" \
+  " if isinstance(n,list):return[c(x)for x in n]\n" \
+  " return n\n" \
+  "t=ast.parse(open(sys.argv[1]).read(),sys.argv[1])\n" \
+  "r=c(t);r['_filename']=sys.argv[1]\n" \
+  "json.dump(r,open(sys.argv[2],'w'),default=str)\n"
+// clang-format on
 
 bool python_languaget::parse(
   std::istream &,
@@ -66,33 +61,30 @@ bool python_languaget::parse(
 
   messaget log{message_handler};
 
-  std::string script_path = find_ast_script();
-  if(script_path.empty())
-  {
-    log.error() << "Cannot find ast_to_json.py script" << messaget::eom;
-    return true;
-  }
-
   // Create temp file for JSON output
   temporary_filet json_file{"cbmc_python_ast_", ".json"};
   std::string json_path = json_file();
 
-  // Run: python3 ast_to_json.py <input.py> <output.json>
-  // argv[0] is the program name by convention
-  int ret =
-    run("python3", {"python3", script_path, path, json_path}, "", "", "");
+  // Invoke python3 -c '<inline script>' <input.py> <output.json>
+  // This is analogous to how the C front-end invokes gcc -E.
+  int ret = run(
+    "python3",
+    {"python3", "-c", PYTHON_AST_TO_JSON_CODE, path, json_path},
+    "",
+    "",
+    "");
 
   if(ret != 0)
   {
-    log.error() << "Python parser failed for " << path << messaget::eom;
+    log.error() << "Python AST generation failed for " << path
+                << " (is python3 installed?)" << messaget::eom;
     return true;
   }
 
   // Read the JSON AST
   if(parse_json(json_path, message_handler, parse_tree.ast_json))
   {
-    log.error() << "Failed to read JSON AST from " << json_path
-                << messaget::eom;
+    log.error() << "Failed to read Python JSON AST" << messaget::eom;
     return true;
   }
 
@@ -114,7 +106,7 @@ bool python_languaget::generate_support_functions(
   symbol_table_baset &,
   message_handlert &)
 {
-  // __CPROVER_start is created by the converter
+  // __CPROVER__start is created by the converter
   return false;
 }
 
