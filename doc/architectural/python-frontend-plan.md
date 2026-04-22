@@ -7,8 +7,8 @@
 | 1 | Skeleton & infrastructure | **Complete** |
 | 2 | Scalar expressions | **Complete** |
 | 3 | Control flow | **Complete** |
-| 4 | Type inference | Not started |
-| 5 | Strings | Not started |
+| 4 | Type inference | **Complete** |
+| 5 | Strings | **Partial** (concat KNOWNBUG) |
 | 6 | Collections | Not started |
 | 7 | Classes and objects | Not started |
 | 8 | Exception handling | Not started |
@@ -245,3 +245,6 @@ operation that can raise sets this variable and jumps to the handler.
 | 2026-04-22 | efa988450d | Phases 2+3: python_convertert, all 16 tests promoted to CORE |
 | 2026-04-22 | b1c236e9ad | Replaced script with inline python3 -c invocation |
 | 2026-04-22 | 8e6a233bc2 | Error handling for missing python3, ast module, syntax errors |
+| 2026-04-22 | 326800d541 | Plan document updates |
+| 2026-04-22 | 7198f0a4c8 | Phase 4: type inference, augmented assign, multiple-target assign (8 new tests) |
+| 2026-04-22 | 27396c8250 | Phase 5: basic string support — literals, len, compare, index (5 new tests) |
