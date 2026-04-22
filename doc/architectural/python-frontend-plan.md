@@ -86,7 +86,7 @@ Type mapping:
 | `dict[K,V]` | Parallel arrays of keys and values (bounded) |
 | `Optional[T]` | `struct { is_none: bool, value: T }` |
 | `Union[T1,T2]` | `struct { tag: enum, union { ... } }` |
-| class instance | `struct_typet` with attribute fields |
+| class instance | `pointer_typet` → `struct_typet` with attribute fields |
 
 ### 3.3 Architecture
 
@@ -235,7 +235,51 @@ operation that can raise sets this variable and jumps to the handler.
 - Tests are promoted to `CORE` when the feature is implemented.
 - Test categories mirror the phases above.
 
-## 6. Build Record
+## 6. Next Steps (Priority Order)
+
+### 6.1 Pointer-based class instances (architectural fix)
+
+The current by-value model for `self` means method calls that mutate
+instance state don't propagate changes back to the caller. This is the
+biggest architectural gap — almost any useful class has mutating methods.
+
+**Fix:** Model class instances as pointers to heap-allocated structs,
+following JBMC's approach for Java objects. `self` becomes a pointer,
+attribute access becomes dereference + member, and mutations propagate
+naturally through the pointer. This also unblocks:
+- List/dict mutation (append, pop, `__setitem__`)
+- Inheritance (vtable-like dispatch via pointer indirection)
+
+### 6.2 Clear the KNOWNBUG backlog
+
+Before adding new features, fix the gaps in features already started:
+- **Tuple unpacking** (`a, b, c = t`): detect Tuple target in Assign,
+  generate one assignment per element.
+- **String concatenation** (`s1 + s2`): allocate new string, set
+  length = left.length + right.length, copy data arrays.
+- **List append**: needs the pointer model from 6.1.
+
+### 6.3 `--function` mode with nondet harness generation
+
+Users should be able to run `cbmc program.py --function my_function` and
+have CBMC generate a harness calling `my_function` with nondet arguments
+of the annotated types. This is how ESBMC-Python found the Ethereum bug.
+Implement in `generate_support_functions` when `--function` is set.
+
+### 6.4 Readable counterexample traces (`expr2python`)
+
+Implement proper `from_expr` and `from_type` so counterexample traces
+show Python syntax instead of `(python expression)`. Critical for
+usability.
+
+### 6.5 Exception handling (Phase 8)
+
+Model Python exceptions following JBMC's `remove_exceptions.cpp` pattern:
+a global "in-flight exception" variable, `try`/`except` lowered to GOTO
+with catch dispatch tables. Needed for `--python-check-exceptions` and
+correct semantics of operations that can raise.
+
+## 7. Build Record
 
 *Updated as implementation progresses.*
 
