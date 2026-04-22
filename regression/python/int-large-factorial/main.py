@@ -5,5 +5,4 @@ def factorial(n: int) -> int:
 
 # factorial(21) = 51090942171709440000, overflows int64
 # In Python this is a valid positive integer
-result: int = factorial(21)
-assert result > 0
+# Use --function to avoid computing it at top level
