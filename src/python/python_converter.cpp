@@ -121,6 +121,39 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   if(annotation.is_null())
     return signedbv_typet{64}; // default to int
 
+  // Handle parameterized types: list[int], dict[str, int], Optional[T]
+  // These appear as Subscript nodes: annotation.value.id is the base type
+  if(is_node_type(annotation, "Subscript"))
+  {
+    std::string base =
+      json_string(json_member(json_member(annotation, "value"), "id"));
+    if(base == "list")
+    {
+      // Extract element type from the slice
+      typet elem_type =
+        convert_type_annotation(json_member(annotation, "slice"));
+      return python_list_type(elem_type);
+    }
+    else if(base == "Optional")
+    {
+      // Optional[T] — for now, treat as T (None handling is future work)
+      return convert_type_annotation(json_member(annotation, "slice"));
+    }
+    // dict[K, V], Set[T], etc. — fall through to base type
+    if(base == "dict")
+      return signedbv_typet{64}; // TODO: proper dict type
+    // Unknown parameterized type — use the base
+    return convert_type_annotation(json_member(annotation, "value"));
+  }
+
+  // Handle Constant None annotation (-> None)
+  if(is_node_type(annotation, "Constant"))
+  {
+    const jsont &val = json_member(annotation, "value");
+    if(val.is_null())
+      return empty_typet{};
+  }
+
   std::string type_name = json_string(json_member(annotation, "id"));
 
   if(type_name == "int")
@@ -131,6 +164,12 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return bool_typet{};
   else if(type_name == "str")
     return python_string_type();
+  else if(type_name == "None" || type_name == "NoneType")
+    return empty_typet{};
+  else if(type_name == "list")
+    return python_list_type(signedbv_typet{64}); // unparameterized list
+  else if(class_types.count(type_name))
+    return class_types[type_name];
   else
   {
     log.warning() << "Unknown Python type annotation: " << type_name
@@ -1794,6 +1833,92 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
 bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
+
+  // Pass 0: register top-level annotated variable names as global symbols
+  // (so functions can reference them during pass 1).
+  // Only AnnAssign (with explicit type) is handled here; plain Assign
+  // variables get their type from the RHS during pass 2.
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "AnnAssign"))
+      {
+        const jsont &target = json_member(stmt, "target");
+        if(is_node_type(target, "Name"))
+        {
+          std::string var_name = json_string(json_member(target, "id"));
+          typet var_type =
+            convert_type_annotation(json_member(stmt, "annotation"));
+          irep_idt sym_id{"python::" + var_name};
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt new_sym{sym_id, var_type, "python"};
+            new_sym.base_name = var_name;
+            new_sym.is_lvalue = true;
+            new_sym.is_state_var = true;
+            new_sym.is_static_lifetime = true;
+            symbol_table.add(new_sym);
+          }
+        }
+      }
+      else if(is_node_type(stmt, "Assign"))
+      {
+        // For plain assignments, pre-register with a placeholder type.
+        // The type will be corrected during pass 2 when the RHS is
+        // evaluated. We only do this so functions can find the symbol.
+        const jsont &targets = json_member(stmt, "targets");
+        if(targets.is_array())
+        {
+          for(const auto &target : as_array(targets))
+          {
+            if(is_node_type(target, "Name"))
+            {
+              std::string var_name = json_string(json_member(target, "id"));
+              irep_idt sym_id{"python::" + var_name};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                // Try to infer type from the RHS constant
+                const jsont &val = json_member(stmt, "value");
+                typet var_type = signedbv_typet{64};
+                if(is_node_type(val, "Constant"))
+                {
+                  const jsont &v = json_member(val, "value");
+                  if(v.is_true() || v.is_false())
+                    var_type = bool_typet{};
+                  else if(v.is_number())
+                  {
+                    std::string vs = v.value;
+                    if(
+                      vs.find('.') != std::string::npos ||
+                      vs.find('e') != std::string::npos ||
+                      vs.find('E') != std::string::npos)
+                      var_type = double_type();
+                  }
+                  else if(v.is_string())
+                    var_type = python_string_type();
+                }
+                else if(is_node_type(val, "List"))
+                  var_type = python_list_type(signedbv_typet{64});
+                else if(is_node_type(val, "Tuple"))
+                {
+                  // Can't determine tuple field types without evaluating
+                  // elements; skip pre-registration and let pass 2 handle it
+                  continue;
+                }
+                symbolt new_sym{sym_id, var_type, "python"};
+                new_sym.base_name = var_name;
+                new_sym.is_lvalue = true;
+                new_sym.is_state_var = true;
+                new_sym.is_static_lifetime = true;
+                symbol_table.add(new_sym);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   // First pass: register all function and class definitions
   if(body.is_array())
