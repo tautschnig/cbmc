@@ -76,6 +76,7 @@ private:
   codet convert_break();
   codet convert_continue();
   codet convert_pass();
+  codet convert_raise(const jsont &stmt);
 
   // --- Expression converters ---
   exprt convert_name(const jsont &expr);
