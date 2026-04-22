@@ -472,6 +472,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
     return convert_ann_assign(stmt);
   else if(node_type == "Assign")
     return convert_assign(stmt);
+  else if(node_type == "AugAssign")
+    return convert_aug_assign(stmt);
   else if(node_type == "Assert")
     return convert_assert(stmt);
   else if(node_type == "If")
@@ -548,45 +550,100 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
 
 codet python_convertert::convert_assign(const jsont &stmt)
 {
-  // x = expr (without type annotation)
+  // x = expr  OR  a = b = expr (multiple targets)
   const jsont &targets = json_member(stmt, "targets");
   const jsont &value = json_member(stmt, "value");
 
   if(!targets.is_array() || as_array(targets).empty())
     return code_skipt{};
 
-  // Handle single target for now
-  const jsont &target = *std::next(as_array(targets).begin(), 0);
-  std::string var_name = json_string(json_member(target, "id"));
   source_locationt loc = get_location(stmt);
-
   exprt rhs = convert_expression(value);
   if(rhs.is_nil())
     return code_skipt{};
 
-  std::string qualified_name =
-    current_function.empty() ? "python::" + var_name
-                             : "python::" + current_function + "::" + var_name;
-  irep_idt symbol_id{qualified_name};
+  code_blockt block;
 
-  // If variable doesn't exist, create it with the type of the RHS
-  if(symbol_table.lookup(symbol_id) == nullptr)
+  for(const auto &target : as_array(targets))
   {
-    symbolt new_symbol{symbol_id, rhs.type(), "python"};
-    new_symbol.base_name = var_name;
-    new_symbol.location = loc;
-    new_symbol.is_lvalue = true;
-    new_symbol.is_state_var = true;
-    new_symbol.is_static_lifetime = current_function.empty();
-    symbol_table.add(new_symbol);
+    std::string var_name = json_string(json_member(target, "id"));
+    std::string qualified_name =
+      current_function.empty()
+        ? "python::" + var_name
+        : "python::" + current_function + "::" + var_name;
+    irep_idt symbol_id{qualified_name};
+
+    if(symbol_table.lookup(symbol_id) == nullptr)
+    {
+      symbolt new_symbol{symbol_id, rhs.type(), "python"};
+      new_symbol.base_name = var_name;
+      new_symbol.location = loc;
+      new_symbol.is_lvalue = true;
+      new_symbol.is_state_var = true;
+      new_symbol.is_static_lifetime = current_function.empty();
+      symbol_table.add(new_symbol);
+    }
+
+    const symbolt &sym = symbol_table.lookup_ref(symbol_id);
+    exprt typed_rhs = rhs;
+    if(typed_rhs.type() != sym.type)
+      typed_rhs = typecast_exprt{typed_rhs, sym.type};
+
+    code_frontend_assignt assign{sym.symbol_expr(), typed_rhs};
+    assign.add_source_location() = loc;
+    block.add(std::move(assign));
   }
 
-  const symbolt &sym = symbol_table.lookup_ref(symbol_id);
+  if(block.statements().size() == 1)
+    return block.statements().front();
+  return std::move(block);
+}
 
-  if(rhs.type() != sym.type)
-    rhs = typecast_exprt{rhs, sym.type};
+codet python_convertert::convert_aug_assign(const jsont &stmt)
+{
+  // x += expr  →  x = x + expr
+  const jsont &target = json_member(stmt, "target");
+  const jsont &op_node = json_member(stmt, "op");
+  const jsont &value = json_member(stmt, "value");
 
-  code_frontend_assignt assign{sym.symbol_expr(), rhs};
+  std::string var_name = json_string(json_member(target, "id"));
+  source_locationt loc = get_location(stmt);
+
+  exprt lhs = convert_name(target);
+  exprt rhs = convert_expression(value);
+  if(lhs.is_nil() || rhs.is_nil())
+    return code_skipt{};
+
+  std::string op = json_string(json_member(op_node, "_type"));
+
+  // Type promotion
+  if(lhs.type() != rhs.type())
+  {
+    if(lhs.type().id() == ID_floatbv)
+      rhs = typecast_exprt{rhs, lhs.type()};
+    else if(rhs.type().id() == ID_floatbv)
+      rhs = typecast_exprt{rhs, lhs.type()};
+  }
+
+  exprt new_rhs;
+  if(op == "Add")
+    new_rhs = plus_exprt{lhs, rhs};
+  else if(op == "Sub")
+    new_rhs = minus_exprt{lhs, rhs};
+  else if(op == "Mult")
+    new_rhs = mult_exprt{lhs, rhs};
+  else if(op == "FloorDiv")
+    new_rhs = div_exprt{lhs, rhs};
+  else if(op == "Mod")
+    new_rhs = mod_exprt{lhs, rhs};
+  else
+  {
+    log.error() << "Unsupported augmented assignment operator: " << op
+                << messaget::eom;
+    return code_skipt{};
+  }
+
+  code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
   return std::move(assign);
 }
