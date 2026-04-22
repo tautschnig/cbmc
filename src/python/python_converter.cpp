@@ -211,6 +211,10 @@ exprt python_convertert::convert_expression(const jsont &expr)
     return convert_attribute(expr);
   else if(node_type == "Dict")
     return convert_dict(expr);
+  else if(node_type == "ListComp")
+    return convert_list_comp(expr);
+  else if(node_type == "Lambda")
+    return convert_lambda(expr);
   else
   {
     log.error() << "Unsupported Python expression type: " << node_type
@@ -1002,6 +1006,174 @@ exprt python_convertert::convert_dict(const jsont &expr)
   return struct_exprt{std::move(field_values), dict_type};
 }
 
+exprt python_convertert::convert_list_comp(const jsont &expr)
+{
+  // [elt for target in iter] — simple single-generator case
+  const jsont &elt = json_member(expr, "elt");
+  const jsont &generators = json_member(expr, "generators");
+
+  if(!generators.is_array() || as_array(generators).empty())
+    return nil_exprt{};
+
+  const jsont &gen = *as_array(generators).begin();
+  const jsont &gen_target = json_member(gen, "target");
+  const jsont &gen_iter = json_member(gen, "iter");
+
+  // Only handle literal list iterables for now
+  if(!is_node_type(gen_iter, "List"))
+  {
+    log.warning() << "List comprehension only supports literal list iterables"
+                  << messaget::eom;
+    return nil_exprt{};
+  }
+
+  std::string iter_var = json_string(json_member(gen_target, "id"));
+  const jsont &iter_elts = json_member(gen_iter, "elts");
+  if(!iter_elts.is_array())
+    return nil_exprt{};
+
+  // For literal list iterables, unroll: evaluate elt for each value.
+  // We create the iteration variable, assign each value, and evaluate elt.
+  std::string qname = current_function.empty()
+                        ? "python::" + iter_var
+                        : "python::" + current_function + "::" + iter_var;
+  irep_idt iter_sym_id{qname};
+
+  // First, determine element type from the first iterable element
+  if(as_array(iter_elts).empty())
+    return nil_exprt{};
+
+  exprt first_val = convert_expression(*as_array(iter_elts).begin());
+  if(first_val.is_nil())
+    return nil_exprt{};
+
+  if(symbol_table.lookup(iter_sym_id) == nullptr)
+  {
+    symbolt sym{iter_sym_id, first_val.type(), "python"};
+    sym.base_name = iter_var;
+    sym.is_lvalue = true;
+    sym.is_state_var = true;
+    symbol_table.add(sym);
+  }
+
+  // For each iterable element, evaluate elt.
+  // Since elt references the iteration variable symbolically, all results
+  // will be the same symbolic expression. For literal iterables, we need
+  // to substitute. Use a simple approach: for each concrete value, build
+  // the elt expression and replace the symbol reference with the value.
+  exprt::operandst elements;
+  for(const auto &iter_val_json : as_array(iter_elts))
+  {
+    exprt iter_val = convert_expression(iter_val_json);
+    // Evaluate elt — it will reference the symbol.
+    // We then substitute the symbol with the concrete value.
+    exprt elt_expr = convert_expression(elt);
+    // Simple substitution: replace symbol_exprt for iter_var with iter_val
+    std::function<void(exprt &)> substitute = [&](exprt &e)
+    {
+      if(
+        e.id() == ID_symbol &&
+        to_symbol_expr(e).get_identifier() == iter_sym_id)
+      {
+        e = iter_val;
+      }
+      else
+      {
+        for(auto &op : e.operands())
+          substitute(op);
+      }
+    };
+    substitute(elt_expr);
+    elements.push_back(elt_expr);
+  }
+
+  if(elements.empty())
+    return nil_exprt{};
+
+  // Build the result list
+  typet elem_type = elements[0].type();
+  struct_typet list_type = python_list_type(elem_type);
+  array_typet data_type{
+    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+
+  exprt::operandst data_elems;
+  for(auto &e : elements)
+  {
+    if(e.type() != elem_type)
+      e = typecast_exprt{e, elem_type};
+    data_elems.push_back(e);
+  }
+  while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
+    data_elems.push_back(from_integer(0, elem_type));
+
+  array_exprt data{std::move(data_elems), data_type};
+  exprt length =
+    from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
+
+  return struct_exprt{{length, data}, list_type};
+}
+
+exprt python_convertert::convert_lambda(const jsont &expr)
+{
+  std::string lambda_name = "__lambda_" + std::to_string(lambda_counter++);
+  source_locationt loc = get_location(expr);
+
+  const jsont &args_node = json_member(expr, "args");
+  const jsont &params = json_member(args_node, "args");
+  const jsont &body_expr = json_member(expr, "body");
+
+  code_typet::parameterst parameters;
+  if(params.is_array())
+  {
+    for(const auto &param : as_array(params))
+    {
+      std::string param_name = json_string(json_member(param, "arg"));
+      code_typet::parametert p{signedbv_typet{64}};
+      p.set_identifier("python::" + lambda_name + "::" + param_name);
+      p.set_base_name(param_name);
+      parameters.push_back(p);
+    }
+  }
+
+  std::string saved_func = current_function;
+  current_function = lambda_name;
+
+  for(const auto &p : parameters)
+  {
+    if(symbol_table.lookup(p.get_identifier()) == nullptr)
+    {
+      symbolt param_sym{p.get_identifier(), p.type(), "python"};
+      param_sym.base_name = p.get_base_name();
+      param_sym.location = loc;
+      param_sym.is_lvalue = true;
+      param_sym.is_state_var = true;
+      param_sym.is_parameter = true;
+      symbol_table.add(param_sym);
+    }
+  }
+
+  exprt body_val = convert_expression(body_expr);
+  current_function = saved_func;
+
+  if(body_val.is_nil())
+    return nil_exprt{};
+
+  typet return_type = body_val.type();
+  code_typet func_type{parameters, return_type};
+
+  irep_idt func_id{"python::" + lambda_name};
+  symbolt func_sym{func_id, func_type, "python"};
+  func_sym.base_name = lambda_name;
+  func_sym.location = loc;
+  func_sym.is_lvalue = true;
+  code_blockt body;
+  body.add(code_frontend_returnt{body_val});
+  func_sym.value = body;
+
+  symbol_table.add(func_sym);
+  return func_sym.symbol_expr();
+}
+
 // --- Statement conversion ---
 
 codet python_convertert::convert_statement(const jsont &stmt)
@@ -1320,14 +1492,26 @@ codet python_convertert::convert_assign(const jsont &stmt)
 codet python_convertert::convert_aug_assign(const jsont &stmt)
 {
   // x += expr  →  x = x + expr
+  // Also handles: lst[i] += expr, self.attr += expr
   const jsont &target = json_member(stmt, "target");
   const jsont &op_node = json_member(stmt, "op");
   const jsont &value = json_member(stmt, "value");
-
-  std::string var_name = json_string(json_member(target, "id"));
   source_locationt loc = get_location(stmt);
 
-  exprt lhs = convert_name(target);
+  // Determine the LHS expression based on target type
+  exprt lhs;
+  if(is_node_type(target, "Name"))
+    lhs = convert_name(target);
+  else if(is_node_type(target, "Subscript"))
+    lhs = convert_subscript(target);
+  else if(is_node_type(target, "Attribute"))
+    lhs = convert_attribute(target);
+  else
+  {
+    log.error() << "Unsupported augmented assignment target" << messaget::eom;
+    return code_skipt{};
+  }
+
   exprt rhs = convert_expression(value);
   if(lhs.is_nil() || rhs.is_nil())
     return code_skipt{};
@@ -1458,76 +1642,146 @@ codet python_convertert::convert_while(const jsont &stmt)
 
 codet python_convertert::convert_for(const jsont &stmt)
 {
-  // for i in range(n): body
-  // Desugar to: i = 0; while(i < n) { body; i = i + 1; }
   const jsont &target = json_member(stmt, "target");
   const jsont &iter = json_member(stmt, "iter");
   source_locationt loc = get_location(stmt);
-
-  // Only support range() for now
-  if(!is_node_type(iter, "Call"))
-  {
-    log.error() << "Only 'for x in range(...)' is supported" << messaget::eom;
-    return code_skipt{};
-  }
-
-  std::string func_name =
-    json_string(json_member(json_member(iter, "func"), "id"));
-  if(func_name != "range")
-  {
-    log.error() << "Only 'for x in range(...)' is supported" << messaget::eom;
-    return code_skipt{};
-  }
-
-  const jsont &range_args = json_member(iter, "args");
-  if(!range_args.is_array() || as_array(range_args).empty())
-    return code_skipt{};
-
-  // range(stop) or range(start, stop) or range(start, stop, step)
-  exprt start, stop;
   typet int_type = signedbv_typet{64};
 
-  if(as_array(range_args).size() == 1)
-  {
-    start = from_integer(0, int_type);
-    stop = convert_expression(*std::next(as_array(range_args).begin(), 0));
-  }
-  else
-  {
-    start = convert_expression(*std::next(as_array(range_args).begin(), 0));
-    stop = convert_expression(*std::next(as_array(range_args).begin(), 1));
-  }
-
-  // Create loop variable
   std::string var_name = json_string(json_member(target, "id"));
   std::string qualified_name =
     current_function.empty() ? "python::" + var_name
                              : "python::" + current_function + "::" + var_name;
-  irep_idt symbol_id{qualified_name};
 
-  if(symbol_table.lookup(symbol_id) == nullptr)
+  // Check for range() call
+  if(
+    is_node_type(iter, "Call") &&
+    json_string(json_member(json_member(iter, "func"), "id")) == "range")
   {
-    symbolt new_symbol{symbol_id, int_type, "python"};
-    new_symbol.base_name = var_name;
-    new_symbol.location = loc;
-    new_symbol.is_lvalue = true;
-    new_symbol.is_state_var = true;
-    new_symbol.is_static_lifetime = false;
-    symbol_table.add(new_symbol);
+    const jsont &range_args = json_member(iter, "args");
+    if(!range_args.is_array() || as_array(range_args).empty())
+      return code_skipt{};
+
+    exprt start, stop;
+    if(as_array(range_args).size() == 1)
+    {
+      start = from_integer(0, int_type);
+      stop = convert_expression(*as_array(range_args).begin());
+    }
+    else
+    {
+      start = convert_expression(*as_array(range_args).begin());
+      stop = convert_expression(*std::next(as_array(range_args).begin(), 1));
+    }
+
+    irep_idt symbol_id{qualified_name};
+    if(symbol_table.lookup(symbol_id) == nullptr)
+    {
+      symbolt new_symbol{symbol_id, int_type, "python"};
+      new_symbol.base_name = var_name;
+      new_symbol.location = loc;
+      new_symbol.is_lvalue = true;
+      new_symbol.is_state_var = true;
+      symbol_table.add(new_symbol);
+    }
+
+    symbol_exprt loop_sym = symbol_table.lookup_ref(symbol_id).symbol_expr();
+
+    code_frontend_assignt init{loop_sym, start};
+    init.add_source_location() = loc;
+
+    code_blockt body_block;
+    const jsont &body = json_member(stmt, "body");
+    if(body.is_array())
+    {
+      for(const auto &s : as_array(body))
+        body_block.add(convert_statement(s));
+    }
+    body_block.add(code_frontend_assignt{
+      loop_sym, plus_exprt{loop_sym, from_integer(1, int_type)}});
+
+    code_whilet while_stmt{
+      binary_relation_exprt{loop_sym, ID_lt, stop}, std::move(body_block)};
+    while_stmt.add_source_location() = loc;
+
+    code_blockt result;
+    result.add(std::move(init));
+    result.add(std::move(while_stmt));
+    return std::move(result);
   }
 
-  const symbolt &loop_var = symbol_table.lookup_ref(symbol_id);
-  symbol_exprt loop_sym = loop_var.symbol_expr();
+  // for x in iterable (list or string)
+  // Desugar to: __idx = 0; while(__idx < iterable.length) {
+  //   x = iterable.data[__idx]; body; __idx += 1; }
+  exprt iterable = convert_expression(iter);
+  if(iterable.is_nil())
+    return code_skipt{};
 
-  // i = start
-  code_frontend_assignt init{loop_sym, start};
-  init.add_source_location() = loc;
+  bool is_list = is_python_list_type(iterable.type());
+  bool is_string = is_python_string_type(iterable.type());
+  if(!is_list && !is_string)
+  {
+    log.error() << "for-in iteration requires a list or string"
+                << messaget::eom;
+    return code_skipt{};
+  }
 
-  // while(i < stop)
-  binary_relation_exprt cond{loop_sym, ID_lt, stop};
+  // Determine element type
+  typet elem_type;
+  if(is_list)
+  {
+    const auto &data_type =
+      to_array_type(to_struct_type(iterable.type()).components()[1].type());
+    elem_type = data_type.element_type();
+  }
+  else
+    elem_type = int_type; // string iteration yields char codes for now
 
-  // body + i = i + 1
+  // Create loop variable
+  irep_idt var_id{qualified_name};
+  if(symbol_table.lookup(var_id) == nullptr)
+  {
+    symbolt new_sym{var_id, elem_type, "python"};
+    new_sym.base_name = var_name;
+    new_sym.location = loc;
+    new_sym.is_lvalue = true;
+    new_sym.is_state_var = true;
+    symbol_table.add(new_sym);
+  }
+  symbol_exprt loop_var = symbol_table.lookup_ref(var_id).symbol_expr();
+
+  // Create index variable
+  std::string idx_name = "__for_idx_" + var_name;
+  std::string idx_qname = current_function.empty()
+                            ? "python::" + idx_name
+                            : "python::" + current_function + "::" + idx_name;
+  irep_idt idx_id{idx_qname};
+  if(symbol_table.lookup(idx_id) == nullptr)
+  {
+    symbolt idx_sym{idx_id, int_type, "python"};
+    idx_sym.base_name = idx_name;
+    idx_sym.location = loc;
+    idx_sym.is_lvalue = true;
+    idx_sym.is_state_var = true;
+    symbol_table.add(idx_sym);
+  }
+  symbol_exprt idx_var = symbol_table.lookup_ref(idx_id).symbol_expr();
+
+  member_exprt length{iterable, "length", int_type};
+  const auto &st = to_struct_type(iterable.type());
+  member_exprt data{iterable, "data", st.components()[1].type()};
+
+  code_blockt result;
+
+  // __idx = 0
+  result.add(code_frontend_assignt{idx_var, from_integer(0, int_type)});
+
+  // while(__idx < iterable.length)
   code_blockt body_block;
+
+  // x = iterable.data[__idx]
+  body_block.add(code_frontend_assignt{loop_var, index_exprt{data, idx_var}});
+
+  // user body
   const jsont &body = json_member(stmt, "body");
   if(body.is_array())
   {
@@ -1535,17 +1789,15 @@ codet python_convertert::convert_for(const jsont &stmt)
       body_block.add(convert_statement(s));
   }
 
-  code_frontend_assignt increment{
-    loop_sym, plus_exprt{loop_sym, from_integer(1, int_type)}};
-  increment.add_source_location() = loc;
-  body_block.add(std::move(increment));
+  // __idx += 1
+  body_block.add(code_frontend_assignt{
+    idx_var, plus_exprt{idx_var, from_integer(1, int_type)}});
 
-  code_whilet while_stmt{cond, std::move(body_block)};
+  code_whilet while_stmt{
+    binary_relation_exprt{idx_var, ID_lt, length}, std::move(body_block)};
   while_stmt.add_source_location() = loc;
-
-  code_blockt result;
-  result.add(std::move(init));
   result.add(std::move(while_stmt));
+
   return std::move(result);
 }
 
@@ -2199,7 +2451,7 @@ bool python_convertert::convert()
                   var_type = python_list_type(signedbv_typet{64});
                 else if(
                   is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
-                  is_node_type(val, "Call"))
+                  is_node_type(val, "Call") || is_node_type(val, "ListComp"))
                 {
                   // Complex RHS — skip pre-registration, let pass 2 handle it
                   continue;
