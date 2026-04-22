@@ -42,6 +42,10 @@ public:
   }
 
   std::size_t size() const { return nodes.size(); }
+  const weg_nodet &node(std::size_t n) const
+  {
+    return nodes[n];
+  }
   const exprt &operator[](std::size_t idx) const { return numbering[idx]; }
 
   /// Find representative of weak equivalence class.
