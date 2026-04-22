@@ -833,3 +833,31 @@ sizes — fundamental to bit-blasting architecture).
 | Wrong          | **0**       | 60     | 50       |
 | Timeout        | 0           | 0      | 0        |
 | Error/OOM      | 83          | 17     | 22       |
+
+## Lazy Ackermann via CDCL(T) Propagator
+
+The Ackermann constraint `(i == j) → a[i] == a[j]` is O(n²) in the
+number of indices per equivalence class. For QF_ABV benchmarks with
+large index sets (88 indices, 59 arrays), this generates 225K constraints
+× ~90 clauses each = 20M clauses.
+
+The lazy Ackermann approach defers the conclusion conversion:
+1. Only the guard literal (index equality) is converted eagerly
+2. The conclusion expression (element equality) is stored
+3. The refinement loop converts conclusions only when violated
+4. The CDCL(T) propagator checks guards on complete models
+
+Results:
+- picorv32: 21M → 2.0M clauses (10.5× reduction), now solves correctly
+- VexRiscv: 4.0M → 686K clauses (5.8× reduction), now solves correctly
+- 4 previously-unsolvable QF_ABV benchmarks now solved
+- QF_AX: 551/551 (0 wrong), CBMC: 1174/1174
+
+The key insight: `convert()` creates ~90 SAT clauses per Ackermann
+constraint for the bitvector equality encoding. Deferring `convert()`
+avoids creating these clauses for constraints that are never violated.
+
+Lazy equality constraints were attempted but don't help because
+`convert()` must still be called to register indices in the index set.
+The Ackermann lazy approach works because Ackermann is generated AFTER
+index collection.
