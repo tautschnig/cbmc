@@ -36,7 +36,18 @@ void python_languaget::set_language_options(
 /// Invoked as: python3 -c '<this code>' <input.py> <output.json>
 // clang-format off
 #define PYTHON_AST_TO_JSON_CODE \
-  "import ast,json,sys\n" \
+  "import sys\n" \
+  "try:\n" \
+  " import ast,json\n" \
+  "except ImportError as e:\n" \
+  " print('CBMC Python front-end: failed to import required Python' \\\n" \
+  "  ' module: '+str(e)+'\\nPlease ensure Python 3 is installed with' \\\n" \
+  "  ' its standard library (the ast and json modules are required).',\\\n" \
+  "  file=sys.stderr);sys.exit(1)\n" \
+  "try:\n" \
+  " t=ast.parse(open(sys.argv[1]).read(),sys.argv[1])\n" \
+  "except SyntaxError as e:\n" \
+  " print(str(e),file=sys.stderr);sys.exit(1)\n" \
   "def c(n):\n" \
   " if isinstance(n,ast.AST):\n" \
   "  r={'_type':n.__class__.__name__}\n" \
@@ -47,7 +58,6 @@ void python_languaget::set_language_options(
   "  return r\n" \
   " if isinstance(n,list):return[c(x)for x in n]\n" \
   " return n\n" \
-  "t=ast.parse(open(sys.argv[1]).read(),sys.argv[1])\n" \
   "r=c(t);r['_filename']=sys.argv[1]\n" \
   "json.dump(r,open(sys.argv[2],'w'),default=str)\n"
 // clang-format on
@@ -67,17 +77,34 @@ bool python_languaget::parse(
 
   // Invoke python3 -c '<inline script>' <input.py> <output.json>
   // This is analogous to how the C front-end invokes gcc -E.
+  temporary_filet stderr_file{"cbmc_python_err_", ".txt"};
+  std::string stderr_path = stderr_file();
+
   int ret = run(
     "python3",
     {"python3", "-c", PYTHON_AST_TO_JSON_CODE, path, json_path},
     "",
     "",
-    "");
+    stderr_path);
 
   if(ret != 0)
   {
-    log.error() << "Python AST generation failed for " << path
-                << " (is python3 installed?)" << messaget::eom;
+    // Show any error output from Python
+    std::ifstream stderr_stream{stderr_path};
+    if(stderr_stream)
+    {
+      std::string line;
+      while(std::getline(stderr_stream, line))
+        log.error() << line << messaget::eom;
+    }
+
+    if(ret == 127 || ret == -1)
+    {
+      log.error() << "Failed to run python3. CBMC's Python front-end requires "
+                     "Python 3 to be installed and available on PATH."
+                  << messaget::eom;
+    }
+
     return true;
   }
 
