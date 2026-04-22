@@ -10,7 +10,7 @@
 | 4 | Type inference | **Complete** |
 | 5 | Strings | **Partial** (concat KNOWNBUG) |
 | 6 | Collections | **Partial** (tuple unpack, list append KNOWNBUG) |
-| 7 | Classes and objects | Not started |
+| 7 | Classes and objects | **Partial** (method mutation, inheritance KNOWNBUG) |
 | 8 | Exception handling | Not started |
 | 9 | Advanced features | Not started |
 
@@ -249,3 +249,4 @@ operation that can raise sets this variable and jumps to the handler.
 | 2026-04-22 | 7198f0a4c8 | Phase 4: type inference, augmented assign, multiple-target assign (8 new tests) |
 | 2026-04-22 | 27396c8250 | Phase 5: basic string support — literals, len, compare, index (5 new tests) |
 | 2026-04-22 | 6782e150b0 | Phase 6: tuples and lists — literals, indexing, len (5 new tests) |
+| 2026-04-22 | 8b81831b57 | Phase 7: basic class support — constructor, attributes, methods (3 new tests) |
