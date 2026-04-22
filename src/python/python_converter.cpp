@@ -11,6 +11,7 @@
 #include <util/ieee_float.h>
 #include <util/json.h>
 #include <util/mathematical_types.h>
+#include <util/pointer_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
@@ -468,7 +469,11 @@ exprt python_convertert::convert_call(const jsont &expr)
         {
           const code_typet &method_type = to_code_type(method_sym->type);
           exprt::operandst arguments;
-          arguments.push_back(obj); // self
+          // Pass address of object as self (pointer-based model)
+          if(obj.type().id() == ID_pointer)
+            arguments.push_back(obj); // already a pointer
+          else
+            arguments.push_back(address_of_exprt{obj});
           if(args.is_array())
           {
             for(const auto &arg : as_array(args))
@@ -523,38 +528,13 @@ exprt python_convertert::convert_call(const jsont &expr)
   // Regular function call — check if it's a class constructor
   if(class_types.count(func_name))
   {
-    // Constructor call: ClassName(args...) → create struct, call __init__
-    const struct_typet &class_type = class_types[func_name];
-
-    // Create a nondet struct, then call __init__ on it
-    // For now, just build the struct by calling __init__ inline
-    // We create a side_effect that returns the initialized struct
-    irep_idt init_id{"python::" + func_name + "::__init__"};
-    const symbolt *init_sym = symbol_table.lookup(init_id);
-    if(init_sym != nullptr)
-    {
-      // Build a nondet struct for self
-      side_effect_expr_nondett self_nondet{class_type, get_location(expr)};
-
-      exprt::operandst arguments;
-      arguments.push_back(self_nondet);
-      if(args.is_array())
-      {
-        for(const auto &arg : as_array(args))
-          arguments.push_back(convert_expression(arg));
-      }
-
-      // Call __init__ and return the struct
-      // We model this as: create temp, call __init__(temp, args), return temp
-      // For simplicity, use a function call side effect
-      side_effect_expr_function_callt call{
-        init_sym->symbol_expr(),
-        std::move(arguments),
-        class_type, // return the struct (we'll fix __init__ to return self)
-        get_location(expr)};
-
-      return std::move(call);
-    }
+    // Constructor calls are handled at the assignment level
+    // (convert_assign detects them and generates proper init code).
+    // If we get here, it's a constructor call used as an expression
+    // outside of assignment — not yet supported.
+    log.error() << "Constructor call " << func_name
+                << "() must be assigned to a variable" << messaget::eom;
+    return nil_exprt{};
   }
 
   irep_idt symbol_id{"python::" + func_name};
@@ -739,7 +719,20 @@ exprt python_convertert::convert_attribute(const jsont &expr)
   if(value.is_nil())
     return nil_exprt{};
 
-  // For struct types (classes), access the member
+  // If value is a pointer (self in a method), dereference first
+  if(value.type().id() == ID_pointer)
+  {
+    const auto &base = to_pointer_type(value.type()).base_type();
+    if(base.id() == ID_struct)
+    {
+      const auto &st = to_struct_type(base);
+      if(st.has_component(attr))
+        return member_exprt{
+          dereference_exprt{value}, attr, st.get_component(attr).type()};
+    }
+  }
+
+  // For struct types (classes), access the member directly
   if(value.type().id() == ID_struct)
   {
     const auto &st = to_struct_type(value.type());
@@ -849,6 +842,68 @@ codet python_convertert::convert_assign(const jsont &stmt)
     return code_skipt{};
 
   source_locationt loc = get_location(stmt);
+
+  // Check if RHS is a constructor call: x = ClassName(args)
+  if(
+    is_node_type(value, "Call") &&
+    is_node_type(json_member(value, "func"), "Name"))
+  {
+    std::string call_name =
+      json_string(json_member(json_member(value, "func"), "id"));
+    if(class_types.count(call_name))
+    {
+      // Constructor: declare var as struct, call __init__(&var, args)
+      const struct_typet &cls_type = class_types[call_name];
+      const jsont &first_target = *as_array(targets).begin();
+      std::string var_name = json_string(json_member(first_target, "id"));
+      std::string qualified_name =
+        current_function.empty()
+          ? "python::" + var_name
+          : "python::" + current_function + "::" + var_name;
+      irep_idt symbol_id{qualified_name};
+
+      if(symbol_table.lookup(symbol_id) == nullptr)
+      {
+        symbolt new_symbol{symbol_id, cls_type, "python"};
+        new_symbol.base_name = var_name;
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        new_symbol.is_static_lifetime = current_function.empty();
+        symbol_table.add(new_symbol);
+      }
+
+      const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);
+      code_blockt result;
+
+      // Call __init__(&var, args...)
+      irep_idt init_id{"python::" + call_name + "::__init__"};
+      const symbolt *init_sym = symbol_table.lookup(init_id);
+      if(init_sym != nullptr)
+      {
+        exprt::operandst arguments;
+        arguments.push_back(address_of_exprt{var_sym.symbol_expr()});
+
+        const jsont &call_args = json_member(value, "args");
+        if(call_args.is_array())
+        {
+          for(const auto &arg : as_array(call_args))
+            arguments.push_back(convert_expression(arg));
+        }
+
+        side_effect_expr_function_callt call{
+          init_sym->symbol_expr(), std::move(arguments), empty_typet{}, loc};
+        code_expressiont call_stmt{call};
+        call_stmt.add_source_location() = loc;
+        result.add(std::move(call_stmt));
+      }
+
+      if(result.statements().size() == 1)
+        return result.statements().front();
+      return std::move(result);
+    }
+  }
+
   exprt rhs = convert_expression(value);
   if(rhs.is_nil())
     return code_skipt{};
@@ -857,31 +912,54 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   for(const auto &target : as_array(targets))
   {
-    std::string var_name;
-
     // Handle attribute assignment: self.x = value
     if(is_node_type(target, "Attribute"))
     {
       exprt obj = convert_expression(json_member(target, "value"));
       std::string attr = json_string(json_member(target, "attr"));
-      if(!obj.is_nil() && obj.type().id() == ID_struct)
+      if(!obj.is_nil())
       {
-        const auto &st = to_struct_type(obj.type());
-        if(st.has_component(attr))
+        // If obj is a pointer (self in a method), dereference it
+        typet obj_type = obj.type();
+        if(obj_type.id() == ID_pointer)
         {
-          member_exprt lhs{obj, attr, st.get_component(attr).type()};
-          exprt typed_rhs = rhs;
-          if(typed_rhs.type() != lhs.type())
-            typed_rhs = typecast_exprt{typed_rhs, lhs.type()};
-          code_frontend_assignt assign{lhs, typed_rhs};
-          assign.add_source_location() = loc;
-          block.add(std::move(assign));
-          continue;
+          const auto &base = to_pointer_type(obj_type).base_type();
+          if(base.id() == ID_struct)
+          {
+            const auto &st = to_struct_type(base);
+            if(st.has_component(attr))
+            {
+              member_exprt lhs{
+                dereference_exprt{obj}, attr, st.get_component(attr).type()};
+              exprt typed_rhs = rhs;
+              if(typed_rhs.type() != lhs.type())
+                typed_rhs = typecast_exprt{typed_rhs, lhs.type()};
+              code_frontend_assignt assign{lhs, typed_rhs};
+              assign.add_source_location() = loc;
+              block.add(std::move(assign));
+              continue;
+            }
+          }
+        }
+        else if(obj_type.id() == ID_struct)
+        {
+          const auto &st = to_struct_type(obj_type);
+          if(st.has_component(attr))
+          {
+            member_exprt lhs{obj, attr, st.get_component(attr).type()};
+            exprt typed_rhs = rhs;
+            if(typed_rhs.type() != lhs.type())
+              typed_rhs = typecast_exprt{typed_rhs, lhs.type()};
+            code_frontend_assignt assign{lhs, typed_rhs};
+            assign.add_source_location() = loc;
+            block.add(std::move(assign));
+            continue;
+          }
         }
       }
     }
 
-    var_name = json_string(json_member(target, "id"));
+    std::string var_name = json_string(json_member(target, "id"));
     std::string qualified_name =
       current_function.empty()
         ? "python::" + var_name
@@ -1353,7 +1431,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             std::string param_name = json_string(json_member(param, "arg"));
             typet param_type;
             if(param_name == "self")
-              param_type = class_type;
+              param_type =
+                pointer_typet{class_type, config.ansi_c.pointer_width};
             else
             {
               const jsont &annotation = json_member(param, "annotation");
@@ -1378,9 +1457,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           json_string(json_member(returns, "id")) == "None")
           return_type = empty_typet{};
 
-        // For __init__, change return type to class type and add return self
+        // __init__ always returns void (it modifies self through pointer)
         if(method_name == "__init__")
-          return_type = class_type;
+          return_type = empty_typet{};
 
         code_typet func_type{parameters, return_type};
         irep_idt func_id{"python::" + class_name + "::" + method_name};
@@ -1425,20 +1504,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
         symbolt *sym_ptr = symbol_table.get_writeable(func_id);
         if(sym_ptr != nullptr)
-        {
-          // For __init__, add "return self" at the end
-          if(method_name == "__init__")
-          {
-            irep_idt self_id{"python::" + class_name + "::__init__::self"};
-            const symbolt *self_sym = symbol_table.lookup(self_id);
-            if(self_sym != nullptr)
-            {
-              code_frontend_returnt ret{self_sym->symbol_expr()};
-              method_body.add(std::move(ret));
-            }
-          }
           sym_ptr->value = method_body;
-        }
       }
     }
 
