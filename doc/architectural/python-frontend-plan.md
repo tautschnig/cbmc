@@ -11,7 +11,7 @@
 | 5 | Strings | **Complete** (concat tracks length, not content) |
 | 6 | Collections | **Complete** (list, tuple, dict) |
 | 7 | Classes and objects | **Complete** (pointer-based model) |
-| 8 | Exception handling | **Partial** (raise-as-failure; try/except KNOWNBUG) |
+| 8 | Exception handling | **Partial** (raise-as-failure, try Stage A) |
 | 9 | Advanced features | Not started |
 
 ### Cross-cutting features
@@ -28,6 +28,9 @@
 | Global variable access | **Complete** |
 | Dict literals | **Complete** |
 | `with` statement | **Complete** (simplified, no __enter__/__exit__) |
+| Built-in functions | **Complete** (int, float, bool, abs, min, max, print, len) |
+| Bitwise operators | **Complete** |
+| `try`/`except` Stage A | **Complete** |
 
 ## 1. Goals
 
@@ -257,13 +260,28 @@ operation that can raise sets this variable and jumps to the handler.
 ### 6.3 Dict literals and access (DONE)
 ### 6.4 `with` statement (DONE)
 
-### 6.5 `try`/`except` (Phase 8 full)
+### 6.5 `try`/`except` (DONE — Stage A)
 
-Staged approach:
-- **Stage A**: Execute try body, skip except handlers. Handles defensive
-  exception handling around code that doesn't raise.
-- **Stage B**: Full exception propagation following JBMC's
-  `remove_exceptions.cpp` pattern.
+Stage A implemented: execute try body, skip except handlers.
+
+### 6.6 Remaining gaps (from ESBMC benchmark validation)
+
+Validation against 2,089 ESBMC non-fail tests: 1,242 pass (59%).
+Main gaps by impact:
+
+- **Generator expressions** (`all(x > 0 for x in l)`) — 13+ tests.
+  Would need to desugar to loops.
+- **List comprehensions** (`[x*2 for x in lst]`) — 13+ tests.
+  Desugar to loop + append.
+- **Lambda** (`lambda x: x+1`) — 10+ tests.
+  Model as anonymous function symbols.
+- **`isinstance()`** — 14+ tests.
+  Needs type tag on class instances.
+- **Import/ImportFrom affecting control flow** — 77+ tests.
+  Currently silently ignored; some tests depend on imported values.
+- **Augmented assign on subscripts** (`lst[0] += 1`) — several tests.
+- **String ordering** (`"A" < "B"`) — several tests.
+- **Slice expressions** (`lst[1:3]`) — 8+ tests.
 
 ### Previous items (DONE)
 
@@ -299,3 +317,5 @@ Staged approach:
 | 2026-04-22 | 85f8bc2b36 | ESBMC failure pattern regression tests (48 CORE, 4 KNOWNBUG) |
 | 2026-04-22 | b9d4ed0804 | Parameterized types, global variables, class type annotations (50 CORE) |
 | 2026-04-22 | 0f44b073e3 | Dict literals, with statement, pass 0 fixes (52 CORE, 1 KNOWNBUG) |
+| 2026-04-22 | 15bd8ea600 | try/except Stage A (53 CORE, 0 KNOWNBUG) |
+| 2026-04-22 | aafa143492 | Builtins, bitwise ops, ESBMC validation (1,242/2,089 = 59%) |
