@@ -80,6 +80,24 @@ const json_arrayt &python_convertert::as_array(const jsont &node) const
   return empty;
 }
 
+void python_convertert::add_check(
+  exprt condition,
+  const std::string &property_class,
+  const std::string &comment,
+  const source_locationt &loc)
+{
+  if(condition.type() != bool_typet{})
+    condition = typecast_exprt{condition, bool_typet{}};
+
+  source_locationt check_loc = loc;
+  check_loc.set_property_class(property_class);
+  check_loc.set_comment(comment);
+
+  code_assertt assertion{condition};
+  assertion.add_source_location() = check_loc;
+  pending_checks.push_back(std::move(assertion));
+}
+
 source_locationt python_convertert::get_location(const jsont &node) const
 {
   source_locationt loc;
@@ -304,9 +322,23 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   else if(op == "Mult")
     return mult_exprt{left, right};
   else if(op == "FloorDiv")
+  {
+    add_check(
+      notequal_exprt{right, from_integer(0, right.type())},
+      "division-by-zero",
+      "division by zero",
+      get_location(expr));
     return div_exprt{left, right};
+  }
   else if(op == "Mod")
+  {
+    add_check(
+      notequal_exprt{right, from_integer(0, right.type())},
+      "division-by-zero",
+      "division by zero in modulo",
+      get_location(expr));
     return mod_exprt{left, right};
+  }
   else if(op == "Pow")
   {
     // Power not directly supported — would need a library model
@@ -596,6 +628,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // String indexing: s[i] → s.data[i] as a single-char string struct
   if(is_python_string_type(value.type()))
   {
+    member_exprt length{value, "length", signedbv_typet{64}};
+    add_check(
+      and_exprt{
+        binary_relation_exprt{slice, ID_ge, from_integer(0, slice.type())},
+        binary_relation_exprt{slice, ID_lt, length}},
+      "index-out-of-bounds",
+      "string index out of range",
+      get_location(expr));
     struct_typet str_type = python_string_type();
     const auto &data_type = to_array_type(str_type.components()[1].type());
 
@@ -618,6 +658,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // Array/list indexing
   if(is_python_list_type(value.type()))
   {
+    member_exprt length{value, "length", signedbv_typet{64}};
+    add_check(
+      and_exprt{
+        binary_relation_exprt{slice, ID_ge, from_integer(0, slice.type())},
+        binary_relation_exprt{slice, ID_lt, length}},
+      "index-out-of-bounds",
+      "list index out of range",
+      get_location(expr));
+
     const auto &st = to_struct_type(value.type());
     const auto &data_type = to_array_type(st.components()[1].type());
     member_exprt data{value, "data", data_type};
@@ -760,40 +809,58 @@ codet python_convertert::convert_statement(const jsont &stmt)
 {
   std::string node_type = json_string(json_member(stmt, "_type"));
 
+  // Clear pending checks before converting this statement
+  pending_checks.clear();
+
+  codet result = code_skipt{};
+
   if(node_type == "AnnAssign")
-    return convert_ann_assign(stmt);
+    result = convert_ann_assign(stmt);
   else if(node_type == "Assign")
-    return convert_assign(stmt);
+    result = convert_assign(stmt);
   else if(node_type == "AugAssign")
-    return convert_aug_assign(stmt);
+    result = convert_aug_assign(stmt);
   else if(node_type == "Assert")
-    return convert_assert(stmt);
+    result = convert_assert(stmt);
   else if(node_type == "If")
-    return convert_if(stmt);
+    result = convert_if(stmt);
   else if(node_type == "While")
-    return convert_while(stmt);
+    result = convert_while(stmt);
   else if(node_type == "For")
-    return convert_for(stmt);
+    result = convert_for(stmt);
   else if(node_type == "Return")
-    return convert_return(stmt);
+    result = convert_return(stmt);
   else if(node_type == "FunctionDef")
-    return convert_function_def(stmt);
+    result = convert_function_def(stmt);
   else if(node_type == "ClassDef")
-    return convert_class_def(stmt);
+    result = convert_class_def(stmt);
   else if(node_type == "Expr")
-    return convert_expr_stmt(stmt);
+    result = convert_expr_stmt(stmt);
   else if(node_type == "Break")
-    return convert_break();
+    result = convert_break();
   else if(node_type == "Continue")
-    return convert_continue();
+    result = convert_continue();
   else if(node_type == "Pass")
-    return convert_pass();
+    result = convert_pass();
   else
   {
     log.warning() << "Unsupported Python statement type: " << node_type
                   << messaget::eom;
-    return code_skipt{};
+    result = code_skipt{};
   }
+
+  // If expression conversion generated checks, prepend them
+  if(!pending_checks.empty())
+  {
+    code_blockt block;
+    for(auto &check : pending_checks)
+      block.add(std::move(check));
+    block.add(std::move(result));
+    pending_checks.clear();
+    return std::move(block);
+  }
+
+  return result;
 }
 
 codet python_convertert::convert_ann_assign(const jsont &stmt)
@@ -1591,6 +1658,48 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
         code_assumet assume{cond};
         assume.add_source_location() = get_location(stmt);
         return std::move(assume);
+      }
+    }
+
+    // Handle list.append(val)
+    if(is_node_type(func, "Attribute"))
+    {
+      std::string method = json_string(json_member(func, "attr"));
+      if(method == "append")
+      {
+        exprt obj = convert_expression(json_member(func, "value"));
+        const jsont &call_args = json_member(value, "args");
+        if(
+          !obj.is_nil() && is_python_list_type(obj.type()) &&
+          call_args.is_array() && !as_array(call_args).empty())
+        {
+          exprt val = convert_expression(*as_array(call_args).begin());
+          source_locationt loc = get_location(stmt);
+
+          const auto &list_st = to_struct_type(obj.type());
+          const auto &data_type = to_array_type(list_st.components()[1].type());
+
+          // lst.data[lst.length] = val
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt data{obj, "data", data_type};
+          index_exprt slot{data, length};
+
+          if(val.type() != data_type.element_type())
+            val = typecast_exprt{val, data_type.element_type()};
+
+          code_blockt block;
+          code_frontend_assignt store{slot, val};
+          store.add_source_location() = loc;
+          block.add(std::move(store));
+
+          // lst.length += 1
+          code_frontend_assignt inc_len{
+            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}};
+          inc_len.add_source_location() = loc;
+          block.add(std::move(inc_len));
+
+          return std::move(block);
+        }
       }
     }
   }

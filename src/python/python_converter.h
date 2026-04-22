@@ -61,6 +61,11 @@ private:
   codet convert_ann_assign(const jsont &stmt);
   codet convert_aug_assign(const jsont &stmt);
   codet convert_assert(const jsont &stmt);
+
+  /// Pending checks (div-by-zero, bounds) to be emitted before the
+  /// next statement. Populated by expression converters, consumed by
+  /// statement converters.
+  std::vector<codet> pending_checks;
   codet convert_if(const jsont &stmt);
   codet convert_while(const jsont &stmt);
   codet convert_for(const jsont &stmt);
@@ -105,6 +110,13 @@ private:
 
   /// Safely cast a jsont to json_arrayt, returning an empty array if not array.
   const json_arrayt &as_array(const jsont &node) const;
+
+  /// Add a property check (assertion) to pending_checks.
+  void add_check(
+    exprt condition,
+    const std::string &property_class,
+    const std::string &comment,
+    const source_locationt &loc);
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H

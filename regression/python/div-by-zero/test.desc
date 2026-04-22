@@ -1,0 +1,9 @@
+CORE
+main.py
+--function divide
+^EXIT=10$
+^SIGNAL=0$
+^\[division-by-zero\.1\].*division by zero: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
