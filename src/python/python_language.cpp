@@ -17,6 +17,7 @@
 
 #include <json/json_parser.h>
 
+#include "expr2python.h"
 #include "python_converter.h"
 
 #include <fstream>
@@ -227,22 +228,20 @@ std::unique_ptr<languaget> new_python_language()
 }
 
 bool python_languaget::from_expr(
-  const exprt &,
+  const exprt &expr,
   std::string &code,
-  const namespacet &)
+  const namespacet &ns)
 {
-  // TODO: implement expr2python
-  code = "(python expression)";
+  code = expr2python(expr, ns);
   return false;
 }
 
 bool python_languaget::from_type(
-  const typet &,
+  const typet &type,
   std::string &code,
-  const namespacet &)
+  const namespacet &ns)
 {
-  // TODO: implement type2python
-  code = "(python type)";
+  code = type2python(type, ns);
   return false;
 }
 

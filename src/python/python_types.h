@@ -4,6 +4,7 @@
 #ifndef CPROVER_PYTHON_PYTHON_TYPES_H
 #define CPROVER_PYTHON_PYTHON_TYPES_H
 
+#include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/std_types.h>
 
