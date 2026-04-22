@@ -9,7 +9,7 @@
 | 3 | Control flow | **Complete** |
 | 4 | Type inference | **Complete** |
 | 5 | Strings | **Complete** (concat tracks length, not content) |
-| 6 | Collections | **Complete** (list, tuple; dict KNOWNBUG) |
+| 6 | Collections | **Complete** (list, tuple, dict) |
 | 7 | Classes and objects | **Complete** (pointer-based model) |
 | 8 | Exception handling | **Partial** (raise-as-failure; try/except KNOWNBUG) |
 | 9 | Advanced features | Not started |
@@ -24,6 +24,10 @@
 | Index-out-of-bounds checks | **Complete** |
 | `raise` as verification failure | **Complete** |
 | ESBMC failure pattern tests | **Complete** (7 tests from evaluation) |
+| Parameterized type annotations | **Complete** |
+| Global variable access | **Complete** |
+| Dict literals | **Complete** |
+| `with` statement | **Complete** (simplified, no __enter__/__exit__) |
 
 ## 1. Goals
 
@@ -248,31 +252,10 @@ operation that can raise sets this variable and jumps to the handler.
 
 ## 6. Next Steps (Priority Order)
 
-### 6.1 Parameterized type annotations (NEXT)
-
-`list[int]`, `dict[str, int]`, `Optional[T]` — these appear as `Subscript`
-AST nodes in annotation position. Currently causes a crash. Fix: extract
-the base type name from the Subscript node. Prevents crashes on real-world
-Python code which uses these annotations pervasively.
-
-### 6.2 Global variables accessed from functions
-
-Functions that read module-level variables get "Unknown variable" errors.
-Fix: fall back to global scope in `convert_name` when the variable is not
-found in the current function scope. Common pattern, easy fix.
-
-### 6.3 Dict literals and access
-
-`{"key": 42}` and `d["key"]` — dicts are the third most common Python
-data structure. Model as a struct with parallel key/value arrays (similar
-to the list model). Clears a KNOWNBUG and enables AWS SDK patterns where
-dict access is central.
-
-### 6.4 `with` statement
-
-Desugar `with expr as x: body` to `x = expr.__enter__(); body;
-expr.__exit__()`. Mechanical transformation, doesn't require exception
-handling. File I/O, database connections, locks all use `with`.
+### 6.1 Parameterized type annotations (DONE)
+### 6.2 Global variables accessed from functions (DONE)
+### 6.3 Dict literals and access (DONE)
+### 6.4 `with` statement (DONE)
 
 ### 6.5 `try`/`except` (Phase 8 full)
 
@@ -314,3 +297,5 @@ Staged approach:
 | 2026-04-22 | b175f3da8f | List append, div-by-zero and bounds checks (43 CORE tests) |
 | 2026-04-22 | a4e03b5dac | raise statements as verification failures (45 CORE tests) |
 | 2026-04-22 | 85f8bc2b36 | ESBMC failure pattern regression tests (48 CORE, 4 KNOWNBUG) |
+| 2026-04-22 | b9d4ed0804 | Parameterized types, global variables, class type annotations (50 CORE) |
+| 2026-04-22 | 0f44b073e3 | Dict literals, with statement, pass 0 fixes (52 CORE, 1 KNOWNBUG) |
