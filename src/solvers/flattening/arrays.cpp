@@ -598,6 +598,7 @@ void arrayst::add_array_constraints()
   // (checked on demand via model-based congruence detection).
   if(!lazy_arrays)
   {
+    setup_cdclt_propagator();
     add_array_Ackermann_constraints();
   }
 
