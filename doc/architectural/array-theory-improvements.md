@@ -403,6 +403,10 @@ only checks indices in `Stores(P)`.
 31. `7071da1672` — Phase E: CDCL(T) array theory propagator via ExternalPropagator
 32. `d2a1a147a9` — Extend propagator: lazy selects + equality constraints
 33. `98b3540329` — Make propagator opt-in, keep eager as default
+34. `71468b8bce` — Update tracking documents with final results and profiling
+35. `55d8b9c61b` — Fix SMT2 parser: iterative store + 256MB stack
+36. `ad7f82aa46` — Refactor: extract function_application_with_id
+37. `b4cd885b3b` — Fully iterative SMT2 expression parser: zero crashes
 
 ## Key Architectural Findings
 
@@ -802,3 +806,30 @@ architecture. Closing it would require a native array theory solver
 (CDCL(T) with E-graph), which the ExternalPropagator infrastructure
 enables but the current implementation doesn't fully exploit due to
 CaDiCaL's callback overhead.
+
+## SMT2 Parser Improvements
+
+The SMT2 parser used recursive descent, causing stack overflow on deeply
+nested expressions. Three mechanisms eliminate all recursion:
+
+1. **Iterative let accumulation** (expression() wrapper): nested lets
+   parsed in a loop with explicit binding stack. Handles 319K+ levels.
+
+2. **Iterative operand collection** (precollected_operands): for all
+   expressions-table handlers, operands collected iteratively and
+   pre-loaded. Handler's operands() call returns pre-collected result.
+
+3. **Iterative store chain** + 256MB stack for remaining cases.
+
+Result: zero crashes across all 15,148 QF_ABV benchmarks (was 30).
+Zero wrong answers. 83 OOM errors (from nested arrays with symbolic
+sizes — fundamental to bit-blasting architecture).
+
+### QF_ABV comparison (200 benchmarks, 60s)
+
+|                | smt2_solver | Yices2 | Bitwuzla |
+|----------------|-------------|--------|----------|
+| Correct        | 117         | 123    | 128      |
+| Wrong          | **0**       | 60     | 50       |
+| Timeout        | 0           | 0      | 0        |
+| Error/OOM      | 83          | 17     | 22       |
