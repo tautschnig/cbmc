@@ -1663,20 +1663,17 @@ bool python_convertert::convert()
   // Second pass: convert top-level statements (excluding function defs)
   code_blockt module_body = convert_module_body(body);
 
-  // Create __CPROVER__start function (note: double underscore before "start")
-  code_typet start_type{{}, empty_typet{}};
-  const std::string start_name = std::string{CPROVER_PREFIX} + "_start";
-  irep_idt start_id{start_name};
-
-  symbolt start_symbol{start_id, start_type, "python"};
-  start_symbol.base_name = start_name;
-  start_symbol.is_lvalue = true;
-  start_symbol.value = module_body;
-
-  if(symbol_table.lookup(start_id) != nullptr)
-    symbol_table.remove(start_id);
-
-  symbol_table.add(start_symbol);
+  // Store the module body as a function symbol for later use by
+  // generate_support_functions (which creates __CPROVER__start).
+  irep_idt module_body_id{"python::__module_body"};
+  symbolt module_body_sym{
+    module_body_id, code_typet{{}, empty_typet{}}, "python"};
+  module_body_sym.base_name = "__module_body";
+  module_body_sym.is_lvalue = true;
+  module_body_sym.value = module_body;
+  if(symbol_table.lookup(module_body_id) != nullptr)
+    symbol_table.remove(module_body_id);
+  symbol_table.add(module_body_sym);
 
   // Create __CPROVER_initialize (empty for now)
   const std::string init_name = std::string{CPROVER_PREFIX} + "initialize";

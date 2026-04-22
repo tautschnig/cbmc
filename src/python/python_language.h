@@ -72,6 +72,9 @@ public:
 protected:
   python_parse_treet parse_tree;
   std::string parse_path;
+
+  /// The function name specified by --function, or empty.
+  std::string function_entry_point;
 };
 
 std::unique_ptr<languaget> new_python_language();

@@ -3,10 +3,15 @@
 
 #include "python_language.h"
 
+#include <util/c_types.h>
 #include <util/config.h>
+#include <util/cprover_prefix.h>
 #include <util/get_base_name.h>
 #include <util/message.h>
+#include <util/options.h>
 #include <util/run.h>
+#include <util/std_code.h>
+#include <util/std_expr.h>
 #include <util/symbol_table.h>
 #include <util/tempfile.h>
 
@@ -27,9 +32,10 @@ void python_languaget::modules_provided(std::set<std::string> &modules)
 }
 
 void python_languaget::set_language_options(
-  const optionst &,
+  const optionst &options,
   message_handlert &)
 {
+  function_entry_point = options.get_option("function");
 }
 
 /// The Python code that converts a .py file to a JSON AST.
@@ -130,10 +136,80 @@ bool python_languaget::typecheck(
 }
 
 bool python_languaget::generate_support_functions(
-  symbol_table_baset &,
-  message_handlert &)
+  symbol_table_baset &symbol_table,
+  message_handlert &message_handler)
 {
-  // __CPROVER__start is created by the converter
+  // If __CPROVER__start already exists, nothing to do
+  const std::string start_name = std::string{CPROVER_PREFIX} + "_start";
+  irep_idt start_id{start_name};
+  if(symbol_table.lookup(start_id) != nullptr)
+    return false;
+
+  messaget log{message_handler};
+  code_blockt start_body;
+
+  if(!function_entry_point.empty())
+  {
+    // --function mode: generate a harness that calls the specified function
+    // with nondet arguments of the annotated types.
+    irep_idt func_id{"python::" + function_entry_point};
+    const symbolt *func_sym = symbol_table.lookup(func_id);
+    if(func_sym == nullptr)
+    {
+      log.error() << "Function '" << function_entry_point << "' not found"
+                  << messaget::eom;
+      return true;
+    }
+
+    const code_typet &func_type = to_code_type(func_sym->type);
+
+    // Generate nondet arguments
+    exprt::operandst arguments;
+    for(const auto &param : func_type.parameters())
+    {
+      side_effect_expr_nondett nondet{param.type(), source_locationt{}};
+      arguments.push_back(std::move(nondet));
+    }
+
+    // Call the function
+    if(func_type.return_type().id() == ID_empty)
+    {
+      // void function: just call it
+      side_effect_expr_function_callt call{
+        func_sym->symbol_expr(),
+        std::move(arguments),
+        func_type.return_type(),
+        source_locationt{}};
+      start_body.add(code_expressiont{call});
+    }
+    else
+    {
+      // Non-void: call and discard result
+      side_effect_expr_function_callt call{
+        func_sym->symbol_expr(),
+        std::move(arguments),
+        func_type.return_type(),
+        source_locationt{}};
+      start_body.add(code_expressiont{call});
+    }
+  }
+  else
+  {
+    // Default mode: use the module body as the entry point
+    const symbolt *module_body_sym =
+      symbol_table.lookup("python::__module_body");
+    if(module_body_sym != nullptr && !module_body_sym->value.is_nil())
+      start_body = to_code_block(to_code(module_body_sym->value));
+  }
+
+  code_typet start_type{{}, empty_typet{}};
+  symbolt start_symbol{start_id, start_type, "python"};
+  start_symbol.base_name = start_name;
+  start_symbol.is_lvalue = true;
+  start_symbol.value = start_body;
+
+  symbol_table.add(start_symbol);
+
   return false;
 }
 
