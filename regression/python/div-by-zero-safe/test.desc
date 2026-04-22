@@ -1,6 +1,6 @@
 CORE
 main.py
-
+--function safe_divide
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$

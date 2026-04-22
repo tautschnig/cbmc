@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[index-out-of-bounds\.1\].*list index out of range: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
