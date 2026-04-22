@@ -77,6 +77,7 @@ private:
   codet convert_continue();
   codet convert_pass();
   codet convert_raise(const jsont &stmt);
+  codet convert_with(const jsont &stmt);
 
   // --- Expression converters ---
   exprt convert_name(const jsont &expr);
@@ -91,6 +92,7 @@ private:
   exprt convert_tuple(const jsont &expr);
   exprt convert_list(const jsont &expr);
   exprt convert_attribute(const jsont &expr);
+  exprt convert_dict(const jsont &expr);
 
   // --- Helpers ---
 

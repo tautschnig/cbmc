@@ -208,6 +208,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
     return convert_list(expr);
   else if(node_type == "Attribute")
     return convert_attribute(expr);
+  else if(node_type == "Dict")
+    return convert_dict(expr);
   else
   {
     log.error() << "Unsupported Python expression type: " << node_type
@@ -659,6 +661,36 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
 exprt python_convertert::convert_subscript(const jsont &expr)
 {
   exprt value = convert_expression(json_member(expr, "value"));
+
+  if(value.is_nil())
+    return nil_exprt{};
+
+  // Dict subscript with string key: d["key"] → d.key (member access)
+  // Check this BEFORE converting the slice, since we need the raw string.
+  if(value.type().id() == ID_struct)
+  {
+    const auto &st = to_struct_type(value.type());
+    if(id2string(st.get_tag()) == "python_dict")
+    {
+      const jsont &slice_node = json_member(expr, "slice");
+      if(is_node_type(slice_node, "Constant"))
+      {
+        const jsont &sv = json_member(slice_node, "value");
+        if(sv.is_string())
+        {
+          std::string key = sv.value;
+          for(char &c : key)
+          {
+            if(!std::isalnum(c) && c != '_')
+              c = '_';
+          }
+          if(st.has_component(key))
+            return member_exprt{value, key, st.get_component(key).type()};
+        }
+      }
+    }
+  }
+
   exprt slice = convert_expression(json_member(expr, "slice"));
 
   if(value.is_nil() || slice.is_nil())
@@ -842,6 +874,50 @@ exprt python_convertert::convert_attribute(const jsont &expr)
   return nil_exprt{};
 }
 
+exprt python_convertert::convert_dict(const jsont &expr)
+{
+  const jsont &keys = json_member(expr, "keys");
+  const jsont &values = json_member(expr, "values");
+
+  if(!keys.is_array() || !values.is_array())
+    return nil_exprt{};
+
+  // Build a struct type with one field per key (string keys only)
+  struct_typet::componentst components;
+  exprt::operandst field_values;
+
+  auto key_it = as_array(keys).begin();
+  auto val_it = as_array(values).begin();
+  for(; key_it != as_array(keys).end(); ++key_it, ++val_it)
+  {
+    // Only support string literal keys
+    if(!is_node_type(*key_it, "Constant"))
+      continue;
+    const jsont &key_val = json_member(*key_it, "value");
+    if(!key_val.is_string())
+      continue;
+
+    std::string key_name = key_val.value;
+    exprt val = convert_expression(*val_it);
+    if(val.is_nil())
+      return nil_exprt{};
+
+    // Sanitize key name for use as a struct field (replace spaces, etc.)
+    for(char &c : key_name)
+    {
+      if(!std::isalnum(c) && c != '_')
+        c = '_';
+    }
+
+    components.push_back(struct_typet::componentt{key_name, val.type()});
+    field_values.push_back(val);
+  }
+
+  struct_typet dict_type{components};
+  dict_type.set_tag("python_dict");
+  return struct_exprt{std::move(field_values), dict_type};
+}
+
 // --- Statement conversion ---
 
 codet python_convertert::convert_statement(const jsont &stmt)
@@ -883,6 +959,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_pass();
   else if(node_type == "Raise")
     result = convert_raise(stmt);
+  else if(node_type == "With")
+    result = convert_with(stmt);
   else
   {
     log.warning() << "Unsupported Python statement type: " << node_type
@@ -1806,6 +1884,103 @@ codet python_convertert::convert_raise(const jsont &stmt)
   return std::move(block);
 }
 
+codet python_convertert::convert_with(const jsont &stmt)
+{
+  // Simplified: execute the body, ignoring __enter__/__exit__ protocol.
+  // If there's an 'as' variable, assign the context_expr to it.
+  code_blockt block;
+  source_locationt loc = get_location(stmt);
+
+  const jsont &items = json_member(stmt, "items");
+  if(items.is_array())
+  {
+    for(const auto &item : as_array(items))
+    {
+      const jsont &optional_vars = json_member(item, "optional_vars");
+      if(!optional_vars.is_null() && is_node_type(optional_vars, "Name"))
+      {
+        std::string var_name = json_string(json_member(optional_vars, "id"));
+        std::string qname = current_function.empty()
+                              ? "python::" + var_name
+                              : "python::" + current_function + "::" + var_name;
+        irep_idt sym_id{qname};
+
+        const jsont &ctx_expr = json_member(item, "context_expr");
+
+        // Check if context_expr is a constructor call
+        if(
+          is_node_type(ctx_expr, "Call") &&
+          is_node_type(json_member(ctx_expr, "func"), "Name") &&
+          class_types.count(
+            json_string(json_member(json_member(ctx_expr, "func"), "id"))))
+        {
+          std::string cls_name =
+            json_string(json_member(json_member(ctx_expr, "func"), "id"));
+          const struct_typet &cls_type = class_types[cls_name];
+
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt new_sym{sym_id, cls_type, "python"};
+            new_sym.base_name = var_name;
+            new_sym.is_lvalue = true;
+            new_sym.is_state_var = true;
+            symbol_table.add(new_sym);
+          }
+
+          // Call __init__
+          irep_idt init_id{"python::" + cls_name + "::__init__"};
+          const symbolt *init_sym = symbol_table.lookup(init_id);
+          if(init_sym != nullptr)
+          {
+            const symbolt &var_sym = symbol_table.lookup_ref(sym_id);
+            exprt::operandst args;
+            args.push_back(address_of_exprt{var_sym.symbol_expr()});
+            const jsont &call_args = json_member(ctx_expr, "args");
+            if(call_args.is_array())
+            {
+              for(const auto &a : as_array(call_args))
+                args.push_back(convert_expression(a));
+            }
+            side_effect_expr_function_callt call{
+              init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
+            block.add(code_expressiont{call});
+          }
+        }
+        else
+        {
+          // Non-constructor: with expr as x → x = expr
+          exprt ctx = convert_expression(ctx_expr);
+          if(!ctx.is_nil())
+          {
+            if(symbol_table.lookup(sym_id) == nullptr)
+            {
+              symbolt new_sym{sym_id, ctx.type(), "python"};
+              new_sym.base_name = var_name;
+              new_sym.is_lvalue = true;
+              new_sym.is_state_var = true;
+              symbol_table.add(new_sym);
+            }
+            const symbolt &sym = symbol_table.lookup_ref(sym_id);
+            code_frontend_assignt assign{sym.symbol_expr(), ctx};
+            assign.add_source_location() = loc;
+            block.add(std::move(assign));
+          }
+        }
+      }
+    }
+  }
+
+  // Convert the body
+  const jsont &body = json_member(stmt, "body");
+  if(body.is_array())
+  {
+    for(const auto &s : as_array(body))
+      block.add(convert_statement(s));
+  }
+
+  return std::move(block);
+}
+
 // --- Module body conversion ---
 
 code_blockt python_convertert::convert_module_body(const jsont &body)
@@ -1900,10 +2075,11 @@ bool python_convertert::convert()
                 }
                 else if(is_node_type(val, "List"))
                   var_type = python_list_type(signedbv_typet{64});
-                else if(is_node_type(val, "Tuple"))
+                else if(
+                  is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
+                  is_node_type(val, "Call"))
                 {
-                  // Can't determine tuple field types without evaluating
-                  // elements; skip pre-registration and let pass 2 handle it
+                  // Complex RHS — skip pre-registration, let pass 2 handle it
                   continue;
                 }
                 symbolt new_sym{sym_id, var_type, "python"};
