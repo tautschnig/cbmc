@@ -742,11 +742,16 @@ exprt python_convertert::convert_call(const jsont &expr)
   const symbolt *sym = symbol_table.lookup(symbol_id);
   if(sym == nullptr)
   {
-    // Unknown function — return nondet value (sound overapproximation).
-    // This handles snippets with missing function definitions and
-    // unresolved imports.
+    // Unknown function — return nondet value (sound overapproximation)
+    // and add a failing property so the user knows the result is
+    // overapproximated, matching CBMC's "no body for callee" pattern.
     log.warning() << "Unknown function '" << func_name
                   << "', returning nondet value" << messaget::eom;
+    add_check(
+      false_exprt{},
+      "no-body",
+      "no body for callee " + func_name,
+      get_location(expr));
     side_effect_expr_nondett nondet{signedbv_typet{64}, get_location(expr)};
     return std::move(nondet);
   }
