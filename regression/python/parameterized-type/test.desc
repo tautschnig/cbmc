@@ -1,0 +1,8 @@
+KNOWNBUG
+main.py
+--function length
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring

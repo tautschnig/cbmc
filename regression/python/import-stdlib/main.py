@@ -1,0 +1,3 @@
+import json
+x = 1
+assert x == 1
