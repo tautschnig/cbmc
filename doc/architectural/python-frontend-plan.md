@@ -31,6 +31,9 @@
 | Built-in functions | **Complete** (int, float, bool, abs, min, max, print, len) |
 | Bitwise operators | **Complete** |
 | `try`/`except` Stage A | **Complete** |
+| `for x in list` iteration | **Complete** |
+| List comprehensions | **Complete** (literal iterables) |
+| Augmented assign on subscripts/attributes | **Complete** |
 
 ## 1. Goals
 
@@ -319,3 +322,4 @@ Main gaps by impact:
 | 2026-04-22 | 0f44b073e3 | Dict literals, with statement, pass 0 fixes (52 CORE, 1 KNOWNBUG) |
 | 2026-04-22 | 15bd8ea600 | try/except Stage A (53 CORE, 0 KNOWNBUG) |
 | 2026-04-22 | aafa143492 | Builtins, bitwise ops, ESBMC validation (1,242/2,089 = 59%) |
+| 2026-04-22 | 2378d18063 | for-in-list, list comprehensions, aug-assign targets (57 CORE, 2 KNOWNBUG) |
