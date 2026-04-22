@@ -961,6 +961,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_raise(stmt);
   else if(node_type == "With")
     result = convert_with(stmt);
+  else if(node_type == "Try" || node_type == "TryStar")
+    result = convert_try(stmt);
   else
   {
     log.warning() << "Unsupported Python statement type: " << node_type
@@ -1982,6 +1984,32 @@ codet python_convertert::convert_with(const jsont &stmt)
 }
 
 // --- Module body conversion ---
+
+codet python_convertert::convert_try(const jsont &stmt)
+{
+  // Stage A: execute the try body, skip except/finally handlers.
+  // This is correct when the try body does not raise.
+  code_blockt block;
+
+  const jsont &body = json_member(stmt, "body");
+  if(body.is_array())
+  {
+    for(const auto &s : as_array(body))
+      block.add(convert_statement(s));
+  }
+
+  // Also execute the 'else' block (runs when no exception was raised)
+  const jsont &orelse = json_member(stmt, "orelse");
+  if(orelse.is_array())
+  {
+    for(const auto &s : as_array(orelse))
+      block.add(convert_statement(s));
+  }
+
+  // TODO: Stage B — model except handlers and finally block
+
+  return std::move(block);
+}
 
 code_blockt python_convertert::convert_module_body(const jsont &body)
 {

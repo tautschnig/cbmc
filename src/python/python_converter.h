@@ -78,6 +78,7 @@ private:
   codet convert_pass();
   codet convert_raise(const jsont &stmt);
   codet convert_with(const jsont &stmt);
+  codet convert_try(const jsont &stmt);
 
   // --- Expression converters ---
   exprt convert_name(const jsont &expr);
