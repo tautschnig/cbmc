@@ -1,6 +1,6 @@
 CORE
 main.py
---function length
+--function check
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
