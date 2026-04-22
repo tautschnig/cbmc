@@ -3,7 +3,7 @@ main.py
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[assertion\.1\].*Python assertion: FAILURE$
+^\[no-body\.1\].*no body for callee compute: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
