@@ -263,40 +263,17 @@ operation that can raise sets this variable and jumps to the handler.
 
 ### Crash fixes (highest priority)
 
-**6.1 Keyword arguments and default parameters (NEXT)**
-
-`f(x=1, y=2)` and `def f(x=0)` both crash. Fix in `convert_call`:
-match arguments by name when `keywords` are present, fill in defaults
-from the function definition when arguments are missing. Fixes 2
-KNOWNBUG tests and eliminates a class of crashes on real code.
-
-**6.2 Return class instance from function**
-
-`return Foo(x)` inside a function crashes because constructor calls
-can only appear in assignments. Fix: handle constructor calls as
-expressions by generating a temporary variable internally. Fixes 1
-KNOWNBUG and a crash.
+**6.1 Keyword arguments and default parameters (DONE)**
+**6.2 Return class instance from function (DONE)**
 
 ### Semantic correctness
 
-**6.3 String ordering**
-
-`"a" < "b"` — compare first character values. Trivial fix. Fixes 1
-KNOWNBUG, several ESBMC false positives.
-
-**6.4 `global` statement**
-
-When a function contains `global x`, assignments to `x` should target
-the module-level symbol. Track which names are declared `global` and
-use the module-level qualified name. Fixes 1 KNOWNBUG.
+**6.3 String ordering (DONE)**
+**6.4 `global` statement (DONE)**
 
 ### Larger features
 
-**6.5 Lambda as first-class function**
-
-Lambda body conversion works; the issue is calling a variable that
-holds a function reference. Fix: when `convert_call` finds a variable
-with a code type, call through it. Fixes 1 KNOWNBUG.
+**6.5 Lambda as first-class function (DONE)**
 
 **6.6 `try`/`except` Stage B**
 
@@ -310,21 +287,16 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (11 tests)
+### KNOWNBUG inventory (6 tests)
 
-| Test | Category | Fix complexity |
-|------|----------|---------------|
-| `keyword-argument` | Crash | Small (6.1) |
-| `default-param` | Crash | Small (6.1) |
-| `return-class-instance` | Crash | Small (6.2) |
-| `string-ordering` | Correctness | Trivial (6.3) |
-| `global-statement` | Correctness | Small (6.4) |
-| `lambda-basic` | Feature | Medium (6.5) |
-| `try-except-catch` | Feature | Large (6.6) |
-| `type-change` | Architecture | Phase 9 |
-| `int-overflow` | Architecture | integer_typet |
-| `int-large-factorial` | Architecture | integer_typet |
-| `function-untyped-param` | Design decision | Any type |
+| Test | Category | Fix plan |
+|------|----------|----------|
+| `type-change` | Architecture | **Tagged unions (Phase 9).** Each Python value becomes `struct { type_tag, union { int_val, float_val, str_val, list_val, ... } }`. Every operation dispatches on the tag. This is a fundamental redesign of the value representation. Estimated effort: 2-3 weeks. Prerequisite for full Python semantics. |
+| `int-overflow` | Architecture | **`integer_typet` support.** Replace `signedbv_typet{64}` with `integer_typet` (mathematical integers). Requires `--z3` flag since SAT solvers can't handle unbounded integers. Need to handle: (a) `from_integer` calls, (b) comparison with 0, (c) bitwise ops (reject or convert to bitvector). Add `--python-int-width` option: `64` (default, fast) vs `unbounded` (correct, requires SMT). Estimated effort: 3-5 days. |
+| `int-large-factorial` | Architecture | Same fix as `int-overflow` — both resolved by `integer_typet`. |
+| `try-except-catch` | Feature | **Exception propagation (Stage B).** Follow JBMC's `remove_exceptions.cpp` pattern: (a) Add a global `__CPROVER_python_exception` variable (pointer to exception struct). (b) After each `raise`, set the exception variable and jump to the nearest handler. (c) `try` blocks register handlers as GOTO targets. (d) `except ExcType` checks the exception type tag. (e) `finally` blocks always execute. Estimated effort: 1-2 weeks. |
+| `function-untyped-param` | Design | **Two options:** (a) *Strict mode*: emit an error requiring type annotations on `--function` entry points. Honest and simple. (b) *Any mode*: use tagged unions (depends on Phase 9) to represent untyped parameters. Recommended: implement option (a) first, option (b) after Phase 9. Estimated effort: 1 day for (a). |
+| `isinstance-check` | Feature | **Type tag on class instances.** Add a `__type_tag` string field to every class struct. Set it in `__init__` to the class name. `isinstance(obj, Cls)` checks if `obj.__type_tag == "Cls"` or matches any base class. For inheritance, store the full MRO chain. Estimated effort: 2-3 days. |
 
 ### Previous items (DONE)
 
@@ -340,6 +312,24 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - Built-in functions (int, float, bool, abs, min, max, print) ✓
 - Bitwise operators ✓
 - ESBMC failure pattern coverage (all categories) ✓
+
+### ESBMC benchmark validation
+
+Tested against 2,089 non-fail tests from ESBMC's Python regression suite:
+
+| Metric | Count | Percentage |
+|--------|-------|-----------|
+| PASS | 930 | 44% |
+| FAIL (real) | 370 | 18% |
+| FAIL (no-body warnings) | 175 | 8% |
+| FAIL (overflow warnings) | 3 | <1% |
+| ERROR/TIMEOUT | 611 | 29% |
+
+Effective pass rate excluding correct warnings: **53%**.
+
+The no-body warnings are correct: they flag calls to functions that have
+no definition (typically from unresolved imports). The previous 59% pass
+rate was inflated by silently dropping these calls (unsound).
 
 ## 7. Build Record
 
@@ -374,3 +364,6 @@ following JBMC's `remove_exceptions.cpp` pattern.
 | 2026-04-22 | c69ce3ab90 | Integer overflow checks, nondet for unknown functions (60 CORE, 6 KNOWNBUG) |
 | 2026-04-22 | e2584bcef1 | no-body failing property for unknown functions |
 | 2026-04-22 | 3f6376c01a | KNOWNBUG tests for all ESBMC failure categories (60 CORE, 11 KNOWNBUG) |
+| 2026-04-22 | 87fbae2419 | Keyword args, defaults, string ordering, global statement (64 CORE) |
+| 2026-04-22 | 9dbd66c2d5 | Lambda first-class, return class instance (66 CORE, 5 KNOWNBUG) |
+| 2026-04-22 | (pending) | isinstance KNOWNBUG, ESBMC re-validation, detailed KNOWNBUG plans |
