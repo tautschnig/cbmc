@@ -1,0 +1,9 @@
+KNOWNBUG
+main.py
+--function greet
+^EXIT=10$
+^SIGNAL=0$
+^\[assertion\.1\].*Python assertion: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
