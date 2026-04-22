@@ -4,9 +4,9 @@
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Skeleton & infrastructure | **In progress** |
-| 2 | Scalar expressions | Not started |
-| 3 | Control flow | Not started |
+| 1 | Skeleton & infrastructure | **Complete** |
+| 2 | Scalar expressions | **Complete** |
+| 3 | Control flow | **Complete** |
 | 4 | Type inference | Not started |
 | 5 | Strings | Not started |
 | 6 | Collections | Not started |
@@ -237,4 +237,5 @@ operation that can raise sets this variable and jumps to the handler.
 
 | Date | Commit | What was built |
 |------|--------|---------------|
-| | | |
+| 2026-04-22 | (initial) | Phase 1: skeleton, language registration, parse pipeline, 16 KNOWNBUG tests |
+| 2026-04-22 | (phase 2+3) | Phases 2+3: python_convertert with expression/statement/control flow conversion, __CPROVER_start generation, nondet/assume support. All 16 tests promoted to CORE. |

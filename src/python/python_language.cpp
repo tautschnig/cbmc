@@ -12,6 +12,8 @@
 
 #include <json/json_parser.h>
 
+#include "python_converter.h"
+
 #include <fstream>
 
 std::set<std::string> python_languaget::extensions() const
@@ -30,14 +32,19 @@ void python_languaget::set_language_options(
 {
 }
 
-/// Find the ast_to_json.py script by searching relative to the source tree.
+/// Find the ast_to_json.py script by searching relative to the source tree
+/// and relative to the CBMC binary.
 /// \return path to the script, or empty string if not found.
 static std::string find_ast_script()
 {
+  // Search relative to CWD (for development)
   const std::vector<std::string> search_paths = {
     "src/python/scripts/ast_to_json.py",
     "../src/python/scripts/ast_to_json.py",
     "../../src/python/scripts/ast_to_json.py",
+    "../../../src/python/scripts/ast_to_json.py",
+    "../../../../src/python/scripts/ast_to_json.py",
+    "../../../../../src/python/scripts/ast_to_json.py",
   };
 
   for(const auto &candidate : search_paths)
@@ -95,23 +102,20 @@ bool python_languaget::parse(
 }
 
 bool python_languaget::typecheck(
-  symbol_table_baset &,
+  symbol_table_baset &symbol_table,
   const std::string &,
   message_handlert &message_handler)
 {
-  messaget log{message_handler};
-  log.error() << "Python typecheck not yet implemented" << messaget::eom;
-  return true;
+  python_convertert converter{symbol_table, parse_tree, message_handler};
+  return converter.convert();
 }
 
 bool python_languaget::generate_support_functions(
   symbol_table_baset &,
-  message_handlert &message_handler)
+  message_handlert &)
 {
-  messaget log{message_handler};
-  log.error() << "Python support function generation not yet implemented"
-              << messaget::eom;
-  return true;
+  // __CPROVER_start is created by the converter
+  return false;
 }
 
 void python_languaget::show_parse(std::ostream &out, message_handlert &)

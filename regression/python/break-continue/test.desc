@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --unwind 11
 ^EXIT=0$
