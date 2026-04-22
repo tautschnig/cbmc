@@ -11,6 +11,9 @@
 
 #include "python_parse_tree.h"
 
+#include <map>
+#include <set>
+
 /// Converts a Python JSON AST into CBMC's symbol table representation.
 /// This populates the symbol table with function symbols and their bodies
 /// as codet trees, which are then converted to goto programs by the
@@ -38,6 +41,9 @@ private:
 
   /// Current class name (empty when not inside a class method)
   std::string current_class;
+
+  /// Names declared 'global' in the current function
+  std::set<std::string> global_names;
 
   /// Map from class name to its struct type
   std::map<std::string, struct_typet> class_types;
@@ -126,6 +132,10 @@ private:
     const std::string &property_class,
     const std::string &comment,
     const source_locationt &loc);
+
+  /// Get the qualified symbol name for a variable, respecting
+  /// function scope and 'global' declarations.
+  std::string qualify_name(const std::string &name) const;
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H

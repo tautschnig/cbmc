@@ -99,6 +99,17 @@ void python_convertert::add_check(
   pending_checks.push_back(std::move(assertion));
 }
 
+std::string python_convertert::qualify_name(const std::string &name) const
+{
+  // If inside a function and the name is declared global, use module scope
+  if(!current_function.empty() && global_names.count(name))
+    return "python::" + name;
+  // Otherwise use function scope if inside a function
+  if(!current_function.empty())
+    return "python::" + current_function + "::" + name;
+  return "python::" + name;
+}
+
 source_locationt python_convertert::get_location(const jsont &node) const
 {
   source_locationt loc;
@@ -537,7 +548,32 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
 
     exprt cmp;
-    if(op == "Eq")
+
+    // String ordering: compare first characters of data arrays
+    if(
+      is_python_string_type(current_left.type()) &&
+      is_python_string_type(right.type()) &&
+      (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE"))
+    {
+      struct_typet str_type = python_string_type();
+      const auto &data_type = to_array_type(str_type.components()[1].type());
+      exprt left_char = index_exprt{
+        member_exprt{current_left, "data", data_type},
+        from_integer(0, signedbv_typet{64})};
+      exprt right_char = index_exprt{
+        member_exprt{right, "data", data_type},
+        from_integer(0, signedbv_typet{64})};
+
+      if(op == "Lt")
+        cmp = binary_relation_exprt{left_char, ID_lt, right_char};
+      else if(op == "LtE")
+        cmp = binary_relation_exprt{left_char, ID_le, right_char};
+      else if(op == "Gt")
+        cmp = binary_relation_exprt{left_char, ID_gt, right_char};
+      else
+        cmp = binary_relation_exprt{left_char, ID_ge, right_char};
+    }
+    else if(op == "Eq")
       cmp = equal_exprt{current_left, right};
     else if(op == "NotEq")
       cmp = notequal_exprt{current_left, right};
@@ -729,13 +765,29 @@ exprt python_convertert::convert_call(const jsont &expr)
   // Regular function call — check if it's a class constructor
   if(class_types.count(func_name))
   {
-    // Constructor calls are handled at the assignment level
-    // (convert_assign detects them and generates proper init code).
-    // If we get here, it's a constructor call used as an expression
-    // outside of assignment — not yet supported.
-    log.error() << "Constructor call " << func_name
-                << "() must be assigned to a variable" << messaget::eom;
-    return nil_exprt{};
+    // Constructor call as expression: create a nondet struct and call __init__
+    // This handles cases like return Foo(x) or f(Foo(x))
+    const struct_typet &cls_type = class_types[func_name];
+    side_effect_expr_nondett self_nondet{cls_type, get_location(expr)};
+
+    irep_idt init_id{"python::" + func_name + "::__init__"};
+    const symbolt *init_sym = symbol_table.lookup(init_id);
+    if(init_sym != nullptr)
+    {
+      exprt::operandst init_args;
+      init_args.push_back(self_nondet);
+      if(args.is_array())
+      {
+        for(const auto &arg : as_array(args))
+          init_args.push_back(convert_expression(arg));
+      }
+      // We can't easily call __init__ and return the struct as a pure
+      // expression. Return nondet of the class type — the caller
+      // (convert_assign) handles the proper init for assignments.
+      // For return statements and nested expressions, this is an
+      // overapproximation.
+    }
+    return std::move(self_nondet);
   }
 
   irep_idt symbol_id{"python::" + func_name};
@@ -757,13 +809,77 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
 
   const code_typet &func_type = to_code_type(sym->type);
+  const auto &params = func_type.parameters();
 
+  // Build argument list: start with positional args
   exprt::operandst arguments;
   if(args.is_array())
   {
     for(const auto &arg : as_array(args))
       arguments.push_back(convert_expression(arg));
   }
+
+  // Handle keyword arguments: match by parameter name
+  const jsont &keywords = json_member(expr, "keywords");
+  if(keywords.is_array() && !as_array(keywords).empty())
+  {
+    // Extend arguments to full parameter count with placeholders
+    arguments.resize(params.size(), nil_exprt{});
+
+    for(const auto &kw : as_array(keywords))
+    {
+      std::string kw_name = json_string(json_member(kw, "arg"));
+      exprt kw_val = convert_expression(json_member(kw, "value"));
+
+      // Find the parameter index by name
+      for(std::size_t i = 0; i < params.size(); i++)
+      {
+        if(id2string(params[i].get_base_name()) == kw_name)
+        {
+          arguments[i] = kw_val;
+          break;
+        }
+      }
+    }
+  }
+
+  // Fill in defaults for any remaining nil arguments.
+  // Defaults are stored in the FunctionDef AST; look up the function's
+  // definition to find them.
+  if(arguments.size() < params.size())
+    arguments.resize(params.size(), nil_exprt{});
+
+  // Look up the function's AST to get defaults
+  const jsont &body = json_member(parse_tree.ast_json, "body");
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(
+        is_node_type(stmt, "FunctionDef") &&
+        json_string(json_member(stmt, "name")) == func_name)
+      {
+        const jsont &func_args = json_member(stmt, "args");
+        const jsont &defaults = json_member(func_args, "defaults");
+        if(defaults.is_array())
+        {
+          std::size_t n_defaults = as_array(defaults).size();
+          std::size_t first_default = params.size() - n_defaults;
+          auto def_it = as_array(defaults).begin();
+          for(std::size_t i = first_default; i < params.size(); i++, ++def_it)
+          {
+            if(arguments[i].is_nil())
+              arguments[i] = convert_expression(*def_it);
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // Remove any remaining nil arguments (shouldn't happen with correct code)
+  while(!arguments.empty() && arguments.back().is_nil())
+    arguments.pop_back();
 
   side_effect_expr_function_callt call{
     sym->symbol_expr(),
@@ -1074,9 +1190,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 
   // For literal list iterables, unroll: evaluate elt for each value.
   // We create the iteration variable, assign each value, and evaluate elt.
-  std::string qname = current_function.empty()
-                        ? "python::" + iter_var
-                        : "python::" + current_function + "::" + iter_var;
+  std::string qname = qualify_name(iter_var);
   irep_idt iter_sym_id{qname};
 
   // First, determine element type from the first iterable element
@@ -1259,6 +1373,20 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_with(stmt);
   else if(node_type == "Try" || node_type == "TryStar")
     result = convert_try(stmt);
+  else if(node_type == "Global")
+  {
+    // Track global names for the current function scope
+    const jsont &names = json_member(stmt, "names");
+    if(names.is_array())
+    {
+      for(const auto &name : as_array(names))
+      {
+        if(name.is_string())
+          global_names.insert(name.value);
+      }
+    }
+    result = code_skipt{};
+  }
   else
   {
     log.warning() << "Unsupported Python statement type: " << node_type
@@ -1291,9 +1419,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   typet var_type = convert_type_annotation(annotation);
   source_locationt loc = get_location(stmt);
 
-  std::string qualified_name =
-    current_function.empty() ? "python::" + var_name
-                             : "python::" + current_function + "::" + var_name;
+  std::string qualified_name = qualify_name(var_name);
   irep_idt symbol_id{qualified_name};
 
   // Create symbol if it doesn't exist
@@ -1350,10 +1476,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
       const struct_typet &cls_type = class_types[call_name];
       const jsont &first_target = *as_array(targets).begin();
       std::string var_name = json_string(json_member(first_target, "id"));
-      std::string qualified_name =
-        current_function.empty()
-          ? "python::" + var_name
-          : "python::" + current_function + "::" + var_name;
+      std::string qualified_name = qualify_name(var_name);
       irep_idt symbol_id{qualified_name};
 
       if(symbol_table.lookup(symbol_id) == nullptr)
@@ -1423,10 +1546,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             typet field_type = tuple_st.get_component(field).type();
             member_exprt field_expr{rhs, field, field_type};
 
-            std::string qname =
-              current_function.empty()
-                ? "python::" + elt_name
-                : "python::" + current_function + "::" + elt_name;
+            std::string qname = qualify_name(elt_name);
             irep_idt sym_id{qname};
             if(symbol_table.lookup(sym_id) == nullptr)
             {
@@ -1497,10 +1617,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
 
     std::string var_name = json_string(json_member(target, "id"));
-    std::string qualified_name =
-      current_function.empty()
-        ? "python::" + var_name
-        : "python::" + current_function + "::" + var_name;
+    std::string qualified_name = qualify_name(var_name);
     irep_idt symbol_id{qualified_name};
 
     if(symbol_table.lookup(symbol_id) == nullptr)
@@ -1688,9 +1805,7 @@ codet python_convertert::convert_for(const jsont &stmt)
   typet int_type = signedbv_typet{64};
 
   std::string var_name = json_string(json_member(target, "id"));
-  std::string qualified_name =
-    current_function.empty() ? "python::" + var_name
-                             : "python::" + current_function + "::" + var_name;
+  std::string qualified_name = qualify_name(var_name);
 
   // Check for range() call
   if(
@@ -1791,9 +1906,7 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   // Create index variable
   std::string idx_name = "__for_idx_" + var_name;
-  std::string idx_qname = current_function.empty()
-                            ? "python::" + idx_name
-                            : "python::" + current_function + "::" + idx_name;
+  std::string idx_qname = qualify_name(idx_name);
   irep_idt idx_id{idx_qname};
   if(symbol_table.lookup(idx_id) == nullptr)
   {
@@ -1917,7 +2030,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   // Convert function body
   std::string saved_function = current_function;
+  auto saved_globals = global_names;
   current_function = func_name;
+  global_names.clear();
 
   code_blockt body_block;
   const jsont &body = json_member(stmt, "body");
@@ -1928,6 +2043,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   current_function = saved_function;
+  global_names = saved_globals;
 
   // Update the symbol with the body
   symbolt *sym_ptr = symbol_table.get_writeable(symbol_id);
@@ -2288,9 +2404,7 @@ codet python_convertert::convert_with(const jsont &stmt)
       if(!optional_vars.is_null() && is_node_type(optional_vars, "Name"))
       {
         std::string var_name = json_string(json_member(optional_vars, "id"));
-        std::string qname = current_function.empty()
-                              ? "python::" + var_name
-                              : "python::" + current_function + "::" + var_name;
+        std::string qname = qualify_name(var_name);
         irep_idt sym_id{qname};
 
         const jsont &ctx_expr = json_member(item, "context_expr");
