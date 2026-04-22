@@ -74,6 +74,7 @@ private:
   exprt convert_compare(const jsont &expr);
   exprt convert_call(const jsont &expr);
   exprt convert_if_exp(const jsont &expr);
+  exprt convert_subscript(const jsont &expr);
 
   // --- Helpers ---
 
