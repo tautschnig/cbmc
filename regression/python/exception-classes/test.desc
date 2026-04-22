@@ -1,0 +1,9 @@
+CORE
+main.py
+--function check
+^EXIT=10$
+^SIGNAL=0$
+^\[exception\.1\].*raise NotFoundError: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
