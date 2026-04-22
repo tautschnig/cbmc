@@ -4,6 +4,7 @@
 #include "python_converter.h"
 
 #include <util/arith_tools.h>
+#include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/config.h>
@@ -393,6 +394,16 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return div_exprt{
       typecast_exprt{left, float_type}, typecast_exprt{right, float_type}};
   }
+  else if(op == "BitOr")
+    return bitor_exprt{left, right};
+  else if(op == "BitAnd")
+    return bitand_exprt{left, right};
+  else if(op == "BitXor")
+    return bitxor_exprt{left, right};
+  else if(op == "LShift")
+    return shl_exprt{left, right};
+  else if(op == "RShift")
+    return ashr_exprt{left, right};
   else
   {
     log.error() << "Unsupported binary operator: " << op << messaget::eom;
@@ -605,6 +616,79 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
     }
     log.error() << "len() requires a string or list argument" << messaget::eom;
+    return nil_exprt{};
+  }
+  // Built-in type constructors: int(), float(), bool()
+  else if(func_name == "int")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil())
+        return typecast_exprt{arg, signedbv_typet{64}};
+    }
+    return from_integer(0, signedbv_typet{64});
+  }
+  else if(func_name == "float")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil())
+        return typecast_exprt{arg, double_type()};
+    }
+    ieee_floatt zero{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    return zero.to_expr();
+  }
+  else if(func_name == "bool")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil())
+        return typecast_exprt{arg, bool_typet{}};
+    }
+    return false_exprt{};
+  }
+  // print() — no-op, return None (modeled as 0)
+  else if(func_name == "print")
+  {
+    return from_integer(0, signedbv_typet{64});
+  }
+  // abs()
+  else if(func_name == "abs")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil())
+      {
+        // abs(x) = x >= 0 ? x : -x
+        return if_exprt{
+          binary_relation_exprt{arg, ID_ge, from_integer(0, arg.type())},
+          arg,
+          unary_minus_exprt{arg}};
+      }
+    }
+    return nil_exprt{};
+  }
+  // min(), max()
+  else if(func_name == "min" || func_name == "max")
+  {
+    if(args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      exprt a = convert_expression(*it);
+      ++it;
+      exprt b = convert_expression(*it);
+      if(!a.is_nil() && !b.is_nil())
+      {
+        irep_idt op = (func_name == "min") ? ID_lt : ID_gt;
+        return if_exprt{binary_relation_exprt{a, op, b}, a, b};
+      }
+    }
     return nil_exprt{};
   }
 
@@ -1270,6 +1354,16 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     new_rhs = div_exprt{lhs, rhs};
   else if(op == "Mod")
     new_rhs = mod_exprt{lhs, rhs};
+  else if(op == "BitOr")
+    new_rhs = bitor_exprt{lhs, rhs};
+  else if(op == "BitAnd")
+    new_rhs = bitand_exprt{lhs, rhs};
+  else if(op == "BitXor")
+    new_rhs = bitxor_exprt{lhs, rhs};
+  else if(op == "LShift")
+    new_rhs = shl_exprt{lhs, rhs};
+  else if(op == "RShift")
+    new_rhs = ashr_exprt{lhs, rhs};
   else
   {
     log.error() << "Unsupported augmented assignment operator: " << op
@@ -1768,7 +1862,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     if(is_node_type(func, "Name"))
       func_name = json_string(json_member(func, "id"));
 
-    if(func_name == "__CPROVER_assume")
+    if(func_name == "__CPROVER_assume" || func_name == "__ESBMC_assume")
     {
       const jsont &args = json_member(value, "args");
       if(args.is_array() && !as_array(args).empty())
