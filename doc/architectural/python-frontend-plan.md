@@ -22,6 +22,7 @@
 | `expr2python` traces | **Complete** |
 | Division-by-zero checks | **Complete** |
 | Index-out-of-bounds checks | **Complete** |
+| Integer overflow checks | **Complete** (warns about int64 limitation) |
 | `raise` as verification failure | **Complete** |
 | ESBMC failure pattern tests | **Complete** (7 tests from evaluation) |
 | Parameterized type annotations | **Complete** |
@@ -34,6 +35,7 @@
 | `for x in list` iteration | **Complete** |
 | List comprehensions | **Complete** (literal iterables) |
 | Augmented assign on subscripts/attributes | **Complete** |
+| Nondet for unknown functions | **Complete** (soundness fix) |
 
 ## 1. Goals
 
@@ -323,3 +325,6 @@ Main gaps by impact:
 | 2026-04-22 | 15bd8ea600 | try/except Stage A (53 CORE, 0 KNOWNBUG) |
 | 2026-04-22 | aafa143492 | Builtins, bitwise ops, ESBMC validation (1,242/2,089 = 59%) |
 | 2026-04-22 | 2378d18063 | for-in-list, list comprehensions, aug-assign targets (57 CORE, 2 KNOWNBUG) |
+| 2026-04-22 | 995ed9c3c6 | Tests for unannotated params and snippet handling (58 CORE, 4 KNOWNBUG) |
+| 2026-04-22 | aca368dbdf | KNOWNBUG tests for type changes and integer overflow |
+| 2026-04-22 | c69ce3ab90 | Integer overflow checks, nondet for unknown functions (60 CORE, 6 KNOWNBUG) |
