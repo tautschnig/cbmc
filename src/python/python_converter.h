@@ -36,6 +36,12 @@ private:
   /// Current function name (empty for top-level code)
   std::string current_function;
 
+  /// Current class name (empty when not inside a class method)
+  std::string current_class;
+
+  /// Map from class name to its struct type
+  std::map<std::string, struct_typet> class_types;
+
   // --- AST node converters ---
 
   /// Convert a top-level module body into a code_blockt.
@@ -60,6 +66,7 @@ private:
   codet convert_for(const jsont &stmt);
   codet convert_return(const jsont &stmt);
   codet convert_function_def(const jsont &stmt);
+  codet convert_class_def(const jsont &stmt);
   codet convert_expr_stmt(const jsont &stmt);
   codet convert_break();
   codet convert_continue();
@@ -77,6 +84,7 @@ private:
   exprt convert_subscript(const jsont &expr);
   exprt convert_tuple(const jsont &expr);
   exprt convert_list(const jsont &expr);
+  exprt convert_attribute(const jsont &expr);
 
   // --- Helpers ---
 
