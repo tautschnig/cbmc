@@ -15,6 +15,8 @@
 #include <util/std_expr.h>
 #include <util/symbol.h>
 
+#include "python_types.h"
+
 #include <sstream>
 
 python_convertert::python_convertert(
@@ -108,6 +110,8 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return double_type();
   else if(type_name == "bool")
     return bool_typet{};
+  else if(type_name == "str")
+    return python_string_type();
   else
   {
     log.warning() << "Unknown Python type annotation: " << type_name
@@ -138,6 +142,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
     return convert_call(expr);
   else if(node_type == "IfExp")
     return convert_if_exp(expr);
+  else if(node_type == "Subscript")
+    return convert_subscript(expr);
   else
   {
     log.error() << "Unsupported Python expression type: " << node_type
@@ -187,9 +193,27 @@ exprt python_convertert::convert_constant(const jsont &expr)
   }
   else if(value.is_string())
   {
-    // String literal — not yet supported in expressions
-    log.warning() << "String literals not yet supported" << messaget::eom;
-    return nil_exprt{};
+    // String literal → python_str struct { length, data[] }
+    std::string str_val = value.value;
+    struct_typet str_type = python_string_type();
+    const auto &components = str_type.components();
+    const auto &data_type = to_array_type(components[1].type());
+
+    // Build the data array
+    exprt::operandst chars;
+    for(char ch : str_val)
+      chars.push_back(
+        from_integer(static_cast<unsigned char>(ch), unsignedbv_typet{8}));
+    // Pad with zeros to MAX_STRING_LENGTH
+    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+      chars.push_back(from_integer(0, unsignedbv_typet{8}));
+
+    array_exprt data_expr{std::move(chars), data_type};
+    exprt length_expr =
+      from_integer(static_cast<long long>(str_val.size()), signedbv_typet{64});
+
+    struct_exprt result{{length_expr, data_expr}, str_type};
+    return std::move(result);
   }
 
   log.error() << "Unsupported constant value" << messaget::eom;
@@ -236,6 +260,16 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
+
+  // String concatenation — not yet fully supported
+  if(
+    is_python_string_type(left.type()) && is_python_string_type(right.type()) &&
+    op == "Add")
+  {
+    log.warning() << "String concatenation not yet fully supported"
+                  << messaget::eom;
+    return nil_exprt{};
+  }
 
   // Type promotion: if either operand is float, promote both
   if(left.type() != right.type())
@@ -422,6 +456,18 @@ exprt python_convertert::convert_call(const jsont &expr)
     side_effect_expr_nondett nondet{bool_typet{}, get_location(expr)};
     return std::move(nondet);
   }
+  else if(func_name == "len")
+  {
+    // len(s) → s.length
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil() && is_python_string_type(arg.type()))
+        return member_exprt{arg, "length", signedbv_typet{64}};
+    }
+    log.error() << "len() requires a string argument" << messaget::eom;
+    return nil_exprt{};
+  }
 
   // Regular function call
   irep_idt symbol_id{"python::" + func_name};
@@ -460,6 +506,41 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
     return nil_exprt{};
 
   return if_exprt{test, body, orelse};
+}
+
+exprt python_convertert::convert_subscript(const jsont &expr)
+{
+  exprt value = convert_expression(json_member(expr, "value"));
+  exprt slice = convert_expression(json_member(expr, "slice"));
+
+  if(value.is_nil() || slice.is_nil())
+    return nil_exprt{};
+
+  // String indexing: s[i] → s.data[i] as a single-char string struct
+  if(is_python_string_type(value.type()))
+  {
+    struct_typet str_type = python_string_type();
+    const auto &data_type = to_array_type(str_type.components()[1].type());
+
+    member_exprt data{value, "data", data_type};
+    index_exprt char_val{data, slice};
+
+    // Build a single-character string struct
+    exprt::operandst chars;
+    chars.push_back(char_val);
+    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+      chars.push_back(from_integer(0, unsignedbv_typet{8}));
+
+    array_exprt data_expr{std::move(chars), data_type};
+    exprt length_expr = from_integer(1, signedbv_typet{64});
+
+    struct_exprt result{{length_expr, data_expr}, str_type};
+    return std::move(result);
+  }
+
+  // Array/list indexing (future)
+  log.error() << "Subscript not yet supported for this type" << messaget::eom;
+  return nil_exprt{};
 }
 
 // --- Statement conversion ---
