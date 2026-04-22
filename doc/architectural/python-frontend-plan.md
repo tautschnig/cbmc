@@ -24,6 +24,7 @@
 | Index-out-of-bounds checks | **Complete** |
 | Integer overflow checks | **Complete** (warns about int64 limitation) |
 | `raise` as verification failure | **Complete** |
+| `no-body` property for unknown functions | **Complete** |
 | ESBMC failure pattern tests | **Complete** (7 tests from evaluation) |
 | Parameterized type annotations | **Complete** |
 | Global variable access | **Complete** |
@@ -260,33 +261,70 @@ operation that can raise sets this variable and jumps to the handler.
 
 ## 6. Next Steps (Priority Order)
 
-### 6.1 Parameterized type annotations (DONE)
-### 6.2 Global variables accessed from functions (DONE)
-### 6.3 Dict literals and access (DONE)
-### 6.4 `with` statement (DONE)
+### Crash fixes (highest priority)
 
-### 6.5 `try`/`except` (DONE — Stage A)
+**6.1 Keyword arguments and default parameters (NEXT)**
 
-Stage A implemented: execute try body, skip except handlers.
+`f(x=1, y=2)` and `def f(x=0)` both crash. Fix in `convert_call`:
+match arguments by name when `keywords` are present, fill in defaults
+from the function definition when arguments are missing. Fixes 2
+KNOWNBUG tests and eliminates a class of crashes on real code.
 
-### 6.6 Remaining gaps (from ESBMC benchmark validation)
+**6.2 Return class instance from function**
 
-Validation against 2,089 ESBMC non-fail tests: 1,242 pass (59%).
-Main gaps by impact:
+`return Foo(x)` inside a function crashes because constructor calls
+can only appear in assignments. Fix: handle constructor calls as
+expressions by generating a temporary variable internally. Fixes 1
+KNOWNBUG and a crash.
 
-- **Generator expressions** (`all(x > 0 for x in l)`) — 13+ tests.
-  Would need to desugar to loops.
-- **List comprehensions** (`[x*2 for x in lst]`) — 13+ tests.
-  Desugar to loop + append.
-- **Lambda** (`lambda x: x+1`) — 10+ tests.
-  Model as anonymous function symbols.
-- **`isinstance()`** — 14+ tests.
-  Needs type tag on class instances.
-- **Import/ImportFrom affecting control flow** — 77+ tests.
-  Currently silently ignored; some tests depend on imported values.
-- **Augmented assign on subscripts** (`lst[0] += 1`) — several tests.
-- **String ordering** (`"A" < "B"`) — several tests.
-- **Slice expressions** (`lst[1:3]`) — 8+ tests.
+### Semantic correctness
+
+**6.3 String ordering**
+
+`"a" < "b"` — compare first character values. Trivial fix. Fixes 1
+KNOWNBUG, several ESBMC false positives.
+
+**6.4 `global` statement**
+
+When a function contains `global x`, assignments to `x` should target
+the module-level symbol. Track which names are declared `global` and
+use the module-level qualified name. Fixes 1 KNOWNBUG.
+
+### Larger features
+
+**6.5 Lambda as first-class function**
+
+Lambda body conversion works; the issue is calling a variable that
+holds a function reference. Fix: when `convert_call` finds a variable
+with a code type, call through it. Fixes 1 KNOWNBUG.
+
+**6.6 `try`/`except` Stage B**
+
+Route exceptions to handlers. The `try-except-catch` KNOWNBUG tests
+`raise` inside `try` being caught by `except`. Substantial work
+following JBMC's `remove_exceptions.cpp` pattern.
+
+### Deferred (fundamental architecture changes needed)
+
+- **Type-changing variables** — needs tagged-union types (Phase 9)
+- **Arbitrary precision integers** — needs `integer_typet` + SMT backend
+- **Unannotated parameters** — needs `Any` type or clear error message
+
+### KNOWNBUG inventory (11 tests)
+
+| Test | Category | Fix complexity |
+|------|----------|---------------|
+| `keyword-argument` | Crash | Small (6.1) |
+| `default-param` | Crash | Small (6.1) |
+| `return-class-instance` | Crash | Small (6.2) |
+| `string-ordering` | Correctness | Trivial (6.3) |
+| `global-statement` | Correctness | Small (6.4) |
+| `lambda-basic` | Feature | Medium (6.5) |
+| `try-except-catch` | Feature | Large (6.6) |
+| `type-change` | Architecture | Phase 9 |
+| `int-overflow` | Architecture | integer_typet |
+| `int-large-factorial` | Architecture | integer_typet |
+| `function-untyped-param` | Design decision | Any type |
 
 ### Previous items (DONE)
 
@@ -294,8 +332,14 @@ Main gaps by impact:
 - KNOWNBUG backlog (tuple unpack, string concat, list append) ✓
 - `--function` mode with nondet harness ✓
 - Readable counterexample traces ✓
-- Division-by-zero and bounds checks ✓
+- Division-by-zero, bounds, and overflow checks ✓
 - `raise` as verification failure ✓
+- `no-body` property for unknown functions ✓
+- for-in-list, list comprehensions, augmented assign targets ✓
+- Dict literals, `with` statement, parameterized types ✓
+- Built-in functions (int, float, bool, abs, min, max, print) ✓
+- Bitwise operators ✓
+- ESBMC failure pattern coverage (all categories) ✓
 
 ## 7. Build Record
 
@@ -328,3 +372,5 @@ Main gaps by impact:
 | 2026-04-22 | 995ed9c3c6 | Tests for unannotated params and snippet handling (58 CORE, 4 KNOWNBUG) |
 | 2026-04-22 | aca368dbdf | KNOWNBUG tests for type changes and integer overflow |
 | 2026-04-22 | c69ce3ab90 | Integer overflow checks, nondet for unknown functions (60 CORE, 6 KNOWNBUG) |
+| 2026-04-22 | e2584bcef1 | no-body failing property for unknown functions |
+| 2026-04-22 | 3f6376c01a | KNOWNBUG tests for all ESBMC failure categories (60 CORE, 11 KNOWNBUG) |
