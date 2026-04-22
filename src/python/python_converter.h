@@ -53,6 +53,7 @@ private:
   // --- Statement converters ---
   codet convert_assign(const jsont &stmt);
   codet convert_ann_assign(const jsont &stmt);
+  codet convert_aug_assign(const jsont &stmt);
   codet convert_assert(const jsont &stmt);
   codet convert_if(const jsont &stmt);
   codet convert_while(const jsont &stmt);
