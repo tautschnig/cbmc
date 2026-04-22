@@ -792,7 +792,16 @@ exprt python_convertert::convert_call(const jsont &expr)
 
   irep_idt symbol_id{"python::" + func_name};
   const symbolt *sym = symbol_table.lookup(symbol_id);
-  if(sym == nullptr)
+
+  // Check function aliases (lambda assignments: double = lambda x: x*2)
+  if(sym == nullptr || sym->type.id() != ID_code)
+  {
+    auto alias_it = function_aliases.find(qualify_name(func_name));
+    if(alias_it != function_aliases.end())
+      sym = symbol_table.lookup(alias_it->second);
+  }
+
+  if(sym == nullptr || sym->type.id() != ID_code)
   {
     // Unknown function — return nondet value (sound overapproximation)
     // and add a failing property so the user knows the result is
@@ -1525,6 +1534,21 @@ codet python_convertert::convert_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // Lambda/function assignment: record alias instead of creating variable
+  if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
+  {
+    for(const auto &target : as_array(targets))
+    {
+      if(is_node_type(target, "Name"))
+      {
+        std::string var_name = json_string(json_member(target, "id"));
+        function_aliases[qualify_name(var_name)] =
+          to_symbol_expr(rhs).get_identifier();
+      }
+    }
+    return code_skipt{};
+  }
+
   code_blockt block;
 
   for(const auto &target : as_array(targets))
@@ -1960,6 +1984,57 @@ codet python_convertert::convert_return(const jsont &stmt)
 
   if(value.is_null())
     return code_frontend_returnt{};
+
+  // Check if returning a constructor call: return Foo(args)
+  if(
+    is_node_type(value, "Call") &&
+    is_node_type(json_member(value, "func"), "Name"))
+  {
+    std::string call_name =
+      json_string(json_member(json_member(value, "func"), "id"));
+    if(class_types.count(call_name))
+    {
+      // Create a temporary, call __init__, return the temporary
+      const struct_typet &cls_type = class_types[call_name];
+      source_locationt loc = get_location(stmt);
+
+      std::string tmp_name = "__ret_tmp_" + call_name;
+      std::string tmp_qname = qualify_name(tmp_name);
+      irep_idt tmp_id{tmp_qname};
+
+      if(symbol_table.lookup(tmp_id) == nullptr)
+      {
+        symbolt tmp_sym{tmp_id, cls_type, "python"};
+        tmp_sym.base_name = tmp_name;
+        tmp_sym.is_lvalue = true;
+        tmp_sym.is_state_var = true;
+        symbol_table.add(tmp_sym);
+      }
+
+      const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+      code_blockt block;
+
+      irep_idt init_id{"python::" + call_name + "::__init__"};
+      const symbolt *init_sym = symbol_table.lookup(init_id);
+      if(init_sym != nullptr)
+      {
+        exprt::operandst args;
+        args.push_back(address_of_exprt{tmp_sym.symbol_expr()});
+        const jsont &call_args = json_member(value, "args");
+        if(call_args.is_array())
+        {
+          for(const auto &a : as_array(call_args))
+            args.push_back(convert_expression(a));
+        }
+        side_effect_expr_function_callt call{
+          init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
+        block.add(code_expressiont{call});
+      }
+
+      block.add(code_frontend_returnt{tmp_sym.symbol_expr()});
+      return std::move(block);
+    }
+  }
 
   exprt ret_val = convert_expression(value);
   if(ret_val.is_nil())
@@ -2605,7 +2680,8 @@ bool python_convertert::convert()
                   var_type = python_list_type(signedbv_typet{64});
                 else if(
                   is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
-                  is_node_type(val, "Call") || is_node_type(val, "ListComp"))
+                  is_node_type(val, "Call") || is_node_type(val, "ListComp") ||
+                  is_node_type(val, "Lambda"))
                 {
                   // Complex RHS — skip pre-registration, let pass 2 handle it
                   continue;
