@@ -20,6 +20,9 @@
 |---------|--------|
 | `--function` mode | **Complete** |
 | `expr2python` traces | **Complete** |
+| Division-by-zero checks | **Complete** |
+| Index-out-of-bounds checks | **Complete** |
+| `raise` as verification failure | **Complete** |
 
 ## 1. Goals
 
@@ -306,3 +309,5 @@ correct semantics of operations that can raise.
 | 2026-04-22 | 4646d2ca8c | KNOWNBUG fixes: tuple unpack, string concat (36 CORE tests) |
 | 2026-04-22 | 239a3c1025 | --function mode with nondet harness generation (38 CORE tests) |
 | 2026-04-22 | 7e753225a0 | expr2python: readable counterexample traces |
+| 2026-04-22 | b175f3da8f | List append, div-by-zero and bounds checks (43 CORE tests) |
+| 2026-04-22 | a4e03b5dac | raise statements as verification failures (45 CORE tests) |
