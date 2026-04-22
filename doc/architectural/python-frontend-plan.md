@@ -8,9 +8,9 @@
 | 2 | Scalar expressions | **Complete** |
 | 3 | Control flow | **Complete** |
 | 4 | Type inference | **Complete** |
-| 5 | Strings | **Partial** (concat KNOWNBUG) |
-| 6 | Collections | **Partial** (tuple unpack, list append KNOWNBUG) |
-| 7 | Classes and objects | **Partial** (method mutation, inheritance KNOWNBUG) |
+| 5 | Strings | **Complete** (concat tracks length, not content) |
+| 6 | Collections | **Partial** (list append KNOWNBUG) |
+| 7 | Classes and objects | **Complete** (pointer-based model) |
 | 8 | Exception handling | Not started |
 | 9 | Advanced features | Not started |
 
@@ -294,3 +294,6 @@ correct semantics of operations that can raise.
 | 2026-04-22 | 27396c8250 | Phase 5: basic string support — literals, len, compare, index (5 new tests) |
 | 2026-04-22 | 6782e150b0 | Phase 6: tuples and lists — literals, indexing, len (5 new tests) |
 | 2026-04-22 | 8b81831b57 | Phase 7: basic class support — constructor, attributes, methods (3 new tests) |
+| 2026-04-22 | 846357ad40 | Plan: added Next Steps section |
+| 2026-04-22 | 3d229e6f56 | Pointer-based class model — fixes method mutation, enables inheritance |
+| 2026-04-22 | 4646d2ca8c | KNOWNBUG fixes: tuple unpack, string concat (36 CORE tests) |
