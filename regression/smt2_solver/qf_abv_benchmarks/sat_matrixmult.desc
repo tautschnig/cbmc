@@ -1,0 +1,6 @@
+CORE
+sat_matrixmult.smt2
+
+^sat$
+^EXIT=0$
+^SIGNAL=0$
