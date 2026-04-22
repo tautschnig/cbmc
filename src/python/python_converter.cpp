@@ -268,14 +268,24 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
-  // String concatenation — not yet fully supported
+  // String concatenation
   if(
     is_python_string_type(left.type()) && is_python_string_type(right.type()) &&
     op == "Add")
   {
-    log.warning() << "String concatenation not yet fully supported"
-                  << messaget::eom;
-    return nil_exprt{};
+    struct_typet str_type = python_string_type();
+    const auto &data_type = to_array_type(str_type.components()[1].type());
+
+    // length = left.length + right.length
+    exprt new_length = plus_exprt{
+      member_exprt{left, "length", signedbv_typet{64}},
+      member_exprt{right, "length", signedbv_typet{64}}};
+
+    // data is nondet (content tracking is future work)
+    side_effect_expr_nondett nondet_data{data_type, source_locationt{}};
+
+    struct_exprt result{{new_length, nondet_data}, str_type};
+    return std::move(result);
   }
 
   // Type promotion: if either operand is float, promote both
@@ -912,6 +922,49 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   for(const auto &target : as_array(targets))
   {
+    // Handle tuple unpacking: a, b, c = expr
+    if(is_node_type(target, "Tuple"))
+    {
+      const jsont &elts = json_member(target, "elts");
+      if(elts.is_array() && is_python_tuple_type(rhs.type()))
+      {
+        const auto &tuple_st = to_struct_type(rhs.type());
+        std::size_t idx = 0;
+        for(const auto &elt : as_array(elts))
+        {
+          std::string elt_name = json_string(json_member(elt, "id"));
+          std::string field = "_" + std::to_string(idx);
+          if(tuple_st.has_component(field))
+          {
+            typet field_type = tuple_st.get_component(field).type();
+            member_exprt field_expr{rhs, field, field_type};
+
+            std::string qname =
+              current_function.empty()
+                ? "python::" + elt_name
+                : "python::" + current_function + "::" + elt_name;
+            irep_idt sym_id{qname};
+            if(symbol_table.lookup(sym_id) == nullptr)
+            {
+              symbolt new_sym{sym_id, field_type, "python"};
+              new_sym.base_name = elt_name;
+              new_sym.location = loc;
+              new_sym.is_lvalue = true;
+              new_sym.is_state_var = true;
+              new_sym.is_static_lifetime = current_function.empty();
+              symbol_table.add(new_sym);
+            }
+            const symbolt &sym = symbol_table.lookup_ref(sym_id);
+            code_frontend_assignt assign{sym.symbol_expr(), field_expr};
+            assign.add_source_location() = loc;
+            block.add(std::move(assign));
+          }
+          idx++;
+        }
+        continue;
+      }
+    }
+
     // Handle attribute assignment: self.x = value
     if(is_node_type(target, "Attribute"))
     {
