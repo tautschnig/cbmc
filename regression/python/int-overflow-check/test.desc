@@ -1,9 +1,9 @@
-KNOWNBUG
+CORE
 main.py
 --function multiply
 ^EXIT=10$
 ^SIGNAL=0$
-^\[overflow\.1\].*integer overflow: FAILURE$
+^\[overflow\.1\].*integer overflow on multiplication: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
