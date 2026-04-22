@@ -148,6 +148,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
     return convert_tuple(expr);
   else if(node_type == "List")
     return convert_list(expr);
+  else if(node_type == "Attribute")
+    return convert_attribute(expr);
   else
   {
     log.error() << "Unsupported Python expression type: " << node_type
@@ -443,6 +445,47 @@ exprt python_convertert::convert_call(const jsont &expr)
   std::string func_name;
   if(is_node_type(func, "Name"))
     func_name = json_string(json_member(func, "id"));
+  else if(is_node_type(func, "Attribute"))
+  {
+    // Method call: obj.method(args)
+    std::string method_name = json_string(json_member(func, "attr"));
+    exprt obj = convert_expression(json_member(func, "value"));
+    if(obj.is_nil())
+      return nil_exprt{};
+
+    // Find the class name from the object's type
+    if(obj.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(obj.type());
+      std::string tag = id2string(st.get_tag());
+      // tag is "python_class_ClassName"
+      if(tag.substr(0, 13) == "python_class_")
+      {
+        std::string class_name = tag.substr(13);
+        irep_idt method_id{"python::" + class_name + "::" + method_name};
+        const symbolt *method_sym = symbol_table.lookup(method_id);
+        if(method_sym != nullptr)
+        {
+          const code_typet &method_type = to_code_type(method_sym->type);
+          exprt::operandst arguments;
+          arguments.push_back(obj); // self
+          if(args.is_array())
+          {
+            for(const auto &arg : as_array(args))
+              arguments.push_back(convert_expression(arg));
+          }
+          side_effect_expr_function_callt call{
+            method_sym->symbol_expr(),
+            std::move(arguments),
+            method_type.return_type(),
+            get_location(expr)};
+          return std::move(call);
+        }
+      }
+    }
+    log.error() << "Unknown method: " << method_name << messaget::eom;
+    return nil_exprt{};
+  }
 
   // Handle nondet functions
   if(func_name == "nondet_int")
@@ -477,7 +520,43 @@ exprt python_convertert::convert_call(const jsont &expr)
     return nil_exprt{};
   }
 
-  // Regular function call
+  // Regular function call — check if it's a class constructor
+  if(class_types.count(func_name))
+  {
+    // Constructor call: ClassName(args...) → create struct, call __init__
+    const struct_typet &class_type = class_types[func_name];
+
+    // Create a nondet struct, then call __init__ on it
+    // For now, just build the struct by calling __init__ inline
+    // We create a side_effect that returns the initialized struct
+    irep_idt init_id{"python::" + func_name + "::__init__"};
+    const symbolt *init_sym = symbol_table.lookup(init_id);
+    if(init_sym != nullptr)
+    {
+      // Build a nondet struct for self
+      side_effect_expr_nondett self_nondet{class_type, get_location(expr)};
+
+      exprt::operandst arguments;
+      arguments.push_back(self_nondet);
+      if(args.is_array())
+      {
+        for(const auto &arg : as_array(args))
+          arguments.push_back(convert_expression(arg));
+      }
+
+      // Call __init__ and return the struct
+      // We model this as: create temp, call __init__(temp, args), return temp
+      // For simplicity, use a function call side effect
+      side_effect_expr_function_callt call{
+        init_sym->symbol_expr(),
+        std::move(arguments),
+        class_type, // return the struct (we'll fix __init__ to return self)
+        get_location(expr)};
+
+      return std::move(call);
+    }
+  }
+
   irep_idt symbol_id{"python::" + func_name};
   const symbolt *sym = symbol_table.lookup(symbol_id);
   if(sym == nullptr)
@@ -652,6 +731,26 @@ exprt python_convertert::convert_list(const jsont &expr)
   return struct_exprt{{length, data}, list_type};
 }
 
+exprt python_convertert::convert_attribute(const jsont &expr)
+{
+  std::string attr = json_string(json_member(expr, "attr"));
+  exprt value = convert_expression(json_member(expr, "value"));
+
+  if(value.is_nil())
+    return nil_exprt{};
+
+  // For struct types (classes), access the member
+  if(value.type().id() == ID_struct)
+  {
+    const auto &st = to_struct_type(value.type());
+    if(st.has_component(attr))
+      return member_exprt{value, attr, st.get_component(attr).type()};
+  }
+
+  log.error() << "Cannot access attribute '" << attr << "'" << messaget::eom;
+  return nil_exprt{};
+}
+
 // --- Statement conversion ---
 
 codet python_convertert::convert_statement(const jsont &stmt)
@@ -676,6 +775,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
     return convert_return(stmt);
   else if(node_type == "FunctionDef")
     return convert_function_def(stmt);
+  else if(node_type == "ClassDef")
+    return convert_class_def(stmt);
   else if(node_type == "Expr")
     return convert_expr_stmt(stmt);
   else if(node_type == "Break")
@@ -756,7 +857,31 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   for(const auto &target : as_array(targets))
   {
-    std::string var_name = json_string(json_member(target, "id"));
+    std::string var_name;
+
+    // Handle attribute assignment: self.x = value
+    if(is_node_type(target, "Attribute"))
+    {
+      exprt obj = convert_expression(json_member(target, "value"));
+      std::string attr = json_string(json_member(target, "attr"));
+      if(!obj.is_nil() && obj.type().id() == ID_struct)
+      {
+        const auto &st = to_struct_type(obj.type());
+        if(st.has_component(attr))
+        {
+          member_exprt lhs{obj, attr, st.get_component(attr).type()};
+          exprt typed_rhs = rhs;
+          if(typed_rhs.type() != lhs.type())
+            typed_rhs = typecast_exprt{typed_rhs, lhs.type()};
+          code_frontend_assignt assign{lhs, typed_rhs};
+          assign.add_source_location() = loc;
+          block.add(std::move(assign));
+          continue;
+        }
+      }
+    }
+
+    var_name = json_string(json_member(target, "id"));
     std::string qualified_name =
       current_function.empty()
         ? "python::" + var_name
@@ -1108,6 +1233,221 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   return code_skipt{};
 }
 
+codet python_convertert::convert_class_def(const jsont &stmt)
+{
+  std::string class_name = json_string(json_member(stmt, "name"));
+  source_locationt loc = get_location(stmt);
+
+  // Analyze __init__ to determine instance attributes
+  struct_typet::componentst components;
+  const jsont &body = json_member(stmt, "body");
+
+  const jsont *init_method = nullptr;
+  if(body.is_array())
+  {
+    for(const auto &item : as_array(body))
+    {
+      if(
+        is_node_type(item, "FunctionDef") &&
+        json_string(json_member(item, "name")) == "__init__")
+      {
+        init_method = &item;
+        break;
+      }
+    }
+  }
+
+  // Scan __init__ body for self.attr = ... assignments to determine fields
+  if(init_method != nullptr)
+  {
+    const jsont &init_body = json_member(*init_method, "body");
+    if(init_body.is_array())
+    {
+      for(const auto &s : as_array(init_body))
+      {
+        if(!is_node_type(s, "Assign"))
+          continue;
+        const jsont &targets = json_member(s, "targets");
+        if(!targets.is_array() || as_array(targets).empty())
+          continue;
+        const jsont &target = *as_array(targets).begin();
+        if(!is_node_type(target, "Attribute"))
+          continue;
+        const jsont &target_value = json_member(target, "value");
+        if(
+          !is_node_type(target_value, "Name") ||
+          json_string(json_member(target_value, "id")) != "self")
+          continue;
+
+        std::string attr_name = json_string(json_member(target, "attr"));
+
+        // Determine type from the __init__ parameter annotation
+        // Look up the parameter name in __init__'s args
+        const jsont &rhs = json_member(s, "value");
+        std::string rhs_name;
+        if(is_node_type(rhs, "Name"))
+          rhs_name = json_string(json_member(rhs, "id"));
+
+        typet attr_type = signedbv_typet{64}; // default
+        if(!rhs_name.empty())
+        {
+          // Find the parameter annotation
+          const jsont &init_args = json_member(*init_method, "args");
+          const jsont &params = json_member(init_args, "args");
+          if(params.is_array())
+          {
+            for(const auto &p : as_array(params))
+            {
+              if(json_string(json_member(p, "arg")) == rhs_name)
+              {
+                const jsont &ann = json_member(p, "annotation");
+                if(!ann.is_null())
+                  attr_type = convert_type_annotation(ann);
+                break;
+              }
+            }
+          }
+        }
+
+        components.push_back(struct_typet::componentt{attr_name, attr_type});
+      }
+    }
+  }
+
+  struct_typet class_type{components};
+  class_type.set_tag("python_class_" + class_name);
+  class_types[class_name] = class_type;
+
+  // Register the class type in the symbol table
+  irep_idt type_symbol_id{"python::class::" + class_name};
+  if(symbol_table.lookup(type_symbol_id) == nullptr)
+  {
+    symbolt type_sym{type_symbol_id, class_type, "python"};
+    type_sym.base_name = class_name;
+    type_sym.is_type = true;
+    type_sym.location = loc;
+    symbol_table.add(type_sym);
+  }
+
+  // Now convert all methods
+  if(body.is_array())
+  {
+    std::string saved_class = current_class;
+    current_class = class_name;
+
+    for(const auto &item : as_array(body))
+    {
+      if(is_node_type(item, "FunctionDef"))
+      {
+        std::string method_name = json_string(json_member(item, "name"));
+
+        // Build method with class-qualified name
+        const jsont &args_node = json_member(item, "args");
+        const jsont &params = json_member(args_node, "args");
+
+        code_typet::parameterst parameters;
+        if(params.is_array())
+        {
+          for(const auto &param : as_array(params))
+          {
+            std::string param_name = json_string(json_member(param, "arg"));
+            typet param_type;
+            if(param_name == "self")
+              param_type = class_type;
+            else
+            {
+              const jsont &annotation = json_member(param, "annotation");
+              param_type = convert_type_annotation(annotation);
+            }
+
+            code_typet::parametert p{param_type};
+            p.set_identifier(
+              "python::" + class_name + "::" + method_name + "::" + param_name);
+            p.set_base_name(param_name);
+            parameters.push_back(p);
+          }
+        }
+
+        const jsont &returns = json_member(item, "returns");
+        typet return_type =
+          returns.is_null() ? empty_typet{} : convert_type_annotation(returns);
+
+        // NoneType → void
+        if(
+          !returns.is_null() &&
+          json_string(json_member(returns, "id")) == "None")
+          return_type = empty_typet{};
+
+        // For __init__, change return type to class type and add return self
+        if(method_name == "__init__")
+          return_type = class_type;
+
+        code_typet func_type{parameters, return_type};
+        irep_idt func_id{"python::" + class_name + "::" + method_name};
+
+        if(symbol_table.lookup(func_id) == nullptr)
+        {
+          symbolt func_sym{func_id, func_type, "python"};
+          func_sym.base_name = method_name;
+          func_sym.location = get_location(item);
+          func_sym.is_lvalue = true;
+          symbol_table.add(func_sym);
+        }
+
+        // Create parameter symbols
+        for(const auto &p : parameters)
+        {
+          if(symbol_table.lookup(p.get_identifier()) == nullptr)
+          {
+            symbolt param_sym{p.get_identifier(), p.type(), "python"};
+            param_sym.base_name = p.get_base_name();
+            param_sym.location = loc;
+            param_sym.is_lvalue = true;
+            param_sym.is_state_var = true;
+            param_sym.is_parameter = true;
+            symbol_table.add(param_sym);
+          }
+        }
+
+        // Convert method body
+        std::string saved_func = current_function;
+        current_function = class_name + "::" + method_name;
+
+        code_blockt method_body;
+        const jsont &method_body_json = json_member(item, "body");
+        if(method_body_json.is_array())
+        {
+          for(const auto &s : as_array(method_body_json))
+            method_body.add(convert_statement(s));
+        }
+
+        current_function = saved_func;
+
+        symbolt *sym_ptr = symbol_table.get_writeable(func_id);
+        if(sym_ptr != nullptr)
+        {
+          // For __init__, add "return self" at the end
+          if(method_name == "__init__")
+          {
+            irep_idt self_id{"python::" + class_name + "::__init__::self"};
+            const symbolt *self_sym = symbol_table.lookup(self_id);
+            if(self_sym != nullptr)
+            {
+              code_frontend_returnt ret{self_sym->symbol_expr()};
+              method_body.add(std::move(ret));
+            }
+          }
+          sym_ptr->value = method_body;
+        }
+      }
+    }
+
+    current_class = saved_class;
+  }
+
+  return code_skipt{};
+}
+
 codet python_convertert::convert_expr_stmt(const jsont &stmt)
 {
   // Expression statement (e.g., function call as statement)
@@ -1172,8 +1512,8 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
 
   for(const auto &stmt : as_array(body))
   {
-    // Function definitions are handled in the first pass
-    if(is_node_type(stmt, "FunctionDef"))
+    // Function and class definitions are handled in the first pass
+    if(is_node_type(stmt, "FunctionDef") || is_node_type(stmt, "ClassDef"))
       continue;
 
     codet code = convert_statement(stmt);
@@ -1189,13 +1529,15 @@ bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
 
-  // First pass: register all function definitions (signatures only)
+  // First pass: register all function and class definitions
   if(body.is_array())
   {
     for(const auto &stmt : as_array(body))
     {
       if(is_node_type(stmt, "FunctionDef"))
         convert_function_def(stmt);
+      else if(is_node_type(stmt, "ClassDef"))
+        convert_class_def(stmt);
     }
   }
 
