@@ -842,6 +842,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_continue();
   else if(node_type == "Pass")
     result = convert_pass();
+  else if(node_type == "Raise")
+    result = convert_raise(stmt);
   else
   {
     log.warning() << "Unsupported Python statement type: " << node_type
@@ -1727,6 +1729,42 @@ codet python_convertert::convert_continue()
 codet python_convertert::convert_pass()
 {
   return code_skipt{};
+}
+
+codet python_convertert::convert_raise(const jsont &stmt)
+{
+  source_locationt loc = get_location(stmt);
+
+  // Extract exception type name for the error message
+  std::string exc_type = "Exception";
+  const jsont &exc = json_member(stmt, "exc");
+  if(!exc.is_null())
+  {
+    if(is_node_type(exc, "Call"))
+    {
+      const jsont &func = json_member(exc, "func");
+      if(is_node_type(func, "Name"))
+        exc_type = json_string(json_member(func, "id"));
+    }
+    else if(is_node_type(exc, "Name"))
+      exc_type = json_string(json_member(exc, "id"));
+  }
+
+  loc.set_property_class("exception");
+  loc.set_comment("raise " + exc_type);
+
+  // Model raise as assert(false) — any raise is a verification failure
+  code_assertt assertion{false_exprt{}};
+  assertion.add_source_location() = loc;
+
+  // Follow with assume(false) so paths after raise are unreachable
+  code_assumet assume{false_exprt{}};
+  assume.add_source_location() = loc;
+
+  code_blockt block;
+  block.add(std::move(assertion));
+  block.add(std::move(assume));
+  return std::move(block);
 }
 
 // --- Module body conversion ---
