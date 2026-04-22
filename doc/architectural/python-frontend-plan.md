@@ -56,10 +56,12 @@ verifier. Its architecture:
 Writing a Python parser from scratch would be a multi-year effort for zero
 benefit. CPython's `ast` module is canonical and always correct.
 
-Our approach: a minimal Python script (`ast_to_json.py`) that does nothing
-but `ast.parse()` → JSON. All semantic analysis happens in C++. The script
-is embedded into the CBMC binary at build time and extracted to a temp
-directory at runtime (same pattern as ESBMC, but with a much simpler script).
+Our approach: CBMC invokes `python3 -c '...'` with the AST conversion
+logic inlined as a string literal, analogous to how the C front-end
+invokes `gcc -E` for preprocessing. All semantic analysis happens in C++.
+The only runtime dependency is a `python3` interpreter on PATH. Error
+handling detects missing `python3`, missing `ast`/`json` modules, and
+syntax errors in the input file, with user-facing messages for each case.
 
 ### 3.2 Type Strategy: Typed Subset with Gradual Expansion
 
@@ -92,20 +94,20 @@ Type mapping:
 Python source (.py)
        │
        ▼
-[ast_to_json.py]  ← Minimal script using ast module
+[python3 -c '...']  ← Inline AST-to-JSON via CPython's ast module
        │
        ▼
-  JSON AST
+  JSON AST (temp file)
        │
        ▼
-[python_languaget::parse()]  ← C++: reads JSON, builds python_parse_treet
+[python_languaget::parse()]  ← C++: reads JSON into python_parse_treet
        │
        ▼
-[python_languaget::typecheck()]  ← Type inference + checking → symbol_tablet
-       │
+[python_languaget::typecheck()]  ← python_convertert: type checking,
+       │                            symbol table population, codet generation
        ▼
-[python_languaget::generate_support_functions()]  ← __CPROVER_start
-       │
+[python_languaget::generate_support_functions()]  ← (no-op; __CPROVER__start
+       │                                             created by converter)
        ▼
 [goto_convert]  ← Standard CBMC pipeline
        │
@@ -117,17 +119,12 @@ Python source (.py)
 
 ```
 src/python/
-  python_language.h/.cpp           # languaget implementation
-  python_parse_tree.h/.cpp         # Internal AST representation
-  python_parser.h/.cpp             # JSON → parse tree
-  python_typecheck.h/.cpp          # Type inference and checking
-  python_types.h/.cpp              # Python type representations
-  python_entry_point.h/.cpp        # __CPROVER_start generation
-  python_converter.h/.cpp          # Parse tree → codet / symbol table
-  expr2python.h/.cpp               # Expression → Python string (for traces)
+  python_language.h/.cpp           # languaget implementation; invokes python3
+  python_parse_tree.h/.cpp         # Holds JSON AST from CPython
+  python_converter.h/.cpp          # JSON AST → symbol table + codet trees
+  python_types.h/.cpp              # Python type representations (future)
+  expr2python.h/.cpp               # Expression → Python string (future)
   library/                         # Operational models (future)
-  scripts/
-    ast_to_json.py                 # Minimal AST dump script
   module_dependencies.txt
   CMakeLists.txt
 ```
@@ -167,28 +164,35 @@ operation that can raise sets this variable and jumps to the handler.
 
 ## 4. Implementation Phases
 
-### Phase 1: Skeleton (target: infrastructure that compiles and runs)
+### Phase 1: Skeleton (DONE)
 - `src/python/` directory with `python_languaget`
-- `ast_to_json.py` script
-- Language registration in CBMC
+- `python3 -c '...'` inline AST-to-JSON invocation
+- Language registration in CBMC (`.py` extension)
 - CMake integration
-- Initial regression tests (KNOWNBUG)
+- Error handling: missing python3, missing ast module, syntax errors
+- Regression test infrastructure in `regression/python/`
 
-### Phase 2: Scalar expressions
-- Integer, float, bool literals
+### Phase 2: Scalar expressions (DONE)
+- `python_convertert`: JSON AST → symbol table + codet
+- Integer (64-bit), float (IEEE 754 double), bool literals and types
+- Type annotations on variables and function signatures
 - Arithmetic, comparison, logical, unary operators
 - `assert` → CBMC assertion
-- Variable declarations with type annotations
-- Assignment statements
-- `__CPROVER_start` from top-level code
+- Assignment (annotated and unannotated)
+- `nondet_int()`, `nondet_float()`, `nondet_bool()` → CBMC nondet
+- `__CPROVER_assume()` → CBMC assume
+- `__CPROVER_rounding_mode` for float operations
+- `__CPROVER__start` and `__CPROVER_initialize` generation
 
-### Phase 3: Control flow
+### Phase 3: Control flow (DONE)
 - `if`/`elif`/`else`
 - `while` with `break`/`continue`
-- `for x in range(n)` (desugar to while)
+- `for x in range(n)` (desugared to while)
 - `return`
-- Function definitions and calls
-- Recursion (bounded by `--unwind`)
+- Function definitions with typed parameters and return types
+- Function calls including recursive (two-pass: register then convert)
+- Proper function scoping for parameters and locals
+- Ternary expressions (`x if cond else y`)
 
 ### Phase 4: Type inference
 - Local inference from initializers
@@ -237,5 +241,7 @@ operation that can raise sets this variable and jumps to the handler.
 
 | Date | Commit | What was built |
 |------|--------|---------------|
-| 2026-04-22 | (initial) | Phase 1: skeleton, language registration, parse pipeline, 16 KNOWNBUG tests |
-| 2026-04-22 | (phase 2+3) | Phases 2+3: python_convertert with expression/statement/control flow conversion, __CPROVER_start generation, nondet/assume support. All 16 tests promoted to CORE. |
+| 2026-04-22 | 7267708167 | Phase 1: skeleton, language registration, parse pipeline, 16 KNOWNBUG tests |
+| 2026-04-22 | efa988450d | Phases 2+3: python_convertert, all 16 tests promoted to CORE |
+| 2026-04-22 | b1c236e9ad | Replaced script with inline python3 -c invocation |
+| 2026-04-22 | 8e6a233bc2 | Error handling for missing python3, ast module, syntax errors |
