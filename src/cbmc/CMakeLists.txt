@@ -22,6 +22,7 @@ target_link_libraries(cbmc-lib
     langapi
     linking
     pointer-analysis
+    python-frontend
     solvers
     statement-list
     util
