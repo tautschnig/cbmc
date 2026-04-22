@@ -933,6 +933,21 @@ void map_theoryt::add_array_constraints_equality(
 
     equal_exprt equality_expr(index_expr1, index_expr2);
 
+    if(lazy_arrays && cdclt_propagator)
+    {
+      // Register indices without converting. The propagator will
+      // handle the constraint lazily via the refinement loop.
+      record_array_index(index_expr1);
+      record_array_index(index_expr2);
+      // Store for lazy conversion
+      lazy_constraintt lazy(
+        lazy_typet::ARRAY_ACKERMANN,
+        implies_exprt(literal_exprt(array_equality.l), equality_expr));
+      lazy_array_constraints.push_back(lazy);
+      array_constraint_count[constraint_typet::ARRAY_EQUALITY]++;
+      continue;
+    }
+
     // add constraint: l -> x[i]=y[i]
     // convert must be done to guarantee correct update of the index_set
     literalt eq_lit = convert(equality_expr);
