@@ -149,8 +149,12 @@ public:
     std::unordered_set<int> model_set(model.begin(), model.end());
     for(const auto &[idx_eq, elem_eq] : ackermann_clauses)
     {
-      if(model_set.count(idx_eq) && model_set.count(-elem_eq))
-        pending_ext_clauses.push_back({-idx_eq, elem_eq}); // no trailing 0
+      if(elem_eq != 0)
+      {
+        if(model_set.count(idx_eq) && model_set.count(-elem_eq))
+          pending_ext_clauses.push_back({-idx_eq, elem_eq});
+      }
+      // Guard-only entries (elem_eq=0): checked by refinement loop
     }
     return pending_ext_clauses.empty();
   }

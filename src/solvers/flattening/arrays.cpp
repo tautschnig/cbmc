@@ -318,26 +318,28 @@ void map_theoryt::add_array_constraint(const lazy_constraintt &lazy, bool refine
   else if(
     cdclt_propagator && refine && lazy.type == lazy_typet::ARRAY_ACKERMANN)
   {
-    // CDCL(T): convert the constraint and register with the propagator.
-    // The propagator adds it as an external clause when the model violates it.
-    // For implies_exprt{guard, conclusion}: clause is (!guard ∨ conclusion)
+    // CDCL(T): store the constraint for lazy evaluation.
+    // Only convert the guard (cheap). The conclusion expression is
+    // stored and converted only when the refinement loop detects
+    // a violation.
     if(lazy.lazy.id() == ID_implies)
     {
       const auto &imp = to_implies_expr(lazy.lazy);
       if(imp.op0().id() == ID_literal)
       {
         const literalt guard = to_literal_expr(imp.op0()).get_literal();
-        const literalt conclusion = convert(imp.op1());
-        if(!guard.is_constant() && !conclusion.is_constant())
+        if(!guard.is_constant())
         {
-          cdclt_propagator->add_ackermann_clause(
-            guard.dimacs(), conclusion.dimacs());
+          // Register guard with propagator for model checking
+          cdclt_propagator->add_ackermann_clause(guard.dimacs(), 0);
           auto *cadical = dynamic_cast<satcheck_cadical_baset *>(&prop);
           if(cadical)
           {
             cadical->observe_var(guard.var_no());
-            cadical->observe_var(conclusion.var_no());
+            prop.set_frozen(guard);
           }
+          // Store the full constraint for lazy conversion
+          lazy_array_constraints.push_back(lazy);
           return;
         }
       }
@@ -598,7 +600,8 @@ void arrayst::add_array_constraints()
   // (checked on demand via model-based congruence detection).
   if(!lazy_arrays)
   {
-    setup_cdclt_propagator();
+    if(lazy_arrays)
+      setup_cdclt_propagator();
     add_array_Ackermann_constraints();
   }
 
