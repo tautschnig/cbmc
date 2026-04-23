@@ -522,6 +522,19 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(is_python_value_type(right.type()))
     right = unwrap_value(right, left.type());
 
+  // List repetition: lst * n → new list with length = lst.length * n
+  if(is_python_list_type(left.type()) && op == "Mult")
+  {
+    struct_typet list_type = to_struct_type(left.type());
+    member_exprt old_len{left, "length", signedbv_typet{64}};
+    exprt new_len =
+      mult_exprt{old_len, safe_typecast(right, signedbv_typet{64})};
+    // Data is nondet (content not tracked for repeated lists)
+    const auto &data_type = to_array_type(list_type.components()[1].type());
+    exprt data = side_effect_expr_nondett{data_type, source_locationt{}};
+    return struct_exprt{{new_len, data}, list_type};
+  }
+
   // Type promotion: if either operand is float, promote both
   if(left.type() != right.type())
   {
@@ -1070,6 +1083,29 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+  // complex() — return nondet float (simplified, no real/imaginary)
+  else if(func_name == "complex")
+  {
+    return side_effect_expr_nondett{double_type(), get_location(expr)};
+  }
+  // list() / sorted() / reversed() — return nondet list
+  else if(
+    func_name == "list" || func_name == "sorted" || func_name == "reversed" ||
+    func_name == "enumerate")
+  {
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
+  // str() — return nondet string
+  else if(func_name == "str")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      // str(x) — convert to string (simplified: return nondet string)
+      return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+    }
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
   // all(genexp) / any(genexp) — unroll for literal iterables
   else if(func_name == "all" || func_name == "any")
@@ -1746,80 +1782,104 @@ exprt python_convertert::convert_dict(const jsont &expr)
 
 exprt python_convertert::convert_list_comp(const jsont &expr)
 {
-  // [elt for target in iter] — simple single-generator case
   const jsont &elt = json_member(expr, "elt");
   const jsont &generators = json_member(expr, "generators");
 
   if(!generators.is_array() || as_array(generators).empty())
     return nil_exprt{};
 
-  const jsont &gen = *as_array(generators).begin();
-  const jsont &gen_target = json_member(gen, "target");
-  const jsont &gen_iter = json_member(gen, "iter");
-
-  // Only handle literal list iterables for now
-  if(!is_node_type(gen_iter, "List"))
+  // Collect all generators (support nested for)
+  struct gen_info
   {
-    log.warning() << "List comprehension only supports literal list iterables"
-                  << messaget::eom;
-    return nil_exprt{};
-  }
+    std::string var_name;
+    std::vector<const jsont *> values;
+  };
+  std::vector<gen_info> gens;
 
-  std::string iter_var = json_string(json_member(gen_target, "id"));
-  const jsont &iter_elts = json_member(gen_iter, "elts");
-  if(!iter_elts.is_array())
-    return nil_exprt{};
-
-  // For literal list iterables, unroll: evaluate elt for each value.
-  // We create the iteration variable, assign each value, and evaluate elt.
-  std::string qname = qualify_name(iter_var);
-  irep_idt iter_sym_id{qname};
-
-  // First, determine element type from the first iterable element
-  if(as_array(iter_elts).empty())
-    return nil_exprt{};
-
-  exprt first_val = convert_expression(*as_array(iter_elts).begin());
-  if(first_val.is_nil())
-    return nil_exprt{};
-
-  if(symbol_table.lookup(iter_sym_id) == nullptr)
+  for(const auto &gen : as_array(generators))
   {
-    symbolt sym{iter_sym_id, first_val.type(), "python"};
-    sym.base_name = iter_var;
-    sym.is_lvalue = true;
-    sym.is_state_var = true;
-    symbol_table.add(sym);
-  }
-
-  // For each iterable element, evaluate elt.
-  // Since elt references the iteration variable symbolically, all results
-  // will be the same symbolic expression. For literal iterables, we need
-  // to substitute. Use a simple approach: for each concrete value, build
-  // the elt expression and replace the symbol reference with the value.
-  exprt::operandst elements;
-  for(const auto &iter_val_json : as_array(iter_elts))
-  {
-    exprt iter_val = convert_expression(iter_val_json);
-    // Evaluate elt — it will reference the symbol.
-    // We then substitute the symbol with the concrete value.
-    exprt elt_expr = convert_expression(elt);
-    // Simple substitution: replace symbol_exprt for iter_var with iter_val
-    std::function<void(exprt &)> substitute = [&](exprt &e)
+    const jsont &gen_iter = json_member(gen, "iter");
+    if(!is_node_type(gen_iter, "List"))
     {
-      if(
-        e.id() == ID_symbol &&
-        to_symbol_expr(e).get_identifier() == iter_sym_id)
+      log.warning() << "List comprehension only supports literal list iterables"
+                    << messaget::eom;
+      return nil_exprt{};
+    }
+    gen_info gi;
+    gi.var_name = json_string(json_member(json_member(gen, "target"), "id"));
+    const jsont &elts = json_member(gen_iter, "elts");
+    if(elts.is_array())
+    {
+      for(const auto &e : as_array(elts))
+        gi.values.push_back(&e);
+    }
+    gens.push_back(std::move(gi));
+  }
+
+  if(gens.empty())
+    return nil_exprt{};
+
+  // Create symbols for all iteration variables
+  for(auto &gi : gens)
+  {
+    std::string qname = qualify_name(gi.var_name);
+    irep_idt sym_id{qname};
+    if(symbol_table.lookup(sym_id) == nullptr)
+    {
+      symbolt sym{sym_id, python_int_type(), "python"};
+      sym.base_name = gi.var_name;
+      sym.is_lvalue = true;
+      sym.is_state_var = true;
+      symbol_table.add(sym);
+    }
+  }
+
+  // Unroll all combinations
+  // For single generator: iterate values
+  // For nested: iterate cartesian product
+  std::vector<std::vector<std::size_t>> combos;
+  combos.push_back({});
+  for(const auto &gi : gens)
+  {
+    std::vector<std::vector<std::size_t>> new_combos;
+    for(const auto &combo : combos)
+    {
+      for(std::size_t i = 0; i < gi.values.size(); i++)
       {
-        e = iter_val;
+        auto new_combo = combo;
+        new_combo.push_back(i);
+        new_combos.push_back(std::move(new_combo));
       }
-      else
+    }
+    combos = std::move(new_combos);
+  }
+
+  // Evaluate elt for each combination
+  exprt::operandst elements;
+  for(const auto &combo : combos)
+  {
+    // Convert each iteration variable's value
+    std::vector<std::pair<irep_idt, exprt>> bindings;
+    for(std::size_t g = 0; g < gens.size(); g++)
+    {
+      exprt val = convert_expression(*gens[g].values[combo[g]]);
+      bindings.push_back({irep_idt{qualify_name(gens[g].var_name)}, val});
+    }
+
+    // Evaluate elt and substitute
+    exprt elt_expr = convert_expression(elt);
+    for(const auto &[sym_id, val] : bindings)
+    {
+      std::function<void(exprt &)> subst = [&](exprt &e)
       {
-        for(auto &op : e.operands())
-          substitute(op);
-      }
-    };
-    substitute(elt_expr);
+        if(e.id() == ID_symbol && to_symbol_expr(e).get_identifier() == sym_id)
+          e = val;
+        else
+          for(auto &op : e.operands())
+            subst(op);
+      };
+      subst(elt_expr);
+    }
     elements.push_back(elt_expr);
   }
 
