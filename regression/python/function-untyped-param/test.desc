@@ -1,9 +1,8 @@
-KNOWNBUG
+CORE
 main.py
 --function greet
-^EXIT=10$
+^EXIT=0$
 ^SIGNAL=0$
-^\[assertion\.1\].*Python assertion: FAILURE$
-^VERIFICATION FAILED$
+parameter 'name' of function 'greet' has no type annotation
 --
 ^warning: ignoring

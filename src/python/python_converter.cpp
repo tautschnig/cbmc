@@ -727,6 +727,51 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     return from_integer(0, signedbv_typet{64});
   }
+  // isinstance(obj, Class) — static type check
+  else if(func_name == "isinstance")
+  {
+    if(args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      exprt obj = convert_expression(*it);
+      ++it;
+      // Second arg is the class name
+      std::string cls_name;
+      if(is_node_type(*it, "Name"))
+        cls_name = json_string(json_member(*it, "id"));
+
+      if(!obj.is_nil() && !cls_name.empty() && obj.type().id() == ID_struct)
+      {
+        const auto &st = to_struct_type(obj.type());
+        std::string tag = id2string(st.get_tag());
+        // Extract the actual class name from the tag
+        std::string obj_class;
+        if(tag.substr(0, 13) == "python_class_")
+          obj_class = tag.substr(13);
+
+        // Check if obj_class is cls_name or inherits from it
+        if(!obj_class.empty())
+        {
+          std::string check = obj_class;
+          while(!check.empty())
+          {
+            if(check == cls_name)
+              return true_exprt{};
+            // Walk up the inheritance chain
+            auto it = class_bases.find(check);
+            if(it != class_bases.end() && !it->second.empty())
+              check = it->second[0]; // single inheritance
+            else
+              break;
+          }
+          return false_exprt{};
+        }
+      }
+      // If we can't determine statically, return nondet bool
+      return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+    }
+    return false_exprt{};
+  }
   // abs()
   else if(func_name == "abs")
   {
@@ -2061,6 +2106,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     {
       std::string param_name = json_string(json_member(param, "arg"));
       const jsont &annotation = json_member(param, "annotation");
+      if(annotation.is_null())
+      {
+        log.warning() << "parameter '" << param_name << "' of function '"
+                      << func_name << "' has no type annotation; assuming int"
+                      << messaget::eom;
+      }
       typet param_type = convert_type_annotation(annotation);
 
       code_typet::parametert p{param_type};
@@ -2213,6 +2264,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   struct_typet class_type{components};
   class_type.set_tag("python_class_" + class_name);
   class_types[class_name] = class_type;
+
+  // Record base classes for isinstance checks
+  const jsont &bases = json_member(stmt, "bases");
+  if(bases.is_array())
+  {
+    for(const auto &base : as_array(bases))
+    {
+      if(is_node_type(base, "Name"))
+        class_bases[class_name].push_back(json_string(json_member(base, "id")));
+    }
+  }
 
   // Register the class type in the symbol table
   irep_idt type_symbol_id{"python::class::" + class_name};
