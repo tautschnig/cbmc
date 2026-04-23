@@ -1,3 +1,3 @@
-# Crash: string set with 'in' operator causes type mismatch
-s: set[str] = {"foo", "bar"}
+# String set with 'in' operator
+s = {"foo", "bar"}
 assert "foo" in s
