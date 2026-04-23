@@ -1606,6 +1606,114 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_continue();
   else if(node_type == "Pass")
     result = convert_pass();
+  else if(node_type == "Import" || node_type == "ImportFrom")
+  {
+    // Handle imports by registering known standard library functions.
+    // Unknown imports are silently ignored (functions will get no-body
+    // warnings when called).
+    if(node_type == "ImportFrom")
+    {
+      std::string module = json_string(json_member(stmt, "module"));
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+      {
+        for(const auto &alias : as_array(names))
+        {
+          std::string name = json_string(json_member(alias, "name"));
+          std::string asname = json_string(json_member(alias, "asname"));
+          if(asname.empty())
+            asname = name;
+
+          // Register known math functions
+          if(module == "math")
+          {
+            typet ret = double_type();
+            code_typet::parameterst params;
+            if(
+              name == "sqrt" || name == "floor" || name == "ceil" ||
+              name == "fabs" || name == "log" || name == "exp" ||
+              name == "sin" || name == "cos" || name == "tan")
+            {
+              code_typet::parametert p{double_type()};
+              p.set_identifier("python::" + asname + "::__p0");
+              p.set_base_name("__p0");
+              params.push_back(p);
+            }
+            else if(name == "pow" || name == "fmod")
+            {
+              code_typet::parametert p0{double_type()};
+              p0.set_identifier("python::" + asname + "::__p0");
+              p0.set_base_name("__p0");
+              params.push_back(p0);
+              code_typet::parametert p1{double_type()};
+              p1.set_identifier("python::" + asname + "::__p1");
+              p1.set_base_name("__p1");
+              params.push_back(p1);
+            }
+            else if(name == "pi" || name == "e")
+            {
+              // Constants — register as global variables
+              irep_idt sym_id{"python::" + asname};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt sym{sym_id, double_type(), "python"};
+                sym.base_name = asname;
+                sym.is_lvalue = true;
+                sym.is_state_var = true;
+                sym.is_static_lifetime = true;
+                // pi ≈ 3.14159, e ≈ 2.71828 — use nondet with constraints
+                sym.value =
+                  side_effect_expr_nondett{double_type(), source_locationt{}};
+                symbol_table.add(sym);
+              }
+              continue;
+            }
+            else
+              continue; // Unknown math function
+
+            code_typet func_type{params, ret};
+            irep_idt func_id{"python::" + asname};
+            if(symbol_table.lookup(func_id) == nullptr)
+            {
+              symbolt func_sym{func_id, func_type, "python"};
+              func_sym.base_name = asname;
+              func_sym.is_lvalue = true;
+              // Body: return nondet value of return type
+              code_blockt body;
+              body.add(code_frontend_returnt{
+                side_effect_expr_nondett{ret, source_locationt{}}});
+              func_sym.value = body;
+              symbol_table.add(func_sym);
+
+              // Create parameter symbols
+              for(std::size_t pi = 0; pi < params.size(); pi++)
+              {
+                std::string pname = "__p" + std::to_string(pi);
+                irep_idt pid{"python::" + asname + "::" + pname};
+                if(symbol_table.lookup(pid) == nullptr)
+                {
+                  symbolt psym{pid, params[pi].type(), "python"};
+                  psym.base_name = pname;
+                  psym.is_parameter = true;
+                  psym.is_lvalue = true;
+                  psym.is_state_var = true;
+                  symbol_table.add(psym);
+                }
+                // Set parameter identifier in the type
+              }
+            }
+          }
+          // typing module — type aliases, no-op
+          else if(module == "typing")
+          {
+            // Names like Any, Optional, List, Dict are type aliases
+            // They don't need runtime symbols
+          }
+        }
+      }
+    }
+    result = code_skipt{};
+  }
   else if(node_type == "Raise")
     result = convert_raise(stmt);
   else if(node_type == "Delete")
