@@ -178,6 +178,10 @@ private:
 
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e) const;
+
+  /// Safe typecast: handles tagged unions, struct-to-scalar, and other
+  /// cases that would crash with a raw typecast_exprt.
+  exprt safe_typecast(const exprt &e, const typet &target) const;
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H
