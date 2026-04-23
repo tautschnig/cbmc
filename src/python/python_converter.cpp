@@ -2224,7 +2224,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   source_locationt loc = get_location(stmt);
 
-  // Check if RHS is a constructor call: x = ClassName(args)
+  // Check if RHS is a constructor call
   if(
     is_node_type(value, "Call") &&
     is_node_type(json_member(value, "func"), "Name"))
@@ -2233,52 +2233,114 @@ codet python_convertert::convert_assign(const jsont &stmt)
       json_string(json_member(json_member(value, "func"), "id"));
     if(class_types.count(call_name))
     {
-      // Constructor: declare var as struct, call __init__(&var, args)
-      const struct_typet &cls_type = class_types[call_name];
       const jsont &first_target = *as_array(targets).begin();
-      std::string var_name = json_string(json_member(first_target, "id"));
-      std::string qualified_name = qualify_name(var_name);
-      irep_idt symbol_id{qualified_name};
 
-      if(symbol_table.lookup(symbol_id) == nullptr)
+      // Attribute target: self.inner = ClassName(args)
+      if(is_node_type(first_target, "Attribute"))
       {
-        symbolt new_symbol{symbol_id, cls_type, "python"};
-        new_symbol.base_name = var_name;
-        new_symbol.location = loc;
-        new_symbol.is_lvalue = true;
-        new_symbol.is_state_var = true;
-        new_symbol.is_static_lifetime = current_function.empty();
-        symbol_table.add(new_symbol);
+        exprt obj = convert_expression(json_member(first_target, "value"));
+        std::string attr = json_string(json_member(first_target, "attr"));
+        exprt lhs_obj = obj;
+        if(obj.type().id() == ID_pointer)
+          lhs_obj = dereference_exprt{obj};
+
+        if(lhs_obj.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(lhs_obj.type());
+          if(st.has_component(attr))
+          {
+            member_exprt lhs{lhs_obj, attr, st.get_component(attr).type()};
+            std::string tmp_name = "__ctor_tmp_" + attr;
+            std::string tmp_qname = qualify_name(tmp_name);
+            irep_idt tmp_id{tmp_qname};
+            typet attr_type = st.get_component(attr).type();
+
+            if(symbol_table.lookup(tmp_id) == nullptr)
+            {
+              symbolt tmp_sym{tmp_id, attr_type, "python"};
+              tmp_sym.base_name = tmp_name;
+              tmp_sym.is_lvalue = true;
+              tmp_sym.is_state_var = true;
+              symbol_table.add(tmp_sym);
+            }
+
+            const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+            code_blockt result;
+
+            irep_idt init_id{"python::" + call_name + "::__init__"};
+            const symbolt *init_sym = symbol_table.lookup(init_id);
+            if(init_sym != nullptr)
+            {
+              exprt::operandst init_args;
+              init_args.push_back(address_of_exprt{tmp_sym.symbol_expr()});
+              const jsont &call_args = json_member(value, "args");
+              if(call_args.is_array())
+              {
+                for(const auto &a : as_array(call_args))
+                  init_args.push_back(convert_expression(a));
+              }
+              side_effect_expr_function_callt call{
+                init_sym->symbol_expr(),
+                std::move(init_args),
+                empty_typet{},
+                loc};
+              result.add(code_expressiont{call});
+            }
+
+            result.add(code_frontend_assignt{lhs, tmp_sym.symbol_expr()});
+            return std::move(result);
+          }
+        }
       }
 
-      const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);
-      code_blockt result;
-
-      // Call __init__(&var, args...)
-      irep_idt init_id{"python::" + call_name + "::__init__"};
-      const symbolt *init_sym = symbol_table.lookup(init_id);
-      if(init_sym != nullptr)
+      // Name target: x = ClassName(args)
+      if(is_node_type(first_target, "Name"))
       {
-        exprt::operandst arguments;
-        arguments.push_back(address_of_exprt{var_sym.symbol_expr()});
+        const struct_typet &cls_type = class_types[call_name];
+        std::string var_name = json_string(json_member(first_target, "id"));
+        std::string qualified_name = qualify_name(var_name);
+        irep_idt symbol_id{qualified_name};
 
-        const jsont &call_args = json_member(value, "args");
-        if(call_args.is_array())
+        if(symbol_table.lookup(symbol_id) == nullptr)
         {
-          for(const auto &arg : as_array(call_args))
-            arguments.push_back(convert_expression(arg));
+          symbolt new_symbol{symbol_id, cls_type, "python"};
+          new_symbol.base_name = var_name;
+          new_symbol.location = loc;
+          new_symbol.is_lvalue = true;
+          new_symbol.is_state_var = true;
+          new_symbol.is_static_lifetime = current_function.empty();
+          symbol_table.add(new_symbol);
         }
 
-        side_effect_expr_function_callt call{
-          init_sym->symbol_expr(), std::move(arguments), empty_typet{}, loc};
-        code_expressiont call_stmt{call};
-        call_stmt.add_source_location() = loc;
-        result.add(std::move(call_stmt));
-      }
+        const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);
+        code_blockt result;
 
-      if(result.statements().size() == 1)
-        return result.statements().front();
-      return std::move(result);
+        // Call __init__(&var, args...)
+        irep_idt init_id{"python::" + call_name + "::__init__"};
+        const symbolt *init_sym = symbol_table.lookup(init_id);
+        if(init_sym != nullptr)
+        {
+          exprt::operandst arguments;
+          arguments.push_back(address_of_exprt{var_sym.symbol_expr()});
+
+          const jsont &call_args = json_member(value, "args");
+          if(call_args.is_array())
+          {
+            for(const auto &arg : as_array(call_args))
+              arguments.push_back(convert_expression(arg));
+          }
+
+          side_effect_expr_function_callt call{
+            init_sym->symbol_expr(), std::move(arguments), empty_typet{}, loc};
+          code_expressiont call_stmt{call};
+          call_stmt.add_source_location() = loc;
+          result.add(std::move(call_stmt));
+        }
+
+        if(result.statements().size() == 1)
+          return result.statements().front();
+        return std::move(result);
+      }
     }
   }
 
@@ -2415,6 +2477,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
 
     std::string var_name = json_string(json_member(target, "id"));
+    if(var_name.empty())
+      continue; // Not a Name target — already handled above
     std::string qualified_name = qualify_name(var_name);
     irep_idt symbol_id{qualified_name};
 
@@ -3164,7 +3228,18 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           rhs_name = json_string(json_member(rhs, "id"));
 
         typet attr_type = python_int_type(); // default
-        if(!rhs_name.empty())
+
+        // Check if RHS is a constructor call: self.inner = Inner(v)
+        if(
+          is_node_type(rhs, "Call") &&
+          is_node_type(json_member(rhs, "func"), "Name"))
+        {
+          std::string ctor_name =
+            json_string(json_member(json_member(rhs, "func"), "id"));
+          if(class_types.count(ctor_name))
+            attr_type = class_types[ctor_name];
+        }
+        else if(!rhs_name.empty())
         {
           // Find the parameter annotation
           const jsont &init_args = json_member(*init_method, "args");
