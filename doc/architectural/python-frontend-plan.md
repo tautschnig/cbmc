@@ -287,7 +287,7 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (6 tests)
+### KNOWNBUG inventory (4 tests)
 
 | Test | Category | Fix plan |
 |------|----------|----------|
@@ -295,8 +295,6 @@ following JBMC's `remove_exceptions.cpp` pattern.
 | `int-overflow` | Architecture | **`integer_typet` support.** Replace `signedbv_typet{64}` with `integer_typet` (mathematical integers). Requires `--z3` flag since SAT solvers can't handle unbounded integers. Need to handle: (a) `from_integer` calls, (b) comparison with 0, (c) bitwise ops (reject or convert to bitvector). Add `--python-int-width` option: `64` (default, fast) vs `unbounded` (correct, requires SMT). Estimated effort: 3-5 days. |
 | `int-large-factorial` | Architecture | Same fix as `int-overflow` — both resolved by `integer_typet`. |
 | `try-except-catch` | Feature | **Exception propagation (Stage B).** Follow JBMC's `remove_exceptions.cpp` pattern: (a) Add a global `__CPROVER_python_exception` variable (pointer to exception struct). (b) After each `raise`, set the exception variable and jump to the nearest handler. (c) `try` blocks register handlers as GOTO targets. (d) `except ExcType` checks the exception type tag. (e) `finally` blocks always execute. Estimated effort: 1-2 weeks. |
-| `function-untyped-param` | Design | **Two options:** (a) *Strict mode*: emit an error requiring type annotations on `--function` entry points. Honest and simple. (b) *Any mode*: use tagged unions (depends on Phase 9) to represent untyped parameters. Recommended: implement option (a) first, option (b) after Phase 9. Estimated effort: 1 day for (a). |
-| `isinstance-check` | Feature | **Type tag on class instances.** Add a `__type_tag` string field to every class struct. Set it in `__init__` to the class name. `isinstance(obj, Cls)` checks if `obj.__type_tag == "Cls"` or matches any base class. For inheritance, store the full MRO chain. Estimated effort: 2-3 days. |
 
 ### Previous items (DONE)
 
@@ -367,3 +365,4 @@ rate was inflated by silently dropping these calls (unsound).
 | 2026-04-22 | 87fbae2419 | Keyword args, defaults, string ordering, global statement (64 CORE) |
 | 2026-04-22 | 9dbd66c2d5 | Lambda first-class, return class instance (66 CORE, 5 KNOWNBUG) |
 | 2026-04-22 | (pending) | isinstance KNOWNBUG, ESBMC re-validation, detailed KNOWNBUG plans |
+| 2026-04-23 | b2285ee019 | Unannotated param warnings, isinstance with inheritance (68 CORE, 4 KNOWNBUG) |
