@@ -14,7 +14,7 @@
 | 6 | Collections | **Complete** (list, tuple, dict) |
 | 7 | Classes and objects | **Complete** (pointer-based model) |
 | 8 | Exception handling | **Complete** (raise, try/except, uncaught detection) |
-| 9 | Advanced features | Not started |
+| 9 | Advanced features | **Partial** (Tiers 1-3 of tagged unions done) |
 
 ### Cross-cutting features
 
