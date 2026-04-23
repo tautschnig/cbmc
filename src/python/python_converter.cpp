@@ -222,6 +222,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
     return convert_attribute(expr);
   else if(node_type == "Dict")
     return convert_dict(expr);
+  else if(node_type == "Set")
+    return convert_list(expr); // Model sets as lists
   else if(node_type == "ListComp")
     return convert_list_comp(expr);
   else if(node_type == "Lambda")
@@ -621,6 +623,36 @@ exprt python_convertert::convert_compare(const jsont &expr)
       cmp = binary_relation_exprt{current_left, ID_gt, right};
     else if(op == "GtE")
       cmp = binary_relation_exprt{current_left, ID_ge, right};
+    else if(op == "In" || op == "NotIn")
+    {
+      // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
+      if(is_python_list_type(right.type()))
+      {
+        const auto &list_st = to_struct_type(right.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt data{right, "data", data_type};
+        member_exprt length{right, "length", signedbv_typet{64}};
+
+        // Build disjunction for up to PYTHON_MAX_LIST_LENGTH elements
+        // guarded by index < length
+        exprt in_expr = false_exprt{};
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt elem = index_exprt{data, idx};
+          exprt match = equal_exprt{current_left, elem};
+          exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+          in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
+        }
+        cmp = (op == "In") ? in_expr : not_exprt{in_expr};
+      }
+      else
+      {
+        log.warning() << "'in' operator only supported for lists"
+                      << messaget::eom;
+        cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+      }
+    }
     else
     {
       log.error() << "Unsupported comparison operator: " << op << messaget::eom;
@@ -762,6 +794,85 @@ exprt python_convertert::convert_call(const jsont &expr)
   else if(func_name == "print")
   {
     return from_integer(0, python_int_type());
+  }
+  // all(genexp) / any(genexp) — unroll for literal iterables
+  else if(func_name == "all" || func_name == "any")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      const jsont &arg = *as_array(args).begin();
+      if(is_node_type(arg, "GeneratorExp"))
+      {
+        const jsont &elt = json_member(arg, "elt");
+        const jsont &generators = json_member(arg, "generators");
+        if(generators.is_array() && !as_array(generators).empty())
+        {
+          const jsont &gen = *as_array(generators).begin();
+          const jsont &gen_iter = json_member(gen, "iter");
+          const jsont &gen_target = json_member(gen, "target");
+          std::string iter_var = json_string(json_member(gen_target, "id"));
+
+          if(is_node_type(gen_iter, "List") || is_node_type(gen_iter, "Name"))
+          {
+            // Get the iterable elements
+            exprt iterable = convert_expression(gen_iter);
+            const jsont *elts_json = nullptr;
+            if(is_node_type(gen_iter, "List"))
+              elts_json = &json_member(gen_iter, "elts");
+
+            if(elts_json != nullptr && elts_json->is_array())
+            {
+              // Literal list: unroll
+              std::string qname = qualify_name(iter_var);
+              irep_idt iter_sym_id{qname};
+              if(symbol_table.lookup(iter_sym_id) == nullptr)
+              {
+                symbolt sym{iter_sym_id, python_int_type(), "python"};
+                sym.base_name = iter_var;
+                sym.is_lvalue = true;
+                sym.is_state_var = true;
+                symbol_table.add(sym);
+              }
+
+              exprt result = (func_name == "all") ? exprt{true_exprt{}}
+                                                  : exprt{false_exprt{}};
+
+              for(const auto &val_json : as_array(*elts_json))
+              {
+                exprt val = convert_expression(val_json);
+                exprt elt_expr = convert_expression(elt);
+                // Substitute iter_var with concrete value
+                std::function<void(exprt &)> subst = [&](exprt &e)
+                {
+                  if(
+                    e.id() == ID_symbol &&
+                    to_symbol_expr(e).get_identifier() == iter_sym_id)
+                    e = val;
+                  else
+                    for(auto &op : e.operands())
+                      subst(op);
+                };
+                subst(elt_expr);
+
+                if(elt_expr.type() != bool_typet{})
+                  elt_expr = typecast_exprt{elt_expr, bool_typet{}};
+
+                if(func_name == "all")
+                  result = and_exprt{result, elt_expr};
+                else
+                  result = or_exprt{result, elt_expr};
+              }
+              return result;
+            }
+          }
+        }
+      }
+      // Non-generator argument: all([True, False]) etc.
+      exprt arg_expr = convert_expression(arg);
+      if(!arg_expr.is_nil())
+        return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+    }
+    return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }
   // isinstance(obj, Class) — static type check
   else if(func_name == "isinstance")
@@ -1023,6 +1134,44 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
       }
     }
+  }
+
+  // List/string slicing: lst[1:4] → new list with elements [1..4)
+  const jsont &slice_json = json_member(expr, "slice");
+  if(is_node_type(slice_json, "Slice") && is_python_list_type(value.type()))
+  {
+    const jsont &lower_json = json_member(slice_json, "lower");
+    const jsont &upper_json = json_member(slice_json, "upper");
+
+    exprt lower = lower_json.is_null() ? from_integer(0, signedbv_typet{64})
+                                       : convert_expression(lower_json);
+    exprt upper = upper_json.is_null()
+                    ? member_exprt{value, "length", signedbv_typet{64}}
+                    : convert_expression(upper_json);
+
+    // For constant bounds, build the result list directly
+    const auto &list_st = to_struct_type(value.type());
+    const auto &data_type = to_array_type(list_st.components()[1].type());
+    typet elem_type = data_type.element_type();
+    member_exprt src_data{value, "data", data_type};
+
+    struct_typet result_type = python_list_type(elem_type);
+    array_typet result_data_type{
+      elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+
+    // new_length = upper - lower
+    exprt new_length = minus_exprt{upper, lower};
+
+    // Build data: result[i] = src[lower + i]
+    exprt::operandst result_elems;
+    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      result_elems.push_back(index_exprt{src_data, plus_exprt{lower, idx}});
+    }
+
+    array_exprt result_data{std::move(result_elems), result_data_type};
+    return struct_exprt{{new_length, result_data}, result_type};
   }
 
   exprt slice = convert_expression(json_member(expr, "slice"));
@@ -1459,6 +1608,59 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_pass();
   else if(node_type == "Raise")
     result = convert_raise(stmt);
+  else if(node_type == "Delete")
+  {
+    // del lst[i]: shift elements left, decrement length
+    const jsont &targets = json_member(stmt, "targets");
+    if(targets.is_array())
+    {
+      code_blockt del_block;
+      source_locationt loc = get_location(stmt);
+      for(const auto &target : as_array(targets))
+      {
+        if(is_node_type(target, "Subscript"))
+        {
+          exprt obj = convert_expression(json_member(target, "value"));
+          if(!obj.is_nil() && is_python_list_type(obj.type()))
+          {
+            exprt idx = convert_expression(json_member(target, "slice"));
+            const auto &list_st = to_struct_type(obj.type());
+            const auto &data_type =
+              to_array_type(list_st.components()[1].type());
+            member_exprt data{obj, "data", data_type};
+            member_exprt length{obj, "length", signedbv_typet{64}};
+
+            // Shift elements: for j in [i, length-2]: data[j] = data[j+1]
+            // For simplicity, generate unrolled shifts up to MAX_LIST_LENGTH
+            for(std::size_t j = 0; j < PYTHON_MAX_LIST_LENGTH - 1; j++)
+            {
+              exprt jexpr = from_integer(j, signedbv_typet{64});
+              // Guard: j >= idx and j < length - 1
+              exprt guard = and_exprt{
+                binary_relation_exprt{jexpr, ID_ge, idx},
+                binary_relation_exprt{
+                  jexpr,
+                  ID_lt,
+                  minus_exprt{length, from_integer(1, signedbv_typet{64})}}};
+              exprt src = index_exprt{
+                data, plus_exprt{jexpr, from_integer(1, signedbv_typet{64})}};
+              index_exprt dst{data, jexpr};
+              code_ifthenelset shift{guard, code_frontend_assignt{dst, src}};
+              del_block.add(std::move(shift));
+            }
+
+            // length -= 1
+            del_block.add(code_frontend_assignt{
+              length,
+              minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          }
+        }
+      }
+      result = std::move(del_block);
+    }
+    else
+      result = code_skipt{};
+  }
   else if(node_type == "With")
     result = convert_with(stmt);
   else if(node_type == "Try" || node_type == "TryStar")
@@ -1670,6 +1872,28 @@ codet python_convertert::convert_assign(const jsont &stmt)
           }
           idx++;
         }
+        continue;
+      }
+    }
+
+    // Handle subscript assignment: lst[i] = value
+    if(is_node_type(target, "Subscript"))
+    {
+      exprt obj = convert_expression(json_member(target, "value"));
+      if(!obj.is_nil() && is_python_list_type(obj.type()))
+      {
+        const jsont &slice_node = json_member(target, "slice");
+        exprt idx = convert_expression(slice_node);
+        const auto &list_st = to_struct_type(obj.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt data{obj, "data", data_type};
+        index_exprt lhs{data, idx};
+        exprt typed_rhs = rhs;
+        if(typed_rhs.type() != data_type.element_type())
+          typed_rhs = typecast_exprt{typed_rhs, data_type.element_type()};
+        code_frontend_assignt assign{lhs, typed_rhs};
+        assign.add_source_location() = loc;
+        block.add(std::move(assign));
         continue;
       }
     }
@@ -2871,7 +3095,8 @@ bool python_convertert::convert()
                 else if(
                   is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
                   is_node_type(val, "Call") || is_node_type(val, "ListComp") ||
-                  is_node_type(val, "Lambda"))
+                  is_node_type(val, "Lambda") || is_node_type(val, "Set") ||
+                  is_node_type(val, "Subscript"))
                 {
                   // Complex RHS — skip pre-registration, let pass 2 handle it
                   continue;
