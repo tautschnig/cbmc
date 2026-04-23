@@ -193,6 +193,31 @@ exprt python_convertert::safe_zero(const typet &type) const
       ieee_floatt::rounding_modet::ROUND_TO_EVEN};
     return zero.to_expr();
   }
+  // For string/list structs, build a zero-length struct with zeroed data
+  if(type.id() == ID_struct)
+  {
+    const auto &st = to_struct_type(type);
+    exprt::operandst fields;
+    for(const auto &comp : st.components())
+    {
+      if(comp.type().id() == ID_array)
+      {
+        // Zero-fill the array
+        const auto &arr_type = to_array_type(comp.type());
+        exprt::operandst elems;
+        mp_integer size;
+        if(!to_integer(to_constant_expr(arr_type.size()), size))
+        {
+          for(mp_integer i = 0; i < size; ++i)
+            elems.push_back(safe_zero(arr_type.element_type()));
+        }
+        fields.push_back(array_exprt{std::move(elems), arr_type});
+      }
+      else
+        fields.push_back(safe_zero(comp.type()));
+    }
+    return struct_exprt{std::move(fields), st};
+  }
   return side_effect_expr_nondett{type, source_locationt{}};
 }
 
@@ -791,6 +816,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt elem = index_exprt{data, idx};
+          // Ensure types match for equality comparison
+          if(current_left.type() != elem.type())
+            elem = safe_typecast(elem, current_left.type());
           exprt match = equal_exprt{current_left, elem};
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
           in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
@@ -1073,8 +1101,32 @@ exprt python_convertert::convert_call(const jsont &expr)
           }
         }
       }
-      // Non-generator argument: all([True, False]) etc.
+      // Non-generator argument: all([x, y]) / any([x, y])
       exprt arg_expr = convert_expression(arg);
+      if(!arg_expr.is_nil() && is_python_list_type(arg_expr.type()))
+      {
+        // Iterate over list elements
+        const auto &list_st = to_struct_type(arg_expr.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt data{arg_expr, "data", data_type};
+        member_exprt length{arg_expr, "length", signedbv_typet{64}};
+
+        exprt result =
+          (func_name == "all") ? exprt{true_exprt{}} : exprt{false_exprt{}};
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+          exprt elem = index_exprt{data, idx};
+          exprt truthy = safe_typecast(elem, bool_typet{});
+
+          if(func_name == "all")
+            result = and_exprt{result, or_exprt{not_exprt{in_range}, truthy}};
+          else
+            result = or_exprt{result, and_exprt{in_range, truthy}};
+        }
+        return result;
+      }
       if(!arg_expr.is_nil())
         return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     }
@@ -1545,7 +1597,7 @@ exprt python_convertert::convert_list(const jsont &expr)
     data_elems.push_back(e);
   }
   while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
-    data_elems.push_back(from_integer(0, elem_type));
+    data_elems.push_back(safe_zero(elem_type));
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =
@@ -1727,7 +1779,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     data_elems.push_back(e);
   }
   while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
-    data_elems.push_back(from_integer(0, elem_type));
+    data_elems.push_back(safe_zero(elem_type));
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =
