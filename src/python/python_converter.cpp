@@ -177,6 +177,25 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
   return side_effect_expr_nondett{target, source_locationt{}};
 }
 
+exprt python_convertert::safe_zero(const typet &type) const
+{
+  if(
+    type.id() == ID_signedbv || type.id() == ID_unsignedbv ||
+    type.id() == ID_integer || type.id() == ID_natural ||
+    type.id() == ID_c_bool)
+    return from_integer(0, type);
+  if(type.id() == ID_bool)
+    return false_exprt{};
+  if(type.id() == ID_floatbv)
+  {
+    ieee_floatt zero{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    return zero.to_expr();
+  }
+  return side_effect_expr_nondett{type, source_locationt{}};
+}
+
 source_locationt python_convertert::get_location(const jsont &node) const
 {
   source_locationt loc;
@@ -526,7 +545,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   else if(op == "FloorDiv")
   {
     add_check(
-      notequal_exprt{right, from_integer(0, right.type())},
+      notequal_exprt{right, safe_zero(right.type())},
       "division-by-zero",
       "division by zero",
       get_location(expr));
@@ -535,7 +554,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   else if(op == "Mod")
   {
     add_check(
-      notequal_exprt{right, from_integer(0, right.type())},
+      notequal_exprt{right, safe_zero(right.type())},
       "division-by-zero",
       "division by zero in modulo",
       get_location(expr));
@@ -824,8 +843,51 @@ exprt python_convertert::convert_call(const jsont &expr)
     func_name = json_string(json_member(func, "id"));
   else if(is_node_type(func, "Attribute"))
   {
-    // Method call: obj.method(args)
     std::string method_name = json_string(json_member(func, "attr"));
+
+    // Check if this is a module function call: math.sqrt(x)
+    const jsont &obj_node = json_member(func, "value");
+    if(is_node_type(obj_node, "Name"))
+    {
+      std::string obj_name = json_string(json_member(obj_node, "id"));
+      if(imported_modules.count(obj_name))
+      {
+        // Resolve module.func to the function symbol
+        // Try python::func_name first (registered by ImportFrom)
+        irep_idt func_id{"python::" + method_name};
+        const symbolt *sym = symbol_table.lookup(func_id);
+        if(sym != nullptr && sym->type.id() == ID_code)
+        {
+          const code_typet &ft = to_code_type(sym->type);
+          exprt::operandst arguments;
+          if(args.is_array())
+          {
+            for(const auto &arg : as_array(args))
+              arguments.push_back(convert_expression(arg));
+          }
+          for(std::size_t i = 0;
+              i < arguments.size() && i < ft.parameters().size();
+              i++)
+          {
+            if(arguments[i].type() != ft.parameters()[i].type())
+              arguments[i] =
+                safe_typecast(arguments[i], ft.parameters()[i].type());
+          }
+          side_effect_expr_function_callt call{
+            sym->symbol_expr(),
+            std::move(arguments),
+            ft.return_type(),
+            get_location(expr)};
+          return std::move(call);
+        }
+        // Not registered — return nondet float for math functions
+        if(obj_name == "math")
+          return side_effect_expr_nondett{double_type(), get_location(expr)};
+        return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      }
+    }
+
+    // Method call: obj.method(args)
     exprt obj = convert_expression(json_member(func, "value"));
     if(obj.is_nil())
       return nil_exprt{};
@@ -1073,7 +1135,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       {
         // abs(x) = x >= 0 ? x : -x
         return if_exprt{
-          binary_relation_exprt{arg, ID_ge, from_integer(0, arg.type())},
+          binary_relation_exprt{arg, ID_ge, safe_zero(arg.type())},
           arg,
           unary_minus_exprt{arg}};
       }
@@ -1091,6 +1153,16 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt b = convert_expression(*it);
       if(!a.is_nil() && !b.is_nil())
       {
+        // Promote to same type (e.g., min(3, 2.5) → float)
+        if(a.type() != b.type())
+        {
+          if(a.type().id() == ID_floatbv)
+            b = safe_typecast(b, a.type());
+          else if(b.type().id() == ID_floatbv)
+            a = safe_typecast(a, b.type());
+          else
+            b = safe_typecast(b, a.type());
+        }
         irep_idt op = (func_name == "min") ? ID_lt : ID_gt;
         return if_exprt{binary_relation_exprt{a, op, b}, a, b};
       }
@@ -1343,7 +1415,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     member_exprt length{value, "length", python_int_type()};
     add_check(
       and_exprt{
-        binary_relation_exprt{slice, ID_ge, from_integer(0, slice.type())},
+        binary_relation_exprt{slice, ID_ge, safe_zero(slice.type())},
         binary_relation_exprt{slice, ID_lt, length}},
       "index-out-of-bounds",
       "string index out of range",
@@ -1373,7 +1445,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     member_exprt length{value, "length", python_int_type()};
     add_check(
       and_exprt{
-        binary_relation_exprt{slice, ID_ge, from_integer(0, slice.type())},
+        binary_relation_exprt{slice, ID_ge, safe_zero(slice.type())},
         binary_relation_exprt{slice, ID_lt, length}},
       "index-out-of-bounds",
       "list index out of range",
@@ -1769,6 +1841,24 @@ codet python_convertert::convert_statement(const jsont &stmt)
     // Handle imports by registering known standard library functions.
     // Unknown imports are silently ignored (functions will get no-body
     // warnings when called).
+    // Handle 'import MODULE' — register module name for MODULE.func() calls
+    if(node_type == "Import")
+    {
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+      {
+        for(const auto &alias : as_array(names))
+        {
+          std::string name = json_string(json_member(alias, "name"));
+          std::string asname = json_string(json_member(alias, "asname"));
+          if(asname.empty())
+            asname = name;
+          imported_modules.insert(asname);
+        }
+      }
+    }
+
+    // Handle 'from MODULE import NAME'
     if(node_type == "ImportFrom")
     {
       std::string module = json_string(json_member(stmt, "module"));
@@ -2901,6 +2991,25 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       {
         init_method = &item;
         break;
+      }
+    }
+  }
+
+  // Scan class body for class-level attributes (AnnAssign outside methods)
+  if(body.is_array())
+  {
+    for(const auto &item : as_array(body))
+    {
+      if(is_node_type(item, "AnnAssign"))
+      {
+        const jsont &target = json_member(item, "target");
+        if(is_node_type(target, "Name"))
+        {
+          std::string attr_name = json_string(json_member(target, "id"));
+          typet attr_type =
+            convert_type_annotation(json_member(item, "annotation"));
+          components.push_back(struct_typet::componentt{attr_name, attr_type});
+        }
       }
     }
   }
