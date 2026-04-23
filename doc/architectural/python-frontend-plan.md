@@ -11,7 +11,7 @@
 | 5 | Strings | **Complete** (concat tracks length, not content) |
 | 6 | Collections | **Complete** (list, tuple, dict) |
 | 7 | Classes and objects | **Complete** (pointer-based model) |
-| 8 | Exception handling | **Partial** (raise-as-failure, try Stage A) |
+| 8 | Exception handling | **Complete** (raise, try/except, uncaught detection) |
 | 9 | Advanced features | Not started |
 
 ### Cross-cutting features
@@ -287,14 +287,11 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (4 tests)
+### KNOWNBUG inventory (1 test)
 
 | Test | Category | Fix plan |
 |------|----------|----------|
 | `type-change` | Architecture | **Tagged unions (Phase 9).** Each Python value becomes `struct { type_tag, union { int_val, float_val, str_val, list_val, ... } }`. Every operation dispatches on the tag. This is a fundamental redesign of the value representation. Estimated effort: 2-3 weeks. Prerequisite for full Python semantics. |
-| `int-overflow` | Architecture | **`integer_typet` support.** Replace `signedbv_typet{64}` with `integer_typet` (mathematical integers). Requires `--z3` flag since SAT solvers can't handle unbounded integers. Need to handle: (a) `from_integer` calls, (b) comparison with 0, (c) bitwise ops (reject or convert to bitvector). Add `--python-int-width` option: `64` (default, fast) vs `unbounded` (correct, requires SMT). Estimated effort: 3-5 days. |
-| `int-large-factorial` | Architecture | Same fix as `int-overflow` — both resolved by `integer_typet`. |
-| `try-except-catch` | Feature | **Exception propagation (Stage B).** Follow JBMC's `remove_exceptions.cpp` pattern: (a) Add a global `__CPROVER_python_exception` variable (pointer to exception struct). (b) After each `raise`, set the exception variable and jump to the nearest handler. (c) `try` blocks register handlers as GOTO targets. (d) `except ExcType` checks the exception type tag. (e) `finally` blocks always execute. Estimated effort: 1-2 weeks. |
 
 ### Previous items (DONE)
 
@@ -366,3 +363,5 @@ rate was inflated by silently dropping these calls (unsound).
 | 2026-04-22 | 9dbd66c2d5 | Lambda first-class, return class instance (66 CORE, 5 KNOWNBUG) |
 | 2026-04-22 | (pending) | isinstance KNOWNBUG, ESBMC re-validation, detailed KNOWNBUG plans |
 | 2026-04-23 | b2285ee019 | Unannotated param warnings, isinstance with inheritance (68 CORE, 4 KNOWNBUG) |
+| 2026-04-23 | 48bedcc240 | --python-unbounded-ints for correct integer semantics (70 CORE, 2 KNOWNBUG) |
+| 2026-04-23 | 72539813a2 | Exception propagation Stage B — try/except catches raise (71 CORE, 1 KNOWNBUG) |
