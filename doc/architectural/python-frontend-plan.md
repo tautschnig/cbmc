@@ -298,13 +298,25 @@ architecture-level change remains.
 
 #### `type-change` — Variable changes type during execution
 
-**Test:** `x = 5; assert x == 5; x = "hello"; assert len(x) == 5`
+**Tiered approach:**
 
-**Why it fails:** Variables have a fixed CBMC type determined at first
-assignment. Reassigning `x = "hello"` (string) to a variable typed as
-`int` produces a typecast that silently drops the string value.
+**Tier 1 (DONE):** Fresh variable renaming for straight-line type changes.
+When `x = 5; x = "hello"` is encountered, the second assignment creates
+`python::x__v1` with type `str`. Subsequent references to `x` resolve to
+the latest version. No overhead for the solver.
 
-**Fix:** Implement tagged-union value representation (Phase 9).
+**Tier 2:** Merge-point ambiguity. When `if/else` branches assign
+different types to the same variable, the merge point has an ambiguous
+type. Options: (a) emit an error, (b) use a tagged union at the merge.
+Remaining KNOWNBUG: `type-change-conditional`.
+
+**Tier 3:** Tagged unions for genuinely unknown types. Needed for:
+- `--function` with unannotated parameters (Case A)
+- Functions with no return annotation (Case B)
+- Heterogeneous lists (Case C)
+
+Remaining KNOWNBUG: `type-untyped-function`, `type-unknown-return`,
+`type-heterogeneous-list`.
 
 **Implementation steps:**
 
@@ -382,7 +394,7 @@ Items 1-6 have been implemented. Only item 7 remains:
 | 4 | `slice-expression` | **DONE** |
 | 5 | `del-statement` | **DONE** |
 | 6 | `import-value` | **DONE** (math module models) |
-| 7 | `type-change` | 2-3 weeks — tagged unions (Phase 9) |
+| 7 | `type-change` | Tier 1 DONE; Tiers 2-3 need tagged unions |
 
 ### Previous items (DONE)
 
