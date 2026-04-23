@@ -48,6 +48,9 @@ private:
   /// Map from class name to its struct type
   std::map<std::string, struct_typet> class_types;
 
+  /// Map from class name to its base class names (for isinstance)
+  std::map<std::string, std::vector<std::string>> class_bases;
+
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
 
