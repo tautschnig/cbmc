@@ -209,6 +209,25 @@ bool python_languaget::generate_support_functions(
   symbolt start_symbol{start_id, start_type, "python"};
   start_symbol.base_name = start_name;
   start_symbol.is_lvalue = true;
+
+  // Add uncaught exception check at the end
+  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+  if(exc_sym != nullptr)
+  {
+    // Initialize exception flag to false at start
+    code_frontend_assignt init_exc{exc_sym->symbol_expr(), false_exprt{}};
+    start_body.statements().insert(
+      start_body.statements().begin(), std::move(init_exc));
+
+    // Check for uncaught exceptions at end
+    source_locationt exc_loc;
+    exc_loc.set_property_class("exception");
+    exc_loc.set_comment("uncaught exception");
+    code_assertt exc_check{not_exprt{exc_sym->symbol_expr()}};
+    exc_check.add_source_location() = exc_loc;
+    start_body.add(std::move(exc_check));
+  }
+
   start_symbol.value = start_body;
 
   symbol_table.add(start_symbol);

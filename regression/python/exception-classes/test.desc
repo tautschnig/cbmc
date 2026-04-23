@@ -3,7 +3,7 @@ main.py
 --function check
 ^EXIT=10$
 ^SIGNAL=0$
-^\[exception\.1\].*raise NotFoundError: FAILURE$
+^\[exception\.1\].*uncaught exception: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

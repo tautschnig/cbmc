@@ -2544,20 +2544,50 @@ codet python_convertert::convert_raise(const jsont &stmt)
       exc_type = json_string(json_member(exc, "id"));
   }
 
-  loc.set_property_class("exception");
-  loc.set_comment("raise " + exc_type);
-
-  // Model raise as assert(false) — any raise is a verification failure
-  code_assertt assertion{false_exprt{}};
-  assertion.add_source_location() = loc;
-
-  // Follow with assume(false) so paths after raise are unreachable
-  code_assumet assume{false_exprt{}};
-  assume.add_source_location() = loc;
-
   code_blockt block;
-  block.add(std::move(assertion));
-  block.add(std::move(assume));
+
+  // Set the exception flag
+  irep_idt exc_id{"python::__exception_active"};
+  const symbolt *exc_sym = symbol_table.lookup(exc_id);
+  if(exc_sym != nullptr)
+  {
+    code_frontend_assignt set_flag{exc_sym->symbol_expr(), true_exprt{}};
+    set_flag.add_source_location() = loc;
+    block.add(std::move(set_flag));
+  }
+
+  // Add a failing assertion for uncaught exceptions only at top level
+  if(current_function.empty())
+  {
+    loc.set_property_class("exception");
+    loc.set_comment("raise " + exc_type);
+    code_assertt assertion{false_exprt{}};
+    assertion.add_source_location() = loc;
+    block.add(std::move(assertion));
+
+    code_assumet assume{false_exprt{}};
+    assume.add_source_location() = loc;
+    block.add(std::move(assume));
+  }
+  else
+  {
+    // Inside a function: return a default value (exception propagates)
+    // The caller's try/except will check __exception_active.
+    // Check if the function returns void
+    irep_idt func_id{"python::" + current_function};
+    const symbolt *func_sym = symbol_table.lookup(func_id);
+    if(
+      func_sym != nullptr &&
+      to_code_type(func_sym->type).return_type().id() == ID_empty)
+    {
+      block.add(code_frontend_returnt{});
+    }
+    else
+    {
+      block.add(code_frontend_returnt{from_integer(0, python_int_type())});
+    }
+  }
+
   return std::move(block);
 }
 
@@ -2660,10 +2690,13 @@ codet python_convertert::convert_with(const jsont &stmt)
 
 codet python_convertert::convert_try(const jsont &stmt)
 {
-  // Stage A: execute the try body, skip except/finally handlers.
-  // This is correct when the try body does not raise.
   code_blockt block;
+  source_locationt loc = get_location(stmt);
 
+  irep_idt exc_id{"python::__exception_active"};
+  const symbolt *exc_sym = symbol_table.lookup(exc_id);
+
+  // Execute the try body
   const jsont &body = json_member(stmt, "body");
   if(body.is_array())
   {
@@ -2671,15 +2704,60 @@ codet python_convertert::convert_try(const jsont &stmt)
       block.add(convert_statement(s));
   }
 
-  // Also execute the 'else' block (runs when no exception was raised)
-  const jsont &orelse = json_member(stmt, "orelse");
-  if(orelse.is_array())
+  // Check for except handlers
+  const jsont &handlers = json_member(stmt, "handlers");
+  if(handlers.is_array() && !as_array(handlers).empty() && exc_sym != nullptr)
   {
-    for(const auto &s : as_array(orelse))
-      block.add(convert_statement(s));
+    // Build the except body
+    code_blockt except_block;
+
+    // Clear the exception flag
+    code_frontend_assignt clear_flag{exc_sym->symbol_expr(), false_exprt{}};
+    clear_flag.add_source_location() = loc;
+    except_block.add(std::move(clear_flag));
+
+    // Execute the first handler's body (simplified: ignore exception type)
+    const jsont &handler = *as_array(handlers).begin();
+    const jsont &handler_body = json_member(handler, "body");
+    if(handler_body.is_array())
+    {
+      for(const auto &s : as_array(handler_body))
+        except_block.add(convert_statement(s));
+    }
+
+    // Build the else body (runs when no exception)
+    code_blockt else_block;
+    const jsont &orelse = json_member(stmt, "orelse");
+    if(orelse.is_array())
+    {
+      for(const auto &s : as_array(orelse))
+        else_block.add(convert_statement(s));
+    }
+
+    // if(__exception_active) { clear; except_body } else { else_body }
+    code_ifthenelset if_exc{
+      exc_sym->symbol_expr(), std::move(except_block), std::move(else_block)};
+    if_exc.add_source_location() = loc;
+    block.add(std::move(if_exc));
+  }
+  else
+  {
+    // No handlers — just execute the else block
+    const jsont &orelse = json_member(stmt, "orelse");
+    if(orelse.is_array())
+    {
+      for(const auto &s : as_array(orelse))
+        block.add(convert_statement(s));
+    }
   }
 
-  // TODO: Stage B — model except handlers and finally block
+  // Execute finally block (always runs)
+  const jsont &finalbody = json_member(stmt, "finalbody");
+  if(finalbody.is_array())
+  {
+    for(const auto &s : as_array(finalbody))
+      block.add(convert_statement(s));
+  }
 
   return std::move(block);
 }
@@ -2709,6 +2787,20 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
 bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
+
+  // Create __python_exception_active flag early (needed during function
+  // body conversion for raise statements)
+  irep_idt exc_flag_id{"python::__exception_active"};
+  if(symbol_table.lookup(exc_flag_id) == nullptr)
+  {
+    symbolt exc_symbol{exc_flag_id, bool_typet{}, "python"};
+    exc_symbol.base_name = "__exception_active";
+    exc_symbol.is_static_lifetime = true;
+    exc_symbol.is_state_var = true;
+    exc_symbol.is_lvalue = true;
+    exc_symbol.value = false_exprt{};
+    symbol_table.add(exc_symbol);
+  }
 
   // Pass 0: register top-level annotated variable names as global symbols
   // (so functions can reference them during pass 1).
