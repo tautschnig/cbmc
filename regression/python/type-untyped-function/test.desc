@@ -1,0 +1,8 @@
+KNOWNBUG
+main.py
+--function process
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+parameter.*has no type annotation
