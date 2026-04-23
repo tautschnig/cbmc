@@ -384,17 +384,148 @@ specific types for annotated variables (the current behavior).
 
 ### Summary
 
-Items 1-6 have been implemented. Only item 7 remains:
+Items 1-7 all implemented. 86 CORE tests, 0 KNOWNBUG.
 
-| # | Test | Status |
-|---|------|--------|
-| 1 | `list-subscript-assign` | **DONE** |
-| 2 | `generator-expression` | **DONE** (literal iterables) |
-| 3 | `set-literal` | **DONE** |
-| 4 | `slice-expression` | **DONE** |
-| 5 | `del-statement` | **DONE** |
-| 6 | `import-value` | **DONE** (math module models) |
-| 7 | `type-change` | Tier 1 DONE; Tiers 2-3 need tagged unions |
+## 7. ESBMC Gap Analysis and Roadmap
+
+ESBMC benchmark: 938 pass, 533 errors, 12 timeouts out of 2,089 tests.
+This section details the 533 errors and the plan to address them.
+
+### Error breakdown
+
+| Category | Count | Root cause |
+|----------|-------|-----------|
+| Crash: `false` (Precondition) | 127 | Various type mismatches in CBMC internals |
+| Crash: `lhs().type() == rhs().type()` | 89 | Type mismatch in equality/assignment |
+| Crash: `function must return value` | 38 | Void function returning a value |
+| Crash: `assignments must be type consistent` | 31 | Assigning wrong type to variable |
+| Crash: `boolean required` | 7 | Non-boolean in boolean context |
+| Crash: other invariants | 8 | Miscellaneous |
+| Comparison: `is`/`is not` | 9 | Identity comparison not implemented |
+| Expression: `Slice` | 1 | Slice on non-list type |
+| Annotation: unknown types | 22 | Unrecognized type annotations |
+| Method: `dict.items()` | 6 | Dict iteration not implemented |
+| Other | 75 | Various |
+| **Total errors** | **533** | |
+
+### Timeout tests (12)
+
+Tests involving nondet values with complex control flow that exceed
+the 10-second timeout. Need investigation with `--unwind` tuning.
+
+### Roadmap by priority
+
+#### Priority 1: Fix crashes (300 tests, ~1 week)
+
+The 300 crashes from type mismatches have a few root causes:
+
+**P1.1: Type-consistent assignments (89 + 31 = 120 crashes)**
+
+`lhs().type() == rhs().type()` and `assignments must be type consistent`
+both indicate that an assignment has mismatched types. Root causes:
+- Assigning a tagged-union value to a concrete-typed variable
+- Assigning a string to an int variable (type change not detected)
+- Function return type mismatch
+
+Fix: in `convert_assign`, always typecast RHS to LHS type when they
+differ, instead of crashing. For tagged unions, unwrap first.
+
+**P1.2: Return type mismatches (38 crashes)**
+
+`function must return value` — a void function has a return statement
+with a value, or vice versa. Root cause: unannotated functions default
+to `python_int_type()` but some return None (void).
+
+Fix: scan function body for return statements during `convert_function_def`.
+If any return has no value, use `empty_typet{}`. If mixed (some with
+value, some without), use `python_int_type()` and add `return 0` for
+bare returns.
+
+**P1.3: Precondition failures (127 crashes)**
+
+Generic `false` precondition failures in CBMC internals. These are
+triggered by malformed expressions reaching the GOTO converter or
+solver. Need case-by-case investigation, but most are likely caused
+by nil expressions propagating from unsupported features.
+
+Fix: audit all places that return `nil_exprt{}` and ensure they don't
+propagate into assignments or function calls. Add guards in
+`convert_assign` and `convert_call` to skip nil expressions with
+a warning instead of passing them to CBMC.
+
+**P1.4: Boolean context (7 crashes)**
+
+Non-boolean expression used where boolean is required (if condition,
+while condition, assert). Likely a tagged-union or struct value used
+directly as a condition.
+
+Fix: in `convert_if`, `convert_while`, `convert_assert`, add explicit
+typecast to bool for non-boolean conditions.
+
+#### Priority 2: Missing operators and methods (15 tests, ~1 day)
+
+**P2.1: `is` / `is not` comparison (9 tests)**
+
+Python identity comparison. For our model (no heap allocation for
+scalars), `is` is equivalent to `==` for int/float/bool/None.
+For objects, it's pointer equality.
+
+Fix: add `Is` and `IsNot` to `convert_compare`. Map to `equal_exprt`
+and `notequal_exprt` for scalar types.
+
+**P2.2: `dict.items()` method (6 tests)**
+
+Dict iteration via `.items()`. Returns key-value pairs.
+
+Fix: for our struct-based dict model, `d.items()` returns a list of
+tuples. Implement in `convert_expr_stmt` or `convert_call` for
+Attribute method calls on dict types.
+
+#### Priority 3: Type annotation gaps (22 tests, ~2 days)
+
+**P3.1: Class names as type annotations (11 tests)**
+
+`Unknown Python type annotation: , defaulting to int` — empty
+annotation string, likely from a class name that wasn't registered.
+
+Fix: in `convert_type_annotation`, when the annotation is a `Name`
+node with an unrecognized id, check `class_types` map. Already
+partially implemented but may miss forward references.
+
+**P3.2: `typing` module types (11 tests)**
+
+`Literal`, `Union`, `Callable`, `BinaryIO`, `List`, `Dict` — typing
+module constructs not handled.
+
+Fix: extend `convert_type_annotation` to handle these:
+- `Literal[value]` → type of the value
+- `Union[T1, T2]` → tagged union or first type
+- `Callable` → code_typet
+- `List`, `Dict` → python_list_type, dict type
+- `BinaryIO` → opaque type (nondet)
+
+#### Priority 4: Investigate timeouts (12 tests, ~1 day)
+
+Tests: `complex_bool_context`, `complex_builtins`, `for-loop13`,
+`github_3622-nondet`, `github_3622_nondet`, `github_3701_5-nondet`,
+`list13`, `nondet_list7`, `nondet_list8`, `range19-nondet`,
+`recursion11_nondet`, `redundancy`.
+
+Most involve nondet values with loops. Investigation needed:
+- Check if `--unwind` is needed (and what bound)
+- Check if the formula is too large (list operations with MAX=64)
+- Consider reducing `PYTHON_MAX_LIST_LENGTH` for these tests
+- Profile with `--show-goto-functions` to identify bottlenecks
+
+### Estimated impact
+
+| Priority | Tests fixed | Effort | Cumulative effective rate |
+|----------|-----------|--------|-------------------------|
+| Current | — | — | 53% (1,116/2,089) |
+| P1 (crashes) | ~300 | 1 week | ~67% |
+| P2 (operators) | ~15 | 1 day | ~68% |
+| P3 (annotations) | ~22 | 2 days | ~69% |
+| P4 (timeouts) | ~12 | 1 day | ~70% |
 
 ### Previous items (DONE)
 
