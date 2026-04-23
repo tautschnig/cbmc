@@ -314,17 +314,22 @@ Tested against 2,089 non-fail tests from ESBMC's Python regression suite:
 
 | Metric | Count | Percentage |
 |--------|-------|-----------|
-| PASS | 930 | 44% |
-| FAIL (real) | 370 | 18% |
+| PASS | 934 | 44% |
+| FAIL (real) | 382 | 18% |
 | FAIL (no-body warnings) | 175 | 8% |
 | FAIL (overflow warnings) | 3 | <1% |
-| ERROR/TIMEOUT | 611 | 29% |
+| FAIL (uncaught exception) | 1 | <1% |
+| ERROR/TIMEOUT | 594 | 28% |
 
 Effective pass rate excluding correct warnings: **53%**.
 
-The no-body warnings are correct: they flag calls to functions that have
-no definition (typically from unresolved imports). The previous 59% pass
-rate was inflated by silently dropping these calls (unsound).
+Remaining errors: ImportFrom (22), Import (7), Slice (1), Set (1),
+Delete (1). The 382 real failures are mostly from: tests depending on
+imported values, generator expressions, and list subscript assignment.
+
+Real-world verification examples tested:
+- Binary search: verified no div-by-zero, no overflow (with bounded size)
+- Bank account: deposit correctness verified with unbounded ints
 
 ## 7. Build Record
 
@@ -365,3 +370,5 @@ rate was inflated by silently dropping these calls (unsound).
 | 2026-04-23 | b2285ee019 | Unannotated param warnings, isinstance with inheritance (68 CORE, 4 KNOWNBUG) |
 | 2026-04-23 | 48bedcc240 | --python-unbounded-ints for correct integer semantics (70 CORE, 2 KNOWNBUG) |
 | 2026-04-23 | 72539813a2 | Exception propagation Stage B — try/except catches raise (71 CORE, 1 KNOWNBUG) |
+| 2026-04-23 | 91ba7c75e3 | User verification guide |
+| 2026-04-23 | (pending) | Final ESBMC validation: 53% effective, real-world examples |
