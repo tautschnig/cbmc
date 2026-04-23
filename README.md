@@ -20,6 +20,10 @@ For full information see [cprover.org](http://www.cprover.org/cbmc).
 For an overview of the various tools that are part of CProver and
 how to use them see [TOOLS_OVERVIEW.md](TOOLS_OVERVIEW.md).
 
+CBMC also includes a Python front-end for verifying Python 3 programs.
+See the [Python Verification Guide](doc/python-verification-guide.md)
+for details.
+
 
 Versions
 ========
