@@ -648,7 +648,136 @@ arguments to the same type before building the `if_exprt`. Use
 
 Total estimated effort: ~1-2 weeks.
 
-### Timeout investigation (13 tests)
+### Remaining 94 errors — detailed breakdown and KNOWNBUG tests
+
+After reducing errors from 533 to 94, the remaining errors fall into
+these categories:
+
+#### Category A: Type-inconsistent assignments in symex (26 crashes)
+
+**KNOWNBUG tests:** `crash-for-string-iter`, `crash-string-concat-var`
+
+**Examples:** `for-loop10` (string iteration), `string-concat4` (string
+concat in loop), `github_3127` (complex class patterns)
+
+**Root cause:** The `for x in string` iteration assigns a char (uint8)
+to a variable that was typed as a string struct. String concatenation
+in loops creates type mismatches when the loop variable's type changes
+between iterations.
+
+**Fix:** Two parts:
+1. String iteration should yield single-character strings (string structs
+   with length 1), not raw char values. Update `convert_for` to wrap
+   the char in a string struct when iterating over strings.
+2. String concatenation result type must match the variable's type.
+   The `plus_exprt` on string structs returns a string struct, but the
+   assignment may typecast incorrectly.
+
+**Effort:** 1-2 days
+
+---
+
+#### Category B: from_integer on struct types (15 crashes)
+
+**KNOWNBUG tests:** `crash-nested-attr`
+
+**Examples:** `nested-attr-1` through `nested-attr-13`, `strings2`,
+`github_3151`
+
+**Root cause:** Nested attribute access (`obj.inner.value`) creates
+intermediate expressions where `from_integer(0, class_struct_type)` is
+called. The `safe_zero` fix handles most cases but misses some paths
+where class struct types reach `from_integer` through default values
+or return type inference.
+
+**Fix:** Audit remaining `from_integer` calls that could receive struct
+types. The nested attribute case specifically needs the inner object
+to be properly initialized through the constructor chain.
+
+**Effort:** 1-2 days
+
+---
+
+#### Category C: Solver type mismatches (7+5+2 = 14 crashes)
+
+**KNOWNBUG tests:** `crash-string-nondet-ops`
+
+**Examples:** `string-symbolic-3` (boolbv_add_sub), `complex_handler`
+(boolbv_mult), `nondet_str5` (equal_exprt), `math_edge_frexp` (equal_exprt)
+
+**Root cause:** String struct or complex number expressions reach the
+SAT solver with mismatched types. The solver's `boolbv_add_sub` and
+`boolbv_mult` expect bitvector operands but receive struct types.
+
+**Fix:** Ensure all arithmetic operations on non-numeric types are
+intercepted in the converter. String `+` should be handled as concat
+(already done for literals), but nondet strings reaching `+` need
+the same treatment. Add type guards before all arithmetic expressions.
+
+**Effort:** 2-3 days
+
+---
+
+#### Category D: Postcondition failures in simplifier (3 crashes)
+
+**KNOWNBUG test:** (covered by crash-from-integer pattern)
+
+**Examples:** `builtin_all_complex`, `complex_binop_promotion`
+
+**Root cause:** Complex number type (not supported) reaches the
+expression simplifier, which can't handle it.
+
+**Fix:** Add `complex` as a recognized type that maps to a struct
+with real/imaginary float fields. Or return nondet for complex
+operations.
+
+**Effort:** 1 day
+
+---
+
+#### Category E: Non-crash errors (32 tests)
+
+**KNOWNBUG tests:** `crash-negative-index`, `crash-chr-function`,
+`crash-nested-class-method`
+
+Sub-categories:
+- **Negative indexing** (covered by `crash-negative-index`): `lst[-1]`
+  should map to `lst[len-1]`. Fix: in `convert_subscript`, detect
+  negative constant indices and add length. ~1 hour.
+- **chr() function** (covered by `crash-chr-function`): `chr(97)` should
+  return a single-character string. Fix: add `chr` to built-in handlers.
+  ~30 minutes.
+- **Nested method calls** (covered by `crash-nested-class-method`):
+  `b.a.f()` — chained attribute + method call. Fix: the Attribute
+  handler already works for single-level; need to ensure it chains
+  correctly. ~1 hour.
+- **map::at crashes** (6 tests): struct member access on wrong type.
+  Already partially fixed by safe_typecast. Remaining cases need
+  deeper type flow analysis.
+- **Hanging tests** (7 tests): tests that produce no output within
+  timeout. Likely infinite loops or very large formulas.
+
+**Effort:** 1-2 days for the quick fixes, longer for map::at and hangs.
+
+---
+
+### Summary table
+
+| # | KNOWNBUG | Category | Errors | Effort |
+|---|----------|----------|--------|--------|
+| 1 | `crash-for-string-iter` | A: string iteration | ~10 | 1 day |
+| 2 | `crash-string-concat-var` | A: string concat in loop | ~6 | 1 day |
+| 3 | `crash-nested-attr` | B: nested objects | ~15 | 1-2 days |
+| 4 | `crash-string-nondet-ops` | C: solver type mismatch | ~14 | 2-3 days |
+| 5 | `crash-negative-index` | E: negative indexing | ~5 | 1 hour |
+| 6 | `crash-chr-function` | E: chr() built-in | ~3 | 30 min |
+| 7 | `crash-nested-class-method` | E: chained method calls | ~7 | 1 hour |
+
+Quick wins (#5, #6, #7): ~2 hours, ~15 errors fixed.
+Medium (#1, #2): ~2 days, ~16 errors fixed.
+Hard (#3, #4): ~4 days, ~29 errors fixed.
+
+### Timeout investigation (19 tests)
 
 Tests: `complex_bool_context`, `complex_builtins`, `for-loop13`,
 `github_3622-nondet`, `github_3622_nondet`, `github_3701_5-nondet`,
