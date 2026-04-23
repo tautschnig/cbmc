@@ -315,9 +315,17 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "None")
     return from_integer(0, python_int_type());
 
-  // Look up in symbol table — try function-scoped first, then global
+  // Look up in symbol table — check versioned names first, then
+  // function-scoped, then global
   const symbolt *sym = nullptr;
-  if(!current_function.empty())
+
+  // Check if this variable has been versioned (type change renaming)
+  std::string qname = qualify_name(id);
+  auto ver_it = variable_versions.find(qname);
+  if(ver_it != variable_versions.end())
+    sym = symbol_table.lookup(ver_it->second);
+
+  if(sym == nullptr && !current_function.empty())
   {
     irep_idt scoped_id{"python::" + current_function + "::" + id};
     sym = symbol_table.lookup(scoped_id);
@@ -2056,6 +2064,41 @@ codet python_convertert::convert_assign(const jsont &stmt)
     std::string var_name = json_string(json_member(target, "id"));
     std::string qualified_name = qualify_name(var_name);
     irep_idt symbol_id{qualified_name};
+
+    // Check if variable exists and has a different type (type change)
+    const symbolt *existing = symbol_table.lookup(symbol_id);
+    // Also check the versioned symbol
+    auto ver_it = variable_versions.find(qualified_name);
+    if(ver_it != variable_versions.end())
+      existing = symbol_table.lookup(ver_it->second);
+
+    if(
+      existing != nullptr && existing->type != rhs.type() &&
+      rhs.type().id() != ID_empty && !rhs.is_nil())
+    {
+      // Type change detected — create a fresh versioned symbol
+      unsigned &ver = version_counters[qualified_name];
+      ver++;
+      std::string versioned_name = qualified_name + "__v" + std::to_string(ver);
+      irep_idt versioned_id{versioned_name};
+
+      symbolt new_symbol{versioned_id, rhs.type(), "python"};
+      new_symbol.base_name = var_name + "__v" + std::to_string(ver);
+      new_symbol.location = loc;
+      new_symbol.is_lvalue = true;
+      new_symbol.is_state_var = true;
+      new_symbol.is_static_lifetime = current_function.empty();
+      symbol_table.add(new_symbol);
+
+      // Update the version mapping
+      variable_versions[qualified_name] = versioned_id;
+
+      const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
+      code_frontend_assignt assign{new_sym.symbol_expr(), rhs};
+      assign.add_source_location() = loc;
+      block.add(std::move(assign));
+      continue;
+    }
 
     if(symbol_table.lookup(symbol_id) == nullptr)
     {
