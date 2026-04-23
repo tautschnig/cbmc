@@ -72,6 +72,9 @@ private:
   /// Counter for generating unique version suffixes.
   std::map<std::string, unsigned> version_counters;
 
+  /// Depth of if/else nesting (>0 means we're inside a branch).
+  unsigned if_else_depth = 0;
+
   // --- AST node converters ---
 
   /// Convert a top-level module body into a code_blockt.
