@@ -111,6 +111,40 @@ std::string python_convertert::qualify_name(const std::string &name) const
   return "python::" + name;
 }
 
+exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
+  const
+{
+  if(!is_python_value_type(e.type()))
+    return e; // already concrete
+
+  // Extract the appropriate field based on target type
+  if(
+    target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
+    target_type == python_int_type())
+    return python_value_int(e);
+  else if(target_type.id() == ID_floatbv)
+    return python_value_float(e);
+  else if(target_type.id() == ID_bool)
+    return python_value_bool(e);
+
+  // Default: extract int
+  return python_value_int(e);
+}
+
+exprt python_convertert::wrap_value(const exprt &e) const
+{
+  if(is_python_value_type(e.type()))
+    return e; // already wrapped
+
+  python_type_tagt tag = python_type_tagt::INT;
+  if(e.type().id() == ID_floatbv)
+    tag = python_type_tagt::FLOAT;
+  else if(e.type().id() == ID_bool)
+    tag = python_type_tagt::BOOL;
+
+  return make_python_value(tag, e);
+}
+
 source_locationt python_convertert::get_location(const jsont &node) const
 {
   source_locationt loc;
@@ -379,6 +413,13 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return std::move(result);
   }
 
+  // Unwrap tagged-union values to concrete types for operations
+  if(is_python_value_type(left.type()))
+    left = unwrap_value(
+      left, right.type().id() != ID_struct ? right.type() : python_int_type());
+  if(is_python_value_type(right.type()))
+    right = unwrap_value(right, left.type());
+
   // Type promotion: if either operand is float, promote both
   if(left.type() != right.type())
   {
@@ -516,6 +557,10 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
   if(operand.is_nil())
     return nil_exprt{};
 
+  // Unwrap tagged-union values
+  if(is_python_value_type(operand.type()))
+    operand = unwrap_value(operand, python_int_type());
+
   if(op == "USub")
     return unary_minus_exprt{operand};
   else if(op == "UAdd")
@@ -589,6 +634,14 @@ exprt python_convertert::convert_compare(const jsont &expr)
 
     if(current_left.is_nil() || right.is_nil())
       return nil_exprt{};
+
+    // Unwrap tagged-union values
+    if(is_python_value_type(current_left.type()))
+      current_left = unwrap_value(
+        current_left,
+        right.type().id() != ID_struct ? right.type() : python_int_type());
+    if(is_python_value_type(right.type()))
+      right = unwrap_value(right, current_left.type());
 
     // Type promotion for comparisons
     if(current_left.type() != right.type())
