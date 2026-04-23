@@ -65,6 +65,13 @@ private:
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
 
+  /// Map from variable name (qualified) to its current versioned symbol.
+  /// Used for fresh variable renaming when a variable changes type.
+  std::map<std::string, irep_idt> variable_versions;
+
+  /// Counter for generating unique version suffixes.
+  std::map<std::string, unsigned> version_counters;
+
   // --- AST node converters ---
 
   /// Convert a top-level module body into a code_blockt.
