@@ -131,7 +131,7 @@ source_locationt python_convertert::get_location(const jsont &node) const
 typet python_convertert::convert_type_annotation(const jsont &annotation)
 {
   if(annotation.is_null())
-    return signedbv_typet{64}; // default to int
+    return python_int_type(); // default to int
 
   // Handle parameterized types: list[int], dict[str, int], Optional[T]
   // These appear as Subscript nodes: annotation.value.id is the base type
@@ -153,7 +153,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     }
     // dict[K, V], Set[T], etc. — fall through to base type
     if(base == "dict")
-      return signedbv_typet{64}; // TODO: proper dict type
+      return python_int_type(); // TODO: proper dict type
     // Unknown parameterized type — use the base
     return convert_type_annotation(json_member(annotation, "value"));
   }
@@ -169,7 +169,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   std::string type_name = json_string(json_member(annotation, "id"));
 
   if(type_name == "int")
-    return signedbv_typet{64};
+    return python_int_type();
   else if(type_name == "float")
     return double_type();
   else if(type_name == "bool")
@@ -179,14 +179,14 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   else if(type_name == "None" || type_name == "NoneType")
     return empty_typet{};
   else if(type_name == "list")
-    return python_list_type(signedbv_typet{64}); // unparameterized list
+    return python_list_type(python_int_type()); // unparameterized list
   else if(class_types.count(type_name))
     return class_types[type_name];
   else
   {
     log.warning() << "Unknown Python type annotation: " << type_name
                   << ", defaulting to int" << messaget::eom;
-    return signedbv_typet{64};
+    return python_int_type();
   }
 }
 
@@ -250,7 +250,7 @@ exprt python_convertert::convert_constant(const jsont &expr)
   else if(value.is_null())
   {
     // Python None — for now treat as 0
-    return from_integer(0, signedbv_typet{64});
+    return from_integer(0, python_int_type());
   }
   else if(value.is_number())
   {
@@ -269,8 +269,8 @@ exprt python_convertert::convert_constant(const jsont &expr)
     }
     else
     {
-      mp_integer int_val{std::stoll(val_str)};
-      return from_integer(int_val, signedbv_typet{64});
+      mp_integer int_val = string2integer(val_str);
+      return from_integer(int_val, python_int_type());
     }
   }
   else if(value.is_string())
@@ -292,7 +292,7 @@ exprt python_convertert::convert_constant(const jsont &expr)
 
     array_exprt data_expr{std::move(chars), data_type};
     exprt length_expr =
-      from_integer(static_cast<long long>(str_val.size()), signedbv_typet{64});
+      from_integer(static_cast<long long>(str_val.size()), python_int_type());
 
     struct_exprt result{{length_expr, data_expr}, str_type};
     return std::move(result);
@@ -311,7 +311,7 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "False")
     return false_exprt{};
   else if(id == "None")
-    return from_integer(0, signedbv_typet{64});
+    return from_integer(0, python_int_type());
 
   // Look up in symbol table — try function-scoped first, then global
   const symbolt *sym = nullptr;
@@ -353,8 +353,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
     // length = left.length + right.length
     exprt new_length = plus_exprt{
-      member_exprt{left, "length", signedbv_typet{64}},
-      member_exprt{right, "length", signedbv_typet{64}}};
+      member_exprt{left, "length", python_int_type()},
+      member_exprt{right, "length", python_int_type()}};
 
     // data is nondet (content tracking is future work)
     side_effect_expr_nondett nondet_data{data_type, source_locationt{}};
@@ -440,15 +440,51 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       typecast_exprt{left, float_type}, typecast_exprt{right, float_type}};
   }
   else if(op == "BitOr")
+  {
+    // Bitwise ops require bitvectors — cast if using unbounded ints
+    if(left.type().id() == ID_integer)
+    {
+      left = typecast_exprt{left, signedbv_typet{64}};
+      right = typecast_exprt{right, signedbv_typet{64}};
+    }
     return bitor_exprt{left, right};
+  }
   else if(op == "BitAnd")
+  {
+    if(left.type().id() == ID_integer)
+    {
+      left = typecast_exprt{left, signedbv_typet{64}};
+      right = typecast_exprt{right, signedbv_typet{64}};
+    }
     return bitand_exprt{left, right};
+  }
   else if(op == "BitXor")
+  {
+    if(left.type().id() == ID_integer)
+    {
+      left = typecast_exprt{left, signedbv_typet{64}};
+      right = typecast_exprt{right, signedbv_typet{64}};
+    }
     return bitxor_exprt{left, right};
+  }
   else if(op == "LShift")
+  {
+    if(left.type().id() == ID_integer)
+    {
+      left = typecast_exprt{left, signedbv_typet{64}};
+      right = typecast_exprt{right, signedbv_typet{64}};
+    }
     return shl_exprt{left, right};
+  }
   else if(op == "RShift")
+  {
+    if(left.type().id() == ID_integer)
+    {
+      left = typecast_exprt{left, signedbv_typet{64}};
+      right = typecast_exprt{right, signedbv_typet{64}};
+    }
     return ashr_exprt{left, right};
+  }
   else
   {
     log.error() << "Unsupported binary operator: " << op << messaget::eom;
@@ -559,10 +595,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
       const auto &data_type = to_array_type(str_type.components()[1].type());
       exprt left_char = index_exprt{
         member_exprt{current_left, "data", data_type},
-        from_integer(0, signedbv_typet{64})};
+        from_integer(0, python_int_type())};
       exprt right_char = index_exprt{
         member_exprt{right, "data", data_type},
-        from_integer(0, signedbv_typet{64})};
+        from_integer(0, python_int_type())};
 
       if(op == "Lt")
         cmp = binary_relation_exprt{left_char, ID_lt, right_char};
@@ -659,7 +695,7 @@ exprt python_convertert::convert_call(const jsont &expr)
   // Handle nondet functions
   if(func_name == "nondet_int")
   {
-    side_effect_expr_nondett nondet{signedbv_typet{64}, get_location(expr)};
+    side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }
   else if(func_name == "nondet_float")
@@ -682,7 +718,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         !arg.is_nil() &&
         (is_python_string_type(arg.type()) || is_python_list_type(arg.type())))
       {
-        return member_exprt{arg, "length", signedbv_typet{64}};
+        return member_exprt{arg, "length", python_int_type()};
       }
     }
     log.error() << "len() requires a string or list argument" << messaget::eom;
@@ -695,9 +731,9 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
-        return typecast_exprt{arg, signedbv_typet{64}};
+        return typecast_exprt{arg, python_int_type()};
     }
-    return from_integer(0, signedbv_typet{64});
+    return from_integer(0, python_int_type());
   }
   else if(func_name == "float")
   {
@@ -725,7 +761,7 @@ exprt python_convertert::convert_call(const jsont &expr)
   // print() — no-op, return None (modeled as 0)
   else if(func_name == "print")
   {
-    return from_integer(0, signedbv_typet{64});
+    return from_integer(0, python_int_type());
   }
   // isinstance(obj, Class) — static type check
   else if(func_name == "isinstance")
@@ -858,7 +894,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       "no-body",
       "no body for callee " + func_name,
       get_location(expr));
-    side_effect_expr_nondett nondet{signedbv_typet{64}, get_location(expr)};
+    side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }
 
@@ -997,7 +1033,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // String indexing: s[i] → s.data[i] as a single-char string struct
   if(is_python_string_type(value.type()))
   {
-    member_exprt length{value, "length", signedbv_typet{64}};
+    member_exprt length{value, "length", python_int_type()};
     add_check(
       and_exprt{
         binary_relation_exprt{slice, ID_ge, from_integer(0, slice.type())},
@@ -1018,7 +1054,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       chars.push_back(from_integer(0, unsignedbv_typet{8}));
 
     array_exprt data_expr{std::move(chars), data_type};
-    exprt length_expr = from_integer(1, signedbv_typet{64});
+    exprt length_expr = from_integer(1, python_int_type());
 
     struct_exprt result{{length_expr, data_expr}, str_type};
     return std::move(result);
@@ -1027,7 +1063,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // Array/list indexing
   if(is_python_list_type(value.type()))
   {
-    member_exprt length{value, "length", signedbv_typet{64}};
+    member_exprt length{value, "length", python_int_type()};
     add_check(
       and_exprt{
         binary_relation_exprt{slice, ID_ge, from_integer(0, slice.type())},
@@ -1104,14 +1140,14 @@ exprt python_convertert::convert_list(const jsont &expr)
   if(elements.empty())
   {
     // Empty list — default to int element type
-    struct_typet list_type = python_list_type(signedbv_typet{64});
-    exprt length = from_integer(0, signedbv_typet{64});
+    struct_typet list_type = python_list_type(python_int_type());
+    exprt length = from_integer(0, python_int_type());
     array_typet data_type{
-      signedbv_typet{64},
-      from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+      python_int_type(),
+      from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
     exprt::operandst zeros;
     for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-      zeros.push_back(from_integer(0, signedbv_typet{64}));
+      zeros.push_back(from_integer(0, python_int_type()));
     array_exprt data{std::move(zeros), data_type};
     return struct_exprt{{length, data}, list_type};
   }
@@ -1119,7 +1155,7 @@ exprt python_convertert::convert_list(const jsont &expr)
   typet elem_type = elements[0].type();
   struct_typet list_type = python_list_type(elem_type);
   array_typet data_type{
-    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
 
   // Build data array: elements followed by zeros
   exprt::operandst data_elems;
@@ -1134,7 +1170,7 @@ exprt python_convertert::convert_list(const jsont &expr)
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =
-    from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
+    from_integer(static_cast<long long>(elements.size()), python_int_type());
 
   return struct_exprt{{length, data}, list_type};
 }
@@ -1302,7 +1338,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   typet elem_type = elements[0].type();
   struct_typet list_type = python_list_type(elem_type);
   array_typet data_type{
-    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
 
   exprt::operandst data_elems;
   for(auto &e : elements)
@@ -1316,7 +1352,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 
   array_exprt data{std::move(data_elems), data_type};
   exprt length =
-    from_integer(static_cast<long long>(elements.size()), signedbv_typet{64});
+    from_integer(static_cast<long long>(elements.size()), python_int_type());
 
   return struct_exprt{{length, data}, list_type};
 }
@@ -1336,7 +1372,7 @@ exprt python_convertert::convert_lambda(const jsont &expr)
     for(const auto &param : as_array(params))
     {
       std::string param_name = json_string(json_member(param, "arg"));
-      code_typet::parametert p{signedbv_typet{64}};
+      code_typet::parametert p{python_int_type()};
       p.set_identifier("python::" + lambda_name + "::" + param_name);
       p.set_base_name(param_name);
       parameters.push_back(p);
@@ -1871,7 +1907,7 @@ codet python_convertert::convert_for(const jsont &stmt)
   const jsont &target = json_member(stmt, "target");
   const jsont &iter = json_member(stmt, "iter");
   source_locationt loc = get_location(stmt);
-  typet int_type = signedbv_typet{64};
+  typet int_type = python_int_type();
 
   std::string var_name = json_string(json_member(target, "id"));
   std::string qualified_name = qualify_name(var_name);
@@ -2235,7 +2271,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(is_node_type(rhs, "Name"))
           rhs_name = json_string(json_member(rhs, "id"));
 
-        typet attr_type = signedbv_typet{64}; // default
+        typet attr_type = python_int_type(); // default
         if(!rhs_name.empty())
         {
           // Find the parameter annotation
@@ -2440,7 +2476,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           const auto &data_type = to_array_type(list_st.components()[1].type());
 
           // lst.data[lst.length] = val
-          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt length{obj, "length", python_int_type()};
           member_exprt data{obj, "data", data_type};
           index_exprt slot{data, length};
 
@@ -2454,7 +2490,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
 
           // lst.length += 1
           code_frontend_assignt inc_len{
-            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}};
+            length, plus_exprt{length, from_integer(1, python_int_type())}};
           inc_len.add_source_location() = loc;
           block.add(std::move(inc_len));
 
@@ -2720,7 +2756,7 @@ bool python_convertert::convert()
               {
                 // Try to infer type from the RHS constant
                 const jsont &val = json_member(stmt, "value");
-                typet var_type = signedbv_typet{64};
+                typet var_type = python_int_type();
                 if(is_node_type(val, "Constant"))
                 {
                   const jsont &v = json_member(val, "value");
@@ -2739,7 +2775,7 @@ bool python_convertert::convert()
                     var_type = python_string_type();
                 }
                 else if(is_node_type(val, "List"))
-                  var_type = python_list_type(signedbv_typet{64});
+                  var_type = python_list_type(python_int_type());
                 else if(
                   is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
                   is_node_type(val, "Call") || is_node_type(val, "ListComp") ||

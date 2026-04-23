@@ -4,6 +4,8 @@
 #ifndef CPROVER_PYTHON_PYTHON_CONVERTER_H
 #define CPROVER_PYTHON_PYTHON_CONVERTER_H
 
+#include <util/bitvector_types.h>
+#include <util/mathematical_types.h>
 #include <util/message.h>
 #include <util/namespace.h>
 #include <util/std_code.h>
@@ -30,6 +32,12 @@ public:
   /// \return true on error
   bool convert();
 
+  /// Enable mathematical (unbounded) integers instead of int64.
+  void set_unbounded_ints(bool v)
+  {
+    unbounded_ints = v;
+  }
+
 private:
   symbol_table_baset &symbol_table;
   const python_parse_treet &parse_tree;
@@ -44,6 +52,9 @@ private:
 
   /// Names declared 'global' in the current function
   std::set<std::string> global_names;
+
+  /// Whether to use mathematical integers instead of int64.
+  bool unbounded_ints = false;
 
   /// Map from class name to its struct type
   std::map<std::string, struct_typet> class_types;
@@ -142,6 +153,14 @@ private:
   /// Get the qualified symbol name for a variable, respecting
   /// function scope and 'global' declarations.
   std::string qualify_name(const std::string &name) const;
+
+  /// Return the CBMC type used for Python int.
+  typet python_int_type() const
+  {
+    if(unbounded_ints)
+      return integer_typet{};
+    return signedbv_typet{64};
+  }
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H
