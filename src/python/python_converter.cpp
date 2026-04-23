@@ -974,6 +974,11 @@ exprt python_convertert::convert_call(const jsont &expr)
     side_effect_expr_nondett nondet{bool_typet{}, get_location(expr)};
     return std::move(nondet);
   }
+  else if(func_name == "nondet_str" || func_name == "nondet_string")
+  {
+    side_effect_expr_nondett nondet{python_string_type(), get_location(expr)};
+    return std::move(nondet);
+  }
   else if(func_name == "len")
   {
     // len(s) → s.length for strings and lists
@@ -1028,6 +1033,43 @@ exprt python_convertert::convert_call(const jsont &expr)
   else if(func_name == "print")
   {
     return from_integer(0, python_int_type());
+  }
+  // chr(n) → single-character string
+  else if(func_name == "chr")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt code_point = convert_expression(*as_array(args).begin());
+      // Build a string struct with length 1 and the char value
+      struct_typet str_type = python_string_type();
+      const auto &data_type = to_array_type(str_type.components()[1].type());
+      exprt::operandst chars;
+      chars.push_back(safe_typecast(code_point, unsignedbv_typet{8}));
+      while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+        chars.push_back(from_integer(0, unsignedbv_typet{8}));
+      array_exprt data{std::move(chars), data_type};
+      exprt length = from_integer(1, signedbv_typet{64});
+      return struct_exprt{{length, data}, str_type};
+    }
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+  }
+  // ord(c) → integer code point of single character
+  else if(func_name == "ord")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(is_python_string_type(arg.type()))
+      {
+        struct_typet str_type = python_string_type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        member_exprt data{arg, "data", data_type};
+        return safe_typecast(
+          index_exprt{data, from_integer(0, signedbv_typet{64})},
+          python_int_type());
+      }
+    }
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   // all(genexp) / any(genexp) — unroll for literal iterables
   else if(func_name == "all" || func_name == "any")
@@ -1495,10 +1537,29 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   if(is_python_list_type(value.type()))
   {
     member_exprt length{value, "length", python_int_type()};
+
+    // Handle negative indices: lst[-1] → lst[len-1]
+    exprt effective_idx = slice;
+    if(slice.is_constant())
+    {
+      mp_integer idx_val;
+      if(!to_integer(to_constant_expr(slice), idx_val) && idx_val < 0)
+        effective_idx = plus_exprt{length, slice};
+    }
+    else
+    {
+      // Runtime: if idx < 0 then idx + length else idx
+      effective_idx = if_exprt{
+        binary_relation_exprt{slice, ID_lt, safe_zero(slice.type())},
+        plus_exprt{length, slice},
+        slice};
+    }
+
     add_check(
       and_exprt{
-        binary_relation_exprt{slice, ID_ge, safe_zero(slice.type())},
-        binary_relation_exprt{slice, ID_lt, length}},
+        binary_relation_exprt{
+          effective_idx, ID_ge, safe_zero(effective_idx.type())},
+        binary_relation_exprt{effective_idx, ID_lt, length}},
       "index-out-of-bounds",
       "list index out of range",
       get_location(expr));
@@ -1506,7 +1567,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     const auto &st = to_struct_type(value.type());
     const auto &data_type = to_array_type(st.components()[1].type());
     member_exprt data{value, "data", data_type};
-    return index_exprt{data, slice};
+    return index_exprt{data, effective_idx};
   }
 
   // Tuple indexing with constant index
@@ -2715,7 +2776,9 @@ codet python_convertert::convert_for(const jsont &stmt)
     elem_type = data_type.element_type();
   }
   else
-    elem_type = int_type; // string iteration yields char codes for now
+    elem_type = python_int_type(); // string iteration yields int (char code)
+  // Note: Python yields single-char strings, but we use int for simplicity.
+  // The loop body assignment wraps the char in operations that work on int.
 
   // Create loop variable
   irep_idt var_id{qualified_name};
@@ -2757,8 +2820,11 @@ codet python_convertert::convert_for(const jsont &stmt)
   // while(__idx < iterable.length)
   code_blockt body_block;
 
-  // x = iterable.data[__idx]
-  body_block.add(code_frontend_assignt{loop_var, index_exprt{data, idx_var}});
+  // x = iterable.data[__idx] (typecast if needed)
+  exprt elem_val = index_exprt{data, idx_var};
+  if(elem_val.type() != loop_var.type())
+    elem_val = safe_typecast(elem_val, loop_var.type());
+  body_block.add(code_frontend_assignt{loop_var, elem_val});
 
   // user body
   const jsont &body = json_member(stmt, "body");
