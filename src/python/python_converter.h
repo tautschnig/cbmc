@@ -171,6 +171,13 @@ private:
       return integer_typet{};
     return signedbv_typet{64};
   }
+
+  /// Unwrap a tagged-union value to a specific type, or return it as-is
+  /// if it's already a concrete type.
+  exprt unwrap_value(const exprt &e, const typet &target_type) const;
+
+  /// Wrap a concrete typed value into a tagged-union value.
+  exprt wrap_value(const exprt &e) const;
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H

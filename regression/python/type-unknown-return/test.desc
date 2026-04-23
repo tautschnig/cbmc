@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --function mystery
 ^EXIT=0$
