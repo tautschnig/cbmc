@@ -790,6 +790,106 @@ Most involve nondet values with loops. Investigation needed:
 - Consider reducing `PYTHON_MAX_LIST_LENGTH` for these tests
 - Profile with `--show-goto-functions` to identify bottlenecks
 
+### Final KNOWNBUG inventory (4 tests)
+
+---
+
+#### `crash-multibyte-chr` (7 ESBMC errors)
+
+**Test:** `assert chr(8364) == "€"`
+
+**Why it fails:** Our `chr()` implementation builds a string struct with
+a single `unsignedbv{8}` character. Characters with code points > 127
+(like `€` = U+20AC) require multi-byte UTF-8 encoding (3 bytes for `€`).
+The comparison `chr(8364) == "€"` fails because the Python AST generator
+(`python3 -c '...'`) crashes with `wstring_convert::to_bytes` when the
+source file contains non-ASCII characters.
+
+**Fix:** Two parts:
+1. **AST generation:** The inline Python script uses `json.dump(...,
+   default=str)` which handles Unicode correctly. The crash is in
+   CBMC's JSON parser or the `chr()` comparison. Ensure the JSON AST
+   encodes non-ASCII string constants as escaped Unicode (`\u20ac`).
+2. **chr() for multibyte:** Encode the code point as UTF-8 bytes in the
+   string struct's data array. For U+20AC: bytes `0xE2, 0x82, 0xAC`,
+   length 3.
+
+**Estimated effort:** 1 day
+
+---
+
+#### `crash-string-reverse` (1 ESBMC error)
+
+**Test:** `s = "hello"; assert s[::-1] == "olleh"`
+
+**Why it fails:** Our slice handler in `convert_subscript` handles
+`Slice` nodes with `lower` and `upper` but ignores the `step` field.
+When `step` is -1, the slice should reverse the string/list.
+
+**Fix:** In the `Slice` handler in `convert_subscript`:
+1. Check if `step` is present and is a constant -1
+2. For step=-1 with no lower/upper: reverse the entire sequence
+3. Build the result by iterating from `length-1` down to 0
+4. For strings: `result.data[i] = src.data[length-1-i]`
+5. For lists: same pattern with list data array
+
+**Estimated effort:** 2-3 hours
+
+---
+
+#### `crash-nested-tuple-unpack` (1 ESBMC error)
+
+**Test:** `(a, b), [c, d] = (("foo", "bar"), [100, 200])`
+
+**Why it crashes:** Our tuple unpack handler in `convert_assign` only
+handles `Tuple` targets with `Name` elements. When a target element is
+itself a `Tuple` or `List` (nested unpacking), the code tries to get
+`json_member(elt, "id")` which returns empty string, creating an
+invalid symbol.
+
+**Fix:** Make the tuple unpack handler recursive:
+1. When a target element is a `Tuple` or `List`, recursively unpack
+   the corresponding field of the RHS tuple
+2. For `(a, b), [c, d] = rhs`: first unpack `rhs._0` into `(a, b)`
+   and `rhs._1` into `[c, d]`
+3. Each sub-unpack follows the same pattern: extract the tuple/list
+   field and assign to the target names
+
+**Estimated effort:** 2-3 hours
+
+---
+
+#### `crash-math-frexp` (2 ESBMC errors)
+
+**Test:** `import math; m, e = math.frexp(8.0); assert m == 0.5`
+
+**Why it fails:** `math.frexp()` returns a tuple `(float, int)`, but
+our math function models all return a single `float`. The tuple unpack
+`m, e = math.frexp(8.0)` fails because the RHS is a float, not a tuple.
+
+**Fix:** Two options:
+1. **Specific model:** Register `frexp` as returning a tuple type
+   `python_tuple_type({double_type(), python_int_type()})`. The tuple
+   values would be nondet (no precise model).
+2. **General approach:** Allow math functions to declare tuple return
+   types. Add a return-type map for functions that return tuples:
+   `frexp`, `modf`, `divmod`.
+
+**Estimated effort:** 1-2 hours
+
+---
+
+### Summary
+
+| # | KNOWNBUG | Effort | ESBMC errors |
+|---|----------|--------|-------------|
+| 1 | `crash-string-reverse` | 2-3 hours | 1 |
+| 2 | `crash-nested-tuple-unpack` | 2-3 hours | 1 |
+| 3 | `crash-math-frexp` | 1-2 hours | 2 |
+| 4 | `crash-multibyte-chr` | 1 day | 7 |
+
+Total: ~2 days for all 4, fixing ~11 ESBMC errors.
+
 ### Previous items (DONE)
 
 - Pointer-based class instances ✓
