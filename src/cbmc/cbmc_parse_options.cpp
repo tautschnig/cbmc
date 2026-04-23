@@ -160,6 +160,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("function"))
     options.set_option("function", cmdline.get_value("function"));
 
+  if(cmdline.isset("python-unbounded-ints"))
+    options.set_option("python-unbounded-ints", true);
+
   if(cmdline.isset("cover") && cmdline.isset("unwinding-assertions"))
   {
     log.error()

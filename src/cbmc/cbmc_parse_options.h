@@ -70,6 +70,7 @@ class optionst;
   OPT_GOTO_TRACE \
   OPT_VALIDATE \
   OPT_ANSI_C_LANGUAGE \
+  "(python-unbounded-ints)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

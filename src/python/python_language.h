@@ -75,6 +75,9 @@ protected:
 
   /// The function name specified by --function, or empty.
   std::string function_entry_point;
+
+  /// Whether to use mathematical integers instead of int64.
+  bool unbounded_ints = false;
 };
 
 std::unique_ptr<languaget> new_python_language();

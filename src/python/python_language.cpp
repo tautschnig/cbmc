@@ -37,6 +37,7 @@ void python_languaget::set_language_options(
   message_handlert &)
 {
   function_entry_point = options.get_option("function");
+  unbounded_ints = options.get_bool_option("python-unbounded-ints");
 }
 
 /// The Python code that converts a .py file to a JSON AST.
@@ -133,6 +134,7 @@ bool python_languaget::typecheck(
   message_handlert &message_handler)
 {
   python_convertert converter{symbol_table, parse_tree, message_handler};
+  converter.set_unbounded_ints(unbounded_ints);
   return converter.convert();
 }
 
