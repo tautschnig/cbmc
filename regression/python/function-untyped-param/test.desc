@@ -3,6 +3,7 @@ main.py
 --function greet
 ^EXIT=0$
 ^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
 parameter 'name' of function 'greet' has no type annotation
 --
 ^warning: ignoring
