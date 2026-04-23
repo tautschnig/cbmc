@@ -89,7 +89,7 @@ void python_convertert::add_check(
   const source_locationt &loc)
 {
   if(condition.type() != bool_typet{})
-    condition = typecast_exprt{condition, bool_typet{}};
+    condition = safe_typecast(condition, bool_typet{});
 
   source_locationt check_loc = loc;
   check_loc.set_property_class(property_class);
@@ -143,6 +143,38 @@ exprt python_convertert::wrap_value(const exprt &e) const
     tag = python_type_tagt::BOOL;
 
   return make_python_value(tag, e);
+}
+
+exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
+  const
+{
+  if(e.type() == target)
+    return e;
+
+  // Unwrap tagged unions
+  if(is_python_value_type(e.type()))
+    return unwrap_value(e, target);
+
+  // Wrap into tagged union if target is tagged union
+  if(is_python_value_type(target))
+    return wrap_value(e);
+
+  // Scalar-to-scalar casts are safe
+  bool src_scalar = e.type().id() == ID_signedbv ||
+                    e.type().id() == ID_unsignedbv ||
+                    e.type().id() == ID_floatbv || e.type().id() == ID_bool ||
+                    e.type().id() == ID_integer || e.type().id() == ID_c_bool;
+  bool tgt_scalar = target.id() == ID_signedbv ||
+                    target.id() == ID_unsignedbv || target.id() == ID_floatbv ||
+                    target.id() == ID_bool || target.id() == ID_integer ||
+                    target.id() == ID_c_bool;
+
+  if(src_scalar && tgt_scalar)
+    return typecast_exprt{e, target};
+
+  // Struct-to-scalar or other incompatible: return a nondet value
+  // of the target type (overapproximation, avoids crash)
+  return side_effect_expr_nondett{target, source_locationt{}};
 }
 
 source_locationt python_convertert::get_location(const jsont &node) const
@@ -201,6 +233,14 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       return empty_typet{};
   }
 
+  // Handle Attribute annotations (e.g., typing.List)
+  if(is_node_type(annotation, "Attribute"))
+  {
+    std::string attr = json_string(json_member(annotation, "attr"));
+    return convert_type_annotation(
+      json_member(annotation, "value")); // recurse on the attribute name
+  }
+
   std::string type_name = json_string(json_member(annotation, "id"));
 
   if(type_name == "int")
@@ -213,8 +253,22 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return python_string_type();
   else if(type_name == "None" || type_name == "NoneType")
     return empty_typet{};
-  else if(type_name == "list")
-    return python_list_type(python_int_type()); // unparameterized list
+  else if(type_name == "list" || type_name == "List")
+    return python_list_type(python_int_type());
+  else if(type_name == "dict" || type_name == "Dict")
+    return python_int_type(); // dict type not fully modeled
+  else if(type_name == "set" || type_name == "Set")
+    return python_list_type(python_int_type()); // sets modeled as lists
+  else if(type_name == "tuple" || type_name == "Tuple")
+    return python_int_type(); // unparameterized tuple
+  else if(
+    type_name == "Any" || type_name == "Union" || type_name == "Literal" ||
+    type_name == "Callable" || type_name == "BinaryIO" ||
+    type_name == "TextIO" || type_name == "Iterator" ||
+    type_name == "Iterable" || type_name == "Sequence" ||
+    type_name == "Mapping" || type_name == "Type" || type_name == "ClassVar" ||
+    type_name == "Final")
+    return python_int_type(); // typing module types default to int
   else if(class_types.count(type_name))
     return class_types[type_name];
   else
@@ -720,6 +774,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
         cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
       }
     }
+    else if(op == "Is")
+      cmp = equal_exprt{current_left, right};
+    else if(op == "IsNot")
+      cmp = notequal_exprt{current_left, right};
     else
     {
       log.error() << "Unsupported comparison operator: " << op << messaget::eom;
@@ -1912,7 +1970,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
 
   // Type cast if needed
   if(rhs.type() != sym.type)
-    rhs = typecast_exprt{rhs, sym.type};
+    rhs = safe_typecast(rhs, sym.type);
 
   code_frontend_assignt assign{sym.symbol_expr(), rhs};
   assign.add_source_location() = loc;
@@ -2094,7 +2152,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 dereference_exprt{obj}, attr, st.get_component(attr).type()};
               exprt typed_rhs = rhs;
               if(typed_rhs.type() != lhs.type())
-                typed_rhs = typecast_exprt{typed_rhs, lhs.type()};
+                typed_rhs = safe_typecast(typed_rhs, lhs.type());
               code_frontend_assignt assign{lhs, typed_rhs};
               assign.add_source_location() = loc;
               block.add(std::move(assign));
@@ -2110,7 +2168,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             member_exprt lhs{obj, attr, st.get_component(attr).type()};
             exprt typed_rhs = rhs;
             if(typed_rhs.type() != lhs.type())
-              typed_rhs = typecast_exprt{typed_rhs, lhs.type()};
+              typed_rhs = safe_typecast(typed_rhs, lhs.type());
             code_frontend_assignt assign{lhs, typed_rhs};
             assign.add_source_location() = loc;
             block.add(std::move(assign));
@@ -2209,7 +2267,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
     const symbolt &sym = symbol_table.lookup_ref(symbol_id);
     exprt typed_rhs = rhs;
     if(typed_rhs.type() != sym.type)
-      typed_rhs = typecast_exprt{typed_rhs, sym.type};
+      typed_rhs = safe_typecast(typed_rhs, sym.type);
 
     code_frontend_assignt assign{sym.symbol_expr(), typed_rhs};
     assign.add_source_location() = loc;
@@ -2300,7 +2358,7 @@ codet python_convertert::convert_assert(const jsont &stmt)
 
   // Ensure the test is boolean
   if(test.type() != bool_typet{})
-    test = typecast_exprt{test, bool_typet{}};
+    test = safe_typecast(test, bool_typet{});
 
   source_locationt loc = get_location(stmt);
   loc.set_property_class("assertion");
@@ -2318,7 +2376,7 @@ codet python_convertert::convert_if(const jsont &stmt)
     return code_skipt{};
 
   if(test.type() != bool_typet{})
-    test = typecast_exprt{test, bool_typet{}};
+    test = safe_typecast(test, bool_typet{});
 
   // Save version state before branches
   auto saved_versions = variable_versions;
@@ -2375,7 +2433,7 @@ codet python_convertert::convert_while(const jsont &stmt)
     return code_skipt{};
 
   if(test.type() != bool_typet{})
-    test = typecast_exprt{test, bool_typet{}};
+    test = safe_typecast(test, bool_typet{});
 
   code_blockt body_block;
   const jsont &body = json_member(stmt, "body");
@@ -2552,7 +2610,22 @@ codet python_convertert::convert_return(const jsont &stmt)
   const jsont &value = json_member(stmt, "value");
 
   if(value.is_null())
+  {
+    // Bare return — check if function expects a return value
+    if(!current_function.empty())
+    {
+      irep_idt func_id{"python::" + current_function};
+      const symbolt *func_sym = symbol_table.lookup(func_id);
+      if(
+        func_sym != nullptr && func_sym->type.id() == ID_code &&
+        to_code_type(func_sym->type).return_type().id() != ID_empty)
+      {
+        return code_frontend_returnt{
+          from_integer(0, to_code_type(func_sym->type).return_type())};
+      }
+    }
     return code_frontend_returnt{};
+  }
 
   // Check if returning a constructor call: return Foo(args)
   if(
@@ -2607,7 +2680,36 @@ codet python_convertert::convert_return(const jsont &stmt)
 
   exprt ret_val = convert_expression(value);
   if(ret_val.is_nil())
+  {
+    // Expression conversion failed — return default value
+    if(!current_function.empty())
+    {
+      irep_idt func_id{"python::" + current_function};
+      const symbolt *func_sym = symbol_table.lookup(func_id);
+      if(
+        func_sym != nullptr && func_sym->type.id() == ID_code &&
+        to_code_type(func_sym->type).return_type().id() != ID_empty)
+      {
+        return code_frontend_returnt{
+          from_integer(0, to_code_type(func_sym->type).return_type())};
+      }
+    }
     return code_frontend_returnt{};
+  }
+
+  // Typecast return value to match function's return type
+  if(!current_function.empty())
+  {
+    irep_idt func_id{"python::" + current_function};
+    const symbolt *func_sym = symbol_table.lookup(func_id);
+    if(
+      func_sym != nullptr && func_sym->type.id() == ID_code &&
+      ret_val.type() != to_code_type(func_sym->type).return_type())
+    {
+      ret_val =
+        safe_typecast(ret_val, to_code_type(func_sym->type).return_type());
+    }
+  }
 
   code_frontend_returnt ret{ret_val};
   ret.add_source_location() = get_location(stmt);
@@ -2647,8 +2749,50 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   // Return type
   const jsont &returns = json_member(stmt, "returns");
-  typet return_type =
-    returns.is_null() ? python_int_type() : convert_type_annotation(returns);
+  typet return_type;
+  if(!returns.is_null())
+  {
+    return_type = convert_type_annotation(returns);
+  }
+  else
+  {
+    // No return annotation — scan body for return statements
+    bool has_value_return = false;
+    bool has_bare_return = false;
+    std::function<void(const jsont &)> scan = [&](const jsont &body_node)
+    {
+      if(!body_node.is_array())
+        return;
+      for(const auto &s : as_array(body_node))
+      {
+        if(is_node_type(s, "Return"))
+        {
+          const jsont &rv = json_member(s, "value");
+          if(rv.is_null())
+            has_bare_return = true;
+          else
+            has_value_return = true;
+        }
+        // Recurse into if/else/while/for/try bodies
+        if(json_member(s, "body").is_array())
+          scan(json_member(s, "body"));
+        if(json_member(s, "orelse").is_array())
+          scan(json_member(s, "orelse"));
+        if(json_member(s, "handlers").is_array())
+        {
+          for(const auto &h : as_array(json_member(s, "handlers")))
+            if(json_member(h, "body").is_array())
+              scan(json_member(h, "body"));
+        }
+      }
+    };
+    scan(json_member(stmt, "body"));
+
+    if(has_value_return)
+      return_type = python_int_type();
+    else
+      return_type = empty_typet{};
+  }
 
   code_typet func_type{parameters, return_type};
 
@@ -2939,7 +3083,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
       {
         exprt cond = convert_expression(*as_array(args).begin());
         if(cond.type() != bool_typet{})
-          cond = typecast_exprt{cond, bool_typet{}};
+          cond = safe_typecast(cond, bool_typet{});
         code_assumet assume{cond};
         assume.add_source_location() = get_location(stmt);
         return std::move(assume);
