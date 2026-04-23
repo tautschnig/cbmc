@@ -517,15 +517,149 @@ Most involve nondet values with loops. Investigation needed:
 - Consider reducing `PYTHON_MAX_LIST_LENGTH` for these tests
 - Profile with `--show-goto-functions` to identify bottlenecks
 
-### Estimated impact
+### Current state (after P1-P3)
 
-| Priority | Tests fixed | Effort | Cumulative effective rate |
-|----------|-----------|--------|-------------------------|
-| Current | — | — | 53% (1,116/2,089) |
-| P1 (crashes) | ~300 | 1 week | ~67% |
-| P2 (operators) | ~15 | 1 day | ~68% |
-| P3 (annotations) | ~22 | 2 days | ~69% |
-| P4 (timeouts) | ~12 | 1 day | ~70% |
+ESBMC benchmark: 1,002 pass (47%), 57% effective, 248 errors, 13 timeouts.
+
+### Remaining KNOWNBUG tests and fix plans (5 tests, ~248 errors)
+
+---
+
+#### `crash-from-integer` (~143 errors)
+
+**Test:** `x = None; assert not any([x])`
+
+**Why it crashes:** `from_integer(0, type)` is called with a type that
+`from_integer` doesn't support — typically `python_value_type` (the
+tagged-union struct) or a string struct. This happens when:
+- `any()`/`all()` on non-literal lists (the list element type is a struct)
+- `None` is used as a value (modeled as `from_integer(0, int)` but the
+  variable may have a different type)
+- Default values in various contexts use `from_integer` with the wrong type
+
+**Fix:** Two parts:
+1. **Proper None modeling:** `None` should be a distinct value, not
+   `from_integer(0, int)`. Use a `python_value_type` with tag `NONE`,
+   or a dedicated `nil_exprt`-like constant. For comparisons with None,
+   use the tag check.
+2. **Guard `from_integer` calls:** Audit all `from_integer` calls in the
+   converter. When the type is a struct or other non-numeric type, use
+   `side_effect_expr_nondett` instead.
+
+**Estimated effort:** 2-3 days
+
+---
+
+#### `crash-string-set` (~39 errors)
+
+**Test:** `s: set[str] = {"foo", "bar"}; assert "foo" in s`
+
+**Why it crashes:** The `set[str]` annotation creates a `python_list_type`
+with `python_string_type()` elements. The `in` operator's unrolled
+disjunction creates `equal_exprt{string_struct, string_struct}` which
+works, but the type promotion code before it tries to cast the set (a
+list struct) to the element type (string), corrupting the set.
+
+**Fix:** The `in` operator already skips type promotion (added in the
+P1 fix). The remaining issue is that `import math` style imports
+(`math.acos`) aren't handled — only `from math import acos` is.
+
+Actually, the 39 errors here overlap with the math import issue. The
+string set crash specifically needs:
+1. Ensure `set[str]` creates a list with string element type
+2. The `in` operator comparison uses `equal_exprt` on the element type
+   (string structs), which requires struct-level equality — this should
+   already work.
+
+**Estimated effort:** 1 day (mostly debugging the type flow)
+
+---
+
+#### `crash-math-import` (~39 errors)
+
+**Test:** `import math; x = math.acos(1.0); assert x >= 0.0`
+
+**Why it crashes:** `import math` (without `from`) is handled as a no-op.
+When `math.acos(1.0)` is called, the `Attribute` node `math.acos` is
+converted — `math` is looked up as a variable (not found), and the
+attribute access fails. The `from math import acos` form works because
+it registers `acos` directly.
+
+**Fix:** Handle `import MODULE` by creating a namespace symbol. When
+`MODULE.func()` is called (Attribute + Call), resolve it by looking up
+the module's registered functions.
+
+**Implementation:**
+1. In `convert_statement` for `Import`, register the module name as a
+   known namespace
+2. In `convert_call`, when the func is an `Attribute` node and the
+   object is a known module namespace, resolve to the function directly
+3. Reuse the existing math function models from `ImportFrom` handling
+
+**Estimated effort:** 1-2 days
+
+---
+
+#### `crash-class-complex` (~23 errors)
+
+**Test:** `class MyClass: class_attr: int = 1; ...`
+
+**Why it crashes:** Class-level attributes (defined in the class body
+outside `__init__`) are not handled. Our `convert_class_def` only scans
+`__init__` for `self.attr = ...` assignments. Class-level `AnnAssign`
+nodes in the class body are ignored, so `MyClass.class_attr` fails.
+
+**Fix:**
+1. In `convert_class_def`, scan the class body for `AnnAssign` nodes
+   that are NOT inside methods (these are class-level attributes)
+2. Add them as fields in the class struct type
+3. Initialize them in the class type's default value
+4. Handle `ClassName.attr` access by looking up the class type's fields
+
+**Estimated effort:** 1-2 days
+
+---
+
+#### `crash-mixed-minmax` (~4 errors)
+
+**Test:** `assert min(3, 2.5) == 2.5`
+
+**Why it crashes:** `min(3, 2.5)` generates `if_exprt{3 < 2.5, 3, 2.5}`
+where the branches have different types (int vs float). The `if_exprt`
+requires both branches to have the same type.
+
+**Fix:** In the `min`/`max` handler in `convert_call`, promote both
+arguments to the same type before building the `if_exprt`. Use
+`safe_typecast` to promote int to float when mixed.
+
+**Estimated effort:** 30 minutes
+
+---
+
+### Recommended implementation order
+
+| # | KNOWNBUG | Errors | Effort | Cumulative |
+|---|----------|--------|--------|-----------|
+| 1 | `crash-mixed-minmax` | 4 | 30 min | 244 errors |
+| 2 | `crash-math-import` | 39 | 1-2 days | 205 errors |
+| 3 | `crash-string-set` | 39 | 1 day | 166 errors |
+| 4 | `crash-class-complex` | 23 | 1-2 days | 143 errors |
+| 5 | `crash-from-integer` | 143 | 2-3 days | ~0 errors |
+
+Total estimated effort: ~1-2 weeks.
+
+### Timeout investigation (13 tests)
+
+Tests: `complex_bool_context`, `complex_builtins`, `for-loop13`,
+`github_3622-nondet`, `github_3622_nondet`, `github_3701_5-nondet`,
+`list13`, `nondet_list7`, `nondet_list8`, `range19-nondet`,
+`recursion11_nondet`, `redundancy`, and 1 more.
+
+Most involve nondet values with loops. Investigation needed:
+- Check if `--unwind` is needed (and what bound)
+- Check if the formula is too large (list operations with MAX=64)
+- Consider reducing `PYTHON_MAX_LIST_LENGTH` for these tests
+- Profile with `--show-goto-functions` to identify bottlenecks
 
 ### Previous items (DONE)
 
