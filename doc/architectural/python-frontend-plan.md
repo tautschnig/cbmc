@@ -1,5 +1,7 @@
 # Python Front-End for CBMC — Design and Implementation Plan
 
+**User guide:** [doc/python-verification-guide.md](../python-verification-guide.md)
+
 ## Status
 
 | Phase | Description | Status |

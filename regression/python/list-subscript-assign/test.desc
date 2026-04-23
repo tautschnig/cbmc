@@ -1,0 +1,11 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^\[assertion\.1\].*Python assertion: SUCCESS$
+^\[assertion\.2\].*Python assertion: SUCCESS$
+^\[assertion\.3\].*Python assertion: SUCCESS$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
