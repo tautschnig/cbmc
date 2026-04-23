@@ -289,200 +289,10 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (7 tests)
+### KNOWNBUG inventory (1 test)
 
-Each entry below includes: what the test does, why it currently fails,
-the proposed fix, implementation steps, affected files, estimated effort,
-and dependencies on other items.
-
----
-
-#### `list-subscript-assign` — List element mutation
-
-**Test:** `lst = [10, 20, 30]; lst[1] = 99; assert lst[1] == 99`
-
-**Why it fails:** `convert_assign` handles `Name` and `Attribute` targets
-but not `Subscript` targets. The assignment `lst[1] = 99` is an `Assign`
-with a `Subscript` target node, which is silently dropped.
-
-**Fix:** In `convert_assign`, detect `Subscript` targets and generate
-an `index_exprt` assignment: `lst.data[i] = val`.
-
-**Implementation steps:**
-1. In `convert_assign`, add a branch for `is_node_type(target, "Subscript")`
-2. Convert the subscript value (the list) and slice (the index)
-3. Build `member_exprt{list, "data", data_type}` then `index_exprt{data, idx}`
-4. Generate `code_frontend_assignt{index_expr, rhs}`
-5. Also handle in `convert_aug_assign` for `lst[i] += val`
-
-**Affected files:** `python_converter.cpp` (convert_assign, ~20 lines)
-
-**Estimated effort:** 1-2 hours
-
-**Dependencies:** None
-
----
-
-#### `generator-expression` — Generator expressions in function calls
-
-**Test:** `result = all(x > 0 for x in nums); assert result`
-
-**Why it fails:** The `all()` built-in receives a `GeneratorExp` AST node
-as its argument. `convert_call` passes it to `convert_expression`, which
-doesn't handle `GeneratorExp`. The `all()` call falls through to the
-"unknown function" path because the argument conversion fails.
-
-**Fix:** Handle `GeneratorExp` as an expression by desugaring it. For
-`all(expr for x in iterable)`, desugar to a loop that checks each element.
-For `any(...)`, similar but with `or` logic.
-
-**Implementation steps:**
-1. Add `GeneratorExp` to the expression dispatcher in `convert_expression`
-2. Implement `convert_generator_exp` that returns a boolean:
-   - Create a result variable initialized to `true` (for `all`) or `false`
-     (for `any`)
-   - Generate a for-loop over the iterable
-   - In the loop body, evaluate the element expression
-   - For `all`: `result = result and expr`; for `any`: `result = result or expr`
-   - Return the result variable
-3. This requires generating statements from an expression context. Use the
-   `pending_checks` mechanism or convert at the statement level.
-4. Alternative simpler approach: for literal iterables, unroll like list
-   comprehensions — evaluate the predicate for each element and combine
-   with `and`/`or`.
-
-**Affected files:** `python_converter.cpp` (~50-80 lines), `python_converter.h`
-
-**Estimated effort:** 3-5 hours
-
-**Dependencies:** None (for literal iterables). For variable iterables,
-depends on `for x in list` (already implemented).
-
----
-
-#### `slice-expression` — List/string slicing
-
-**Test:** `sub = lst[1:4]; assert len(sub) == 3`
-
-**Why it fails:** The `Subscript` node's `slice` field contains a `Slice`
-AST node (with `lower`, `upper`, `step` fields) instead of a simple
-expression. `convert_expression` doesn't handle `Slice` nodes.
-
-**Fix:** When the subscript's slice is a `Slice` node, generate a new
-list containing the elements from `lower` to `upper`.
-
-**Implementation steps:**
-1. In `convert_subscript`, detect when the slice is a `Slice` node
-   (has `lower`/`upper` fields instead of being a simple expression)
-2. Convert `lower` and `upper` to expressions (default: 0 and length)
-3. Generate a new list struct:
-   - `new_length = upper - lower`
-   - `new_data[i] = old_data[lower + i]` for each element
-4. For constant bounds, unroll at conversion time (like list comprehensions)
-5. For variable bounds, generate a loop (requires statement-level code
-   from expression context — use a temporary variable)
-
-**Affected files:** `python_converter.cpp` (~40-60 lines)
-
-**Estimated effort:** 4-6 hours
-
-**Dependencies:** None
-
----
-
-#### `set-literal` — Set type and `in` operator
-
-**Test:** `s = {1, 2, 3}; assert 2 in s`
-
-**Why it fails:** Two issues: (a) `Set` expression type not handled in
-`convert_expression`, (b) `In` comparison operator not handled in
-`convert_compare`.
-
-**Fix:** Model sets as sorted lists (or unsorted lists with linear search
-for `in`). The `in` operator becomes a loop or disjunction.
-
-**Implementation steps:**
-1. Add `Set` to the expression dispatcher
-2. Implement `convert_set`: model as a list struct (reuse `python_list_type`)
-   with elements stored in the data array
-3. Add `In` and `NotIn` to `convert_compare`:
-   - For lists/sets: `x in lst` becomes
-     `lst.data[0]==x or lst.data[1]==x or ... or lst.data[lst.length-1]==x`
-   - For constant-size collections, unroll the disjunction
-   - For variable-size, generate a loop with a result flag
-4. Also handle `in` for strings: `"a" in "abc"` (character search)
-
-**Affected files:** `python_converter.cpp` (~40-60 lines)
-
-**Estimated effort:** 3-5 hours
-
-**Dependencies:** None
-
----
-
-#### `del-statement` — Delete statement
-
-**Test:** `lst = [1, 2, 3]; del lst[1]; assert len(lst) == 2`
-
-**Why it fails:** `Delete` statement type not handled in
-`convert_statement` (silently skipped as unsupported).
-
-**Fix:** For `del lst[i]`, shift elements left and decrement length.
-For `del x`, remove the variable from scope (or set to nondet).
-
-**Implementation steps:**
-1. Add `Delete` to the statement dispatcher
-2. Implement `convert_delete`:
-   - Parse the `targets` list from the Delete AST node
-   - For `Subscript` targets (`del lst[i]`):
-     - Generate a loop: `for j in range(i, lst.length-1): lst.data[j] = lst.data[j+1]`
-     - Decrement `lst.length`
-     - For constant index, unroll the shift
-   - For `Name` targets (`del x`):
-     - Set the variable to a nondet value (overapproximation)
-     - Or mark it as undefined (would need a validity flag)
-3. Add bounds check: `assert 0 <= i < lst.length` before deletion
-
-**Affected files:** `python_converter.cpp` (~30-50 lines)
-
-**Estimated effort:** 3-5 hours
-
-**Dependencies:** `list-subscript-assign` (for the element shifting)
-
----
-
-#### `import-value` — Imported function/value resolution
-
-**Test:** `from math import sqrt; x = sqrt(4.0); assert x > 1.9`
-
-**Why it fails:** `ImportFrom` statements are silently ignored. The
-imported name `sqrt` is not registered in the symbol table, so the call
-falls through to the "unknown function" handler (returns nondet).
-
-**Fix:** Provide operational models for commonly imported standard library
-functions, similar to CBMC's C library models in `src/ansi-c/library/`.
-
-**Implementation steps:**
-1. Create a model registry: a map from `(module, name)` to a built-in
-   handler function (like the existing `abs`, `len`, `print` handlers)
-2. Handle `ImportFrom` in `convert_statement`:
-   - Parse the module name and imported names
-   - For each imported name, check the model registry
-   - If found, register the name as a known built-in
-   - If not found, log a warning (current behavior)
-3. Implement models for high-priority functions:
-   - `math`: `sqrt`, `floor`, `ceil`, `log`, `exp`, `pow`, `fabs`
-     (model as nondet with postconditions, e.g., `sqrt(x) >= 0`)
-   - `typing`: `Any`, `Optional`, `List`, `Dict` (type aliases, no-op)
-   - `os.path`: `exists`, `join` (return nondet bool/string)
-4. Long-term: support loading `.pyi` stub files for type information
-
-**Affected files:** `python_converter.cpp` (~50-100 lines for registry),
-new file `python_models.h` for model definitions
-
-**Estimated effort:** 1-2 days for the framework + initial models
-
-**Dependencies:** None
+Items 1-6 from the original plan have been implemented. Only the
+architecture-level change remains.
 
 ---
 
@@ -560,22 +370,19 @@ specific types for annotated variables (the current behavior).
 
 ---
 
-### Summary and recommended implementation order
+### Summary
 
-| # | Test | Effort | Dependencies | Impact |
-|---|------|--------|-------------|--------|
-| 1 | `list-subscript-assign` | 1-2 hours | None | Unblocks array algorithms |
-| 2 | `generator-expression` | 3-5 hours | None | 13+ ESBMC tests |
-| 3 | `set-literal` | 3-5 hours | None | `in` operator |
-| 4 | `slice-expression` | 4-6 hours | None | 8+ ESBMC tests |
-| 5 | `del-statement` | 3-5 hours | #1 | List mutation |
-| 6 | `import-value` | 1-2 days | None | 29+ ESBMC tests |
-| 7 | `type-change` | 2-3 weeks | All above stable | Full Python semantics |
+Items 1-6 have been implemented. Only item 7 remains:
 
-Items 1-5 are independent and can be done in any order. Item 1 is the
-quickest win and unblocks real-world array-manipulating code (sorting,
-searching with mutation). Item 6 is the highest-impact single change
-for ESBMC benchmark coverage. Item 7 is a separate project.
+| # | Test | Status |
+|---|------|--------|
+| 1 | `list-subscript-assign` | **DONE** |
+| 2 | `generator-expression` | **DONE** (literal iterables) |
+| 3 | `set-literal` | **DONE** |
+| 4 | `slice-expression` | **DONE** |
+| 5 | `del-statement` | **DONE** |
+| 6 | `import-value` | **DONE** (math module models) |
+| 7 | `type-change` | 2-3 weeks — tagged unions (Phase 9) |
 
 ### Previous items (DONE)
 
@@ -598,22 +405,21 @@ Tested against 2,089 non-fail tests from ESBMC's Python regression suite:
 
 | Metric | Count | Percentage |
 |--------|-------|-----------|
-| PASS | 934 | 44% |
-| FAIL (real) | 382 | 18% |
-| FAIL (no-body warnings) | 175 | 8% |
+| PASS | 914 | 43% |
+| FAIL (real) | 412 | 20% |
+| FAIL (no-body warnings) | 171 | 8% |
 | FAIL (overflow warnings) | 3 | <1% |
-| FAIL (uncaught exception) | 1 | <1% |
-| ERROR/TIMEOUT | 594 | 28% |
+| FAIL (uncaught exception) | 3 | <1% |
+| ERROR/TIMEOUT | 586 | 28% |
 
-Effective pass rate excluding correct warnings: **53%**.
+Effective pass rate excluding correct warnings: **52%**.
 
-Remaining errors: ImportFrom (22), Import (7), Slice (1), Set (1),
-Delete (1). The 382 real failures are mostly from: tests depending on
-imported values, generator expressions, and list subscript assignment.
-
-Real-world verification examples tested:
-- Binary search: verified no div-by-zero, no overflow (with bounded size)
-- Bank account: deposit correctness verified with unbounded ints
+Error count dropped from 594 to 586 after import handling. The 412 real
+failures are from: tests depending on imported values with specific
+semantics, generator expressions with variable iterables, and dynamic
+typing patterns. The front-end now analyzes more code (fewer silent
+drops), which reveals more real failures — this is progress toward
+soundness.
 
 ## 7. Build Record
 
@@ -655,4 +461,7 @@ Real-world verification examples tested:
 | 2026-04-23 | 48bedcc240 | --python-unbounded-ints for correct integer semantics (70 CORE, 2 KNOWNBUG) |
 | 2026-04-23 | 72539813a2 | Exception propagation Stage B — try/except catches raise (71 CORE, 1 KNOWNBUG) |
 | 2026-04-23 | 91ba7c75e3 | User verification guide |
-| 2026-04-23 | (pending) | Final ESBMC validation: 53% effective, real-world examples |
+| 2026-04-23 | b299a0ef82 | Real-world tests, KNOWNBUG for all gaps |
+| 2026-04-23 | 47a4c0c3dc | Detailed fix plans for all 7 KNOWNBUG tests |
+| 2026-04-23 | cb19d2735a | Items 1-5: list assign, generators, sets, slices, del (78 CORE) |
+| 2026-04-23 | f55f374299 | Item 6: import handling with math library models (79 CORE, 1 KNOWNBUG) |
