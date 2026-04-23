@@ -18,6 +18,7 @@
 #include <util/symbol.h>
 
 #include "python_types.h"
+#include "python_value_type.h"
 
 #include <sstream>
 
@@ -340,6 +341,11 @@ exprt python_convertert::convert_name(const jsont &expr)
     log.error() << "Unknown variable: " << id << messaget::eom;
     return nil_exprt{};
   }
+
+  // If the variable is a tagged union, extract the int field by default.
+  // The caller will handle type dispatch if needed.
+  if(is_python_value_type(sym->type))
+    return python_value_int(sym->symbol_expr());
 
   return sym->symbol_expr();
 }
@@ -2076,7 +2082,43 @@ codet python_convertert::convert_assign(const jsont &stmt)
       existing != nullptr && existing->type != rhs.type() &&
       rhs.type().id() != ID_empty && !rhs.is_nil())
     {
-      // Type change detected — create a fresh versioned symbol
+      if(if_else_depth > 0)
+      {
+        // Inside if/else: type change at a branch point.
+        // Use python_value_type for the variable.
+        // Create a tagged-union variable and wrap the value.
+        struct_typet val_type = python_value_type();
+        unsigned &ver = version_counters[qualified_name];
+        ver++;
+        std::string versioned_name =
+          qualified_name + "__v" + std::to_string(ver);
+        irep_idt versioned_id{versioned_name};
+
+        symbolt new_symbol{versioned_id, val_type, "python"};
+        new_symbol.base_name = var_name + "__v" + std::to_string(ver);
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        symbol_table.add(new_symbol);
+
+        variable_versions[qualified_name] = versioned_id;
+
+        // Wrap the value in a tagged union
+        python_type_tagt tag = python_type_tagt::INT;
+        if(rhs.type().id() == ID_floatbv)
+          tag = python_type_tagt::FLOAT;
+        else if(rhs.type().id() == ID_bool)
+          tag = python_type_tagt::BOOL;
+
+        struct_exprt wrapped = make_python_value(tag, rhs);
+        const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
+        code_frontend_assignt assign{new_sym.symbol_expr(), wrapped};
+        assign.add_source_location() = loc;
+        block.add(std::move(assign));
+        continue;
+      }
+
+      // Straight-line code: create a fresh versioned symbol
       unsigned &ver = version_counters[qualified_name];
       ver++;
       std::string versioned_name = qualified_name + "__v" + std::to_string(ver);
@@ -2225,6 +2267,10 @@ codet python_convertert::convert_if(const jsont &stmt)
   if(test.type() != bool_typet{})
     test = typecast_exprt{test, bool_typet{}};
 
+  // Save version state before branches
+  auto saved_versions = variable_versions;
+  if_else_depth++;
+
   // Convert body
   code_blockt then_block;
   const jsont &body = json_member(stmt, "body");
@@ -2234,6 +2280,10 @@ codet python_convertert::convert_if(const jsont &stmt)
       then_block.add(convert_statement(s));
   }
 
+  // Save then-branch versions, restore for else branch
+  auto then_versions = variable_versions;
+  variable_versions = saved_versions;
+
   // Convert orelse (may be empty, elif chain, or else block)
   const jsont &orelse = json_member(stmt, "orelse");
   if(orelse.is_array() && !as_array(orelse).empty())
@@ -2242,6 +2292,13 @@ codet python_convertert::convert_if(const jsont &stmt)
     for(const auto &s : as_array(orelse))
       else_block.add(convert_statement(s));
 
+    // Merge: if both branches modified the same variable, keep the
+    // then-branch version (the else branch's version is only live on
+    // the else path, which CBMC handles via the if-then-else structure)
+    variable_versions = then_versions;
+
+    if_else_depth--;
+
     code_ifthenelset if_stmt{
       test, std::move(then_block), std::move(else_block)};
     if_stmt.add_source_location() = get_location(stmt);
@@ -2249,6 +2306,9 @@ codet python_convertert::convert_if(const jsont &stmt)
   }
   else
   {
+    variable_versions = then_versions;
+    if_else_depth--;
+
     code_ifthenelset if_stmt{test, std::move(then_block)};
     if_stmt.add_source_location() = get_location(stmt);
     return std::move(if_stmt);
@@ -2535,7 +2595,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // Return type
   const jsont &returns = json_member(stmt, "returns");
   typet return_type =
-    returns.is_null() ? empty_typet{} : convert_type_annotation(returns);
+    returns.is_null() ? python_int_type() : convert_type_annotation(returns);
 
   code_typet func_type{parameters, return_type};
 
@@ -2739,8 +2799,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         }
 
         const jsont &returns = json_member(item, "returns");
-        typet return_type =
-          returns.is_null() ? empty_typet{} : convert_type_annotation(returns);
+        typet return_type = returns.is_null()
+                              ? python_int_type()
+                              : convert_type_annotation(returns);
 
         // NoneType → void
         if(
