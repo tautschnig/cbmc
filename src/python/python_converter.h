@@ -65,6 +65,9 @@ private:
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
 
+  /// Known imported module names (for `import math` style)
+  std::set<std::string> imported_modules;
+
   /// Map from variable name (qualified) to its current versioned symbol.
   /// Used for fresh variable renaming when a variable changes type.
   std::map<std::string, irep_idt> variable_versions;
@@ -182,6 +185,10 @@ private:
   /// Safe typecast: handles tagged unions, struct-to-scalar, and other
   /// cases that would crash with a raw typecast_exprt.
   exprt safe_typecast(const exprt &e, const typet &target) const;
+
+  /// Safe zero: returns from_integer(0, type) for numeric types,
+  /// or a nondet value for struct/other types.
+  exprt safe_zero(const typet &type) const;
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H
