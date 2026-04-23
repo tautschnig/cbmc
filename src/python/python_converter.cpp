@@ -285,44 +285,48 @@ exprt python_convertert::convert_expression(const jsont &expr)
 {
   std::string node_type = json_string(json_member(expr, "_type"));
 
+  exprt result = nil_exprt{};
+
   if(node_type == "Constant")
-    return convert_constant(expr);
+    result = convert_constant(expr);
   else if(node_type == "Name")
-    return convert_name(expr);
+    result = convert_name(expr);
   else if(node_type == "BinOp")
-    return convert_bin_op(expr);
+    result = convert_bin_op(expr);
   else if(node_type == "UnaryOp")
-    return convert_unary_op(expr);
+    result = convert_unary_op(expr);
   else if(node_type == "BoolOp")
-    return convert_bool_op(expr);
+    result = convert_bool_op(expr);
   else if(node_type == "Compare")
-    return convert_compare(expr);
+    result = convert_compare(expr);
   else if(node_type == "Call")
-    return convert_call(expr);
+    result = convert_call(expr);
   else if(node_type == "IfExp")
-    return convert_if_exp(expr);
+    result = convert_if_exp(expr);
   else if(node_type == "Subscript")
-    return convert_subscript(expr);
+    result = convert_subscript(expr);
   else if(node_type == "Tuple")
-    return convert_tuple(expr);
+    result = convert_tuple(expr);
   else if(node_type == "List")
-    return convert_list(expr);
+    result = convert_list(expr);
   else if(node_type == "Attribute")
-    return convert_attribute(expr);
+    result = convert_attribute(expr);
   else if(node_type == "Dict")
-    return convert_dict(expr);
+    result = convert_dict(expr);
   else if(node_type == "Set")
-    return convert_list(expr); // Model sets as lists
+    result = convert_list(expr);
   else if(node_type == "ListComp")
-    return convert_list_comp(expr);
+    result = convert_list_comp(expr);
   else if(node_type == "Lambda")
-    return convert_lambda(expr);
+    result = convert_lambda(expr);
   else
   {
-    log.error() << "Unsupported Python expression type: " << node_type
-                << messaget::eom;
-    return nil_exprt{};
+    log.warning() << "Unsupported Python expression type: " << node_type
+                  << messaget::eom;
   }
+
+  // Return nil for unsupported expressions — callers handle nil gracefully
+  return result;
 }
 
 exprt python_convertert::convert_constant(const jsont &expr)
@@ -620,7 +624,7 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
   else if(op == "UAdd")
     return operand;
   else if(op == "Not")
-    return not_exprt{operand};
+    return not_exprt{safe_typecast(operand, bool_typet{})};
   else
   {
     log.error() << "Unsupported unary operator: " << op << messaget::eom;
@@ -648,9 +652,11 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
       return nil_exprt{};
 
     if(op == "And")
-      result = and_exprt{result, next};
+      result = and_exprt{
+        safe_typecast(result, bool_typet{}), safe_typecast(next, bool_typet{})};
     else if(op == "Or")
-      result = or_exprt{result, next};
+      result = or_exprt{
+        safe_typecast(result, bool_typet{}), safe_typecast(next, bool_typet{})};
     else
     {
       log.error() << "Unsupported bool operator: " << op << messaget::eom;
@@ -697,13 +703,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
     if(is_python_value_type(right.type()))
       right = unwrap_value(right, current_left.type());
 
-    // Type promotion for comparisons
-    if(current_left.type() != right.type())
+    // Type promotion for comparisons (skip for In/NotIn/Is/IsNot)
+    if(
+      current_left.type() != right.type() && op != "In" && op != "NotIn" &&
+      op != "Is" && op != "IsNot")
     {
       if(current_left.type().id() == ID_floatbv)
-        right = typecast_exprt{right, current_left.type()};
+        right = safe_typecast(right, current_left.type());
       else if(right.type().id() == ID_floatbv)
-        current_left = typecast_exprt{current_left, right.type()};
+        current_left = safe_typecast(current_left, right.type());
+      else
+        // General case: cast right to left's type
+        right = safe_typecast(right, current_left.type());
     }
 
     exprt cmp;
@@ -775,9 +786,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
     }
     else if(op == "Is")
+    {
+      if(current_left.type() != right.type())
+        right = safe_typecast(right, current_left.type());
       cmp = equal_exprt{current_left, right};
+    }
     else if(op == "IsNot")
+    {
+      if(current_left.type() != right.type())
+        right = safe_typecast(right, current_left.type());
       cmp = notequal_exprt{current_left, right};
+    }
     else
     {
       log.error() << "Unsupported comparison operator: " << op << messaget::eom;
@@ -1207,6 +1226,13 @@ exprt python_convertert::convert_call(const jsont &expr)
   while(!arguments.empty() && arguments.back().is_nil())
     arguments.pop_back();
 
+  // Typecast arguments to match parameter types
+  for(std::size_t i = 0; i < arguments.size() && i < params.size(); i++)
+  {
+    if(!arguments[i].is_nil() && arguments[i].type() != params[i].type())
+      arguments[i] = safe_typecast(arguments[i], params[i].type());
+  }
+
   side_effect_expr_function_callt call{
     sym->symbol_expr(),
     std::move(arguments),
@@ -1224,6 +1250,13 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
 
   if(test.is_nil() || body.is_nil() || orelse.is_nil())
     return nil_exprt{};
+
+  // Ensure both branches have the same type
+  if(body.type() != orelse.type())
+    orelse = safe_typecast(orelse, body.type());
+
+  if(test.type() != bool_typet{})
+    test = safe_typecast(test, bool_typet{});
 
   return if_exprt{test, body, orelse};
 }
