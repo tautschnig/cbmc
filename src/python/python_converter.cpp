@@ -1347,10 +1347,61 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
-  // complex() — return nondet float (simplified, no real/imaginary)
+  // complex(real, imag) — return struct with real/imag fields
   else if(func_name == "complex")
   {
-    return side_effect_expr_nondett{double_type(), get_location(expr)};
+    struct_typet::componentst comps;
+    comps.push_back(struct_typet::componentt{"real", double_type()});
+    comps.push_back(struct_typet::componentt{"imag", double_type()});
+    struct_typet complex_type{comps};
+    complex_type.set_tag("python_complex");
+
+    exprt real_val = safe_zero(double_type());
+    exprt imag_val = safe_zero(double_type());
+    if(args.is_array())
+    {
+      auto it = as_array(args).begin();
+      if(it != as_array(args).end())
+      {
+        exprt arg = convert_expression(*it);
+        if(arg.type().id() == ID_floatbv)
+          real_val = arg;
+        else
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          if(arg.is_constant())
+          {
+            mp_integer iv;
+            if(!to_integer(to_constant_expr(arg), iv))
+              fv.from_integer(iv);
+          }
+          real_val = fv.to_expr();
+        }
+        ++it;
+      }
+      if(it != as_array(args).end())
+      {
+        exprt arg = convert_expression(*it);
+        if(arg.type().id() == ID_floatbv)
+          imag_val = arg;
+        else
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          if(arg.is_constant())
+          {
+            mp_integer iv;
+            if(!to_integer(to_constant_expr(arg), iv))
+              fv.from_integer(iv);
+          }
+          imag_val = fv.to_expr();
+        }
+      }
+    }
+    return struct_exprt{{real_val, imag_val}, complex_type};
   }
   // list() / sorted() / reversed() — return nondet list
   else if(
@@ -2116,8 +2167,9 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       return member_exprt{value, attr, st.get_component(attr).type()};
   }
 
-  log.error() << "Cannot access attribute '" << attr << "'" << messaget::eom;
-  return nil_exprt{};
+  log.warning() << "Cannot access attribute '" << attr << "', using nondet"
+                << messaget::eom;
+  return side_effect_expr_nondett{python_int_type(), source_locationt{}};
 }
 
 exprt python_convertert::convert_dict(const jsont &expr)
@@ -3775,6 +3827,27 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     {
       for(const auto &s : as_array(init_body))
       {
+        // Handle AnnAssign: self.attr: Type = value
+        if(is_node_type(s, "AnnAssign"))
+        {
+          const jsont &target = json_member(s, "target");
+          if(!is_node_type(target, "Attribute"))
+            continue;
+          const jsont &target_value = json_member(target, "value");
+          if(
+            !is_node_type(target_value, "Name") ||
+            json_string(json_member(target_value, "id")) != "self")
+            continue;
+
+          std::string attr_name = json_string(json_member(target, "attr"));
+          const jsont &annotation = json_member(s, "annotation");
+          typet attr_type = annotation.is_null()
+                              ? python_value_type()
+                              : convert_type_annotation(annotation);
+          components.push_back(struct_typet::componentt{attr_name, attr_type});
+          continue;
+        }
+
         if(!is_node_type(s, "Assign"))
           continue;
         const jsont &targets = json_member(s, "targets");
