@@ -207,6 +207,44 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     return typecast_exprt{e, target};
   }
 
+  // Class pointer cast: Derived* → Base* (layout-compatible)
+  if(
+    e.type().id() == ID_pointer && target.id() == ID_pointer &&
+    to_pointer_type(e.type()).base_type().id() == ID_struct &&
+    to_pointer_type(target).base_type().id() == ID_struct)
+  {
+    return typecast_exprt{e, target};
+  }
+
+  // Class struct cast: Derived → Base (take address, cast, deref)
+  if(
+    e.type().id() == ID_struct && target.id() == ID_pointer &&
+    to_pointer_type(target).base_type().id() == ID_struct)
+  {
+    return typecast_exprt{address_of_exprt{e}, target};
+  }
+
+  // Class struct cast: Derived → Base (reinterpret via byte_extract)
+  if(
+    e.type().id() == ID_struct && target.id() == ID_struct &&
+    to_struct_type(e.type()).get_tag() != to_struct_type(target).get_tag())
+  {
+    const auto &src_tag = to_struct_type(e.type()).get_tag();
+    const auto &tgt_tag = to_struct_type(target).get_tag();
+    if(
+      !src_tag.empty() && !tgt_tag.empty() &&
+      id2string(src_tag).substr(0, 13) == "python_class_" &&
+      id2string(tgt_tag).substr(0, 13) == "python_class_")
+    {
+      // Layout-compatible: extract base fields from derived struct
+      const auto &tgt_st = to_struct_type(target);
+      exprt::operandst fields;
+      for(const auto &comp : tgt_st.components())
+        fields.push_back(member_exprt{e, comp.get_name(), comp.type()});
+      return struct_exprt{std::move(fields), target};
+    }
+  }
+
   // Struct-to-scalar or other incompatible: return a nondet value
   // of the target type (overapproximation, avoids crash)
   return side_effect_expr_nondett{target, source_locationt{}};
@@ -1047,10 +1085,14 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(obj.is_nil())
       return nil_exprt{};
 
-    // Find the class name from the object's type
-    if(obj.type().id() == ID_struct)
+    // Resolve class name from object's type (struct or pointer-to-struct)
+    typet obj_base_type = obj.type();
+    if(obj_base_type.id() == ID_pointer)
+      obj_base_type = to_pointer_type(obj_base_type).base_type();
+
+    if(obj_base_type.id() == ID_struct)
     {
-      const auto &st = to_struct_type(obj.type());
+      const auto &st = to_struct_type(obj_base_type);
       std::string tag = id2string(st.get_tag());
       // tag is "python_class_ClassName"
       if(tag.substr(0, 13) == "python_class_")
@@ -1079,6 +1121,59 @@ exprt python_convertert::convert_call(const jsont &expr)
             for(const auto &arg : as_array(args))
               arguments.push_back(convert_expression(arg));
           }
+
+          // Check for dynamic dispatch: if subclasses override this method,
+          // dispatch based on __class_tag
+          std::vector<std::pair<std::string, irep_idt>> dispatch_targets;
+          for(const auto &[sub_name, sub_bases] : class_bases)
+          {
+            for(const auto &base : sub_bases)
+            {
+              if(base == class_name)
+              {
+                irep_idt sub_method_id{
+                  "python::" + sub_name + "::" + method_name};
+                if(symbol_table.lookup(sub_method_id) != nullptr)
+                  dispatch_targets.emplace_back(sub_name, sub_method_id);
+                break;
+              }
+            }
+          }
+
+          if(!dispatch_targets.empty())
+          {
+            // Read __class_tag from the object
+            exprt deref_obj =
+              obj.type().id() == ID_pointer ? dereference_exprt{obj} : obj;
+            exprt tag_field =
+              member_exprt{deref_obj, "__class_tag", signedbv_typet{32}};
+
+            // Build if-then-else chain: check subclass tags first
+            exprt result_call = side_effect_expr_function_callt{
+              method_sym->symbol_expr(),
+              arguments,
+              method_type.return_type(),
+              get_location(expr)};
+
+            for(auto it = dispatch_targets.rbegin();
+                it != dispatch_targets.rend();
+                ++it)
+            {
+              const auto &[sub_name, sub_method_id] = *it;
+              const symbolt &sub_sym = symbol_table.lookup_ref(sub_method_id);
+              exprt sub_call = side_effect_expr_function_callt{
+                sub_sym.symbol_expr(),
+                arguments,
+                method_type.return_type(),
+                get_location(expr)};
+              exprt tag_check = equal_exprt{
+                tag_field,
+                from_integer(class_tag_ids[sub_name], signedbv_typet{32})};
+              result_call = if_exprt{tag_check, sub_call, result_call};
+            }
+            return result_call;
+          }
+
           side_effect_expr_function_callt call{
             method_sym->symbol_expr(),
             std::move(arguments),
@@ -2680,6 +2775,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
         const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);
         code_blockt result;
 
+        // Set __class_tag to the actual class being constructed
+        if(class_tag_ids.count(call_name))
+        {
+          result.add(code_frontend_assignt{
+            member_exprt{
+              var_sym.symbol_expr(), "__class_tag", signedbv_typet{32}},
+            from_integer(class_tag_ids[call_name], signedbv_typet{32})});
+        }
+
         // Call __init__(&var, args...)
         irep_idt init_id{"python::" + call_name + "::__init__"};
         const symbolt *init_sym = symbol_table.lookup(init_id);
@@ -3620,6 +3724,30 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
   }
 
+  // Inherit fields from base classes (layout-compatible for dispatch)
+  const jsont &bases = json_member(stmt, "bases");
+  if(bases.is_array())
+  {
+    for(const auto &base : as_array(bases))
+    {
+      if(is_node_type(base, "Name"))
+      {
+        std::string base_name = json_string(json_member(base, "id"));
+        if(class_types.count(base_name))
+        {
+          const auto &base_type = class_types[base_name];
+          for(const auto &comp : base_type.components())
+          {
+            // Skip __class_tag (added separately)
+            if(id2string(comp.get_name()) == "__class_tag")
+              continue;
+            components.push_back(comp);
+          }
+        }
+      }
+    }
+  }
+
   // Scan class body for class-level attributes (AnnAssign outside methods)
   if(body.is_array())
   {
@@ -3708,12 +3836,19 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
   }
 
-  struct_typet class_type{components};
+  // Add __class_tag as first field for dynamic dispatch
+  struct_typet::componentst tagged_components;
+  tagged_components.push_back(
+    struct_typet::componentt{"__class_tag", signedbv_typet{32}});
+  for(auto &c : components)
+    tagged_components.push_back(std::move(c));
+
+  struct_typet class_type{tagged_components};
   class_type.set_tag("python_class_" + class_name);
   class_types[class_name] = class_type;
+  class_tag_ids[class_name] = static_cast<int>(class_tag_ids.size()) + 1;
 
   // Record base classes for isinstance checks
-  const jsont &bases = json_member(stmt, "bases");
   if(bases.is_array())
   {
     for(const auto &base : as_array(bases))
@@ -3747,6 +3882,13 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     exprt::operandst field_values;
     for(const auto &comp : class_type.components())
     {
+      // Set __class_tag to this class's unique ID
+      if(id2string(comp.get_name()) == "__class_tag")
+      {
+        field_values.push_back(
+          from_integer(class_tag_ids[class_name], signedbv_typet{32}));
+        continue;
+      }
       exprt val = safe_zero(comp.type());
       // Look for the value in the class body
       if(body.is_array())
