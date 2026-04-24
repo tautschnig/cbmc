@@ -7,6 +7,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/ieee_float.h>
 #include <util/pointer_expr.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
@@ -63,7 +64,11 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
 
   exprt tag_expr = from_integer(static_cast<int>(tag), signedbv_typet{32});
   exprt int_val = from_integer(0, signedbv_typet{64});
-  exprt float_val = from_integer(0, signedbv_typet{64}); // placeholder
+  exprt float_val =
+    ieee_floatt{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN}
+      .to_expr();
   exprt bool_val = false_exprt{};
   exprt str_ptr = null_pointer_exprt{
     pointer_typet{python_string_type(), 64}};

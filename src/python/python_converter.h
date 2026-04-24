@@ -180,11 +180,11 @@ private:
   exprt unwrap_value(const exprt &e, const typet &target_type) const;
 
   /// Wrap a concrete typed value into a tagged-union value.
-  exprt wrap_value(const exprt &e) const;
+  exprt wrap_value(const exprt &e);
 
   /// Safe typecast: handles tagged unions, struct-to-scalar, and other
   /// cases that would crash with a raw typecast_exprt.
-  exprt safe_typecast(const exprt &e, const typet &target) const;
+  exprt safe_typecast(const exprt &e, const typet &target);
 
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.
