@@ -1074,10 +1074,36 @@ exprt smt2_parsert::expression()
       {
         if(next_token() != smt2_tokenizert::CLOSE)
           throw error("expected \')\' after let");
-        replace_symbolt replace;
+        // Check if any binding is array-typed
+        bool has_array_binding = false;
         for(const auto &b : it->bindings)
-          replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
-        replace(result);
+        {
+          if(b.second.type().id() == ID_array)
+          {
+            has_array_binding = true;
+            break;
+          }
+        }
+        if(has_array_binding)
+        {
+          // Array-typed bindings need replace_symbolt for correct
+          // interaction with the array theory.
+          replace_symbolt replace;
+          for(const auto &b : it->bindings)
+            replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
+          replace(result);
+        }
+        else if(!it->bindings.empty())
+        {
+          binding_exprt::variablest vars;
+          exprt::operandst vals;
+          for(const auto &b : it->bindings)
+          {
+            vars.push_back(symbol_exprt{b.first, b.second.type()});
+            vals.push_back(b.second);
+          }
+          result = let_exprt{std::move(vars), std::move(vals), result};
+        }
         for(const auto &binding : it->bindings)
           id_map.erase(binding.first);
         for(auto &saved_id : it->saved_ids)
