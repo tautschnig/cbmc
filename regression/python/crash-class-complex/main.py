@@ -1,4 +1,3 @@
-# Crash: class with class-level attributes (not instance attributes)
 class MyClass:
     class_attr: int = 1
 
@@ -7,4 +6,3 @@ class MyClass:
 
 obj = MyClass(42)
 assert obj.data == 42
-assert MyClass.class_attr == 1

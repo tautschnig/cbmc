@@ -1,6 +1,7 @@
-# Limitation: for c in string yields int char code, not single-char string
+# String iteration yields single-char strings
 word = "abc"
-chars = []
+first: str = ""
 for c in word:
-    chars.append(c)
-assert chars[0] == "a"
+    first = c
+    break
+assert first == "a"
