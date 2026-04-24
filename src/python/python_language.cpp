@@ -67,7 +67,7 @@ void python_languaget::set_language_options(
   " if isinstance(n,list):return[c(x)for x in n]\n" \
   " return n\n" \
   "r=c(t);r['_filename']=sys.argv[1]\n" \
-  "json.dump(r,open(sys.argv[2],'w'),default=str)\n"
+  "json.dump(r,open(sys.argv[2],'w'),default=str,ensure_ascii=True)\n"
 // clang-format on
 
 bool python_languaget::parse(
