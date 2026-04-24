@@ -1039,3 +1039,53 @@ The propagator would eliminate ~24% of clauses for zipcpu-zipmmu
 limited to benchmarks with many refinement iterations. The integration
 complexity (accessing bv_cache from arrayst, handling extensionality)
 outweighs the benefit given the current results.
+
+## Deep WEG Debugging: use_read_over_weakeq (investigated, not committed)
+
+### Root cause identified
+
+The `use_read_over_weakeq` mode has a soundness bug caused by
+`weakly_equivalent_mod` using SYNTACTIC comparison of store indices.
+The function `get_rep_mod(n, i)` checks `node.pi == i` (line 71 of
+arrays_weg.h) — this is syntactic equality. When the store index and
+read index are different symbols (e.g., `i1` vs `i2`), they're
+considered different even though they might have the same value at
+runtime.
+
+### The fix
+
+The read-over-weakeq constraint `i=j → a[i]=b[j]` (when `a ≈_i b`)
+must be guarded by store index inequalities:
+
+    ¬(i=j) ∨ (s1=i) ∨ (s2=i) ∨ ... ∨ (a[i]=b[j])
+
+where `s1, s2, ...` are the store indices on the WEG path from `a`
+to `b`. The guard `(sk=i)` is an escape clause: if any store index
+equals the read index, the constraint doesn't apply.
+
+### Implementation tested
+
+Two approaches were tested:
+1. **Filter + guards**: Use `weakly_equivalent_mod` as a filter (skip
+   trivially-true constraints where a store index syntactically matches
+   the read index), add guards for remaining constraints. Result:
+   0 wrong, 411/551 correct at 30s.
+2. **No filter + guards**: Generate ROW constraints for ALL pairs,
+   with guards. Result: 0 wrong, 379/551 correct at 30s.
+
+Both are correct but SLOWER than the traditional mode (522/551).
+The weakeq mode generates O(n²) ROW constraints (same as Ackermann),
+plus the store index guards add extra literals per clause. The
+traditional mode's ITE encoding + lazy Ackermann is more efficient.
+
+### Conclusion
+
+The `use_read_over_weakeq` mode's soundness bug is fixable (store
+index guards), but the fixed mode is not a performance improvement
+over the traditional approach. The mode remains disabled.
+
+The key insight: the WEG's `weakly_equivalent_mod` is a SYNTACTIC
+approximation. It's useful as an optimization (skip definitely-
+unneeded constraints) but cannot be used as a soundness filter
+(it may incorrectly skip needed constraints when symbolic indices
+might be equal at runtime).
