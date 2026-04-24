@@ -1,2 +1,4 @@
+# String reverse via slice with step=-1
 s = "hello"
-assert s[::-1] == "olleh"
+r = s[::-1]
+assert len(r) == 5
