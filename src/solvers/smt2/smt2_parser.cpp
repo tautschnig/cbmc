@@ -194,15 +194,17 @@ exprt smt2_parsert::let_expression()
   if(next_token() != smt2_tokenizert::CLOSE)
     throw error("expected ')' after let");
 
-  // Substitute bindings into the where-expression directly rather than
-  // creating a let_exprt. This avoids an abstraction barrier that
-  // prevents the array theory from seeing through element-typed
-  // let bindings (the array theory generates constraints after
-  // convert_let erases the temporary bitvector mappings).
-  replace_symbolt replace;
-  for(const auto &b : bindings)
-    replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
-  replace(where);
+  if(!bindings.empty())
+  {
+    binding_exprt::variablest vars;
+    exprt::operandst vals;
+    for(const auto &b : bindings)
+    {
+      vars.push_back(symbol_exprt{b.first, b.second.type()});
+      vals.push_back(b.second);
+    }
+    where = let_exprt{std::move(vars), std::move(vals), where};
+  }
 
   // delete the bindings from the id_map
   for(const auto &binding : bindings)
