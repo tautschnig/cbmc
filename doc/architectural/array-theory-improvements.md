@@ -934,3 +934,59 @@ due to refinement loop overhead).
    read-over-write across the entire equivalence class
 3. **`use_read_over_weakeq` mode**: implemented but disabled alternative
    constraint generation using WEG structure
+
+## Activation Limit Removal (commit b73dca91d7)
+
+Removed the MAX_ACTIVATIONS=100 limit for constraint activation and
+Ackermann addition when lazy selects are active. This allows all
+constraints to be activated in a single iteration instead of 100 per
+iteration.
+
+Impact on hardware verification:
+- zipcpu-zipmmu: 280+ iterations (timeout) → 28 iterations (solves!)
+- VexRiscv: 13 iterations → 2 iterations
+- QF_AX: 512 → 523 correct at 30s
+
+## Let Expansion Optimization (investigated, not committed)
+
+The swapmem/wchains/bubsort timeout cliff is caused by exponential
+expression growth during let expansion in the SMT2 parser. The parser
+uses `replace_symbolt` to expand let bindings, which duplicates
+sub-expressions when bindings are used multiple times. With 36 nested
+lets in swapmem003ue, the expression tree grows from 87 nodes to 169M
+nodes (doubling every ~3 frames).
+
+Attempted fix: create `let_exprt` instead of expanding. This avoids
+the exponential blowup and makes swapmem benchmarks run (3-4 iterations).
+However, it introduces 72 wrong answers on QF_AX because `convert_let`
+creates fresh symbols that the array theory doesn't properly connect
+to store chains after the let scope ends.
+
+The fix requires ensuring that `convert_let`'s fresh symbols remain
+connected to the array theory after the let scope. The
+`record_array_let_binding` mechanism handles array-typed bindings but
+the interaction with nested lets and the refinement loop needs more
+investigation.
+
+## Current Status Summary
+
+**Commits:** 49 on `origin/develop`
+
+**QF_AX:** 523/551 correct at 30s, 551/551 at 180s, 0 wrong
+
+**QF_ABV (506 benchmarks, 30s):**
+| Solver | Correct | Wrong | Timeout |
+|--------|---------|-------|---------|
+| Bitwuzla | 435 | 0 | 71 |
+| Yices2 | 385 | 0 | 121 |
+| smt2_solver | 226 | 0 | 280 |
+
+**Hardware verification:**
+| Benchmark | Baseline | Current | Status |
+|-----------|----------|---------|--------|
+| picorv32-check | 2.0M cls | 752K cls | ✓ solved |
+| VexRiscv | 686K cls | 317K cls, 2 iters | ✓ solved |
+| zipcpu-pfcache | 41.5M (OOM) | 1.2M cls | ✓ solved |
+| zipcpu-zipmmu | 6M (timeout) | 7.2M cls, 28 iters | ✓ solved |
+
+**CBMC:** All regression tests pass
