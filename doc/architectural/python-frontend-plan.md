@@ -952,9 +952,248 @@ model). The assertion `> 3.0` can fail because nondet can be any value.
 ### Remaining ESBMC errors (46 errors)
 
 After reducing from 533 to ~46 errors, the remaining errors are covered
-by the 8 KNOWNBUG tests above plus variations of those patterns in more
-complex ESBMC tests. Fixing the 8 KNOWNBUG tests should resolve most
-of the remaining errors.
+by the KNOWNBUG tests above plus variations of those patterns.
+
+## 8. Design Limitation Roadmap
+
+Complete inventory of all intentional design limitations, each with a
+KNOWNBUG test and a detailed plan for lifting the limitation.
+
+### L1: String concatenation content not tracked
+
+**KNOWNBUG:** `crash-unicode-source`, `crash-list-repeat-compare`
+
+**Current behavior:** `s1 + s2` has correct length but nondet data.
+
+**Fix plan:** Generate statement-level code for string concat:
+1. Create a temporary string variable
+2. Copy `s1.data[0..s1.length]` to `tmp.data[0..]`
+3. Copy `s2.data[0..s2.length]` to `tmp.data[s1.length..]`
+4. Set `tmp.length = s1.length + s2.length`
+5. This requires converting string `+` from an expression to a
+   statement block (similar to how constructor calls are handled)
+
+**Effort:** 1-2 days. **Impact:** ~10 ESBMC errors, enables string
+content verification.
+
+---
+
+### L2: Bounded string length (256 characters)
+
+**KNOWNBUG:** `limit-string-length`
+
+**Current behavior:** `PYTHON_MAX_STRING_LENGTH = 256`, truncation.
+
+**Fix plan:** Two options:
+1. **Configurable bound:** `--python-max-string-length N` flag. Simple
+   but doesn't solve the fundamental issue.
+2. **CBMC string solver integration:** Use `refined_string_typet` from
+   `src/util/string_expr.h` which models strings as length + pointer
+   to unbounded array. Requires integrating with CBMC's string
+   refinement solver. Major project.
+
+**Effort:** Option 1: 2 hours. Option 2: 2-3 weeks.
+
+---
+
+### L3: Bounded list length (64 elements)
+
+**KNOWNBUG:** `limit-list-length`
+
+**Current behavior:** `PYTHON_MAX_LIST_LENGTH = 64`, overflow.
+
+**Fix plan:** Same as L2 — configurable bound or unbounded arrays.
+For lists, unbounded arrays are simpler than strings since there's
+no string solver to integrate with. Use `infinity_exprt` as array
+size (like C's flexible array members).
+
+**Effort:** Configurable: 2 hours. Unbounded: 1-2 weeks.
+
+---
+
+### L4: Integer overflow with int64
+
+**KNOWNBUG:** (CORE test `int-overflow-check` covers the warning)
+
+**Current behavior:** Overflow wraps with warning. `--python-unbounded-ints
+--z3` provides correct semantics.
+
+**Status:** Already solved with the `--python-unbounded-ints` flag.
+The limitation is that the default (without the flag) uses int64.
+
+**Fix plan:** Consider making `--python-unbounded-ints` the default
+when `--z3` is used. No code change needed — just a default change.
+
+---
+
+### L5: None modeled as integer 0
+
+**KNOWNBUG:** `limit-none-identity`
+
+**Current behavior:** `None` = `from_integer(0, int)`. `0 is None` is
+incorrectly `True`.
+
+**Fix plan:** Model `None` as a tagged-union value with tag `NONE`:
+1. In `convert_constant` for null values, return
+   `make_python_value(NONE, from_integer(0, int))`
+2. `is None` checks the tag: `python_value_is(x, NONE)`
+3. `is not None` checks `!python_value_is(x, NONE)`
+4. Truthiness of None: `False`
+5. Requires variables that could be None to use `python_value_type`
+
+**Effort:** 2-3 days (depends on tagged-union coverage).
+
+---
+
+### L6: Constructor-as-expression returns nondet
+
+**KNOWNBUG:** `limit-constructor-expr`
+
+**Current behavior:** `Foo(args)` in expression position returns nondet.
+
+**Fix plan:** Materialize constructor calls in expression position:
+1. In `convert_expression` for `Call` nodes that are constructors,
+   generate a temporary variable (using a counter for unique names)
+2. Add the temp declaration and `__init__` call to `pending_checks`
+   (which are prepended before the current statement)
+3. Return the temp variable's `symbol_exprt`
+4. This reuses the `pending_checks` mechanism already used for
+   property checks
+
+**Effort:** 3-4 hours.
+
+---
+
+### L7: Imports silently ignored
+
+**KNOWNBUG:** (CORE test `import-stdlib` covers the no-crash case)
+
+**Current behavior:** Unknown imports ignored, functions return nondet
+with `no-body` warning.
+
+**Fix plan:** Incremental:
+1. **Stub system:** Load `.pyi` type stub files for standard library
+   modules. Parse function signatures and register them.
+2. **Operational models:** For critical functions (e.g., `json.loads`,
+   `os.path.exists`), provide hand-written models with postconditions.
+3. **Module loader:** Parse imported `.py` files and include their
+   function definitions.
+
+**Effort:** Stub system: 1 week. Models: ongoing. Module loader: 2-3 weeks.
+
+---
+
+### L8: Class-level attribute access on class itself
+
+**KNOWNBUG:** `limit-class-attr-access`
+
+**Current behavior:** `ClassName.attr` fails (only `instance.attr` works).
+
+**Fix plan:** Create a "class object" symbol for each class:
+1. In `convert_class_def`, create a symbol `python::ClassName` with
+   the class struct type, initialized with class-level attribute values
+2. `ClassName.attr` resolves to `member_exprt{class_symbol, attr, type}`
+3. Instance attributes shadow class attributes (already handled)
+
+**Effort:** 2-3 hours.
+
+---
+
+### L9: No dynamic dispatch
+
+**KNOWNBUG:** `limit-dynamic-dispatch`
+
+**Current behavior:** Method calls resolved statically by struct tag.
+
+**Fix plan:** Add a vtable-like mechanism:
+1. Add a `__vtable` field to each class struct containing function
+   pointers for each method
+2. Method calls dispatch through the vtable: `obj.__vtable.method(obj)`
+3. Derived classes override vtable entries
+4. Alternative: use `if-then-else` dispatch based on the struct tag
+   (simpler but generates larger formulas)
+
+**Effort:** 1-2 weeks.
+
+---
+
+### L10: Exception type not tracked
+
+**KNOWNBUG:** `limit-except-type`
+
+**Current behavior:** `except TypeError` catches all exceptions.
+
+**Fix plan:** Replace the boolean `__exception_active` flag with a
+typed exception value:
+1. Add `__exception_type` integer variable (enum of exception types)
+2. `raise ValueError(...)` sets `__exception_type = VALUEERROR`
+3. `except ValueError` checks `__exception_type == VALUEERROR`
+4. `except Exception` catches all (base class check)
+5. Unhandled exceptions: check `__exception_active` at end (unchanged)
+
+**Effort:** 1-2 days.
+
+---
+
+### L11: String iteration yields int, not single-char string
+
+**KNOWNBUG:** `limit-string-iter-type`
+
+**Current behavior:** `for c in "abc"` yields `c = 97` (int).
+
+**Fix plan:** In the string iteration path of `convert_for`, wrap
+each character in a single-character string struct:
+1. Extract `data[idx]` as `unsignedbv{8}`
+2. Build a string struct with `length=1` and `data[0]=char_val`
+3. Assign the string struct to the loop variable
+4. Set loop variable type to `python_string_type()`
+
+**Effort:** 1-2 hours.
+
+---
+
+### L12: Generator expressions only work with literal iterables
+
+**KNOWNBUG:** `limit-generator-variable`
+
+**Current behavior:** `all(x > 0 for x in variable_list)` returns nondet.
+
+**Fix plan:** Generate a loop at the statement level:
+1. Create a result variable (`true` for `all`, `false` for `any`)
+2. Generate `for x in iterable` loop (already supported)
+3. In loop body: evaluate predicate, update result
+4. For `all`: `result = result and pred`
+5. For `any`: `result = result or pred`
+6. Use `pending_checks` to inject the loop before the current statement
+
+**Effort:** 3-4 hours.
+
+---
+
+### Remaining KNOWNBUG from ESBMC patterns
+
+**`crash-class-string-attr`:** Unannotated `__init__` param assigned to
+string attribute. Fix: infer attribute type from RHS expression type
+during `__init__` scan. **Effort:** 1-2 hours.
+
+---
+
+### Summary: all KNOWNBUG tests
+
+| # | KNOWNBUG | Limitation | Effort |
+|---|----------|-----------|--------|
+| 1 | `crash-unicode-source` | L1: string concat content | 1-2 days |
+| 2 | `crash-list-repeat-compare` | L1: list repeat content | 1-2 days |
+| 3 | `crash-class-string-attr` | Unannotated string param | 1-2 hours |
+| 4 | `limit-string-length` | L2: bounded strings | 2h or 2-3 weeks |
+| 5 | `limit-list-length` | L3: bounded lists | 2h or 1-2 weeks |
+| 6 | `limit-none-identity` | L5: None as 0 | 2-3 days |
+| 7 | `limit-constructor-expr` | L6: constructor in expr | 3-4 hours |
+| 8 | `limit-class-attr-access` | L8: ClassName.attr | 2-3 hours |
+| 9 | `limit-dynamic-dispatch` | L9: no virtual dispatch | 1-2 weeks |
+| 10 | `limit-except-type` | L10: exception type | 1-2 days |
+| 11 | `limit-string-iter-type` | L11: string iter type | 1-2 hours |
+| 12 | `limit-generator-variable` | L12: generator variable | 3-4 hours |
 
 ### Previous items (DONE)
 
