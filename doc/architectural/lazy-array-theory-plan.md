@@ -1,367 +1,202 @@
-# Plan: Truly Lazy Array Theory for CBMC
-
-## Goal
-
-Close the performance gap between CBMC's bit-blasting array solver and
-CDCL(T) solvers like Yices2 (currently 30-500× slower on QF_AX).
-
-## Current Architecture
-
-```
-Formula → convert() → bit-blast everything → add_array_constraints() → SAT solve
-                         ↑                        ↑
-                    ITE encoding            element-wise + Ackermann
-                    (per select)            (quadratic in indices)
-```
-
-Every array select `a[i]` is immediately bit-blasted into an ITE chain
-walking the store chain. Every pair of indices in the same equivalence
-class gets an Ackermann constraint. The SAT solver works on a formula
-with all array semantics fully encoded as propositional clauses.
-
-Yices2's architecture:
-
-```
-Formula → E-graph → SAT solve → theory check → lemma → re-solve
-                                     ↑              ↑
-                              constant-time     single clause
-                              model lookup      (targeted)
-```
-
-The theory solver never bit-blasts. It checks the model in the E-graph
-(constant time per check) and generates one clause per violation.
-
-## The Three Bottlenecks
-
-### 1. Eager bit-blasting of selects (biggest cost)
-
-Every `a[i]` is converted to `ITE(i==k_n, v_n, ITE(i==k_{n-1}, ...))`.
-For a store chain of length n with w-bit elements, this creates O(n·w)
-SAT variables and O(n·w) clauses. For 10 stores on 32-bit arrays:
-~3200 clauses per select.
-
-**Yices2 equivalent:** Zero clauses. The E-graph stores `a[i]`'s value
-directly. When the SAT solver needs to know if `a[i] == v`, the theory
-solver answers from the E-graph in O(1).
-
-### 2. Quadratic Ackermann constraints
-
-For n indices in an equivalence class, we generate O(n²) constraints:
-`i₁ == i₂ → a[i₁] == a[i₂]`. For 40 indices: 780 constraints, each
-with ~w clauses for the element equality.
-
-**Yices2 equivalent:** Congruence lemmas on demand. When the E-graph
-merges two index terms, it checks if any array selects become
-congruent. Only generates a lemma when the model violates congruence.
-Typically 0-5 lemmas total.
-
-### 3. Element-wise constraints for stores
-
-For each store `x = store(y, j, v)` and each index i in the index set:
-`j ≠ i → x[i] = y[i]`. This is O(n) per store, O(n·m) total for m
-stores.
-
-**Status:** Already eliminated by the element-wise skip (commit 26).
-The ITE encoding handles this. No further work needed.
-
-## Phased Plan
-
-### Phase A: Lazy Ackermann (medium effort, high impact)
-
-**Goal:** Replace quadratic eager Ackermann with on-demand congruence.
-
-**Current cost:** For storecomm_00060 with 120 stores and ~60 indices:
-~1800 Ackermann constraints × ~100 clauses each = ~180K clauses.
-
-**Approach:**
-1. In `add_array_Ackermann_constraints()`, when `lazy_arrays` is true,
-   skip all Ackermann constraint generation.
-2. In `arrays_overapproximated()`, after evaluating the model, check
-   for Ackermann violations: for each pair of indices (i₁, i₂) in the
-   same equivalence class, if `get_value(i₁) == get_value(i₂)` but
-   `get_value(a[i₁]) != get_value(a[i₂])`, add the single constraint
-   `i₁ == i₂ → a[i₁] == a[i₂]`.
-3. Only check index pairs where both indices have the same model value
-   (use a hash map: value → list of indices).
-
-**Expected impact:** Eliminate ~180K clauses on storecomm_00060. The
-refinement loop adds only the violated constraints (typically 0-10).
-
-**Risk:** Low. Ackermann is a pure consistency check — deferring it
-can only cause spurious SAT (caught by refinement), never spurious
-UNSAT.
-
-**Prerequisite:** The truly lazy constraint infrastructure (commit 29).
-
-### Phase B: Lazy select bit-blasting (high effort, highest impact)
-
-**Goal:** Don't bit-blast `a[i]` until the refinement loop needs its
-value.
-
-**Current cost:** Each select creates an ITE chain with O(n·w) clauses.
-This is the dominant cost — for storecomm_00060, the ITE chains for
-~60 selects on ~120-store chains produce millions of clauses.
-
-**Approach:**
-1. In `convert_index()`, when `lazy_arrays` is true and the array is
-   in the array theory (not a small flattened array), return fresh
-   unconstrained bitvector variables instead of the ITE chain.
-2. Record the mapping: `{fresh_bv, index_exprt}` in a side table.
-3. In the refinement loop, evaluate the model: for each recorded
-   select, compute what the value SHOULD be (by walking the store
-   chain with model values for indices) and compare with the SAT
-   model's value for the fresh variables.
-4. If they disagree, add the ITE constraint for that specific select:
-   `fresh_bv == ITE(i==k_n, v_n, ITE(...))`.
-
-**Key insight:** Most selects in a formula are never the cause of a
-conflict. The SAT solver can find a satisfying assignment for the
-non-array part, and only a few selects need their ITE chains to
-resolve conflicts.
-
-**Challenge:** The model evaluation in step 3 requires walking the
-store chain with concrete index values. This is what Bitwuzla's
-`check_access` does (the bidirectional DAG traversal). We need to
-implement this model-based store chain evaluation.
-
-**Implementation sketch:**
-```cpp
-// In convert_index, for lazy mode:
-bvt lazy_bv = prop.new_variables(width);
-lazy_selects.push_back({lazy_bv, expr});
-return lazy_bv;
-
-// In refinement loop:
-for(auto &sel : lazy_selects) {
-  exprt expected = evaluate_select_in_model(sel.expr);
-  exprt actual = bv_get(sel.bv, sel.expr.type());
-  if(expected != actual) {
-    // Bit-blast the ITE chain and equate with lazy_bv
-    bvt ite_bv = convert_index_eager(sel.expr);
-    for(size_t i = 0; i < width; i++)
-      prop.lcnf(!sel.bv[i], ite_bv[i]);  // lazy[i] == ite[i]
-      prop.lcnf(sel.bv[i], !ite_bv[i]);
-    progress = true;
-  }
-}
-```
-
-**Expected impact:** For sat instances, most selects never need
-bit-blasting → dramatic clause reduction. For unsat instances, all
-selects eventually get bit-blasted → same total clauses but spread
-across iterations (incremental solving may help or hurt).
-
-**Risk:** Medium. The model evaluation must correctly handle:
-- Nested stores with symbolic indices
-- Store chains across equality edges
-- ITE arrays (conditional stores)
-The Bitwuzla source code provides a reference implementation.
-
-**Phase B implementation findings (attempted):**
-
-Three approaches were tried:
-
-1. **Simple store chain walk:** Walk `with` expressions directly from the
-   select's array. Failed: doesn't follow equality edges in the WEG, so
-   misses stores on arrays connected through equalities. Result: 88 wrong
-   answers on QF_AX.
-
-2. **WEG BFS traversal:** BFS through the entire equivalence class using
-   parent/child edges. Correctly finds matching stores across equality
-   edges. Key bugs found and fixed:
-   - Must check for matching store BEFORE the visited-set check (otherwise
-     nodes visited going UP are missed going DOWN)
-   - Must clear `bv_cache` before `convert_bv` (otherwise returns cached
-     lazy BV instead of ITE chain)
-   - Must set `lazy_arrays=false` during ITE bit-blasting (prevents
-     recursive lazy selects)
-   - Model-based violation detection is incomplete: SAT solver assigns
-     lazy BVs to match store chain, so violations are never detected.
-
-3. **Class-level store check:** Bit-blast ALL selects in equivalence
-   classes that have any store edges. Correct (4/6 benchmarks) but
-   equivalent to eager for QF_AX (every class has stores). Sat benchmarks
-   timeout due to refinement loop overhead.
-
-**Conclusion:** Lazy selects require CaDiCaL ExternalPropagator (Phase E)
-to be effective. Without theory propagation, the refinement loop either:
-- Misses violations (model-based check is incomplete), or
-- Bit-blasts everything in iteration 1 (class-level check), adding
-  overhead without benefit.
-
-The ExternalPropagator would allow checking array axioms DURING the SAT
-search, catching violations immediately without a full re-solve.
-
-**Prerequisite:** Phase A (lazy Ackermann) should be done first to
-avoid generating quadratic constraints for the fresh variables.
-
-### Phase C: Lazy equality constraints (medium effort, medium impact)
-
-**Goal:** Defer `(a == b) → a[i] == b[i]` constraints.
-
-**Current cost:** For each equality literal and each index in the
-equivalence class: one implication clause. O(e·n) where e is the
-number of equalities and n is the index set size.
-
-**Approach:**
-1. Skip equality constraint generation when `lazy_arrays` is true.
-2. In the refinement loop, check: for each equality `a == b` that is
-   true in the model, verify that `get_value(a[i]) == get_value(b[i])`
-   for all indices i. If not, add the single violated constraint.
-
-**Expected impact:** Moderate. Equality constraints are typically fewer
-than Ackermann constraints.
-
-**Risk:** Low. Same reasoning as Phase A.
-
-### Phase D: Incremental index discovery (low effort, enables A-C)
-
-**Goal:** Don't pre-compute the full index set. Discover indices as
-the refinement loop encounters them.
-
-**Current:** `collect_indices()` walks all array expressions and
-collects every index that appears. This determines the Ackermann
-constraint count.
-
-**Approach:**
-1. Start with an empty index set.
-2. When the refinement loop bit-blasts a select `a[i]` (Phase B),
-   add `i` to the index set.
-3. When a new index is added, check for Ackermann violations against
-   existing indices (Phase A).
-
-**Expected impact:** Reduces the index set to only indices that are
-actually needed, which reduces Ackermann from O(n²) to O(k²) where
-k << n is the number of indices actually involved in conflicts.
-
-### Phase E: Theory propagation in SAT solver (very high effort)
-
-**Goal:** Integrate array theory checks into the SAT solver's
-propagation loop, eliminating the solve-check-add-resolve cycle.
-
-**Approach:** This requires modifying CaDiCaL (or using a different
-SAT solver) to support theory propagation callbacks:
-1. After each decision/propagation, call the array theory checker.
-2. The checker evaluates the partial assignment against array axioms.
-3. If a violation is found, generate a conflict clause and backtrack.
-
-This is the full CDCL(T) approach that Yices2 uses. It eliminates
-the overhead of complete SAT solves between refinement iterations.
-
-**Expected impact:** Would close most of the remaining gap to Yices2.
-The per-check cost is O(1) (E-graph lookup) vs O(n) (SAT re-solve).
-
-**Risk:** Medium-high. Requires implementing the `ExternalPropagator`
-interface and maintaining array theory state that tracks the SAT
-solver's partial assignment. The propagator must handle backtracking
-correctly (undo theory state when the SAT solver backtracks).
-
-**CaDiCaL support confirmed:** CBMC's CaDiCaL version already has the
-`ExternalPropagator` API with:
-- `notify_assignment(lits)` — track index/element assignments
-- `notify_backtrack(level)` — undo theory state
-- `cb_check_found_model(model)` — full model check (like current refinement)
-- `cb_propagate()` — theory propagation (return implied literal)
-- `cb_add_reason_clause_lit()` — explain propagation
-
-**Implementation sketch:**
-```cpp
-class array_propagatort : public CaDiCaL::ExternalPropagator {
-  // Track assignments to index and element variables
-  void notify_assignment(const vector<int> &lits) override {
-    for(int lit : lits) {
-      if(is_index_var(lit)) update_index_assignment(lit);
-      if(is_element_var(lit)) update_element_assignment(lit);
-    }
-  }
-  // Check for congruence violations
-  int cb_propagate() override {
-    // If two indices are assigned equal but their selects differ,
-    // propagate the equality of the selects
-    for(auto &[idx_pair, status] : watched_pairs) {
-      if(indices_equal(idx_pair) && selects_differ(idx_pair))
-        return select_equality_lit(idx_pair);
-    }
-    return 0;
-  }
-  bool cb_check_found_model(const vector<int> &model) override {
-    // Full array theory check (store axioms, extensionality)
-    return check_all_array_axioms(model);
-  }
-};
-```
-
-**Alternative:** Use CaDiCaL's `connect_external_propagator` API
-(added in CaDiCaL 2.0) which provides external propagation callbacks.
-This is designed exactly for CDCL(T) integration. Need to verify
-CBMC's CaDiCaL version supports this.
-
-```
-Phase A (lazy Ackermann)     ← low risk, high impact, do first
-  ↓
-Phase D (incremental indices) ← enables smaller index sets
-  ↓
-Phase B (lazy selects)        ← highest impact, needs A+D
-  ↓
-Phase C (lazy equalities)     ← moderate impact, easy after B
-  ↓
-Phase E (theory propagation)  ← closes the gap, needs SAT solver work
-```
-
-**Phase E implementation findings (attempted):**
-
-A lazy `ExternalPropagator` was implemented with `is_lazy=true`. Key findings:
-
-1. **Cannot call `convert()` during callbacks.** CaDiCaL's `add()` method
-   cannot be called during `cb_check_found_model`. All clauses must be
-   returned via `cb_add_external_clause_lit` over pre-existing variables.
-
-2. **Pre-converted guards work for lazy selects.** ITE chains pre-converted
-   with guard literals during setup. Propagator activates guards via unit
-   clauses. CaDiCaL backtracks internally (no re-solve overhead).
-
-3. **Sat benchmarks dramatically faster:** `swap_00010` 0.062s (was 0.226s,
-   3.6×), `storecomm_00040` 0.44s (was 2.34s, 5.3×).
-
-4. **Unsat benchmarks incomplete:** Ackermann and extensionality require
-   `convert()` (creates new variables/clauses) which can't be called during
-   callbacks. These still need the refinement loop.
-
-5. **Full CDCL(T) (`cb_propagate`)** would require maintaining backtrackable
-   array theory state synchronized with CaDiCaL's trail. Significantly
-   larger engineering effort.
-
-## Expected Performance Progression
-
-| Phase | storecomm_00060 | vs Yices2 | Notes |
-|-------|-----------------|-----------|-------|
-| Current (eager) | 5.2s | 130× | All constraints upfront |
-| +A (lazy Ackermann) | ~2s | ~50× | Eliminate quadratic cost |
-| +B (lazy selects) | ~0.5s | ~12× | Eliminate ITE chains |
-| +C (lazy equalities) | ~0.3s | ~7× | Eliminate equality propagation |
-| +E (theory propagation) | ~0.1s | ~2× | Eliminate re-solve overhead |
-| Yices2 | 0.04s | 1× | Native CDCL(T) |
-
-These estimates are speculative. The actual speedups depend on how many
-constraints the refinement loop needs to add (benchmark-dependent).
-
-## Measuring Progress
-
-Use the 6 selected QF_AX benchmarks as the primary metric:
-- storeinv_00002 (small unsat, needs extensionality)
-- storeinv_00010 (medium unsat, needs extensionality)
-- swap_00010 (sat)
-- storecomm_00010 (small unsat)
-- storecomm_00040 (sat)
-- storecomm_00060 (large unsat)
-
-Plus the full QF_AX suite (551 benchmarks, 180s) for correctness.
-
-## References
-
-- CaDiCaL external propagator: `connect_external_propagator()` in
-  CaDiCaL 2.0+ (Biere, Fazekas, Fleury, Heisinger, 2020)
-- Bitwuzla array solver: `src/solver/array/array_solver.cpp`
-  (check_access, collect_path_conditions)
-- Yices2 fun_solver: `src/solvers/funs/fun_solver.c`
-  (update_conflict_for_application, reconcile_model)
+# Detailed Plan for Remaining Array Theory Opportunities
+
+## Opportunity 1: Iterative Let Path Optimization
+
+### Problem
+The SMT2 parser's iterative let path uses `replace_symbolt` to expand
+let bindings. For deeply nested lets (swapmem: 36-719, bubsort: up to
+4854), this causes exponential expression growth. swapmem003ue grows
+from 87 nodes to 169M nodes (doubling every ~3 frames). The perf
+profile shows 45% of time in `replace_symbolt` traversal.
+
+### Affected benchmarks
+- swapmem (36-719 lets): ~60 benchmarks, all timeout
+- bubsort (up to 4854 lets): ~17 benchmarks, all timeout
+- selsort (similar to bubsort): ~17 benchmarks, all timeout
+- Total: ~94 benchmarks (19% of the 506-benchmark QF_ABV set)
+- wchains: NOT affected (only 1 let; timeout is from SAT solver)
+
+### Root cause
+The parser adds let bindings to `id_map` during parsing, but the
+`id_map` lookup returns `symbol_exprt` (not the binding value). The
+`replace_symbolt` call after parsing replaces these `symbol_exprt`
+nodes with the actual binding values. Each replacement traverses the
+entire expression tree, and the tree grows with each replacement.
+
+### Investigated approaches
+
+**A. `let_exprt` in both paths (ALMOST WORKS)**
+- Create `let_exprt` instead of calling `replace_symbolt`
+- The solver's `convert_let` handles sharing efficiently
+- Results: 279 correct (+53), 10 wrong (all memcpy benchmarks)
+- The 10 wrong are from a specific interaction between nested
+  `let_exprt` and the array theory when BV-typed and array-typed
+  bindings are mixed in the same let frame
+
+**B. Direct binding resolution during parsing (WORKS but doesn't help)**
+- Return `id_it->second.definition` directly from `id_map` lookup
+- Avoids `replace_symbolt` entirely
+- Results: 0 wrong, but swapmem still OOM (25GB) because expression
+  copies still grow exponentially (C++ value semantics copies operand
+  vectors even though irept data is shared)
+
+**C. Non-iterative path only (COMMITTED, partial fix)**
+- Only change `let_expression()` (non-iterative path) to `let_exprt`
+- Iterative path unchanged
+- Results: 0 wrong, helps non-nested let benchmarks
+
+### Recommended plan
+
+**Phase 1: Fix the memcpy bug in approach A**
+
+The 10 memcpy wrong answers are caused by a specific pattern: nested
+lets where the outer let has MIXED BV-typed and array-typed bindings,
+and the inner let's value references the outer array-typed binding
+through a fresh symbol. The array theory's `record_array_let_binding`
+creates an equality edge for the fresh symbol, but the ITE encoding
+for selects on the inner let's fresh symbol doesn't properly follow
+the equality chain through the outer let's fresh symbol.
+
+Steps:
+1. Create a minimal reproducer for the memcpy pattern (nested let with
+   mixed BV/array bindings where inner references outer array binding)
+2. Add debug to `convert_let` and `record_array_let_binding` to trace
+   the fresh symbol chain
+3. Check if the WEG properly connects the inner fresh symbol to the
+   outer fresh symbol to the original store expression
+4. Fix: likely need to ensure `collect_indices` and `add_array_constraints`
+   process the fresh symbols in the correct order (inner before outer)
+
+**Phase 2: Enable `let_exprt` in the iterative path**
+
+Once the memcpy bug is fixed, enable `let_exprt` in the iterative path.
+This should solve ~53 additional QF_ABV benchmarks (279 vs 226).
+
+**Phase 3: Verify swapmem/bubsort solve**
+
+With `let_exprt`, swapmem003ue solves in 9 iterations. Verify that
+larger swapmem and bubsort benchmarks also solve within 30s.
+
+### Expected impact
+- +53 QF_ABV benchmarks (226 → 279)
+- swapmem/bubsort/selsort families become solvable
+- 0 regressions on QF_AX and CBMC
+
+---
+
+## Opportunity 2: Fix `use_read_over_weakeq`
+
+### Problem
+The `use_read_over_weakeq` mode is implemented but disabled. When
+enabled, it produces 70 wrong answers on QF_AX (returns sat for unsat
+formulas). All wrong answers are on `storecomm_invalid` benchmarks.
+
+### Root cause analysis needed
+The mode replaces the traditional element-wise + Ackermann constraint
+generation with a WEG-based approach:
+1. Store axiom: `store(a, i, v)[i] = v` (direct)
+2. Equality constraints: `l → a[i] = b[i]` for equality edges
+3. Read-over-weakeq: `i = j → a[i] = b[j]` when `a ≈_i b` in the WEG
+
+The 70 wrong answers suggest the read-over-weakeq constraints are
+INCOMPLETE — they don't generate enough constraints for certain store
+chain patterns. The `storecomm_invalid` benchmarks test commutativity
+of stores, which requires reasoning about stores at different indices
+on the same array.
+
+### Recommended plan
+
+**Phase 1: Identify the missing constraints**
+
+1. Run a single failing `storecomm_invalid` benchmark with debug output
+   showing which constraints are generated
+2. Compare with the constraints generated by the traditional approach
+3. Identify which constraints are missing
+
+**Phase 2: Fix the constraint generation**
+
+The likely issue is one of:
+- The `weakly_equivalent_mod` check is too restrictive (skips pairs
+  that should be constrained)
+- The store axiom generation misses some store expressions
+- The equality constraint generation doesn't cover all equality edges
+
+**Phase 3: Performance comparison**
+
+Once correct, compare the read-over-weakeq mode against the traditional
+mode on QF_AX and QF_ABV benchmarks. The WEG-based approach should
+generate fewer constraints (O(n) per select instead of O(n²) Ackermann).
+
+### Expected impact
+- Potentially significant clause reduction for benchmarks with many
+  arrays and indices (the O(n²) Ackermann is the dominant cost)
+- May interact well with Phase B lazy selects (fewer constraints to
+  force-activate)
+- Risk: the WEG-based approach may be slower for some benchmarks
+  due to the overhead of WEG traversal
+
+---
+
+## Opportunity 3: CDCL(T) Propagator for Ackermann
+
+### Problem
+The current approach generates Ackermann constraints eagerly (O(n²) in
+the number of indices). For picorv32 with 88 indices, this is 220K
+potential constraints. With lazy Ackermann (refinement loop), only
+violated constraints are added. But the refinement loop adds overhead
+(multiple SAT solves).
+
+### Current state
+A bit-level Ackermann propagator is implemented in `array_propagator.h`.
+It watches index equality literals and propagates element equality
+bit-by-bit when `i == j` becomes true during SAT search. The propagator
+uses 3-literal reason clauses: `¬idx_eq ∨ ¬a[i][k] ∨ a[j][k]`.
+
+The propagator is connected to CaDiCaL via the `ExternalPropagator` API
+but is currently only used for legacy Ackermann clause checking (not
+for the bit-level propagation).
+
+### Recommended plan
+
+**Phase 1: Register Ackermann watches during constraint generation**
+
+In `add_array_Ackermann_constraints`, instead of creating lazy
+constraints, register bit-level watches with the propagator:
+1. For each pair of indices (i, j) on each base array a:
+   - Convert `i == j` to get the index equality literal
+   - Look up the BVs for `a[i]` and `a[j]` (from bv_cache or lazy_select_map)
+   - Register: `propagator.add_ackermann_watch(idx_eq, bit_pairs)`
+2. The propagator enforces `a[i][k] == a[j][k]` during SAT search
+3. No Ackermann clauses are generated upfront (0 clauses)
+
+**Phase 2: Handle dynamic index pairs**
+
+When extensionality adds new diff indices, register new Ackermann
+watches for the new index pairs. This requires:
+1. Access to the propagator from the refinement loop
+2. Looking up BVs for the new selects (from bv_cache)
+3. Registering watches for all pairs involving the new index
+
+**Phase 3: Remove legacy Ackermann generation**
+
+Once the propagator handles all Ackermann constraints:
+1. Remove `add_array_Ackermann_constraints` call
+2. Remove the refinement loop's model-based Ackermann check
+3. The propagator handles everything during SAT search
+
+### Key challenges
+- The propagator can only propagate when BOTH the index equality AND
+  a bit value are assigned. If the SAT solver assigns bits before
+  the index equality, the propagator can't propagate until the index
+  equality is decided.
+- The `cb_check_found_model` callback handles the case where the
+  propagator missed a violation (adds a blocking clause).
+- The reason clause mechanism needs to handle 3-literal clauses
+  correctly (already implemented and tested).
+
+### Expected impact
+- Eliminates O(n²) Ackermann clause generation entirely
+- For picorv32: 220K potential Ackermann → 0 upfront clauses
+- The propagator adds clauses on-demand during search
+- May reduce total clause count significantly for large benchmarks
+- Risk: propagator overhead may slow down SAT search for small benchmarks
