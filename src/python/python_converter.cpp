@@ -170,7 +170,18 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
                     target.id() == ID_c_bool;
 
   if(src_scalar && tgt_scalar)
+  {
+    // None sentinel → false for truthiness
+    if(target.id() == ID_bool && e.type().id() == ID_signedbv)
+    {
+      exprt none_val =
+        from_integer(mp_integer{-4611686018427387904LL}, e.type());
+      return and_exprt{
+        notequal_exprt{e, from_integer(0, e.type())},
+        notequal_exprt{e, none_val}};
+    }
     return typecast_exprt{e, target};
+  }
 
   // Struct-to-scalar or other incompatible: return a nondet value
   // of the target type (overapproximation, avoids crash)
@@ -388,8 +399,8 @@ exprt python_convertert::convert_constant(const jsont &expr)
   }
   else if(value.is_null())
   {
-    // Python None — for now treat as 0
-    return from_integer(0, python_int_type());
+    // Python None — distinct sentinel value (not 0)
+    return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
   }
   else if(value.is_number())
   {
@@ -458,7 +469,7 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "False")
     return false_exprt{};
   else if(id == "None")
-    return from_integer(0, python_int_type());
+    return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
 
   // Look up in symbol table — check versioned names first, then
   // function-scoped, then global
@@ -503,7 +514,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
-  // String concatenation
+  // String concatenation with content tracking
   if(
     is_python_string_type(left.type()) && is_python_string_type(right.type()) &&
     op == "Add")
@@ -511,16 +522,50 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     struct_typet str_type = python_string_type();
     const auto &data_type = to_array_type(str_type.components()[1].type());
 
-    // length = left.length + right.length
-    exprt new_length = plus_exprt{
-      member_exprt{left, "length", python_int_type()},
-      member_exprt{right, "length", python_int_type()}};
+    member_exprt left_len{left, "length", signedbv_typet{64}};
+    member_exprt right_len{right, "length", signedbv_typet{64}};
+    member_exprt left_data{left, "data", data_type};
+    member_exprt right_data{right, "data", data_type};
 
-    // data is nondet (content tracking is future work)
-    side_effect_expr_nondett nondet_data{data_type, source_locationt{}};
+    // Create temporary for result
+    static unsigned str_concat_counter = 0;
+    std::string tmp_name =
+      "__str_concat_" + std::to_string(str_concat_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
 
-    struct_exprt result{{new_length, nondet_data}, str_type};
-    return std::move(result);
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, str_type, "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+
+    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+    symbol_exprt tmp = tmp_sym.symbol_expr();
+
+    // Set length
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{tmp, "length", signedbv_typet{64}},
+      plus_exprt{left_len, right_len}});
+
+    // Copy data: for each index i, tmp.data[i] =
+    //   i < left.length ? left.data[i] : right.data[i - left.length]
+    member_exprt tmp_data{tmp, "data", data_type};
+    for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      exprt from_left = index_exprt{left_data, idx};
+      exprt from_right = index_exprt{right_data, minus_exprt{idx, left_len}};
+      exprt val = if_exprt{
+        binary_relation_exprt{idx, ID_lt, left_len}, from_left, from_right};
+      pending_checks.push_back(
+        code_frontend_assignt{index_exprt{tmp_data, idx}, val});
+    }
+
+    return std::move(tmp);
   }
 
   // Unwrap tagged-union values to concrete types for operations
@@ -530,17 +575,52 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(is_python_value_type(right.type()))
     right = unwrap_value(right, left.type());
 
-  // List repetition: lst * n → new list with length = lst.length * n
+  // List repetition with content tracking: lst * n
   if(is_python_list_type(left.type()) && op == "Mult")
   {
     struct_typet list_type = to_struct_type(left.type());
-    member_exprt old_len{left, "length", signedbv_typet{64}};
-    exprt new_len =
-      mult_exprt{old_len, safe_typecast(right, signedbv_typet{64})};
-    // Data is nondet (content not tracked for repeated lists)
     const auto &data_type = to_array_type(list_type.components()[1].type());
-    exprt data = side_effect_expr_nondett{data_type, source_locationt{}};
-    return struct_exprt{{new_len, data}, list_type};
+    member_exprt old_len{left, "length", signedbv_typet{64}};
+    member_exprt old_data{left, "data", data_type};
+    exprt n = safe_typecast(right, signedbv_typet{64});
+
+    static unsigned list_repeat_counter = 0;
+    std::string tmp_name =
+      "__list_repeat_" + std::to_string(list_repeat_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, list_type, "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+
+    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+    symbol_exprt tmp = tmp_sym.symbol_expr();
+
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{tmp, "length", signedbv_typet{64}}, mult_exprt{old_len, n}});
+
+    // Copy data: tmp.data[i] = i < new_len ? old.data[i % old.length] : 0
+    member_exprt tmp_data{tmp, "data", data_type};
+    exprt new_len = mult_exprt{old_len, n};
+    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      exprt src_idx = mod_exprt{idx, old_len};
+      exprt val = if_exprt{
+        binary_relation_exprt{idx, ID_lt, new_len},
+        index_exprt{old_data, src_idx},
+        safe_zero(data_type.element_type())};
+      pending_checks.push_back(
+        code_frontend_assignt{index_exprt{tmp_data, idx}, val});
+    }
+
+    return std::move(tmp);
   }
 
   // Type promotion: if either operand is float, promote both
@@ -1032,7 +1112,9 @@ exprt python_convertert::convert_call(const jsont &expr)
       if(!arg.is_nil())
         return typecast_exprt{arg, python_int_type()};
     }
-    return from_integer(0, python_int_type());
+    mp_integer none_val = mp_integer(1) << 62;
+    none_val = -none_val;
+    return from_integer(none_val, python_int_type());
   }
   else if(func_name == "float")
   {
@@ -1060,7 +1142,9 @@ exprt python_convertert::convert_call(const jsont &expr)
   // print() — no-op, return None (modeled as 0)
   else if(func_name == "print")
   {
-    return from_integer(0, python_int_type());
+    mp_integer none_val = mp_integer(1) << 62;
+    none_val = -none_val;
+    return from_integer(none_val, python_int_type());
   }
   // chr(n) → single-character string
   else if(func_name == "chr")
