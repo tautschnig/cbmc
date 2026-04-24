@@ -1009,3 +1009,33 @@ INCOMPLETE: 70 wrong answers on QF_AX (returns sat for unsat formulas).
 The WEG-based constraint generation misses necessary constraints for
 storecomm_invalid benchmarks. This mode needs significant correctness
 work before it can be enabled.
+
+## Iterative Let Path Optimization (commit 2848e3c42a)
+
+For let frames with only BV-typed bindings, create let_exprt instead
+of using replace_symbolt. This avoids exponential expression growth
+for deeply nested lets. Frames with array-typed bindings still use
+replace_symbolt (the memcpy bug: nested let_exprt with mixed BV/array
+bindings causes the array theory to lose track of store chains through
+fresh symbol equality edges).
+
+Results: QF_ABV 226 → 277 correct (+51), 0 wrong.
+swapmem003ue, swapmem010ue, bubsort005un now solve.
+
+## use_read_over_weakeq Analysis (not committed)
+
+The mode has a SOUNDNESS bug: returns unsat for sat formulas
+(storecomm_invalid benchmarks). The read-over-weakeq constraints
+over-constrain the formula, forcing array equalities that shouldn't
+hold. Root cause: the weakly_equivalent_mod check or WEG construction
+has a bug that incorrectly determines weak equivalence. Fixing requires
+deep WEG debugging. Abandoned for now.
+
+## CDCL(T) Propagator Analysis (not committed)
+
+The propagator would eliminate ~24% of clauses for zipcpu-zipmmu
+(52K Ackermann constraints → 0 upfront). But picorv32 already has
+0 Ackermann constraints (solved in 1 iteration). The benefit is
+limited to benchmarks with many refinement iterations. The integration
+complexity (accessing bv_cache from arrayst, handling extensionality)
+outweighs the benefit given the current results.
