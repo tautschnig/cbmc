@@ -58,6 +58,7 @@ private:
 
   /// Map from class name to its struct type
   std::map<std::string, struct_typet> class_types;
+  std::map<std::string, int> class_tag_ids;
 
   /// Map from class name to its base class names (for isinstance)
   std::map<std::string, std::vector<std::string>> class_bases;
