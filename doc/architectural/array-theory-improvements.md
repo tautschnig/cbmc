@@ -881,3 +881,56 @@ handles direct read-over-write within a single store chain.
 The WEG's main contribution remains the lazy Ackermann optimization:
 identifying which arrays need Ackermann (via the derived-symbol skip)
 and deferring the expensive conclusion conversion (via the propagator).
+
+## Phase B: Lazy Select Bit-Blasting (commits 8e819041b9, 5494ef30e6)
+
+### Approach
+Instead of eagerly creating ITE chains for every array select during formula
+conversion, return free bitvector variables (lazy selects). The refinement
+loop then bit-blasts with-selects on demand and force-activates all
+true-guard lazy constraints to connect free BVs to the store chain.
+
+### Key Bug Fix
+The extensionality check in the refinement loop calls
+`add_array_constraints(index_sett{diff}, arrays[i])` for new diff indices,
+but this overload only creates with/if/etc constraints — NOT equality
+constraints between arrays connected by equality edges. Without these,
+the proof that arrays agree at the diff index via the asserted equality
+cannot be established. Fixed by explicitly calling
+`add_array_constraints_equality` for each array equality at the diff index.
+
+### Results
+
+**QF_ABV clause reduction:**
+| Benchmark | Baseline | Phase B | Reduction |
+|-----------|----------|---------|-----------|
+| picorv32-check | 2.0M | 752K | 2.6× |
+| VexRiscv | 686K | 317K | 2.2× |
+| zipcpu-pfcache | 41.5M (OOM) | 1.2M (solves!) | 35× |
+
+**QF_ABV comparison (506 benchmarks, 30s):**
+| Solver | Correct | Wrong | Timeout |
+|--------|---------|-------|---------|
+| Bitwuzla | 435 | 0 | 71 |
+| Yices2 | 385 | 0 | 121 |
+| smt2_solver | 224 | 0 | 282 |
+
+**QF_AX:** 551/551 correct at 180s (512/551 at 30s, regression from 548
+due to refinement loop overhead).
+
+**CBMC:** All regression tests pass.
+
+### Remaining gap to Bitwuzla (211 benchmarks)
+- ~120 swapmem/wchains/bubsort/selsort: BV32 index arithmetic timeout
+  (formula conversion, not array theory)
+- ~36 bf/matrixmultcomm/unconstrained: heavy BV arithmetic
+- ~47 fifo/countbits/binarysearch: moderate BV + arrays
+- ~13 hardware verification variants
+
+### Unused WEG opportunities
+1. **WEG-guided ITE encoding**: skip ITEs for stores at provably-different
+   indices (currently walks syntactic chain, not WEG)
+2. **Cross-equality-edge ITE encoding**: follow equality edges to encode
+   read-over-write across the entire equivalence class
+3. **`use_read_over_weakeq` mode**: implemented but disabled alternative
+   constraint generation using WEG structure
