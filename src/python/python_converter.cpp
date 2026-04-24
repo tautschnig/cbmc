@@ -126,12 +126,16 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     return python_value_float(e);
   else if(target_type.id() == ID_bool)
     return python_value_bool(e);
+  else if(is_python_string_type(target_type))
+    return python_value_str(e);
+  else if(is_python_list_type(target_type))
+    return python_value_list(e);
 
   // Default: extract int
   return python_value_int(e);
 }
 
-exprt python_convertert::wrap_value(const exprt &e) const
+exprt python_convertert::wrap_value(const exprt &e)
 {
   if(is_python_value_type(e.type()))
     return e; // already wrapped
@@ -141,12 +145,32 @@ exprt python_convertert::wrap_value(const exprt &e) const
     tag = python_type_tagt::FLOAT;
   else if(e.type().id() == ID_bool)
     tag = python_type_tagt::BOOL;
+  else if(is_python_string_type(e.type()))
+  {
+    // Materialize string into a temporary symbol for the pointer
+    static unsigned str_wrap_counter = 0;
+    std::string tmp_name = "__str_val_" + std::to_string(str_wrap_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, python_string_type(), "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+    // Assign the string value to the temp via pending_checks
+    pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
+    return make_python_value(
+      python_type_tagt::STR, address_of_exprt{tmp_sym.symbol_expr()});
+  }
 
   return make_python_value(tag, e);
 }
 
 exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
-  const
 {
   if(e.type() == target)
     return e;
@@ -497,11 +521,6 @@ exprt python_convertert::convert_name(const jsont &expr)
     return nil_exprt{};
   }
 
-  // If the variable is a tagged union, extract the int field by default.
-  // The caller will handle type dispatch if needed.
-  if(is_python_value_type(sym->type))
-    return python_value_int(sym->symbol_expr());
-
   return sym->symbol_expr();
 }
 
@@ -842,9 +861,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
 
     // Unwrap tagged-union values
     if(is_python_value_type(current_left.type()))
-      current_left = unwrap_value(
-        current_left,
-        right.type().id() != ID_struct ? right.type() : python_int_type());
+      current_left = unwrap_value(current_left, right.type());
     if(is_python_value_type(right.type()))
       right = unwrap_value(right, current_left.type());
 
@@ -857,6 +874,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
         right = safe_typecast(right, current_left.type());
       else if(right.type().id() == ID_floatbv)
         current_left = safe_typecast(current_left, right.type());
+      else if(
+        is_python_value_type(current_left.type()) &&
+        !is_python_value_type(right.type()))
+        // Unwrap tagged union to match concrete type
+        current_left = unwrap_value(current_left, right.type());
+      else if(
+        is_python_value_type(right.type()) &&
+        !is_python_value_type(current_left.type()))
+        right = unwrap_value(right, current_left.type());
       else
         // General case: cast right to left's type
         right = safe_typecast(right, current_left.type());
@@ -3457,9 +3483,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                       << func_name << "' has no type annotation"
                       << messaget::eom;
       }
-      // Use int for unannotated params (tagged union needs string support)
+      // Use tagged union for unannotated params
       typet param_type = annotation.is_null()
-                           ? python_int_type()
+                           ? python_value_type()
                            : convert_type_annotation(annotation);
 
       code_typet::parametert p{param_type};
@@ -3644,7 +3670,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(is_node_type(rhs, "Name"))
           rhs_name = json_string(json_member(rhs, "id"));
 
-        typet attr_type = python_int_type(); // default for untyped params
+        typet attr_type = python_value_type(); // tagged union for untyped
 
         // Check if RHS is a constructor call: self.inner = Inner(v)
         if(
@@ -3804,7 +3830,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             {
               const jsont &annotation = json_member(param, "annotation");
               param_type = annotation.is_null()
-                             ? python_int_type()
+                             ? python_value_type()
                              : convert_type_annotation(annotation);
             }
 
