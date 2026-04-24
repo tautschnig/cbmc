@@ -790,7 +790,7 @@ Most involve nondet values with loops. Investigation needed:
 - Consider reducing `PYTHON_MAX_LIST_LENGTH` for these tests
 - Profile with `--show-goto-functions` to identify bottlenecks
 
-### Final KNOWNBUG inventory (2 tests)
+### Final KNOWNBUG inventory (8 tests)
 
 ---
 
@@ -798,20 +798,15 @@ Most involve nondet values with loops. Investigation needed:
 
 **Test:** `assert chr(8364) == "€"`
 
-**Why it fails:** Two issues: (a) `chr()` with code points > 127 needs
-UTF-8 multi-byte encoding in our 8-bit char model. (b) Source files
-containing non-ASCII characters (Greek, emoji) crash the Python AST
-JSON generation with `wstring_convert::to_bytes`.
+**Why it fails:** `chr()` with code points > 127 needs UTF-8 multi-byte
+encoding. Our string model uses `unsignedbv{8}` characters.
 
-**Fix:**
-1. In the inline Python AST script, ensure non-ASCII string constants
-   are encoded as `\uXXXX` escape sequences in the JSON output.
-2. In `chr()`, encode code points > 127 as UTF-8 byte sequences:
-   - U+0080..U+07FF: 2 bytes
-   - U+0800..U+FFFF: 3 bytes (covers `€` = U+20AC)
-   - U+10000..U+10FFFF: 4 bytes (covers emoji)
+**Fix:** In `chr()` handler, encode code points > 127 as UTF-8 bytes:
+- U+0080..U+07FF: 2 bytes (0xC0|hi, 0x80|lo)
+- U+0800..U+FFFF: 3 bytes (covers `€` = U+20AC)
+- Set string length to the number of UTF-8 bytes, not 1.
 
-**Estimated effort:** 1 day
+**Estimated effort:** 2-3 hours
 
 ---
 
@@ -819,34 +814,147 @@ JSON generation with `wstring_convert::to_bytes`.
 
 **Test:** `assert "α" + "β" == "αβ"`
 
-**Why it fails:** Same root cause as `crash-multibyte-chr` — the Python
-AST JSON generation crashes on non-ASCII source. The inline Python
-script's `json.dump(..., default=str)` should handle Unicode, but
-CBMC's JSON parser may not handle the resulting escape sequences.
+**Why it fails:** Source files with non-ASCII characters crash the
+Python AST JSON generation (`wstring_convert::to_bytes` in CBMC's
+JSON parser).
 
-**Fix:** Same as `crash-multibyte-chr` — fix the AST generation to
-produce ASCII-safe JSON with `\uXXXX` escapes, and update the JSON
-parser or string constant handler to decode them.
+**Fix:** In the inline Python AST script, add `ensure_ascii=True` to
+`json.dump()` so all non-ASCII characters are escaped as `\uXXXX`.
+Then update `convert_constant` to decode `\uXXXX` escapes in string
+literals back to UTF-8 bytes.
 
-**Estimated effort:** Included in crash-multibyte-chr fix.
+**Estimated effort:** 1-2 hours
 
 ---
 
-### Remaining ESBMC errors not covered by KNOWNBUG (46 errors)
+#### `crash-class-method-chain` (6 ESBMC errors)
 
-These errors don't have direct KNOWNBUG tests because they're
-variations of patterns already covered or are CBMC-internal issues:
+**Test:** `b = B(); assert b.g().f() == 1` — method returning object,
+then calling method on result.
 
-| Category | Count | Root cause | Fixability |
-|----------|-------|-----------|-----------|
-| from_integer on struct | 14 | Nested attrs with string fields | Needs deeper safe_zero coverage |
-| address_arithmetic nondet | 6 | Constructor returns nondet in nested class patterns | Needs constructor-as-expression improvement |
-| symex type mismatch | 6 | Complex class patterns (Any type, temp objects) | Case-by-case |
-| Out of memory | 7 | Large formulas from list/loop operations | Config (reduce MAX_LIST_LENGTH) |
-| type-annotation-class | 4 | Unannotated __init__ params with string attrs | Needs type inference from assignment RHS |
-| complex number | 3 | complex() type in simplifier | Needs complex type model |
-| Solver type mismatch | 3 | list*int, math function types | Case-by-case |
-| Other | 3 | stod parse, dict.items, etc. | Case-by-case |
+**Why it fails:** `b.g()` returns a class instance (nondet struct from
+constructor-as-expression). Calling `.f()` on the nondet result triggers
+`address_arithmetic does not handle nondet_symbol` in symex because
+the method call passes `address_of(nondet)`.
+
+**Fix:** When a method call's object is a `side_effect_expr_nondett`,
+create a temporary variable, assign the nondet to it, then call the
+method on the temporary (which has a proper address). In `convert_call`
+for Attribute method calls, detect nondet objects and materialize them.
+
+**Estimated effort:** 2-3 hours
+
+---
+
+#### `crash-constructor-default-none` (6 ESBMC errors)
+
+**Test:** `class Node: def __init__(self, x: int, next=None): ...`
+
+**Why it fails:** Default parameter `next=None` — `None` is modeled as
+`from_integer(0, python_int_type())` but the parameter type should be
+the class type (for a linked list node). The type mismatch between
+`int` (None) and the class struct causes crashes.
+
+**Fix:** In `convert_function_def`, when a default parameter value is
+`None`, use `safe_zero(param_type)` instead of `from_integer(0, int)`.
+This produces a zero-filled struct for class-typed parameters.
+
+**Estimated effort:** 1-2 hours
+
+---
+
+#### `crash-class-string-attr` (4 ESBMC errors)
+
+**Test:** `class A: def __init__(self, s): self.name = s` — unannotated
+`__init__` param assigned to attribute.
+
+**Why it fails:** The `__init__` scan determines attribute types from
+parameter annotations. When `s` has no annotation, it defaults to `int`.
+But `self.name = s` creates a string-typed attribute if `s` is actually
+a string. The type mismatch between the attribute type (int, from
+default) and the actual value (string) causes crashes.
+
+**Fix:** In the `__init__` scan, when the parameter has no annotation,
+try to infer the type from how the parameter is used in the body. If
+`self.attr = param` and the attribute is later accessed as a string,
+use string type. Simpler alternative: default unannotated params to
+`python_int_type()` and use `safe_typecast` everywhere (already done
+for most cases — need to audit remaining paths).
+
+**Estimated effort:** 1-2 hours
+
+---
+
+#### `crash-complex-literal` (3 ESBMC errors)
+
+**Test:** `z = 1 + 2j` — complex number literal.
+
+**Why it fails:** The Python AST has a `Constant` node with value
+`(1+2j)` which is a complex number. Our `convert_constant` doesn't
+handle complex values — they're neither int, float, bool, nor string.
+
+**Fix:** In `convert_constant`, detect complex values (they appear as
+non-numeric, non-string constants in the JSON). Model as nondet float
+(simplified) or as a struct with real/imaginary fields.
+
+**Estimated effort:** 1 hour
+
+---
+
+#### `crash-list-repeat-compare` (1 ESBMC error)
+
+**Test:** `lst = [4,5]; assert lst * 2 == [4,5,4,5]`
+
+**Why it fails:** `lst * 2` returns a list with correct length but
+nondet data (content not tracked). The comparison `== [4,5,4,5]`
+compares the nondet data with concrete values and fails.
+
+**Fix:** For `lst * n` where both `lst` and `n` are concrete, build
+the repeated list with actual data (copy elements n times) instead of
+using nondet data.
+
+**Estimated effort:** 1-2 hours
+
+---
+
+#### `crash-math-radians` (2 ESBMC errors)
+
+**Test:** `import math; assert math.radians(180) > 3.0`
+
+**Why it fails:** `math.radians()` returns nondet float (no precise
+model). The assertion `> 3.0` can fail because nondet can be any value.
+
+**Fix:** Two options:
+1. Accept that math functions return nondet (current behavior is correct
+   but imprecise). Update the test to not assert on specific values.
+2. Add postconditions: `radians(x) == x * pi / 180`. This requires
+   modeling `pi` as a constant.
+
+**Estimated effort:** 30 min (option 1) or 2 hours (option 2)
+
+---
+
+### Recommended implementation order
+
+| # | KNOWNBUG | Effort | Impact |
+|---|----------|--------|--------|
+| 1 | `crash-complex-literal` | 1h | 3 errors |
+| 2 | `crash-math-radians` | 30min | 2 errors |
+| 3 | `crash-constructor-default-none` | 1-2h | 6 errors |
+| 4 | `crash-class-string-attr` | 1-2h | 4 errors |
+| 5 | `crash-unicode-source` | 1-2h | 7 errors |
+| 6 | `crash-multibyte-chr` | 2-3h | 7 errors |
+| 7 | `crash-class-method-chain` | 2-3h | 6 errors |
+| 8 | `crash-list-repeat-compare` | 1-2h | 1 error |
+
+---
+
+### Remaining ESBMC errors (46 errors)
+
+After reducing from 533 to ~46 errors, the remaining errors are covered
+by the 8 KNOWNBUG tests above plus variations of those patterns in more
+complex ESBMC tests. Fixing the 8 KNOWNBUG tests should resolve most
+of the remaining errors.
 
 ### Previous items (DONE)
 
