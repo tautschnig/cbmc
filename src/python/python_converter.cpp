@@ -414,8 +414,16 @@ exprt python_convertert::convert_constant(const jsont &expr)
   }
   else if(value.is_string())
   {
-    // String literal → python_str struct { length, data[] }
     std::string str_val = value.value;
+
+    // Detect complex number literals (e.g., "2j", "(1+2j)")
+    if(!str_val.empty() && (str_val.back() == 'j' || str_val.back() == ')'))
+    {
+      // Model complex as nondet float (simplified)
+      return side_effect_expr_nondett{double_type(), get_location(expr)};
+    }
+
+    // String literal → python_str struct { length, data[] }
     struct_typet str_type = python_string_type();
     const auto &components = str_type.components();
     const auto &data_type = to_array_type(components[1].type());
@@ -950,7 +958,14 @@ exprt python_convertert::convert_call(const jsont &expr)
           exprt::operandst arguments;
           // Pass address of object as self (pointer-based model)
           if(obj.type().id() == ID_pointer)
-            arguments.push_back(obj); // already a pointer
+            arguments.push_back(obj);
+          else if(obj.id() == ID_side_effect)
+          {
+            // Can't take address of nondet/side_effect — use nondet pointer
+            arguments.push_back(side_effect_expr_nondett{
+              pointer_typet{obj.type(), config.ansi_c.pointer_width},
+              get_location(expr)});
+          }
           else
             arguments.push_back(address_of_exprt{obj});
           if(args.is_array())
@@ -2441,6 +2456,24 @@ codet python_convertert::convert_assign(const jsont &stmt)
           {
             for(const auto &arg : as_array(call_args))
               arguments.push_back(convert_expression(arg));
+          }
+
+          // Pad missing arguments with defaults (safe_zero for each param type)
+          const code_typet &init_type = to_code_type(init_sym->type);
+          while(arguments.size() < init_type.parameters().size())
+          {
+            std::size_t idx = arguments.size();
+            arguments.push_back(safe_zero(init_type.parameters()[idx].type()));
+          }
+
+          // Typecast arguments to match parameter types
+          for(std::size_t i = 0;
+              i < arguments.size() && i < init_type.parameters().size();
+              i++)
+          {
+            if(arguments[i].type() != init_type.parameters()[i].type())
+              arguments[i] =
+                safe_typecast(arguments[i], init_type.parameters()[i].type());
           }
 
           side_effect_expr_function_callt call{
