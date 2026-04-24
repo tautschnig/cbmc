@@ -7,6 +7,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/pointer_expr.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
 
@@ -36,6 +37,11 @@ inline struct_typet python_value_type()
     struct_typet::componentt{"__int_val", signedbv_typet{64}});
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
   components.push_back(struct_typet::componentt{"__bool_val", bool_typet{}});
+  // Pointers to heap-allocated complex types (keeps union small)
+  components.push_back(struct_typet::componentt{
+    "__str_ptr", pointer_typet{python_string_type(), 64}});
+  components.push_back(struct_typet::componentt{
+    "__list_ptr", pointer_typet{python_list_type(signedbv_typet{64}), 64}});
 
   struct_typet result{components};
   result.set_tag("python_value");
@@ -59,6 +65,10 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   exprt int_val = from_integer(0, signedbv_typet{64});
   exprt float_val = from_integer(0, signedbv_typet{64}); // placeholder
   exprt bool_val = false_exprt{};
+  exprt str_ptr = null_pointer_exprt{
+    pointer_typet{python_string_type(), 64}};
+  exprt list_ptr = null_pointer_exprt{
+    pointer_typet{python_list_type(signedbv_typet{64}), 64}};
 
   switch(tag)
   {
@@ -73,13 +83,22 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   case python_type_tagt::BOOL:
     bool_val = value;
     break;
-  case python_type_tagt::NONE:
   case python_type_tagt::STR:
+    str_ptr = value.type().id() == ID_pointer
+                ? value
+                : address_of_exprt{value};
+    break;
   case python_type_tagt::LIST:
+    list_ptr = value.type().id() == ID_pointer
+                 ? value
+                 : address_of_exprt{value};
+    break;
+  case python_type_tagt::NONE:
     break;
   }
 
-  return struct_exprt{{tag_expr, int_val, float_val, bool_val}, vtype};
+  return struct_exprt{
+    {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr}, vtype};
 }
 
 /// Extract the tag from a tagged-union value.
@@ -104,6 +123,21 @@ inline member_exprt python_value_float(const exprt &value)
 inline member_exprt python_value_bool(const exprt &value)
 {
   return member_exprt{value, "__bool_val", bool_typet{}};
+}
+
+/// Extract the string pointer from a tagged-union value.
+inline dereference_exprt python_value_str(const exprt &value)
+{
+  return dereference_exprt{
+    member_exprt{value, "__str_ptr", pointer_typet{python_string_type(), 64}}};
+}
+
+/// Extract the list pointer from a tagged-union value.
+inline dereference_exprt python_value_list(const exprt &value)
+{
+  return dereference_exprt{member_exprt{
+    value, "__list_ptr",
+    pointer_typet{python_list_type(signedbv_typet{64}), 64}}};
 }
 
 /// Check if a tagged-union value has a specific tag.
