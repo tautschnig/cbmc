@@ -296,17 +296,119 @@ were added from ESBMC validation:
 
 #### `crash-except-type-assign` — try/except with type-changing assignment
 
-When a `try` block assigns a different type (e.g., `result = safe_div()`
-returns float but `result` was initialized as int), symex hits a type
-consistency invariant. Needs: type-aware assignment in try blocks that
-typecasts the RHS to match the existing variable type.
+**Problem:** When a `try` block assigns a different type to an existing
+variable (e.g., `result = safe_div()` returns `float` but `result` was
+initialized as `int`), the variable versioning system creates
+`result__v1` with type `float`. On the exception path (where `safe_div`
+raises and the assignment is skipped), symex tries to merge the original
+`int` value into the `float` variable, hitting the `assignments must be
+type consistent` invariant.
+
+**GOTO produced:**
+```
+ASSIGN result := 10                          // int
+CALL result__v1 := safe_div(5, 0)           // float
+IF exception caught THEN skip
+ASSERT result__v1 = typecast(10, float)      // uses float version
+```
+
+The issue: on the exception path, `result__v1` was never assigned (the
+CALL was skipped), so symex sees the original `result` (int) flowing
+into `result__v1` (float).
+
+**Fix plan (estimated effort: 3-4 hours):**
+
+1. In `convert_assign` inside a `try` block, when the RHS is a function
+   call that returns a different type than the existing variable, do NOT
+   create a new version. Instead, typecast the return value to match the
+   existing variable's type:
+   ```
+   CALL __tmp := safe_div(5, 0)
+   ASSIGN result := typecast(__tmp, int)    // stays int
+   ```
+
+2. Alternatively, insert a typecast assignment on the exception path:
+   after the exception handler, assign `result__v1 := typecast(result, float)`
+   to ensure the float variable has a valid value even when the call was
+   skipped.
+
+3. The simplest correct fix: in `convert_assign`, when the target variable
+   already exists and the RHS has a different type, always typecast the
+   RHS to match the existing variable's type instead of creating a new
+   version. This is correct for Python semantics (the variable keeps its
+   identity; only the value changes). The variable versioning should only
+   trigger when the type change is intentional (e.g., `x = 5; x = "hello"`
+   in straight-line code), not when it's a side effect of function return
+   types.
+
+**Key files:** `python_converter.cpp` — `convert_assign`, variable
+versioning logic around `variable_versions` map.
 
 #### `crash-default-obj-param` — default parameter with object value
 
-When a function parameter has a class instance as default value
-(`def f(y: MyClass = x)`), the default value handling creates a
-`member_exprt` on a non-struct type. Needs: proper default value
-evaluation that preserves the object type.
+**Problem:** When a function parameter has a class instance as default
+value (`def f(y: MyClass = x) -> MyClass`), two issues occur:
+
+1. **Class type not found during pass 0:** The declaration `x: MyClass`
+   is processed in pass 0, which runs before pass 1 (class registration).
+   `convert_type_annotation("MyClass")` doesn't find it in `class_types`
+   and defaults to `int`. This causes `x` to be typed as `int` instead
+   of the `MyClass` struct.
+
+2. **Default value evaluation:** Even if the type were correct, the
+   default value `x` is a global variable reference. The default
+   parameter handling in `convert_call` correctly calls
+   `convert_expression` on the default AST node, but since `x` has the
+   wrong type (int instead of MyClass), the returned value is wrong.
+
+**GOTO produced:**
+```
+ASSIGN x := nondet    // x typed as int, not MyClass
+ASSIGN obj := nondet  // return_obj() returns nondet
+```
+
+**Fix plan (estimated effort: 2-3 hours):**
+
+1. **Add pass 0.25: pre-register class names.** Before pass 0, scan the
+   module body for `ClassDef` nodes and register their names in
+   `class_types` with a placeholder struct (just `{__class_tag}`). This
+   allows `convert_type_annotation("MyClass")` to find the class during
+   pass 0. The full struct (with fields from `__init__`) is built in
+   pass 1 as before — the placeholder is replaced.
+
+   ```cpp
+   // Pass 0.25: pre-register class names for type annotations
+   for(const auto &stmt : as_array(body))
+   {
+     if(is_node_type(stmt, "ClassDef"))
+     {
+       std::string name = json_string(json_member(stmt, "name"));
+       if(!class_types.count(name))
+       {
+         struct_typet placeholder{{
+           struct_typet::componentt{"__class_tag", signedbv_typet{32}}}};
+         placeholder.set_tag("python_class_" + name);
+         class_types[name] = placeholder;
+       }
+     }
+   }
+   ```
+
+2. **Rebuild variable types after pass 1:** After class registration
+   completes, re-check pass-0 variables whose type annotation referenced
+   a class. Update their symbol type to the now-complete class struct.
+   This is a targeted fix — only variables with class-type annotations
+   need updating.
+
+3. **Alternative simpler approach:** Move the `AnnAssign` processing for
+   class-typed variables from pass 0 to pass 2. Pass 0 only pre-registers
+   variables with primitive type annotations (`int`, `float`, `str`,
+   `bool`, `list`). Variables with class-type annotations are deferred to
+   pass 2, where `class_types` is fully populated. This avoids the
+   placeholder complexity.
+
+**Key files:** `python_converter.cpp` — `convert_module` (pass ordering),
+`convert_type_annotation`.
 
 ### Completed KNOWNBUG fixes (all original 7)
 
