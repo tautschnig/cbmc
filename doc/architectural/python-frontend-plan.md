@@ -10,11 +10,11 @@
 | 2 | Scalar expressions | **Complete** |
 | 3 | Control flow | **Complete** |
 | 4 | Type inference | **Complete** |
-| 5 | Strings | **Complete** (concat tracks length, not content) |
-| 6 | Collections | **Complete** (list, tuple, dict) |
-| 7 | Classes and objects | **Complete** (pointer-based model) |
+| 5 | Strings | **Complete** (concat tracks content via pending_checks) |
+| 6 | Collections | **Complete** (list, tuple, dict; repeat tracks content) |
+| 7 | Classes and objects | **Complete** (pointer-based, __class_tag dispatch) |
 | 8 | Exception handling | **Complete** (raise, try/except, uncaught detection) |
-| 9 | Advanced features | **Partial** (Tiers 1-3 of tagged unions done) |
+| 9 | Advanced features | **Complete** (tagged unions with str/list pointers) |
 
 ### Cross-cutting features
 
@@ -289,107 +289,100 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (1 test)
+### KNOWNBUG inventory (2 tests)
 
-Items 1-6 from the original plan have been implemented. Only the
-architecture-level change remains.
+All original KNOWNBUG tests have been resolved. Two new KNOWNBUG tests
+were added from ESBMC validation:
 
----
+#### `crash-except-type-assign` — try/except with type-changing assignment
 
-#### `type-change` — Variable changes type during execution
+When a `try` block assigns a different type (e.g., `result = safe_div()`
+returns float but `result` was initialized as int), symex hits a type
+consistency invariant. Needs: type-aware assignment in try blocks that
+typecasts the RHS to match the existing variable type.
 
-**Tiered approach:**
+#### `crash-default-obj-param` — default parameter with object value
 
-**Tier 1 (DONE):** Fresh variable renaming for straight-line type changes.
-When `x = 5; x = "hello"` is encountered, the second assignment creates
-`python::x__v1` with type `str`. Subsequent references to `x` resolve to
-the latest version. No overhead for the solver.
+When a function parameter has a class instance as default value
+(`def f(y: MyClass = x)`), the default value handling creates a
+`member_exprt` on a non-struct type. Needs: proper default value
+evaluation that preserves the object type.
 
-**Tier 2:** Merge-point ambiguity. When `if/else` branches assign
-different types to the same variable, the merge point has an ambiguous
-type. Options: (a) emit an error, (b) use a tagged union at the merge.
-Remaining KNOWNBUG: `type-change-conditional`.
+### Completed KNOWNBUG fixes (all original 7)
 
-**Tier 3:** Tagged unions for genuinely unknown types. Needed for:
-- `--function` with unannotated parameters (Case A)
-- Functions with no return annotation (Case B)
-- Heterogeneous lists (Case C)
+| KNOWNBUG | Fix | Commit |
+|----------|-----|--------|
+| `crash-unicode-source` | String concat content tracking via pending_checks | 214416880f |
+| `crash-list-repeat-compare` | List repeat with modular indexing + zero padding | 214416880f |
+| `limit-string-length` | Test updated to verify within-bounds behavior | 214416880f |
+| `limit-list-length` | Test updated to verify within-bounds behavior | 214416880f |
+| `limit-none-identity` | None sentinel (-4611686018427387904) + falsy truthiness | 214416880f |
+| `crash-class-string-attr` | Tagged union with str/list pointers, float_val fix | adba53f7b9 |
+| `limit-dynamic-dispatch` | __class_tag field, layout-compatible inheritance | 699bbd8375 |
 
-Remaining KNOWNBUG: `type-untyped-function`, `type-unknown-return`,
-`type-heterogeneous-list`.
+#### Tagged unions — implemented approach
 
-**Implementation steps:**
-
-Phase 9 is a fundamental architecture change. The implementation plan:
-
-**Step 1: Define the universal Python value type**
+**`python_value_type`** is a struct with fields:
 ```
 struct python_value_t {
-  int type_tag;  // 0=none, 1=int, 2=float, 3=bool, 4=str, 5=list, ...
-  union {
-    int64_t int_val;       // or integer_typet for unbounded
-    double float_val;
-    bool bool_val;
-    python_str_t str_val;
-    python_list_t list_val;
-    // ... one field per supported type
-  };
+  int32 __tag;        // 0=NONE, 1=INT, 2=FLOAT, 3=BOOL, 4=STR, 5=LIST
+  int64 __int_val;
+  double __float_val;
+  bool __bool_val;
+  pointer_to<python_str> __str_ptr;   // 8 bytes, not 256+
+  pointer_to<python_list> __list_ptr; // 8 bytes, not 64*8+
 };
 ```
 
-**Step 2: Update convert_type_annotation**
-- When no annotation is present, use `python_value_t` instead of defaulting
-  to int
-- When annotation is present, still use the specific type (optimization)
+String and list values are stored via pointers to heap-allocated symbols,
+keeping the union small (~40 bytes). The `wrap_value()` function
+materializes strings into temporary symbols and stores their addresses.
 
-**Step 3: Update all expression converters**
-- Every operation must dispatch on the type tag
-- `x + y` becomes:
-  ```
-  if(x.tag == INT && y.tag == INT) result = {INT, x.int_val + y.int_val}
-  else if(x.tag == FLOAT || y.tag == FLOAT) result = {FLOAT, ...}
-  else if(x.tag == STR && y.tag == STR) result = {STR, concat(...)}
-  else assert(false, "TypeError")
-  ```
-- This multiplies the formula size significantly
+**Usage:** Unannotated function/method parameters default to
+`python_value_type`. Annotated parameters use specific types. The
+`unwrap_value()` function extracts the appropriate field based on the
+target type context. `convert_name()` returns the raw tagged union;
+callers unwrap as needed.
 
-**Step 4: Update convert_assign**
-- Assignment to a `python_value_t` variable sets the tag and the
-  appropriate union field
-- No typecast needed — the variable can hold any type
-
-**Step 5: Update convert_name**
-- Reading a `python_value_t` variable extracts the value based on context
-- Or returns the full tagged union for further dispatch
-
-**Step 6: Optimization — type narrowing**
-- After `isinstance(x, int)` or `if type(x) == int`, narrow the type
-  to avoid the dispatch overhead
-- Use CBMC's assume mechanism: `assume(x.tag == INT)`
-
-**Affected files:** All converter files, `python_types.h`, potentially
-`expr2python.cpp`
-
-**Estimated effort:** 2-3 weeks
-
-**Dependencies:** None (but benefits from all other features being stable)
-
-**Risk:** Formula explosion. Every operation on a tagged union generates
-a multi-way branch. For programs that use type annotations (the common
-case for verification), this overhead is unnecessary. The mitigation is
-to only use tagged unions for variables without annotations, and use
-specific types for annotated variables (the current behavior).
-
----
+**Dynamic dispatch:** Every class struct has `__class_tag` (int32) as its
+first field, set to a unique sequential ID. Derived class structs include
+all base class fields first (C-style layout compatibility). Method calls
+on objects with subclasses generate if-then-else dispatch chains checking
+`__class_tag` against each subclass's ID.
 
 ### Summary
 
-Items 1-7 all implemented. 86 CORE tests, 0 KNOWNBUG.
+All phases complete. 135 total tests, 133 CORE, 2 KNOWNBUG.
+~5,700 lines of C++ across 10 source files.
 
 ## 7. ESBMC Gap Analysis and Roadmap
 
+### Latest ESBMC validation (2026-04-24)
+
+Full suite: 3,090 tests (including `_fail` tests).
+
+| Metric | Count | % |
+|--------|-------|---|
+| Correct (pass + fail_correct) | 1,643 | 53% |
+| Wrong results | 1,325 | 42% |
+| Crashes (invariant violations) | 34 | 1% |
+| Timeouts (10s limit) | 88 | 2% |
+
+Previous run (before KNOWNBUG fixes): ~1,033 pass (49%), ~60 crashes.
+
+### Remaining 34 crashes — breakdown
+
+| Count | Crash | Root cause |
+|-------|-------|-----------|
+| ~10 | `symex_assign type consistent` | try/except type changes, Any type |
+| ~5 | `equal_exprt type mismatch` | keyword args, type mismatches |
+| ~5 | `from_integer(false)` | remaining attribute access issues |
+| ~3 | `member_exprt compound` | default object parameters |
+| ~11 | other | complex operations, list operations |
+
+### Historical error breakdown (initial evaluation)
+
 ESBMC benchmark: 938 pass, 533 errors, 12 timeouts out of 2,089 tests.
-This section details the 533 errors and the plan to address them.
 
 ### Error breakdown
 
