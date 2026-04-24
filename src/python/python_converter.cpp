@@ -3074,9 +3074,8 @@ codet python_convertert::convert_for(const jsont &stmt)
     elem_type = data_type.element_type();
   }
   else
-    elem_type = python_int_type(); // string iteration yields int (char code)
-  // Note: Python yields single-char strings, but we use int for simplicity.
-  // The loop body assignment wraps the char in operations that work on int.
+    elem_type =
+      python_string_type(); // string iteration yields single-char strings
 
   // Create loop variable
   irep_idt var_id{qualified_name};
@@ -3120,7 +3119,20 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   // x = iterable.data[__idx] (typecast if needed)
   exprt elem_val = index_exprt{data, idx_var};
-  if(elem_val.type() != loop_var.type())
+  // For string iteration, wrap the char byte in a single-char string struct
+  if(is_string && is_python_string_type(loop_var.type()))
+  {
+    struct_typet str_type = python_string_type();
+    const auto &str_data_type = to_array_type(str_type.components()[1].type());
+    exprt::operandst chars;
+    chars.push_back(elem_val);
+    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+      chars.push_back(from_integer(0, unsignedbv_typet{8}));
+    array_exprt char_data{std::move(chars), str_data_type};
+    exprt len_one = from_integer(1, signedbv_typet{64});
+    elem_val = struct_exprt{{len_one, char_data}, str_type};
+  }
+  else if(elem_val.type() != loop_var.type())
     elem_val = safe_typecast(elem_val, loop_var.type());
   body_block.add(code_frontend_assignt{loop_var, elem_val});
 
@@ -3524,6 +3536,20 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     symbol_table.add(type_sym);
   }
 
+  // Create a class object symbol for ClassName.attr access
+  irep_idt class_obj_id{"python::" + class_name};
+  if(symbol_table.lookup(class_obj_id) == nullptr)
+  {
+    symbolt class_obj{class_obj_id, class_type, "python"};
+    class_obj.base_name = class_name;
+    class_obj.is_lvalue = true;
+    class_obj.is_state_var = true;
+    class_obj.is_static_lifetime = true;
+    // Initialize with class-level attribute values
+    class_obj.value = safe_zero(class_type);
+    symbol_table.add(class_obj);
+  }
+
   // Now convert all methods
   if(body.is_array())
   {
@@ -3748,7 +3774,7 @@ codet python_convertert::convert_raise(const jsont &stmt)
 
   code_blockt block;
 
-  // Set the exception flag
+  // Set the exception flag and type
   irep_idt exc_id{"python::__exception_active"};
   const symbolt *exc_sym = symbol_table.lookup(exc_id);
   if(exc_sym != nullptr)
@@ -3756,6 +3782,21 @@ codet python_convertert::convert_raise(const jsont &stmt)
     code_frontend_assignt set_flag{exc_sym->symbol_expr(), true_exprt{}};
     set_flag.add_source_location() = loc;
     block.add(std::move(set_flag));
+  }
+
+  // Set exception type (hash of type name for matching)
+  irep_idt exc_type_sym_id{"python::__exception_type"};
+  const symbolt *exc_type_sym = symbol_table.lookup(exc_type_sym_id);
+  if(exc_type_sym != nullptr)
+  {
+    // Use a simple hash: sum of character values
+    long type_hash = 0;
+    for(char c : exc_type)
+      type_hash += static_cast<unsigned char>(c);
+    code_frontend_assignt set_type{
+      exc_type_sym->symbol_expr(), from_integer(type_hash, python_int_type())};
+    set_type.add_source_location() = loc;
+    block.add(std::move(set_type));
   }
 
   // Add a failing assertion for uncaught exceptions only at top level
@@ -3918,8 +3959,35 @@ codet python_convertert::convert_try(const jsont &stmt)
     clear_flag.add_source_location() = loc;
     except_block.add(std::move(clear_flag));
 
-    // Execute the first handler's body (simplified: ignore exception type)
+    // Execute the first handler's body with type checking
     const jsont &handler = *as_array(handlers).begin();
+    const jsont &handler_type = json_member(handler, "type");
+
+    // Check if handler specifies a type (except TypeError: ...)
+    const symbolt *exc_type_sym =
+      symbol_table.lookup("python::__exception_type");
+    bool has_type_check = false;
+    exprt type_match = true_exprt{};
+
+    if(
+      !handler_type.is_null() && is_node_type(handler_type, "Name") &&
+      exc_type_sym != nullptr)
+    {
+      std::string handler_type_name =
+        json_string(json_member(handler_type, "id"));
+      if(handler_type_name != "Exception" && !handler_type_name.empty())
+      {
+        // Compute hash of handler type name
+        long type_hash = 0;
+        for(char c : handler_type_name)
+          type_hash += static_cast<unsigned char>(c);
+        type_match = equal_exprt{
+          exc_type_sym->symbol_expr(),
+          from_integer(type_hash, python_int_type())};
+        has_type_check = true;
+      }
+    }
+
     const jsont &handler_body = json_member(handler, "body");
     if(handler_body.is_array())
     {
@@ -3936,9 +4004,14 @@ codet python_convertert::convert_try(const jsont &stmt)
         else_block.add(convert_statement(s));
     }
 
-    // if(__exception_active) { clear; except_body } else { else_body }
+    // if(__exception_active && type_matches) { clear; except_body }
+    // else { else_body }
+    exprt condition = exc_sym->symbol_expr();
+    if(has_type_check)
+      condition = and_exprt{condition, type_match};
+
     code_ifthenelset if_exc{
-      exc_sym->symbol_expr(), std::move(except_block), std::move(else_block)};
+      condition, std::move(except_block), std::move(else_block)};
     if_exc.add_source_location() = loc;
     block.add(std::move(if_exc));
   }
@@ -4002,6 +4075,19 @@ bool python_convertert::convert()
     exc_symbol.is_lvalue = true;
     exc_symbol.value = false_exprt{};
     symbol_table.add(exc_symbol);
+  }
+
+  // Exception type variable (string hash for type name matching)
+  irep_idt exc_type_id{"python::__exception_type"};
+  if(symbol_table.lookup(exc_type_id) == nullptr)
+  {
+    symbolt exc_type_sym{exc_type_id, python_int_type(), "python"};
+    exc_type_sym.base_name = "__exception_type";
+    exc_type_sym.is_static_lifetime = true;
+    exc_type_sym.is_state_var = true;
+    exc_type_sym.is_lvalue = true;
+    exc_type_sym.value = from_integer(0, python_int_type());
+    symbol_table.add(exc_type_sym);
   }
 
   // Pass 0: register top-level annotated variable names as global symbols
