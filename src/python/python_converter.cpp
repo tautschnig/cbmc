@@ -1,5 +1,22 @@
 /// \file
 /// Python to GOTO converter — converts Python JSON AST to CBMC symbol table
+///
+/// This converter implements the semantics defined in the Python Language
+/// Reference (https://docs.python.org/3/reference/). Comments throughout
+/// this file cite specific sections using the format:
+///
+///   PLR §X.Y: section title
+///
+/// where PLR = Python Language Reference, and the section numbers correspond
+/// to the online documentation structure. The reference source is also
+/// available at ~/cpython.git/Doc/reference/.
+///
+/// Key reference files:
+///   expressions.rst    — PLR §6: Expressions
+///   simple_stmts.rst   — PLR §7: Simple statements
+///   compound_stmts.rst — PLR §8: Compound statements
+///   datamodel.rst      — PLR §3: Data model
+///   executionmodel.rst — PLR §4: Execution model
 
 #include "python_converter.h"
 
@@ -311,6 +328,10 @@ source_locationt python_convertert::get_location(const jsont &node) const
 }
 
 // --- Type conversion ---
+// PLR §3.2: The standard type hierarchy
+// "Below is a list of the types that are built into Python."
+// PLR §4.7.2: Annotation scopes
+// "Type annotations are evaluated lazily in some contexts."
 
 typet python_convertert::convert_type_annotation(const jsont &annotation)
 {
@@ -397,6 +418,8 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
 }
 
 // --- Expression conversion ---
+// PLR §6: Expressions
+// "This chapter explains the meaning of the elements of expressions in Python."
 
 exprt python_convertert::convert_expression(const jsont &expr)
 {
@@ -446,6 +469,8 @@ exprt python_convertert::convert_expression(const jsont &expr)
   return result;
 }
 
+// PLR §6.2.2: Literals
+// "Python supports string and bytes literals and various numeric literals."
 exprt python_convertert::convert_constant(const jsont &expr)
 {
   const jsont &value = json_member(expr, "value");
@@ -461,7 +486,10 @@ exprt python_convertert::convert_constant(const jsont &expr)
   }
   else if(value.is_null())
   {
-    // Python None — distinct sentinel value (not 0)
+    // PLR §3.2: "None — This type has a single value... used to signify
+    // the absence of a value." §6.10.3: "x is y is true if and only
+    // if x and y are the same object." We use a sentinel value
+    // distinct from 0 so that "0 is None" is correctly False. (not 0)
     return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
   }
   else if(value.is_number())
@@ -522,6 +550,8 @@ exprt python_convertert::convert_constant(const jsont &expr)
   return nil_exprt{};
 }
 
+// PLR §6.2.1: Identifiers (Names)
+// "An identifier occurring as an atom is a name."
 exprt python_convertert::convert_name(const jsont &expr)
 {
   std::string id = json_string(json_member(expr, "id"));
@@ -562,6 +592,9 @@ exprt python_convertert::convert_name(const jsont &expr)
   return sym->symbol_expr();
 }
 
+// PLR §6.7: Binary arithmetic operations
+// PLR §6.8: Shifting operations
+// PLR §6.9: Binary bitwise operations
 exprt python_convertert::convert_bin_op(const jsont &expr)
 {
   exprt left = convert_expression(json_member(expr, "left"));
@@ -571,7 +604,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
-  // String concatenation with content tracking
+  // PLR §4.7: "str" type, §6.7: binary arithmetic
+  // String concatenation: s1 + s2 produces a new string containing the
+  // characters of s1 followed by s2. We track content by copying data
+  // arrays element-by-element via pending_checks.
   if(
     is_python_string_type(left.type()) && is_python_string_type(right.type()) &&
     op == "Add")
@@ -809,6 +845,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
 }
 
+// PLR §6.6: Unary arithmetic and bitwise operations
+// "All unary arithmetic and bitwise operations have the same priority."
 exprt python_convertert::convert_unary_op(const jsont &expr)
 {
   exprt operand = convert_expression(json_member(expr, "operand"));
@@ -834,6 +872,9 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
   }
 }
 
+// PLR §6.11: Boolean operations
+// "x or y: if x is true, then x, else y"
+// "x and y: if x is false, then x, else y"
 exprt python_convertert::convert_bool_op(const jsont &expr)
 {
   std::string op = json_string(json_member(json_member(expr, "op"), "_type"));
@@ -869,6 +910,9 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
   return result;
 }
 
+// PLR §6.10: Comparisons
+// "Comparisons can be chained arbitrarily, e.g., x < y <= z is equivalent
+// to x < y and y <= z."
 exprt python_convertert::convert_compare(const jsont &expr)
 {
   exprt left = convert_expression(json_member(expr, "left"));
@@ -1026,6 +1070,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
   return result;
 }
 
+// PLR §6.3.4: Calls
+// "A call calls a callable object (e.g., a function) with a possibly
+// empty series of arguments."
 exprt python_convertert::convert_call(const jsont &expr)
 {
   const jsont &func = json_member(expr, "func");
@@ -1851,6 +1898,8 @@ exprt python_convertert::convert_call(const jsont &expr)
   return std::move(call);
 }
 
+// PLR §6.13: Conditional expressions
+// "x if C else y — first C is evaluated; if true, x is evaluated; else y."
 exprt python_convertert::convert_if_exp(const jsont &expr)
 {
   exprt test = convert_expression(json_member(expr, "test"));
@@ -1870,6 +1919,8 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
   return if_exprt{test, body, orelse};
 }
 
+// PLR §6.3.2: Subscriptions
+// "The primary must evaluate to an object that supports subscription."
 exprt python_convertert::convert_subscript(const jsont &expr)
 {
   exprt value = convert_expression(json_member(expr, "value"));
@@ -2072,6 +2123,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   return nil_exprt{};
 }
 
+// PLR §6.2.5: List, set and tuple displays
+// "A tuple display yields a new tuple object."
 exprt python_convertert::convert_tuple(const jsont &expr)
 {
   const jsont &elts = json_member(expr, "elts");
@@ -2093,6 +2146,9 @@ exprt python_convertert::convert_tuple(const jsont &expr)
   return struct_exprt{std::move(elements), tuple_type};
 }
 
+// PLR §6.2.5: List displays
+// "A list display yields a new list object, the contents being specified
+// by either a list of expressions or a comprehension."
 exprt python_convertert::convert_list(const jsont &expr)
 {
   const jsont &elts = json_member(expr, "elts");
@@ -2147,6 +2203,8 @@ exprt python_convertert::convert_list(const jsont &expr)
   return struct_exprt{{length, data}, list_type};
 }
 
+// PLR §6.3.1: Attribute references
+// "An attribute reference is a primary followed by a period and a name."
 exprt python_convertert::convert_attribute(const jsont &expr)
 {
   std::string attr = json_string(json_member(expr, "attr"));
@@ -2181,6 +2239,8 @@ exprt python_convertert::convert_attribute(const jsont &expr)
   return side_effect_expr_nondett{python_int_type(), source_locationt{}};
 }
 
+// PLR §6.2.7: Dictionary displays
+// "A dictionary display yields a new dictionary object."
 exprt python_convertert::convert_dict(const jsont &expr)
 {
   const jsont &keys = json_member(expr, "keys");
@@ -2225,6 +2285,12 @@ exprt python_convertert::convert_dict(const jsont &expr)
   return struct_exprt{std::move(field_values), dict_type};
 }
 
+// PLR §6.2.5: List displays
+// "A list display yields a new list object, the contents being specified
+// by either a list of expressions or a comprehension."
+// PLR §6.2.8: Comprehension displays
+// "A comprehension consists of a single expression followed by at least
+// one for clause and zero or more for or if clauses."
 exprt python_convertert::convert_list_comp(const jsont &expr)
 {
   const jsont &elt = json_member(expr, "elt");
@@ -2354,6 +2420,8 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   return struct_exprt{{length, data}, list_type};
 }
 
+// PLR §6.14: Lambdas
+// "Lambda expressions are used to create anonymous functions."
 exprt python_convertert::convert_lambda(const jsont &expr)
 {
   std::string lambda_name = "__lambda_" + std::to_string(lambda_counter++);
@@ -2690,6 +2758,9 @@ codet python_convertert::convert_statement(const jsont &stmt)
   return result;
 }
 
+// PLR §7.2.1: Annotated assignment statements
+// "Annotation assignment is the combination, in a single statement, of a
+// variable or attribute annotation and an optional assignment statement."
 codet python_convertert::convert_ann_assign(const jsont &stmt)
 {
   // x: int = 5
@@ -2734,6 +2805,9 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   return std::move(assign);
 }
 
+// PLR §7.2: Assignment statements
+// "Assignment statements are used to (re)bind names to values and to
+// modify attributes or items of mutable objects."
 codet python_convertert::convert_assign(const jsont &stmt)
 {
   // x = expr  OR  a = b = expr (multiple targets)
@@ -3241,6 +3315,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
   return std::move(block);
 }
 
+// PLR §7.2.1: Augmented assignment statements
+// "An augmented assignment evaluates the target and the expression list,
+// performs the binary operation, and assigns the result to the target."
 codet python_convertert::convert_aug_assign(const jsont &stmt)
 {
   // x += expr  →  x = x + expr
@@ -3312,6 +3389,9 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   return std::move(assign);
 }
 
+// PLR §7.3: The assert statement
+// "Assert statements are a convenient way to insert debugging assertions
+// into a program."
 codet python_convertert::convert_assert(const jsont &stmt)
 {
   exprt test = convert_expression(json_member(stmt, "test"));
@@ -3331,6 +3411,8 @@ codet python_convertert::convert_assert(const jsont &stmt)
   return std::move(assertion);
 }
 
+// PLR §8.1: The if statement
+// "The if statement is used for conditional execution."
 codet python_convertert::convert_if(const jsont &stmt)
 {
   exprt test = convert_expression(json_member(stmt, "test"));
@@ -3388,6 +3470,9 @@ codet python_convertert::convert_if(const jsont &stmt)
   }
 }
 
+// PLR §8.2: The while statement
+// "The while statement is used for repeated execution as long as an
+// expression is true."
 codet python_convertert::convert_while(const jsont &stmt)
 {
   exprt test = convert_expression(json_member(stmt, "test"));
@@ -3410,6 +3495,9 @@ codet python_convertert::convert_while(const jsont &stmt)
   return std::move(while_stmt);
 }
 
+// PLR §8.3: The for statement
+// "The for statement is used to iterate over the elements of a sequence
+// (such as a string, tuple or list) or other iterable object."
 codet python_convertert::convert_for(const jsont &stmt)
 {
   const jsont &target = json_member(stmt, "target");
@@ -3584,6 +3672,8 @@ codet python_convertert::convert_for(const jsont &stmt)
   return std::move(result);
 }
 
+// PLR §7.6: The return statement
+// "return may only occur syntactically nested in a function definition."
 codet python_convertert::convert_return(const jsont &stmt)
 {
   const jsont &value = json_member(stmt, "value");
@@ -3695,6 +3785,8 @@ codet python_convertert::convert_return(const jsont &stmt)
   return std::move(ret);
 }
 
+// PLR §8.7: Function definitions
+// "A function definition defines a user-defined function object."
 codet python_convertert::convert_function_def(const jsont &stmt)
 {
   std::string func_name = json_string(json_member(stmt, "name"));
@@ -3830,6 +3922,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   return code_skipt{};
 }
 
+// PLR §8.9: Class definitions
+// "A class definition defines a class object."
 codet python_convertert::convert_class_def(const jsont &stmt)
 {
   std::string class_name = json_string(json_member(stmt, "name"));
@@ -4283,21 +4377,30 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
   return std::move(code_expr);
 }
 
+// PLR §7.9: The break statement
+// "break may only occur syntactically nested in a for or while loop."
 codet python_convertert::convert_break()
 {
   return code_breakt{};
 }
 
+// PLR §7.10: The continue statement
+// "continue may only occur syntactically nested in a for or while loop."
 codet python_convertert::convert_continue()
 {
   return code_continuet{};
 }
 
+// PLR §7.1: Expression statements / pass
+// "pass is a null operation — when it is executed, nothing happens."
 codet python_convertert::convert_pass()
 {
   return code_skipt{};
 }
 
+// PLR §7.8: The raise statement
+// "raise evaluates the first expression as the exception object. It must
+// be either a subclass or an instance of BaseException."
 codet python_convertert::convert_raise(const jsont &stmt)
 {
   source_locationt loc = get_location(stmt);
@@ -4380,6 +4483,9 @@ codet python_convertert::convert_raise(const jsont &stmt)
   return std::move(block);
 }
 
+// PLR §8.5: The with statement
+// "The with statement is used to wrap the execution of a block with
+// methods defined by a context manager."
 codet python_convertert::convert_with(const jsont &stmt)
 {
   // Simplified: execute the body, ignoring __enter__/__exit__ protocol.
@@ -4477,6 +4583,9 @@ codet python_convertert::convert_with(const jsont &stmt)
 
 // --- Module body conversion ---
 
+// PLR §8.4: The try statement
+// "The try statement specifies exception handlers and/or cleanup code
+// for a group of statements."
 codet python_convertert::convert_try(const jsont &stmt)
 {
   code_blockt block;
