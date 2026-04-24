@@ -1,5 +1,19 @@
 /// \file
-/// Python tagged-union value type for dynamic typing
+/// Python tagged-union value type for dynamic typing.
+///
+/// PLR §3.1: "Every object has an identity, a type and a value."
+/// PLR §3.2: "The standard type hierarchy"
+///
+/// Python variables are dynamically typed — a name can refer to objects
+/// of different types at different times. When a function parameter has
+/// no type annotation, we model it as a tagged union that can hold any
+/// of the supported types. This is the python_value_type struct:
+///
+///   struct { int32 tag; int64 int_val; double float_val; bool bool_val;
+///            str* str_ptr; list* list_ptr; }
+///
+/// The tag field identifies which field is active (see python_type_tagt).
+/// String and list values use pointers to avoid bloating the union.
 
 #ifndef CPROVER_PYTHON_PYTHON_VALUE_TYPE_H
 #define CPROVER_PYTHON_PYTHON_VALUE_TYPE_H

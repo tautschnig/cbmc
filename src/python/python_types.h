@@ -1,5 +1,21 @@
 /// \file
-/// Python type representations
+/// Python type representations for CBMC verification.
+///
+/// Models Python's built-in types as CBMC struct/array types:
+///
+/// - int:  signedbv[64] (PLR §3.2: "Integers have unlimited precision" —
+///         we approximate with 64-bit; use --python-unbounded-ints for exact)
+/// - float: IEEE 754 double (PLR §3.2: "double-precision floating-point")
+/// - bool: bool_typet (PLR §3.2: "Booleans are a subtype of integers")
+/// - str:  struct { int64 length; uint8 data[256]; }
+///         (PLR §3.2: "immutable sequences of Unicode code points" —
+///         bounded approximation; content tracked for literals and concat)
+/// - list: struct { int64 length; T data[64]; }
+///         (PLR §3.2: "mutable sequences" — bounded approximation)
+/// - tuple: struct { T _0; T _1; ... }
+///         (PLR §3.2: "immutable sequences" — fixed-size struct)
+/// - dict: struct { int64 length; K keys[16]; V values[16]; }
+///         (PLR §3.2: "mutable mappings" — bounded approximation)
 
 #ifndef CPROVER_PYTHON_PYTHON_TYPES_H
 #define CPROVER_PYTHON_PYTHON_TYPES_H
