@@ -212,6 +212,24 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
 
   if(src_scalar && tgt_scalar)
   {
+    // PLR §3.2: "Integers have unlimited precision" / "floating-point numbers"
+    // For int constant → float, use ieee_floatt for exact conversion
+    // (typecast_exprt can produce off-by-one-ULP results in the solver)
+    if(
+      target.id() == ID_floatbv && e.is_constant() &&
+      (e.type().id() == ID_signedbv || e.type().id() == ID_unsignedbv))
+    {
+      mp_integer iv;
+      if(!to_integer(to_constant_expr(e), iv))
+      {
+        ieee_floatt fv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fv.from_integer(iv);
+        return fv.to_expr();
+      }
+    }
+
     // None sentinel → false for truthiness
     if(target.id() == ID_bool && e.type().id() == ID_signedbv)
     {
@@ -1085,8 +1103,64 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     std::string method_name = json_string(json_member(func, "attr"));
 
-    // Check if this is a module function call: math.sqrt(x)
+    // PLR §6.3.4: super() — resolve to parent class
     const jsont &obj_node = json_member(func, "value");
+    if(
+      is_node_type(obj_node, "Call") &&
+      is_node_type(json_member(obj_node, "func"), "Name") &&
+      json_string(json_member(json_member(obj_node, "func"), "id")) == "super")
+    {
+      // Find the current class and its base class
+      if(
+        !current_class.empty() && class_bases.count(current_class) &&
+        !class_bases[current_class].empty())
+      {
+        std::string base_class = class_bases[current_class][0];
+        // Inline super().__init__() by re-converting the base class's
+        // __init__ body with the current self pointer. This avoids
+        // pointer type mismatches (Derived* vs Base*).
+        // Find the base class __init__ AST
+        const jsont &module_body = json_member(parse_tree.ast_json, "body");
+        if(module_body.is_array())
+        {
+          for(const auto &top_stmt : as_array(module_body))
+          {
+            if(
+              is_node_type(top_stmt, "ClassDef") &&
+              json_string(json_member(top_stmt, "name")) == base_class)
+            {
+              const jsont &cls_body = json_member(top_stmt, "body");
+              if(cls_body.is_array())
+              {
+                for(const auto &item : as_array(cls_body))
+                {
+                  if(
+                    is_node_type(item, "FunctionDef") &&
+                    json_string(json_member(item, "name")) == method_name)
+                  {
+                    // Convert the base __init__ body statements
+                    // in the current scope (so self refers to Derived)
+                    const jsont &init_body = json_member(item, "body");
+                    if(init_body.is_array())
+                    {
+                      for(const auto &s : as_array(init_body))
+                        pending_checks.push_back(convert_statement(s));
+                    }
+                    // Return a no-op value (the side effects are in
+                    // pending_checks)
+                    return from_integer(0, python_int_type());
+                  }
+                }
+              }
+              break;
+            }
+          }
+        }
+      }
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
+
+    // Check if this is a module function call: math.sqrt(x)
     if(is_node_type(obj_node, "Name"))
     {
       std::string obj_name = json_string(json_member(obj_node, "id"));
@@ -1120,9 +1194,53 @@ exprt python_convertert::convert_call(const jsont &expr)
             get_location(expr)};
           return std::move(call);
         }
-        // Not registered — return nondet float for math functions
+        // PLR stdlib: math module functions
         if(obj_name == "math")
+        {
+          exprt arg =
+            args.is_array() && !as_array(args).empty()
+              ? convert_expression(*as_array(args).begin())
+              : side_effect_expr_nondett{double_type(), get_location(expr)};
+          if(arg.type().id() != ID_floatbv)
+            arg = safe_typecast(arg, double_type());
+
+          if(method_name == "ceil")
+          {
+            // ceil(x) → smallest integer >= x
+            // Model: typecast to int, then if result < x, add 1
+            return plus_exprt{
+              typecast_exprt{arg, python_int_type()},
+              if_exprt{
+                binary_relation_exprt{
+                  typecast_exprt{
+                    typecast_exprt{arg, python_int_type()}, double_type()},
+                  ID_lt,
+                  arg},
+                from_integer(1, python_int_type()),
+                from_integer(0, python_int_type())}};
+          }
+          if(method_name == "floor")
+          {
+            // floor(x) → largest integer <= x
+            return minus_exprt{
+              typecast_exprt{arg, python_int_type()},
+              if_exprt{
+                binary_relation_exprt{
+                  typecast_exprt{
+                    typecast_exprt{arg, python_int_type()}, double_type()},
+                  ID_gt,
+                  arg},
+                from_integer(1, python_int_type()),
+                from_integer(0, python_int_type())}};
+          }
+          if(method_name == "fabs")
+            return if_exprt{
+              binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
+              unary_minus_exprt{arg},
+              arg};
+          // Unknown math function — return nondet
           return side_effect_expr_nondett{double_type(), get_location(expr)};
+        }
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
       }
     }
@@ -1286,11 +1404,29 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "float")
   {
+    // PLR §2.4.8: float(x) converts x to floating-point
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
+      {
+        // For constant integers, use ieee_floatt for exact conversion
+        if(
+          arg.is_constant() &&
+          (arg.type().id() == ID_signedbv || arg.type().id() == ID_unsignedbv))
+        {
+          mp_integer iv;
+          if(!to_integer(to_constant_expr(arg), iv))
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_integer(iv);
+            return fv.to_expr();
+          }
+        }
         return typecast_exprt{arg, double_type()};
+      }
     }
     ieee_floatt zero{
       ieee_float_spect::double_precision(),
@@ -1624,7 +1760,9 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }
-  // isinstance(obj, Class) — static type check
+  // PLR §6.10.2: isinstance(obj, classinfo)
+  // "Return True if the object argument is an instance of the classinfo
+  // argument, or of a (direct, indirect, or virtual) subclass thereof."
   else if(func_name == "isinstance")
   {
     if(args.is_array() && as_array(args).size() >= 2)
@@ -1632,39 +1770,56 @@ exprt python_convertert::convert_call(const jsont &expr)
       auto it = as_array(args).begin();
       exprt obj = convert_expression(*it);
       ++it;
-      // Second arg is the class name
       std::string cls_name;
       if(is_node_type(*it, "Name"))
         cls_name = json_string(json_member(*it, "id"));
 
-      if(!obj.is_nil() && !cls_name.empty() && obj.type().id() == ID_struct)
+      if(!obj.is_nil() && !cls_name.empty())
       {
-        const auto &st = to_struct_type(obj.type());
-        std::string tag = id2string(st.get_tag());
-        // Extract the actual class name from the tag
-        std::string obj_class;
-        if(tag.substr(0, 13) == "python_class_")
-          obj_class = tag.substr(13);
+        // Check built-in types first
+        if(
+          cls_name == "int" &&
+          (obj.type().id() == ID_signedbv || obj.type().id() == ID_integer))
+          return true_exprt{};
+        if(cls_name == "float" && obj.type().id() == ID_floatbv)
+          return true_exprt{};
+        if(cls_name == "bool" && obj.type().id() == ID_bool)
+          return true_exprt{};
+        if(cls_name == "str" && is_python_string_type(obj.type()))
+          return true_exprt{};
+        if(cls_name == "list" && is_python_list_type(obj.type()))
+          return true_exprt{};
+        if(cls_name == "tuple" && is_python_tuple_type(obj.type()))
+          return true_exprt{};
+        if(cls_name == "dict" && is_python_dict_type(obj.type()))
+          return true_exprt{};
 
-        // Check if obj_class is cls_name or inherits from it
-        if(!obj_class.empty())
+        // Check user-defined classes
+        if(obj.type().id() == ID_struct)
         {
-          std::string check = obj_class;
-          while(!check.empty())
+          const auto &st = to_struct_type(obj.type());
+          std::string tag = id2string(st.get_tag());
+          std::string obj_class;
+          if(tag.substr(0, 13) == "python_class_")
+            obj_class = tag.substr(13);
+
+          if(!obj_class.empty())
           {
-            if(check == cls_name)
-              return true_exprt{};
-            // Walk up the inheritance chain
-            auto it = class_bases.find(check);
-            if(it != class_bases.end() && !it->second.empty())
-              check = it->second[0]; // single inheritance
-            else
-              break;
+            std::string check = obj_class;
+            while(!check.empty())
+            {
+              if(check == cls_name)
+                return true_exprt{};
+              auto base_it = class_bases.find(check);
+              if(base_it != class_bases.end() && !base_it->second.empty())
+                check = base_it->second[0];
+              else
+                break;
+            }
+            return false_exprt{};
           }
-          return false_exprt{};
         }
       }
-      // If we can't determine statically, return nondet bool
       return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
     }
     return false_exprt{};
@@ -2763,14 +2918,47 @@ codet python_convertert::convert_statement(const jsont &stmt)
 // variable or attribute annotation and an optional assignment statement."
 codet python_convertert::convert_ann_assign(const jsont &stmt)
 {
-  // x: int = 5
+  // PLR §7.2.1: Annotated assignment
   const jsont &target = json_member(stmt, "target");
   const jsont &annotation = json_member(stmt, "annotation");
   const jsont &value = json_member(stmt, "value");
+  source_locationt loc = get_location(stmt);
+
+  // Handle self.attr: Type = value (attribute target)
+  if(is_node_type(target, "Attribute"))
+  {
+    if(value.is_null())
+      return code_skipt{};
+    exprt obj = convert_expression(json_member(target, "value"));
+    std::string attr = json_string(json_member(target, "attr"));
+    exprt rhs = convert_expression(value);
+    if(obj.is_nil() || rhs.is_nil())
+      return code_skipt{};
+
+    typet obj_type = obj.type();
+    if(obj_type.id() == ID_pointer)
+    {
+      const auto &base = to_pointer_type(obj_type).base_type();
+      if(base.id() == ID_struct)
+      {
+        const auto &st = to_struct_type(base);
+        if(st.has_component(attr))
+        {
+          member_exprt lhs{
+            dereference_exprt{obj}, attr, st.get_component(attr).type()};
+          if(rhs.type() != lhs.type())
+            rhs = safe_typecast(rhs, lhs.type());
+          code_frontend_assignt assign{lhs, rhs};
+          assign.add_source_location() = loc;
+          return std::move(assign);
+        }
+      }
+    }
+    return code_skipt{};
+  }
 
   std::string var_name = json_string(json_member(target, "id"));
   typet var_type = convert_type_annotation(annotation);
-  source_locationt loc = get_location(stmt);
 
   std::string qualified_name = qualify_name(var_name);
   irep_idt symbol_id{qualified_name};
@@ -3084,9 +3272,38 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
 
     // Handle subscript assignment: lst[i] = value
+    // PLR §3.2: "Tuples are immutable sequences"
     if(is_node_type(target, "Subscript"))
     {
       exprt obj = convert_expression(json_member(target, "value"));
+
+      // Tuple assignment → raise TypeError
+      if(!obj.is_nil() && is_python_tuple_type(obj.type()))
+      {
+        code_blockt type_error;
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          type_error.add(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+        }
+        if(exc_type_sym != nullptr)
+        {
+          // TypeError hash
+          long type_hash = 0;
+          for(char c : std::string{"TypeError"})
+            type_hash += static_cast<unsigned char>(c);
+          type_error.add(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            from_integer(type_hash, python_int_type())});
+        }
+        block.add(std::move(type_error));
+        continue;
+      }
+
       if(!obj.is_nil() && is_python_list_type(obj.type()))
       {
         const jsont &slice_node = json_member(target, "slice");
@@ -3517,17 +3734,33 @@ codet python_convertert::convert_for(const jsont &stmt)
     if(!range_args.is_array() || as_array(range_args).empty())
       return code_skipt{};
 
-    exprt start, stop;
+    // PLR §4.6.6: range(start, stop[, step])
+    exprt start, stop, step;
     if(as_array(range_args).size() == 1)
     {
       start = from_integer(0, int_type);
       stop = convert_expression(*as_array(range_args).begin());
+      step = from_integer(1, int_type);
     }
-    else
+    else if(as_array(range_args).size() >= 2)
     {
       start = convert_expression(*as_array(range_args).begin());
       stop = convert_expression(*std::next(as_array(range_args).begin(), 1));
+      if(as_array(range_args).size() >= 3)
+        step = convert_expression(*std::next(as_array(range_args).begin(), 2));
+      else
+        step = from_integer(1, int_type);
     }
+    else
+    {
+      start = from_integer(0, int_type);
+      stop = from_integer(0, int_type);
+      step = from_integer(1, int_type);
+    }
+
+    start = safe_typecast(start, int_type);
+    stop = safe_typecast(stop, int_type);
+    step = safe_typecast(step, int_type);
 
     irep_idt symbol_id{qualified_name};
     if(symbol_table.lookup(symbol_id) == nullptr)
@@ -3552,11 +3785,28 @@ codet python_convertert::convert_for(const jsont &stmt)
       for(const auto &s : as_array(body))
         body_block.add(convert_statement(s));
     }
-    body_block.add(code_frontend_assignt{
-      loop_sym, plus_exprt{loop_sym, from_integer(1, int_type)}});
+    body_block.add(code_frontend_assignt{loop_sym, plus_exprt{loop_sym, step}});
 
-    code_whilet while_stmt{
-      binary_relation_exprt{loop_sym, ID_lt, stop}, std::move(body_block)};
+    // Condition: step > 0 ? i < stop : i > stop
+    exprt cond;
+    if(step.is_constant())
+    {
+      mp_integer sv;
+      if(!to_integer(to_constant_expr(step), sv) && sv < 0)
+        cond = binary_relation_exprt{loop_sym, ID_gt, stop};
+      else
+        cond = binary_relation_exprt{loop_sym, ID_lt, stop};
+    }
+    else
+    {
+      // Dynamic step: if(step > 0) then i < stop else i > stop
+      cond = if_exprt{
+        binary_relation_exprt{step, ID_gt, from_integer(0, int_type)},
+        binary_relation_exprt{loop_sym, ID_lt, stop},
+        binary_relation_exprt{loop_sym, ID_gt, stop}};
+    }
+
+    code_whilet while_stmt{cond, std::move(body_block)};
     while_stmt.add_source_location() = loc;
 
     code_blockt result;
@@ -3574,10 +3824,64 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   bool is_list = is_python_list_type(iterable.type());
   bool is_string = is_python_string_type(iterable.type());
+  bool is_dict = is_python_dict_type(iterable.type());
+
+  // PLR §8.3: "for k in dict" iterates over keys
+  // Dicts are modeled as structs with one field per key.
+  // Unroll the loop over the struct fields.
+  if(is_dict)
+  {
+    const auto &dict_st = to_struct_type(iterable.type());
+    code_blockt result;
+
+    irep_idt var_id{qualified_name};
+    typet key_type = python_string_type();
+    if(symbol_table.lookup(var_id) == nullptr)
+    {
+      symbolt new_sym{var_id, key_type, "python"};
+      new_sym.base_name = var_name;
+      new_sym.location = loc;
+      new_sym.is_lvalue = true;
+      new_sym.is_state_var = true;
+      symbol_table.add(new_sym);
+    }
+    symbol_exprt loop_var = symbol_table.lookup_ref(var_id).symbol_expr();
+
+    const jsont &body_stmts = json_member(stmt, "body");
+    for(const auto &comp : dict_st.components())
+    {
+      // Assign key name as string literal
+      std::string key_name = id2string(comp.get_name());
+      struct_typet str_type = python_string_type();
+      const auto &data_type = to_array_type(str_type.components()[1].type());
+      exprt::operandst chars;
+      for(char ch : key_name)
+        chars.push_back(
+          from_integer(static_cast<unsigned char>(ch), unsignedbv_typet{8}));
+      while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+        chars.push_back(from_integer(0, unsignedbv_typet{8}));
+      exprt key_str = struct_exprt{
+        {from_integer(
+           static_cast<long long>(key_name.size()), python_int_type()),
+         array_exprt{std::move(chars), data_type}},
+        str_type};
+      if(loop_var.type() != key_str.type())
+        key_str = safe_typecast(key_str, loop_var.type());
+      result.add(code_frontend_assignt{loop_var, key_str});
+
+      if(body_stmts.is_array())
+      {
+        for(const auto &s : as_array(body_stmts))
+          result.add(convert_statement(s));
+      }
+    }
+    return std::move(result);
+  }
+
   if(!is_list && !is_string)
   {
-    log.error() << "for-in iteration requires a list or string"
-                << messaget::eom;
+    log.warning() << "for-in iteration requires a list, string, or dict"
+                  << messaget::eom;
     return code_skipt{};
   }
 
@@ -4091,7 +4395,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   struct_typet class_type{tagged_components};
   class_type.set_tag("python_class_" + class_name);
   class_types[class_name] = class_type;
-  class_tag_ids[class_name] = static_cast<int>(class_tag_ids.size()) + 1;
+  if(!class_tag_ids.count(class_name))
+    class_tag_ids[class_name] = static_cast<int>(class_tag_ids.size()) + 1;
 
   // Record base classes for isinstance checks
   if(bases.is_array())
@@ -4594,13 +4899,29 @@ codet python_convertert::convert_try(const jsont &stmt)
   irep_idt exc_id{"python::__exception_active"};
   const symbolt *exc_sym = symbol_table.lookup(exc_id);
 
-  // Execute the try body
+  // PLR §8.4: Execute the try body.
+  // After each statement, if an exception was raised, skip remaining
+  // statements (they are guarded by !__exception_active).
   const jsont &body = json_member(stmt, "body");
   try_depth++;
   if(body.is_array())
   {
+    bool first = true;
     for(const auto &s : as_array(body))
-      block.add(convert_statement(s));
+    {
+      codet stmt_code = convert_statement(s);
+      // First statement runs unconditionally; subsequent ones are
+      // guarded so that a raise in an earlier statement skips them.
+      if(!first && exc_sym != nullptr)
+      {
+        code_ifthenelset guarded{
+          not_exprt{exc_sym->symbol_expr()}, std::move(stmt_code)};
+        block.add(std::move(guarded));
+      }
+      else
+        block.add(std::move(stmt_code));
+      first = false;
+    }
   }
   try_depth--;
 
@@ -4892,11 +5213,23 @@ bool python_convertert::convert()
     for(const auto &sym_pair : symbol_table)
     {
       const symbolt &sym = sym_pair.second;
+      // Update struct types
       if(
         sym.type.id() == ID_struct &&
         to_struct_type(sym.type).get_tag() == tag && sym.type != cls_type)
       {
         symbol_table.get_writeable_ref(sym.name).type = cls_type;
+      }
+      // Update pointer-to-struct types (e.g., self parameters)
+      if(
+        sym.type.id() == ID_pointer &&
+        to_pointer_type(sym.type).base_type().id() == ID_struct &&
+        to_struct_type(to_pointer_type(sym.type).base_type()).get_tag() ==
+          tag &&
+        to_pointer_type(sym.type).base_type() != cls_type)
+      {
+        symbol_table.get_writeable_ref(sym.name).type =
+          pointer_typet{cls_type, to_pointer_type(sym.type).get_width()};
       }
     }
   }

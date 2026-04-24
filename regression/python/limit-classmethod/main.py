@@ -5,4 +5,5 @@ class MyClass:
     def create(cls) -> int:
         return 42
 
-assert MyClass.create() == 42
+x: int = MyClass.create()
+assert x == 42

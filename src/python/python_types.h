@@ -84,6 +84,15 @@ inline bool is_python_tuple_type(const typet &type)
   return st.get_tag() == "python_tuple";
 }
 
+/// Check if a type is a Python dict type.
+inline bool is_python_dict_type(const typet &type)
+{
+  if(type.id() != ID_struct)
+    return false;
+  const auto &st = to_struct_type(type);
+  return st.get_tag() == "python_dict";
+}
+
 /// Return the CBMC type used to represent Python list[T].
 /// This is a struct { int64 length; T data[MAX_LIST_LENGTH]; }
 inline struct_typet python_list_type(const typet &element_type)
