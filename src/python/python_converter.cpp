@@ -1234,6 +1234,59 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
               return result;
             }
+
+            // Variable iterable: iterate over list data array
+            if(!iterable.is_nil() && is_python_list_type(iterable.type()))
+            {
+              const auto &list_st = to_struct_type(iterable.type());
+              const auto &data_type =
+                to_array_type(list_st.components()[1].type());
+              member_exprt data{iterable, "data", data_type};
+              member_exprt length{iterable, "length", signedbv_typet{64}};
+
+              std::string qname = qualify_name(iter_var);
+              irep_idt iter_sym_id{qname};
+              if(symbol_table.lookup(iter_sym_id) == nullptr)
+              {
+                symbolt sym{iter_sym_id, data_type.element_type(), "python"};
+                sym.base_name = iter_var;
+                sym.is_lvalue = true;
+                sym.is_state_var = true;
+                symbol_table.add(sym);
+              }
+
+              exprt result = (func_name == "all") ? exprt{true_exprt{}}
+                                                  : exprt{false_exprt{}};
+              for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+              {
+                exprt idx = from_integer(i, signedbv_typet{64});
+                exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+                exprt elem = index_exprt{data, idx};
+
+                exprt elt_expr = convert_expression(elt);
+                std::function<void(exprt &)> subst = [&](exprt &e)
+                {
+                  if(
+                    e.id() == ID_symbol &&
+                    to_symbol_expr(e).get_identifier() == iter_sym_id)
+                    e = elem;
+                  else
+                    for(auto &op : e.operands())
+                      subst(op);
+                };
+                subst(elt_expr);
+
+                if(elt_expr.type() != bool_typet{})
+                  elt_expr = safe_typecast(elt_expr, bool_typet{});
+
+                if(func_name == "all")
+                  result =
+                    and_exprt{result, or_exprt{not_exprt{in_range}, elt_expr}};
+                else
+                  result = or_exprt{result, and_exprt{in_range, elt_expr}};
+              }
+              return result;
+            }
           }
         }
       }
@@ -1361,29 +1414,60 @@ exprt python_convertert::convert_call(const jsont &expr)
   // Regular function call — check if it's a class constructor
   if(class_types.count(func_name))
   {
-    // Constructor call as expression: create a nondet struct and call __init__
-    // This handles cases like return Foo(x) or f(Foo(x))
+    // Constructor call as expression: create temp, call __init__, return temp
     const struct_typet &cls_type = class_types[func_name];
-    side_effect_expr_nondett self_nondet{cls_type, get_location(expr)};
+    static unsigned ctor_tmp_counter = 0;
+    std::string tmp_name =
+      "__ctor_expr_" + func_name + "_" + std::to_string(ctor_tmp_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, cls_type, "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+
+    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
 
     irep_idt init_id{"python::" + func_name + "::__init__"};
     const symbolt *init_sym = symbol_table.lookup(init_id);
     if(init_sym != nullptr)
     {
       exprt::operandst init_args;
-      init_args.push_back(self_nondet);
+      init_args.push_back(address_of_exprt{tmp_sym.symbol_expr()});
       if(args.is_array())
       {
         for(const auto &arg : as_array(args))
           init_args.push_back(convert_expression(arg));
       }
-      // We can't easily call __init__ and return the struct as a pure
-      // expression. Return nondet of the class type — the caller
-      // (convert_assign) handles the proper init for assignments.
-      // For return statements and nested expressions, this is an
-      // overapproximation.
+      // Pad missing args with defaults
+      const code_typet &init_type = to_code_type(init_sym->type);
+      while(init_args.size() < init_type.parameters().size())
+        init_args.push_back(
+          safe_zero(init_type.parameters()[init_args.size()].type()));
+      for(std::size_t i = 0;
+          i < init_args.size() && i < init_type.parameters().size();
+          i++)
+      {
+        if(init_args[i].type() != init_type.parameters()[i].type())
+          init_args[i] =
+            safe_typecast(init_args[i], init_type.parameters()[i].type());
+      }
+
+      side_effect_expr_function_callt call{
+        init_sym->symbol_expr(),
+        std::move(init_args),
+        empty_typet{},
+        get_location(expr)};
+      // Inject the __init__ call before the current statement
+      pending_checks.push_back(code_expressiont{call});
     }
-    return std::move(self_nondet);
+
+    return tmp_sym.symbol_expr();
   }
 
   irep_idt symbol_id{"python::" + func_name};
