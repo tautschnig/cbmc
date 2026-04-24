@@ -78,6 +78,7 @@ private:
 
   /// Depth of if/else nesting (>0 means we're inside a branch).
   unsigned if_else_depth = 0;
+  unsigned try_depth = 0;
 
   // --- AST node converters ---
 

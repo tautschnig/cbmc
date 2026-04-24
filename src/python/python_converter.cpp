@@ -1689,6 +1689,15 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
 
+    // Copy class-level default values from the class object
+    irep_idt class_obj_id{"python::" + func_name};
+    const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+    if(class_obj != nullptr && !class_obj->value.is_nil())
+    {
+      pending_checks.push_back(
+        code_frontend_assignt{tmp_sym.symbol_expr(), class_obj->symbol_expr()});
+    }
+
     irep_idt init_id{"python::" + func_name + "::__init__"};
     const symbolt *init_sym = symbol_table.lookup(init_id);
     if(init_sym != nullptr)
@@ -2836,6 +2845,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
             from_integer(class_tag_ids[call_name], signedbv_typet{32})});
         }
 
+        // Copy class-level default values from the class object
+        irep_idt class_obj_id{"python::" + call_name};
+        const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+        if(class_obj != nullptr && !class_obj->value.is_nil())
+        {
+          result.add(code_frontend_assignt{
+            var_sym.symbol_expr(), class_obj->symbol_expr()});
+        }
+
         // Call __init__(&var, args...)
         irep_idt init_id{"python::" + call_name + "::__init__"};
         const symbolt *init_sym = symbol_table.lookup(init_id);
@@ -3073,11 +3091,29 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(ver_it != variable_versions.end())
       existing = symbol_table.lookup(ver_it->second);
 
+    bool rhs_has_side_effect = rhs.id() == ID_side_effect;
+
     if(
       existing != nullptr && existing->type != rhs.type() &&
       rhs.type().id() != ID_empty && !rhs.is_nil())
     {
-      if(if_else_depth > 0)
+      // If both types are numeric (int/float/bool), typecast the RHS
+      // to match the existing variable's type. This avoids creating
+      // versioned variables that cause type mismatches at merge points
+      // (e.g., exception handlers).
+      bool src_numeric =
+        rhs.type().id() == ID_signedbv || rhs.type().id() == ID_floatbv ||
+        rhs.type().id() == ID_bool || rhs.type().id() == ID_integer;
+      bool tgt_numeric = existing->type.id() == ID_signedbv ||
+                         existing->type.id() == ID_floatbv ||
+                         existing->type.id() == ID_bool ||
+                         existing->type.id() == ID_integer;
+      if(src_numeric && tgt_numeric)
+      {
+        rhs = safe_typecast(rhs, existing->type);
+        // Fall through to normal assignment below
+      }
+      else if(if_else_depth > 0)
       {
         // Inside if/else: type change at a branch point.
         // Use python_value_type for the variable.
@@ -3112,29 +3148,32 @@ codet python_convertert::convert_assign(const jsont &stmt)
         block.add(std::move(assign));
         continue;
       }
+      else
+      {
+        // Straight-line code: create a fresh versioned symbol
+        unsigned &ver = version_counters[qualified_name];
+        ver++;
+        std::string versioned_name =
+          qualified_name + "__v" + std::to_string(ver);
+        irep_idt versioned_id{versioned_name};
 
-      // Straight-line code: create a fresh versioned symbol
-      unsigned &ver = version_counters[qualified_name];
-      ver++;
-      std::string versioned_name = qualified_name + "__v" + std::to_string(ver);
-      irep_idt versioned_id{versioned_name};
+        symbolt new_symbol{versioned_id, rhs.type(), "python"};
+        new_symbol.base_name = var_name + "__v" + std::to_string(ver);
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        new_symbol.is_static_lifetime = current_function.empty();
+        symbol_table.add(new_symbol);
 
-      symbolt new_symbol{versioned_id, rhs.type(), "python"};
-      new_symbol.base_name = var_name + "__v" + std::to_string(ver);
-      new_symbol.location = loc;
-      new_symbol.is_lvalue = true;
-      new_symbol.is_state_var = true;
-      new_symbol.is_static_lifetime = current_function.empty();
-      symbol_table.add(new_symbol);
+        // Update the version mapping
+        variable_versions[qualified_name] = versioned_id;
 
-      // Update the version mapping
-      variable_versions[qualified_name] = versioned_id;
-
-      const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
-      code_frontend_assignt assign{new_sym.symbol_expr(), rhs};
-      assign.add_source_location() = loc;
-      block.add(std::move(assign));
-      continue;
+        const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
+        code_frontend_assignt assign{new_sym.symbol_expr(), rhs};
+        assign.add_source_location() = loc;
+        block.add(std::move(assign));
+        continue;
+      }
     }
 
     if(symbol_table.lookup(symbol_id) == nullptr)
@@ -3152,6 +3191,45 @@ codet python_convertert::convert_assign(const jsont &stmt)
     exprt typed_rhs = rhs;
     if(typed_rhs.type() != sym.type)
       typed_rhs = safe_typecast(typed_rhs, sym.type);
+
+    // Inside a try block with a function call RHS: split into
+    // call-into-temp + guarded-assign so that if the call raises,
+    // the assignment is skipped.
+    if(
+      try_depth > 0 &&
+      (typed_rhs.id() == ID_side_effect || rhs_has_side_effect))
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      if(exc_sym != nullptr)
+      {
+        // Evaluate the RHS (may contain function call)
+        static unsigned try_tmp_counter = 0;
+        std::string tmp_name = "__try_tmp_" + std::to_string(try_tmp_counter++);
+        std::string tmp_qname = qualify_name(tmp_name);
+        irep_idt tmp_id{tmp_qname};
+        if(symbol_table.lookup(tmp_id) == nullptr)
+        {
+          symbolt tmp_sym{tmp_id, typed_rhs.type(), "python"};
+          tmp_sym.base_name = tmp_name;
+          tmp_sym.is_lvalue = true;
+          tmp_sym.is_state_var = true;
+          symbol_table.add(tmp_sym);
+        }
+        const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+        code_frontend_assignt eval{tmp_sym.symbol_expr(), typed_rhs};
+        eval.add_source_location() = loc;
+        block.add(std::move(eval));
+
+        // Guard the actual assignment
+        code_frontend_assignt assign{sym.symbol_expr(), tmp_sym.symbol_expr()};
+        assign.add_source_location() = loc;
+        code_ifthenelset guarded{
+          not_exprt{exc_sym->symbol_expr()}, std::move(assign)};
+        block.add(std::move(guarded));
+        continue;
+      }
+    }
 
     code_frontend_assignt assign{sym.symbol_expr(), typed_rhs};
     assign.add_source_location() = loc;
@@ -4294,7 +4372,8 @@ codet python_convertert::convert_raise(const jsont &stmt)
     }
     else
     {
-      block.add(code_frontend_returnt{from_integer(0, python_int_type())});
+      typet ret_type = to_code_type(func_sym->type).return_type();
+      block.add(code_frontend_returnt{safe_zero(ret_type)});
     }
   }
 
@@ -4408,11 +4487,13 @@ codet python_convertert::convert_try(const jsont &stmt)
 
   // Execute the try body
   const jsont &body = json_member(stmt, "body");
+  try_depth++;
   if(body.is_array())
   {
     for(const auto &s : as_array(body))
       block.add(convert_statement(s));
   }
+  try_depth--;
 
   // Check for except handlers
   const jsont &handlers = json_member(stmt, "handlers");
@@ -4570,6 +4651,29 @@ bool python_convertert::convert()
     symbol_table.add(exc_type_sym);
   }
 
+  // Pass 0.25: pre-register class names so type annotations can reference
+  // them during pass 0 (e.g., x: MyClass = MyClass()).
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "ClassDef"))
+      {
+        std::string name = json_string(json_member(stmt, "name"));
+        if(!class_types.count(name))
+        {
+          struct_typet::componentst comps;
+          comps.push_back(
+            struct_typet::componentt{"__class_tag", signedbv_typet{32}});
+          struct_typet placeholder{comps};
+          placeholder.set_tag("python_class_" + name);
+          class_types[name] = placeholder;
+          class_tag_ids[name] = static_cast<int>(class_tag_ids.size()) + 1;
+        }
+      }
+    }
+  }
+
   // Pass 0: register top-level annotated variable names as global symbols
   // (so functions can reference them during pass 1).
   // Only AnnAssign (with explicit type) is handled here; plain Assign
@@ -4668,6 +4772,23 @@ bool python_convertert::convert()
         convert_function_def(stmt);
       else if(is_node_type(stmt, "ClassDef"))
         convert_class_def(stmt);
+    }
+  }
+
+  // Pass 1.5: update symbols that were registered with placeholder class
+  // types during pass 0 (before the full class struct was built in pass 1).
+  for(const auto &[cls_name, cls_type] : class_types)
+  {
+    std::string tag = "python_class_" + cls_name;
+    for(const auto &sym_pair : symbol_table)
+    {
+      const symbolt &sym = sym_pair.second;
+      if(
+        sym.type.id() == ID_struct &&
+        to_struct_type(sym.type).get_tag() == tag && sym.type != cls_type)
+      {
+        symbol_table.get_writeable_ref(sym.name).type = cls_type;
+      }
     }
   }
 
