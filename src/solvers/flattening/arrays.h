@@ -27,6 +27,11 @@ class update_exprt;
 class arrayst : public map_theoryt
 {
 public:
+  void enable_lazy_arrays()
+  {
+    lazy_arrays = true;
+    setup_cdclt_propagator();
+  }
   arrayst(
     const namespacet &_ns,
     propt &_prop,
@@ -75,6 +80,7 @@ protected:
   {
     bvt bv;
     index_exprt expr;
+    bvt index_bv;
   };
   std::vector<lazy_selectt> lazy_selects;
 

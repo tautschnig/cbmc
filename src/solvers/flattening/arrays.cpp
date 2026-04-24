@@ -116,6 +116,10 @@ void arrayst::record_array_let_binding(
     symbol.type().id() == ID_array,
     "record_array_let_binding parameter should be array-typed");
 
+  // Collect indices from the binding value (let_exprt hides them
+  // from the normal collect_indices traversal of array expressions).
+  collect_indices(value);
+
   const equal_exprt eq{symbol, value};
   const literalt eq_lit = record_array_equality(eq);
   array_equalities.back().asserted_true = true;

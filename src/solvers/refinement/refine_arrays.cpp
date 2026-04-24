@@ -48,7 +48,24 @@ void bv_refinementt::arrays_overapproximated()
   // CaDiCaL requires satisfied state for model queries.
   // ============================================================
 
-  // 1a. Element-wise constraint violations
+  // 1a. Lazy select: collect with-selects for bit-blasting
+  struct select_violationt
+  {
+    bvt lazy_bv;
+    index_exprt expr;
+  };
+  std::vector<select_violationt> select_violations;
+  std::vector<std::size_t> to_remove;
+  for(std::size_t si = 0; si < lazy_selects.size(); si++)
+  {
+    if(lazy_selects[si].expr.array().id() == ID_with)
+    {
+      select_violations.push_back({lazy_selects[si].bv, lazy_selects[si].expr});
+      to_remove.push_back(si);
+    }
+  }
+
+  // 1a-cont. Element-wise constraint violations
   struct evaluated_constraintt
   {
     exprt constraint;
@@ -76,7 +93,10 @@ void bv_refinementt::arrays_overapproximated()
         get_value(orexp.op1()) == true_exprt())
         continue;
     }
-    to_check.push_back({current, simplify_expr(get_value(current), ns), it});
+    if(!lazy_selects.empty())
+      to_check.push_back({current, false_exprt(), it});
+    else
+      to_check.push_back({current, simplify_expr(get_value(current), ns), it});
   }
 
   // 1c. Ackermann violations
@@ -153,7 +173,31 @@ void bv_refinementt::arrays_overapproximated()
   // PHASE 2: Add clauses (model is now invalidated)
   // ============================================================
 
-  // 2a. Element-wise constraints
+  const bool was_lazy = lazy_arrays;
+  lazy_arrays = false;
+
+  // 2a. Lazy selects
+  for(const auto &v : select_violations)
+  {
+    bv_cache.erase(v.expr);
+    bvt ite_bv = convert_bv(v.expr);
+    for(std::size_t i = 0; i < v.lazy_bv.size() && i < ite_bv.size(); i++)
+    {
+      prop.lcnf(!v.lazy_bv[i], ite_bv[i]);
+      prop.lcnf(v.lazy_bv[i], !ite_bv[i]);
+    }
+    nb_active++;
+  }
+  for(auto it = to_remove.rbegin(); it != to_remove.rend(); ++it)
+    lazy_selects.erase(lazy_selects.begin() + *it);
+  if(!select_violations.empty())
+  {
+    log.debug() << "BV-Refinement: " << select_violations.size()
+                << " lazy selects bit-blasted" << messaget::eom;
+    progress = true;
+  }
+
+  // 2a-cont. Element-wise constraints
   static const unsigned MAX_ACTIVATIONS = 100;
   for(auto &entry : to_check)
   {
@@ -162,6 +206,8 @@ void bv_refinementt::arrays_overapproximated()
       prop.l_set_to_true(convert(entry.constraint));
       nb_active++;
       lazy_array_constraints.erase(entry.list_it);
+      if(!lazy_selects.empty())
+        continue; // no limit when force-activating with lazy selects
       if(nb_active >= MAX_ACTIVATIONS)
         break;
     }
@@ -184,7 +230,7 @@ void bv_refinementt::arrays_overapproximated()
         index_exprt{v.arr, v.idx1, v.element_type},
         index_exprt{v.arr, v.idx2, v.element_type}}}));
     nb_ackermann++;
-    if(nb_ackermann >= MAX_ACTIVATIONS)
+    if(lazy_selects.empty() && nb_ackermann >= MAX_ACTIVATIONS)
       break;
   }
   if(nb_ackermann > 0)
@@ -254,6 +300,8 @@ void bv_refinementt::arrays_overapproximated()
                 << " extensionality constraints added" << messaget::eom;
     progress = true;
   }
+
+  lazy_arrays = was_lazy;
 }
 
 

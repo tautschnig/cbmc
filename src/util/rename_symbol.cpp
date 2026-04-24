@@ -121,9 +121,6 @@ bool rename_symbolt::have_to_rename(const exprt &dest) const
 
 bool rename_symbolt::rename(typet &dest) const
 {
-  if(!have_to_rename(dest))
-    return true;
-
   bool result=true;
 
   if(dest.has_subtype())

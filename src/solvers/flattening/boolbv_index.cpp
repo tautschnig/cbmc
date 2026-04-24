@@ -94,6 +94,35 @@ bvt boolbvt::convert_index(const index_exprt &expr)
       }
       else
       {
+        // Phase B lazy select: return free BVs for all selects
+        if(
+          cdclt_propagator && lazy_arrays &&
+          bv_width.get_width_opt(expr.type()).has_value() &&
+          expr.type().id() != ID_array)
+        {
+          const auto width = bv_width.get_width_opt(expr.type()).value();
+          bv = prop.new_variables(width);
+          for(const auto &lit : bv)
+            prop.set_frozen(lit);
+          bvt idx_bv = convert_bv(index);
+          for(const auto &lit : idx_bv)
+            prop.set_frozen(lit);
+          lazy_selects.push_back(lazy_selectt{bv, expr, idx_bv});
+          record_array_index(expr);
+          // Also register indices for the store chain walk.
+          // The ITE encoding would create selects on intermediate
+          // arrays; register those indices for the array theory.
+          {
+            exprt arr = array;
+            while(arr.id() == ID_with)
+            {
+              record_array_index(
+                index_exprt{to_with_expr(arr).old(), index, expr.type()});
+              arr = to_with_expr(arr).old();
+            }
+          }
+          return bv;
+        }
         // CDCL(T) lazy select (disabled by default — opt-in via
         // --refine-arrays with CaDiCaL).
         if(
