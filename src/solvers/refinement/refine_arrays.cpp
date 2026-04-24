@@ -206,6 +206,8 @@ void bv_refinementt::arrays_overapproximated()
       prop.l_set_to_true(convert(entry.constraint));
       nb_active++;
       lazy_array_constraints.erase(entry.list_it);
+      if(!lazy_selects.empty())
+        continue; // no limit when force-activating with lazy selects
       if(nb_active >= MAX_ACTIVATIONS)
         break;
     }
@@ -228,7 +230,7 @@ void bv_refinementt::arrays_overapproximated()
         index_exprt{v.arr, v.idx1, v.element_type},
         index_exprt{v.arr, v.idx2, v.element_type}}}));
     nb_ackermann++;
-    if(nb_ackermann >= MAX_ACTIVATIONS)
+    if(lazy_selects.empty() && nb_ackermann >= MAX_ACTIVATIONS)
       break;
   }
   if(nb_ackermann > 0)
