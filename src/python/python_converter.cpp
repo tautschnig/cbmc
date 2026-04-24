@@ -1496,42 +1496,79 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
   }
 
-  // List/string slicing: lst[1:4] → new list with elements [1..4)
+  // List/string slicing: lst[1:4] or s[::-1]
   const jsont &slice_json = json_member(expr, "slice");
-  if(is_node_type(slice_json, "Slice") && is_python_list_type(value.type()))
+  if(
+    is_node_type(slice_json, "Slice") &&
+    (is_python_list_type(value.type()) || is_python_string_type(value.type())))
   {
     const jsont &lower_json = json_member(slice_json, "lower");
     const jsont &upper_json = json_member(slice_json, "upper");
+    const jsont &step_json = json_member(slice_json, "step");
 
-    exprt lower = lower_json.is_null() ? from_integer(0, signedbv_typet{64})
-                                       : convert_expression(lower_json);
-    exprt upper = upper_json.is_null()
-                    ? member_exprt{value, "length", signedbv_typet{64}}
-                    : convert_expression(upper_json);
+    member_exprt length{value, "length", signedbv_typet{64}};
 
-    // For constant bounds, build the result list directly
-    const auto &list_st = to_struct_type(value.type());
-    const auto &data_type = to_array_type(list_st.components()[1].type());
+    // Check for step=-1 (reverse)
+    bool is_reverse = false;
+    if(!step_json.is_null())
+    {
+      exprt step = convert_expression(step_json);
+      if(step.is_constant())
+      {
+        mp_integer step_val;
+        if(!to_integer(to_constant_expr(step), step_val) && step_val == -1)
+          is_reverse = true;
+      }
+    }
+
+    const auto &st = to_struct_type(value.type());
+    const auto &data_type = to_array_type(st.components()[1].type());
     typet elem_type = data_type.element_type();
     member_exprt src_data{value, "data", data_type};
 
-    struct_typet result_type = python_list_type(elem_type);
+    exprt lower, upper;
+    if(is_reverse)
+    {
+      lower = from_integer(0, signedbv_typet{64});
+      upper = length;
+    }
+    else
+    {
+      lower = lower_json.is_null() ? from_integer(0, signedbv_typet{64})
+                                   : convert_expression(lower_json);
+      upper = upper_json.is_null() ? length : convert_expression(upper_json);
+    }
+
+    exprt new_length =
+      is_reverse ? exprt{length} : exprt{minus_exprt{upper, lower}};
+
+    // Determine result type (same as source: list or string)
+    std::size_t max_len = is_python_string_type(value.type())
+                            ? PYTHON_MAX_STRING_LENGTH
+                            : PYTHON_MAX_LIST_LENGTH;
     array_typet result_data_type{
-      elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})};
+      elem_type, from_integer(max_len, signedbv_typet{64})};
 
-    // new_length = upper - lower
-    exprt new_length = minus_exprt{upper, lower};
-
-    // Build data: result[i] = src[lower + i]
     exprt::operandst result_elems;
-    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+    for(std::size_t i = 0; i < max_len; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
-      result_elems.push_back(index_exprt{src_data, plus_exprt{lower, idx}});
+      if(is_reverse)
+      {
+        // result[i] = src[length - 1 - i]
+        result_elems.push_back(index_exprt{
+          src_data,
+          minus_exprt{
+            minus_exprt{length, from_integer(1, signedbv_typet{64})}, idx}});
+      }
+      else
+      {
+        result_elems.push_back(index_exprt{src_data, plus_exprt{lower, idx}});
+      }
     }
 
     array_exprt result_data{std::move(result_elems), result_data_type};
-    return struct_exprt{{new_length, result_data}, result_type};
+    return struct_exprt{{new_length, result_data}, st};
   }
 
   exprt slice = convert_expression(json_member(expr, "slice"));
@@ -2071,6 +2108,22 @@ codet python_convertert::convert_statement(const jsont &stmt)
               p1.set_base_name("__p1");
               params.push_back(p1);
             }
+            else if(name == "frexp" || name == "modf")
+            {
+              // Returns tuple (float, int) — use tuple type
+              code_typet::parametert p{double_type()};
+              p.set_identifier("python::" + asname + "::__p0");
+              p.set_base_name("__p0");
+              params.push_back(p);
+              ret = python_tuple_type({double_type(), python_int_type()});
+            }
+            else if(name == "radians" || name == "degrees")
+            {
+              code_typet::parametert p{double_type()};
+              p.set_identifier("python::" + asname + "::__p0");
+              p.set_base_name("__p0");
+              params.push_back(p);
+            }
             else if(name == "pi" || name == "e")
             {
               // Constants — register as global variables
@@ -2428,7 +2481,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
   for(const auto &target : as_array(targets))
   {
     // Handle tuple unpacking: a, b, c = expr
-    if(is_node_type(target, "Tuple"))
+    if(is_node_type(target, "Tuple") || is_node_type(target, "List"))
     {
       const jsont &elts = json_member(target, "elts");
       if(elts.is_array() && is_python_tuple_type(rhs.type()))
@@ -2437,29 +2490,74 @@ codet python_convertert::convert_assign(const jsont &stmt)
         std::size_t idx = 0;
         for(const auto &elt : as_array(elts))
         {
-          std::string elt_name = json_string(json_member(elt, "id"));
           std::string field = "_" + std::to_string(idx);
-          if(tuple_st.has_component(field))
+          if(!tuple_st.has_component(field))
           {
-            typet field_type = tuple_st.get_component(field).type();
-            member_exprt field_expr{rhs, field, field_type};
+            idx++;
+            continue;
+          }
+          typet field_type = tuple_st.get_component(field).type();
+          member_exprt field_expr{rhs, field, field_type};
 
-            std::string qname = qualify_name(elt_name);
-            irep_idt sym_id{qname};
-            if(symbol_table.lookup(sym_id) == nullptr)
+          // Recursive unpack: if elt is Tuple/List, unpack the field
+          if(is_node_type(elt, "Tuple") || is_node_type(elt, "List"))
+          {
+            const jsont &sub_elts = json_member(elt, "elts");
+            if(sub_elts.is_array() && is_python_tuple_type(field_type))
             {
-              symbolt new_sym{sym_id, field_type, "python"};
-              new_sym.base_name = elt_name;
-              new_sym.location = loc;
-              new_sym.is_lvalue = true;
-              new_sym.is_state_var = true;
-              new_sym.is_static_lifetime = current_function.empty();
-              symbol_table.add(new_sym);
+              const auto &sub_st = to_struct_type(field_type);
+              std::size_t sub_idx = 0;
+              for(const auto &sub_elt : as_array(sub_elts))
+              {
+                std::string sub_field = "_" + std::to_string(sub_idx);
+                if(sub_st.has_component(sub_field))
+                {
+                  typet sub_type = sub_st.get_component(sub_field).type();
+                  member_exprt sub_expr{field_expr, sub_field, sub_type};
+                  std::string name = json_string(json_member(sub_elt, "id"));
+                  if(!name.empty())
+                  {
+                    std::string qname = qualify_name(name);
+                    irep_idt sym_id{qname};
+                    if(symbol_table.lookup(sym_id) == nullptr)
+                    {
+                      symbolt new_sym{sym_id, sub_type, "python"};
+                      new_sym.base_name = name;
+                      new_sym.location = loc;
+                      new_sym.is_lvalue = true;
+                      new_sym.is_state_var = true;
+                      new_sym.is_static_lifetime = current_function.empty();
+                      symbol_table.add(new_sym);
+                    }
+                    block.add(code_frontend_assignt{
+                      symbol_table.lookup_ref(sym_id).symbol_expr(), sub_expr});
+                  }
+                }
+                sub_idx++;
+              }
             }
-            const symbolt &sym = symbol_table.lookup_ref(sym_id);
-            code_frontend_assignt assign{sym.symbol_expr(), field_expr};
-            assign.add_source_location() = loc;
-            block.add(std::move(assign));
+          }
+          else
+          {
+            // Simple Name target
+            std::string elt_name = json_string(json_member(elt, "id"));
+            if(!elt_name.empty())
+            {
+              std::string qname = qualify_name(elt_name);
+              irep_idt sym_id{qname};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt new_sym{sym_id, field_type, "python"};
+                new_sym.base_name = elt_name;
+                new_sym.location = loc;
+                new_sym.is_lvalue = true;
+                new_sym.is_state_var = true;
+                new_sym.is_static_lifetime = current_function.empty();
+                symbol_table.add(new_sym);
+              }
+              block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(sym_id).symbol_expr(), field_expr});
+            }
           }
           idx++;
         }
