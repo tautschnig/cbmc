@@ -1068,15 +1068,58 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt code_point = convert_expression(*as_array(args).begin());
-      // Build a string struct with length 1 and the char value
       struct_typet str_type = python_string_type();
       const auto &data_type = to_array_type(str_type.components()[1].type());
       exprt::operandst chars;
-      chars.push_back(safe_typecast(code_point, unsignedbv_typet{8}));
+
+      // For constant code points, encode as UTF-8
+      mp_integer cp_val;
+      if(
+        code_point.is_constant() &&
+        !to_integer(to_constant_expr(code_point), cp_val))
+      {
+        long cp = cp_val.to_long();
+        if(cp < 0x80)
+        {
+          chars.push_back(from_integer(cp, unsignedbv_typet{8}));
+        }
+        else if(cp < 0x800)
+        {
+          chars.push_back(from_integer(0xC0 | (cp >> 6), unsignedbv_typet{8}));
+          chars.push_back(
+            from_integer(0x80 | (cp & 0x3F), unsignedbv_typet{8}));
+        }
+        else if(cp < 0x10000)
+        {
+          chars.push_back(from_integer(0xE0 | (cp >> 12), unsignedbv_typet{8}));
+          chars.push_back(
+            from_integer(0x80 | ((cp >> 6) & 0x3F), unsignedbv_typet{8}));
+          chars.push_back(
+            from_integer(0x80 | (cp & 0x3F), unsignedbv_typet{8}));
+        }
+        else
+        {
+          chars.push_back(from_integer(0xF0 | (cp >> 18), unsignedbv_typet{8}));
+          chars.push_back(
+            from_integer(0x80 | ((cp >> 12) & 0x3F), unsignedbv_typet{8}));
+          chars.push_back(
+            from_integer(0x80 | ((cp >> 6) & 0x3F), unsignedbv_typet{8}));
+          chars.push_back(
+            from_integer(0x80 | (cp & 0x3F), unsignedbv_typet{8}));
+        }
+      }
+      else
+      {
+        // Non-constant: single byte (truncated)
+        chars.push_back(safe_typecast(code_point, unsignedbv_typet{8}));
+      }
+
+      std::size_t char_count = chars.size();
       while(chars.size() < PYTHON_MAX_STRING_LENGTH)
         chars.push_back(from_integer(0, unsignedbv_typet{8}));
       array_exprt data{std::move(chars), data_type};
-      exprt length = from_integer(1, signedbv_typet{64});
+      exprt length =
+        from_integer(static_cast<long long>(char_count), signedbv_typet{64});
       return struct_exprt{{length, data}, str_type};
     }
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
