@@ -3370,10 +3370,13 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       if(annotation.is_null())
       {
         log.warning() << "parameter '" << param_name << "' of function '"
-                      << func_name << "' has no type annotation; assuming int"
+                      << func_name << "' has no type annotation"
                       << messaget::eom;
       }
-      typet param_type = convert_type_annotation(annotation);
+      // Use int for unannotated params (tagged union needs string support)
+      typet param_type = annotation.is_null()
+                           ? python_int_type()
+                           : convert_type_annotation(annotation);
 
       code_typet::parametert p{param_type};
       p.set_identifier("python::" + func_name + "::" + param_name);
@@ -3557,7 +3560,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(is_node_type(rhs, "Name"))
           rhs_name = json_string(json_member(rhs, "id"));
 
-        typet attr_type = python_int_type(); // default
+        typet attr_type = python_int_type(); // default for untyped params
 
         // Check if RHS is a constructor call: self.inner = Inner(v)
         if(
@@ -3583,6 +3586,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 const jsont &ann = json_member(p, "annotation");
                 if(!ann.is_null())
                   attr_type = convert_type_annotation(ann);
+                // else: stays as python_value_type (tagged union)
                 break;
               }
             }
@@ -3630,8 +3634,60 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     class_obj.is_state_var = true;
     class_obj.is_static_lifetime = true;
     // Initialize with class-level attribute values
-    class_obj.value = safe_zero(class_type);
+    exprt::operandst field_values;
+    for(const auto &comp : class_type.components())
+    {
+      exprt val = safe_zero(comp.type());
+      // Look for the value in the class body
+      if(body.is_array())
+      {
+        for(const auto &item : as_array(body))
+        {
+          if(is_node_type(item, "AnnAssign"))
+          {
+            const jsont &tgt = json_member(item, "target");
+            if(
+              is_node_type(tgt, "Name") &&
+              json_string(json_member(tgt, "id")) == id2string(comp.get_name()))
+            {
+              const jsont &v = json_member(item, "value");
+              if(!v.is_null())
+                val = safe_typecast(convert_expression(v), comp.type());
+            }
+          }
+          else if(is_node_type(item, "Assign"))
+          {
+            const jsont &targets = json_member(item, "targets");
+            if(targets.is_array())
+            {
+              for(const auto &tgt : as_array(targets))
+              {
+                if(
+                  is_node_type(tgt, "Name") &&
+                  json_string(json_member(tgt, "id")) ==
+                    id2string(comp.get_name()))
+                {
+                  exprt rv = convert_expression(json_member(item, "value"));
+                  val = safe_typecast(rv, comp.type());
+                }
+              }
+            }
+          }
+        }
+      }
+      field_values.push_back(val);
+    }
+    class_obj.value = struct_exprt{std::move(field_values), class_type};
     symbol_table.add(class_obj);
+  }
+
+  // Generate class object initialization in the module body
+  const symbolt *cls_sym = symbol_table.lookup(class_obj_id);
+  if(cls_sym != nullptr && !cls_sym->value.is_nil())
+  {
+    // This will be included in the module body via convert_module_body
+    // since class defs are processed in the first pass but the init
+    // needs to run at module load time
   }
 
   // Now convert all methods
@@ -3663,7 +3719,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             else
             {
               const jsont &annotation = json_member(param, "annotation");
-              param_type = convert_type_annotation(annotation);
+              param_type = annotation.is_null()
+                             ? python_int_type()
+                             : convert_type_annotation(annotation);
             }
 
             code_typet::parametert p{param_type};
@@ -4131,8 +4189,21 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
   for(const auto &stmt : as_array(body))
   {
     // Function and class definitions are handled in the first pass
-    if(is_node_type(stmt, "FunctionDef") || is_node_type(stmt, "ClassDef"))
+    if(is_node_type(stmt, "FunctionDef"))
       continue;
+    if(is_node_type(stmt, "ClassDef"))
+    {
+      // Add class object initialization
+      std::string cls_name = json_string(json_member(stmt, "name"));
+      irep_idt cls_id{"python::" + cls_name};
+      const symbolt *cls_sym = symbol_table.lookup(cls_id);
+      if(cls_sym != nullptr && !cls_sym->value.is_nil())
+      {
+        code_frontend_assignt init{cls_sym->symbol_expr(), cls_sym->value};
+        block.add(std::move(init));
+      }
+      continue;
+    }
 
     codet code = convert_statement(stmt);
     block.add(std::move(code));
