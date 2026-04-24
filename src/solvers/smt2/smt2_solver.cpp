@@ -423,6 +423,7 @@ int solver(std::istream &in)
   info.refine_arrays = true;
   bv_refinementt boolbv{info};
 
+  boolbv.enable_lazy_arrays();
   smt2_solvert smt2_solver{in, boolbv};
   bool error_found = false;
 
