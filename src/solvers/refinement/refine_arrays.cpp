@@ -222,6 +222,19 @@ void bv_refinementt::arrays_overapproximated()
       index_exprt{cand.f2, diff_index, et}});
     prop.lcnf(!eq_lit, cand.l);
     prop.lcnf(!cand.l, eq_lit);
+    // Add equality constraints for the new diff index.
+    // add_array_constraints(index_sett, expr) only creates with/if/etc
+    // constraints, not equality constraints between arrays connected by
+    // equality edges. Without these, the refinement loop cannot establish
+    // that arrays agree at the diff index via the asserted equality,
+    // which is required for the extensionality proof.
+    for(const auto &equality : array_equalities)
+    {
+      if(arrays.find_number(equality.f1) != root)
+        continue;
+      add_array_constraints_equality(index_sett{diff_index}, equality);
+    }
+
     for(const auto &sym : find_symbols(diff_index))
     {
       if(!bv_width.get_width_opt(sym.type()).has_value())
