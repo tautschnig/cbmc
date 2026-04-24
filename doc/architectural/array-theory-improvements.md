@@ -990,3 +990,22 @@ investigation.
 | zipcpu-zipmmu | 6M (timeout) | 7.2M cls, 28 iters | ✓ solved |
 
 **CBMC:** All regression tests pass
+
+## Let Expression Optimization (commit aaf8ff282e)
+
+Changed the non-iterative let_expression() path in the SMT2 parser to
+create let_exprt instead of eagerly expanding with replace_symbolt.
+The solver's convert_let handles sharing efficiently (each binding
+converted once). Also kept let binding mappings alive in convert_let.
+
+The iterative let path (for deeply nested lets) is unchanged — fixing
+it requires a different approach because the parser resolves bindings
+during parsing, making the body's symbols already resolved.
+
+## use_read_over_weakeq Investigation
+
+The disabled use_read_over_weakeq mode was tested and found to be
+INCOMPLETE: 70 wrong answers on QF_AX (returns sat for unsat formulas).
+The WEG-based constraint generation misses necessary constraints for
+storecomm_invalid benchmarks. This mode needs significant correctness
+work before it can be enabled.
