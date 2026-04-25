@@ -289,128 +289,164 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (2 tests)
+### KNOWNBUG inventory (9 tests)
 
-All original KNOWNBUG tests have been resolved. Two new KNOWNBUG tests
-were added from ESBMC validation:
+154 total tests, 145 CORE, 9 KNOWNBUG.
 
-#### `crash-except-type-assign` — try/except with type-changing assignment
+ESBMC validation (2026-04-25): 3,090 tests, 1,692 correct (54%),
+39 crashes (1%), 90 timeouts (2%), 1,269 wrong results (41%).
 
-**Problem:** When a `try` block assigns a different type to an existing
-variable (e.g., `result = safe_div()` returns `float` but `result` was
-initialized as `int`), the variable versioning system creates
-`result__v1` with type `float`. On the exception path (where `safe_div`
-raises and the assignment is skipped), symex tries to merge the original
-`int` value into the `float` variable, hitting the `assignments must be
-type consistent` invariant.
+#### Tier 1 — Built-in functions and operators (1-2 hours each)
 
-**GOTO produced:**
-```
-ASSIGN result := 10                          // int
-CALL result__v1 := safe_div(5, 0)           // float
-IF exception caught THEN skip
-ASSERT result__v1 = typecast(10, float)      // uses float version
-```
+##### `limit-divmod` — divmod() built-in
 
-The issue: on the exception path, `result__v1` was never assigned (the
-CALL was skipped), so symex sees the original `result` (int) flowing
-into `result__v1` (float).
+**Problem:** `divmod(a, b)` is not recognized. Returns nondet.
 
-**Fix plan (estimated effort: 3-4 hours):**
+**Fix plan:** Add `divmod` to `convert_call`. Return a tuple struct
+`{a // b, a % b}` using `div_exprt` and `mod_exprt`. The tuple
+unpacking `q, r = divmod(7, 3)` already works for tuple structs.
 
-1. In `convert_assign` inside a `try` block, when the RHS is a function
-   call that returns a different type than the existing variable, do NOT
-   create a new version. Instead, typecast the return value to match the
-   existing variable's type:
-   ```
-   CALL __tmp := safe_div(5, 0)
-   ASSIGN result := typecast(__tmp, int)    // stays int
-   ```
+**PLR reference:** §2.4.5 — "divmod(a, b) returns (a // b, a % b)"
 
-2. Alternatively, insert a typecast assignment on the exception path:
-   after the exception handler, assign `result__v1 := typecast(result, float)`
-   to ensure the float variable has a valid value even when the call was
-   skipped.
+##### `limit-power-negative` — Power with negative exponent
 
-3. The simplest correct fix: in `convert_assign`, when the target variable
-   already exists and the RHS has a different type, always typecast the
-   RHS to match the existing variable's type instead of creating a new
-   version. This is correct for Python semantics (the variable keeps its
-   identity; only the value changes). The variable versioning should only
-   trigger when the type change is intentional (e.g., `x = 5; x = "hello"`
-   in straight-line code), not when it's a side effect of function return
-   types.
+**Problem:** `2 ** -1` returns `int` 0 (integer division). Should
+return `float` 0.5 when the exponent is negative.
 
-**Key files:** `python_converter.cpp` — `convert_assign`, variable
-versioning logic around `variable_versions` map.
+**Fix plan:** In `convert_bin_op` for `Pow`, check if the exponent is
+negative. If so, compute `1.0 / (base ** abs(exp))` using float
+division. For constant exponents, compute at conversion time using
+`ieee_floatt`. For variable exponents, use `if_exprt` to dispatch.
 
-#### `crash-default-obj-param` — default parameter with object value
+**PLR reference:** §6.5 — "Raising a negative number to a fractional
+power results in a complex number."
 
-**Problem:** When a function parameter has a class instance as default
-value (`def f(y: MyClass = x) -> MyClass`), two issues occur:
+##### `limit-nondet-overflow` — nondet arithmetic overflow
 
-1. **Class type not found during pass 0:** The declaration `x: MyClass`
-   is processed in pass 0, which runs before pass 1 (class registration).
-   `convert_type_annotation("MyClass")` doesn't find it in `class_types`
-   and defaults to `int`. This causes `x` to be typed as `int` instead
-   of the `MyClass` struct.
+**Problem:** `x = nondet_int(); y = x + 1; assert x < y` fails because
+64-bit integer overflow wraps around (INT64_MAX + 1 = INT64_MIN).
 
-2. **Default value evaluation:** Even if the type were correct, the
-   default value `x` is a global variable reference. The default
-   parameter handling in `convert_call` correctly calls
-   `convert_expression` on the default AST node, but since `x` has the
-   wrong type (int instead of MyClass), the returned value is wrong.
+**Fix plan:** This is correct behavior for bounded integers. The fix is
+to use `--python-unbounded-ints --z3` which models integers with
+`integer_typet` (mathematical integers, no overflow). The test should
+document this: either add `--python-unbounded-ints --z3` to the test
+flags, or change the assertion to account for overflow.
 
-**GOTO produced:**
-```
-ASSIGN x := nondet    // x typed as int, not MyClass
-ASSIGN obj := nondet  // return_obj() returns nondet
-```
+**PLR reference:** §3.2 — "Integers have unlimited precision"
 
-**Fix plan (estimated effort: 2-3 hours):**
+#### Tier 2 — String and list methods (2-4 hours each)
 
-1. **Add pass 0.25: pre-register class names.** Before pass 0, scan the
-   module body for `ClassDef` nodes and register their names in
-   `class_types` with a placeholder struct (just `{__class_tag}`). This
-   allows `convert_type_annotation("MyClass")` to find the class during
-   pass 0. The full struct (with fields from `__init__`) is built in
-   pass 1 as before — the placeholder is replaced.
+##### `limit-string-augassign` — String += operator
 
-   ```cpp
-   // Pass 0.25: pre-register class names for type annotations
-   for(const auto &stmt : as_array(body))
-   {
-     if(is_node_type(stmt, "ClassDef"))
-     {
-       std::string name = json_string(json_member(stmt, "name"));
-       if(!class_types.count(name))
-       {
-         struct_typet placeholder{{
-           struct_typet::componentt{"__class_tag", signedbv_typet{32}}}};
-         placeholder.set_tag("python_class_" + name);
-         class_types[name] = placeholder;
-       }
-     }
-   }
-   ```
+**Problem:** `word += "a"` is handled by `convert_aug_assign` which
+calls `convert_bin_op` for `Add`. But the result is assigned back to
+`word` which may have a different type (empty string vs non-empty).
+The augmented assignment handler doesn't use the string concat content
+tracking (which uses `pending_checks`).
 
-2. **Rebuild variable types after pass 1:** After class registration
-   completes, re-check pass-0 variables whose type annotation referenced
-   a class. Update their symbol type to the now-complete class struct.
-   This is a targeted fix — only variables with class-type annotations
-   need updating.
+**Fix plan:** In `convert_aug_assign`, detect string types and delegate
+to the same content-tracking concat logic used in `convert_bin_op`.
+The key issue: `convert_aug_assign` creates `lhs = lhs + rhs` as a
+single expression, but string concat needs `pending_checks` for the
+element-by-element copy. Solution: convert `word += "a"` to
+`word = word + "a"` and route through `convert_assign` which handles
+`pending_checks`.
 
-3. **Alternative simpler approach:** Move the `AnnAssign` processing for
-   class-typed variables from pass 0 to pass 2. Pass 0 only pre-registers
-   variables with primitive type annotations (`int`, `float`, `str`,
-   `bool`, `list`). Variables with class-type annotations are deferred to
-   pass 2, where `class_types` is fully populated. This avoids the
-   placeholder complexity.
+**PLR reference:** §7.2.1 — "An augmented assignment evaluates the
+target and the expression list, performs the binary operation, and
+assigns the result to the original target."
 
-**Key files:** `python_converter.cpp` — `convert_module` (pass ordering),
-`convert_type_annotation`.
+##### `limit-list-sort` — list.sort() method
 
-### Completed KNOWNBUG fixes (all original 7)
+**Problem:** `list.sort()` is not recognized as a method.
+
+**Fix plan:** Add `sort` to the method call handler in `convert_call`.
+For bounded lists (up to 64 elements), generate a sorting network
+using `if_exprt` comparisons and swaps via `pending_checks`. For
+verification purposes, the exact sort algorithm doesn't matter — we
+need the postcondition that elements are in order and the multiset
+is preserved. Simpler approach: for literal lists, sort at conversion
+time. For symbolic lists, assert the sorted property as nondet with
+constraints.
+
+**PLR reference:** §4.6.1 — "sort(*, key=None, reverse=False): This
+method sorts the list in place."
+
+##### `limit-list-reverse` — list.reverse() method
+
+**Problem:** `list.reverse()` is not recognized as a method.
+
+**Fix plan:** Add `reverse` to the method call handler. Generate
+element swaps: `for i in 0..len/2: swap(data[i], data[len-1-i])`.
+Use `pending_checks` for the swap assignments.
+
+**PLR reference:** §4.6.1 — "reverse(): Reverse the items of the
+list in place."
+
+#### Tier 3 — Type system and advanced features (half day each)
+
+##### `limit-untyped-param-string-call` — Untyped param receiving string
+
+**Problem:** `def foo(s): x = len(s)` — `s` is `python_value_type`
+(tagged union). `len(s)` tries to access `.length` on the tagged
+union, which doesn't have a `length` field. The `len()` handler
+needs to unwrap the tagged union to get the actual string/list.
+
+**Fix plan:** In the `len()` handler in `convert_call`, check if the
+argument is `python_value_type`. If so, generate a dispatch:
+`if(tag == STR) return deref(str_ptr).length`
+`else if(tag == LIST) return deref(list_ptr).length`
+`else return nondet`. This is the general pattern for built-in
+functions that operate on tagged unions.
+
+**PLR reference:** §8.7 — "If the function body contains no annotation
+for a parameter, the parameter's type is not constrained."
+
+##### `limit-lambda-multi-param` — Lambda with multiple parameters
+
+**Problem:** `lambda l, w, h: l * w * h` — the lambda handler only
+supports single-parameter lambdas. Multi-parameter lambdas need
+multiple parameter symbols and argument passing.
+
+**Fix plan:** In `convert_lambda`, iterate over all parameters (not
+just the first). Create a symbol for each parameter. In the call
+handler for lambda aliases, pass all arguments. The lambda body
+conversion already works for any expression — only the parameter
+binding needs fixing.
+
+**PLR reference:** §6.14 — "lambda parameters: expression"
+
+##### `limit-classmethod` — @classmethod decorator
+
+**Problem:** `@classmethod` methods time out because the `cls`
+parameter is typed as `python_value_type` (tagged union with pointer
+fields), causing the solver to explore too many paths.
+
+**Fix plan:** In `convert_class_def`, detect the `@classmethod`
+decorator on method definitions. For classmethod parameters:
+(a) type `cls` as `pointer_typet{class_type}` (same as `self`), or
+(b) skip the `cls` parameter entirely (since it's not used for
+verification — the class is known statically). Option (b) is simpler:
+register the method with no `cls` parameter, and when called as
+`MyClass.method()`, don't pass any self/cls argument.
+
+**PLR reference:** §8.7 — "A class method receives the class as
+implicit first argument, just like an instance method receives the
+instance."
+
+### Completed KNOWNBUG fixes
+
+| KNOWNBUG | Fix | Commit |
+|----------|-----|--------|
+| `crash-except-type-assign` | Numeric typecast + try-block guarded assign + raise return type | b535f9666d |
+| `crash-default-obj-param` | Pass 0.25 class pre-registration + pass 1.5 type update + constructor defaults | b535f9666d |
+| `limit-float-conversion` | ieee_floatt for exact int→float in float() and safe_typecast | f4273c41a2 |
+| `limit-range-negative-step` | Negative step support with i > stop condition | f4273c41a2 |
+| `limit-isinstance-builtin` | Built-in type checks (list, str, tuple, dict, etc.) | f4273c41a2 |
+| `limit-math-functions` | math.ceil/floor/fabs as exact expressions | f4273c41a2 |
+| `limit-tuple-immutable` | TypeError on tuple subscript assignment | f4273c41a2 |
+| `limit-for-in-dict` | Unroll over dict struct fields | f4273c41a2 |
+| `limit-super-call` | Inline base __init__ body + AnnAssign attribute targets | f4273c41a2 |
 
 | KNOWNBUG | Fix | Commit |
 |----------|-----|--------|
@@ -459,28 +495,46 @@ All phases complete. 135 total tests, 133 CORE, 2 KNOWNBUG.
 
 ## 7. ESBMC Gap Analysis and Roadmap
 
-### Latest ESBMC validation (2026-04-24)
+### Latest ESBMC validation (2026-04-25)
 
 Full suite: 3,090 tests (including `_fail` tests).
 
 | Metric | Count | % |
 |--------|-------|---|
-| Correct (pass + fail_correct) | 1,643 | 53% |
-| Wrong results | 1,325 | 42% |
-| Crashes (invariant violations) | 34 | 1% |
-| Timeouts (10s limit) | 88 | 2% |
+| Correct (pass + fail_correct) | 1,692 | 54% |
+| Wrong pass (should pass, got FAILED) | 1,028 | 33% |
+| Wrong fail (should fail, got SUCCESS) | 241 | 7% |
+| Crashes (invariant violations) | 39 | 1% |
+| Timeouts (10s limit) | 90 | 2% |
 
-Previous run (before KNOWNBUG fixes): ~1,033 pass (49%), ~60 crashes.
+Progress: initial ~1,033 pass (49%), ~533 crashes → now 1,692 correct
+(54%), 39 crashes (93% crash reduction).
 
-### Remaining 34 crashes — breakdown
+### Wrong-pass breakdown (1,028 tests that should pass)
+
+| Category | Count | Root cause |
+|----------|-------|-----------|
+| github_* | 240 | Mixed — many use unsupported features |
+| math_* | 88 | math module functions beyond ceil/floor |
+| complex_* | 70 | Complex number operations |
+| list_* | 54 | list methods (sort, reverse, pop, copy) |
+| nondet_* | 36 | Nondet arithmetic with overflow |
+| dict_* | 33 | Dict methods and iteration patterns |
+| casting_* | 24 | Type casting edge cases |
+| isinstance_* | 19 | isinstance with multiple types / tuples |
+| divmod_* | 15 | divmod() not implemented |
+| range_* | 14 | Range edge cases |
+| lambda_* | 13 | Multi-param lambdas |
+| string_* | ~30 | String methods, augmented assignment |
+
+### Remaining 39 crashes — breakdown
 
 | Count | Crash | Root cause |
 |-------|-------|-----------|
-| ~10 | `symex_assign type consistent` | try/except type changes, Any type |
-| ~5 | `equal_exprt type mismatch` | keyword args, type mismatches |
-| ~5 | `from_integer(false)` | remaining attribute access issues |
-| ~3 | `member_exprt compound` | default object parameters |
-| ~11 | other | complex operations, list operations |
+| ~19 | `symex_assign type consistent` | Type mismatches at merge points |
+| ~10 | `from_integer(false)` | Unsupported type in from_integer |
+| ~5 | `equal_exprt type mismatch` | Comparison type mismatches |
+| ~5 | other | Various invariant violations |
 
 ### Historical error breakdown (initial evaluation)
 
