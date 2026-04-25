@@ -799,9 +799,72 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "Pow")
   {
-    // Power not directly supported — would need a library model
-    log.error() << "Power operator (**) not yet supported" << messaget::eom;
-    return nil_exprt{};
+    // PLR §6.5: The power operator
+    // For constant integer exponents, unroll the multiplication.
+    // For negative exponents, return 1.0 / (base ** abs(exp)).
+    mp_integer exp_val;
+    bool exp_known = false;
+    if(right.is_constant() && right.type().id() == ID_signedbv)
+      exp_known = !to_integer(to_constant_expr(right), exp_val);
+    // Handle -N (UnaryOp USub on constant)
+    if(
+      !exp_known && right.id() == ID_unary_minus &&
+      right.operands().size() == 1 && right.operands()[0].is_constant())
+    {
+      mp_integer pos_val;
+      if(!to_integer(to_constant_expr(right.operands()[0]), pos_val))
+      {
+        exp_val = -pos_val;
+        exp_known = true;
+      }
+    }
+    if(exp_known)
+    {
+      bool negative = exp_val < 0;
+      if(negative)
+        exp_val = -exp_val;
+
+      if(exp_val == 0)
+        return from_integer(1, left.type());
+
+      // Unroll: base * base * ... (up to reasonable limit)
+      if(exp_val <= 16)
+      {
+        exprt result = left;
+        for(mp_integer i = 1; i < exp_val; ++i)
+          result = mult_exprt{result, left};
+        if(negative)
+        {
+          typet ft = double_type();
+          ieee_floatt one{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          one.from_integer(1);
+          // Use ieee_floatt for exact base conversion
+          exprt float_result = result;
+          if(result.is_constant() && result.type().id() == ID_signedbv)
+          {
+            mp_integer rv;
+            if(!to_integer(to_constant_expr(result), rv))
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_integer(rv);
+              float_result = fv.to_expr();
+            }
+            else
+              float_result = typecast_exprt{result, ft};
+          }
+          else
+            float_result = typecast_exprt{result, ft};
+          return div_exprt{one.to_expr(), float_result};
+        }
+        return result;
+      }
+    }
+    // Fallback: return nondet
+    return side_effect_expr_nondett{left.type(), source_locationt{}};
   }
   else if(op == "Div")
   {
@@ -1257,6 +1320,99 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     if(obj_base_type.id() == ID_struct)
     {
+      // PLR §4.6.1: List methods (append, sort, reverse, pop, etc.)
+      if(is_python_list_type(obj_base_type))
+      {
+        const auto &list_st = to_struct_type(obj_base_type);
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt length{obj, "length", signedbv_typet{64}};
+        member_exprt data{obj, "data", data_type};
+
+        if(method_name == "reverse")
+        {
+          // Reverse in place: swap data[i] with data[len-1-i]
+          code_blockt block;
+          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH / 2; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt mirror = minus_exprt{
+              minus_exprt{length, from_integer(1, signedbv_typet{64})}, idx};
+            exprt cond = binary_relation_exprt{idx, ID_lt, mirror};
+            // Swap via temp
+            static unsigned rev_counter = 0;
+            std::string tmp_name = "__rev_tmp_" + std::to_string(rev_counter++);
+            std::string tmp_qname = qualify_name(tmp_name);
+            irep_idt tmp_id{tmp_qname};
+            if(symbol_table.lookup(tmp_id) == nullptr)
+            {
+              symbolt tmp_sym{tmp_id, data_type.element_type(), "python"};
+              tmp_sym.base_name = tmp_name;
+              tmp_sym.is_lvalue = true;
+              tmp_sym.is_state_var = true;
+              symbol_table.add(tmp_sym);
+            }
+            symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+            code_blockt swap;
+            swap.add(code_frontend_assignt{tmp, index_exprt{data, idx}});
+            swap.add(code_frontend_assignt{
+              index_exprt{data, idx}, index_exprt{data, mirror}});
+            swap.add(code_frontend_assignt{index_exprt{data, mirror}, tmp});
+            pending_checks.push_back(code_ifthenelset{cond, std::move(swap)});
+          }
+          return from_integer(0, python_int_type()); // None
+        }
+
+        if(method_name == "sort")
+        {
+          // Bubble sort via pending_checks (correct for bounded lists)
+          for(std::size_t pass = 0; pass < PYTHON_MAX_LIST_LENGTH; pass++)
+          {
+            for(std::size_t i = 0; i + 1 < PYTHON_MAX_LIST_LENGTH; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt next = from_integer(i + 1, signedbv_typet{64});
+              exprt in_bounds = binary_relation_exprt{next, ID_lt, length};
+              exprt should_swap = binary_relation_exprt{
+                index_exprt{data, idx}, ID_gt, index_exprt{data, next}};
+              // Conditional swap
+              static unsigned sort_counter = 0;
+              std::string tmp_name =
+                "__sort_tmp_" + std::to_string(sort_counter++);
+              std::string tmp_qname = qualify_name(tmp_name);
+              irep_idt tmp_id{tmp_qname};
+              if(symbol_table.lookup(tmp_id) == nullptr)
+              {
+                symbolt tmp_sym{tmp_id, data_type.element_type(), "python"};
+                tmp_sym.base_name = tmp_name;
+                tmp_sym.is_lvalue = true;
+                tmp_sym.is_state_var = true;
+                symbol_table.add(tmp_sym);
+              }
+              symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+              code_blockt swap;
+              swap.add(code_frontend_assignt{tmp, index_exprt{data, idx}});
+              swap.add(code_frontend_assignt{
+                index_exprt{data, idx}, index_exprt{data, next}});
+              swap.add(code_frontend_assignt{index_exprt{data, next}, tmp});
+              pending_checks.push_back(code_ifthenelset{
+                and_exprt{in_bounds, should_swap}, std::move(swap)});
+            }
+          }
+          return from_integer(0, python_int_type()); // None
+        }
+
+        if(method_name == "pop")
+        {
+          // pop() removes and returns last element
+          exprt last_idx =
+            minus_exprt{length, from_integer(1, signedbv_typet{64})};
+          exprt result = index_exprt{data, last_idx};
+          pending_checks.push_back(code_frontend_assignt{
+            member_exprt{obj, "length", signedbv_typet{64}}, last_idx});
+          return result;
+        }
+      }
+
       const auto &st = to_struct_type(obj_base_type);
       std::string tag = id2string(st.get_tag());
       // tag is "python_class_ClassName"
@@ -1375,19 +1531,33 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "len")
   {
-    // len(s) → s.length for strings and lists
+    // PLR §2.4.5: len(s) returns the length of s
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
-      if(
-        !arg.is_nil() &&
-        (is_python_string_type(arg.type()) || is_python_list_type(arg.type())))
+      if(!arg.is_nil())
       {
-        return member_exprt{arg, "length", python_int_type()};
+        if(is_python_string_type(arg.type()) || is_python_list_type(arg.type()))
+          return member_exprt{arg, "length", python_int_type()};
+
+        // Tagged union: dispatch on tag
+        if(is_python_value_type(arg.type()))
+        {
+          exprt str_len =
+            member_exprt{python_value_str(arg), "length", python_int_type()};
+          exprt list_len =
+            member_exprt{python_value_list(arg), "length", python_int_type()};
+          return if_exprt{
+            python_value_is(arg, python_type_tagt::STR),
+            str_len,
+            if_exprt{
+              python_value_is(arg, python_type_tagt::LIST),
+              list_len,
+              from_integer(0, python_int_type())}};
+        }
       }
     }
-    log.error() << "len() requires a string or list argument" << messaget::eom;
-    return nil_exprt{};
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   // Built-in type constructors: int(), float(), bool()
   else if(func_name == "int")
@@ -1593,6 +1763,26 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
+  }
+  // PLR §2.4.5: divmod(a, b) returns (a // b, a % b)
+  else if(func_name == "divmod")
+  {
+    if(args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      exprt a = convert_expression(*it);
+      ++it;
+      exprt b = convert_expression(*it);
+      a = safe_typecast(a, python_int_type());
+      b = safe_typecast(b, python_int_type());
+      struct_typet::componentst comps;
+      comps.push_back(struct_typet::componentt{"_0", python_int_type()});
+      comps.push_back(struct_typet::componentt{"_1", python_int_type()});
+      struct_typet tuple_type{comps};
+      tuple_type.set_tag("python_tuple");
+      return struct_exprt{{div_exprt{a, b}, mod_exprt{a, b}}, tuple_type};
+    }
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   // str() — return nondet string
   else if(func_name == "str")
@@ -3564,6 +3754,63 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
 
   std::string op = json_string(json_member(op_node, "_type"));
 
+  // PLR §7.2.1: For string +=, use content-tracking concat
+  if(
+    op == "Add" && is_python_string_type(lhs.type()) &&
+    is_python_string_type(rhs.type()))
+  {
+    // Build the concat with content tracking (same as convert_bin_op)
+    struct_typet str_type = python_string_type();
+    const auto &data_type = to_array_type(str_type.components()[1].type());
+    member_exprt left_len{lhs, "length", signedbv_typet{64}};
+    member_exprt right_len{rhs, "length", signedbv_typet{64}};
+    member_exprt left_data{lhs, "data", data_type};
+    member_exprt right_data{rhs, "data", data_type};
+
+    static unsigned str_aug_counter = 0;
+    std::string tmp_name = "__str_aug_" + std::to_string(str_aug_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, str_type, "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+
+    code_blockt block;
+    block.add(code_frontend_assignt{
+      member_exprt{tmp, "length", signedbv_typet{64}},
+      plus_exprt{left_len, right_len}});
+
+    member_exprt tmp_data{tmp, "data", data_type};
+    for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      exprt val = if_exprt{
+        binary_relation_exprt{idx, ID_lt, left_len},
+        index_exprt{left_data, idx},
+        index_exprt{right_data, minus_exprt{idx, left_len}}};
+      block.add(code_frontend_assignt{index_exprt{tmp_data, idx}, val});
+    }
+
+    // Assign result back to target
+    if(is_node_type(target, "Name"))
+    {
+      std::string var_name = json_string(json_member(target, "id"));
+      std::string qname = qualify_name(var_name);
+      const symbolt *sym = symbol_table.lookup(irep_idt{qname});
+      if(sym != nullptr)
+      {
+        block.add(code_frontend_assignt{sym->symbol_expr(), tmp});
+        return std::move(block);
+      }
+    }
+  }
+
   // Type promotion
   if(lhs.type() != rhs.type())
   {
@@ -4504,6 +4751,20 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       {
         std::string method_name = json_string(json_member(item, "name"));
 
+        // PLR §8.7: Check for @classmethod decorator
+        bool is_classmethod = false;
+        const jsont &decorators = json_member(item, "decorator_list");
+        if(decorators.is_array())
+        {
+          for(const auto &dec : as_array(decorators))
+          {
+            if(
+              is_node_type(dec, "Name") &&
+              json_string(json_member(dec, "id")) == "classmethod")
+              is_classmethod = true;
+          }
+        }
+
         // Build method with class-qualified name
         const jsont &args_node = json_member(item, "args");
         const jsont &params = json_member(args_node, "args");
@@ -4514,6 +4775,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           for(const auto &param : as_array(params))
           {
             std::string param_name = json_string(json_member(param, "arg"));
+            // Skip cls parameter for @classmethod
+            if(is_classmethod && (param_name == "cls" || param_name == "self"))
+              continue;
             typet param_type;
             if(param_name == "self")
               param_type =
