@@ -1,6 +1,6 @@
-KNOWNBUG
+CORE
 main.py
-
+--python-unbounded-ints --z3
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
