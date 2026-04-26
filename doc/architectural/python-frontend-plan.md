@@ -427,6 +427,92 @@ reuse the list struct (with deduplication at construction time).
 
 **Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
 
+#### Tier 1 — Quick fixes (< 1 hour each)
+
+##### `limit-power-variable-exp` — Power with variable exponent
+
+**Problem:** `a ** b` where `b` is a variable returns nondet. Our power
+handler only unrolls constant exponents.
+
+**Fix:** Use CBMC's `power_exprt` (from `bitvector_expr.h`) for integer
+power, or model as a loop. For bounded verification, unroll up to a
+maximum exponent (e.g., 16) using an if-then-else chain:
+`if(b==0) 1 else if(b==1) a else if(b==2) a*a else ...`
+For exponents beyond the limit, return nondet.
+
+**Effort:** 30 minutes. **Affects:** ~20 ESBMC tests.
+
+##### `limit-nondet-collections` — nondet_list() / nondet_dict()
+
+**Problem:** `nondet_list()` and `nondet_dict()` are ESBMC-specific
+verification primitives not recognized by our front-end.
+
+**Fix:** In `convert_call`, recognize `nondet_list` and `nondet_dict`
+as returning `side_effect_expr_nondett` of the appropriate type
+(`python_list_type` and `python_int_type` respectively). Same pattern
+as `nondet_int()`.
+
+**Effort:** 15 minutes. **Affects:** ~32 ESBMC tests.
+
+##### `limit-import-math-direct` — `import math; math.sqrt()`
+
+**Problem:** `import math` registers the module name, but `math.sqrt()`
+inside a function body can't find `math` because the module variable
+isn't in the function's scope.
+
+**Fix:** The `imported_modules` set is checked in the method call
+handler, but only when the object is a `Name` node resolved via
+`convert_expression`. The issue: `convert_name("math")` fails because
+`math` isn't a symbol. Fix: in `convert_name`, check `imported_modules`
+and return a sentinel value. Or simpler: in the method call handler's
+module check, look up `imported_modules` directly from the AST node
+name instead of going through `convert_expression`.
+
+**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
+
+##### `limit-next-builtin` — next() / iter()
+
+**Problem:** `next(iter([1,2,3]))` — neither `iter()` nor `next()` is
+implemented.
+
+**Fix:** `iter(list)` returns the list itself (for our bounded model,
+iteration state is tracked by index). `next(iter)` returns the first
+element (index 0) and is a simplification. For verification, model
+`next()` as returning a nondet element of the list's element type.
+
+**Effort:** 15 minutes. **Affects:** ~8 ESBMC tests.
+
+#### Tier 2 — Moderate (2-4 hours each)
+
+##### `limit-fstring` — f-string formatting
+
+**Problem:** `f"value is {x}"` — f-strings (formatted string literals)
+are represented as `JoinedStr` AST nodes containing `FormattedValue`
+nodes. The converter doesn't handle these.
+
+**Fix:** In `convert_expression`, handle `JoinedStr` nodes. For each
+part: if it's a `Constant` string, use the literal; if it's a
+`FormattedValue`, convert the expression and concatenate its string
+representation. For verification, the exact string content is less
+important than the length and structure. Return a nondet string for
+now (sound overapproximation), or concatenate known literal parts
+with nondet parts for the formatted values.
+
+**Effort:** 2 hours. **Affects:** ~50+ ESBMC tests.
+
+##### `limit-complex-operations` — Complex number arithmetic
+
+**Problem:** `z + w` where both are complex structs crashes or returns
+wrong results. The `+` operator doesn't handle complex struct types.
+
+**Fix:** In `convert_bin_op`, detect when both operands are complex
+structs (tag `python_complex`). For Add/Sub: create a new complex
+struct with `{left.real ± right.real, left.imag ± right.imag}`. For
+Mult: `{l.r*r.r - l.i*r.i, l.r*r.i + l.i*r.r}`. For Div: use the
+standard complex division formula.
+
+**Effort:** 2 hours. **Affects:** ~16 ESBMC tests + crashes.
+
 ### Completed KNOWNBUG fixes
 
 | KNOWNBUG | Fix | Commit |
