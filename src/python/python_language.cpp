@@ -3,6 +3,7 @@
 
 #include "python_language.h"
 
+#include <util/arith_tools.h>
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/cprover_prefix.h>
@@ -226,6 +227,17 @@ bool python_languaget::generate_support_functions(
     code_assertt exc_check{not_exprt{exc_sym->symbol_expr()}};
     exc_check.add_source_location() = exc_loc;
     start_body.add(std::move(exc_check));
+  }
+
+  // Initialize rounding mode to ROUND_TO_EVEN at the start
+  irep_idt rounding_id{std::string{CPROVER_PREFIX} + "rounding_mode"};
+  const symbolt *rounding_sym = symbol_table.lookup(rounding_id);
+  if(rounding_sym != nullptr)
+  {
+    start_body.statements().insert(
+      start_body.statements().begin(),
+      code_frontend_assignt{
+        rounding_sym->symbol_expr(), from_integer(0, rounding_sym->type)});
   }
 
   start_symbol.value = start_body;
