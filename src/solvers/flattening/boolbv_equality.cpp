@@ -38,6 +38,25 @@ literalt boolbvt::convert_equality(const equal_exprt &expr)
     return record_array_equality(expr);
   }
 
+  // Simplify: (x + c1) == (x + c2) is false when c1 != c2.
+  // Common in byte-addressed array stores (store at v+0, v+1, v+2, v+3).
+  if(
+    expr.lhs().id() == ID_plus && expr.rhs().id() == ID_plus &&
+    to_plus_expr(expr.lhs()).operands().size() == 2 &&
+    to_plus_expr(expr.rhs()).operands().size() == 2)
+  {
+    const auto &lp = to_plus_expr(expr.lhs());
+    const auto &rp = to_plus_expr(expr.rhs());
+    if(
+      lp.op0() == rp.op0() && lp.op1().is_constant() &&
+      rp.op1().is_constant() && lp.op1() != rp.op1())
+      return const_literal(false);
+    if(
+      lp.op1() == rp.op1() && lp.op0().is_constant() &&
+      rp.op0().is_constant() && lp.op0() != rp.op0())
+      return const_literal(false);
+  }
+
   const bvt &lhs_bv = convert_bv(expr.lhs());
   const bvt &rhs_bv = convert_bv(expr.rhs());
 
@@ -70,6 +89,25 @@ literalt boolbvt::convert_verilog_case_equality(
     "lhs and rhs types should match in verilog_case_equality",
     irep_pretty_diagnosticst{expr.lhs()},
     irep_pretty_diagnosticst{expr.rhs()});
+
+  // Simplify: (x + c1) == (x + c2) is false when c1 != c2.
+  // Common in byte-addressed array stores (store at v+0, v+1, v+2, v+3).
+  if(
+    expr.lhs().id() == ID_plus && expr.rhs().id() == ID_plus &&
+    to_plus_expr(expr.lhs()).operands().size() == 2 &&
+    to_plus_expr(expr.rhs()).operands().size() == 2)
+  {
+    const auto &lp = to_plus_expr(expr.lhs());
+    const auto &rp = to_plus_expr(expr.rhs());
+    if(
+      lp.op0() == rp.op0() && lp.op1().is_constant() &&
+      rp.op1().is_constant() && lp.op1() != rp.op1())
+      return const_literal(false);
+    if(
+      lp.op1() == rp.op1() && lp.op0().is_constant() &&
+      rp.op0().is_constant() && lp.op0() != rp.op0())
+      return const_literal(false);
+  }
 
   const bvt &lhs_bv = convert_bv(expr.lhs());
   const bvt &rhs_bv = convert_bv(expr.rhs());
