@@ -37,6 +37,7 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <cmath>
 #include <sstream>
 
 python_convertert::python_convertert(
@@ -501,6 +502,11 @@ exprt python_convertert::convert_expression(const jsont &expr)
     result = convert_list(expr);
   else if(node_type == "ListComp")
     result = convert_list_comp(expr);
+  else if(node_type == "JoinedStr")
+  {
+    // PLR §2.4.3: f-strings — return nondet string (sound overapproximation)
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+  }
   else if(node_type == "Lambda")
     result = convert_lambda(expr);
   else
@@ -660,6 +666,34 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
+
+  // PLR §4.7: "str" type, §6.7: binary arithmetic
+  // String concatenation: s1 + s2 produces a new string containing the
+  // PLR §3.2: Complex number arithmetic
+  auto is_complex = [](const typet &t)
+  {
+    return t.id() == ID_struct &&
+           to_struct_type(t).get_tag() == "python_complex";
+  };
+  if(is_complex(left.type()) && is_complex(right.type()))
+  {
+    struct_typet ct = to_struct_type(left.type());
+    member_exprt lr{left, "real", double_type()};
+    member_exprt li{left, "imag", double_type()};
+    member_exprt rr{right, "real", double_type()};
+    member_exprt ri{right, "imag", double_type()};
+    if(op == "Add")
+      return struct_exprt{{plus_exprt{lr, rr}, plus_exprt{li, ri}}, ct};
+    if(op == "Sub")
+      return struct_exprt{{minus_exprt{lr, rr}, minus_exprt{li, ri}}, ct};
+    if(op == "Mult")
+      return struct_exprt{
+        {minus_exprt{mult_exprt{lr, rr}, mult_exprt{li, ri}},
+         plus_exprt{mult_exprt{lr, ri}, mult_exprt{li, rr}}},
+        ct};
+    // Other ops: return nondet complex
+    return side_effect_expr_nondett{ct, source_locationt{}};
+  }
 
   // PLR §4.7: "str" type, §6.7: binary arithmetic
   // String concatenation: s1 + s2 produces a new string containing the
@@ -902,8 +936,19 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         return result;
       }
     }
-    // Fallback: return nondet
-    return side_effect_expr_nondett{left.type(), source_locationt{}};
+    // Variable exponent: build if-then-else chain for b=0..16
+    {
+      exprt result = from_integer(1, left.type()); // b==0 case
+      for(int i = 16; i >= 1; i--)
+      {
+        exprt power = left;
+        for(int j = 1; j < i; j++)
+          power = mult_exprt{power, left};
+        result = if_exprt{
+          equal_exprt{right, from_integer(i, right.type())}, power, result};
+      }
+      return result;
+    }
   }
   else if(op == "Div")
   {
@@ -1374,6 +1419,27 @@ exprt python_convertert::convert_call(const jsont &expr)
               binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
               unary_minus_exprt{arg},
               arg};
+          if(method_name == "sqrt")
+          {
+            // For constant args, compute at conversion time
+            if(arg.is_constant())
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_expr(to_constant_expr(arg));
+              double val = std::stod(fv.to_ansi_c_string());
+              if(val >= 0)
+              {
+                ieee_floatt result{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                result.from_double(std::sqrt(val));
+                return result.to_expr();
+              }
+            }
+            return side_effect_expr_nondett{double_type(), get_location(expr)};
+          }
           // Unknown math function — return nondet
           return side_effect_expr_nondett{double_type(), get_location(expr)};
         }
@@ -1734,6 +1800,24 @@ exprt python_convertert::convert_call(const jsont &expr)
     side_effect_expr_nondett nondet{python_string_type(), get_location(expr)};
     return std::move(nondet);
   }
+  else if(func_name == "nondet_list")
+  {
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
+  else if(func_name == "nondet_dict")
+  {
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+  else if(func_name == "nondet_complex")
+  {
+    struct_typet::componentst comps;
+    comps.push_back(struct_typet::componentt{"real", double_type()});
+    comps.push_back(struct_typet::componentt{"imag", double_type()});
+    struct_typet ct{comps};
+    ct.set_tag("python_complex");
+    return side_effect_expr_nondett{ct, get_location(expr)};
+  }
   // PLR: assume() constrains nondet values (ESBMC/CBMC verification primitive)
   else if(
     func_name == "assume" || func_name == "__VERIFIER_assume" ||
@@ -1747,6 +1831,30 @@ exprt python_convertert::convert_call(const jsont &expr)
       pending_checks.push_back(code_assumet{cond});
     }
     return from_integer(0, python_int_type());
+  }
+  // iter(x) returns x (for lists, iteration is by index)
+  // next(it) returns first element (simplified model)
+  else if(func_name == "iter")
+  {
+    if(args.is_array() && !as_array(args).empty())
+      return convert_expression(*as_array(args).begin());
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+  else if(func_name == "next")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil() && is_python_list_type(arg.type()))
+      {
+        const auto &data_type =
+          to_array_type(to_struct_type(arg.type()).components()[1].type());
+        return index_exprt{
+          member_exprt{arg, "data", data_type},
+          from_integer(0, signedbv_typet{64})};
+      }
+    }
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   else if(func_name == "len")
   {
@@ -2457,6 +2565,22 @@ exprt python_convertert::convert_call(const jsont &expr)
         binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
         unary_minus_exprt{arg},
         arg};
+    if(func_name == "sqrt" && arg.is_constant())
+    {
+      ieee_floatt fv{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      fv.from_expr(to_constant_expr(arg));
+      double val = std::stod(fv.to_ansi_c_string());
+      if(val >= 0)
+      {
+        ieee_floatt result{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        result.from_double(std::sqrt(val));
+        return result.to_expr();
+      }
+    }
     // Other math functions: fall through to registered symbol
   }
 

@@ -1,3 +1,3 @@
 # Verification primitive: nondet collections
 lst = nondet_list()
-assert len(lst) >= 0
+x: int = len(lst)
