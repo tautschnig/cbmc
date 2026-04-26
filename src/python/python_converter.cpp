@@ -1618,12 +1618,27 @@ exprt python_convertert::convert_call(const jsont &expr)
 
         if(method_name == "pop")
         {
+          // Save last element, then decrement length
           exprt last_idx =
             minus_exprt{length, from_integer(1, signedbv_typet{64})};
-          exprt result = index_exprt{data, last_idx};
+          static unsigned pop_counter = 0;
+          std::string tmp_name = "__pop_tmp_" + std::to_string(pop_counter++);
+          std::string tmp_qname = qualify_name(tmp_name);
+          irep_idt tmp_id{tmp_qname};
+          if(symbol_table.lookup(tmp_id) == nullptr)
+          {
+            symbolt tmp_sym{tmp_id, data_type.element_type(), "python"};
+            tmp_sym.base_name = tmp_name;
+            tmp_sym.is_lvalue = true;
+            tmp_sym.is_state_var = true;
+            symbol_table.add(tmp_sym);
+          }
+          symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+          pending_checks.push_back(
+            code_frontend_assignt{tmp, index_exprt{data, last_idx}});
           pending_checks.push_back(code_frontend_assignt{
             member_exprt{obj, "length", signedbv_typet{64}}, last_idx});
-          return result;
+          return std::move(tmp);
         }
 
         // PLR §4.6.1: list.extend(iterable)
