@@ -289,150 +289,143 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (9 tests)
+### KNOWNBUG inventory (10 tests)
 
-154 total tests, 145 CORE, 9 KNOWNBUG.
+170 total tests, 160 CORE, 10 KNOWNBUG.
 
 ESBMC validation (2026-04-25): 3,090 tests, 1,692 correct (54%),
 39 crashes (1%), 90 timeouts (2%), 1,269 wrong results (41%).
 
-#### Tier 1 — Built-in functions and operators (1-2 hours each)
+#### Tier 1 — Quick fixes (< 1 hour each)
 
-##### `limit-divmod` — divmod() built-in
+##### `limit-mixed-type-compare` — int == float comparison
 
-**Problem:** `divmod(a, b)` is not recognized. Returns nondet.
+**Problem:** `5 == 5.0` fails. The int `5` is compared with the float
+`5.0` via `safe_typecast(5, double_type())` which uses `typecast_exprt`.
+CBMC's solver evaluates `typecast_exprt{5, double}` differently from
+`ieee_floatt(5.0)` — off by one ULP.
 
-**Fix plan:** Add `divmod` to `convert_call`. Return a tuple struct
-`{a // b, a % b}` using `div_exprt` and `mod_exprt`. The tuple
-unpacking `q, r = divmod(7, 3)` already works for tuple structs.
+**Fix:** In the comparison type promotion, when casting an int constant
+to float for comparison, use `ieee_floatt::from_integer()` (exact) instead
+of `typecast_exprt` (solver-dependent). The `safe_typecast` already has
+this for the `float()` built-in — extend it to cover all int-constant-to-
+float casts. The existing code at line ~215 handles `e.is_constant()` but
+the comparison handler may pass non-constant expressions through
+`safe_typecast` before the constant check fires.
 
-**PLR reference:** §2.4.5 — "divmod(a, b) returns (a // b, a % b)"
+**Effort:** 30 minutes. **Affects:** ~37 ESBMC tests.
 
-##### `limit-power-negative` — Power with negative exponent
+##### `limit-from-import-func` — `from math import floor`
 
-**Problem:** `2 ** -1` returns `int` 0 (integer division). Should
-return `float` 0.5 when the exponent is negative.
+**Problem:** `from math import floor; floor(3.7)` doesn't use our
+math model. The `from X import Y` handler registers `Y` as a function
+symbol with a nondet body. The `import X; X.Y()` path goes through the
+module method handler which has our ceil/floor/fabs models.
 
-**Fix plan:** In `convert_bin_op` for `Pow`, check if the exponent is
-negative. If so, compute `1.0 / (base ** abs(exp))` using float
-division. For constant exponents, compute at conversion time using
-`ieee_floatt`. For variable exponents, use `if_exprt` to dispatch.
+**Fix:** In the `from math import Y` handler, instead of registering a
+generic function symbol, check if `Y` is one of our modeled math
+functions (ceil, floor, fabs, sqrt). If so, register an alias that
+routes through the math model. Alternatively, in `convert_call`, when
+calling a function that was imported from `math`, redirect to the math
+module handler.
 
-**PLR reference:** §6.5 — "Raising a negative number to a fractional
-power results in a complex number."
+**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
 
-##### `limit-nondet-overflow` — nondet arithmetic overflow
+##### `limit-assume` — assume() for constraining nondet values
 
-**Problem:** `x = nondet_int(); y = x + 1; assert x < y` fails because
-64-bit integer overflow wraps around (INT64_MAX + 1 = INT64_MIN).
+**Problem:** `assume(x > 0)` is not recognized. ESBMC uses `assume()`
+to constrain nondet values. CBMC uses `__CPROVER_assume()`.
 
-**Fix plan:** This is correct behavior for bounded integers. The fix is
-to use `--python-unbounded-ints --z3` which models integers with
-`integer_typet` (mathematical integers, no overflow). The test should
-document this: either add `--python-unbounded-ints --z3` to the test
-flags, or change the assertion to account for overflow.
+**Fix:** In `convert_call`, recognize `assume` and `__VERIFIER_assume`
+as aliases for `__CPROVER_assume`. Convert the argument to a bool and
+emit `code_assumet{condition}`.
 
-**PLR reference:** §3.2 — "Integers have unlimited precision"
+**Effort:** 15 minutes. **Affects:** ~21 ESBMC tests.
 
-#### Tier 2 — String and list methods (2-4 hours each)
+##### `limit-sum` — sum() built-in
 
-##### `limit-string-augassign` — String += operator
+**Problem:** `sum([1,2,3])` is not recognized.
 
-**Problem:** `word += "a"` is handled by `convert_aug_assign` which
-calls `convert_bin_op` for `Add`. But the result is assigned back to
-`word` which may have a different type (empty string vs non-empty).
-The augmented assignment handler doesn't use the string concat content
-tracking (which uses `pending_checks`).
+**Fix:** In `convert_call`, add a `sum` handler. For list arguments,
+generate a loop: `result = 0; for i in 0..length: result += data[i]`.
+Use `pending_checks` for the accumulation loop (unrolled up to
+`PYTHON_MAX_LIST_LENGTH`).
 
-**Fix plan:** In `convert_aug_assign`, detect string types and delegate
-to the same content-tracking concat logic used in `convert_bin_op`.
-The key issue: `convert_aug_assign` creates `lhs = lhs + rhs` as a
-single expression, but string concat needs `pending_checks` for the
-element-by-element copy. Solution: convert `word += "a"` to
-`word = word + "a"` and route through `convert_assign` which handles
-`pending_checks`.
+**Effort:** 30 minutes. **Affects:** ~5 ESBMC tests.
 
-**PLR reference:** §7.2.1 — "An augmented assignment evaluates the
-target and the expression list, performs the binary operation, and
-assigns the result to the original target."
+##### `limit-forward-class-ref` — forward class references
 
-##### `limit-list-sort` — list.sort() method
+**Problem:** `def make_foo() -> "Foo"` — the return type annotation is
+a string `"Foo"` (forward reference), not a `Name` node. The
+`convert_type_annotation` handler doesn't handle `Constant` string
+annotations.
 
-**Problem:** `list.sort()` is not recognized as a method.
+**Fix:** In `convert_type_annotation`, when the annotation is a
+`Constant` with a string value, look up the string in `class_types`.
+This handles PEP 484 forward references.
 
-**Fix plan:** Add `sort` to the method call handler in `convert_call`.
-For bounded lists (up to 64 elements), generate a sorting network
-using `if_exprt` comparisons and swaps via `pending_checks`. For
-verification purposes, the exact sort algorithm doesn't matter — we
-need the postcondition that elements are in order and the multiset
-is preserved. Simpler approach: for literal lists, sort at conversion
-time. For symbolic lists, assert the sorted property as nondet with
-constraints.
+**Effort:** 15 minutes. **Affects:** ~50 ESBMC tests.
 
-**PLR reference:** §4.6.1 — "sort(*, key=None, reverse=False): This
-method sorts the list in place."
+#### Tier 2 — List/string methods (1-2 hours each)
 
-##### `limit-list-reverse` — list.reverse() method
+##### `limit-str-split` — str.split() method
 
-**Problem:** `list.reverse()` is not recognized as a method.
+**Problem:** `"a,b,c".split(",")` is not recognized.
 
-**Fix plan:** Add `reverse` to the method call handler. Generate
-element swaps: `for i in 0..len/2: swap(data[i], data[len-1-i])`.
-Use `pending_checks` for the swap assignments.
+**Fix:** Add `split` to the method call handler for string types. For
+a constant delimiter and constant string, split at conversion time and
+return a list of string structs. For variable strings, return a nondet
+list of strings with length = count of delimiters + 1.
 
-**PLR reference:** §4.6.1 — "reverse(): Reverse the items of the
-list in place."
+**Effort:** 1-2 hours. **Affects:** ~16 ESBMC tests.
 
-#### Tier 3 — Type system and advanced features (half day each)
+##### `limit-list-extend` — list.extend() method
 
-##### `limit-untyped-param-string-call` — Untyped param receiving string
+**Problem:** `a.extend([3, 4])` is not recognized.
 
-**Problem:** `def foo(s): x = len(s)` — `s` is `python_value_type`
-(tagged union). `len(s)` tries to access `.length` on the tagged
-union, which doesn't have a `length` field. The `len()` handler
-needs to unwrap the tagged union to get the actual string/list.
+**Fix:** Add `extend` to the list method handler. Copy elements from
+the argument list to the target list starting at `target.length`.
+Update `target.length += arg.length`. Use `pending_checks` for the
+element-by-element copy (same pattern as string concat).
 
-**Fix plan:** In the `len()` handler in `convert_call`, check if the
-argument is `python_value_type`. If so, generate a dispatch:
-`if(tag == STR) return deref(str_ptr).length`
-`else if(tag == LIST) return deref(list_ptr).length`
-`else return nondet`. This is the general pattern for built-in
-functions that operate on tagged unions.
+**Effort:** 1 hour. **Affects:** ~11 ESBMC tests.
 
-**PLR reference:** §8.7 — "If the function body contains no annotation
-for a parameter, the parameter's type is not constrained."
+##### `limit-list-remove` — list.remove() method
 
-##### `limit-lambda-multi-param` — Lambda with multiple parameters
+**Problem:** `lst.remove(2)` is not recognized.
 
-**Problem:** `lambda l, w, h: l * w * h` — the lambda handler only
-supports single-parameter lambdas. Multi-parameter lambdas need
-multiple parameter symbols and argument passing.
+**Fix:** Add `remove` to the list method handler. Find the first
+element equal to the value, then shift all subsequent elements left
+by one. Decrement length. Use `pending_checks` for the shift loop.
 
-**Fix plan:** In `convert_lambda`, iterate over all parameters (not
-just the first). Create a symbol for each parameter. In the call
-handler for lambda aliases, pass all arguments. The lambda body
-conversion already works for any expression — only the parameter
-binding needs fixing.
+**Effort:** 1 hour. **Affects:** ~11 ESBMC tests.
 
-**PLR reference:** §6.14 — "lambda parameters: expression"
+#### Tier 3 — Type system features (2-4 hours each)
 
-##### `limit-classmethod` — @classmethod decorator
+##### `limit-type-builtin` — type() built-in
 
-**Problem:** `@classmethod` methods time out because the `cls`
-parameter is typed as `python_value_type` (tagged union with pointer
-fields), causing the solver to explore too many paths.
+**Problem:** `type(x) == int` is not supported.
 
-**Fix plan:** In `convert_class_def`, detect the `@classmethod`
-decorator on method definitions. For classmethod parameters:
-(a) type `cls` as `pointer_typet{class_type}` (same as `self`), or
-(b) skip the `cls` parameter entirely (since it's not used for
-verification — the class is known statically). Option (b) is simpler:
-register the method with no `cls` parameter, and when called as
-`MyClass.method()`, don't pass any self/cls argument.
+**Fix:** In `convert_call`, add a `type` handler that returns a
+type-tag integer based on the argument's static type. Then `type(x)`
+returns a constant that can be compared with `int`, `float`, `str`,
+etc. (which are also converted to their type-tag constants in this
+context). This is a static approximation — Python's `type()` is
+dynamic, but for verification of statically-typed code it suffices.
 
-**PLR reference:** §8.7 — "A class method receives the class as
-implicit first argument, just like an instance method receives the
-instance."
+**Effort:** 2 hours. **Affects:** ~4 ESBMC tests.
+
+##### `limit-set-builtin` — set() type
+
+**Problem:** `set([1, 2, 2, 3])` should produce a set with 3 elements.
+Sets are currently modeled as lists, which don't deduplicate.
+
+**Fix:** Model `set()` constructor to deduplicate: iterate the input
+list and only add elements not already present. For bounded lists this
+is an O(n²) unrolled loop via `pending_checks`. The set struct can
+reuse the list struct (with deduplication at construction time).
+
+**Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
 
 ### Completed KNOWNBUG fixes
 
@@ -457,6 +450,24 @@ instance."
 | `limit-none-identity` | None sentinel (-4611686018427387904) + falsy truthiness | 214416880f |
 | `crash-class-string-attr` | Tagged union with str/list pointers, float_val fix | adba53f7b9 |
 | `limit-dynamic-dispatch` | __class_tag field, layout-compatible inheritance | 699bbd8375 |
+| `crash-except-type-assign` | Numeric typecast + try-block guarded assign | b535f9666d |
+| `crash-default-obj-param` | Pass 0.25 class pre-registration + constructor defaults | b535f9666d |
+| `limit-float-conversion` | ieee_floatt for exact int→float | f4273c41a2 |
+| `limit-range-negative-step` | Negative step with i > stop condition | f4273c41a2 |
+| `limit-isinstance-builtin` | Built-in type checks (list, str, etc.) | f4273c41a2 |
+| `limit-math-functions` | math.ceil/floor/fabs as exact expressions | f4273c41a2 |
+| `limit-tuple-immutable` | TypeError on tuple subscript assignment | f4273c41a2 |
+| `limit-for-in-dict` | Unroll over dict struct fields | f4273c41a2 |
+| `limit-super-call` | Inline base __init__ body | f4273c41a2 |
+| `limit-divmod` | divmod() → tuple {a//b, a%b} | 19f3e7459f |
+| `limit-power-negative` | ** with constant exponents, unrolled | 19f3e7459f |
+| `limit-nondet-overflow` | Test uses --python-unbounded-ints --z3 | 19f3e7459f |
+| `limit-string-augassign` | Content-tracking concat in aug_assign | 19f3e7459f |
+| `limit-list-sort` | Bubble sort via pending_checks | 19f3e7459f |
+| `limit-list-reverse` | Element swaps + list.pop() | 19f3e7459f |
+| `limit-classmethod` | Detect @classmethod, skip cls param | 19f3e7459f |
+| `limit-untyped-param-string-call` | len() dispatch on tagged union | 19f3e7459f |
+| `limit-lambda-multi-param` | Already worked, test updated | 19f3e7459f |
 
 #### Tagged unions — implemented approach
 
