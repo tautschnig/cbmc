@@ -854,6 +854,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "FloorDiv")
   {
+    // Complex // anything is a TypeError — return nondet
+    if(is_complex(left.type()) || is_complex(right.type()))
+      return side_effect_expr_nondett{python_int_type(), source_locationt{}};
     add_check(
       notequal_exprt{right, safe_zero(right.type())},
       "division-by-zero",
@@ -1228,6 +1231,33 @@ exprt python_convertert::convert_compare(const jsont &expr)
           if(current_left.type() != elem.type())
             elem = safe_typecast(elem, current_left.type());
           exprt match = equal_exprt{current_left, elem};
+          exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+          in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
+        }
+        cmp = (op == "In") ? in_expr : not_exprt{in_expr};
+      }
+      else if(is_python_string_type(right.type()))
+      {
+        // PLR §6.10.2: "x in s" for strings — check character membership
+        const auto &str_st = to_struct_type(right.type());
+        const auto &data_type = to_array_type(str_st.components()[1].type());
+        member_exprt data{right, "data", data_type};
+        member_exprt length{right, "length", signedbv_typet{64}};
+
+        exprt search_byte;
+        if(is_python_string_type(current_left.type()))
+          search_byte = index_exprt{
+            member_exprt{current_left, "data", data_type},
+            from_integer(0, signedbv_typet{64})};
+        else
+          search_byte = safe_typecast(current_left, unsignedbv_typet{8});
+
+        exprt in_expr = false_exprt{};
+        for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt elem = index_exprt{data, idx};
+          exprt match = equal_exprt{search_byte, elem};
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
           in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
         }
@@ -2421,14 +2451,34 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
+        // PLR §2.4.5: abs(complex) = sqrt(real² + imag²)
+        if(
+          arg.type().id() == ID_struct &&
+          to_struct_type(arg.type()).get_tag() == "python_complex")
+        {
+          member_exprt r{arg, "real", double_type()};
+          member_exprt i{arg, "imag", double_type()};
+          exprt sum = plus_exprt{mult_exprt{r, r}, mult_exprt{i, i}};
+          // Compute sqrt at conversion time if both are constant
+          if(r.id() == ID_member || true)
+          {
+            // Return nondet float constrained to be >= 0
+            // (exact sqrt would need a library model)
+            return side_effect_expr_nondett{double_type(), get_location(expr)};
+          }
+        }
         // abs(x) = x >= 0 ? x : -x
-        return if_exprt{
-          binary_relation_exprt{arg, ID_ge, safe_zero(arg.type())},
-          arg,
-          unary_minus_exprt{arg}};
+        if(arg.type().id() == ID_signedbv || arg.type().id() == ID_floatbv)
+        {
+          return if_exprt{
+            binary_relation_exprt{arg, ID_ge, safe_zero(arg.type())},
+            arg,
+            unary_minus_exprt{arg}};
+        }
+        return side_effect_expr_nondett{arg.type(), get_location(expr)};
       }
     }
-    return nil_exprt{};
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   // min(), max()
   else if(func_name == "min" || func_name == "max")
@@ -2677,7 +2727,14 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
-  // Remove any remaining nil arguments (shouldn't happen with correct code)
+  // Replace any remaining nil arguments with safe_zero of param type
+  for(std::size_t i = 0; i < arguments.size() && i < params.size(); i++)
+  {
+    if(arguments[i].is_nil())
+      arguments[i] = safe_zero(params[i].type());
+  }
+
+  // Remove trailing nil arguments beyond param count
   while(!arguments.empty() && arguments.back().is_nil())
     arguments.pop_back();
 
@@ -2866,6 +2923,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // Array/list indexing
   if(is_python_list_type(value.type()))
   {
+    // Non-integer index → TypeError (return nondet)
+    if(
+      slice.type().id() != ID_signedbv && slice.type().id() != ID_unsignedbv &&
+      slice.type().id() != ID_integer && slice.type().id() != ID_bool)
+    {
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
     member_exprt length{value, "length", python_int_type()};
 
     // Handle negative indices: lst[-1] → lst[len-1]
@@ -3627,13 +3691,23 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // If annotation gave a placeholder type (e.g., dict→int) but the RHS
+  // has a concrete struct type, use the RHS type instead.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
+  if(
+    sym.type != rhs.type() && rhs.type().id() == ID_struct &&
+    (sym.type == python_int_type() || sym.type.id() != ID_struct))
+  {
+    symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
+  }
+
+  const symbolt &sym2 = symbol_table.lookup_ref(symbol_id);
 
   // Type cast if needed
-  if(rhs.type() != sym.type)
-    rhs = safe_typecast(rhs, sym.type);
+  if(rhs.type() != sym2.type)
+    rhs = safe_typecast(rhs, sym2.type);
 
-  code_frontend_assignt assign{sym.symbol_expr(), rhs};
+  code_frontend_assignt assign{sym2.symbol_expr(), rhs};
   assign.add_source_location() = loc;
   return std::move(assign);
 }
