@@ -184,6 +184,7 @@ satcheck_cadical_baset::satcheck_cadical_baset(
   // then the above overrides of `new_variable` and `new_variables` need to be
   // enabled.
   solver->set("factor", 0);
+  solver->set("congruence", 0);
 }
 
 satcheck_cadical_baset::~satcheck_cadical_baset()
