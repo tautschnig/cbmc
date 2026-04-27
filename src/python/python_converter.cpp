@@ -1785,8 +1785,10 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
-        if(method_name == "replace")
+        if(method_name == "replace" || method_name == "format")
         {
+          // PLR §4.7.1: str.replace() and str.format()
+          // Return nondet string (sound overapproximation)
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
@@ -1799,6 +1801,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(
           method_name == "find" || method_name == "index" ||
+          method_name == "rfind" || method_name == "rindex" ||
           method_name == "count")
         {
           return side_effect_expr_nondett{
@@ -1809,6 +1812,68 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
+      }
+
+      // PLR §4.10: Dict methods
+      if(is_python_dict_type(obj_base_type))
+      {
+        if(method_name == "get")
+        {
+          // d.get(key, default) — access key, return default if missing
+          if(args.is_array() && !as_array(args).empty())
+          {
+            auto arg_it = as_array(args).begin();
+            exprt key_expr = convert_expression(*arg_it);
+            // Try to access the key as a struct member
+            if(
+              key_expr.id() == ID_struct &&
+              is_python_string_type(key_expr.type()))
+            {
+              // Extract key string from constant
+              const auto &key_data = key_expr.operands()[1];
+              if(key_data.operands().size() > 0)
+              {
+                std::string key;
+                mp_integer klen;
+                if(!to_integer(to_constant_expr(key_expr.operands()[0]), klen))
+                {
+                  for(mp_integer i = 0; i < klen; ++i)
+                  {
+                    std::size_t idx = i.to_ulong();
+                    if(
+                      idx < key_data.operands().size() &&
+                      key_data.operands()[idx].is_constant())
+                    {
+                      mp_integer ch;
+                      if(!to_integer(
+                           to_constant_expr(key_data.operands()[idx]), ch))
+                        key += static_cast<char>(ch.to_ulong());
+                    }
+                  }
+                }
+                for(char &c : key)
+                  if(!std::isalnum(c) && c != '_')
+                    c = '_';
+                const auto &st = to_struct_type(obj_base_type);
+                if(st.has_component(key))
+                  return member_exprt{obj, key, st.get_component(key).type()};
+              }
+            }
+          }
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        }
+        if(
+          method_name == "keys" || method_name == "values" ||
+          method_name == "items")
+          return side_effect_expr_nondett{
+            python_list_type(python_int_type()), get_location(expr)};
+        if(
+          method_name == "setdefault" || method_name == "pop" ||
+          method_name == "popitem" || method_name == "update" ||
+          method_name == "clear" || method_name == "copy")
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
       }
 
       // PLR §4.6.1: List methods (append, sort, reverse, pop, etc.)
@@ -5269,7 +5334,17 @@ codet python_convertert::convert_return(const jsont &stmt)
         block.add(code_expressiont{call});
       }
 
-      block.add(code_frontend_returnt{tmp_sym.symbol_expr()});
+      // Typecast to function's return type if needed
+      exprt ret_expr = tmp_sym.symbol_expr();
+      irep_idt func_id{"python::" + current_function};
+      const symbolt *func_sym = symbol_table.lookup(func_id);
+      if(func_sym != nullptr && func_sym->type.id() == ID_code)
+      {
+        typet ret_type = to_code_type(func_sym->type).return_type();
+        if(ret_expr.type() != ret_type)
+          ret_expr = safe_typecast(ret_expr, ret_type);
+      }
+      block.add(code_frontend_returnt{ret_expr});
       return std::move(block);
     }
   }
@@ -5382,7 +5457,15 @@ codet python_convertert::convert_function_def(const jsont &stmt)
               std::string call_name =
                 json_string(json_member(json_member(rv, "func"), "id"));
               if(class_types.count(call_name))
-                return_type = class_types[call_name];
+              {
+                typet this_type = class_types[call_name];
+                if(return_type.id() == ID_empty)
+                  return_type = this_type;
+                else if(return_type != this_type)
+                  // Multiple different class return types — use int
+                  // (will be typecast via safe_typecast on each path)
+                  return_type = python_int_type();
+              }
             }
           }
         }
