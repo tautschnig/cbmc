@@ -1680,6 +1680,22 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     if(obj_base_type.id() == ID_struct)
     {
+      // PLR §3.2: Complex number methods
+      if(
+        obj_base_type.id() == ID_struct &&
+        to_struct_type(obj_base_type).get_tag() == "python_complex")
+      {
+        if(method_name == "conjugate")
+        {
+          member_exprt r{obj, "real", double_type()};
+          member_exprt i{obj, "imag", double_type()};
+          return struct_exprt{
+            {r, unary_minus_exprt{i}}, to_struct_type(obj_base_type)};
+        }
+        // Other complex methods: return nondet
+        return side_effect_expr_nondett{obj_base_type, get_location(expr)};
+      }
+
       // PLR §4.7.1: String methods
       if(is_python_string_type(obj_base_type))
       {
@@ -1964,9 +1980,14 @@ exprt python_convertert::convert_call(const jsont &expr)
 
         if(method_name == "pop")
         {
-          // Save last element, then decrement length
-          exprt last_idx =
-            minus_exprt{length, from_integer(1, signedbv_typet{64})};
+          // PLR §4.6.1: pop(i) or pop() — remove and return element
+          exprt pop_idx;
+          if(args.is_array() && !as_array(args).empty())
+            pop_idx = safe_typecast(
+              convert_expression(*as_array(args).begin()), signedbv_typet{64});
+          else
+            pop_idx = minus_exprt{length, from_integer(1, signedbv_typet{64})};
+
           static unsigned pop_counter = 0;
           std::string tmp_name = "__pop_tmp_" + std::to_string(pop_counter++);
           std::string tmp_qname = qualify_name(tmp_name);
@@ -1980,10 +2001,31 @@ exprt python_convertert::convert_call(const jsont &expr)
             symbol_table.add(tmp_sym);
           }
           symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+          // Save element at index
           pending_checks.push_back(
-            code_frontend_assignt{tmp, index_exprt{data, last_idx}});
+            code_frontend_assignt{tmp, index_exprt{data, pop_idx}});
+          // Shift elements left from pop_idx
+          for(std::size_t j = 0; j + 1 < PYTHON_MAX_LIST_LENGTH; j++)
+          {
+            exprt jexpr = from_integer(j, signedbv_typet{64});
+            exprt guard = and_exprt{
+              binary_relation_exprt{jexpr, ID_ge, pop_idx},
+              binary_relation_exprt{
+                jexpr,
+                ID_lt,
+                minus_exprt{length, from_integer(1, signedbv_typet{64})}}};
+            pending_checks.push_back(code_ifthenelset{
+              guard,
+              code_frontend_assignt{
+                index_exprt{data, jexpr},
+                index_exprt{
+                  data,
+                  plus_exprt{jexpr, from_integer(1, signedbv_typet{64})}}}});
+          }
+          // Decrement length
           pending_checks.push_back(code_frontend_assignt{
-            member_exprt{obj, "length", signedbv_typet{64}}, last_idx});
+            member_exprt{obj, "length", signedbv_typet{64}},
+            minus_exprt{length, from_integer(1, signedbv_typet{64})}});
           return std::move(tmp);
         }
 
@@ -2377,6 +2419,11 @@ exprt python_convertert::convert_call(const jsont &expr)
     mp_integer none_val = mp_integer(1) << 62;
     none_val = -none_val;
     return from_integer(none_val, python_int_type());
+  }
+  // PLR §2.4.5: input() reads from stdin — model as nondet string
+  else if(func_name == "input")
+  {
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
   // chr(n) → single-character string
   else if(func_name == "chr")
@@ -2813,6 +2860,39 @@ exprt python_convertert::convert_call(const jsont &expr)
       std::string cls_name;
       if(is_node_type(*it, "Name"))
         cls_name = json_string(json_member(*it, "id"));
+
+      // PLR §6.10.2: isinstance(x, (A, B)) — tuple of types
+      if(is_node_type(*it, "Tuple"))
+      {
+        const jsont &elts = json_member(*it, "elts");
+        if(elts.is_array() && !obj.is_nil())
+        {
+          exprt result = false_exprt{};
+          for(const auto &elt : as_array(elts))
+          {
+            if(is_node_type(elt, "Name"))
+            {
+              std::string tname = json_string(json_member(elt, "id"));
+              bool match = false;
+              if(
+                tname == "int" && (obj.type().id() == ID_signedbv ||
+                                   obj.type().id() == ID_integer))
+                match = true;
+              else if(tname == "float" && obj.type().id() == ID_floatbv)
+                match = true;
+              else if(tname == "bool" && obj.type().id() == ID_bool)
+                match = true;
+              else if(tname == "str" && is_python_string_type(obj.type()))
+                match = true;
+              else if(tname == "list" && is_python_list_type(obj.type()))
+                match = true;
+              if(match)
+                return true_exprt{};
+            }
+          }
+          return false_exprt{};
+        }
+      }
 
       if(!obj.is_nil() && !cls_name.empty())
       {

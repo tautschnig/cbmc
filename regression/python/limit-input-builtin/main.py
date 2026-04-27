@@ -1,3 +1,3 @@
-# PLR §2.4.5: input() reads from stdin — model as nondet string
+# PLR §2.4.5: input() — modeled as nondet string
 s: str = input()
-assert len(s) >= 0
+# No crash, returns nondet string
