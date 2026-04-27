@@ -185,6 +185,14 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::STR, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
+  // For struct types (class instances, dicts, etc.) that don't fit
+  // in the tagged union, return a nondet value. The struct can't be
+  // stored in the int/float/bool/str/list fields.
+  if(
+    e.type().id() == ID_struct && !is_python_string_type(e.type()) &&
+    !is_python_list_type(e.type()))
+    return side_effect_expr_nondett{python_value_type(), source_locationt{}};
+
   return make_python_value(tag, e);
 }
 
@@ -274,12 +282,26 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       id2string(src_tag).substr(0, 13) == "python_class_" &&
       id2string(tgt_tag).substr(0, 13) == "python_class_")
     {
-      // Layout-compatible: extract base fields from derived struct
+      // Check if source has all target's fields (inheritance)
+      const auto &src_st = to_struct_type(e.type());
       const auto &tgt_st = to_struct_type(target);
-      exprt::operandst fields;
+      bool compatible = true;
       for(const auto &comp : tgt_st.components())
-        fields.push_back(member_exprt{e, comp.get_name(), comp.type()});
-      return struct_exprt{std::move(fields), target};
+      {
+        if(!src_st.has_component(comp.get_name()))
+        {
+          compatible = false;
+          break;
+        }
+      }
+      if(compatible)
+      {
+        exprt::operandst fields;
+        for(const auto &comp : tgt_st.components())
+          fields.push_back(member_exprt{e, comp.get_name(), comp.type()});
+        return struct_exprt{std::move(fields), target};
+      }
+      // Incompatible class types — return nondet
     }
   }
 
@@ -797,7 +819,13 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(is_python_value_type(right.type()))
     right = unwrap_value(right, left.type());
 
-  // List repetition with content tracking: lst * n
+  // List repetition with content tracking: lst * n or n * lst
+  if(
+    op == "Mult" && is_python_list_type(right.type()) &&
+    !is_python_list_type(left.type()))
+  {
+    std::swap(left, right); // normalize to lst * n
+  }
   if(is_python_list_type(left.type()) && op == "Mult")
   {
     struct_typet list_type = to_struct_type(left.type());
@@ -1281,17 +1309,27 @@ exprt python_convertert::convert_compare(const jsont &expr)
         cmp = binary_relation_exprt{left_char, ID_ge, right_char};
     }
     else if(op == "Eq")
+    {
+      if(current_left.type() != right.type())
+        right = safe_typecast(right, current_left.type());
       cmp = equal_exprt{current_left, right};
+    }
     else if(op == "NotEq")
+    {
+      if(current_left.type() != right.type())
+        right = safe_typecast(right, current_left.type());
       cmp = notequal_exprt{current_left, right};
-    else if(op == "Lt")
-      cmp = binary_relation_exprt{current_left, ID_lt, right};
-    else if(op == "LtE")
-      cmp = binary_relation_exprt{current_left, ID_le, right};
-    else if(op == "Gt")
-      cmp = binary_relation_exprt{current_left, ID_gt, right};
-    else if(op == "GtE")
-      cmp = binary_relation_exprt{current_left, ID_ge, right};
+    }
+    else if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
+    {
+      if(current_left.type() != right.type())
+        right = safe_typecast(right, current_left.type());
+      irep_idt rel_id = op == "Lt"    ? ID_lt
+                        : op == "LtE" ? ID_le
+                        : op == "Gt"  ? ID_gt
+                                      : ID_ge;
+      cmp = binary_relation_exprt{current_left, rel_id, right};
+    }
     else if(op == "In" || op == "NotIn")
     {
       // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
@@ -4222,8 +4260,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 new_sym.is_static_lifetime = current_function.empty();
                 symbol_table.add(new_sym);
               }
-              block.add(code_frontend_assignt{
-                symbol_table.lookup_ref(sym_id).symbol_expr(), field_expr});
+              const symbolt &target_sym = symbol_table.lookup_ref(sym_id);
+              exprt typed_field = field_expr;
+              if(typed_field.type() != target_sym.type)
+                typed_field = safe_typecast(typed_field, target_sym.type);
+              block.add(
+                code_frontend_assignt{target_sym.symbol_expr(), typed_field});
             }
           }
           idx++;
@@ -5100,8 +5142,22 @@ codet python_convertert::convert_return(const jsont &stmt)
       func_sym != nullptr && func_sym->type.id() == ID_code &&
       ret_val.type() != to_code_type(func_sym->type).return_type())
     {
-      ret_val =
-        safe_typecast(ret_val, to_code_type(func_sym->type).return_type());
+      typet ret_type = to_code_type(func_sym->type).return_type();
+      // If the declared return type is the default placeholder (int)
+      // or python_value_type (union), but the actual return is a struct,
+      // update the function's return type to match.
+      if(
+        (ret_type == python_int_type() || is_python_value_type(ret_type)) &&
+        ret_val.type().id() == ID_struct)
+      {
+        code_typet new_type = to_code_type(func_sym->type);
+        new_type.return_type() = ret_val.type();
+        symbol_table.get_writeable_ref(func_id).type = new_type;
+      }
+      // If the return type was already updated to a different struct,
+      // typecast the return value to match (nondet for incompatible)
+      else
+        ret_val = safe_typecast(ret_val, ret_type);
     }
   }
 
@@ -6327,6 +6383,19 @@ bool python_convertert::convert()
       static_cast<int>(ieee_floatt::rounding_modet::ROUND_TO_EVEN),
       signed_int_type());
     symbol_table.add(rounding_symbol);
+  }
+
+  // Create __CPROVER_memory (needed for pointer operations)
+  irep_idt memory_id{CPROVER_PREFIX "memory"};
+  if(symbol_table.lookup(memory_id) == nullptr)
+  {
+    array_typet mem_type{
+      unsignedbv_typet{8}, from_integer(0, signedbv_typet{64})};
+    symbolt memory_symbol{memory_id, mem_type, "python"};
+    memory_symbol.base_name = CPROVER_PREFIX "memory";
+    memory_symbol.is_static_lifetime = true;
+    memory_symbol.is_lvalue = true;
+    symbol_table.add(memory_symbol);
   }
 
   return false;
