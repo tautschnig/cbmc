@@ -751,6 +751,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         {minus_exprt{mult_exprt{lr, rr}, mult_exprt{li, ri}},
          plus_exprt{mult_exprt{lr, ri}, mult_exprt{li, rr}}},
         ct};
+    // PLR §6.7: FloorDiv and Mod on complex raise TypeError
+    if(op == "FloorDiv" || op == "Mod")
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long type_hash = 0;
+        for(char c : std::string{"TypeError"})
+          type_hash += static_cast<unsigned char>(c);
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(),
+          from_integer(type_hash, python_int_type())});
+      }
+      return from_integer(0, python_int_type());
+    }
     // Other ops: return nondet complex
     return side_effect_expr_nondett{ct, source_locationt{}};
   }
