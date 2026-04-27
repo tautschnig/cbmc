@@ -1540,8 +1540,13 @@ exprt python_convertert::convert_call(const jsont &expr)
                     const jsont &init_body = json_member(item, "body");
                     if(init_body.is_array())
                     {
+                      // Set current_class to base so nested super()
+                      // resolves to the grandparent, not back to parent
+                      std::string saved_class = current_class;
+                      current_class = base_class;
                       for(const auto &s : as_array(init_body))
                         pending_checks.push_back(convert_statement(s));
+                      current_class = saved_class;
                     }
                     // Return a no-op value (the side effects are in
                     // pending_checks)
