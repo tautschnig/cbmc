@@ -333,21 +333,31 @@ searched sequentially for one that matches."
 
 ##### `crash-complex-floordiv` — TypeError in try/except
 
-**Problem:** `z // 2` inside a try block — the TypeError is set via
-`pending_checks` but the try body's exception guard doesn't see it
-because `pending_checks` are flushed before the statement, not between
-the expression evaluation and the assignment.
+**Problem:** `z // 2` inside a try block — the FloorDiv handler adds
+TypeError to `pending_checks`, but the checks never appear in the GOTO.
+Investigation confirmed: (a) the `is_complex` check fires correctly,
+(b) `pending_checks.push_back` is called, (c) the try-block handler
+condition `!pending_checks.empty()` was added. Yet the GOTO shows no
+`__exception_active := true`.
 
-**Fix:** The TypeError `pending_checks` need to be flushed INSIDE the
-try-block handler's temp assignment, not outside. Move the
-`pending_checks` flush into the try-block code path in `convert_assign`,
-before the temp assignment. This ensures the exception flag is set
-before the guard checks it.
+**Root cause (updated):** The `pending_checks` are being cleared
+somewhere between `convert_bin_op` adding them and `convert_statement`
+flushing them. Most likely, the `convert_assign` type coercion code
+path (which handles `python_value_type → numeric` unwrapping) calls
+`safe_typecast` or `unwrap_value` which internally clears or replaces
+`pending_checks`. Need to trace the exact code path with a debugger
+or add logging at every `pending_checks.clear()` call.
+
+**Fix:** Add a `std::vector<codet> saved_checks` before the type
+coercion code in `convert_assign`, save `pending_checks`, and restore
+them after coercion. Or: move the TypeError from `pending_checks` to
+a direct `block.add()` in the FloorDiv handler (requires passing the
+block through the expression converter, which is a larger refactor).
 
 **PLR reference:** §6.7 — "Floor division and modulo are not defined
 for complex numbers."
 
-**Effort:** 30 minutes. **Affects:** ~3 ESBMC tests.
+**Effort:** 1-2 hours (debugging). **Affects:** ~3 ESBMC tests.
 
 #### Tier 2 — Moderate (1-2 hours each)
 
