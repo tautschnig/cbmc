@@ -428,37 +428,59 @@ content tracking.
 
 ##### `limit-constructor-expr` — constructor in list literal
 
-**Problem:** `[Pair(1,2), Pair(3,4)]` — the constructor-as-expression
-path returns a temp symbol, but the return type inference during
-function registration doesn't detect constructors inside list literals.
-The list element type is inferred as `int` instead of `Pair`.
+**Problem:** `[Pair(1,2)]` — the list literal handler creates a
+`struct_exprt` with the constructor temp as an element. The element
+type is correctly `Pair` struct. But the GOTO shows `lst := nondet`.
 
-**Fix:** The constructor-as-expression path in `convert_call` returns
-a `symbol_exprt` with the correct class type. The list literal handler
-should use this type. The issue is that the function registration
-scan for return types doesn't cover all constructor call patterns.
-Extend the scan to also check for constructor calls in list/tuple
-literals and other expression contexts.
+**Root cause (updated from investigation):** The list handler calls
+`safe_zero(Pair_struct)` for the 63 padding elements. The `safe_zero`
+creates a `struct_exprt` with zeroed fields. This works for simple
+structs. But the list handler also calls `python_list_type(Pair_struct)`
+which creates an `array_typet{Pair_struct, 64}`. The resulting list
+struct is very large (64 × sizeof(Pair)). The issue is likely that
+`convert_assign` or `convert_statement` converts the large struct to
+nondet via `safe_typecast` because the types don't match exactly
+(the list type from `python_list_type` might differ structurally from
+the variable's type if the Pair struct was updated between creation).
+
+**Fix:** Debug with logging to find exactly where the struct_exprt
+is converted to nondet. Most likely: (a) the pass 1.5 type update
+changes the Pair struct after the list type was created, causing a
+structural mismatch, or (b) the `convert_assign` type coercion code
+treats the list-of-structs as incompatible. Fix by ensuring the list
+type uses the FINAL Pair struct (after pass 1.5), or by adding a
+struct-equality check that ignores component order.
 
 **PLR reference:** §6.3.4 — "A call calls a callable object."
 
-**Effort:** 2-3 hours. **Affects:** ~5 ESBMC tests.
+**Effort:** 2-3 hours (debugging). **Affects:** ~5 ESBMC tests.
 
 ##### `crash-out-of-memory` — nested list operations
 
-**Problem:** `[[1,2],[3,4]]` — nested lists cause excessive memory
-usage because each inner list generates 64 elements × 8 bytes, and
-the outer list has 64 slots of inner lists = 64 × 64 × 8 = 32KB per
-nested list variable. With multiple operations, this exceeds memory.
+**Problem:** `lst = [inner]; assert lst[0][0] == 1` — nested list
+subscript `lst[0][0]` fails the bounds check. The outer subscript
+`lst[0]` returns the inner list struct. The inner subscript `[0]`
+checks `0 < inner.length`. But the inner list was stored as an
+element of the outer list's data array, and the length field may
+not be preserved correctly through the array storage.
 
-**Fix:** Reduce `PYTHON_MAX_LIST_LENGTH` for nested lists, or detect
-nested list types and use a smaller bound. Alternatively, add a
-`--python-max-list-length` command-line option so users can tune the
-bound for their specific program.
+**Root cause (updated):** The inner list `[1, 2]` has `length=2`.
+When stored in the outer list's data array (type `array[64] of
+list_struct`), the struct is copied. The subscript `lst[0]` returns
+`index_exprt{data, 0}` which should return the full inner list struct
+including `length=2`. The bounds check `0 < length` should pass.
+The failure suggests the inner list's length is nondet (from
+`safe_zero` padding) rather than the actual value.
+
+**Fix:** Verify that `lst[0]` returns the correct inner list struct
+(not a padding zero). The issue may be that the outer list's data
+array has the inner list at index 0 but the bounds check uses the
+OUTER list's length instead of the inner list's length. Check the
+subscript handler for nested list access.
 
 **PLR reference:** §3.2 — "Lists are mutable sequences."
 
-**Effort:** 2-3 hours. **Affects:** ~3 ESBMC tests.
+**Effort:** 2-3 hours (debugging). **Affects:** ~3 ESBMC tests.
 
 ##### `limit-set-builtin` — set() deduplication
 
