@@ -854,9 +854,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "FloorDiv")
   {
-    // Complex // anything is a TypeError — return nondet
+    // PLR §6.7: Complex // anything raises TypeError
     if(is_complex(left.type()) || is_complex(right.type()))
-      return side_effect_expr_nondett{python_int_type(), source_locationt{}};
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long type_hash = 0;
+        for(char c : std::string{"TypeError"})
+          type_hash += static_cast<unsigned char>(c);
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(),
+          from_integer(type_hash, python_int_type())});
+      }
+      return from_integer(0, python_int_type());
+    }
     add_check(
       notequal_exprt{right, safe_zero(right.type())},
       "division-by-zero",
@@ -866,6 +884,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "Mod")
   {
+    // PLR §6.7: Complex % anything raises TypeError
+    if(is_complex(left.type()) || is_complex(right.type()))
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long type_hash = 0;
+        for(char c : std::string{"TypeError"})
+          type_hash += static_cast<unsigned char>(c);
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(),
+          from_integer(type_hash, python_int_type())});
+      }
+      return from_integer(0, python_int_type());
+    }
     add_check(
       notequal_exprt{right, safe_zero(right.type())},
       "division-by-zero",
@@ -2938,12 +2977,28 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // Array/list indexing
   if(is_python_list_type(value.type()))
   {
-    // Non-integer index → TypeError (return nondet)
+    // PLR §6.3.2: Non-integer index → TypeError
     if(
       slice.type().id() != ID_signedbv && slice.type().id() != ID_unsignedbv &&
       slice.type().id() != ID_integer && slice.type().id() != ID_bool)
     {
-      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long type_hash = 0;
+        for(char c : std::string{"TypeError"})
+          type_hash += static_cast<unsigned char>(c);
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(),
+          from_integer(type_hash, python_int_type())});
+      }
+      return from_integer(0, python_int_type());
     }
     member_exprt length{value, "length", python_int_type()};
 
