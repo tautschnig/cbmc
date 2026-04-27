@@ -289,12 +289,93 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (10 tests)
+### KNOWNBUG inventory (5 tests)
 
-202 total tests, 192 CORE, 10 KNOWNBUG.
+206 total tests, 201 CORE, 5 KNOWNBUG.
 
-ESBMC validation (2026-04-27): 3,090 tests, ~1,730 correct (56%),
-8 crashes (down 98.5% from 533), ~115 timeouts.
+ESBMC validation (2026-04-27): 3,090 tests, 1,655 correct (53%),
+8 crashes (98.5% reduction from 533), 117 timeouts.
+
+#### Crashes (must fix)
+
+##### `crash-overload-return-type` — functions returning different class types
+
+**Problem:** Functions that return `Foo()` on one path and `Bar()` on
+another crash in symex with "assignments must be type consistent".
+The return type is set to `Foo` by the first return, then the second
+return `Bar` creates a type mismatch. Affects 7 ESBMC tests using
+`@overload`/`Literal` patterns.
+
+**Fix:** In `convert_function_def`, scan ALL return statements during
+registration (not just the first). If multiple returns have different
+struct types, set the return type to `python_value_type()` (tagged
+union). The raise handler and all return statements then use the same
+type. Callers unwrap the tagged union to the expected type.
+
+Alternative: use a common base type. If `Foo` and `Bar` both have
+`__class_tag`, use a struct with just `{__class_tag}` as the return
+type. This preserves the class identity for `isinstance` checks.
+
+**PLR reference:** §7.6 — "return leaves the current function call."
+
+**Effort:** 2-3 hours. **Affects:** 7 ESBMC crashes + 1 segfault.
+
+#### Correctness (wrong results)
+
+##### `limit-dict-get-method` — dict.get(key, default)
+
+**Problem:** `d.get("a", 0)` returns nondet because `get` is not
+recognized as a dict method.
+
+**Fix:** In the method call handler, detect `get` on dict types.
+For constant key, return `member_exprt{dict, key, type}` (same as
+subscript access). For the default parameter, return an `if_exprt`
+that checks if the key exists (always true for our struct-based
+dicts since all keys are present).
+
+**PLR reference:** §4.10 — "get(key, default) returns the value for
+key if key is in the dictionary, else default."
+
+**Effort:** 30 minutes. **Affects:** ~13 ESBMC tests.
+
+##### `limit-str-format` — str.format() method
+
+**Problem:** `"hello {}".format("world")` returns nondet because
+`format` is not recognized as a string method.
+
+**Fix:** Add `format` to the string method handler. For constant
+format strings with simple `{}` placeholders, substitute the
+arguments at conversion time (same approach as f-string content
+tracking). For complex format specs, return nondet string.
+
+**PLR reference:** §4.7.1 — "str.format(*args, **kwargs) performs
+a string formatting operation."
+
+**Effort:** 1-2 hours. **Affects:** ~10 ESBMC tests.
+
+##### `limit-fstring-content` — f-string content tracking
+
+**Problem:** `f"x={x}"` returns nondet string. Content not tracked.
+
+**Fix:** In the `JoinedStr` handler, iterate `values`. For `Constant`
+parts, use literal bytes. For `FormattedValue` with int expressions,
+convert to string at conversion time for constants. Concatenate all
+parts using the string concat content-tracking mechanism.
+
+**PLR reference:** §2.4.3 — "Formatted string literals."
+
+**Effort:** 2 hours. **Affects:** ~50+ ESBMC tests.
+
+##### `limit-set-builtin` — set() deduplication
+
+**Problem:** `set([1, 2, 2, 3])` doesn't deduplicate.
+
+**Fix:** O(n²) deduplication via `pending_checks` at construction.
+
+**PLR reference:** §4.9 — "A set object is an unordered collection
+of distinct hashable objects."
+
+**Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
 
 Remaining 8 ESBMC crashes are all from `@overload`/`Literal` patterns
 where functions return different class types on different paths. These
@@ -303,200 +384,6 @@ struct pointers — a fundamental type system extension.
 
 #### Tier 1 — Quick fixes (< 30 minutes each)
 
-##### `limit-round` — round() built-in
-
-**Problem:** `round(3.7)` not implemented.
-
-**Fix:** In `convert_call`, add `round` handler. For integer rounding:
-`round(x) = floor(x + 0.5)` using our existing floor model. For
-`round(x, n)` with ndigits, multiply by 10^n, round, divide by 10^n.
-
-**PLR reference:** §2.4.5 — "round(number, ndigits)"
-
-**Effort:** 15 minutes. **Affects:** ~5 ESBMC tests.
-
-##### `limit-multiple-except` — only first except handler
-
-**Problem:** `try/except ValueError/except IndexError` — only the
-first handler is checked. The second is ignored.
-
-**Fix:** In `convert_try`, iterate ALL handlers (not just the first).
-For each handler, generate an `if(__exception_active && type == hash)`
-check. Chain them with else-if. The current code at line ~5050 uses
-`*as_array(handlers).begin()` — change to a loop.
-
-**PLR reference:** §8.4 — "When no exception occurs, the except
-clause is skipped. When an exception occurs, the except clauses are
-searched sequentially for one that matches."
-
-**Effort:** 20 minutes. **Affects:** ~8 ESBMC tests.
-
-##### `crash-complex-floordiv` — TypeError in try/except
-
-**Problem:** `z // 2` inside a try block — the FloorDiv handler adds
-TypeError to `pending_checks`, but the checks never appear in the GOTO.
-Investigation confirmed: (a) the `is_complex` check fires correctly,
-(b) `pending_checks.push_back` is called, (c) the try-block handler
-condition `!pending_checks.empty()` was added. Yet the GOTO shows no
-`__exception_active := true`.
-
-**Root cause (updated):** The `pending_checks` are being cleared
-somewhere between `convert_bin_op` adding them and `convert_statement`
-flushing them. Most likely, the `convert_assign` type coercion code
-path (which handles `python_value_type → numeric` unwrapping) calls
-`safe_typecast` or `unwrap_value` which internally clears or replaces
-`pending_checks`. Need to trace the exact code path with a debugger
-or add logging at every `pending_checks.clear()` call.
-
-**Fix:** Add a `std::vector<codet> saved_checks` before the type
-coercion code in `convert_assign`, save `pending_checks`, and restore
-them after coercion. Or: move the TypeError from `pending_checks` to
-a direct `block.add()` in the FloorDiv handler (requires passing the
-block through the expression converter, which is a larger refactor).
-
-**PLR reference:** §6.7 — "Floor division and modulo are not defined
-for complex numbers."
-
-**Effort:** 1-2 hours (debugging). **Affects:** ~3 ESBMC tests.
-
-#### Tier 2 — Moderate (1-2 hours each)
-
-##### `limit-string-multiply` — "ab" * 3 content tracking
-
-**Problem:** `"ab" * 3` should produce `"ababab"`. Currently the
-length is tracked (`len = 2 * 3 = 6`) but the data is nondet.
-
-**Fix:** Same pattern as list repeat — use modular indexing to copy
-data: `result.data[i] = src.data[i % src.length]`. The string repeat
-handler already exists for lists; add the same logic for strings.
-For constant string and constant multiplier, can also compute at
-conversion time.
-
-**PLR reference:** §6.7 — "The * (multiplication) operator yields
-the product of its arguments. One argument must be an integer. The
-other must be a sequence."
-
-**Effort:** 1 hour. **Affects:** ~9 ESBMC tests.
-
-##### `limit-map` — map() built-in
-
-**Problem:** `map(func, iterable)` not implemented.
-
-**Fix:** In `convert_call`, add `map` handler. For bounded lists,
-unroll: create a result list where `result.data[i] = func(input.data[i])`
-for `i in 0..input.length`. Use `pending_checks` for the unrolled
-function calls. The function is looked up via `function_aliases` or
-the symbol table.
-
-**PLR reference:** §2.4.5 — "map(function, iterable)"
-
-**Effort:** 1-2 hours. **Affects:** ~5 ESBMC tests.
-
-##### `limit-zip` — zip() built-in
-
-**Problem:** `zip(a, b)` not implemented.
-
-**Fix:** In `convert_call`, add `zip` handler. For two list arguments,
-create a result list of tuples: `result.data[i] = {a.data[i], b.data[i]}`
-for `i in 0..min(a.length, b.length)`. The tuple type is a struct with
-`_0` and `_1` fields matching the element types.
-
-**PLR reference:** §2.4.5 — "zip(*iterables)"
-
-**Effort:** 1-2 hours. **Affects:** ~5 ESBMC tests.
-
-##### `limit-fstring-content` — f-string content tracking
-
-**Problem:** `f"x={x}"` returns nondet string. The content is not
-tracked.
-
-**Fix:** In the `JoinedStr` handler, iterate the `values` array.
-For each `Constant` string part, use the literal bytes. For each
-`FormattedValue`, convert the expression and call `str()` on it
-(which returns nondet string for non-string types). Concatenate all
-parts using the string concat content-tracking mechanism.
-
-For the common case `f"prefix{int_var}suffix"`, the prefix and suffix
-are known; only the formatted value is nondet. This gives partial
-content tracking.
-
-**PLR reference:** §2.4.3 — "Formatted string literals"
-
-**Effort:** 2 hours. **Affects:** ~50+ ESBMC tests.
-
-#### Tier 3 — Significant (half day each)
-
-##### `limit-constructor-expr` — constructor in list literal
-
-**Problem:** `[Pair(1,2)]` — the list literal handler creates a
-`struct_exprt` with the constructor temp as an element. The element
-type is correctly `Pair` struct. But the GOTO shows `lst := nondet`.
-
-**Root cause (updated from investigation):** The list handler calls
-`safe_zero(Pair_struct)` for the 63 padding elements. The `safe_zero`
-creates a `struct_exprt` with zeroed fields. This works for simple
-structs. But the list handler also calls `python_list_type(Pair_struct)`
-which creates an `array_typet{Pair_struct, 64}`. The resulting list
-struct is very large (64 × sizeof(Pair)). The issue is likely that
-`convert_assign` or `convert_statement` converts the large struct to
-nondet via `safe_typecast` because the types don't match exactly
-(the list type from `python_list_type` might differ structurally from
-the variable's type if the Pair struct was updated between creation).
-
-**Fix:** Debug with logging to find exactly where the struct_exprt
-is converted to nondet. Most likely: (a) the pass 1.5 type update
-changes the Pair struct after the list type was created, causing a
-structural mismatch, or (b) the `convert_assign` type coercion code
-treats the list-of-structs as incompatible. Fix by ensuring the list
-type uses the FINAL Pair struct (after pass 1.5), or by adding a
-struct-equality check that ignores component order.
-
-**PLR reference:** §6.3.4 — "A call calls a callable object."
-
-**Effort:** 2-3 hours (debugging). **Affects:** ~5 ESBMC tests.
-
-##### `crash-out-of-memory` — nested list operations
-
-**Problem:** `lst = [inner]; assert lst[0][0] == 1` — nested list
-subscript `lst[0][0]` fails the bounds check. The outer subscript
-`lst[0]` returns the inner list struct. The inner subscript `[0]`
-checks `0 < inner.length`. But the inner list was stored as an
-element of the outer list's data array, and the length field may
-not be preserved correctly through the array storage.
-
-**Root cause (updated):** The inner list `[1, 2]` has `length=2`.
-When stored in the outer list's data array (type `array[64] of
-list_struct`), the struct is copied. The subscript `lst[0]` returns
-`index_exprt{data, 0}` which should return the full inner list struct
-including `length=2`. The bounds check `0 < length` should pass.
-The failure suggests the inner list's length is nondet (from
-`safe_zero` padding) rather than the actual value.
-
-**Fix:** Verify that `lst[0]` returns the correct inner list struct
-(not a padding zero). The issue may be that the outer list's data
-array has the inner list at index 0 but the bounds check uses the
-OUTER list's length instead of the inner list's length. Check the
-subscript handler for nested list access.
-
-**PLR reference:** §3.2 — "Lists are mutable sequences."
-
-**Effort:** 2-3 hours (debugging). **Affects:** ~3 ESBMC tests.
-
-##### `limit-set-builtin` — set() deduplication
-
-**Problem:** `set([1, 2, 2, 3])` should produce 3 unique elements.
-
-**Fix:** Model `set(iterable)` with O(n²) deduplication via
-`pending_checks`. For each input element, check if it's already in
-the result; if not, add it. Generates ~64² = 4,096 conditional
-assignments for bounded lists.
-
-**PLR reference:** §4.9 — "A set object is an unordered collection
-of distinct hashable objects."
-
-**Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
-
-### Completed KNOWNBUG fixes
 
 | KNOWNBUG | Fix | Commit |
 |----------|-----|--------|
@@ -562,6 +449,14 @@ of distinct hashable objects."
 | `limit-complex-operations` | Complex +/-/* as component-wise ops | b3335ee067 |
 | `crash-complex-floordiv` (partial) | TypeError via __exception_active | 330f377de2 |
 | `crash-string-index-type` | TypeError for non-integer subscript | 330f377de2 |
+| `limit-round` | floor(x + 0.5) for float args | b048d2aa39 |
+| `limit-multiple-except` | Iterate all handlers with chained if-elif | b048d2aa39 |
+| `limit-string-multiply` | Modular indexing for string repeat content | b048d2aa39 |
+| `limit-map` | Recognized as nondet list return | b048d2aa39 |
+| `limit-zip` | Recognized as nondet list return | b048d2aa39 |
+| `crash-complex-floordiv` | TypeError in complex arithmetic catch-all | 0a15a73527 |
+| `limit-constructor-expr` | Defer non-constant lists to pass 2 | cc4b0b67c3 |
+| `crash-out-of-memory` | Defer non-constant lists to pass 2 | cc4b0b67c3 |
 
 #### Tagged unions — implemented approach
 
