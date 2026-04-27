@@ -4402,10 +4402,34 @@ codet python_convertert::convert_assign(const jsont &stmt)
                          existing->type.id() == ID_floatbv ||
                          existing->type.id() == ID_bool ||
                          existing->type.id() == ID_integer;
-      if(src_numeric && tgt_numeric)
+      // Also treat python_value_type → numeric as compatible
+      // (unwrap the tagged union to the target type)
+      if(is_python_value_type(rhs.type()) && tgt_numeric)
+      {
+        rhs = unwrap_value(rhs, existing->type);
+      }
+      else if(src_numeric && tgt_numeric)
       {
         rhs = safe_typecast(rhs, existing->type);
         // Fall through to normal assignment below
+      }
+      // numeric → python_value_type: wrap
+      else if(src_numeric && is_python_value_type(existing->type))
+      {
+        rhs = wrap_value(rhs);
+      }
+      // python_value_type → struct: unwrap or nondet
+      else if(
+        is_python_value_type(rhs.type()) && existing->type.id() == ID_struct)
+      {
+        rhs = safe_typecast(rhs, existing->type);
+      }
+      // struct → different struct: nondet
+      else if(
+        rhs.type().id() == ID_struct && existing->type.id() == ID_struct &&
+        rhs.type() != existing->type)
+      {
+        rhs = safe_typecast(rhs, existing->type);
       }
       else if(if_else_depth > 0)
       {
@@ -4515,8 +4539,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
         eval.add_source_location() = loc;
         block.add(std::move(eval));
 
-        // Guard the actual assignment
-        code_frontend_assignt assign{sym.symbol_expr(), tmp_sym.symbol_expr()};
+        // Guard the actual assignment (typecast if needed)
+        exprt assign_rhs = tmp_sym.symbol_expr();
+        if(assign_rhs.type() != sym.type)
+          assign_rhs = safe_typecast(assign_rhs, sym.type);
+        code_frontend_assignt assign{sym.symbol_expr(), assign_rhs};
         assign.add_source_location() = loc;
         code_ifthenelset guarded{
           not_exprt{exc_sym->symbol_expr()}, std::move(assign)};
@@ -5143,21 +5170,7 @@ codet python_convertert::convert_return(const jsont &stmt)
       ret_val.type() != to_code_type(func_sym->type).return_type())
     {
       typet ret_type = to_code_type(func_sym->type).return_type();
-      // If the declared return type is the default placeholder (int)
-      // or python_value_type (union), but the actual return is a struct,
-      // update the function's return type to match.
-      if(
-        (ret_type == python_int_type() || is_python_value_type(ret_type)) &&
-        ret_val.type().id() == ID_struct)
-      {
-        code_typet new_type = to_code_type(func_sym->type);
-        new_type.return_type() = ret_val.type();
-        symbol_table.get_writeable_ref(func_id).type = new_type;
-      }
-      // If the return type was already updated to a different struct,
-      // typecast the return value to match (nondet for incompatible)
-      else
-        ret_val = safe_typecast(ret_val, ret_type);
+      ret_val = safe_typecast(ret_val, ret_type);
     }
   }
 
@@ -5204,7 +5217,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   // Return type
   const jsont &returns = json_member(stmt, "returns");
-  typet return_type;
+  typet return_type = empty_typet{};
   if(!returns.is_null())
   {
     return_type = convert_type_annotation(returns);
@@ -5226,7 +5239,19 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           if(rv.is_null())
             has_bare_return = true;
           else
+          {
             has_value_return = true;
+            // Check if return value is a constructor call
+            if(
+              is_node_type(rv, "Call") &&
+              is_node_type(json_member(rv, "func"), "Name"))
+            {
+              std::string call_name =
+                json_string(json_member(json_member(rv, "func"), "id"));
+              if(class_types.count(call_name))
+                return_type = class_types[call_name];
+            }
+          }
         }
         // Recurse into if/else/while/for/try bodies
         if(json_member(s, "body").is_array())
@@ -5243,9 +5268,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     };
     scan(json_member(stmt, "body"));
 
-    if(has_value_return)
+    if(has_value_return && return_type.id() == ID_empty)
       return_type = python_int_type();
-    else
+    else if(!has_value_return)
       return_type = empty_typet{};
   }
 
@@ -5863,9 +5888,10 @@ codet python_convertert::convert_raise(const jsont &stmt)
   }
   else
   {
-    // Inside a function: return a default value (exception propagates)
-    // The caller's try/except will check __exception_active.
-    // Check if the function returns void
+    // Inside a function: the exception flag is set, and the caller's
+    // try/except will check __exception_active. We need to return a
+    // value of the correct type. Use safe_zero of the current return
+    // type, which may be updated later by a return statement.
     irep_idt func_id{"python::" + current_function};
     const symbolt *func_sym = symbol_table.lookup(func_id);
     if(
@@ -5874,10 +5900,14 @@ codet python_convertert::convert_raise(const jsont &stmt)
     {
       block.add(code_frontend_returnt{});
     }
-    else
+    else if(func_sym != nullptr)
     {
+      // Return nondet of the declared type. If the type is later
+      // updated by a return statement, CBMC's GOTO conversion will
+      // handle the typecast.
       typet ret_type = to_code_type(func_sym->type).return_type();
-      block.add(code_frontend_returnt{safe_zero(ret_type)});
+      block.add(code_frontend_returnt{
+        side_effect_expr_nondett{ret_type, source_locationt{}}});
     }
   }
 
