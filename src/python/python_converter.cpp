@@ -6439,7 +6439,28 @@ bool python_convertert::convert()
                     var_type = python_string_type();
                 }
                 else if(is_node_type(val, "List"))
-                  var_type = python_list_type(python_int_type());
+                {
+                  // Only pre-register with int element type if elements
+                  // are simple constants. Skip for complex elements
+                  // (constructors, variables) — let pass 2 handle it.
+                  const jsont &elts = json_member(val, "elts");
+                  bool simple = true;
+                  if(elts.is_array())
+                  {
+                    for(const auto &e : as_array(elts))
+                    {
+                      if(!is_node_type(e, "Constant"))
+                      {
+                        simple = false;
+                        break;
+                      }
+                    }
+                  }
+                  if(simple)
+                    var_type = python_list_type(python_int_type());
+                  else
+                    continue; // defer to pass 2
+                }
                 else if(
                   is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
                   is_node_type(val, "Call") || is_node_type(val, "ListComp") ||
