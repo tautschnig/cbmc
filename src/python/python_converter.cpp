@@ -5391,6 +5391,19 @@ codet python_convertert::convert_return(const jsont &stmt)
 // "A function definition defines a user-defined function object."
 codet python_convertert::convert_function_def(const jsont &stmt)
 {
+  // PLR §8.7: skip @overload decorated functions (type hints only)
+  const jsont &decorators = json_member(stmt, "decorator_list");
+  if(decorators.is_array())
+  {
+    for(const auto &dec : as_array(decorators))
+    {
+      if(
+        is_node_type(dec, "Name") &&
+        json_string(json_member(dec, "id")) == "overload")
+        return code_skipt{};
+    }
+  }
+
   std::string func_name = json_string(json_member(stmt, "name"));
   source_locationt loc = get_location(stmt);
 
