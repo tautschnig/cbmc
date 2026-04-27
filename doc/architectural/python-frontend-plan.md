@@ -289,170 +289,180 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (7 tests)
+### KNOWNBUG inventory (10 tests)
 
-192 total tests, 185 CORE, 7 KNOWNBUG.
+202 total tests, 192 CORE, 10 KNOWNBUG.
 
-ESBMC validation (2026-04-26): 3,090 tests, 1,728 correct (55%),
-29 crashes, 117 timeouts. Down from 533 crashes initially (94.6%
-reduction). All remaining KNOWNBUGs are wrong-result or missing-feature
-issues — no crashes from our converter code.
+ESBMC validation (2026-04-27): 3,090 tests, ~1,730 correct (56%),
+8 crashes (down 98.5% from 533), ~115 timeouts.
+
+Remaining 8 ESBMC crashes are all from `@overload`/`Literal` patterns
+where functions return different class types on different paths. These
+require erased return types or a tagged union that can hold class
+struct pointers — a fundamental type system extension.
 
 #### Tier 1 — Quick fixes (< 30 minutes each)
 
-##### `crash-complex-abs` — abs() on complex returns nondet
+##### `limit-round` — round() built-in
 
-**Problem:** `abs(complex(3, 4))` should return `5.0` (the magnitude
-√(3²+4²)). Currently returns nondet float because we can't model
-`sqrt` as an exact expression.
+**Problem:** `round(3.7)` not implemented.
 
-**Fix:** For constant complex arguments, compute the magnitude at
-conversion time using `std::sqrt` (same approach as `math.sqrt`):
-```cpp
-if(r.is_constant() && i.is_constant())
-{
-  double rv = std::stod(ieee_floatt{...}.to_ansi_c_string());
-  double iv = std::stod(ieee_floatt{...}.to_ansi_c_string());
-  ieee_floatt result{...};
-  result.from_double(std::sqrt(rv*rv + iv*iv));
-  return result.to_expr();
-}
-```
-For variable complex arguments, return nondet (sound overapproximation).
+**Fix:** In `convert_call`, add `round` handler. For integer rounding:
+`round(x) = floor(x + 0.5)` using our existing floor model. For
+`round(x, n)` with ndigits, multiply by 10^n, round, divide by 10^n.
 
-**PLR reference:** §2.4.5 — "For a complex number z, abs(z) returns
-its magnitude."
+**PLR reference:** §2.4.5 — "round(number, ndigits)"
 
-**Effort:** 15 minutes. **Affects:** ~18 ESBMC tests.
+**Effort:** 15 minutes. **Affects:** ~5 ESBMC tests.
 
-##### `crash-complex-floordiv` — complex // int returns nondet
+##### `limit-multiple-except` — only first except handler
 
-**Problem:** `complex(1,2) // 2` should raise `TypeError`. Currently
-returns nondet int. The test expects the TypeError to be caught by a
-try/except block.
+**Problem:** `try/except ValueError/except IndexError` — only the
+first handler is checked. The second is ignored.
 
-**Fix:** In `convert_bin_op` for `FloorDiv` and `Mod` with complex
-operands, set `__exception_active = true` and `__exception_type` to
-the TypeError hash, then return a default value. This models the
-TypeError that Python raises for these operations on complex numbers.
+**Fix:** In `convert_try`, iterate ALL handlers (not just the first).
+For each handler, generate an `if(__exception_active && type == hash)`
+check. Chain them with else-if. The current code at line ~5050 uses
+`*as_array(handlers).begin()` — change to a loop.
 
-**PLR reference:** §6.7 — "The floor division and modulo operators
-are not defined for complex numbers."
+**PLR reference:** §8.4 — "When no exception occurs, the except
+clause is skipped. When an exception occurs, the except clauses are
+searched sequentially for one that matches."
 
-**Effort:** 20 minutes. **Affects:** ~3 ESBMC tests.
+**Effort:** 20 minutes. **Affects:** ~8 ESBMC tests.
 
-##### `crash-string-index-type` — list["string"] returns nondet
+##### `crash-complex-floordiv` — TypeError in try/except
 
-**Problem:** `numbers["invalid"]` should raise `TypeError`. Currently
-returns nondet. The test expects the TypeError to be caught.
+**Problem:** `z // 2` inside a try block — the TypeError is set via
+`pending_checks` but the try body's exception guard doesn't see it
+because `pending_checks` are flushed before the statement, not between
+the expression evaluation and the assignment.
 
-**Fix:** Same pattern as complex floordiv: in `convert_subscript`,
-when the index is a non-integer type (string, struct, etc.), set
-`__exception_active` and `__exception_type` for TypeError, then
-return a default value.
+**Fix:** The TypeError `pending_checks` need to be flushed INSIDE the
+try-block handler's temp assignment, not outside. Move the
+`pending_checks` flush into the try-block code path in `convert_assign`,
+before the temp assignment. This ensures the exception flag is set
+before the guard checks it.
 
-**PLR reference:** §6.3.2 — "The subscription of a sequence with a
-non-integer index raises TypeError."
+**PLR reference:** §6.7 — "Floor division and modulo are not defined
+for complex numbers."
 
-**Effort:** 15 minutes. **Affects:** ~1 ESBMC test.
-
-##### `limit-dict-string-compare` — dict annotation loses struct
-
-**Problem:** `d: dict = {"ref": "Python"}` — the `dict` type
-annotation resolves to `python_int_type()` (placeholder) in pass 0.
-The variable `d` gets type `int`, losing the dict struct. The
-`convert_ann_assign` fix (using RHS type) only works during pass 2,
-but pass 0 already created the symbol with the wrong type.
-
-**Fix:** In pass 0, when processing `AnnAssign` with a `dict`/`set`
-type annotation AND a dict/set literal RHS, skip the pre-registration
-(let pass 2 handle it with the correct RHS type). This is the same
-pattern used for `Call`, `ListComp`, etc. — complex RHS types are
-deferred to pass 2.
-
-```cpp
-// In pass 0 AnnAssign handling:
-std::string type_name = json_string(json_member(annotation, "id"));
-if(type_name == "dict" || type_name == "set")
-  continue; // defer to pass 2
-```
-
-**PLR reference:** §3.2 — "Dictionaries are mutable mappings."
-
-**Effort:** 10 minutes. **Affects:** ~15 ESBMC tests.
+**Effort:** 30 minutes. **Affects:** ~3 ESBMC tests.
 
 #### Tier 2 — Moderate (1-2 hours each)
 
-##### `limit-del-dict` — del d["key"] not modeled
+##### `limit-string-multiply` — "ab" * 3 content tracking
 
-**Problem:** `del d["a"]` on a dict struct does nothing. The dict is
-modeled as a struct with one field per key. Deleting a field from a
-struct is not possible in CBMC's type system.
+**Problem:** `"ab" * 3` should produce `"ababab"`. Currently the
+length is tracked (`len = 2 * 3 = 6`) but the data is nondet.
 
-**Fix:** Model dict deletion by adding a parallel "deleted" bitmask.
-For each dict, maintain a companion symbol `d__deleted` (a struct of
-bools, one per key). `del d["a"]` sets `d__deleted.a = true`. Dict
-access `d["a"]` checks `!d__deleted.a` first. `len(d)` subtracts
-the count of deleted keys. `for k in d` skips deleted keys.
+**Fix:** Same pattern as list repeat — use modular indexing to copy
+data: `result.data[i] = src.data[i % src.length]`. The string repeat
+handler already exists for lists; add the same logic for strings.
+For constant string and constant multiplier, can also compute at
+conversion time.
 
-Alternative simpler approach: model `del d["key"]` as setting the
-value to a sentinel (e.g., None/0). This doesn't change the length
-but prevents the value from being used. Less precise but much simpler.
+**PLR reference:** §6.7 — "The * (multiplication) operator yields
+the product of its arguments. One argument must be an integer. The
+other must be a sequence."
 
-**PLR reference:** §7.5 — "Deletion of a target list recursively
-deletes each target."
+**Effort:** 1 hour. **Affects:** ~9 ESBMC tests.
 
-**Effort:** 1-2 hours. **Affects:** ~4 ESBMC tests.
+##### `limit-map` — map() built-in
 
-##### `limit-str-split` — str.split() returns nondet list
+**Problem:** `map(func, iterable)` not implemented.
 
-**Problem:** `"a,b,c".split(",")` returns a nondet list. The test
-asserts `len(parts) == 3` which can't be proven.
+**Fix:** In `convert_call`, add `map` handler. For bounded lists,
+unroll: create a result list where `result.data[i] = func(input.data[i])`
+for `i in 0..input.length`. Use `pending_checks` for the unrolled
+function calls. The function is looked up via `function_aliases` or
+the symbol table.
 
-**Fix:** For constant string and constant delimiter, split at
-conversion time:
-1. Scan the string data array for delimiter bytes
-2. Count occurrences → `n_parts = count + 1`
-3. Build a list of string structs, each containing the substring
-   between delimiters
-4. Return the list with `length = n_parts`
+**PLR reference:** §2.4.5 — "map(function, iterable)"
 
-For variable strings/delimiters, keep the nondet overapproximation.
+**Effort:** 1-2 hours. **Affects:** ~5 ESBMC tests.
 
-Implementation: iterate the constant string's data array, find
-delimiter positions, extract substrings using the same element-copy
-pattern as string concat.
+##### `limit-zip` — zip() built-in
 
-**PLR reference:** §4.7.1 — "str.split(sep) returns a list of the
-words in the string, using sep as the delimiter."
+**Problem:** `zip(a, b)` not implemented.
 
-**Effort:** 2 hours. **Affects:** ~16 ESBMC tests.
+**Fix:** In `convert_call`, add `zip` handler. For two list arguments,
+create a result list of tuples: `result.data[i] = {a.data[i], b.data[i]}`
+for `i in 0..min(a.length, b.length)`. The tuple type is a struct with
+`_0` and `_1` fields matching the element types.
+
+**PLR reference:** §2.4.5 — "zip(*iterables)"
+
+**Effort:** 1-2 hours. **Affects:** ~5 ESBMC tests.
+
+##### `limit-fstring-content` — f-string content tracking
+
+**Problem:** `f"x={x}"` returns nondet string. The content is not
+tracked.
+
+**Fix:** In the `JoinedStr` handler, iterate the `values` array.
+For each `Constant` string part, use the literal bytes. For each
+`FormattedValue`, convert the expression and call `str()` on it
+(which returns nondet string for non-string types). Concatenate all
+parts using the string concat content-tracking mechanism.
+
+For the common case `f"prefix{int_var}suffix"`, the prefix and suffix
+are known; only the formatted value is nondet. This gives partial
+content tracking.
+
+**PLR reference:** §2.4.3 — "Formatted string literals"
+
+**Effort:** 2 hours. **Affects:** ~50+ ESBMC tests.
+
+#### Tier 3 — Significant (half day each)
+
+##### `limit-constructor-expr` — constructor in list literal
+
+**Problem:** `[Pair(1,2), Pair(3,4)]` — the constructor-as-expression
+path returns a temp symbol, but the return type inference during
+function registration doesn't detect constructors inside list literals.
+The list element type is inferred as `int` instead of `Pair`.
+
+**Fix:** The constructor-as-expression path in `convert_call` returns
+a `symbol_exprt` with the correct class type. The list literal handler
+should use this type. The issue is that the function registration
+scan for return types doesn't cover all constructor call patterns.
+Extend the scan to also check for constructor calls in list/tuple
+literals and other expression contexts.
+
+**PLR reference:** §6.3.4 — "A call calls a callable object."
+
+**Effort:** 2-3 hours. **Affects:** ~5 ESBMC tests.
+
+##### `crash-out-of-memory` — nested list operations
+
+**Problem:** `[[1,2],[3,4]]` — nested lists cause excessive memory
+usage because each inner list generates 64 elements × 8 bytes, and
+the outer list has 64 slots of inner lists = 64 × 64 × 8 = 32KB per
+nested list variable. With multiple operations, this exceeds memory.
+
+**Fix:** Reduce `PYTHON_MAX_LIST_LENGTH` for nested lists, or detect
+nested list types and use a smaller bound. Alternatively, add a
+`--python-max-list-length` command-line option so users can tune the
+bound for their specific program.
+
+**PLR reference:** §3.2 — "Lists are mutable sequences."
+
+**Effort:** 2-3 hours. **Affects:** ~3 ESBMC tests.
 
 ##### `limit-set-builtin` — set() deduplication
 
-**Problem:** `set([1, 2, 2, 3])` should produce a collection with
-3 unique elements. Currently modeled as a list without deduplication.
+**Problem:** `set([1, 2, 2, 3])` should produce 3 unique elements.
 
-**Fix:** Model `set(iterable)` by iterating the input and only adding
-elements not already present. For bounded lists (up to 64 elements):
-```
-result.length = 0
-for i in 0..input.length:
-  found = false
-  for j in 0..result.length:
-    if result.data[j] == input.data[i]: found = true
-  if !found:
-    result.data[result.length] = input.data[i]
-    result.length += 1
-```
-This is O(n²) unrolled via `pending_checks`. For `PYTHON_MAX_LIST_LENGTH=64`,
-generates ~64×64 = 4,096 conditional assignments. May be slow for the
-solver but is correct.
+**Fix:** Model `set(iterable)` with O(n²) deduplication via
+`pending_checks`. For each input element, check if it's already in
+the result; if not, add it. Generates ~64² = 4,096 conditional
+assignments for bounded lists.
 
 **PLR reference:** §4.9 — "A set object is an unordered collection
 of distinct hashable objects."
 
-**Effort:** 2 hours. **Affects:** ~8 ESBMC tests.
+**Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
 
 ### Completed KNOWNBUG fixes
 
@@ -512,6 +522,14 @@ of distinct hashable objects."
 | `limit-string-char-in` | Byte-by-byte scan for character membership | 368b3d1a14 |
 | `crash-keyword-missing-param` | Replace nil args with safe_zero | 368b3d1a14 |
 | `crash-list-pop-mixed` | Save element to temp before decrementing | 4aa1b6ffbe |
+| `crash-complex-abs` | Compute magnitude at conversion time for constants | 7b960f140c |
+| `limit-dict-string-compare` | Skip dict-annotated AnnAssign in pass 0 | 7b960f140c |
+| `limit-str-split` | Conversion-time split for constant strings | 7b960f140c |
+| `limit-del-dict` | Zero dict field value on del | 7b960f140c |
+| `limit-fstring` | JoinedStr → nondet string | b3335ee067 |
+| `limit-complex-operations` | Complex +/-/* as component-wise ops | b3335ee067 |
+| `crash-complex-floordiv` (partial) | TypeError via __exception_active | 330f377de2 |
+| `crash-string-index-type` | TypeError for non-integer subscript | 330f377de2 |
 
 #### Tagged unions — implemented approach
 
@@ -550,20 +568,20 @@ All phases complete. 135 total tests, 133 CORE, 2 KNOWNBUG.
 
 ## 7. ESBMC Gap Analysis and Roadmap
 
-### Latest ESBMC validation (2026-04-26)
+### Latest ESBMC validation (2026-04-27)
 
 Full suite: 3,090 tests (including `_fail` tests).
 
 | Metric | Count | % |
 |--------|-------|---|
-| Correct (pass + fail_correct) | 1,728 | 55% |
-| Wrong pass (should pass, got FAILED) | 1,079 | 34% |
-| Wrong fail (should fail, got SUCCESS) | 137 | 4% |
-| Crashes (invariant violations) | 29 | 0.9% |
-| Timeouts (10s limit) | 90 | 2% |
+| Correct (pass + fail_correct) | ~1,730 | 56% |
+| Wrong pass (should pass, got FAILED) | ~1,060 | 34% |
+| Wrong fail (should fail, got SUCCESS) | ~140 | 4% |
+| Crashes (invariant violations) | 8 | 0.3% |
+| Timeouts (10s limit) | ~115 | 3% |
 
-Progress: initial ~1,033 pass (49%), ~533 crashes → now 1,692 correct
-(54%), 39 crashes (93% crash reduction).
+Progress: initial ~1,033 pass (49%), ~533 crashes → now ~1,730 correct
+(56%), 8 crashes (98.5% crash reduction).
 
 ### Wrong-pass breakdown (1,028 tests that should pass)
 
