@@ -1,4 +1,3 @@
 # PLR §4.7.1: str.split()
-s: str = "a,b,c"
-parts = s.split(",")
+parts = "a,b,c".split(",")
 assert len(parts) == 3

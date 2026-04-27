@@ -1533,8 +1533,98 @@ exprt python_convertert::convert_call(const jsont &expr)
       {
         if(method_name == "split")
         {
-          // Return a nondet list of strings (exact split is complex)
-          // For verification, the length is nondet but bounded
+          // PLR §4.7.1: str.split(sep)
+          // For constant string and delimiter, split at conversion time
+          if(
+            obj.id() == ID_struct && args.is_array() && !as_array(args).empty())
+          {
+            exprt delim_expr = convert_expression(*as_array(args).begin());
+            // Extract constant string bytes from obj
+            if(
+              obj.operands().size() == 2 && obj.operands()[0].is_constant() &&
+              delim_expr.id() == ID_struct &&
+              delim_expr.operands().size() == 2 &&
+              delim_expr.operands()[0].is_constant())
+            {
+              mp_integer slen, dlen;
+              if(
+                !to_integer(to_constant_expr(obj.operands()[0]), slen) &&
+                !to_integer(to_constant_expr(delim_expr.operands()[0]), dlen) &&
+                dlen == 1 && slen <= PYTHON_MAX_STRING_LENGTH)
+              {
+                // Get delimiter byte
+                const auto &delim_data = delim_expr.operands()[1];
+                mp_integer delim_byte;
+                if(
+                  delim_data.operands().size() > 0 &&
+                  delim_data.operands()[0].is_constant() &&
+                  !to_integer(
+                    to_constant_expr(delim_data.operands()[0]), delim_byte))
+                {
+                  // Scan string for delimiter, build parts
+                  const auto &str_data = obj.operands()[1];
+                  std::vector<std::string> parts;
+                  std::string current;
+                  for(mp_integer i = 0; i < slen; ++i)
+                  {
+                    std::size_t idx = i.to_ulong();
+                    if(
+                      idx < str_data.operands().size() &&
+                      str_data.operands()[idx].is_constant())
+                    {
+                      mp_integer ch;
+                      if(!to_integer(
+                           to_constant_expr(str_data.operands()[idx]), ch))
+                      {
+                        if(ch == delim_byte)
+                        {
+                          parts.push_back(current);
+                          current.clear();
+                        }
+                        else
+                          current += static_cast<char>(ch.to_ulong());
+                      }
+                    }
+                  }
+                  parts.push_back(current);
+
+                  // Build list of string structs
+                  struct_typet str_type = python_string_type();
+                  const auto &data_type =
+                    to_array_type(str_type.components()[1].type());
+                  typet list_type = python_list_type(str_type);
+                  const auto &list_data_type = to_array_type(
+                    to_struct_type(list_type).components()[1].type());
+
+                  exprt::operandst list_elems;
+                  for(const auto &part : parts)
+                  {
+                    exprt::operandst chars;
+                    for(char c : part)
+                      chars.push_back(from_integer(
+                        static_cast<unsigned char>(c), unsignedbv_typet{8}));
+                    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+                      chars.push_back(from_integer(0, unsignedbv_typet{8}));
+                    list_elems.push_back(struct_exprt{
+                      {from_integer(
+                         static_cast<long long>(part.size()),
+                         python_int_type()),
+                       array_exprt{std::move(chars), data_type}},
+                      str_type});
+                  }
+                  while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
+                    list_elems.push_back(safe_zero(str_type));
+                  exprt len_expr = from_integer(
+                    static_cast<long long>(parts.size()), python_int_type());
+                  return struct_exprt{
+                    {len_expr,
+                     array_exprt{std::move(list_elems), list_data_type}},
+                    list_type};
+                }
+              }
+            }
+          }
+          // Fallback: nondet list of strings
           return side_effect_expr_nondett{
             python_list_type(python_string_type()), get_location(expr)};
         }
@@ -2510,16 +2600,31 @@ exprt python_convertert::convert_call(const jsont &expr)
           arg.type().id() == ID_struct &&
           to_struct_type(arg.type()).get_tag() == "python_complex")
         {
-          member_exprt r{arg, "real", double_type()};
-          member_exprt i{arg, "imag", double_type()};
-          exprt sum = plus_exprt{mult_exprt{r, r}, mult_exprt{i, i}};
-          // Compute sqrt at conversion time if both are constant
-          if(r.id() == ID_member || true)
+          // For struct_exprt (literal complex), compute at conversion time
+          if(arg.id() == ID_struct && arg.operands().size() == 2)
           {
-            // Return nondet float constrained to be >= 0
-            // (exact sqrt would need a library model)
-            return side_effect_expr_nondett{double_type(), get_location(expr)};
+            const exprt &re = arg.operands()[0];
+            const exprt &im = arg.operands()[1];
+            if(re.is_constant() && im.is_constant())
+            {
+              ieee_floatt rv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              rv.from_expr(to_constant_expr(re));
+              ieee_floatt iv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              iv.from_expr(to_constant_expr(im));
+              double rd = std::stod(rv.to_ansi_c_string());
+              double id = std::stod(iv.to_ansi_c_string());
+              ieee_floatt result{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              result.from_double(std::sqrt(rd * rd + id * id));
+              return result.to_expr();
+            }
           }
+          return side_effect_expr_nondett{double_type(), get_location(expr)};
         }
         // abs(x) = x >= 0 ? x : -x
         if(arg.type().id() == ID_signedbv || arg.type().id() == ID_floatbv)
@@ -3645,6 +3750,29 @@ codet python_convertert::convert_statement(const jsont &stmt)
             del_block.add(code_frontend_assignt{
               length,
               minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          }
+          // PLR §7.5: del d["key"] on dict — zero the value
+          else if(!obj.is_nil() && is_python_dict_type(obj.type()))
+          {
+            const jsont &slice_node = json_member(target, "slice");
+            if(is_node_type(slice_node, "Constant"))
+            {
+              const jsont &sv = json_member(slice_node, "value");
+              if(sv.is_string())
+              {
+                std::string key = sv.value;
+                for(char &c : key)
+                  if(!std::isalnum(c) && c != '_')
+                    c = '_';
+                const auto &st = to_struct_type(obj.type());
+                if(st.has_component(key))
+                {
+                  del_block.add(code_frontend_assignt{
+                    member_exprt{obj, key, st.get_component(key).type()},
+                    safe_zero(st.get_component(key).type())});
+                }
+              }
+            }
           }
         }
       }
@@ -5981,6 +6109,17 @@ bool python_convertert::convert()
         if(is_node_type(target, "Name"))
         {
           std::string var_name = json_string(json_member(target, "id"));
+          // Skip dict/set annotations — their placeholder type (int)
+          // would lose the struct from the RHS. Defer to pass 2.
+          const jsont &ann = json_member(stmt, "annotation");
+          if(is_node_type(ann, "Name"))
+          {
+            std::string tname = json_string(json_member(ann, "id"));
+            if(
+              tname == "dict" || tname == "Dict" || tname == "set" ||
+              tname == "Set")
+              continue;
+          }
           typet var_type =
             convert_type_annotation(json_member(stmt, "annotation"));
           irep_idt sym_id{"python::" + var_name};
