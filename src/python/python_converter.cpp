@@ -329,6 +329,20 @@ exprt python_convertert::safe_zero(const typet &type) const
     }
     return struct_exprt{std::move(fields), st};
   }
+  if(type.id() == ID_pointer)
+    return null_pointer_exprt{to_pointer_type(type)};
+  if(type.id() == ID_array)
+  {
+    const auto &arr_type = to_array_type(type);
+    exprt::operandst elems;
+    mp_integer size;
+    if(!to_integer(to_constant_expr(arr_type.size()), size))
+    {
+      for(mp_integer i = 0; i < size; ++i)
+        elems.push_back(safe_zero(arr_type.element_type()));
+    }
+    return array_exprt{std::move(elems), arr_type};
+  }
   return side_effect_expr_nondett{type, source_locationt{}};
 }
 
@@ -416,6 +430,15 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     }
     if(val.is_null())
       return empty_typet{};
+  }
+
+  // PLR §3.2: Union types (X | Y) — use tagged union
+  if(is_node_type(annotation, "BinOp"))
+  {
+    std::string op =
+      json_string(json_member(json_member(annotation, "op"), "_type"));
+    if(op == "BitOr")
+      return python_value_type();
   }
 
   // Handle Attribute annotations (e.g., typing.List)
@@ -677,6 +700,19 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return t.id() == ID_struct &&
            to_struct_type(t).get_tag() == "python_complex";
   };
+  // PLR §3.2: Promote int/float to complex for mixed arithmetic
+  if(is_complex(left.type()) && !is_complex(right.type()))
+  {
+    struct_typet ct = to_struct_type(left.type());
+    exprt real_part = safe_typecast(right, double_type());
+    right = struct_exprt{{real_part, safe_zero(double_type())}, ct};
+  }
+  if(!is_complex(left.type()) && is_complex(right.type()))
+  {
+    struct_typet ct = to_struct_type(right.type());
+    exprt real_part = safe_typecast(left, double_type());
+    left = struct_exprt{{real_part, safe_zero(double_type())}, ct};
+  }
   if(is_complex(left.type()) && is_complex(right.type()))
   {
     struct_typet ct = to_struct_type(left.type());
@@ -935,6 +971,10 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         exp_known = true;
       }
     }
+    // PLR §6.5: Complex power — not supported as exact expression
+    if(is_complex(left.type()))
+      return side_effect_expr_nondett{left.type(), source_locationt{}};
+
     if(exp_known)
     {
       bool negative = exp_val < 0;
@@ -981,8 +1021,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
     }
     // Variable exponent: build if-then-else chain for b=0..16
+    // (only for scalar types — complex handled above)
     {
-      exprt result = from_integer(1, left.type()); // b==0 case
+      exprt result = safe_zero(left.type()); // b==0 case: return 0 for safety
       for(int i = 16; i >= 1; i--)
       {
         exprt power = left;
@@ -1176,10 +1217,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
         if(
           current_left.is_constant() && current_left.type().id() == ID_signedbv)
           current_left = safe_typecast(current_left, right.type());
-        // If right is a float constant representable as int, cast to int
-        else if(right.is_constant())
+        // If left is numeric and right is a float constant representable
+        // as int, cast to int for exact comparison
+        else if(
+          right.is_constant() && (current_left.type().id() == ID_signedbv ||
+                                  current_left.type().id() == ID_integer))
         {
-          // Check if the float constant is an exact integer
           ieee_floatt fv{
             ieee_float_spect::double_precision(),
             ieee_floatt::rounding_modet::ROUND_TO_EVEN};
@@ -1190,10 +1233,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
             ieee_floatt::rounding_modet::ROUND_TO_EVEN};
           check.from_integer(iv);
           if(fv == check)
-          {
-            // Exact integer — compare as ints
             right = from_integer(iv, current_left.type());
-          }
           else
             current_left = safe_typecast(current_left, right.type());
         }
@@ -1952,8 +1992,8 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
     }
-    log.error() << "Unknown method: " << method_name << messaget::eom;
-    return nil_exprt{};
+    log.warning() << "Unknown method: " << method_name << messaget::eom;
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
 
   // Handle nondet functions
