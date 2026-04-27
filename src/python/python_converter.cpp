@@ -231,6 +231,8 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       }
     }
 
+    // PLR §4.1: Truth Value Testing — "the following values are
+    // considered false: None, False, zero, empty sequences/mappings"
     // None sentinel → false for truthiness
     if(target.id() == ID_bool && e.type().id() == ID_signedbv)
     {
@@ -994,7 +996,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "Div")
   {
-    // True division — promote to float
+    // PLR §6.7: "The / (division) operator yields the quotient of its
+    // arguments." True division always returns float.
     typet float_type = double_type();
     return div_exprt{
       typecast_exprt{left, float_type}, typecast_exprt{right, float_type}};
@@ -3107,6 +3110,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
     member_exprt length{value, "length", python_int_type()};
 
+    // PLR §6.3.2: Subscriptions — negative indices count from the end.
     // Handle negative indices: lst[-1] → lst[len-1]
     exprt effective_idx = slice;
     if(slice.is_constant())
@@ -4687,6 +4691,9 @@ codet python_convertert::convert_while(const jsont &stmt)
 }
 
 // PLR §8.3: The for statement
+// "The for statement is used to iterate over the elements of a
+// sequence (such as a string, tuple or list) or other iterable."
+// We desugar to while loops with explicit index variables.
 // "The for statement is used to iterate over the elements of a sequence
 // (such as a string, tuple or list) or other iterable object."
 codet python_convertert::convert_for(const jsont &stmt)
@@ -5201,6 +5208,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 }
 
 // PLR §8.9: Class definitions
+// PLR §3.2: "Class instances have a namespace implemented as a dictionary."
+// We model classes as structs with __class_tag for dispatch.
 // "A class definition defines a class object."
 codet python_convertert::convert_class_def(const jsont &stmt)
 {
@@ -5880,6 +5889,9 @@ codet python_convertert::convert_with(const jsont &stmt)
 // --- Module body conversion ---
 
 // PLR §8.4: The try statement
+// PLR §3.2: "Exceptions are identified by class instances."
+// We model exceptions via __exception_active (bool) and
+// __exception_type (hash of exception class name).
 // "The try statement specifies exception handlers and/or cleanup code
 // for a group of statements."
 codet python_convertert::convert_try(const jsont &stmt)
