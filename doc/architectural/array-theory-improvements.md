@@ -1129,3 +1129,25 @@ would reduce comparisons from 16n² to n² (e.g., wchains050ue: 9M → 560K
 clauses). Implementation requires detecting the byte-store pattern in
 the ITE encoding and creating grouped comparisons. Too complex for
 incremental implementation.
+
+## convert_let Optimization: Scope Stack Approach (investigated, not committed)
+
+Attempted to eliminate replace_symbolt from convert_let by using a
+scope stack in convert_bv. BV-typed let bindings are resolved via the
+scope stack (O(1) lookup) instead of renaming in the expression tree.
+
+Results: swapmem040se and bubsort020un solve (were stuck in formula
+conversion). But 72 wrong on QF_AX (swap_nf benchmarks) because the
+array theory runs AFTER the scope is popped and can't resolve BV-typed
+symbols referenced by array-typed binding values.
+
+Root cause: the array theory needs ALL let-bound symbols (both BV-typed
+and array-typed) to be visible as fresh symbols in the expression tree.
+This requires replace_symbolt renaming. The scope stack can resolve
+symbols during convert_bv but can't make them visible to the array
+theory's post-processing.
+
+The fix requires either:
+1. Making the array theory scope-aware (process constraints within
+   the let scope, not after)
+2. A functional (non-mutating) replace_symbolt that preserves sharing
