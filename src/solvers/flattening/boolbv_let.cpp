@@ -84,6 +84,9 @@ bvt boolbvt::convert_let(const let_exprt &expr)
     }
   }
 
+  // Rename bound symbols using iterator-based single-pass traversal.
+  // This avoids the separate have_to_replace check (which traverses
+  // the entire tree) and only detaches nodes that are actually modified.
   // rename the bound symbols in 'where'
   exprt where_renamed = expr.where();
   replace_symbol(where_renamed);

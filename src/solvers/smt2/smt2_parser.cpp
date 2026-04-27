@@ -1074,26 +1074,7 @@ exprt smt2_parsert::expression()
       {
         if(next_token() != smt2_tokenizert::CLOSE)
           throw error("expected \')\' after let");
-        // Check if any binding is array-typed
-        bool has_array_binding = false;
-        for(const auto &b : it->bindings)
-        {
-          if(b.second.type().id() == ID_array)
-          {
-            has_array_binding = true;
-            break;
-          }
-        }
-        if(has_array_binding)
-        {
-          // Array-typed bindings need replace_symbolt for correct
-          // interaction with the array theory.
-          replace_symbolt replace;
-          for(const auto &b : it->bindings)
-            replace.insert(symbol_exprt{b.first, b.second.type()}, b.second);
-          replace(result);
-        }
-        else if(!it->bindings.empty())
+        if(!it->bindings.empty())
         {
           binding_exprt::variablest vars;
           exprt::operandst vals;

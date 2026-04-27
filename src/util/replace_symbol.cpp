@@ -72,36 +72,8 @@ bool replace_symbolt::replace(exprt &dest) const
     if(!replace(dest.type()))
       result=false;
 
-  // now do expression itself
-
-  if(!have_to_replace(dest))
-    return result;
-
-  if(dest.id()==ID_member)
-  {
-    member_exprt &me=to_member_expr(dest);
-
-    if(!replace(me.struct_op()))
-      result=false;
-  }
-  else if(dest.id()==ID_index)
-  {
-    index_exprt &ie=to_index_expr(dest);
-
-    if(!replace(ie.array()))
-      result=false;
-
-    if(!replace(ie.index()))
-      result=false;
-  }
-  else if(dest.id()==ID_address_of)
-  {
-    address_of_exprt &aoe=to_address_of_expr(dest);
-
-    if(!replace(aoe.object()))
-      result=false;
-  }
-  else if(dest.id()==ID_symbol)
+  // Handle expression replacement directly (no have_to_replace pre-check)
+  if(dest.id() == ID_symbol)
   {
     if(!replace_symbol_expr(to_symbol_expr(dest)))
       return false;
@@ -205,9 +177,6 @@ bool replace_symbolt::have_to_replace(const exprt &dest) const
 
 bool replace_symbolt::replace(typet &dest) const
 {
-  if(!have_to_replace(dest))
-    return true;
-
   bool result=true;
 
   if(dest.has_subtype())
@@ -365,11 +334,7 @@ bool address_of_aware_replace_symbolt::replace(exprt &dest) const
       result = false;
   }
 
-  // now do expression itself
-
-  if(!have_to_replace(dest))
-    return result;
-
+  // Handle expression directly (no have_to_replace pre-check)
   if(dest.id() == ID_index)
   {
     index_exprt &ie = to_index_expr(dest);

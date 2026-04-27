@@ -109,6 +109,18 @@ bvt boolbvt::convert_index(const index_exprt &expr)
             prop.set_frozen(lit);
           lazy_selects.push_back(lazy_selectt{bv, expr, idx_bv});
           record_array_index(expr);
+          // Also register indices for the store chain walk.
+          // The ITE encoding would create selects on intermediate
+          // arrays; register those indices for the array theory.
+          {
+            exprt arr = array;
+            while(arr.id() == ID_with)
+            {
+              record_array_index(
+                index_exprt{to_with_expr(arr).old(), index, expr.type()});
+              arr = to_with_expr(arr).old();
+            }
+          }
           return bv;
         }
         // CDCL(T) lazy select (disabled by default — opt-in via
