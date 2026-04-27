@@ -1089,3 +1089,43 @@ approximation. It's useful as an optimization (skip definitely-
 unneeded constraints) but cannot be used as a soundness filter
 (it may incorrectly skip needed constraints when symbolic indices
 might be equal at runtime).
+
+## CaDiCaL Tuning + BV Simplification (commits a5fa34e067, 000d3c2955)
+
+Disabled CaDiCaL's congruence closure (gate detection), which consumed
+62% of solving time on array-heavy formulas. Added (x+c1)==(x+c2)→false
+simplification for byte-addressed store patterns.
+
+QF_ABV: 277 → 286 correct (+9).
+
+## convert_let Optimization Investigation (not committed)
+
+Attempted to eliminate replace_symbolt from convert_let by mapping
+original symbols directly to converted BVs. Three approaches tried:
+
+1. **Direct mapping with save/restore**: Maps original symbols to BVs,
+   restores on scope exit. Breaks because bv_cache returns stale entries
+   for remapped symbols, and array-typed bindings create self-referential
+   equality edges.
+
+2. **Hybrid (BV direct + array fresh)**: Direct mapping for BV-typed,
+   fresh symbols for array-typed. Correct for array theory but BV-typed
+   mapping still has bv_cache staleness issues.
+
+3. **Memoized have_to_replace**: Added caching to replace_symbolt's
+   have_to_replace. Cache keys (data pointers) become invalid after
+   replace() modifies the tree via detach().
+
+Root cause: replace_symbolt modifies the expression tree in-place,
+invalidating any pointer-based caching. A correct fix requires either
+(a) a copy-on-write replace that preserves sharing, or (b) restructuring
+convert_let to use a scope-based symbol table instead of expression
+rewriting.
+
+## Byte-Store Merging Investigation (not committed)
+
+wchains benchmarks store 32-bit values as 4 byte stores each. Merging
+would reduce comparisons from 16n² to n² (e.g., wchains050ue: 9M → 560K
+clauses). Implementation requires detecting the byte-store pattern in
+the ITE encoding and creating grouped comparisons. Too complex for
+incremental implementation.
