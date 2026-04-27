@@ -819,6 +819,51 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(is_python_value_type(right.type()))
     right = unwrap_value(right, left.type());
 
+  // PLR §6.7: String repetition: "ab" * 3 → "ababab"
+  if(
+    op == "Mult" &&
+    (is_python_string_type(left.type()) || is_python_string_type(right.type())))
+  {
+    exprt str_op = is_python_string_type(left.type()) ? left : right;
+    exprt num_op = is_python_string_type(left.type()) ? right : left;
+    num_op = safe_typecast(num_op, signedbv_typet{64});
+
+    struct_typet str_type = python_string_type();
+    const auto &data_type = to_array_type(str_type.components()[1].type());
+    member_exprt old_len{str_op, "length", signedbv_typet{64}};
+    member_exprt old_data{str_op, "data", data_type};
+
+    static unsigned str_rep_counter = 0;
+    std::string tmp_name = "__str_rep_" + std::to_string(str_rep_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, str_type, "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+    exprt new_len = mult_exprt{old_len, num_op};
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{tmp, "length", signedbv_typet{64}}, new_len});
+    member_exprt tmp_data{tmp, "data", data_type};
+    for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      exprt src_idx = mod_exprt{idx, old_len};
+      exprt val = if_exprt{
+        binary_relation_exprt{idx, ID_lt, new_len},
+        index_exprt{old_data, src_idx},
+        from_integer(0, unsignedbv_typet{8})};
+      pending_checks.push_back(
+        code_frontend_assignt{index_exprt{tmp_data, idx}, val});
+    }
+    return std::move(tmp);
+  }
+
   // List repetition with content tracking: lst * n or n * lst
   if(
     op == "Mult" && is_python_list_type(right.type()) &&
@@ -2087,6 +2132,46 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return from_integer(0, python_int_type());
   }
+  // PLR §2.4.5: map(func, iterable)
+  else if(func_name == "map")
+  {
+    if(args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      exprt func_arg = convert_expression(*it);
+      ++it;
+      exprt list_arg = convert_expression(*it);
+      if(is_python_list_type(list_arg.type()))
+      {
+        // Return nondet list (sound overapproximation)
+        // Exact map would need unrolled function calls
+        return side_effect_expr_nondett{list_arg.type(), get_location(expr)};
+      }
+    }
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
+  // PLR §2.4.5: zip(*iterables)
+  else if(func_name == "zip")
+  {
+    // Return nondet list of tuples
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
+  // PLR §2.4.5: filter(func, iterable)
+  else if(func_name == "filter")
+  {
+    if(args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      ++it;
+      exprt list_arg = convert_expression(*it);
+      if(is_python_list_type(list_arg.type()))
+        return side_effect_expr_nondett{list_arg.type(), get_location(expr)};
+    }
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
   // iter(x) returns x (for lists, iteration is by index)
   // next(it) returns first element (simplified model)
   else if(func_name == "iter")
@@ -2385,6 +2470,26 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         return std::move(tmp);
       }
+    }
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+  // PLR §2.4.5: round(number) → nearest integer
+  else if(func_name == "round")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(arg.type().id() == ID_floatbv)
+      {
+        // round(x) = floor(x + 0.5)
+        ieee_floatt half{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        half.from_double(0.5);
+        exprt sum = plus_exprt{arg, half.to_expr()};
+        return typecast_exprt{sum, python_int_type()};
+      }
+      return arg; // int → int
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
@@ -4514,8 +4619,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // call-into-temp + guarded-assign so that if the call raises,
     // the assignment is skipped.
     if(
-      try_depth > 0 &&
-      (typed_rhs.id() == ID_side_effect || rhs_has_side_effect))
+      try_depth > 0 && (typed_rhs.id() == ID_side_effect ||
+                        rhs_has_side_effect || !pending_checks.empty()))
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
@@ -4535,6 +4640,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
           symbol_table.add(tmp_sym);
         }
         const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+
+        // Flush pending_checks (e.g., TypeError from complex //)
+        // BEFORE the temp assignment so exception flag is set first
+        for(auto &check : pending_checks)
+          block.add(std::move(check));
+        pending_checks.clear();
+
         code_frontend_assignt eval{tmp_sym.symbol_expr(), typed_rhs};
         eval.add_source_location() = loc;
         block.add(std::move(eval));
@@ -6058,69 +6170,66 @@ codet python_convertert::convert_try(const jsont &stmt)
   const jsont &handlers = json_member(stmt, "handlers");
   if(handlers.is_array() && !as_array(handlers).empty() && exc_sym != nullptr)
   {
-    // Build the except body
-    code_blockt except_block;
-
-    // Clear the exception flag
-    code_frontend_assignt clear_flag{exc_sym->symbol_expr(), false_exprt{}};
-    clear_flag.add_source_location() = loc;
-    except_block.add(std::move(clear_flag));
-
-    // Execute the first handler's body with type checking
-    const jsont &handler = *as_array(handlers).begin();
-    const jsont &handler_type = json_member(handler, "type");
-
-    // Check if handler specifies a type (except TypeError: ...)
+    // PLR §8.4: iterate all except handlers sequentially
     const symbolt *exc_type_sym =
       symbol_table.lookup("python::__exception_type");
-    bool has_type_check = false;
-    exprt type_match = true_exprt{};
 
-    if(
-      !handler_type.is_null() && is_node_type(handler_type, "Name") &&
-      exc_type_sym != nullptr)
+    // Build chained if-elif for each handler
+    codet handler_chain = code_skipt{};
+
+    // Process handlers in reverse to build the chain from inside out
+    std::vector<const jsont *> handler_list;
+    for(const auto &h : as_array(handlers))
+      handler_list.push_back(&h);
+
+    for(auto it = handler_list.rbegin(); it != handler_list.rend(); ++it)
     {
-      std::string handler_type_name =
-        json_string(json_member(handler_type, "id"));
-      if(handler_type_name != "Exception" && !handler_type_name.empty())
+      const jsont &handler = **it;
+      const jsont &handler_type = json_member(handler, "type");
+
+      code_blockt except_block;
+      except_block.add(
+        code_frontend_assignt{exc_sym->symbol_expr(), false_exprt{}});
+
+      const jsont &handler_body = json_member(handler, "body");
+      if(handler_body.is_array())
       {
-        // Compute hash of handler type name
-        long type_hash = 0;
-        for(char c : handler_type_name)
-          type_hash += static_cast<unsigned char>(c);
-        type_match = equal_exprt{
-          exc_type_sym->symbol_expr(),
-          from_integer(type_hash, python_int_type())};
-        has_type_check = true;
+        for(const auto &s : as_array(handler_body))
+          except_block.add(convert_statement(s));
       }
+
+      exprt condition = exc_sym->symbol_expr();
+      if(
+        !handler_type.is_null() && is_node_type(handler_type, "Name") &&
+        exc_type_sym != nullptr)
+      {
+        std::string htype = json_string(json_member(handler_type, "id"));
+        if(htype != "Exception" && !htype.empty())
+        {
+          long type_hash = 0;
+          for(char c : htype)
+            type_hash += static_cast<unsigned char>(c);
+          condition = and_exprt{
+            condition,
+            equal_exprt{
+              exc_type_sym->symbol_expr(),
+              from_integer(type_hash, python_int_type())}};
+        }
+      }
+
+      handler_chain = code_ifthenelset{
+        condition, std::move(except_block), std::move(handler_chain)};
     }
 
-    const jsont &handler_body = json_member(handler, "body");
-    if(handler_body.is_array())
-    {
-      for(const auto &s : as_array(handler_body))
-        except_block.add(convert_statement(s));
-    }
+    block.add(std::move(handler_chain));
 
-    // Build the else body (runs when no exception)
-    code_blockt else_block;
+    // Execute else block (runs when no exception)
     const jsont &orelse = json_member(stmt, "orelse");
     if(orelse.is_array())
     {
       for(const auto &s : as_array(orelse))
-        else_block.add(convert_statement(s));
+        block.add(convert_statement(s));
     }
-
-    // if(__exception_active && type_matches) { clear; except_body }
-    // else { else_body }
-    exprt condition = exc_sym->symbol_expr();
-    if(has_type_check)
-      condition = and_exprt{condition, type_match};
-
-    code_ifthenelset if_exc{
-      condition, std::move(except_block), std::move(else_block)};
-    if_exc.add_source_location() = loc;
-    block.add(std::move(if_exc));
   }
   else
   {
