@@ -289,229 +289,170 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (10 tests)
+### KNOWNBUG inventory (7 tests)
 
-170 total tests, 160 CORE, 10 KNOWNBUG.
+192 total tests, 185 CORE, 7 KNOWNBUG.
 
-ESBMC validation (2026-04-25): 3,090 tests, 1,692 correct (54%),
-39 crashes (1%), 90 timeouts (2%), 1,269 wrong results (41%).
+ESBMC validation (2026-04-26): 3,090 tests, 1,728 correct (55%),
+29 crashes, 117 timeouts. Down from 533 crashes initially (94.6%
+reduction). All remaining KNOWNBUGs are wrong-result or missing-feature
+issues — no crashes from our converter code.
 
-#### Tier 1 — Quick fixes (< 1 hour each)
+#### Tier 1 — Quick fixes (< 30 minutes each)
 
-##### `limit-mixed-type-compare` — int == float comparison
+##### `crash-complex-abs` — abs() on complex returns nondet
 
-**Problem:** `5 == 5.0` fails. The int `5` is compared with the float
-`5.0` via `safe_typecast(5, double_type())` which uses `typecast_exprt`.
-CBMC's solver evaluates `typecast_exprt{5, double}` differently from
-`ieee_floatt(5.0)` — off by one ULP.
+**Problem:** `abs(complex(3, 4))` should return `5.0` (the magnitude
+√(3²+4²)). Currently returns nondet float because we can't model
+`sqrt` as an exact expression.
 
-**Fix:** In the comparison type promotion, when casting an int constant
-to float for comparison, use `ieee_floatt::from_integer()` (exact) instead
-of `typecast_exprt` (solver-dependent). The `safe_typecast` already has
-this for the `float()` built-in — extend it to cover all int-constant-to-
-float casts. The existing code at line ~215 handles `e.is_constant()` but
-the comparison handler may pass non-constant expressions through
-`safe_typecast` before the constant check fires.
+**Fix:** For constant complex arguments, compute the magnitude at
+conversion time using `std::sqrt` (same approach as `math.sqrt`):
+```cpp
+if(r.is_constant() && i.is_constant())
+{
+  double rv = std::stod(ieee_floatt{...}.to_ansi_c_string());
+  double iv = std::stod(ieee_floatt{...}.to_ansi_c_string());
+  ieee_floatt result{...};
+  result.from_double(std::sqrt(rv*rv + iv*iv));
+  return result.to_expr();
+}
+```
+For variable complex arguments, return nondet (sound overapproximation).
 
-**Effort:** 30 minutes. **Affects:** ~37 ESBMC tests.
+**PLR reference:** §2.4.5 — "For a complex number z, abs(z) returns
+its magnitude."
 
-##### `limit-from-import-func` — `from math import floor`
+**Effort:** 15 minutes. **Affects:** ~18 ESBMC tests.
 
-**Problem:** `from math import floor; floor(3.7)` doesn't use our
-math model. The `from X import Y` handler registers `Y` as a function
-symbol with a nondet body. The `import X; X.Y()` path goes through the
-module method handler which has our ceil/floor/fabs models.
+##### `crash-complex-floordiv` — complex // int returns nondet
 
-**Fix:** In the `from math import Y` handler, instead of registering a
-generic function symbol, check if `Y` is one of our modeled math
-functions (ceil, floor, fabs, sqrt). If so, register an alias that
-routes through the math model. Alternatively, in `convert_call`, when
-calling a function that was imported from `math`, redirect to the math
-module handler.
+**Problem:** `complex(1,2) // 2` should raise `TypeError`. Currently
+returns nondet int. The test expects the TypeError to be caught by a
+try/except block.
 
-**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
+**Fix:** In `convert_bin_op` for `FloorDiv` and `Mod` with complex
+operands, set `__exception_active = true` and `__exception_type` to
+the TypeError hash, then return a default value. This models the
+TypeError that Python raises for these operations on complex numbers.
 
-##### `limit-assume` — assume() for constraining nondet values
+**PLR reference:** §6.7 — "The floor division and modulo operators
+are not defined for complex numbers."
 
-**Problem:** `assume(x > 0)` is not recognized. ESBMC uses `assume()`
-to constrain nondet values. CBMC uses `__CPROVER_assume()`.
+**Effort:** 20 minutes. **Affects:** ~3 ESBMC tests.
 
-**Fix:** In `convert_call`, recognize `assume` and `__VERIFIER_assume`
-as aliases for `__CPROVER_assume`. Convert the argument to a bool and
-emit `code_assumet{condition}`.
+##### `crash-string-index-type` — list["string"] returns nondet
 
-**Effort:** 15 minutes. **Affects:** ~21 ESBMC tests.
+**Problem:** `numbers["invalid"]` should raise `TypeError`. Currently
+returns nondet. The test expects the TypeError to be caught.
 
-##### `limit-sum` — sum() built-in
+**Fix:** Same pattern as complex floordiv: in `convert_subscript`,
+when the index is a non-integer type (string, struct, etc.), set
+`__exception_active` and `__exception_type` for TypeError, then
+return a default value.
 
-**Problem:** `sum([1,2,3])` is not recognized.
+**PLR reference:** §6.3.2 — "The subscription of a sequence with a
+non-integer index raises TypeError."
 
-**Fix:** In `convert_call`, add a `sum` handler. For list arguments,
-generate a loop: `result = 0; for i in 0..length: result += data[i]`.
-Use `pending_checks` for the accumulation loop (unrolled up to
-`PYTHON_MAX_LIST_LENGTH`).
+**Effort:** 15 minutes. **Affects:** ~1 ESBMC test.
 
-**Effort:** 30 minutes. **Affects:** ~5 ESBMC tests.
+##### `limit-dict-string-compare` — dict annotation loses struct
 
-##### `limit-forward-class-ref` — forward class references
+**Problem:** `d: dict = {"ref": "Python"}` — the `dict` type
+annotation resolves to `python_int_type()` (placeholder) in pass 0.
+The variable `d` gets type `int`, losing the dict struct. The
+`convert_ann_assign` fix (using RHS type) only works during pass 2,
+but pass 0 already created the symbol with the wrong type.
 
-**Problem:** `def make_foo() -> "Foo"` — the return type annotation is
-a string `"Foo"` (forward reference), not a `Name` node. The
-`convert_type_annotation` handler doesn't handle `Constant` string
-annotations.
+**Fix:** In pass 0, when processing `AnnAssign` with a `dict`/`set`
+type annotation AND a dict/set literal RHS, skip the pre-registration
+(let pass 2 handle it with the correct RHS type). This is the same
+pattern used for `Call`, `ListComp`, etc. — complex RHS types are
+deferred to pass 2.
 
-**Fix:** In `convert_type_annotation`, when the annotation is a
-`Constant` with a string value, look up the string in `class_types`.
-This handles PEP 484 forward references.
+```cpp
+// In pass 0 AnnAssign handling:
+std::string type_name = json_string(json_member(annotation, "id"));
+if(type_name == "dict" || type_name == "set")
+  continue; // defer to pass 2
+```
 
-**Effort:** 15 minutes. **Affects:** ~50 ESBMC tests.
+**PLR reference:** §3.2 — "Dictionaries are mutable mappings."
 
-#### Tier 2 — List/string methods (1-2 hours each)
+**Effort:** 10 minutes. **Affects:** ~15 ESBMC tests.
 
-##### `limit-str-split` — str.split() method
+#### Tier 2 — Moderate (1-2 hours each)
 
-**Problem:** `"a,b,c".split(",")` is not recognized.
+##### `limit-del-dict` — del d["key"] not modeled
 
-**Fix:** Add `split` to the method call handler for string types. For
-a constant delimiter and constant string, split at conversion time and
-return a list of string structs. For variable strings, return a nondet
-list of strings with length = count of delimiters + 1.
+**Problem:** `del d["a"]` on a dict struct does nothing. The dict is
+modeled as a struct with one field per key. Deleting a field from a
+struct is not possible in CBMC's type system.
 
-**Effort:** 1-2 hours. **Affects:** ~16 ESBMC tests.
-
-##### `limit-list-extend` — list.extend() method
-
-**Problem:** `a.extend([3, 4])` is not recognized.
-
-**Fix:** Add `extend` to the list method handler. Copy elements from
-the argument list to the target list starting at `target.length`.
-Update `target.length += arg.length`. Use `pending_checks` for the
-element-by-element copy (same pattern as string concat).
-
-**Effort:** 1 hour. **Affects:** ~11 ESBMC tests.
-
-##### `limit-list-remove` — list.remove() method
-
-**Problem:** `lst.remove(2)` is not recognized.
-
-**Fix:** Add `remove` to the list method handler. Find the first
-element equal to the value, then shift all subsequent elements left
-by one. Decrement length. Use `pending_checks` for the shift loop.
-
-**Effort:** 1 hour. **Affects:** ~11 ESBMC tests.
-
-#### Tier 3 — Type system features (2-4 hours each)
-
-##### `limit-type-builtin` — type() built-in
-
-**Problem:** `type(x) == int` is not supported.
-
-**Fix:** In `convert_call`, add a `type` handler that returns a
-type-tag integer based on the argument's static type. Then `type(x)`
-returns a constant that can be compared with `int`, `float`, `str`,
-etc. (which are also converted to their type-tag constants in this
-context). This is a static approximation — Python's `type()` is
-dynamic, but for verification of statically-typed code it suffices.
-
-**Effort:** 2 hours. **Affects:** ~4 ESBMC tests.
-
-##### `limit-set-builtin` — set() type
-
-**Problem:** `set([1, 2, 2, 3])` should produce a set with 3 elements.
-Sets are currently modeled as lists, which don't deduplicate.
-
-**Fix:** Model `set()` constructor to deduplicate: iterate the input
-list and only add elements not already present. For bounded lists this
-is an O(n²) unrolled loop via `pending_checks`. The set struct can
-reuse the list struct (with deduplication at construction time).
-
-**Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
-
-#### Tier 1 — Quick fixes (< 1 hour each)
-
-##### `limit-power-variable-exp` — Power with variable exponent
-
-**Problem:** `a ** b` where `b` is a variable returns nondet. Our power
-handler only unrolls constant exponents.
-
-**Fix:** Use CBMC's `power_exprt` (from `bitvector_expr.h`) for integer
-power, or model as a loop. For bounded verification, unroll up to a
-maximum exponent (e.g., 16) using an if-then-else chain:
-`if(b==0) 1 else if(b==1) a else if(b==2) a*a else ...`
-For exponents beyond the limit, return nondet.
-
-**Effort:** 30 minutes. **Affects:** ~20 ESBMC tests.
-
-##### `limit-nondet-collections` — nondet_list() / nondet_dict()
-
-**Problem:** `nondet_list()` and `nondet_dict()` are ESBMC-specific
-verification primitives not recognized by our front-end.
-
-**Fix:** In `convert_call`, recognize `nondet_list` and `nondet_dict`
-as returning `side_effect_expr_nondett` of the appropriate type
-(`python_list_type` and `python_int_type` respectively). Same pattern
-as `nondet_int()`.
-
-**Effort:** 15 minutes. **Affects:** ~32 ESBMC tests.
-
-##### `limit-import-math-direct` — `import math; math.sqrt()`
-
-**Problem:** `import math` registers the module name, but `math.sqrt()`
-inside a function body can't find `math` because the module variable
-isn't in the function's scope.
-
-**Fix:** The `imported_modules` set is checked in the method call
-handler, but only when the object is a `Name` node resolved via
-`convert_expression`. The issue: `convert_name("math")` fails because
-`math` isn't a symbol. Fix: in `convert_name`, check `imported_modules`
-and return a sentinel value. Or simpler: in the method call handler's
-module check, look up `imported_modules` directly from the AST node
-name instead of going through `convert_expression`.
-
-**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
-
-##### `limit-next-builtin` — next() / iter()
-
-**Problem:** `next(iter([1,2,3]))` — neither `iter()` nor `next()` is
-implemented.
-
-**Fix:** `iter(list)` returns the list itself (for our bounded model,
-iteration state is tracked by index). `next(iter)` returns the first
-element (index 0) and is a simplification. For verification, model
-`next()` as returning a nondet element of the list's element type.
-
-**Effort:** 15 minutes. **Affects:** ~8 ESBMC tests.
-
-#### Tier 2 — Moderate (2-4 hours each)
-
-##### `limit-fstring` — f-string formatting
-
-**Problem:** `f"value is {x}"` — f-strings (formatted string literals)
-are represented as `JoinedStr` AST nodes containing `FormattedValue`
-nodes. The converter doesn't handle these.
-
-**Fix:** In `convert_expression`, handle `JoinedStr` nodes. For each
-part: if it's a `Constant` string, use the literal; if it's a
-`FormattedValue`, convert the expression and concatenate its string
-representation. For verification, the exact string content is less
-important than the length and structure. Return a nondet string for
-now (sound overapproximation), or concatenate known literal parts
-with nondet parts for the formatted values.
-
-**Effort:** 2 hours. **Affects:** ~50+ ESBMC tests.
-
-##### `limit-complex-operations` — Complex number arithmetic
-
-**Problem:** `z + w` where both are complex structs crashes or returns
-wrong results. The `+` operator doesn't handle complex struct types.
-
-**Fix:** In `convert_bin_op`, detect when both operands are complex
-structs (tag `python_complex`). For Add/Sub: create a new complex
-struct with `{left.real ± right.real, left.imag ± right.imag}`. For
-Mult: `{l.r*r.r - l.i*r.i, l.r*r.i + l.i*r.r}`. For Div: use the
-standard complex division formula.
-
-**Effort:** 2 hours. **Affects:** ~16 ESBMC tests + crashes.
+**Fix:** Model dict deletion by adding a parallel "deleted" bitmask.
+For each dict, maintain a companion symbol `d__deleted` (a struct of
+bools, one per key). `del d["a"]` sets `d__deleted.a = true`. Dict
+access `d["a"]` checks `!d__deleted.a` first. `len(d)` subtracts
+the count of deleted keys. `for k in d` skips deleted keys.
+
+Alternative simpler approach: model `del d["key"]` as setting the
+value to a sentinel (e.g., None/0). This doesn't change the length
+but prevents the value from being used. Less precise but much simpler.
+
+**PLR reference:** §7.5 — "Deletion of a target list recursively
+deletes each target."
+
+**Effort:** 1-2 hours. **Affects:** ~4 ESBMC tests.
+
+##### `limit-str-split` — str.split() returns nondet list
+
+**Problem:** `"a,b,c".split(",")` returns a nondet list. The test
+asserts `len(parts) == 3` which can't be proven.
+
+**Fix:** For constant string and constant delimiter, split at
+conversion time:
+1. Scan the string data array for delimiter bytes
+2. Count occurrences → `n_parts = count + 1`
+3. Build a list of string structs, each containing the substring
+   between delimiters
+4. Return the list with `length = n_parts`
+
+For variable strings/delimiters, keep the nondet overapproximation.
+
+Implementation: iterate the constant string's data array, find
+delimiter positions, extract substrings using the same element-copy
+pattern as string concat.
+
+**PLR reference:** §4.7.1 — "str.split(sep) returns a list of the
+words in the string, using sep as the delimiter."
+
+**Effort:** 2 hours. **Affects:** ~16 ESBMC tests.
+
+##### `limit-set-builtin` — set() deduplication
+
+**Problem:** `set([1, 2, 2, 3])` should produce a collection with
+3 unique elements. Currently modeled as a list without deduplication.
+
+**Fix:** Model `set(iterable)` by iterating the input and only adding
+elements not already present. For bounded lists (up to 64 elements):
+```
+result.length = 0
+for i in 0..input.length:
+  found = false
+  for j in 0..result.length:
+    if result.data[j] == input.data[i]: found = true
+  if !found:
+    result.data[result.length] = input.data[i]
+    result.length += 1
+```
+This is O(n²) unrolled via `pending_checks`. For `PYTHON_MAX_LIST_LENGTH=64`,
+generates ~64×64 = 4,096 conditional assignments. May be slow for the
+solver but is correct.
+
+**PLR reference:** §4.9 — "A set object is an unordered collection
+of distinct hashable objects."
+
+**Effort:** 2 hours. **Affects:** ~8 ESBMC tests.
 
 ### Completed KNOWNBUG fixes
 
@@ -554,6 +495,23 @@ standard complex division formula.
 | `limit-classmethod` | Detect @classmethod, skip cls param | 19f3e7459f |
 | `limit-untyped-param-string-call` | len() dispatch on tagged union | 19f3e7459f |
 | `limit-lambda-multi-param` | Already worked, test updated | 19f3e7459f |
+| `limit-mixed-type-compare` | Rounding mode init + float→int for exact constants | 7b2adc7c2f |
+| `limit-from-import-func` | Route imported math funcs through our model | 7b2adc7c2f |
+| `limit-assume` | Recognize assume() as code_assumet | 7b2adc7c2f |
+| `limit-sum` | Unrolled accumulation loop | 7b2adc7c2f |
+| `limit-forward-class-ref` | String annotations as forward refs | 7b2adc7c2f |
+| `limit-list-extend` | Copy elements + update length | 7b2adc7c2f |
+| `limit-list-remove` | Find + shift left + decrement | 7b2adc7c2f |
+| `limit-type-builtin` | Static type-tag for type() comparisons | 7b2adc7c2f |
+| `limit-power-variable-exp` | If-then-else chain for b=0..16 | b3335ee067 |
+| `limit-nondet-collections` | nondet_list/nondet_dict/nondet_complex | b3335ee067 |
+| `limit-import-math-direct` | math.sqrt model for constant args | b3335ee067 |
+| `limit-fstring` | JoinedStr → nondet string | b3335ee067 |
+| `limit-complex-operations` | Complex +/-/* as component-wise ops | b3335ee067 |
+| `limit-next-builtin` | iter(list)=list, next(list)=first elem | b3335ee067 |
+| `limit-string-char-in` | Byte-by-byte scan for character membership | 368b3d1a14 |
+| `crash-keyword-missing-param` | Replace nil args with safe_zero | 368b3d1a14 |
+| `crash-list-pop-mixed` | Save element to temp before decrementing | 4aa1b6ffbe |
 
 #### Tagged unions — implemented approach
 
@@ -592,16 +550,16 @@ All phases complete. 135 total tests, 133 CORE, 2 KNOWNBUG.
 
 ## 7. ESBMC Gap Analysis and Roadmap
 
-### Latest ESBMC validation (2026-04-25)
+### Latest ESBMC validation (2026-04-26)
 
 Full suite: 3,090 tests (including `_fail` tests).
 
 | Metric | Count | % |
 |--------|-------|---|
-| Correct (pass + fail_correct) | 1,692 | 54% |
-| Wrong pass (should pass, got FAILED) | 1,028 | 33% |
-| Wrong fail (should fail, got SUCCESS) | 241 | 7% |
-| Crashes (invariant violations) | 39 | 1% |
+| Correct (pass + fail_correct) | 1,728 | 55% |
+| Wrong pass (should pass, got FAILED) | 1,079 | 34% |
+| Wrong fail (should fail, got SUCCESS) | 137 | 4% |
+| Crashes (invariant violations) | 29 | 0.9% |
 | Timeouts (10s limit) | 90 | 2% |
 
 Progress: initial ~1,033 pass (49%), ~533 crashes → now 1,692 correct
