@@ -353,6 +353,58 @@ a string formatting operation."
 
 **Effort:** 1-2 hours. **Affects:** ~10 ESBMC tests.
 
+##### `limit-isinstance-tuple` — isinstance with tuple of types
+
+**Problem:** `isinstance(x, (int, float))` — the second argument is a
+`Tuple` node, not a `Name` node. Our isinstance handler only checks
+`Name` nodes.
+
+**Fix:** In the isinstance handler, when the second argument is a
+`Tuple`, iterate its elements and check each type. Return the
+disjunction: `isinstance(x, A) || isinstance(x, B) || ...`.
+
+**PLR reference:** §6.10.2 — "classinfo may be a tuple of class objects."
+
+**Effort:** 15 minutes. **Affects:** ~19 ESBMC tests.
+
+##### `limit-list-pop-index` — list.pop(i) with index
+
+**Problem:** `lst.pop(0)` — pop with an index argument. Our pop handler
+only supports pop() without arguments (removes last element).
+
+**Fix:** In the list pop handler, check if an argument is provided.
+If so, use it as the index instead of `length - 1`. Then shift
+elements left from that index (same as the del handler).
+
+**PLR reference:** §4.6.1 — "pop(i) removes and returns the item at
+the given position."
+
+**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
+
+##### `limit-input-builtin` — input() not modeled
+
+**Problem:** `input()` returns nondet because it's not recognized.
+
+**Fix:** In `convert_call`, recognize `input` and return
+`side_effect_expr_nondett{python_string_type()}`. This models user
+input as an arbitrary string (sound for verification).
+
+**PLR reference:** §2.4.5 — "input() reads a line from input."
+
+**Effort:** 5 minutes. **Affects:** ~13 ESBMC tests.
+
+##### `limit-complex-conjugate` — complex.conjugate()
+
+**Problem:** `z.conjugate()` not recognized as a method.
+
+**Fix:** In the method call handler, detect `conjugate` on complex
+types. Return `struct_exprt{{real, unary_minus(imag)}, complex_type}`.
+
+**PLR reference:** §3.2 — "complex.conjugate() returns the complex
+conjugate."
+
+**Effort:** 15 minutes. **Affects:** ~13 ESBMC tests.
+
 ##### `limit-fstring-content` — f-string content tracking
 
 **Problem:** `f"x={x}"` returns nondet string. Content not tracked.
