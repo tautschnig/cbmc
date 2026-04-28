@@ -1060,6 +1060,35 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return std::move(tmp);
   }
 
+  // List concatenation: [1,2] + [3,4] → [1,2,3,4]
+  if(
+    is_python_list_type(left.type()) && is_python_list_type(right.type()) &&
+    op == "Add")
+  {
+    const auto &list_st = to_struct_type(left.type());
+    const auto &data_type = to_array_type(list_st.components()[1].type());
+    typet elem_type = data_type.element_type();
+
+    member_exprt left_len{left, "length", signedbv_typet{64}};
+    member_exprt right_len{right, "length", signedbv_typet{64}};
+    member_exprt left_data{left, "data", data_type};
+    member_exprt right_data{right, "data", data_type};
+
+    exprt new_len = plus_exprt{left_len, right_len};
+    exprt::operandst elems;
+    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      // If i < left_len, take from left; else take from right at i-left_len
+      elems.push_back(if_exprt{
+        binary_relation_exprt{idx, ID_lt, left_len},
+        index_exprt{left_data, idx},
+        index_exprt{right_data, minus_exprt{idx, left_len}}});
+    }
+    array_exprt new_data{std::move(elems), data_type};
+    return struct_exprt{{new_len, new_data}, left.type()};
+  }
+
   // List repetition with content tracking: lst * n or n * lst
   if(
     op == "Mult" && is_python_list_type(right.type()) &&
@@ -8337,7 +8366,30 @@ bool python_convertert::convert()
                     }
                   }
                   if(simple)
-                    var_type = python_list_type(python_int_type());
+                  {
+                    // Infer element type from first constant
+                    typet elem_type = python_int_type();
+                    if(elts.is_array() && !as_array(elts).empty())
+                    {
+                      const jsont &first = *as_array(elts).begin();
+                      const jsont &fv = json_member(first, "value");
+                      if(
+                        fv.is_string() && !fv.value.empty() &&
+                        fv.value[0] != 'b')
+                        elem_type = python_string_type();
+                      else if(fv.is_true() || fv.is_false())
+                        elem_type = bool_typet{};
+                      else if(fv.is_number())
+                      {
+                        std::string vs = fv.value;
+                        if(
+                          vs.find('.') != std::string::npos ||
+                          vs.find('e') != std::string::npos)
+                          elem_type = double_type();
+                      }
+                    }
+                    var_type = python_list_type(elem_type);
+                  }
                   else
                     continue; // defer to pass 2
                 }
