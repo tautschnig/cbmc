@@ -192,6 +192,10 @@ private:
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.
   exprt safe_zero(const typet &type) const;
+
+  /// Compute exception type hash for a given type name.
+  /// Uses class_tag_ids if available, else sum of ASCII values.
+  long exception_type_hash(const std::string &type_name) const;
 };
 
 #endif // CPROVER_PYTHON_PYTHON_CONVERTER_H
