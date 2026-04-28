@@ -486,6 +486,35 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     // dict[K, V], Set[T], etc. — fall through to base type
     if(base == "dict")
       return python_int_type(); // TODO: proper dict type
+    if(base == "tuple")
+    {
+      // tuple[int, int] → struct with _0, _1, ... components
+      const jsont &slice = json_member(annotation, "slice");
+      struct_typet::componentst comps;
+      if(is_node_type(slice, "Tuple"))
+      {
+        const jsont &elts = json_member(slice, "elts");
+        if(elts.is_array())
+        {
+          int idx = 0;
+          for(const auto &e : as_array(elts))
+          {
+            typet ct = convert_type_annotation(e);
+            comps.push_back(
+              struct_typet::componentt{"_" + std::to_string(idx++), ct});
+          }
+        }
+      }
+      else
+      {
+        // tuple[int] — single element
+        typet ct = convert_type_annotation(slice);
+        comps.push_back(struct_typet::componentt{"_0", ct});
+      }
+      struct_typet tuple_type{comps};
+      tuple_type.set_tag("python_tuple");
+      return tuple_type;
+    }
     // Unknown parameterized type — use the base
     return convert_type_annotation(json_member(annotation, "value"));
   }
