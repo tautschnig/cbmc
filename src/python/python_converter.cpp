@@ -1151,6 +1151,26 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       "division-by-zero",
       "division by zero",
       get_location(expr));
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt is_zero = equal_exprt{right, safe_zero(right.type())};
+        pending_checks.push_back(code_ifthenelset{
+          is_zero,
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+        if(exc_type_sym != nullptr)
+          pending_checks.push_back(code_ifthenelset{
+            is_zero,
+            code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(
+                exception_type_hash("ZeroDivisionError"), python_int_type())}});
+      }
+    }
     return div_exprt{left, right};
   }
   else if(op == "Mod")
@@ -1179,6 +1199,27 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       "division-by-zero",
       "division by zero in modulo",
       get_location(expr));
+    // Also set Python exception for try/except handling
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt is_zero = equal_exprt{right, safe_zero(right.type())};
+        pending_checks.push_back(code_ifthenelset{
+          is_zero,
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+        if(exc_type_sym != nullptr)
+          pending_checks.push_back(code_ifthenelset{
+            is_zero,
+            code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(
+                exception_type_hash("ZeroDivisionError"), python_int_type())}});
+      }
+    }
     return mod_exprt{left, right};
   }
   else if(op == "Pow")
@@ -1843,6 +1884,47 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
             return side_effect_expr_nondett{double_type(), get_location(expr)};
           }
+          // Trig/log/exp for constant args
+          if(
+            (method_name == "sin" || method_name == "cos" ||
+             method_name == "tan" || method_name == "asin" ||
+             method_name == "acos" || method_name == "atan" ||
+             method_name == "log" || method_name == "exp" ||
+             method_name == "log2" || method_name == "log10") &&
+            arg.is_constant())
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(arg));
+            double val = std::stod(fv.to_ansi_c_string());
+            double res = 0;
+            if(method_name == "sin")
+              res = std::sin(val);
+            else if(method_name == "cos")
+              res = std::cos(val);
+            else if(method_name == "tan")
+              res = std::tan(val);
+            else if(method_name == "asin")
+              res = std::asin(val);
+            else if(method_name == "acos")
+              res = std::acos(val);
+            else if(method_name == "atan")
+              res = std::atan(val);
+            else if(method_name == "log")
+              res = std::log(val);
+            else if(method_name == "exp")
+              res = std::exp(val);
+            else if(method_name == "log2")
+              res = std::log2(val);
+            else if(method_name == "log10")
+              res = std::log10(val);
+            ieee_floatt result{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            result.from_double(res);
+            return result.to_expr();
+          }
           // Unknown math function — return nondet
           return side_effect_expr_nondett{double_type(), get_location(expr)};
         }
@@ -2245,16 +2327,20 @@ exprt python_convertert::convert_call(const jsont &expr)
                   ch, ID_le, from_integer('9', unsignedbv_typet{8})}};
             else if(method_name == "isalpha")
               pred = or_exprt{
-                and_exprt{
-                  binary_relation_exprt{
-                    ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
-                  binary_relation_exprt{
-                    ch, ID_le, from_integer('z', unsignedbv_typet{8})}},
-                and_exprt{
-                  binary_relation_exprt{
-                    ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
-                  binary_relation_exprt{
-                    ch, ID_le, from_integer('Z', unsignedbv_typet{8})}}};
+                or_exprt{
+                  and_exprt{
+                    binary_relation_exprt{
+                      ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
+                    binary_relation_exprt{
+                      ch, ID_le, from_integer('z', unsignedbv_typet{8})}},
+                  and_exprt{
+                    binary_relation_exprt{
+                      ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
+                    binary_relation_exprt{
+                      ch, ID_le, from_integer('Z', unsignedbv_typet{8})}}},
+                // UTF-8: first byte >= 0xC0 or continuation byte 0x80-0xBF
+                binary_relation_exprt{
+                  ch, ID_ge, from_integer(0x80, unsignedbv_typet{8})}};
             else if(method_name == "isalnum")
               pred = or_exprt{
                 and_exprt{
@@ -2719,8 +2805,31 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "nondet_list")
   {
-    return side_effect_expr_nondett{
-      python_list_type(python_int_type()), get_location(expr)};
+    // Constrain length to valid bounds
+    static unsigned nl_ctr = 0;
+    std::string tn = "__nondet_list_" + std::to_string(nl_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt ti{tq};
+    typet lt = python_list_type(python_int_type());
+    if(symbol_table.lookup(ti) == nullptr)
+    {
+      symbolt ts{ti, lt, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      tmp, side_effect_expr_nondett{lt, get_location(expr)}});
+    member_exprt len{tmp, "length", signedbv_typet{64}};
+    pending_checks.push_back(code_assumet{and_exprt{
+      binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
+      binary_relation_exprt{
+        len,
+        ID_le,
+        from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})}}});
+    return std::move(tmp);
   }
   else if(func_name == "nondet_dict")
   {
@@ -2900,11 +3009,14 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
-        return typecast_exprt{arg, python_int_type()};
+      {
+        // Tagged union: dispatch on tag
+        if(is_python_value_type(arg.type()))
+          return unwrap_value(arg, python_int_type());
+        return safe_typecast(arg, python_int_type());
+      }
     }
-    mp_integer none_val = mp_integer(1) << 62;
-    none_val = -none_val;
-    return from_integer(none_val, python_int_type());
+    return from_integer(0, python_int_type());
   }
   else if(func_name == "float")
   {
@@ -3391,6 +3503,73 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
+  // PLib builtins: range() as expression → list
+  else if(func_name == "range")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt start, stop, step;
+      auto it = as_array(args).begin();
+      if(as_array(args).size() == 1)
+      {
+        start = from_integer(0, python_int_type());
+        stop = convert_expression(*it);
+        step = from_integer(1, python_int_type());
+      }
+      else
+      {
+        start = convert_expression(*it);
+        ++it;
+        stop = convert_expression(*it);
+        step = from_integer(1, python_int_type());
+        if(as_array(args).size() >= 3)
+        {
+          ++it;
+          step = convert_expression(*it);
+        }
+      }
+      start = safe_typecast(start, python_int_type());
+      stop = safe_typecast(stop, python_int_type());
+      step = safe_typecast(step, python_int_type());
+
+      typet lt = python_list_type(python_int_type());
+      static unsigned range_ctr = 0;
+      std::string tn = "__range_" + std::to_string(range_ctr++);
+      std::string tq = qualify_name(tn);
+      irep_idt ti{tq};
+      if(symbol_table.lookup(ti) == nullptr)
+      {
+        symbolt ts{ti, lt, "python"};
+        ts.base_name = tn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        symbol_table.add(ts);
+      }
+      symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+      const auto &data_type =
+        to_array_type(to_struct_type(lt).components()[1].type());
+      member_exprt data{tmp, "data", data_type};
+      member_exprt length{tmp, "length", signedbv_typet{64}};
+
+      // Fill: data[i] = start + i * step for i in 0..MAX
+      pending_checks.push_back(
+        code_frontend_assignt{length, from_integer(0, signedbv_typet{64})});
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt val = plus_exprt{start, mult_exprt{idx, step}};
+        exprt in_range = binary_relation_exprt{val, ID_lt, stop};
+        code_blockt add;
+        add.add(code_frontend_assignt{index_exprt{data, idx}, val});
+        add.add(code_frontend_assignt{
+          length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+        pending_checks.push_back(code_ifthenelset{in_range, std::move(add)});
+      }
+      return std::move(tmp);
+    }
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
   // PLib builtins: round(number) → nearest integer
   else if(func_name == "round")
   {
@@ -3693,6 +3872,23 @@ exprt python_convertert::convert_call(const jsont &expr)
           return true_exprt{};
         if(cls_name == "dict" && is_python_dict_type(obj.type()))
           return true_exprt{};
+
+        // If checking against a built-in type and obj is a different
+        // built-in type, return false (no cross-type isinstance)
+        if(
+          cls_name == "int" || cls_name == "float" || cls_name == "bool" ||
+          cls_name == "str" || cls_name == "list" || cls_name == "tuple" ||
+          cls_name == "dict")
+        {
+          // obj is not the requested built-in type
+          if(
+            obj.type().id() == ID_signedbv || obj.type().id() == ID_integer ||
+            obj.type().id() == ID_floatbv || obj.type().id() == ID_bool ||
+            is_python_string_type(obj.type()) ||
+            is_python_list_type(obj.type()) ||
+            is_python_tuple_type(obj.type()) || is_python_dict_type(obj.type()))
+            return false_exprt{};
+        }
 
         // Check user-defined classes
         if(obj.type().id() == ID_struct)
