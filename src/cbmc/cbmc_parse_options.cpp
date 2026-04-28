@@ -162,6 +162,13 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(cmdline.isset("python-unbounded-ints"))
     options.set_option("python-unbounded-ints", true);
+  if(cmdline.isset("python-max-string-length"))
+    options.set_option(
+      "python-max-string-length",
+      cmdline.get_value("python-max-string-length"));
+  if(cmdline.isset("python-max-list-length"))
+    options.set_option(
+      "python-max-list-length", cmdline.get_value("python-max-list-length"));
 
   if(cmdline.isset("cover") && cmdline.isset("unwinding-assertions"))
   {

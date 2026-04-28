@@ -39,6 +39,12 @@ void python_languaget::set_language_options(
 {
   function_entry_point = options.get_option("function");
   unbounded_ints = options.get_bool_option("python-unbounded-ints");
+  std::string max_str = options.get_option("python-max-string-length");
+  if(!max_str.empty())
+    max_string_length = std::stoul(max_str);
+  std::string max_lst = options.get_option("python-max-list-length");
+  if(!max_lst.empty())
+    max_list_length = std::stoul(max_lst);
 }
 
 /// The Python code that converts a .py file to a JSON AST.

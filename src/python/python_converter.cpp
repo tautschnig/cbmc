@@ -148,18 +148,30 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     return python_value_float(e);
   else if(target_type.id() == ID_bool)
   {
-    // PLib stdtypes: Truth Value Testing
-    // Falsy: None, False, 0, 0.0, "", [], {}, set(), range(0)
-    // We check: NONE→false, BOOL→bool_val, INT→int_val!=0
-    // FLOAT/STR/LIST with nondet values are assumed truthy
-    // (sound overapproximation — may miss empty-string/list falsiness)
+    // PLib stdtypes: Truth Value Testing (precise)
+    // Falsy: None, False, 0, 0.0, empty string "", empty list []
+    exprt bool_true = and_exprt{
+      python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)};
+    exprt int_true = and_exprt{
+      python_value_is(e, python_type_tagt::INT),
+      notequal_exprt{python_value_int(e), from_integer(0, signedbv_typet{64})}};
+    exprt float_true = and_exprt{
+      python_value_is(e, python_type_tagt::FLOAT),
+      notequal_exprt{python_value_float(e), safe_zero(double_type())}};
+    exprt str_true = and_exprt{
+      python_value_is(e, python_type_tagt::STR),
+      notequal_exprt{
+        member_exprt{python_value_str(e), "length", signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})}};
+    exprt list_true = and_exprt{
+      python_value_is(e, python_type_tagt::LIST),
+      notequal_exprt{
+        member_exprt{python_value_list(e), "length", signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})}};
+    // NONE tag → false (not in any of the above)
     return or_exprt{
-      and_exprt{
-        python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)},
-      and_exprt{
-        python_value_is(e, python_type_tagt::INT),
-        notequal_exprt{
-          python_value_int(e), from_integer(0, signedbv_typet{64})}}};
+      or_exprt{bool_true, int_true},
+      or_exprt{float_true, or_exprt{str_true, list_true}}};
   }
   else if(is_python_string_type(target_type))
     return python_value_str(e);
