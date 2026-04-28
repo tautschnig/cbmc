@@ -1268,7 +1268,15 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
                 exception_type_hash("ZeroDivisionError"), python_int_type())}});
       }
     }
-    return mod_exprt{left, right};
+    // PLR §6.7: Python modulo: result has same sign as divisor
+    // C modulo: result has same sign as dividend
+    // Fix: if remainder != 0 and signs differ, add divisor
+    exprt c_mod = mod_exprt{left, right};
+    exprt has_rem = notequal_exprt{c_mod, from_integer(0, left.type())};
+    exprt diff_sign = binary_relation_exprt{
+      bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
+    return if_exprt{
+      and_exprt{has_rem, diff_sign}, plus_exprt{c_mod, right}, c_mod};
   }
   else if(op == "Pow")
   {
@@ -3880,7 +3888,24 @@ exprt python_convertert::convert_call(const jsont &expr)
       comps.push_back(struct_typet::componentt{"_1", python_int_type()});
       struct_typet tuple_type{comps};
       tuple_type.set_tag("python_tuple");
-      return struct_exprt{{div_exprt{a, b}, mod_exprt{a, b}}, tuple_type};
+      // PLR §6.7: divmod uses floor division and Python modulo
+      exprt quotient = div_exprt{a, b};
+      exprt remainder = mod_exprt{a, b};
+      exprt has_remainder =
+        notequal_exprt{remainder, from_integer(0, a.type())};
+      exprt diff_sign = binary_relation_exprt{
+        bitxor_exprt{a, b}, ID_lt, from_integer(0, a.type())};
+      exprt floor_q = minus_exprt{
+        quotient,
+        if_exprt{
+          and_exprt{has_remainder, diff_sign},
+          from_integer(1, a.type()),
+          from_integer(0, a.type())}};
+      exprt py_mod = if_exprt{
+        and_exprt{has_remainder, diff_sign},
+        plus_exprt{remainder, b},
+        remainder};
+      return struct_exprt{{floor_q, py_mod}, tuple_type};
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
