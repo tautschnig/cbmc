@@ -41,6 +41,33 @@ const bvt &boolbvt::convert_bv(
   const exprt &expr,
   std::optional<std::size_t> expected_width)
 {
+  // Check let scope stack for original symbols (avoids replace_symbolt
+  // traversal in convert_let). Returns the scoped BV directly.
+  if(!let_scope_stack.empty() && expr.id() == ID_symbol)
+  {
+    const auto &id = to_symbol_expr(expr).get_identifier();
+    for(auto it = let_scope_stack.rbegin(); it != let_scope_stack.rend(); ++it)
+    {
+      if(expr.is_boolean())
+      {
+        auto bool_it = it->bool_map.find(id);
+        if(bool_it != it->bool_map.end())
+        {
+          // Return without caching (scope is temporary)
+          static thread_local bvt scope_result;
+          scope_result = {bool_it->second};
+          return scope_result;
+        }
+      }
+      else
+      {
+        auto bv_it = it->bv_map.find(id);
+        if(bv_it != it->bv_map.end())
+          return bv_it->second;
+      }
+    }
+  }
+
   // check cache first
   std::pair<bv_cachet::iterator, bool> cache_result=
     bv_cache.insert(std::make_pair(expr, bvt()));
