@@ -290,286 +290,145 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Unannotated parameters** — needs `Any` type or clear error message
 
 
-### KNOWNBUG inventory (3 tests)
 
-239 total tests, 236 CORE, 3 KNOWNBUG.
+### KNOWNBUG inventory (10 tests)
 
-ESBMC validation: 3,090 tests, ~1 crash (ESBMC-specific primitive),
-0 crashes from our converter. Precision roadmap: 25 of 27 items done.
+250 total tests, 240 CORE, 10 KNOWNBUG.
 
-All 3 remaining KNOWNBUGs are implementable — none are fundamental
-limitations of bounded model checking.
+ESBMC: ~1 crash (ESBMC-specific), 0 from our converter.
+These 10 KNOWNBUGs cover ~157 ESBMC tests directly and ~783
+combination failures indirectly.
 
-#### `limit-dict-dynamic-keys` — array-based dict model
+#### Tier 1 — Quick fixes (< 1 hour each)
 
-**Problem:** `d = {}; d["x"] = 1` — dynamic key insertion not supported.
-Current model: struct-per-key (only literal keys at creation time).
-`del d["key"]` zeros the value instead of removing the key. `len(d)`
-returns the number of struct fields, not the number of live keys.
+##### `limit-isinstance-negative` — `not isinstance(42, str)`
 
-**Detailed implementation plan:**
+**Problem:** `isinstance(42, str)` returns `false_exprt{}` (correct),
+but `not isinstance(42, str)` wraps it in `not_exprt{false_exprt{}}`
+which the solver can't simplify in all contexts. The real issue:
+`isinstance` returns a static `true_exprt`/`false_exprt` but the
+`not` operator expects a `bool` variable, not a constant.
 
-**Step 1: Define the array-based dict type.**
+**Fix:** In the isinstance handler, when the result is `false_exprt`,
+return `true_exprt` for the `not isinstance` case directly. Or:
+ensure `not_exprt{false_exprt{}}` simplifies to `true_exprt{}` by
+calling `simplify_expr()` on the result.
 
-Replace the struct-per-key model with:
-```
-struct python_dict_t {
-  int64 length;                    // number of live key-value pairs
-  python_str keys[MAX_DICT_SIZE];  // key array (string keys)
-  int64 values[MAX_DICT_SIZE];     // value array (int values)
-};
-```
-Add `PYTHON_MAX_DICT_SIZE` constant (default 16). Create
-`python_dict_type(key_type, value_type)` function in `python_types.h`.
+**Effort:** 15 minutes. **Affects:** ~13 ESBMC tests.
 
-**Step 2: Update `convert_dict` (dict literal creation).**
+##### `limit-nondet-list-typed` — nondet list length can be negative
 
-For `{"a": 1, "b": 2}`: create the array-based struct with
-`length=2`, `keys[0]="a"`, `keys[1]="b"`, `values[0]=1`, `values[1]=2`.
-Pad remaining slots with zeros.
+**Problem:** `nondet_list()` returns a list with nondet length
+(signedbv{64}), which can be negative. `assert len(x) >= 0` fails.
 
-**Step 3: Update `convert_subscript` (dict access `d["key"]`).**
+**Fix:** After creating the nondet list, add `assume(length >= 0 &&
+length <= PYTHON_MAX_LIST_LENGTH)` to constrain the length to valid
+bounds. Same pattern as `random.randint` constraints.
 
-For `d["key"]`: scan the keys array for a match:
-```
-result = nondet  // default if key not found
-for i in 0..length:
-  if keys[i] == key: result = values[i]
-```
-Generate as an if-then-else chain via the existing comparison mechanism.
+**Effort:** 15 minutes. **Affects:** ~18 ESBMC tests.
 
-**Step 4: Update dict subscript assignment (`d["key"] = value`).**
+##### `limit-mod-zero-exception` — `2 % 0` as Python exception
 
-For `d["key"] = value`: scan keys for existing key. If found, update
-value. If not found, append at `length` position and increment length.
-```
-found = false
-for i in 0..length:
-  if keys[i] == key: values[i] = value; found = true
-if !found:
-  keys[length] = key; values[length] = value; length += 1
-```
-Use `pending_checks` for the unrolled loop.
+**Problem:** `2 % 0` generates a CBMC `division-by-zero` property
+check but doesn't set `__exception_active` for `ZeroDivisionError`.
+A `try/except ZeroDivisionError` can't catch it.
 
-**Step 5: Update `del d["key"]`.**
+**Fix:** In the `Mod` and `FloorDiv` handlers, when the divisor
+might be zero, set `__exception_active = true` and `__exception_type`
+to the ZeroDivisionError hash via `pending_checks`, BEFORE the
+division. Guard the actual division with `if(!__exception_active)`.
 
-Scan keys for match. Shift remaining elements left. Decrement length.
-Same pattern as `list.remove()`.
+**Effort:** 30 minutes. **Affects:** ~9 ESBMC tests.
 
-**Step 6: Update `len(d)`.**
+##### `limit-range-expression` — `range()` as expression
 
-Return `d.length` (the live count, not the array size).
+**Problem:** `list(range(5))` — `range()` only works inside `for-in`.
+As a standalone expression, it returns nondet.
 
-**Step 7: Update `for k in d`.**
+**Fix:** In `convert_call`, recognize `range` and return a list
+struct with `length = stop - start` (or `(stop - start + step - 1) / step`
+for stepped ranges) and `data[i] = start + i * step`. Build the
+list at conversion time for constant arguments, or use `pending_checks`
+for variable arguments.
 
-Iterate `keys[0..length]` instead of struct fields.
+**Effort:** 45 minutes. **Affects:** ~14 ESBMC tests.
 
-**Step 8: Update `d.get(key, default)`.**
+#### Tier 2 — Moderate (1-2 hours each)
 
-Scan keys array. Return value if found, default otherwise.
+##### `limit-math-trig` — `math.cos(0) == 1.0`
 
-**Step 9: Update `in` operator for dicts.**
+**Problem:** Trig functions return nondet. For constant arguments,
+we could compute at conversion time (like `math.sqrt`).
 
-`key in d`: scan keys array for match.
+**Fix:** In the math module handler, add `sin`, `cos`, `tan`, `asin`,
+`acos`, `atan`, `log`, `exp` models. For constant float arguments,
+compute using `std::sin/cos/tan/etc.` and return `ieee_floatt` result.
+For variable arguments, return nondet float.
 
-**Step 10: Update pass 0 type inference.**
+**Effort:** 1 hour. **Affects:** ~18 ESBMC tests.
 
-Dict literals infer key/value types from the first element.
-Empty dicts `{}` use `python_dict_type(string, int)` as default.
+##### `limit-str-replace-content` — `str.replace()` content tracking
 
-**Affected files:** `python_types.h` (new type), `python_converter.cpp`
-(convert_dict, convert_subscript, convert_assign subscript handler,
-convert_for dict iteration, del handler, len handler, in operator,
-dict method handler, pass 0).
+**Problem:** `"hello world".replace("world", "python")` returns nondet.
 
-**Testing:** Update all existing dict tests. Add tests for dynamic
-insertion, deletion, len(), iteration, get(), in operator.
+**Fix:** For constant string, constant old, constant new: perform the
+replacement at conversion time. Scan the string data for occurrences
+of `old`, replace each with `new`, build the result string. For
+variable arguments, return nondet.
 
-**Risk:** High — touches many code paths. Run full regression suite
-after each step.
+**Effort:** 1-2 hours. **Affects:** ~5 ESBMC tests.
 
-**PLR reference:** PLib stdtypes — Mapping Types (dict)
+##### `limit-unicode-string` — `isalpha()` on non-ASCII
 
-**Effort:** 1-2 days. **Affects:** ~20 ESBMC tests.
+**Problem:** Our `isalpha()` only checks `[a-zA-Z]`. Python's
+`isalpha()` also accepts Unicode letters (é, ñ, etc.).
 
-#### `limit-generator-infinite` — lazy generator state machine
+**Fix:** Extend the byte-range check to include common Unicode
+letter ranges. For UTF-8 encoded strings, multi-byte characters
+have first byte >= 0xC0. A simple approximation: any byte >= 128
+is considered a letter (overapproximation but handles most cases).
+Or: check Unicode categories using a lookup table for the first
+256 code points.
 
-**Problem:** `while True: yield n; n += 1` — infinite generators can't
-be eagerly evaluated. The eager approach (collect all yields into a
-list) would loop forever. Requires lazy evaluation where `next(gen)`
-advances the generator to the next yield point.
+**Effort:** 1 hour. **Affects:** ~7 ESBMC tests.
 
-**Detailed implementation plan:**
+##### `limit-typecast-tagged-union` — `int()` on tagged union
 
-**Step 1: Model generator state as a struct.**
+**Problem:** `int(x)` where `x` is `python_value_type` generates
+`warning: ignoring typecast` because `typecast_exprt{struct, int}`
+is not valid.
 
-For each generator function, create a state struct:
-```
-struct gen_state_t {
-  int __state;        // current yield point (0 = start, -1 = done)
-  // all local variables of the generator function:
-  int n;              // local var 'n'
-  int i;              // local var 'i'
-  // ... one field per local variable
-};
-```
-The `__state` field tracks which yield point the generator is at.
+**Fix:** In the `int()` built-in handler, check if the argument is
+`python_value_type`. If so, dispatch on tag: `if(tag==INT) int_val
+else if(tag==FLOAT) typecast(float_val, int) else if(tag==BOOL)
+typecast(bool_val, int) else 0`. Same pattern as the truth value
+dispatch.
 
-**Step 2: Transform the generator body into a switch-based state machine.**
+**Effort:** 30 minutes. **Affects:** ~48 ESBMC tests.
 
-The generator function body:
-```python
-def count():
-    n = 0
-    while True:
-        yield n      # yield point 0
-        n += 1
-```
-Becomes:
-```c
-int gen_next(gen_state_t *self) {
-  switch(self->__state) {
-    case 0: goto yield_0;
-    case -1: return STOP_ITERATION;
-  }
-  // initial code
-  self->n = 0;
-yield_0:
-  self->__state = 0;
-  return self->n;  // yield value
-  // code after yield
-  self->n += 1;
-  goto yield_0;    // loop back
-}
-```
+#### Tier 3 — Significant (1-2 weeks each)
 
-**Step 3: Model `iter(gen_func())` as creating the state struct.**
+##### `limit-generator-infinite` — lazy generator state machine
 
-`gen = count()` creates a `gen_state_t` with `__state = -2` (not started).
-The first call to `next(gen)` runs the body until the first yield.
+**Problem:** Infinite generators (`while True: yield n`) can't be
+eagerly evaluated.
 
-**Step 4: Model `next(gen)` as calling the state machine.**
-
-`next(gen)` calls `gen_next(&gen)` which advances to the next yield
-and returns the yielded value.
-
-**Step 5: Model `for x in gen()` as a while loop with next().**
-
-```c
-gen_state_t __gen = {};
-__gen.__state = -2;
-while(true) {
-  int __val = gen_next(&__gen);
-  if(__gen.__state == -1) break;  // StopIteration
-  x = __val;
-  // loop body
-}
-```
-
-**Step 6: Handle `--unwind N` for infinite generators.**
-
-CBMC's `--unwind` flag bounds the while loop. With `--unwind 10`,
-the generator produces at most 10 values. The unwinding assertion
-alerts the user if the bound is insufficient.
-
-**Step 7: Handle generator expressions.**
-
-`(x*2 for x in range(10))` — create an anonymous generator function
-and apply the same transformation.
-
-**Implementation approach:**
-
-During `convert_function_def`, if the function contains `yield`:
-1. Collect all local variables → struct fields
-2. Identify yield points (number them 0, 1, 2, ...)
-3. Generate the state machine function with switch/goto
-4. Replace the original function with a constructor that returns
-   the state struct
-
-During `convert_call` for generator functions:
-1. Create the state struct instance
-2. Return it (the caller iterates via for-in or next())
-
-During `convert_for` for generator iterables:
-1. Detect that the iterable is a generator state struct
-2. Generate the while loop with next() calls
-
-**Affected files:** `python_types.h` (generator state type),
-`python_converter.h` (generator metadata), `python_converter.cpp`
-(convert_function_def, convert_call, convert_for, convert_expr_stmt).
-
-**PLR reference:** PLR §6.2.9 — Yield expressions
+**Fix:** Full state machine transformation as described in Section 9.
+Generator function body → switch-based state machine with `__state`
+field. `next(gen)` advances to next yield point. Works with
+`--unwind` for bounded verification.
 
 **Effort:** 1-2 weeks. **Affects:** ~15 ESBMC tests.
 
-#### `limit-async-concurrent` — concurrent coroutines via CBMC threads
+##### `limit-async-concurrent` — concurrent coroutines
 
-**Problem:** `asyncio.gather(coro1(), coro2())` runs coroutines
-concurrently. Our sequential model executes them one after another,
-missing race conditions from interleaving.
+**Problem:** `asyncio.gather()` runs coroutines concurrently.
 
-**Detailed implementation plan:**
+**Fix:** Model using CBMC's `__CPROVER_thread_create` for each
+coroutine. `await` → `__CPROVER_yield()`. Cooperative scheduling
+via `__CPROVER_atomic_begin/end`. Depends on generator state machine.
 
-**Step 1: Model coroutines as generator state machines.**
-
-`async def` functions are already converted as regular functions
-(9.5.3). Extend this: each `async def` becomes a state machine
-(same as generators in `limit-generator-infinite` plan). Each
-`await` expression is a yield point.
-
-**Step 2: Model `asyncio.gather()` as CBMC thread spawning.**
-
-In `convert_call`, detect `asyncio.gather(coro1, coro2, ...)`.
-For each coroutine argument:
-```c
-__CPROVER_thread_create(coro_state_machine, &state_i);
-```
-This spawns a CBMC thread that runs the coroutine's state machine.
-
-**Step 3: Model `await` as a yield point with thread synchronization.**
-
-Each `await expr` in a coroutine:
-1. Evaluate `expr` (which may be another coroutine call)
-2. Insert a `__CPROVER_yield()` to allow other threads to run
-3. Resume after the yield
-
-The `__CPROVER_yield()` is CBMC's primitive for cooperative scheduling.
-It tells the model checker to explore interleavings at this point.
-
-**Step 4: Model shared state correctly.**
-
-Python's `asyncio` uses cooperative multitasking — only one coroutine
-runs at a time, and context switches happen only at `await` points.
-Model this with CBMC's `__CPROVER_atomic_begin()` /
-`__CPROVER_atomic_end()` around non-await code blocks. This ensures
-CBMC only explores interleavings at await points, matching Python's
-cooperative scheduling semantics.
-
-**Step 5: Model `asyncio.run(main())`.**
-
-`asyncio.run(coro)` creates an event loop and runs the coroutine.
-Model as: create the coroutine state machine, run it to completion.
-If the coroutine uses `gather()`, the threads are spawned inside.
-
-**Step 6: Model `asyncio.Lock`, `asyncio.Event`, etc.**
-
-These synchronization primitives can be modeled using CBMC's
-`__CPROVER_mutex_lock()` / `__CPROVER_mutex_unlock()` for locks,
-and shared boolean variables for events.
-
-**Dependencies:**
-- Requires the generator state machine infrastructure from
-  `limit-generator-infinite` (Step 1-2).
-- Requires CBMC's thread support (`__CPROVER_thread_create`,
-  `__CPROVER_yield`, `__CPROVER_atomic_begin/end`).
-
-**Affected files:** `python_converter.cpp` (convert_call for
-asyncio.gather, convert_expr_stmt for await, async function
-body transformation), `python_language.cpp` (asyncio.run model).
-
-**PLR reference:** PLR §8.8 — Coroutines, PLib asyncio
-
-**Effort:** 1-2 weeks (after generator state machine). **Affects:** ~10 ESBMC tests.
+**Effort:** 1-2 weeks (after generators). **Affects:** ~10 ESBMC tests.
 
 ### Summary
 
