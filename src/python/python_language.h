@@ -7,6 +7,7 @@
 #include <langapi/language.h>
 
 #include "python_parse_tree.h"
+#include "python_types.h"
 
 /// Implements the language interface for Python.
 class python_languaget : public languaget
@@ -78,6 +79,8 @@ protected:
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
+  std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;
+  std::size_t max_list_length = PYTHON_MAX_LIST_LENGTH;
 };
 
 std::unique_ptr<languaget> new_python_language();

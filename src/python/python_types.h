@@ -26,10 +26,15 @@
 
 /// Maximum length for Python strings in verification.
 /// Can be overridden with --python-max-string-length.
-#define PYTHON_MAX_STRING_LENGTH 256
+#ifndef PYTHON_MAX_STRING_LENGTH
+#  define PYTHON_MAX_STRING_LENGTH 256
+#endif
 
 /// Maximum length for Python lists in verification.
-#define PYTHON_MAX_LIST_LENGTH 64
+/// Can be overridden with --python-max-list-length.
+#ifndef PYTHON_MAX_LIST_LENGTH
+#  define PYTHON_MAX_LIST_LENGTH 64
+#endif
 
 /// Return the CBMC type used to represent Python str.
 /// This is a struct { signedbv[64] length; unsignedbv[8] data[N]; }
