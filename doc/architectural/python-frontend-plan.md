@@ -289,341 +289,287 @@ following JBMC's `remove_exceptions.cpp` pattern.
 - **Arbitrary precision integers** — needs `integer_typet` + SMT backend
 - **Unannotated parameters** — needs `Any` type or clear error message
 
-### KNOWNBUG inventory (5 tests)
 
-206 total tests, 201 CORE, 5 KNOWNBUG.
+### KNOWNBUG inventory (3 tests)
 
-ESBMC validation (2026-04-27): 3,090 tests, 1,655 correct (53%),
-8 crashes (98.5% reduction from 533), 117 timeouts.
+239 total tests, 236 CORE, 3 KNOWNBUG.
 
-#### Crashes (must fix)
+ESBMC validation: 3,090 tests, ~1 crash (ESBMC-specific primitive),
+0 crashes from our converter. Precision roadmap: 25 of 27 items done.
 
-##### `crash-overload-return-type` — functions returning different class types
+All 3 remaining KNOWNBUGs are implementable — none are fundamental
+limitations of bounded model checking.
 
-**Problem:** Functions that return `Foo()` on one path and `Bar()` on
-another crash in symex with "assignments must be type consistent".
-The return type is set to `Foo` by the first return, then the second
-return `Bar` creates a type mismatch. Affects 7 ESBMC tests using
-`@overload`/`Literal` patterns.
+#### `limit-dict-dynamic-keys` — array-based dict model
 
-**Fix:** In `convert_function_def`, scan ALL return statements during
-registration (not just the first). If multiple returns have different
-struct types, set the return type to `python_value_type()` (tagged
-union). The raise handler and all return statements then use the same
-type. Callers unwrap the tagged union to the expected type.
+**Problem:** `d = {}; d["x"] = 1` — dynamic key insertion not supported.
+Current model: struct-per-key (only literal keys at creation time).
+`del d["key"]` zeros the value instead of removing the key. `len(d)`
+returns the number of struct fields, not the number of live keys.
 
-Alternative: use a common base type. If `Foo` and `Bar` both have
-`__class_tag`, use a struct with just `{__class_tag}` as the return
-type. This preserves the class identity for `isinstance` checks.
+**Detailed implementation plan:**
 
-**PLR reference:** §7.6 — "return leaves the current function call."
+**Step 1: Define the array-based dict type.**
 
-**Effort:** 2-3 hours. **Affects:** 7 ESBMC crashes + 1 segfault.
-
-#### Correctness (wrong results)
-
-##### `limit-dict-get-method` — dict.get(key, default)
-
-**Problem:** `d.get("a", 0)` returns nondet because `get` is not
-recognized as a dict method.
-
-**Fix:** In the method call handler, detect `get` on dict types.
-For constant key, return `member_exprt{dict, key, type}` (same as
-subscript access). For the default parameter, return an `if_exprt`
-that checks if the key exists (always true for our struct-based
-dicts since all keys are present).
-
-**PLR reference:** §4.10 — "get(key, default) returns the value for
-key if key is in the dictionary, else default."
-
-**Effort:** 30 minutes. **Affects:** ~13 ESBMC tests.
-
-##### `limit-str-format` — str.format() method
-
-**Problem:** `"hello {}".format("world")` returns nondet because
-`format` is not recognized as a string method.
-
-**Fix:** Add `format` to the string method handler. For constant
-format strings with simple `{}` placeholders, substitute the
-arguments at conversion time (same approach as f-string content
-tracking). For complex format specs, return nondet string.
-
-**PLR reference:** §4.7.1 — "str.format(*args, **kwargs) performs
-a string formatting operation."
-
-**Effort:** 1-2 hours. **Affects:** ~10 ESBMC tests.
-
-##### `limit-isinstance-tuple` — isinstance with tuple of types
-
-**Problem:** `isinstance(x, (int, float))` — the second argument is a
-`Tuple` node, not a `Name` node. Our isinstance handler only checks
-`Name` nodes.
-
-**Fix:** In the isinstance handler, when the second argument is a
-`Tuple`, iterate its elements and check each type. Return the
-disjunction: `isinstance(x, A) || isinstance(x, B) || ...`.
-
-**PLR reference:** §6.10.2 — "classinfo may be a tuple of class objects."
-
-**Effort:** 15 minutes. **Affects:** ~19 ESBMC tests.
-
-##### `limit-list-pop-index` — list.pop(i) with index
-
-**Problem:** `lst.pop(0)` — pop with an index argument. Our pop handler
-only supports pop() without arguments (removes last element).
-
-**Fix:** In the list pop handler, check if an argument is provided.
-If so, use it as the index instead of `length - 1`. Then shift
-elements left from that index (same as the del handler).
-
-**PLR reference:** §4.6.1 — "pop(i) removes and returns the item at
-the given position."
-
-**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
-
-##### `limit-input-builtin` — input() not modeled
-
-**Problem:** `input()` returns nondet because it's not recognized.
-
-**Fix:** In `convert_call`, recognize `input` and return
-`side_effect_expr_nondett{python_string_type()}`. This models user
-input as an arbitrary string (sound for verification).
-
-**PLR reference:** §2.4.5 — "input() reads a line from input."
-
-**Effort:** 5 minutes. **Affects:** ~13 ESBMC tests.
-
-##### `limit-complex-conjugate` — complex.conjugate()
-
-**Problem:** `z.conjugate()` not recognized as a method.
-
-**Fix:** In the method call handler, detect `conjugate` on complex
-types. Return `struct_exprt{{real, unary_minus(imag)}, complex_type}`.
-
-**PLR reference:** §3.2 — "complex.conjugate() returns the complex
-conjugate."
-
-**Effort:** 15 minutes. **Affects:** ~13 ESBMC tests.
-
-##### `limit-tagged-union-bool` — truth value of tagged union
-
-**Problem:** `if x:` where `x` is `python_value_type` generates
-`warning: ignoring typecast` because the tagged union struct can't
-be directly cast to bool.
-
-**Fix:** In `safe_typecast`, when casting `python_value_type` to
-`bool`, dispatch on the tag: `if(tag==INT) int_val!=0 else if
-(tag==FLOAT) float_val!=0.0 else if(tag==BOOL) bool_val else true`.
-This is the same pattern as the None truthiness check but generalized
-for all tagged union types.
-
-**PLR reference:** §4.1 — "Truth Value Testing"
-
-**Effort:** 30 minutes. **Affects:** ~40 ESBMC tests.
-
-##### `limit-missing-return-none` — missing return gives nondet
-
-**Problem:** Functions with missing return paths return nondet instead
-of None. This causes wrong-fail results where `assert result is None`
-should pass but fails.
-
-**Fix:** In `convert_function_def`, after converting the body, check
-if the last statement is NOT a return. If so, append
-`return None_sentinel` (our None value). This ensures all code paths
-have an explicit return.
-
-**PLR reference:** §7.6 — "If no expression is present, None is
-returned."
-
-**Effort:** 20 minutes. **Affects:** ~6 ESBMC tests.
-
-##### `limit-hex-oct-bin` — hex()/oct()/bin() built-ins
-
-**Problem:** `hex(255)` not implemented.
-
-**Fix:** In `convert_call`, add handlers for `hex`, `oct`, `bin`.
-For constant integer arguments, compute the string at conversion
-time. For variable arguments, return nondet string.
-
-**PLR reference:** §2.4.5 — "hex(x) converts an integer to a
-lowercase hexadecimal string."
-
-**Effort:** 30 minutes. **Affects:** ~18 ESBMC tests.
-
-##### `limit-string-methods-extended` — additional string methods
-
-**Problem:** zfill, isidentifier, isupper, islower, isnumeric,
-casefold, partition, etc. not modeled.
-
-**Fix:** Add these to the string method handler. Most return nondet
-of the correct type (string for zfill/casefold, bool for is*
-predicates, tuple for partition).
-
-**PLR reference:** §4.7.1 — "String Methods"
-
-**Effort:** 20 minutes. **Affects:** ~30 ESBMC tests.
-
-##### `limit-sorted-key` — sorted() returns nondet
-
-**Problem:** `sorted([3,1,2])` returns nondet list instead of
-`[1,2,3]`.
-
-**Fix:** In `convert_call`, when `sorted` is called with a list
-argument, create a copy and sort it using the same bubble sort
-mechanism as `list.sort()`. Return the sorted copy.
-
-**PLR reference:** §2.4.5 — "sorted(iterable) returns a new sorted
-list."
-
-**Effort:** 30 minutes. **Affects:** ~7 ESBMC tests.
-
-##### `limit-re-module` — regex not supported
-
-**Problem:** `import re; re.match(...)` not supported.
-
-**Fix:** Register `re` as a known module. Model `re.match`,
-`re.search`, `re.findall` as returning nondet values of the
-appropriate types (nondet for match objects, nondet list for findall).
-This is a sound overapproximation.
-
-**PLR reference:** Python Library Reference — `re` module.
-
-**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
-
-##### `limit-fstring-content` — f-string content tracking
-
-**Problem:** `f"x={x}"` returns nondet string. Content not tracked.
-
-**Fix:** In the `JoinedStr` handler, iterate `values`. For `Constant`
-parts, use literal bytes. For `FormattedValue` with int expressions,
-convert to string at conversion time for constants. Concatenate all
-parts using the string concat content-tracking mechanism.
-
-**PLR reference:** §2.4.3 — "Formatted string literals."
-
-**Effort:** 2 hours. **Affects:** ~50+ ESBMC tests.
-
-##### `limit-set-builtin` — set() deduplication
-
-**Problem:** `set([1, 2, 2, 3])` doesn't deduplicate.
-
-**Fix:** O(n²) deduplication via `pending_checks` at construction.
-
-**PLR reference:** §4.9 — "A set object is an unordered collection
-of distinct hashable objects."
-
-**Effort:** 2-3 hours. **Affects:** ~8 ESBMC tests.
-
-Remaining 8 ESBMC crashes are all from `@overload`/`Literal` patterns
-where functions return different class types on different paths. These
-require erased return types or a tagged union that can hold class
-struct pointers — a fundamental type system extension.
-
-#### Tier 1 — Quick fixes (< 30 minutes each)
-
-
-| KNOWNBUG | Fix | Commit |
-|----------|-----|--------|
-| `crash-except-type-assign` | Numeric typecast + try-block guarded assign + raise return type | b535f9666d |
-| `crash-default-obj-param` | Pass 0.25 class pre-registration + pass 1.5 type update + constructor defaults | b535f9666d |
-| `limit-float-conversion` | ieee_floatt for exact int→float in float() and safe_typecast | f4273c41a2 |
-| `limit-range-negative-step` | Negative step support with i > stop condition | f4273c41a2 |
-| `limit-isinstance-builtin` | Built-in type checks (list, str, tuple, dict, etc.) | f4273c41a2 |
-| `limit-math-functions` | math.ceil/floor/fabs as exact expressions | f4273c41a2 |
-| `limit-tuple-immutable` | TypeError on tuple subscript assignment | f4273c41a2 |
-| `limit-for-in-dict` | Unroll over dict struct fields | f4273c41a2 |
-| `limit-super-call` | Inline base __init__ body + AnnAssign attribute targets | f4273c41a2 |
-
-| KNOWNBUG | Fix | Commit |
-|----------|-----|--------|
-| `crash-unicode-source` | String concat content tracking via pending_checks | 214416880f |
-| `crash-list-repeat-compare` | List repeat with modular indexing + zero padding | 214416880f |
-| `limit-string-length` | Test updated to verify within-bounds behavior | 214416880f |
-| `limit-list-length` | Test updated to verify within-bounds behavior | 214416880f |
-| `limit-none-identity` | None sentinel (-4611686018427387904) + falsy truthiness | 214416880f |
-| `crash-class-string-attr` | Tagged union with str/list pointers, float_val fix | adba53f7b9 |
-| `limit-dynamic-dispatch` | __class_tag field, layout-compatible inheritance | 699bbd8375 |
-| `crash-except-type-assign` | Numeric typecast + try-block guarded assign | b535f9666d |
-| `crash-default-obj-param` | Pass 0.25 class pre-registration + constructor defaults | b535f9666d |
-| `limit-float-conversion` | ieee_floatt for exact int→float | f4273c41a2 |
-| `limit-range-negative-step` | Negative step with i > stop condition | f4273c41a2 |
-| `limit-isinstance-builtin` | Built-in type checks (list, str, etc.) | f4273c41a2 |
-| `limit-math-functions` | math.ceil/floor/fabs as exact expressions | f4273c41a2 |
-| `limit-tuple-immutable` | TypeError on tuple subscript assignment | f4273c41a2 |
-| `limit-for-in-dict` | Unroll over dict struct fields | f4273c41a2 |
-| `limit-super-call` | Inline base __init__ body | f4273c41a2 |
-| `limit-divmod` | divmod() → tuple {a//b, a%b} | 19f3e7459f |
-| `limit-power-negative` | ** with constant exponents, unrolled | 19f3e7459f |
-| `limit-nondet-overflow` | Test uses --python-unbounded-ints --z3 | 19f3e7459f |
-| `limit-string-augassign` | Content-tracking concat in aug_assign | 19f3e7459f |
-| `limit-list-sort` | Bubble sort via pending_checks | 19f3e7459f |
-| `limit-list-reverse` | Element swaps + list.pop() | 19f3e7459f |
-| `limit-classmethod` | Detect @classmethod, skip cls param | 19f3e7459f |
-| `limit-untyped-param-string-call` | len() dispatch on tagged union | 19f3e7459f |
-| `limit-lambda-multi-param` | Already worked, test updated | 19f3e7459f |
-| `limit-mixed-type-compare` | Rounding mode init + float→int for exact constants | 7b2adc7c2f |
-| `limit-from-import-func` | Route imported math funcs through our model | 7b2adc7c2f |
-| `limit-assume` | Recognize assume() as code_assumet | 7b2adc7c2f |
-| `limit-sum` | Unrolled accumulation loop | 7b2adc7c2f |
-| `limit-forward-class-ref` | String annotations as forward refs | 7b2adc7c2f |
-| `limit-list-extend` | Copy elements + update length | 7b2adc7c2f |
-| `limit-list-remove` | Find + shift left + decrement | 7b2adc7c2f |
-| `limit-type-builtin` | Static type-tag for type() comparisons | 7b2adc7c2f |
-| `limit-power-variable-exp` | If-then-else chain for b=0..16 | b3335ee067 |
-| `limit-nondet-collections` | nondet_list/nondet_dict/nondet_complex | b3335ee067 |
-| `limit-import-math-direct` | math.sqrt model for constant args | b3335ee067 |
-| `limit-fstring` | JoinedStr → nondet string | b3335ee067 |
-| `limit-complex-operations` | Complex +/-/* as component-wise ops | b3335ee067 |
-| `limit-next-builtin` | iter(list)=list, next(list)=first elem | b3335ee067 |
-| `limit-string-char-in` | Byte-by-byte scan for character membership | 368b3d1a14 |
-| `crash-keyword-missing-param` | Replace nil args with safe_zero | 368b3d1a14 |
-| `crash-list-pop-mixed` | Save element to temp before decrementing | 4aa1b6ffbe |
-| `crash-complex-abs` | Compute magnitude at conversion time for constants | 7b960f140c |
-| `limit-dict-string-compare` | Skip dict-annotated AnnAssign in pass 0 | 7b960f140c |
-| `limit-str-split` | Conversion-time split for constant strings | 7b960f140c |
-| `limit-del-dict` | Zero dict field value on del | 7b960f140c |
-| `limit-fstring` | JoinedStr → nondet string | b3335ee067 |
-| `limit-complex-operations` | Complex +/-/* as component-wise ops | b3335ee067 |
-| `crash-complex-floordiv` (partial) | TypeError via __exception_active | 330f377de2 |
-| `crash-string-index-type` | TypeError for non-integer subscript | 330f377de2 |
-| `limit-round` | floor(x + 0.5) for float args | b048d2aa39 |
-| `limit-multiple-except` | Iterate all handlers with chained if-elif | b048d2aa39 |
-| `limit-string-multiply` | Modular indexing for string repeat content | b048d2aa39 |
-| `limit-map` | Recognized as nondet list return | b048d2aa39 |
-| `limit-zip` | Recognized as nondet list return | b048d2aa39 |
-| `crash-complex-floordiv` | TypeError in complex arithmetic catch-all | 0a15a73527 |
-| `limit-constructor-expr` | Defer non-constant lists to pass 2 | cc4b0b67c3 |
-| `crash-out-of-memory` | Defer non-constant lists to pass 2 | cc4b0b67c3 |
-
-#### Tagged unions — implemented approach
-
-**`python_value_type`** is a struct with fields:
+Replace the struct-per-key model with:
 ```
-struct python_value_t {
-  int32 __tag;        // 0=NONE, 1=INT, 2=FLOAT, 3=BOOL, 4=STR, 5=LIST
-  int64 __int_val;
-  double __float_val;
-  bool __bool_val;
-  pointer_to<python_str> __str_ptr;   // 8 bytes, not 256+
-  pointer_to<python_list> __list_ptr; // 8 bytes, not 64*8+
+struct python_dict_t {
+  int64 length;                    // number of live key-value pairs
+  python_str keys[MAX_DICT_SIZE];  // key array (string keys)
+  int64 values[MAX_DICT_SIZE];     // value array (int values)
 };
 ```
+Add `PYTHON_MAX_DICT_SIZE` constant (default 16). Create
+`python_dict_type(key_type, value_type)` function in `python_types.h`.
 
-String and list values are stored via pointers to heap-allocated symbols,
-keeping the union small (~40 bytes). The `wrap_value()` function
-materializes strings into temporary symbols and stores their addresses.
+**Step 2: Update `convert_dict` (dict literal creation).**
 
-**Usage:** Unannotated function/method parameters default to
-`python_value_type`. Annotated parameters use specific types. The
-`unwrap_value()` function extracts the appropriate field based on the
-target type context. `convert_name()` returns the raw tagged union;
-callers unwrap as needed.
+For `{"a": 1, "b": 2}`: create the array-based struct with
+`length=2`, `keys[0]="a"`, `keys[1]="b"`, `values[0]=1`, `values[1]=2`.
+Pad remaining slots with zeros.
 
-**Dynamic dispatch:** Every class struct has `__class_tag` (int32) as its
-first field, set to a unique sequential ID. Derived class structs include
-all base class fields first (C-style layout compatibility). Method calls
-on objects with subclasses generate if-then-else dispatch chains checking
-`__class_tag` against each subclass's ID.
+**Step 3: Update `convert_subscript` (dict access `d["key"]`).**
+
+For `d["key"]`: scan the keys array for a match:
+```
+result = nondet  // default if key not found
+for i in 0..length:
+  if keys[i] == key: result = values[i]
+```
+Generate as an if-then-else chain via the existing comparison mechanism.
+
+**Step 4: Update dict subscript assignment (`d["key"] = value`).**
+
+For `d["key"] = value`: scan keys for existing key. If found, update
+value. If not found, append at `length` position and increment length.
+```
+found = false
+for i in 0..length:
+  if keys[i] == key: values[i] = value; found = true
+if !found:
+  keys[length] = key; values[length] = value; length += 1
+```
+Use `pending_checks` for the unrolled loop.
+
+**Step 5: Update `del d["key"]`.**
+
+Scan keys for match. Shift remaining elements left. Decrement length.
+Same pattern as `list.remove()`.
+
+**Step 6: Update `len(d)`.**
+
+Return `d.length` (the live count, not the array size).
+
+**Step 7: Update `for k in d`.**
+
+Iterate `keys[0..length]` instead of struct fields.
+
+**Step 8: Update `d.get(key, default)`.**
+
+Scan keys array. Return value if found, default otherwise.
+
+**Step 9: Update `in` operator for dicts.**
+
+`key in d`: scan keys array for match.
+
+**Step 10: Update pass 0 type inference.**
+
+Dict literals infer key/value types from the first element.
+Empty dicts `{}` use `python_dict_type(string, int)` as default.
+
+**Affected files:** `python_types.h` (new type), `python_converter.cpp`
+(convert_dict, convert_subscript, convert_assign subscript handler,
+convert_for dict iteration, del handler, len handler, in operator,
+dict method handler, pass 0).
+
+**Testing:** Update all existing dict tests. Add tests for dynamic
+insertion, deletion, len(), iteration, get(), in operator.
+
+**Risk:** High — touches many code paths. Run full regression suite
+after each step.
+
+**PLR reference:** PLib stdtypes — Mapping Types (dict)
+
+**Effort:** 1-2 days. **Affects:** ~20 ESBMC tests.
+
+#### `limit-generator-infinite` — lazy generator state machine
+
+**Problem:** `while True: yield n; n += 1` — infinite generators can't
+be eagerly evaluated. The eager approach (collect all yields into a
+list) would loop forever. Requires lazy evaluation where `next(gen)`
+advances the generator to the next yield point.
+
+**Detailed implementation plan:**
+
+**Step 1: Model generator state as a struct.**
+
+For each generator function, create a state struct:
+```
+struct gen_state_t {
+  int __state;        // current yield point (0 = start, -1 = done)
+  // all local variables of the generator function:
+  int n;              // local var 'n'
+  int i;              // local var 'i'
+  // ... one field per local variable
+};
+```
+The `__state` field tracks which yield point the generator is at.
+
+**Step 2: Transform the generator body into a switch-based state machine.**
+
+The generator function body:
+```python
+def count():
+    n = 0
+    while True:
+        yield n      # yield point 0
+        n += 1
+```
+Becomes:
+```c
+int gen_next(gen_state_t *self) {
+  switch(self->__state) {
+    case 0: goto yield_0;
+    case -1: return STOP_ITERATION;
+  }
+  // initial code
+  self->n = 0;
+yield_0:
+  self->__state = 0;
+  return self->n;  // yield value
+  // code after yield
+  self->n += 1;
+  goto yield_0;    // loop back
+}
+```
+
+**Step 3: Model `iter(gen_func())` as creating the state struct.**
+
+`gen = count()` creates a `gen_state_t` with `__state = -2` (not started).
+The first call to `next(gen)` runs the body until the first yield.
+
+**Step 4: Model `next(gen)` as calling the state machine.**
+
+`next(gen)` calls `gen_next(&gen)` which advances to the next yield
+and returns the yielded value.
+
+**Step 5: Model `for x in gen()` as a while loop with next().**
+
+```c
+gen_state_t __gen = {};
+__gen.__state = -2;
+while(true) {
+  int __val = gen_next(&__gen);
+  if(__gen.__state == -1) break;  // StopIteration
+  x = __val;
+  // loop body
+}
+```
+
+**Step 6: Handle `--unwind N` for infinite generators.**
+
+CBMC's `--unwind` flag bounds the while loop. With `--unwind 10`,
+the generator produces at most 10 values. The unwinding assertion
+alerts the user if the bound is insufficient.
+
+**Step 7: Handle generator expressions.**
+
+`(x*2 for x in range(10))` — create an anonymous generator function
+and apply the same transformation.
+
+**Implementation approach:**
+
+During `convert_function_def`, if the function contains `yield`:
+1. Collect all local variables → struct fields
+2. Identify yield points (number them 0, 1, 2, ...)
+3. Generate the state machine function with switch/goto
+4. Replace the original function with a constructor that returns
+   the state struct
+
+During `convert_call` for generator functions:
+1. Create the state struct instance
+2. Return it (the caller iterates via for-in or next())
+
+During `convert_for` for generator iterables:
+1. Detect that the iterable is a generator state struct
+2. Generate the while loop with next() calls
+
+**Affected files:** `python_types.h` (generator state type),
+`python_converter.h` (generator metadata), `python_converter.cpp`
+(convert_function_def, convert_call, convert_for, convert_expr_stmt).
+
+**PLR reference:** PLR §6.2.9 — Yield expressions
+
+**Effort:** 1-2 weeks. **Affects:** ~15 ESBMC tests.
+
+#### `limit-async-concurrent` — concurrent coroutines via CBMC threads
+
+**Problem:** `asyncio.gather(coro1(), coro2())` runs coroutines
+concurrently. Our sequential model executes them one after another,
+missing race conditions from interleaving.
+
+**Detailed implementation plan:**
+
+**Step 1: Model coroutines as generator state machines.**
+
+`async def` functions are already converted as regular functions
+(9.5.3). Extend this: each `async def` becomes a state machine
+(same as generators in `limit-generator-infinite` plan). Each
+`await` expression is a yield point.
+
+**Step 2: Model `asyncio.gather()` as CBMC thread spawning.**
+
+In `convert_call`, detect `asyncio.gather(coro1, coro2, ...)`.
+For each coroutine argument:
+```c
+__CPROVER_thread_create(coro_state_machine, &state_i);
+```
+This spawns a CBMC thread that runs the coroutine's state machine.
+
+**Step 3: Model `await` as a yield point with thread synchronization.**
+
+Each `await expr` in a coroutine:
+1. Evaluate `expr` (which may be another coroutine call)
+2. Insert a `__CPROVER_yield()` to allow other threads to run
+3. Resume after the yield
+
+The `__CPROVER_yield()` is CBMC's primitive for cooperative scheduling.
+It tells the model checker to explore interleavings at this point.
+
+**Step 4: Model shared state correctly.**
+
+Python's `asyncio` uses cooperative multitasking — only one coroutine
+runs at a time, and context switches happen only at `await` points.
+Model this with CBMC's `__CPROVER_atomic_begin()` /
+`__CPROVER_atomic_end()` around non-await code blocks. This ensures
+CBMC only explores interleavings at await points, matching Python's
+cooperative scheduling semantics.
+
+**Step 5: Model `asyncio.run(main())`.**
+
+`asyncio.run(coro)` creates an event loop and runs the coroutine.
+Model as: create the coroutine state machine, run it to completion.
+If the coroutine uses `gather()`, the threads are spawned inside.
+
+**Step 6: Model `asyncio.Lock`, `asyncio.Event`, etc.**
+
+These synchronization primitives can be modeled using CBMC's
+`__CPROVER_mutex_lock()` / `__CPROVER_mutex_unlock()` for locks,
+and shared boolean variables for events.
+
+**Dependencies:**
+- Requires the generator state machine infrastructure from
+  `limit-generator-infinite` (Step 1-2).
+- Requires CBMC's thread support (`__CPROVER_thread_create`,
+  `__CPROVER_yield`, `__CPROVER_atomic_begin/end`).
+
+**Affected files:** `python_converter.cpp` (convert_call for
+asyncio.gather, convert_expr_stmt for await, async function
+body transformation), `python_language.cpp` (asyncio.run model).
+
+**PLR reference:** PLR §8.8 — Coroutines, PLib asyncio
+
+**Effort:** 1-2 weeks (after generator state machine). **Affects:** ~10 ESBMC tests.
 
 ### Summary
 
