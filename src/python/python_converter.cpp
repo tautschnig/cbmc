@@ -2322,51 +2322,45 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
 
-      // PLib stdtypes: Dict methods
+      // PLib stdtypes: Dict methods (array-based model)
       if(is_python_dict_type(obj_base_type))
       {
         if(method_name == "get")
         {
-          // d.get(key, default) — access key, return default if missing
+          // d.get(key, default) — scan keys array
           if(args.is_array() && !as_array(args).empty())
           {
             auto arg_it = as_array(args).begin();
             exprt key_expr = convert_expression(*arg_it);
-            // Try to access the key as a struct member
-            if(
-              key_expr.id() == ID_struct &&
-              is_python_string_type(key_expr.type()))
+            const auto &dict_st = to_struct_type(obj_base_type);
+            const auto &keys_type =
+              to_array_type(dict_st.components()[1].type());
+            const auto &vals_type =
+              to_array_type(dict_st.components()[2].type());
+            member_exprt length{obj, "length", signedbv_typet{64}};
+            member_exprt keys{obj, "keys", keys_type};
+            member_exprt vals{obj, "values", vals_type};
+
+            if(key_expr.type() != keys_type.element_type())
+              key_expr = safe_typecast(key_expr, keys_type.element_type());
+
+            // Default value (second arg or 0)
+            exprt default_val = safe_zero(vals_type.element_type());
+            ++arg_it;
+            if(arg_it != as_array(args).end())
+              default_val = safe_typecast(
+                convert_expression(*arg_it), vals_type.element_type());
+
+            exprt result = default_val;
+            for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
             {
-              // Extract key string from constant
-              const auto &key_data = key_expr.operands()[1];
-              if(key_data.operands().size() > 0)
-              {
-                std::string key;
-                mp_integer klen;
-                if(!to_integer(to_constant_expr(key_expr.operands()[0]), klen))
-                {
-                  for(mp_integer i = 0; i < klen; ++i)
-                  {
-                    std::size_t idx = i.to_ulong();
-                    if(
-                      idx < key_data.operands().size() &&
-                      key_data.operands()[idx].is_constant())
-                    {
-                      mp_integer ch;
-                      if(!to_integer(
-                           to_constant_expr(key_data.operands()[idx]), ch))
-                        key += static_cast<char>(ch.to_ulong());
-                    }
-                  }
-                }
-                for(char &c : key)
-                  if(!std::isalnum(c) && c != '_')
-                    c = '_';
-                const auto &st = to_struct_type(obj_base_type);
-                if(st.has_component(key))
-                  return member_exprt{obj, key, st.get_component(key).type()};
-              }
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+              exprt match = equal_exprt{index_exprt{keys, idx}, key_expr};
+              result = if_exprt{
+                and_exprt{in_range, match}, index_exprt{vals, idx}, result};
             }
+            return result;
           }
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
@@ -2875,7 +2869,9 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
-        if(is_python_string_type(arg.type()) || is_python_list_type(arg.type()))
+        if(
+          is_python_string_type(arg.type()) ||
+          is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
           return member_exprt{arg, "length", python_int_type()};
 
         // Tagged union: dispatch on tag
@@ -4114,29 +4110,34 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   if(value.is_nil())
     return nil_exprt{};
 
-  // Dict subscript with string key: d["key"] → d.key (member access)
-  // Check this BEFORE converting the slice, since we need the raw string.
-  if(value.type().id() == ID_struct)
+  // Dict subscript: d["key"] → scan keys array for match
+  if(is_python_dict_type(value.type()))
   {
-    const auto &st = to_struct_type(value.type());
-    if(id2string(st.get_tag()) == "python_dict")
+    exprt slice = convert_expression(json_member(expr, "slice"));
+    if(!slice.is_nil())
     {
-      const jsont &slice_node = json_member(expr, "slice");
-      if(is_node_type(slice_node, "Constant"))
+      const auto &dict_st = to_struct_type(value.type());
+      const auto &keys_type = to_array_type(dict_st.components()[1].type());
+      const auto &vals_type = to_array_type(dict_st.components()[2].type());
+      member_exprt length{value, "length", signedbv_typet{64}};
+      member_exprt keys{value, "keys", keys_type};
+      member_exprt vals{value, "values", vals_type};
+
+      // Scan: result = values[i] where keys[i] == slice
+      exprt result =
+        safe_zero(vals_type.element_type()); // default if not found
+      for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
-        const jsont &sv = json_member(slice_node, "value");
-        if(sv.is_string())
-        {
-          std::string key = sv.value;
-          for(char &c : key)
-          {
-            if(!std::isalnum(c) && c != '_')
-              c = '_';
-          }
-          if(st.has_component(key))
-            return member_exprt{value, key, st.get_component(key).type()};
-        }
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+        exprt key_i = index_exprt{keys, idx};
+        if(key_i.type() != slice.type())
+          key_i = safe_typecast(key_i, slice.type());
+        exprt match = equal_exprt{key_i, slice};
+        result =
+          if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
       }
+      return result;
     }
   }
 
@@ -4457,40 +4458,59 @@ exprt python_convertert::convert_dict(const jsont &expr)
   if(!keys.is_array() || !values.is_array())
     return nil_exprt{};
 
-  // Build a struct type with one field per key (string keys only)
-  struct_typet::componentst components;
-  exprt::operandst field_values;
-
+  // Collect key-value pairs
+  std::vector<std::pair<exprt, exprt>> pairs;
   auto key_it = as_array(keys).begin();
   auto val_it = as_array(values).begin();
   for(; key_it != as_array(keys).end(); ++key_it, ++val_it)
   {
-    // Only support string literal keys
-    if(!is_node_type(*key_it, "Constant"))
+    exprt k = convert_expression(*key_it);
+    exprt v = convert_expression(*val_it);
+    if(k.is_nil() || v.is_nil())
       continue;
-    const jsont &key_val = json_member(*key_it, "value");
-    if(!key_val.is_string())
-      continue;
-
-    std::string key_name = key_val.value;
-    exprt val = convert_expression(*val_it);
-    if(val.is_nil())
-      return nil_exprt{};
-
-    // Sanitize key name for use as a struct field (replace spaces, etc.)
-    for(char &c : key_name)
-    {
-      if(!std::isalnum(c) && c != '_')
-        c = '_';
-    }
-
-    components.push_back(struct_typet::componentt{key_name, val.type()});
-    field_values.push_back(val);
+    pairs.emplace_back(k, v);
   }
 
-  struct_typet dict_type{components};
-  dict_type.set_tag("python_dict");
-  return struct_exprt{std::move(field_values), dict_type};
+  // Determine key/value types from first pair
+  typet key_type = pairs.empty() ? python_string_type() : pairs[0].first.type();
+  typet val_type = pairs.empty() ? python_int_type() : pairs[0].second.type();
+
+  struct_typet dict_type = python_dict_type(key_type, val_type);
+  const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
+  const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
+
+  // Build keys array
+  exprt::operandst key_elems;
+  for(const auto &p : pairs)
+  {
+    exprt k = p.first;
+    if(k.type() != key_type)
+      k = safe_typecast(k, key_type);
+    key_elems.push_back(k);
+  }
+  while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+    key_elems.push_back(safe_zero(key_type));
+
+  // Build values array
+  exprt::operandst val_elems;
+  for(const auto &p : pairs)
+  {
+    exprt v = p.second;
+    if(v.type() != val_type)
+      v = safe_typecast(v, val_type);
+    val_elems.push_back(v);
+  }
+  while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
+    val_elems.push_back(safe_zero(val_type));
+
+  exprt length =
+    from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
+
+  return struct_exprt{
+    {length,
+     array_exprt{std::move(key_elems), keys_arr_type},
+     array_exprt{std::move(val_elems), vals_arr_type}},
+    dict_type};
 }
 
 // PLR §6.2.5: List displays
@@ -4921,27 +4941,64 @@ codet python_convertert::convert_statement(const jsont &stmt)
               length,
               minus_exprt{length, from_integer(1, signedbv_typet{64})}});
           }
-          // PLR §7.5: del d["key"] on dict — zero the value
+          // PLR §7.5: del d["key"] on dict — scan, shift, decrement
           else if(!obj.is_nil() && is_python_dict_type(obj.type()))
           {
-            const jsont &slice_node = json_member(target, "slice");
-            if(is_node_type(slice_node, "Constant"))
+            exprt key = convert_expression(json_member(target, "slice"));
+            if(!key.is_nil())
             {
-              const jsont &sv = json_member(slice_node, "value");
-              if(sv.is_string())
+              const auto &dict_st = to_struct_type(obj.type());
+              const auto &keys_type =
+                to_array_type(dict_st.components()[1].type());
+              const auto &vals_type =
+                to_array_type(dict_st.components()[2].type());
+              member_exprt length{obj, "length", signedbv_typet{64}};
+              member_exprt keys_arr{obj, "keys", keys_type};
+              member_exprt vals_arr{obj, "values", vals_type};
+
+              if(key.type() != keys_type.element_type())
+                key = safe_typecast(key, keys_type.element_type());
+
+              // Find key, shift remaining left, decrement length
+              static unsigned del_dict_ctr = 0;
+              std::string fn =
+                "__del_dict_found_" + std::to_string(del_dict_ctr++);
+              std::string fq = qualify_name(fn);
+              irep_idt fi{fq};
+              if(symbol_table.lookup(fi) == nullptr)
               {
-                std::string key = sv.value;
-                for(char &c : key)
-                  if(!std::isalnum(c) && c != '_')
-                    c = '_';
-                const auto &st = to_struct_type(obj.type());
-                if(st.has_component(key))
-                {
-                  del_block.add(code_frontend_assignt{
-                    member_exprt{obj, key, st.get_component(key).type()},
-                    safe_zero(st.get_component(key).type())});
-                }
+                symbolt fs{fi, bool_typet{}, "python"};
+                fs.base_name = fn;
+                fs.is_lvalue = true;
+                fs.is_state_var = true;
+                symbol_table.add(fs);
               }
+              symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+              del_block.add(code_frontend_assignt{found, false_exprt{}});
+              for(std::size_t i = 0; i + 1 < PYTHON_MAX_DICT_SIZE; i++)
+              {
+                exprt idx = from_integer(i, signedbv_typet{64});
+                exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+                exprt match = equal_exprt{index_exprt{keys_arr, idx}, key};
+                // Set found on match
+                del_block.add(code_ifthenelset{
+                  and_exprt{in_range, and_exprt{not_exprt{found}, match}},
+                  code_frontend_assignt{found, true_exprt{}}});
+                // If found, shift left
+                exprt next = from_integer(i + 1, signedbv_typet{64});
+                code_blockt shift;
+                shift.add(code_frontend_assignt{
+                  index_exprt{keys_arr, idx}, index_exprt{keys_arr, next}});
+                shift.add(code_frontend_assignt{
+                  index_exprt{vals_arr, idx}, index_exprt{vals_arr, next}});
+                del_block.add(code_ifthenelset{
+                  and_exprt{in_range, found}, std::move(shift)});
+              }
+              del_block.add(code_ifthenelset{
+                found,
+                code_frontend_assignt{
+                  length,
+                  minus_exprt{length, from_integer(1, signedbv_typet{64})}}});
             }
           }
         }
@@ -5444,6 +5501,62 @@ codet python_convertert::convert_assign(const jsont &stmt)
         continue;
       }
 
+      // Dict subscript assignment: d["key"] = value
+      if(!obj.is_nil() && is_python_dict_type(obj.type()))
+      {
+        const jsont &slice_node = json_member(target, "slice");
+        exprt key = convert_expression(slice_node);
+        if(!key.is_nil())
+        {
+          const auto &dict_st = to_struct_type(obj.type());
+          const auto &keys_type = to_array_type(dict_st.components()[1].type());
+          const auto &vals_type = to_array_type(dict_st.components()[2].type());
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt keys_arr{obj, "keys", keys_type};
+          member_exprt vals_arr{obj, "values", vals_type};
+          exprt typed_key = key;
+          if(typed_key.type() != keys_type.element_type())
+            typed_key = safe_typecast(typed_key, keys_type.element_type());
+          exprt typed_val = rhs;
+          if(typed_val.type() != vals_type.element_type())
+            typed_val = safe_typecast(typed_val, vals_type.element_type());
+          static unsigned dict_assign_ctr = 0;
+          std::string fn = "__dict_found_" + std::to_string(dict_assign_ctr++);
+          std::string fq = qualify_name(fn);
+          irep_idt fi{fq};
+          if(symbol_table.lookup(fi) == nullptr)
+          {
+            symbolt fs{fi, bool_typet{}, "python"};
+            fs.base_name = fn;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            symbol_table.add(fs);
+          }
+          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+          block.add(code_frontend_assignt{found, false_exprt{}});
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt match = equal_exprt{index_exprt{keys_arr, idx}, typed_key};
+            code_blockt update;
+            update.add(
+              code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val});
+            update.add(code_frontend_assignt{found, true_exprt{}});
+            block.add(
+              code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+          }
+          code_blockt append;
+          append.add(
+            code_frontend_assignt{index_exprt{keys_arr, length}, typed_key});
+          append.add(
+            code_frontend_assignt{index_exprt{vals_arr, length}, typed_val});
+          append.add(code_frontend_assignt{
+            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+          continue;
+        }
+      }
       if(!obj.is_nil() && is_python_list_type(obj.type()))
       {
         const jsont &slice_node = json_member(target, "slice");
@@ -6060,16 +6173,14 @@ codet python_convertert::convert_for(const jsont &stmt)
   bool is_string = is_python_string_type(iterable.type());
   bool is_dict = is_python_dict_type(iterable.type());
 
-  // PLR §8.3: "for k in dict" iterates over keys
-  // Dicts are modeled as structs with one field per key.
-  // Unroll the loop over the struct fields.
+  // PLR §8.3: "for k in dict" iterates over keys (array-based)
   if(is_dict)
   {
     const auto &dict_st = to_struct_type(iterable.type());
-    code_blockt result;
+    const auto &keys_type = to_array_type(dict_st.components()[1].type());
+    typet key_type = keys_type.element_type();
 
     irep_idt var_id{qualified_name};
-    typet key_type = python_string_type();
     if(symbol_table.lookup(var_id) == nullptr)
     {
       symbolt new_sym{var_id, key_type, "python"};
@@ -6081,34 +6192,45 @@ codet python_convertert::convert_for(const jsont &stmt)
     }
     symbol_exprt loop_var = symbol_table.lookup_ref(var_id).symbol_expr();
 
-    const jsont &body_stmts = json_member(stmt, "body");
-    for(const auto &comp : dict_st.components())
+    // Desugar to: idx=0; while(idx < d.length) { k = d.keys[idx]; body; idx++ }
+    static unsigned dict_iter_ctr = 0;
+    std::string idx_name = "__dict_idx_" + std::to_string(dict_iter_ctr++);
+    std::string idx_qname = qualify_name(idx_name);
+    irep_idt idx_id{idx_qname};
+    if(symbol_table.lookup(idx_id) == nullptr)
     {
-      // Assign key name as string literal
-      std::string key_name = id2string(comp.get_name());
-      struct_typet str_type = python_string_type();
-      const auto &data_type = to_array_type(str_type.components()[1].type());
-      exprt::operandst chars;
-      for(char ch : key_name)
-        chars.push_back(
-          from_integer(static_cast<unsigned char>(ch), unsignedbv_typet{8}));
-      while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-        chars.push_back(from_integer(0, unsignedbv_typet{8}));
-      exprt key_str = struct_exprt{
-        {from_integer(
-           static_cast<long long>(key_name.size()), python_int_type()),
-         array_exprt{std::move(chars), data_type}},
-        str_type};
-      if(loop_var.type() != key_str.type())
-        key_str = safe_typecast(key_str, loop_var.type());
-      result.add(code_frontend_assignt{loop_var, key_str});
-
-      if(body_stmts.is_array())
-      {
-        for(const auto &s : as_array(body_stmts))
-          result.add(convert_statement(s));
-      }
+      symbolt idx_sym{idx_id, signedbv_typet{64}, "python"};
+      idx_sym.base_name = idx_name;
+      idx_sym.is_lvalue = true;
+      idx_sym.is_state_var = true;
+      symbol_table.add(idx_sym);
     }
+    symbol_exprt idx_var = symbol_table.lookup_ref(idx_id).symbol_expr();
+    member_exprt length{iterable, "length", signedbv_typet{64}};
+    member_exprt keys{iterable, "keys", keys_type};
+
+    code_blockt result;
+    result.add(
+      code_frontend_assignt{idx_var, from_integer(0, signedbv_typet{64})});
+
+    code_blockt body_block;
+    exprt key_val = index_exprt{keys, idx_var};
+    if(key_val.type() != loop_var.type())
+      key_val = safe_typecast(key_val, loop_var.type());
+    body_block.add(code_frontend_assignt{loop_var, key_val});
+
+    const jsont &body_stmts = json_member(stmt, "body");
+    if(body_stmts.is_array())
+    {
+      for(const auto &s : as_array(body_stmts))
+        body_block.add(convert_statement(s));
+    }
+    body_block.add(code_frontend_assignt{
+      idx_var, plus_exprt{idx_var, from_integer(1, signedbv_typet{64})}});
+
+    code_whilet while_stmt{
+      binary_relation_exprt{idx_var, ID_lt, length}, std::move(body_block)};
+    result.add(std::move(while_stmt));
     return std::move(result);
   }
 

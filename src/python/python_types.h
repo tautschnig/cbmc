@@ -95,7 +95,29 @@ inline bool is_python_dict_type(const typet &type)
   if(type.id() != ID_struct)
     return false;
   const auto &st = to_struct_type(type);
-  return st.get_tag() == "python_dict";
+  return id2string(st.get_tag()).substr(0, 11) == "python_dict";
+}
+
+#define PYTHON_MAX_DICT_SIZE 16
+
+/// Return the CBMC type for an array-based Python dict.
+/// struct { int64 length; key_type keys[N]; value_type values[N]; }
+inline struct_typet
+python_dict_type(const typet &key_type, const typet &value_type)
+{
+  struct_typet::componentst components;
+  components.push_back(struct_typet::componentt{"length", signedbv_typet{64}});
+  components.push_back(struct_typet::componentt{
+    "keys",
+    array_typet{
+      key_type, from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+  components.push_back(struct_typet::componentt{
+    "values",
+    array_typet{
+      value_type, from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}});
+  struct_typet result{components};
+  result.set_tag("python_dict_array");
+  return result;
 }
 
 /// Return the CBMC type used to represent Python list[T].
