@@ -1,8 +1,8 @@
-KNOWNBUG
+CORE
 main.py
 
-^EXIT=0$
+^EXIT=10$
 ^SIGNAL=0$
-^VERIFICATION SUCCESSFUL$
+^\[assertion\.1\].*Python assertion: SUCCESS$
 --
 ^warning: ignoring
