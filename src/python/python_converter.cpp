@@ -655,6 +655,11 @@ exprt python_convertert::convert_expression(const jsont &expr)
   {
     result = convert_expression(json_member(expr, "value"));
   }
+  // PLR §8.8: Await expression — evaluate sequentially (no concurrency)
+  else if(node_type == "Await")
+  {
+    result = convert_expression(json_member(expr, "value"));
+  }
   else
   {
     log.warning() << "Unsupported Python expression type: " << node_type
@@ -1708,7 +1713,8 @@ exprt python_convertert::convert_call(const jsont &expr)
                 for(const auto &item : as_array(cls_body))
                 {
                   if(
-                    is_node_type(item, "FunctionDef") &&
+                    (is_node_type(item, "FunctionDef") ||
+                     is_node_type(item, "AsyncFunctionDef")) &&
                     json_string(json_member(item, "name")) == method_name)
                   {
                     // Convert the base __init__ body statements
@@ -4029,7 +4035,8 @@ exprt python_convertert::convert_call(const jsont &expr)
     for(const auto &stmt : as_array(body))
     {
       if(
-        is_node_type(stmt, "FunctionDef") &&
+        (is_node_type(stmt, "FunctionDef") ||
+         is_node_type(stmt, "AsyncFunctionDef")) &&
         json_string(json_member(stmt, "name")) == func_name)
       {
         const jsont &func_args = json_member(stmt, "args");
@@ -4711,7 +4718,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_for(stmt);
   else if(node_type == "Return")
     result = convert_return(stmt);
-  else if(node_type == "FunctionDef")
+  else if(node_type == "FunctionDef" || node_type == "AsyncFunctionDef")
     result = convert_function_def(stmt);
   else if(node_type == "ClassDef")
     result = convert_class_def(stmt);
@@ -6376,6 +6383,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   // Return type
+  bool has_yield = false;
   const jsont &returns = json_member(stmt, "returns");
   typet return_type = empty_typet{};
   if(!returns.is_null())
@@ -6384,7 +6392,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
   else
   {
-    // No return annotation — scan body for return statements
+    // No return annotation — scan body for return/yield statements
     bool has_value_return = false;
     bool has_bare_return = false;
     std::function<void(const jsont &)> scan = [&](const jsont &body_node)
@@ -6421,6 +6429,13 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             }
           }
         }
+        // Detect yield (generator function)
+        if(is_node_type(s, "Expr"))
+        {
+          const jsont &val = json_member(s, "value");
+          if(is_node_type(val, "Yield") || is_node_type(val, "YieldFrom"))
+            has_yield = true;
+        }
         // Recurse into if/else/while/for/try bodies
         if(json_member(s, "body").is_array())
           scan(json_member(s, "body"));
@@ -6436,13 +6451,19 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     };
     scan(json_member(stmt, "body"));
 
-    if(has_value_return && return_type.id() == ID_empty)
+    // Generator functions return a list (eager evaluation)
+    if(has_yield)
+      return_type = python_list_type(python_int_type());
+    else if(has_value_return && return_type.id() == ID_empty)
       return_type = python_int_type();
     else if(!has_value_return)
       return_type = empty_typet{};
   }
 
   code_typet func_type{parameters, return_type};
+
+  if(has_yield)
+    generator_functions.insert(func_name);
 
   // Create function symbol BEFORE converting the body
   // (so recursive calls can find it)
@@ -6476,7 +6497,37 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   current_function = func_name;
   global_names.clear();
 
+  // For generator functions, create __gen_result list
+  bool is_generator = generator_functions.count(func_name) > 0;
+  irep_idt gen_result_id;
+  if(is_generator)
+  {
+    std::string grn = "__gen_result_" + func_name;
+    std::string grq = qualify_name(grn);
+    gen_result_id = irep_idt{grq};
+    if(symbol_table.lookup(gen_result_id) == nullptr)
+    {
+      symbolt grs{gen_result_id, return_type, "python"};
+      grs.base_name = grn;
+      grs.is_lvalue = true;
+      grs.is_state_var = true;
+      symbol_table.add(grs);
+    }
+  }
+
   code_blockt body_block;
+
+  // For generators, initialize __gen_result.length = 0
+  if(is_generator)
+  {
+    body_block.add(code_frontend_assignt{
+      member_exprt{
+        symbol_table.lookup_ref(gen_result_id).symbol_expr(),
+        "length",
+        signedbv_typet{64}},
+      from_integer(0, signedbv_typet{64})});
+  }
+
   const jsont &body = json_member(stmt, "body");
   if(body.is_array())
   {
@@ -6487,8 +6538,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   current_function = saved_function;
   global_names = saved_globals;
 
-  // PLR §7.6: if function doesn't end with return, append return None
-  if(return_type.id() != ID_empty)
+  // PLR §7.6: if function doesn't end with return, append return
+  // For generators: return __gen_result list
+  if(is_generator)
+  {
+    body_block.add(code_frontend_returnt{
+      symbol_table.lookup_ref(gen_result_id).symbol_expr()});
+  }
+  else if(return_type.id() != ID_empty)
   {
     exprt none_expr;
     if(is_python_value_type(return_type))
@@ -6532,7 +6589,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     for(const auto &item : as_array(body))
     {
       if(
-        is_node_type(item, "FunctionDef") &&
+        (is_node_type(item, "FunctionDef") ||
+         is_node_type(item, "AsyncFunctionDef")) &&
         json_string(json_member(item, "name")) == "__init__")
       {
         init_method = &item;
@@ -6792,7 +6850,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
     for(const auto &item : as_array(body))
     {
-      if(is_node_type(item, "FunctionDef"))
+      if((is_node_type(item, "FunctionDef") ||
+          is_node_type(item, "AsyncFunctionDef")))
       {
         std::string method_name = json_string(json_member(item, "name"));
 
@@ -6922,6 +6981,38 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
 {
   // Expression statement (e.g., function call as statement)
   const jsont &value = json_member(stmt, "value");
+
+  // PLR §6.2.9: yield X → __gen_result.append(X) (eager evaluation)
+  if(
+    is_node_type(value, "Yield") && !current_function.empty() &&
+    generator_functions.count(current_function))
+  {
+    const jsont &yield_val = json_member(value, "value");
+    exprt val = yield_val.is_null() ? from_integer(0, python_int_type())
+                                    : convert_expression(yield_val);
+
+    std::string grn = "__gen_result_" + current_function;
+    std::string grq = qualify_name(grn);
+    irep_idt gri{grq};
+    const symbolt *grs = symbol_table.lookup(gri);
+    if(grs != nullptr)
+    {
+      const auto &list_st = to_struct_type(grs->type);
+      const auto &data_type = to_array_type(list_st.components()[1].type());
+      member_exprt data{grs->symbol_expr(), "data", data_type};
+      member_exprt length{grs->symbol_expr(), "length", signedbv_typet{64}};
+      code_blockt block;
+      // data[length] = val
+      exprt typed_val = val;
+      if(typed_val.type() != data_type.element_type())
+        typed_val = safe_typecast(typed_val, data_type.element_type());
+      block.add(code_frontend_assignt{index_exprt{data, length}, typed_val});
+      // length += 1
+      block.add(code_frontend_assignt{
+        length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+      return std::move(block);
+    }
+  }
 
   // Check for __CPROVER_assume calls
   if(is_node_type(value, "Call"))
@@ -7342,7 +7433,8 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
   for(const auto &stmt : as_array(body))
   {
     // Function and class definitions are handled in the first pass
-    if(is_node_type(stmt, "FunctionDef"))
+    if((is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef")))
       continue;
     if(is_node_type(stmt, "ClassDef"))
     {
@@ -7547,7 +7639,8 @@ bool python_convertert::convert()
   {
     for(const auto &stmt : as_array(body))
     {
-      if(is_node_type(stmt, "FunctionDef"))
+      if((is_node_type(stmt, "FunctionDef") ||
+          is_node_type(stmt, "AsyncFunctionDef")))
         convert_function_def(stmt);
       else if(is_node_type(stmt, "ClassDef"))
         convert_class_def(stmt);
