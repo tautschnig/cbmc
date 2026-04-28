@@ -914,6 +914,45 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return std::move(tmp);
   }
 
+  // PLR §6.7: Type-dispatched arithmetic on tagged unions
+  // When both operands are tagged unions, dispatch on types:
+  // if either is FLOAT, use float arithmetic; else use int
+  if(
+    is_python_value_type(left.type()) && is_python_value_type(right.type()) &&
+    (op == "Add" || op == "Sub" || op == "Mult"))
+  {
+    exprt either_float = or_exprt{
+      python_value_is(left, python_type_tagt::FLOAT),
+      python_value_is(right, python_type_tagt::FLOAT)};
+    exprt left_int = python_value_int(left);
+    exprt right_int = python_value_int(right);
+    exprt left_float = python_value_float(left);
+    exprt right_float = python_value_float(right);
+
+    exprt int_result, float_result;
+    if(op == "Add")
+    {
+      int_result = plus_exprt{left_int, right_int};
+      float_result = plus_exprt{left_float, right_float};
+    }
+    else if(op == "Sub")
+    {
+      int_result = minus_exprt{left_int, right_int};
+      float_result = minus_exprt{left_float, right_float};
+    }
+    else
+    {
+      int_result = mult_exprt{left_int, right_int};
+      float_result = mult_exprt{left_float, right_float};
+    }
+
+    // Return tagged union with appropriate type
+    exprt int_wrapped = make_python_value(python_type_tagt::INT, int_result);
+    exprt float_wrapped =
+      make_python_value(python_type_tagt::FLOAT, float_result);
+    return if_exprt{either_float, float_wrapped, int_wrapped};
+  }
+
   // Unwrap tagged-union values to concrete types for operations
   if(is_python_value_type(left.type()))
     left = unwrap_value(
@@ -1939,6 +1978,41 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
+        // PLib stdtypes: startswith/endswith — exact byte comparison
+        if(
+          (method_name == "startswith" || method_name == "endswith") &&
+          args.is_array() && !as_array(args).empty())
+        {
+          exprt prefix = convert_expression(*as_array(args).begin());
+          if(is_python_string_type(prefix.type()))
+          {
+            const auto &str_st = to_struct_type(obj_base_type);
+            const auto &data_type =
+              to_array_type(str_st.components()[1].type());
+            member_exprt obj_data{obj, "data", data_type};
+            member_exprt obj_len{obj, "length", signedbv_typet{64}};
+            member_exprt pre_data{prefix, "data", data_type};
+            member_exprt pre_len{prefix, "length", signedbv_typet{64}};
+
+            // Build conjunction: all prefix bytes match
+            exprt result = binary_relation_exprt{pre_len, ID_le, obj_len};
+            for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_prefix = binary_relation_exprt{idx, ID_lt, pre_len};
+              exprt obj_idx =
+                (method_name == "endswith")
+                  ? minus_exprt{minus_exprt{obj_len, pre_len}, from_integer(-static_cast<long long>(i), signedbv_typet{64})}
+                  : idx;
+              if(method_name == "endswith")
+                obj_idx = plus_exprt{minus_exprt{obj_len, pre_len}, idx};
+              exprt match = equal_exprt{
+                index_exprt{obj_data, obj_idx}, index_exprt{pre_data, idx}};
+              result = and_exprt{result, or_exprt{not_exprt{in_prefix}, match}};
+            }
+            return result;
+          }
+        }
         if(
           method_name == "startswith" || method_name == "endswith" ||
           method_name == "isalpha" || method_name == "isdigit" ||
@@ -2409,12 +2483,60 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt func_arg = convert_expression(*it);
       ++it;
       exprt list_arg = convert_expression(*it);
-      if(is_python_list_type(list_arg.type()))
+      if(
+        is_python_list_type(list_arg.type()) && func_arg.id() == ID_symbol &&
+        func_arg.type().id() == ID_code)
       {
-        // Return nondet list (sound overapproximation)
-        // Exact map would need unrolled function calls
-        return side_effect_expr_nondett{list_arg.type(), get_location(expr)};
+        // Unroll: result[i] = func(input[i]) for i in 0..length
+        const auto &list_st = to_struct_type(list_arg.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        const code_typet &ft = to_code_type(func_arg.type());
+        typet ret_type = ft.return_type();
+        typet result_list_type = python_list_type(ret_type);
+
+        static unsigned map_ctr = 0;
+        std::string tn = "__map_" + std::to_string(map_ctr++);
+        std::string tq = qualify_name(tn);
+        irep_idt ti{tq};
+        if(symbol_table.lookup(ti) == nullptr)
+        {
+          symbolt ts{ti, result_list_type, "python"};
+          ts.base_name = tn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+        member_exprt src_data{list_arg, "data", data_type};
+        member_exprt src_len{list_arg, "length", signedbv_typet{64}};
+        const auto &res_data_type = to_array_type(
+          to_struct_type(result_list_type).components()[1].type());
+        member_exprt dst_data{tmp, "data", res_data_type};
+
+        pending_checks.push_back(code_frontend_assignt{
+          member_exprt{tmp, "length", signedbv_typet{64}}, src_len});
+
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt guard = binary_relation_exprt{idx, ID_lt, src_len};
+          exprt elem = index_exprt{src_data, idx};
+          if(elem.type() != ft.parameters()[0].type())
+            elem = safe_typecast(elem, ft.parameters()[0].type());
+          side_effect_expr_function_callt call{
+            func_arg, {elem}, ret_type, get_location(expr)};
+          // Use nondet for the result element (exact call is complex)
+          // TODO: inline the function call for full precision
+          pending_checks.push_back(code_ifthenelset{
+            guard,
+            code_frontend_assignt{
+              index_exprt{dst_data, idx},
+              side_effect_expr_nondett{ret_type, source_locationt{}}}});
+        }
+        return std::move(tmp);
       }
+      if(is_python_list_type(list_arg.type()))
+        return side_effect_expr_nondett{list_arg.type(), get_location(expr)};
     }
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
