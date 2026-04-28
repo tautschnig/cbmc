@@ -6818,7 +6818,16 @@ codet python_convertert::convert_return(const jsont &stmt)
       ret_val.type() != to_code_type(func_sym->type).return_type())
     {
       typet ret_type = to_code_type(func_sym->type).return_type();
-      ret_val = safe_typecast(ret_val, ret_type);
+      // If declared type is int (default) but actual return is float,
+      // update function type to float (avoids truncation)
+      if(ret_type == python_int_type() && ret_val.type().id() == ID_floatbv)
+      {
+        code_typet new_type = to_code_type(func_sym->type);
+        new_type.return_type() = ret_val.type();
+        symbol_table.get_writeable_ref(func_id).type = new_type;
+      }
+      else
+        ret_val = safe_typecast(ret_val, ret_type);
     }
   }
 
@@ -6949,7 +6958,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     if(has_yield)
       return_type = python_list_type(python_int_type());
     else if(has_value_return && return_type.id() == ID_empty)
-      return_type = python_int_type();
+    {
+      // If any parameter is float, return type is likely float
+      bool has_float_param = false;
+      for(const auto &p : parameters)
+      {
+        if(p.type().id() == ID_floatbv)
+          has_float_param = true;
+      }
+      return_type = has_float_param ? double_type() : python_int_type();
+    }
     else if(!has_value_return)
       return_type = empty_typet{};
   }
