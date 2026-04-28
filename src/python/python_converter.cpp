@@ -637,6 +637,11 @@ exprt python_convertert::convert_expression(const jsont &expr)
   }
   else if(node_type == "Lambda")
     result = convert_lambda(expr);
+  // PLR §6.2.4: Starred expression — unwrap for basic support
+  else if(node_type == "Starred")
+  {
+    result = convert_expression(json_member(expr, "value"));
+  }
   else
   {
     log.warning() << "Unsupported Python expression type: " << node_type
@@ -3609,7 +3614,28 @@ exprt python_convertert::convert_call(const jsont &expr)
               return result.to_expr();
             }
           }
-          return side_effect_expr_nondett{double_type(), get_location(expr)};
+          // Variable complex: nondet with result >= 0
+          {
+            static unsigned abs_ctr = 0;
+            std::string tn = "__abs_" + std::to_string(abs_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, double_type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              tmp,
+              side_effect_expr_nondett{double_type(), source_locationt{}}});
+            pending_checks.push_back(code_assumet{
+              binary_relation_exprt{tmp, ID_ge, safe_zero(double_type())}});
+            return std::move(tmp);
+          }
         }
         // abs(x) = x >= 0 ? x : -x
         if(arg.type().id() == ID_signedbv || arg.type().id() == ID_floatbv)
@@ -4821,9 +4847,10 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_with(stmt);
   else if(node_type == "Try" || node_type == "TryStar")
     result = convert_try(stmt);
-  else if(node_type == "Global")
+  else if(node_type == "Global" || node_type == "Nonlocal")
   {
-    // Track global names for the current function scope
+    // PLR §7.12/§7.13: global/nonlocal — track names for scope resolution
+    // Nonlocal is treated like global (simplified: no closure support)
     const jsont &names = json_member(stmt, "names");
     if(names.is_array())
     {
