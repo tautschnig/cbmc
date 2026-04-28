@@ -291,144 +291,88 @@ following JBMC's `remove_exceptions.cpp` pattern.
 
 
 
-### KNOWNBUG inventory (10 tests)
 
-250 total tests, 240 CORE, 10 KNOWNBUG.
+### KNOWNBUG inventory (7 tests)
 
-ESBMC: ~1 crash (ESBMC-specific), 0 from our converter.
-These 10 KNOWNBUGs cover ~157 ESBMC tests directly and ~783
-combination failures indirectly.
+257 total tests, 250 CORE, 7 KNOWNBUG.
+ESBMC: 1,732 correct (56%), 1 crash, 1,066 wrong-pass.
 
-#### Tier 1 — Quick fixes (< 1 hour each)
+#### Tier 1 — Quick fixes (< 30 minutes each)
 
-##### `limit-isinstance-negative` — `not isinstance(42, str)`
+##### `limit-float-div-rounding` — `1/2 != 0.5`
 
-**Problem:** `isinstance(42, str)` returns `false_exprt{}` (correct),
-but `not isinstance(42, str)` wraps it in `not_exprt{false_exprt{}}`
-which the solver can't simplify in all contexts. The real issue:
-`isinstance` returns a static `true_exprt`/`false_exprt` but the
-`not` operator expects a `bool` variable, not a constant.
+**Problem:** `a = 1 / 2; assert a == 0.5` fails. The division
+`typecast(1, float) / typecast(2, float)` uses `floatbv_typecast`
+which depends on `__CPROVER_rounding_mode`. Even though we initialize
+it to 0 (ROUND_TO_EVEN), the solver treats the typecast result as
+potentially different from the `ieee_floatt(0.5)` literal.
 
-**Fix:** In the isinstance handler, when the result is `false_exprt`,
-return `true_exprt` for the `not isinstance` case directly. Or:
-ensure `not_exprt{false_exprt{}}` simplifies to `true_exprt{}` by
-calling `simplify_expr()` on the result.
+**Fix:** In the true division handler, when both operands are constant
+integers, compute the result at conversion time using `ieee_floatt`:
+`ieee_floatt(1.0) / ieee_floatt(2.0) = ieee_floatt(0.5)`. Only use
+`floatbv_div` for variable operands.
 
-**Effort:** 15 minutes. **Affects:** ~13 ESBMC tests.
+**Effort:** 20 minutes. **Affects:** ~5 direct, ~50 indirect.
 
-##### `limit-nondet-list-typed` — nondet list length can be negative
+##### `limit-nondet-dict-typed` — nondet_dict() unconstrained
 
-**Problem:** `nondet_list()` returns a list with nondet length
-(signedbv{64}), which can be negative. `assert len(x) >= 0` fails.
+**Problem:** `nondet_dict()` returns nondet int (not even a dict type).
 
-**Fix:** After creating the nondet list, add `assume(length >= 0 &&
-length <= PYTHON_MAX_LIST_LENGTH)` to constrain the length to valid
-bounds. Same pattern as `random.randint` constraints.
+**Fix:** Same pattern as `nondet_list()`: return a nondet dict with
+`assume(0 <= length <= PYTHON_MAX_DICT_SIZE)`. Use the array-based
+dict type `python_dict_type(python_string_type(), python_int_type())`.
 
-**Effort:** 15 minutes. **Affects:** ~18 ESBMC tests.
+**Effort:** 15 minutes. **Affects:** ~9 direct, ~20 indirect.
 
-##### `limit-mod-zero-exception` — `2 % 0` as Python exception
+##### `limit-nondet-string-sized` — nondet_string(N) exact length
 
-**Problem:** `2 % 0` generates a CBMC `division-by-zero` property
-check but doesn't set `__exception_active` for `ZeroDivisionError`.
-A `try/except ZeroDivisionError` can't catch it.
+**Problem:** `nondet_string(5)` returns nondet string with nondet
+length. Should have `length == 5`.
 
-**Fix:** In the `Mod` and `FloorDiv` handlers, when the divisor
-might be zero, set `__exception_active = true` and `__exception_type`
-to the ZeroDivisionError hash via `pending_checks`, BEFORE the
-division. Guard the actual division with `if(!__exception_active)`.
+**Fix:** In the `nondet_str` handler, check for a size argument.
+If present, create a nondet string and add `assume(length == N)`.
 
-**Effort:** 30 minutes. **Affects:** ~9 ESBMC tests.
+**Effort:** 15 minutes. **Affects:** ~6 direct, ~15 indirect.
 
-##### `limit-range-expression` — `range()` as expression
+##### `limit-bytes-literal` — b"Hello" not supported
 
-**Problem:** `list(range(5))` — `range()` only works inside `for-in`.
-As a standalone expression, it returns nondet.
+**Problem:** `b"Hello"` is a `Constant` with `bytes` type. Our
+constant converter doesn't handle bytes — only strings.
 
-**Fix:** In `convert_call`, recognize `range` and return a list
-struct with `length = stop - start` (or `(stop - start + step - 1) / step`
-for stepped ranges) and `data[i] = start + i * step`. Build the
-list at conversion time for constant arguments, or use `pending_checks`
-for variable arguments.
+**Fix:** In `convert_constant`, detect bytes values (Python AST
+represents them as `Constant(value=b"Hello")`). Convert to a list
+of integers: `[72, 101, 108, 108, 111]`. Or model as a string
+struct with the raw byte values (same representation, different
+semantic interpretation).
 
-**Effort:** 45 minutes. **Affects:** ~14 ESBMC tests.
+**Effort:** 30 minutes. **Affects:** ~4 direct, ~10 indirect.
 
 #### Tier 2 — Moderate (1-2 hours each)
 
-##### `limit-math-trig` — `math.cos(0) == 1.0`
-
-**Problem:** Trig functions return nondet. For constant arguments,
-we could compute at conversion time (like `math.sqrt`).
-
-**Fix:** In the math module handler, add `sin`, `cos`, `tan`, `asin`,
-`acos`, `atan`, `log`, `exp` models. For constant float arguments,
-compute using `std::sin/cos/tan/etc.` and return `ieee_floatt` result.
-For variable arguments, return nondet float.
-
-**Effort:** 1 hour. **Affects:** ~18 ESBMC tests.
-
-##### `limit-str-replace-content` — `str.replace()` content tracking
+##### `limit-str-replace-content` — str.replace() content tracking
 
 **Problem:** `"hello world".replace("world", "python")` returns nondet.
 
-**Fix:** For constant string, constant old, constant new: perform the
-replacement at conversion time. Scan the string data for occurrences
-of `old`, replace each with `new`, build the result string. For
-variable arguments, return nondet.
+**Fix:** For constant string, constant old, constant new: scan the
+string data for occurrences of `old` at conversion time. For each
+occurrence, replace the bytes with `new`. Build the result string
+with adjusted length. For variable arguments, return nondet.
 
-**Effort:** 1-2 hours. **Affects:** ~5 ESBMC tests.
-
-##### `limit-unicode-string` — `isalpha()` on non-ASCII
-
-**Problem:** Our `isalpha()` only checks `[a-zA-Z]`. Python's
-`isalpha()` also accepts Unicode letters (é, ñ, etc.).
-
-**Fix:** Extend the byte-range check to include common Unicode
-letter ranges. For UTF-8 encoded strings, multi-byte characters
-have first byte >= 0xC0. A simple approximation: any byte >= 128
-is considered a letter (overapproximation but handles most cases).
-Or: check Unicode categories using a lookup table for the first
-256 code points.
-
-**Effort:** 1 hour. **Affects:** ~7 ESBMC tests.
-
-##### `limit-typecast-tagged-union` — `int()` on tagged union
-
-**Problem:** `int(x)` where `x` is `python_value_type` generates
-`warning: ignoring typecast` because `typecast_exprt{struct, int}`
-is not valid.
-
-**Fix:** In the `int()` built-in handler, check if the argument is
-`python_value_type`. If so, dispatch on tag: `if(tag==INT) int_val
-else if(tag==FLOAT) typecast(float_val, int) else if(tag==BOOL)
-typecast(bool_val, int) else 0`. Same pattern as the truth value
-dispatch.
-
-**Effort:** 30 minutes. **Affects:** ~48 ESBMC tests.
+**Effort:** 1-2 hours. **Affects:** ~5 direct, ~20 indirect.
 
 #### Tier 3 — Significant (1-2 weeks each)
 
 ##### `limit-generator-infinite` — lazy generator state machine
 
-**Problem:** Infinite generators (`while True: yield n`) can't be
-eagerly evaluated.
+(Detailed plan in Section 9.5.2 — 7-step state machine transformation.)
 
-**Fix:** Full state machine transformation as described in Section 9.
-Generator function body → switch-based state machine with `__state`
-field. `next(gen)` advances to next yield point. Works with
-`--unwind` for bounded verification.
-
-**Effort:** 1-2 weeks. **Affects:** ~15 ESBMC tests.
+**Effort:** 1-2 weeks. **Affects:** ~15 direct, ~30 indirect.
 
 ##### `limit-async-concurrent` — concurrent coroutines
 
-**Problem:** `asyncio.gather()` runs coroutines concurrently.
+(Detailed plan in Section 9.5.3 — 6-step CBMC thread model.)
 
-**Fix:** Model using CBMC's `__CPROVER_thread_create` for each
-coroutine. `await` → `__CPROVER_yield()`. Cooperative scheduling
-via `__CPROVER_atomic_begin/end`. Depends on generator state machine.
-
-**Effort:** 1-2 weeks (after generators). **Affects:** ~10 ESBMC tests.
+**Effort:** 1-2 weeks. **Affects:** ~10 direct, ~15 indirect.
 
 ### Summary
 
