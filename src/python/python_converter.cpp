@@ -6336,6 +6336,16 @@ codet python_convertert::convert_for(const jsont &stmt)
 // "return may only occur syntactically nested in a function definition."
 codet python_convertert::convert_return(const jsont &stmt)
 {
+  // PLR §6.2.9: return in generator → return __gen_result
+  if(!current_function.empty() && generator_functions.count(current_function))
+  {
+    std::string grn = "__gen_result_" + current_function;
+    std::string grq = qualify_name(grn);
+    const symbolt *grs = symbol_table.lookup(irep_idt{grq});
+    if(grs != nullptr)
+      return code_frontend_returnt{grs->symbol_expr()};
+  }
+
   const jsont &value = json_member(stmt, "value");
 
   if(value.is_null())
