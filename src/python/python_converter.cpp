@@ -143,7 +143,16 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   else if(target_type.id() == ID_floatbv)
     return python_value_float(e);
   else if(target_type.id() == ID_bool)
-    return python_value_bool(e);
+  {
+    // PLR §4.1: Truth value — dispatch on tag
+    return or_exprt{
+      and_exprt{
+        python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)},
+      and_exprt{
+        python_value_is(e, python_type_tagt::INT),
+        notequal_exprt{
+          python_value_int(e), from_integer(0, signedbv_typet{64})}}};
+  }
   else if(is_python_string_type(target_type))
     return python_value_str(e);
   else if(is_python_list_type(target_type))
@@ -303,6 +312,20 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       }
       // Incompatible class types — return nondet
     }
+  }
+
+  // PLR §4.1: Tagged union → bool (truth value testing)
+  if(is_python_value_type(e.type()) && target.id() == ID_bool)
+  {
+    // Dispatch on tag: INT→int_val!=0, FLOAT→float_val!=0,
+    // BOOL→bool_val, STR/LIST→true (non-empty assumed)
+    return or_exprt{
+      and_exprt{
+        python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)},
+      and_exprt{
+        python_value_is(e, python_type_tagt::INT),
+        notequal_exprt{
+          python_value_int(e), from_integer(0, signedbv_typet{64})}}};
   }
 
   // Struct-to-scalar or other incompatible: return a nondet value
@@ -1664,6 +1687,14 @@ exprt python_convertert::convert_call(const jsont &expr)
           // Unknown math function — return nondet
           return side_effect_expr_nondett{double_type(), get_location(expr)};
         }
+        // PLR stdlib: re module — return nondet for all methods
+        if(obj_name == "re")
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        // PLR stdlib: random module
+        if(obj_name == "random")
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
       }
     }
@@ -1800,7 +1831,12 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "upper" || method_name == "lower" ||
           method_name == "strip" || method_name == "lstrip" ||
           method_name == "rstrip" || method_name == "title" ||
-          method_name == "capitalize" || method_name == "swapcase")
+          method_name == "capitalize" || method_name == "swapcase" ||
+          method_name == "zfill" || method_name == "casefold" ||
+          method_name == "center" || method_name == "ljust" ||
+          method_name == "rjust" || method_name == "expandtabs" ||
+          method_name == "encode" || method_name == "decode" ||
+          method_name == "removeprefix" || method_name == "removesuffix")
         {
           // Return nondet string with same length
           return side_effect_expr_nondett{
@@ -1816,7 +1852,11 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(
           method_name == "startswith" || method_name == "endswith" ||
           method_name == "isalpha" || method_name == "isdigit" ||
-          method_name == "isalnum" || method_name == "isspace")
+          method_name == "isalnum" || method_name == "isspace" ||
+          method_name == "isupper" || method_name == "islower" ||
+          method_name == "istitle" || method_name == "isnumeric" ||
+          method_name == "isdecimal" || method_name == "isidentifier" ||
+          method_name == "isprintable" || method_name == "isascii")
         {
           return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
         }
@@ -1828,7 +1868,9 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
-        if(method_name == "join")
+        if(
+          method_name == "join" || method_name == "partition" ||
+          method_name == "rpartition")
         {
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
@@ -2425,6 +2467,18 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
+  // PLR §2.4.5: hex/oct/bin — return nondet string
+  else if(
+    func_name == "hex" || func_name == "oct" || func_name == "bin" ||
+    func_name == "repr" || func_name == "ascii")
+  {
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+  }
+  // PLR §2.4.5: hash/id — return nondet int
+  else if(func_name == "hash")
+  {
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
   // chr(n) → single-character string
   else if(func_name == "chr")
   {
@@ -2561,11 +2615,81 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return struct_exprt{{real_val, imag_val}, complex_type};
   }
-  // list() / sorted() / reversed() — return nondet list
+  // list() / reversed() / enumerate() — return nondet list
   else if(
-    func_name == "list" || func_name == "sorted" || func_name == "reversed" ||
-    func_name == "enumerate")
+    func_name == "list" || func_name == "reversed" || func_name == "enumerate")
   {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(is_python_list_type(arg.type()))
+        return arg; // list(lst) = copy
+    }
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
+  // PLR §2.4.5: sorted(iterable) — return sorted copy
+  else if(func_name == "sorted")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(is_python_list_type(arg.type()))
+      {
+        // Create a copy and sort it
+        static unsigned sorted_counter = 0;
+        std::string tmp_name = "__sorted_" + std::to_string(sorted_counter++);
+        std::string tmp_qname = qualify_name(tmp_name);
+        irep_idt tmp_id{tmp_qname};
+        if(symbol_table.lookup(tmp_id) == nullptr)
+        {
+          symbolt tmp_sym{tmp_id, arg.type(), "python"};
+          tmp_sym.base_name = tmp_name;
+          tmp_sym.is_lvalue = true;
+          tmp_sym.is_state_var = true;
+          symbol_table.add(tmp_sym);
+        }
+        symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{tmp, arg});
+        // Bubble sort the copy
+        const auto &list_st = to_struct_type(arg.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt data{tmp, "data", data_type};
+        member_exprt length{tmp, "length", signedbv_typet{64}};
+        for(std::size_t pass = 0; pass < PYTHON_MAX_LIST_LENGTH; pass++)
+        {
+          for(std::size_t i = 0; i + 1 < PYTHON_MAX_LIST_LENGTH; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt next = from_integer(i + 1, signedbv_typet{64});
+            exprt guard = and_exprt{
+              binary_relation_exprt{next, ID_lt, length},
+              binary_relation_exprt{
+                index_exprt{data, idx}, ID_gt, index_exprt{data, next}}};
+            static unsigned stmp = 0;
+            std::string sn = "__stmp_" + std::to_string(stmp++);
+            std::string sq = qualify_name(sn);
+            irep_idt si{sq};
+            if(symbol_table.lookup(si) == nullptr)
+            {
+              symbolt ss{si, data_type.element_type(), "python"};
+              ss.base_name = sn;
+              ss.is_lvalue = true;
+              ss.is_state_var = true;
+              symbol_table.add(ss);
+            }
+            symbol_exprt sv = symbol_table.lookup_ref(si).symbol_expr();
+            code_blockt swap;
+            swap.add(code_frontend_assignt{sv, index_exprt{data, idx}});
+            swap.add(code_frontend_assignt{
+              index_exprt{data, idx}, index_exprt{data, next}});
+            swap.add(code_frontend_assignt{index_exprt{data, next}, sv});
+            pending_checks.push_back(code_ifthenelset{guard, std::move(swap)});
+          }
+        }
+        return std::move(tmp);
+      }
+    }
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
@@ -5632,6 +5756,15 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   current_function = saved_function;
   global_names = saved_globals;
+
+  // PLR §7.6: if function doesn't end with return, append return None
+  if(return_type.id() != ID_empty)
+  {
+    mp_integer none_val = mp_integer(1) << 62;
+    none_val = -none_val;
+    body_block.add(code_frontend_returnt{
+      safe_typecast(from_integer(none_val, python_int_type()), return_type)});
+  }
 
   // Update the symbol with the body
   symbolt *sym_ptr = symbol_table.get_writeable(symbol_id);

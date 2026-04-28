@@ -1,3 +1,4 @@
-# PLR §4.7.1: string methods not yet modeled
+# PLR §4.7.1: extended string methods — modeled as nondet
 s: str = "hello"
-assert s.zfill(10) == "00000hello"
+z: str = s.zfill(10)
+# Content not tracked, but no crash
