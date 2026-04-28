@@ -5,18 +5,22 @@
 /// Reference (https://docs.python.org/3/reference/). Comments throughout
 /// this file cite specific sections using the format:
 ///
-///   PLR §X.Y: section title
+///   PLR §X.Y: section title     (Python Language Reference)
+///   PLib: section title          (Python Library Reference — stdtypes/builtins)
 ///
-/// where PLR = Python Language Reference, and the section numbers correspond
-/// to the online documentation structure. The reference source is also
-/// available at ~/cpython.git/Doc/reference/.
+/// The Language Reference defines syntax and core semantics. The Library
+/// Reference defines built-in types and functions.
+/// Source: ~/cpython.git/Doc/reference/ and ~/cpython.git/Doc/library/.
 ///
 /// Key reference files:
-///   expressions.rst    — PLR §6: Expressions
-///   simple_stmts.rst   — PLR §7: Simple statements
-///   compound_stmts.rst — PLR §8: Compound statements
-///   datamodel.rst      — PLR §3: Data model
-///   executionmodel.rst — PLR §4: Execution model
+///   reference/expressions.rst    — PLR §6: Expressions
+///   reference/simple_stmts.rst   — PLR §7: Simple statements
+///   reference/compound_stmts.rst — PLR §8: Compound statements
+///   reference/datamodel.rst      — PLR §3: Data model
+///   library/stdtypes.rst         — PLib: Built-in Types (truth testing,
+///                                  numeric ops, sequences, mappings, sets)
+///   library/functions.rst        — PLib: Built-in Functions (len, range,
+///                                  abs, min, max, sum, sorted, etc.)
 
 #include "python_converter.h"
 
@@ -144,7 +148,11 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     return python_value_float(e);
   else if(target_type.id() == ID_bool)
   {
-    // PLR §4.1: Truth value — dispatch on tag
+    // PLib stdtypes: Truth Value Testing
+    // Falsy: None, False, 0, 0.0, "", [], {}, set(), range(0)
+    // We check: NONE→false, BOOL→bool_val, INT→int_val!=0
+    // FLOAT/STR/LIST with nondet values are assumed truthy
+    // (sound overapproximation — may miss empty-string/list falsiness)
     return or_exprt{
       and_exprt{
         python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)},
@@ -248,7 +256,7 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       }
     }
 
-    // PLR §4.1: Truth Value Testing — "the following values are
+    // PLib stdtypes: Truth Value Testing — "the following values are
     // considered false: None, False, zero, empty sequences/mappings"
     // None sentinel → false for truthiness
     if(target.id() == ID_bool && e.type().id() == ID_signedbv)
@@ -775,7 +783,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
-  // PLR §4.7: "str" type, §6.7: binary arithmetic
+  // PLib stdtypes: "str" type, §6.7: binary arithmetic
   // String concatenation: s1 + s2 produces a new string containing the
   // PLR §3.2: Complex number arithmetic
   auto is_complex = [](const typet &t)
@@ -837,7 +845,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return side_effect_expr_nondett{ct, source_locationt{}};
   }
 
-  // PLR §4.7: "str" type, §6.7: binary arithmetic
+  // PLib stdtypes: "str" type, §6.7: binary arithmetic
   // String concatenation: s1 + s2 produces a new string containing the
   // characters of s1 followed by s2. We track content by copying data
   // arrays element-by-element via pending_checks.
@@ -1765,12 +1773,12 @@ exprt python_convertert::convert_call(const jsont &expr)
         return side_effect_expr_nondett{obj_base_type, get_location(expr)};
       }
 
-      // PLR §4.7.1: String methods
+      // PLib stdtypes: String methods
       if(is_python_string_type(obj_base_type))
       {
         if(method_name == "split")
         {
-          // PLR §4.7.1: str.split(sep)
+          // PLib stdtypes: str.split(sep)
           // For constant string and delimiter, split at conversion time
           if(
             obj.id() == ID_struct && args.is_array() && !as_array(args).empty())
@@ -1882,7 +1890,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "replace" || method_name == "format")
         {
-          // PLR §4.7.1: str.replace() and str.format()
+          // PLib stdtypes: str.replace() and str.format()
           // Return nondet string (sound overapproximation)
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
@@ -1915,7 +1923,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
 
-      // PLR §4.10: Dict methods
+      // PLib stdtypes: Dict methods
       if(is_python_dict_type(obj_base_type))
       {
         if(method_name == "get")
@@ -1977,7 +1985,7 @@ exprt python_convertert::convert_call(const jsont &expr)
             python_int_type(), get_location(expr)};
       }
 
-      // PLR §4.6.1: List methods (append, sort, reverse, pop, etc.)
+      // PLib stdtypes: List methods (append, sort, reverse, pop, etc.)
       if(is_python_list_type(obj_base_type))
       {
         const auto &list_st = to_struct_type(obj_base_type);
@@ -2060,7 +2068,7 @@ exprt python_convertert::convert_call(const jsont &expr)
 
         if(method_name == "pop")
         {
-          // PLR §4.6.1: pop(i) or pop() — remove and return element
+          // PLib stdtypes: pop(i) or pop() — remove and return element
           exprt pop_idx;
           if(args.is_array() && !as_array(args).empty())
             pop_idx = safe_typecast(
@@ -2109,7 +2117,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           return std::move(tmp);
         }
 
-        // PLR §4.6.1: list.extend(iterable)
+        // PLib stdtypes: list.extend(iterable)
         if(method_name == "extend")
         {
           if(args.is_array() && !as_array(args).empty())
@@ -2139,7 +2147,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           return from_integer(0, python_int_type());
         }
 
-        // PLR §4.6.1: list.remove(value)
+        // PLib stdtypes: list.remove(value)
         if(method_name == "remove")
         {
           if(args.is_array() && !as_array(args).empty())
@@ -2192,7 +2200,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           return from_integer(0, python_int_type());
         }
 
-        // PLR §4.6.1: list.copy()
+        // PLib stdtypes: list.copy()
         if(method_name == "copy")
           return obj; // struct copy
       }
@@ -2345,7 +2353,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return from_integer(0, python_int_type());
   }
-  // PLR §2.4.5: map(func, iterable)
+  // PLib builtins: map(func, iterable)
   else if(func_name == "map")
   {
     if(args.is_array() && as_array(args).size() >= 2)
@@ -2364,14 +2372,14 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
-  // PLR §2.4.5: zip(*iterables)
+  // PLib builtins: zip(*iterables)
   else if(func_name == "zip")
   {
     // Return nondet list of tuples
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
-  // PLR §2.4.5: filter(func, iterable)
+  // PLib builtins: filter(func, iterable)
   else if(func_name == "filter")
   {
     if(args.is_array() && as_array(args).size() >= 2)
@@ -2411,7 +2419,7 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "len")
   {
-    // PLR §2.4.5: len(s) returns the length of s
+    // PLib builtins: len(s) returns the length of s
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
@@ -2500,19 +2508,19 @@ exprt python_convertert::convert_call(const jsont &expr)
     none_val = -none_val;
     return from_integer(none_val, python_int_type());
   }
-  // PLR §2.4.5: input() reads from stdin — model as nondet string
+  // PLib builtins: input() reads from stdin — model as nondet string
   else if(func_name == "input")
   {
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
-  // PLR §2.4.5: hex/oct/bin — return nondet string
+  // PLib builtins: hex/oct/bin — return nondet string
   else if(
     func_name == "hex" || func_name == "oct" || func_name == "bin" ||
     func_name == "repr" || func_name == "ascii")
   {
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
-  // PLR §2.4.5: hash/id — return nondet int
+  // PLib builtins: hash/id — return nondet int
   else if(func_name == "hash")
   {
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
@@ -2653,7 +2661,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return struct_exprt{{real_val, imag_val}, complex_type};
   }
-  // PLR §4.9: set(iterable) — deduplicate elements
+  // PLib stdtypes: set(iterable) — deduplicate elements
   else if(func_name == "set")
   {
     if(args.is_array() && !as_array(args).empty())
@@ -2750,7 +2758,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
-  // PLR §2.4.5: sorted(iterable) — return sorted copy
+  // PLib builtins: sorted(iterable) — return sorted copy
   else if(func_name == "sorted")
   {
     if(args.is_array() && !as_array(args).empty())
@@ -2815,7 +2823,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
-  // PLR §2.4.5: sum(iterable) — sum of elements
+  // PLib builtins: sum(iterable) — sum of elements
   else if(func_name == "sum")
   {
     if(args.is_array() && !as_array(args).empty())
@@ -2857,7 +2865,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
-  // PLR §2.4.5: round(number) → nearest integer
+  // PLib builtins: round(number) → nearest integer
   else if(func_name == "round")
   {
     if(args.is_array() && !as_array(args).empty())
@@ -2877,7 +2885,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
-  // PLR §2.4.5: divmod(a, b) returns (a // b, a % b)
+  // PLib builtins: divmod(a, b) returns (a // b, a % b)
   else if(func_name == "divmod")
   {
     if(args.is_array() && as_array(args).size() >= 2)
@@ -3063,7 +3071,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }
-  // PLR §2.4.5: type(obj) — return the type of an object
+  // PLib builtins: type(obj) — return the type of an object
   // We model this as a static type tag for comparison with type names.
   else if(func_name == "type")
   {
@@ -3198,7 +3206,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
-        // PLR §2.4.5: abs(complex) = sqrt(real² + imag²)
+        // PLib builtins: abs(complex) = sqrt(real² + imag²)
         if(
           arg.type().id() == ID_struct &&
           to_struct_type(arg.type()).get_tag() == "python_complex")
@@ -5353,7 +5361,7 @@ codet python_convertert::convert_for(const jsont &stmt)
     if(!range_args.is_array() || as_array(range_args).empty())
       return code_skipt{};
 
-    // PLR §4.6.6: range(start, stop[, step])
+    // PLib stdtypes: range(start, stop[, step])
     exprt start, stop, step;
     if(as_array(range_args).size() == 1)
     {
