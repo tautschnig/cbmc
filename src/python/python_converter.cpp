@@ -718,6 +718,27 @@ exprt python_convertert::convert_constant(const jsont &expr)
   {
     std::string str_val = value.value;
 
+    // PLR §2.4.2: Detect bytes literals (b"Hello" → "b'Hello'" in JSON)
+    if(str_val.size() >= 3 && str_val[0] == 'b' && str_val[1] == '\'')
+    {
+      // Extract bytes content between b' and '
+      std::string bytes_content = str_val.substr(2, str_val.size() - 3);
+      // Model as list of integers
+      typet lt = python_list_type(python_int_type());
+      const auto &data_type =
+        to_array_type(to_struct_type(lt).components()[1].type());
+      exprt::operandst elems;
+      for(unsigned char c : bytes_content)
+        elems.push_back(from_integer(c, python_int_type()));
+      while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+        elems.push_back(from_integer(0, python_int_type()));
+      return struct_exprt{
+        {from_integer(
+           static_cast<long long>(bytes_content.size()), python_int_type()),
+         array_exprt{std::move(elems), data_type}},
+        lt};
+    }
+
     // Detect complex number literals (e.g., "2j", "(1+2j)")
     if(!str_val.empty() && (str_val.back() == 'j' || str_val.back() == ')'))
     {
@@ -1309,11 +1330,32 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "Div")
   {
-    // PLR §6.7: "The / (division) operator yields the quotient of its
-    // arguments." True division always returns float.
+    // PLR §6.7: True division always returns float.
+    // For constant integer operands, compute exactly with ieee_floatt
+    if(
+      left.is_constant() && right.is_constant() &&
+      left.type().id() == ID_signedbv && right.type().id() == ID_signedbv)
+    {
+      mp_integer lv, rv;
+      if(
+        !to_integer(to_constant_expr(left), lv) &&
+        !to_integer(to_constant_expr(right), rv) && rv != 0)
+      {
+        ieee_floatt fl{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fl.from_integer(lv);
+        ieee_floatt fr{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fr.from_integer(rv);
+        fl /= fr;
+        return fl.to_expr();
+      }
+    }
     typet float_type = double_type();
     return div_exprt{
-      typecast_exprt{left, float_type}, typecast_exprt{right, float_type}};
+      safe_typecast(left, float_type), safe_typecast(right, float_type)};
   }
   else if(op == "BitOr")
   {
@@ -2162,6 +2204,78 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "replace" || method_name == "format")
         {
+          // PLib stdtypes: str.replace(old, new) for constant strings
+          if(
+            method_name == "replace" && obj.id() == ID_struct &&
+            obj.operands().size() == 2 && obj.operands()[0].is_constant() &&
+            args.is_array() && as_array(args).size() >= 2)
+          {
+            auto ait = as_array(args).begin();
+            exprt old_expr = convert_expression(*ait);
+            ++ait;
+            exprt new_expr = convert_expression(*ait);
+            // Extract all three as constant strings
+            auto extract_str = [&](const exprt &e) -> std::string
+            {
+              if(
+                e.id() != ID_struct || e.operands().size() != 2 ||
+                !e.operands()[0].is_constant())
+                return "";
+              mp_integer len;
+              if(to_integer(to_constant_expr(e.operands()[0]), len))
+                return "";
+              std::string s;
+              for(mp_integer i = 0; i < len; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(
+                  idx < e.operands()[1].operands().size() &&
+                  e.operands()[1].operands()[idx].is_constant())
+                {
+                  mp_integer ch;
+                  if(!to_integer(
+                       to_constant_expr(e.operands()[1].operands()[idx]), ch))
+                    s += static_cast<char>(ch.to_ulong());
+                }
+              }
+              return s;
+            };
+            std::string src = extract_str(obj);
+            std::string old_s = extract_str(old_expr);
+            std::string new_s = extract_str(new_expr);
+            if(!src.empty() && !old_s.empty())
+            {
+              // Perform replacement
+              std::string result;
+              std::size_t pos = 0;
+              while(pos < src.size())
+              {
+                auto found = src.find(old_s, pos);
+                if(found == std::string::npos)
+                {
+                  result += src.substr(pos);
+                  break;
+                }
+                result += src.substr(pos, found - pos) + new_s;
+                pos = found + old_s.size();
+              }
+              // Build string literal
+              struct_typet str_type = python_string_type();
+              const auto &data_type =
+                to_array_type(str_type.components()[1].type());
+              exprt::operandst chars;
+              for(char c : result)
+                chars.push_back(from_integer(
+                  static_cast<unsigned char>(c), unsignedbv_typet{8}));
+              while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+                chars.push_back(from_integer(0, unsignedbv_typet{8}));
+              return struct_exprt{
+                {from_integer(
+                   static_cast<long long>(result.size()), python_int_type()),
+                 array_exprt{std::move(chars), data_type}},
+                str_type};
+            }
+          }
           // PLib stdtypes: str.format() — substitute {} placeholders
           if(
             method_name == "format" && obj.id() == ID_struct &&
@@ -2800,8 +2914,39 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "nondet_str" || func_name == "nondet_string")
   {
-    side_effect_expr_nondett nondet{python_string_type(), get_location(expr)};
-    return std::move(nondet);
+    static unsigned ns_ctr = 0;
+    std::string tn = "__nondet_str_" + std::to_string(ns_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt ti{tq};
+    if(symbol_table.lookup(ti) == nullptr)
+    {
+      symbolt ts{ti, python_string_type(), "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      tmp, side_effect_expr_nondett{python_string_type(), get_location(expr)}});
+    member_exprt len{tmp, "length", signedbv_typet{64}};
+    // If size argument provided, constrain length == size
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt size = convert_expression(*as_array(args).begin());
+      pending_checks.push_back(code_assumet{
+        equal_exprt{len, safe_typecast(size, signedbv_typet{64})}});
+    }
+    else
+    {
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
+        binary_relation_exprt{
+          len,
+          ID_le,
+          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
+    }
+    return std::move(tmp);
   }
   else if(func_name == "nondet_list")
   {
@@ -2833,7 +2978,28 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "nondet_dict")
   {
-    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    typet dt = python_dict_type(python_string_type(), python_int_type());
+    static unsigned nd_ctr = 0;
+    std::string tn = "__nondet_dict_" + std::to_string(nd_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt ti{tq};
+    if(symbol_table.lookup(ti) == nullptr)
+    {
+      symbolt ts{ti, dt, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      tmp, side_effect_expr_nondett{dt, get_location(expr)}});
+    member_exprt len{tmp, "length", signedbv_typet{64}};
+    pending_checks.push_back(code_assumet{and_exprt{
+      binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
+      binary_relation_exprt{
+        len, ID_le, from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}}});
+    return std::move(tmp);
   }
   else if(func_name == "nondet_complex")
   {
@@ -7914,7 +8080,13 @@ bool python_convertert::convert()
                       var_type = double_type();
                   }
                   else if(v.is_string())
-                    var_type = python_string_type();
+                  {
+                    std::string sv = v.value;
+                    if(sv.size() >= 3 && sv[0] == 'b' && sv[1] == '\'')
+                      var_type = python_list_type(python_int_type());
+                    else
+                      var_type = python_string_type();
+                  }
                 }
                 else if(is_node_type(val, "List"))
                 {
@@ -7943,7 +8115,10 @@ bool python_convertert::convert()
                   is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
                   is_node_type(val, "Call") || is_node_type(val, "ListComp") ||
                   is_node_type(val, "Lambda") || is_node_type(val, "Set") ||
-                  is_node_type(val, "Subscript"))
+                  is_node_type(val, "Subscript") ||
+                  is_node_type(val, "BinOp") || is_node_type(val, "UnaryOp") ||
+                  is_node_type(val, "Compare") || is_node_type(val, "BoolOp") ||
+                  is_node_type(val, "IfExp"))
                 {
                   // Complex RHS — skip pre-registration, let pass 2 handle it
                   continue;
