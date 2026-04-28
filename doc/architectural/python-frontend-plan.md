@@ -1562,3 +1562,258 @@ soundness.
 | 2026-04-23 | 47a4c0c3dc | Detailed fix plans for all 7 KNOWNBUG tests |
 | 2026-04-23 | cb19d2735a | Items 1-5: list assign, generators, sets, slices, del (78 CORE) |
 | 2026-04-23 | f55f374299 | Item 6: import handling with math library models (79 CORE, 1 KNOWNBUG) |
+
+## 9. Precision Roadmap — Eliminating Overapproximations
+
+This section provides a plan for turning each of the 27 overapproximations
+documented in `doc/overapproximations.md` into precise verification.
+
+### 9.1 Bounded Data Structures
+
+#### 9.1.1 Strings: configurable bound (currently 256)
+
+**Precise approach:** Add `--python-max-string-length N` command-line
+option. Parse in `python_language.cpp`, pass to converter via `optionst`.
+Replace `PYTHON_MAX_STRING_LENGTH` macro with a runtime value.
+
+**Effort:** 2 hours. **Impact:** Users can tune for their program.
+
+#### 9.1.2 Lists: configurable bound (currently 64)
+
+**Precise approach:** Add `--python-max-list-length N`. Same pattern
+as strings.
+
+**Effort:** 1 hour. **Impact:** Users can tune for their program.
+
+#### 9.1.3 Integers: already solved with --python-unbounded-ints
+
+**Precise approach:** Already implemented. `--python-unbounded-ints --z3`
+uses `integer_typet` for mathematical integers with no overflow.
+
+**Effort:** Done.
+
+#### 9.1.4 Dicts: array-based model
+
+**Precise approach:** Replace struct-per-key model with array-based
+model: `struct { int length; key_type keys[N]; value_type values[N]; }`.
+Supports dynamic insertion/deletion. `d[key]` scans keys array.
+`del d[key]` shifts elements left. `len(d)` returns length field.
+
+**Effort:** 1-2 days. **Impact:** Full dict semantics.
+
+### 9.2 Nondet Returns → Exact Models
+
+#### 9.2.1 String transform methods (upper/lower/strip/etc.)
+
+**Precise approach:** For `upper()`: iterate data array, convert each
+byte `c` to `c - 32` if `c >= 'a' && c <= 'z'`. Similar for `lower()`.
+For `strip()`: scan from both ends for whitespace, adjust length and
+shift data. Use `pending_checks` for element-by-element operations.
+
+**Effort:** 1 day per method. **Impact:** Content-preserving transforms.
+
+#### 9.2.2 String query methods (find/index/count/startswith/endswith)
+
+**Precise approach:** For `find(sub)`: scan data array for substring
+match. Return index or -1. For `startswith(prefix)`: compare first
+N bytes. For `count(sub)`: count non-overlapping occurrences.
+
+**Effort:** 1 day per method. **Impact:** Exact string search results.
+
+#### 9.2.3 String predicate methods (isalpha/isdigit/etc.)
+
+**Precise approach:** For `isalpha()`: check all bytes are in
+`[a-zA-Z]` range. Build conjunction: `for i in 0..length:
+(data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z')`.
+
+**Effort:** 2 hours per method. **Impact:** Exact character class checks.
+
+#### 9.2.4 str.format() and f-strings with expressions
+
+**Precise approach:** For `str.format("hello {}", x)`: parse format
+string for `{}` placeholders. For each placeholder, call `str(arg)`
+to convert the argument to a string. Concatenate literal parts with
+converted arguments using the string concat content-tracking mechanism.
+
+For `str(int_val)`: convert integer to decimal string at the GOTO
+level using repeated division by 10 and digit extraction.
+
+**Effort:** 2-3 days. **Impact:** Full format string content tracking.
+
+#### 9.2.5 Built-in functions (hex/oct/bin/repr)
+
+**Precise approach:** For `hex(n)`: convert integer to hex string
+using repeated division by 16. Prepend "0x". For `oct(n)`: divide
+by 8. For `bin(n)`: divide by 2. All use the integer-to-string
+conversion pattern.
+
+**Effort:** 1 day. **Impact:** Exact conversion results.
+
+#### 9.2.6 map/zip/filter
+
+**Precise approach:** For `map(func, lst)`: unroll function calls:
+`result[i] = func(lst[i])` for `i in 0..lst.length`. Requires
+resolving `func` to a symbol and generating inline calls via
+`pending_checks`. For `zip(a, b)`: `result[i] = (a[i], b[i])` for
+`i in 0..min(a.length, b.length)`. For `filter(func, lst)`: similar
+to set deduplication — conditional copy.
+
+**Effort:** 1 day each. **Impact:** Exact functional operations.
+
+#### 9.2.7 Module functions (math/re/random)
+
+**Precise approach:** For `math.sin/cos/tan/log/exp`: use CBMC's
+built-in floating-point models or compute at conversion time for
+constants. For `re`: implement a bounded regex matcher (complex —
+would need NFA simulation). For `random`: model as nondet with
+range constraints (`randint(a,b)` → `assume(result >= a && result <= b)`).
+
+**Effort:** Math: 1 day. Random: 2 hours. Re: 1-2 weeks.
+
+#### 9.2.8 Complex number operations
+
+**Precise approach:** For `abs(complex)` with variable args: use
+CBMC's `__CPROVER_sqrt` or model `sqrt` as a function with the
+postcondition `result * result == input`. For `complex ** n`: use
+De Moivre's formula or repeated multiplication.
+
+**Effort:** 1 day. **Impact:** Exact complex arithmetic.
+
+### 9.3 Tagged Union Precision
+
+#### 9.3.1 Full truth value dispatch
+
+**Precise approach:** Extend the bool unwrap to check all tags:
+NONE→false, BOOL→bool_val, INT→int_val!=0, FLOAT→float_val!=0.0,
+STR→deref(str_ptr).length!=0, LIST→deref(list_ptr).length!=0.
+
+**Effort:** 1 hour. **Impact:** Correct falsiness for all types.
+
+#### 9.3.2 Type-dispatched arithmetic
+
+**Precise approach:** For `x + y` on tagged unions: generate
+multi-way dispatch: `if(x.tag==INT && y.tag==INT) {INT, x.int+y.int}
+else if(x.tag==FLOAT || y.tag==FLOAT) {FLOAT, ...} else if
+(x.tag==STR && y.tag==STR) {STR, concat(...)}`. This is the full
+tagged-union arithmetic from the original Phase 9 plan.
+
+**Effort:** 2-3 days. **Impact:** Correct mixed-type arithmetic.
+
+#### 9.3.3 Full tagged union operations
+
+**Precise approach:** Extend `len()`, indexing, slicing, `in` operator,
+and all other operations to dispatch on the tag field. Each operation
+generates an if-then-else chain for each supported type.
+
+**Effort:** 1 week. **Impact:** Full dynamic typing support.
+
+### 9.4 Semantic Simplifications → Exact Models
+
+#### 9.4.1 None as a proper type tag (not sentinel)
+
+**Precise approach:** Add a `NONE` tag to `python_value_type` (already
+exists). For variables that can be None, use `python_value_type` with
+tag=NONE. `x is None` checks `x.tag == NONE`. Remove the sentinel
+integer value.
+
+**Effort:** 1 day. **Impact:** No risk of sentinel collision.
+
+#### 9.4.2 Exception types as class objects (not hashes)
+
+**Precise approach:** Model exception types as class structs with
+`__class_tag`. `raise TypeError()` creates a TypeError instance.
+`except TypeError` checks `isinstance(exc, TypeError)`. This uses
+the existing class/isinstance infrastructure.
+
+**Effort:** 2-3 days. **Impact:** Correct exception hierarchy, no hash collisions.
+
+#### 9.4.3 Dynamic dispatch for isinstance
+
+**Precise approach:** Already implemented via `__class_tag` and
+`class_bases`. Extend to support `__class__` attribute access and
+runtime type changes (rare in verification code).
+
+**Effort:** 1 day. **Impact:** Full isinstance semantics.
+
+#### 9.4.4 Multiple inheritance
+
+**Precise approach:** Extend the layout-compatible inheritance to
+support multiple bases. Use C3 linearization (MRO) for method
+resolution. Store multiple base class fields in the derived struct.
+
+**Effort:** 1 week. **Impact:** Full inheritance model.
+
+#### 9.4.5 del on dicts: proper key removal
+
+**Precise approach:** With the array-based dict model (9.1.4), `del`
+shifts elements left and decrements length, same as list deletion.
+
+**Effort:** Included in 9.1.4.
+
+#### 9.4.6 Missing return: proper None object
+
+**Precise approach:** With the proper None type tag (9.4.1), missing
+returns produce `python_value_type{tag=NONE}` instead of the sentinel.
+
+**Effort:** Included in 9.4.1.
+
+### 9.5 Unsupported Features → Full Support
+
+#### 9.5.1 Decorators
+
+**Precise approach:** Model decorators as function wrappers:
+`@decorator def f(): ...` → `f = decorator(f)`. For `@staticmethod`:
+skip self parameter. For `@property`: model as attribute access.
+
+**Effort:** 2-3 days. **Impact:** Full decorator support.
+
+#### 9.5.2 Generators and yield
+
+**Precise approach:** Model generators as state machines. Each `yield`
+creates a state transition. The generator object stores the current
+state and local variables. `next(gen)` advances to the next yield.
+
+**Effort:** 1-2 weeks. **Impact:** Full generator support.
+
+#### 9.5.3 Async/await
+
+**Precise approach:** Model coroutines as generators (they share the
+same state machine structure). `await` is equivalent to `yield from`.
+Requires the generator infrastructure from 9.5.2.
+
+**Effort:** 1 week (after 9.5.2). **Impact:** Full async support.
+
+#### 9.5.4 Match statement
+
+**Precise approach:** Desugar `match`/`case` to if-elif chains. Each
+`case` pattern becomes a condition check. Structural patterns use
+isinstance + attribute access. Guard clauses become additional conditions.
+
+**Effort:** 2-3 days. **Impact:** Full pattern matching.
+
+#### 9.5.5 Nonlocal statement
+
+**Precise approach:** Model closures by passing captured variables as
+additional parameters (closure conversion). `nonlocal x` marks `x` as
+captured. The enclosing function passes `x` by reference (pointer).
+
+**Effort:** 1 week. **Impact:** Full closure support.
+
+#### 9.5.6 Star expressions
+
+**Precise approach:** For `*args`: model as a list parameter. For
+`**kwargs`: model as a dict parameter. For `a, *b = [1,2,3]`: assign
+first element to `a`, remaining to `b` as a list.
+
+**Effort:** 2-3 days. **Impact:** Full unpacking support.
+
+### Summary
+
+| Category | Items | Total effort |
+|----------|-------|-------------|
+| Bounded data structures | 4 | 1-2 days + 1-2 days (dicts) |
+| Nondet → exact models | 8 | 2-3 weeks |
+| Tagged union precision | 3 | 1-2 weeks |
+| Semantic simplifications | 6 | 1-2 weeks |
+| Unsupported features | 6 | 4-6 weeks |
+| **Total** | **27** | **~10-14 weeks** |
