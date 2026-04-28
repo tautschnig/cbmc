@@ -69,6 +69,7 @@ private:
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
   std::set<std::string> imported_math_funcs;
+  std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.
   /// Used for fresh variable renaming when a variable changes type.
