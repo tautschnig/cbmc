@@ -405,6 +405,91 @@ conjugate."
 
 **Effort:** 15 minutes. **Affects:** ~13 ESBMC tests.
 
+##### `limit-tagged-union-bool` — truth value of tagged union
+
+**Problem:** `if x:` where `x` is `python_value_type` generates
+`warning: ignoring typecast` because the tagged union struct can't
+be directly cast to bool.
+
+**Fix:** In `safe_typecast`, when casting `python_value_type` to
+`bool`, dispatch on the tag: `if(tag==INT) int_val!=0 else if
+(tag==FLOAT) float_val!=0.0 else if(tag==BOOL) bool_val else true`.
+This is the same pattern as the None truthiness check but generalized
+for all tagged union types.
+
+**PLR reference:** §4.1 — "Truth Value Testing"
+
+**Effort:** 30 minutes. **Affects:** ~40 ESBMC tests.
+
+##### `limit-missing-return-none` — missing return gives nondet
+
+**Problem:** Functions with missing return paths return nondet instead
+of None. This causes wrong-fail results where `assert result is None`
+should pass but fails.
+
+**Fix:** In `convert_function_def`, after converting the body, check
+if the last statement is NOT a return. If so, append
+`return None_sentinel` (our None value). This ensures all code paths
+have an explicit return.
+
+**PLR reference:** §7.6 — "If no expression is present, None is
+returned."
+
+**Effort:** 20 minutes. **Affects:** ~6 ESBMC tests.
+
+##### `limit-hex-oct-bin` — hex()/oct()/bin() built-ins
+
+**Problem:** `hex(255)` not implemented.
+
+**Fix:** In `convert_call`, add handlers for `hex`, `oct`, `bin`.
+For constant integer arguments, compute the string at conversion
+time. For variable arguments, return nondet string.
+
+**PLR reference:** §2.4.5 — "hex(x) converts an integer to a
+lowercase hexadecimal string."
+
+**Effort:** 30 minutes. **Affects:** ~18 ESBMC tests.
+
+##### `limit-string-methods-extended` — additional string methods
+
+**Problem:** zfill, isidentifier, isupper, islower, isnumeric,
+casefold, partition, etc. not modeled.
+
+**Fix:** Add these to the string method handler. Most return nondet
+of the correct type (string for zfill/casefold, bool for is*
+predicates, tuple for partition).
+
+**PLR reference:** §4.7.1 — "String Methods"
+
+**Effort:** 20 minutes. **Affects:** ~30 ESBMC tests.
+
+##### `limit-sorted-key` — sorted() returns nondet
+
+**Problem:** `sorted([3,1,2])` returns nondet list instead of
+`[1,2,3]`.
+
+**Fix:** In `convert_call`, when `sorted` is called with a list
+argument, create a copy and sort it using the same bubble sort
+mechanism as `list.sort()`. Return the sorted copy.
+
+**PLR reference:** §2.4.5 — "sorted(iterable) returns a new sorted
+list."
+
+**Effort:** 30 minutes. **Affects:** ~7 ESBMC tests.
+
+##### `limit-re-module` — regex not supported
+
+**Problem:** `import re; re.match(...)` not supported.
+
+**Fix:** Register `re` as a known module. Model `re.match`,
+`re.search`, `re.findall` as returning nondet values of the
+appropriate types (nondet for match objects, nondet list for findall).
+This is a sound overapproximation.
+
+**PLR reference:** Python Library Reference — `re` module.
+
+**Effort:** 30 minutes. **Affects:** ~11 ESBMC tests.
+
 ##### `limit-fstring-content` — f-string content tracking
 
 **Problem:** `f"x={x}"` returns nondet string. Content not tracked.
