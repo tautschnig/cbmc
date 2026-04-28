@@ -348,6 +348,19 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
           python_value_int(e), from_integer(0, signedbv_typet{64})}}};
   }
 
+  // PLib stdtypes: list/string/dict truthiness — non-empty is truthy
+  if(target.id() == ID_bool && e.type().id() == ID_struct)
+  {
+    if(
+      is_python_string_type(e.type()) || is_python_list_type(e.type()) ||
+      is_python_dict_type(e.type()))
+      return notequal_exprt{
+        member_exprt{e, "length", signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})};
+    // Other structs (class instances) are always truthy
+    return true_exprt{};
+  }
+
   // Struct-to-scalar or other incompatible: return a nondet value
   // of the target type (overapproximation, avoids crash)
   return side_effect_expr_nondett{target, source_locationt{}};
