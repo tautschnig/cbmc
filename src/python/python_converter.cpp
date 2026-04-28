@@ -6666,7 +6666,68 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     rhs = unwrap_value(rhs, arith_lhs.type());
 
   exprt new_rhs;
-  if(op == "Add")
+  // For string/list operations, build a synthetic BinOp JSON and use
+  // convert_bin_op which handles concatenation and repetition
+  if(
+    (op == "Add" || op == "Mult") &&
+    (is_python_string_type(lhs.type()) || is_python_list_type(lhs.type())))
+  {
+    // Create a temporary BinOp expression through convert_bin_op
+    // by directly constructing the result
+    if(
+      op == "Add" && is_python_string_type(lhs.type()) &&
+      is_python_string_type(rhs.type()))
+    {
+      // String concatenation
+      struct_typet str_type = python_string_type();
+      const auto &data_type = to_array_type(str_type.components()[1].type());
+      member_exprt left_len{lhs, "length", signedbv_typet{64}};
+      member_exprt right_len{rhs, "length", signedbv_typet{64}};
+      member_exprt left_data{lhs, "data", data_type};
+      member_exprt right_data{rhs, "data", data_type};
+      exprt new_len = plus_exprt{left_len, right_len};
+      exprt::operandst chars;
+      for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        chars.push_back(if_exprt{
+          binary_relation_exprt{idx, ID_lt, left_len},
+          index_exprt{left_data, idx},
+          index_exprt{right_data, minus_exprt{idx, left_len}}});
+      }
+      new_rhs = struct_exprt{
+        {new_len, array_exprt{std::move(chars), data_type}}, str_type};
+    }
+    else if(op == "Add" && is_python_list_type(lhs.type()))
+    {
+      // List concatenation
+      const auto &list_st = to_struct_type(lhs.type());
+      const auto &data_type = to_array_type(list_st.components()[1].type());
+      member_exprt left_len{lhs, "length", signedbv_typet{64}};
+      member_exprt right_len{rhs, "length", signedbv_typet{64}};
+      member_exprt left_data{lhs, "data", data_type};
+      member_exprt right_data{rhs, "data", data_type};
+      exprt new_len = plus_exprt{left_len, right_len};
+      exprt::operandst elems;
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        elems.push_back(if_exprt{
+          binary_relation_exprt{idx, ID_lt, left_len},
+          index_exprt{left_data, idx},
+          index_exprt{right_data, minus_exprt{idx, left_len}}});
+      }
+      new_rhs = struct_exprt{
+        {new_len, array_exprt{std::move(elems), data_type}}, lhs.type()};
+    }
+    else
+    {
+      // String/list repetition: s *= n
+      // For now, return nondet (proper repetition needs unrolling)
+      new_rhs = side_effect_expr_nondett{lhs.type(), loc};
+    }
+  }
+  else if(op == "Add")
     new_rhs = plus_exprt{arith_lhs, rhs};
   else if(op == "Sub")
     new_rhs = minus_exprt{arith_lhs, rhs};
