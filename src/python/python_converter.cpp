@@ -1192,7 +1192,21 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
                 exception_type_hash("ZeroDivisionError"), python_int_type())}});
       }
     }
-    return div_exprt{left, right};
+    // PLR §6.7: Floor division rounds toward negative infinity
+    // C division truncates toward zero. Adjust for negative results:
+    // floor_div(a, b) = a/b - (1 if (a%b != 0 and sign(a) != sign(b)) else 0)
+    exprt quotient = div_exprt{left, right};
+    exprt remainder = mod_exprt{left, right};
+    exprt has_remainder =
+      notequal_exprt{remainder, from_integer(0, left.type())};
+    exprt diff_sign = binary_relation_exprt{
+      bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
+    return minus_exprt{
+      quotient,
+      if_exprt{
+        and_exprt{has_remainder, diff_sign},
+        from_integer(1, left.type()),
+        from_integer(0, left.type())}};
   }
   else if(op == "Mod")
   {
