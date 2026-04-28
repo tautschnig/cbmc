@@ -5586,6 +5586,13 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // Function alias: g: Callable = double → record alias
+  if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
+  {
+    function_aliases[qualified_name] = to_symbol_expr(rhs).get_identifier();
+    return code_skipt{};
+  }
+
   // If annotation gave a placeholder type (e.g., dict→int) but the RHS
   // has a concrete struct type, use the RHS type instead.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
