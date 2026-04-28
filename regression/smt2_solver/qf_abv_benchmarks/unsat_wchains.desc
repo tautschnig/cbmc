@@ -1,0 +1,6 @@
+CORE
+unsat_wchains.smt2
+
+^unsat$
+^EXIT=0$
+^SIGNAL=0$

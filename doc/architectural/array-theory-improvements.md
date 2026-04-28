@@ -1089,3 +1089,65 @@ approximation. It's useful as an optimization (skip definitely-
 unneeded constraints) but cannot be used as a soundness filter
 (it may incorrectly skip needed constraints when symbolic indices
 might be equal at runtime).
+
+## CaDiCaL Tuning + BV Simplification (commits a5fa34e067, 000d3c2955)
+
+Disabled CaDiCaL's congruence closure (gate detection), which consumed
+62% of solving time on array-heavy formulas. Added (x+c1)==(x+c2)→false
+simplification for byte-addressed store patterns.
+
+QF_ABV: 277 → 286 correct (+9).
+
+## convert_let Optimization Investigation (not committed)
+
+Attempted to eliminate replace_symbolt from convert_let by mapping
+original symbols directly to converted BVs. Three approaches tried:
+
+1. **Direct mapping with save/restore**: Maps original symbols to BVs,
+   restores on scope exit. Breaks because bv_cache returns stale entries
+   for remapped symbols, and array-typed bindings create self-referential
+   equality edges.
+
+2. **Hybrid (BV direct + array fresh)**: Direct mapping for BV-typed,
+   fresh symbols for array-typed. Correct for array theory but BV-typed
+   mapping still has bv_cache staleness issues.
+
+3. **Memoized have_to_replace**: Added caching to replace_symbolt's
+   have_to_replace. Cache keys (data pointers) become invalid after
+   replace() modifies the tree via detach().
+
+Root cause: replace_symbolt modifies the expression tree in-place,
+invalidating any pointer-based caching. A correct fix requires either
+(a) a copy-on-write replace that preserves sharing, or (b) restructuring
+convert_let to use a scope-based symbol table instead of expression
+rewriting.
+
+## Byte-Store Merging Investigation (not committed)
+
+wchains benchmarks store 32-bit values as 4 byte stores each. Merging
+would reduce comparisons from 16n² to n² (e.g., wchains050ue: 9M → 560K
+clauses). Implementation requires detecting the byte-store pattern in
+the ITE encoding and creating grouped comparisons. Too complex for
+incremental implementation.
+
+## convert_let Optimization: Scope Stack Approach (investigated, not committed)
+
+Attempted to eliminate replace_symbolt from convert_let by using a
+scope stack in convert_bv. BV-typed let bindings are resolved via the
+scope stack (O(1) lookup) instead of renaming in the expression tree.
+
+Results: swapmem040se and bubsort020un solve (were stuck in formula
+conversion). But 72 wrong on QF_AX (swap_nf benchmarks) because the
+array theory runs AFTER the scope is popped and can't resolve BV-typed
+symbols referenced by array-typed binding values.
+
+Root cause: the array theory needs ALL let-bound symbols (both BV-typed
+and array-typed) to be visible as fresh symbols in the expression tree.
+This requires replace_symbolt renaming. The scope stack can resolve
+symbols during convert_bv but can't make them visible to the array
+theory's post-processing.
+
+The fix requires either:
+1. Making the array theory scope-aware (process constraints within
+   the let scope, not after)
+2. A functional (non-mutating) replace_symbolt that preserves sharing

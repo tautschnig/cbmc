@@ -1,0 +1,6 @@
+CORE
+unsat_binarysearch16.smt2
+
+^unsat$
+^EXIT=0$
+^SIGNAL=0$

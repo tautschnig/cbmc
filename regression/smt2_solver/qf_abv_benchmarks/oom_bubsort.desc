@@ -1,0 +1,8 @@
+KNOWNBUG
+oom_bubsort.smt2
+
+^(sat|unsat|error)
+^EXIT=(0|1|6)$
+^SIGNAL=0$
+--
+Runs out of memory due to bit-blasting of array operations.
