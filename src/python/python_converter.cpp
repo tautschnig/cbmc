@@ -1235,6 +1235,23 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
     }
     // PLR §6.7: Floor division rounds toward negative infinity
+    // Constant evaluation
+    if(
+      left.is_constant() && right.is_constant() &&
+      left.type().id() == ID_signedbv && right.type().id() == ID_signedbv)
+    {
+      mp_integer a, b;
+      if(
+        !to_integer(to_constant_expr(left), a) &&
+        !to_integer(to_constant_expr(right), b) && b != 0)
+      {
+        mp_integer q = a / b;
+        mp_integer r = a % b;
+        if(r != 0 && ((a < 0) != (b < 0)))
+          q -= 1;
+        return from_integer(q, left.type());
+      }
+    }
     // C division truncates toward zero. Adjust for negative results:
     // floor_div(a, b) = a/b - (1 if (a%b != 0 and sign(a) != sign(b)) else 0)
     exprt quotient = div_exprt{left, right};
@@ -1252,6 +1269,23 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else if(op == "Mod")
   {
+    // Constant evaluation: compute at conversion time
+    if(
+      left.is_constant() && right.is_constant() &&
+      left.type().id() == ID_signedbv && right.type().id() == ID_signedbv)
+    {
+      mp_integer a, b;
+      if(
+        !to_integer(to_constant_expr(left), a) &&
+        !to_integer(to_constant_expr(right), b) && b != 0)
+      {
+        // Python modulo: result has same sign as divisor
+        mp_integer r = a % b;
+        if(r != 0 && ((a < 0) != (b < 0)))
+          r += b;
+        return from_integer(r, left.type());
+      }
+    }
     // PLR §6.7: Complex % anything raises TypeError
     if(is_complex(left.type()) || is_complex(right.type()))
     {
@@ -5197,6 +5231,127 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
       };
       subst(elt_expr);
     }
+    // Check if conditions (filters) for this combination
+    bool passes_filter = true;
+    for(std::size_t g = 0; g < gens.size() && passes_filter; g++)
+    {
+      const jsont &gen = *std::next(as_array(generators).begin(), g);
+      const jsont &ifs = json_member(gen, "ifs");
+      if(ifs.is_array())
+      {
+        for(const auto &cond_json : as_array(ifs))
+        {
+          exprt cond_expr = convert_expression(cond_json);
+          for(const auto &[sym_id, val] : bindings)
+          {
+            std::function<void(exprt &)> subst2 = [&](exprt &e)
+            {
+              if(
+                e.id() == ID_symbol &&
+                to_symbol_expr(e).get_identifier() == sym_id)
+                e = val;
+              else
+                for(auto &op : e.operands())
+                  subst2(op);
+            };
+            subst2(cond_expr);
+          }
+          // Try constant evaluation: check if all operands are constant
+          // and the result can be computed
+          // Try constant evaluation after substitution
+          // Recursively simplify the expression
+          std::function<exprt(const exprt &)> try_eval =
+            [&](const exprt &e) -> exprt
+          {
+            if(e.is_constant())
+              return e;
+            // Simplify binary ops with constant operands
+            if(e.operands().size() == 2)
+            {
+              exprt l = try_eval(e.operands()[0]);
+              exprt r = try_eval(e.operands()[1]);
+              if(
+                l.is_constant() && r.is_constant() &&
+                l.type().id() == ID_signedbv)
+              {
+                mp_integer a, b;
+                if(
+                  !to_integer(to_constant_expr(l), a) &&
+                  !to_integer(to_constant_expr(r), b))
+                {
+                  if(e.id() == ID_mod && b != 0)
+                    return from_integer(a % b, l.type());
+                  if(e.id() == ID_plus)
+                    return from_integer(a + b, l.type());
+                  if(e.id() == ID_minus)
+                    return from_integer(a - b, l.type());
+                  if(e.id() == ID_mult)
+                    return from_integer(a * b, l.type());
+                  if(e.id() == ID_bitxor)
+                  {
+                    long long av = a.to_long(), bv = b.to_long();
+                    return from_integer(av ^ bv, l.type());
+                  }
+                  if(e.id() == ID_div && b != 0)
+                    return from_integer(a / b, l.type());
+                  if(e.id() == ID_equal)
+                    return a == b ? static_cast<exprt>(true_exprt{})
+                                  : static_cast<exprt>(false_exprt{});
+                  if(e.id() == ID_notequal)
+                    return a != b ? static_cast<exprt>(true_exprt{})
+                                  : static_cast<exprt>(false_exprt{});
+                  if(e.id() == ID_lt)
+                    return a < b ? static_cast<exprt>(true_exprt{})
+                                 : static_cast<exprt>(false_exprt{});
+                  if(e.id() == ID_gt)
+                    return a > b ? static_cast<exprt>(true_exprt{})
+                                 : static_cast<exprt>(false_exprt{});
+                  if(e.id() == ID_le)
+                    return a <= b ? static_cast<exprt>(true_exprt{})
+                                  : static_cast<exprt>(false_exprt{});
+                  if(e.id() == ID_ge)
+                    return a >= b ? static_cast<exprt>(true_exprt{})
+                                  : static_cast<exprt>(false_exprt{});
+                }
+              }
+            }
+            // if_exprt: evaluate condition
+            if(e.id() == ID_if && e.operands().size() == 3)
+            {
+              exprt c = try_eval(e.operands()[0]);
+              if(c.is_true())
+                return try_eval(e.operands()[1]);
+              if(c.is_false())
+                return try_eval(e.operands()[2]);
+            }
+            // and/or
+            if(e.id() == ID_and && e.operands().size() == 2)
+            {
+              exprt l = try_eval(e.operands()[0]);
+              exprt r = try_eval(e.operands()[1]);
+              if(l.is_false() || r.is_false())
+                return false_exprt{};
+              if(l.is_true() && r.is_true())
+                return true_exprt{};
+            }
+            if(e.id() == ID_not && e.operands().size() == 1)
+            {
+              exprt o = try_eval(e.operands()[0]);
+              if(o.is_true())
+                return false_exprt{};
+              if(o.is_false())
+                return true_exprt{};
+            }
+            return e;
+          };
+          exprt simplified = try_eval(cond_expr);
+          if(simplified.is_false())
+            passes_filter = false;
+        }
+      }
+    }
+    if(!passes_filter)
+      continue;
     elements.push_back(elt_expr);
   }
 
