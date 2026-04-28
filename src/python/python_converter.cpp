@@ -1459,12 +1459,26 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
     if(result.is_nil() || next.is_nil())
       return nil_exprt{};
 
+    // PLR §6.11: "x or y" returns x if x is truthy, else y
+    // "x and y" returns x if x is falsy, else y
     if(op == "And")
-      result = and_exprt{
-        safe_typecast(result, bool_typet{}), safe_typecast(next, bool_typet{})};
+    {
+      exprt cond = safe_typecast(result, bool_typet{});
+      // If result is falsy, return result; else return next
+      if(result.type() == next.type())
+        result = if_exprt{cond, next, result};
+      else
+        result = and_exprt{cond, safe_typecast(next, bool_typet{})};
+    }
     else if(op == "Or")
-      result = or_exprt{
-        safe_typecast(result, bool_typet{}), safe_typecast(next, bool_typet{})};
+    {
+      exprt cond = safe_typecast(result, bool_typet{});
+      // If result is truthy, return result; else return next
+      if(result.type() == next.type())
+        result = if_exprt{cond, result, next};
+      else
+        result = or_exprt{cond, safe_typecast(next, bool_typet{})};
+    }
     else
     {
       log.error() << "Unsupported bool operator: " << op << messaget::eom;
