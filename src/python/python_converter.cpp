@@ -4744,10 +4744,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   if(is_python_string_type(value.type()))
   {
     member_exprt length{value, "length", python_int_type()};
+    // PLR §6.3.3: negative indices count from the end
+    exprt adjusted_idx = if_exprt{
+      binary_relation_exprt{slice, ID_lt, from_integer(0, slice.type())},
+      plus_exprt{length, slice},
+      slice};
     add_check(
       and_exprt{
-        binary_relation_exprt{slice, ID_ge, safe_zero(slice.type())},
-        binary_relation_exprt{slice, ID_lt, length}},
+        binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(slice.type())},
+        binary_relation_exprt{adjusted_idx, ID_lt, length}},
       "index-out-of-bounds",
       "string index out of range",
       get_location(expr));
@@ -4755,7 +4760,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     const auto &data_type = to_array_type(str_type.components()[1].type());
 
     member_exprt data{value, "data", data_type};
-    index_exprt char_val{data, slice};
+    index_exprt char_val{data, adjusted_idx};
 
     // Build a single-character string struct
     exprt::operandst chars;
