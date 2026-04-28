@@ -8613,7 +8613,14 @@ bool python_convertert::convert()
         irep_idt sym_id{"python::" + fname};
         if(symbol_table.lookup(sym_id) == nullptr)
         {
-          code_typet fn_type{{}, python_int_type()};
+          // Parse return type annotation for better forward reference types
+          typet ret_type = python_int_type();
+          const jsont &returns = json_member(stmt, "returns");
+          if(!returns.is_null())
+            ret_type = convert_type_annotation(returns);
+          if(ret_type.id() == ID_empty)
+            ret_type = python_int_type();
+          code_typet fn_type{{}, ret_type};
           symbolt fn_sym{sym_id, fn_type, "python"};
           fn_sym.base_name = fname;
           fn_sym.location = get_location(stmt);
