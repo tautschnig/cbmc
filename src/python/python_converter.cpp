@@ -4021,6 +4021,22 @@ exprt python_convertert::convert_call(const jsont &expr)
 
       if(!obj.is_nil() && !cls_name.empty())
       {
+        // Tagged union: isinstance checks the tag field
+        if(is_python_value_type(obj.type()))
+        {
+          if(cls_name == "int")
+            return python_value_is(obj, python_type_tagt::INT);
+          if(cls_name == "float")
+            return python_value_is(obj, python_type_tagt::FLOAT);
+          if(cls_name == "bool")
+            return python_value_is(obj, python_type_tagt::BOOL);
+          if(cls_name == "str")
+            return python_value_is(obj, python_type_tagt::STR);
+          if(cls_name == "list")
+            return python_value_is(obj, python_type_tagt::LIST);
+          return false_exprt{}; // not a known type
+        }
+
         // Check built-in types first
         if(
           cls_name == "int" &&
