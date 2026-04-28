@@ -138,6 +138,16 @@ protected:
   typedef std::unordered_map<const exprt, bvt, irep_hash> bv_cachet;
   bv_cachet bv_cache;
 
+  // Scope stack for let bindings — maps original symbol identifiers
+  // to their BVs within the current let scope. Checked before bv_cache
+  // in convert_bv to handle nested scopes with the same variable name.
+  struct let_scope_entryt
+  {
+    std::unordered_map<irep_idt, bvt> bv_map;
+    std::unordered_map<irep_idt, literalt> bool_map;
+  };
+  std::vector<let_scope_entryt> let_scope_stack;
+
   bool type_conversion(
     const typet &src_type, const bvt &src,
     const typet &dest_type, bvt &dest);
