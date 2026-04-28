@@ -1956,8 +1956,53 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_list_type(python_string_type()), get_location(expr)};
         }
+        // PLib stdtypes: upper/lower — exact byte transformation
+        if(method_name == "upper" || method_name == "lower")
+        {
+          const auto &str_st = to_struct_type(obj_base_type);
+          const auto &data_type = to_array_type(str_st.components()[1].type());
+          member_exprt src_data{obj, "data", data_type};
+          member_exprt src_len{obj, "length", signedbv_typet{64}};
+
+          static unsigned case_ctr = 0;
+          std::string tn = "__case_" + std::to_string(case_ctr++);
+          std::string tq = qualify_name(tn);
+          irep_idt ti{tq};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, python_string_type(), "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            symbol_table.add(ts);
+          }
+          symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            member_exprt{tmp, "length", signedbv_typet{64}}, src_len});
+          member_exprt dst_data{tmp, "data", data_type};
+
+          exprt lo = from_integer(
+            method_name == "upper" ? 'a' : 'A', unsignedbv_typet{8});
+          exprt hi = from_integer(
+            method_name == "upper" ? 'z' : 'Z', unsignedbv_typet{8});
+          exprt offset =
+            from_integer(method_name == "upper" ? -32 : 32, signedbv_typet{8});
+
+          for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt ch = index_exprt{src_data, idx};
+            exprt in_range = and_exprt{
+              binary_relation_exprt{ch, ID_ge, lo},
+              binary_relation_exprt{ch, ID_le, hi}};
+            exprt converted =
+              plus_exprt{ch, typecast_exprt{offset, unsignedbv_typet{8}}};
+            pending_checks.push_back(code_frontend_assignt{
+              index_exprt{dst_data, idx}, if_exprt{in_range, converted, ch}});
+          }
+          return std::move(tmp);
+        }
         if(
-          method_name == "upper" || method_name == "lower" ||
           method_name == "strip" || method_name == "lstrip" ||
           method_name == "rstrip" || method_name == "title" ||
           method_name == "capitalize" || method_name == "swapcase" ||
@@ -2013,14 +2058,94 @@ exprt python_convertert::convert_call(const jsont &expr)
             return result;
           }
         }
+        // PLib stdtypes: exact string predicates
+        if(
+          method_name == "isdigit" || method_name == "isalpha" ||
+          method_name == "isalnum" || method_name == "isupper" ||
+          method_name == "islower" || method_name == "isspace" ||
+          method_name == "isascii")
+        {
+          const auto &str_st = to_struct_type(obj_base_type);
+          const auto &data_type = to_array_type(str_st.components()[1].type());
+          member_exprt data{obj, "data", data_type};
+          member_exprt length{obj, "length", signedbv_typet{64}};
+
+          // length > 0 AND for all i < length: char_predicate(data[i])
+          exprt result = binary_relation_exprt{
+            length, ID_gt, from_integer(0, signedbv_typet{64})};
+          for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt ch = index_exprt{data, idx};
+            exprt pred;
+            if(
+              method_name == "isdigit" || method_name == "isdecimal" ||
+              method_name == "isnumeric")
+              pred = and_exprt{
+                binary_relation_exprt{
+                  ch, ID_ge, from_integer('0', unsignedbv_typet{8})},
+                binary_relation_exprt{
+                  ch, ID_le, from_integer('9', unsignedbv_typet{8})}};
+            else if(method_name == "isalpha")
+              pred = or_exprt{
+                and_exprt{
+                  binary_relation_exprt{
+                    ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
+                  binary_relation_exprt{
+                    ch, ID_le, from_integer('z', unsignedbv_typet{8})}},
+                and_exprt{
+                  binary_relation_exprt{
+                    ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
+                  binary_relation_exprt{
+                    ch, ID_le, from_integer('Z', unsignedbv_typet{8})}}};
+            else if(method_name == "isalnum")
+              pred = or_exprt{
+                and_exprt{
+                  binary_relation_exprt{
+                    ch, ID_ge, from_integer('0', unsignedbv_typet{8})},
+                  binary_relation_exprt{
+                    ch, ID_le, from_integer('9', unsignedbv_typet{8})}},
+                or_exprt{
+                  and_exprt{
+                    binary_relation_exprt{
+                      ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
+                    binary_relation_exprt{
+                      ch, ID_le, from_integer('z', unsignedbv_typet{8})}},
+                  and_exprt{
+                    binary_relation_exprt{
+                      ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
+                    binary_relation_exprt{
+                      ch, ID_le, from_integer('Z', unsignedbv_typet{8})}}}};
+            else if(method_name == "isupper")
+              pred = and_exprt{
+                binary_relation_exprt{
+                  ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
+                binary_relation_exprt{
+                  ch, ID_le, from_integer('Z', unsignedbv_typet{8})}};
+            else if(method_name == "islower")
+              pred = and_exprt{
+                binary_relation_exprt{
+                  ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
+                binary_relation_exprt{
+                  ch, ID_le, from_integer('z', unsignedbv_typet{8})}};
+            else if(method_name == "isspace")
+              pred = or_exprt{
+                equal_exprt{ch, from_integer(' ', unsignedbv_typet{8})},
+                or_exprt{
+                  equal_exprt{ch, from_integer('\t', unsignedbv_typet{8})},
+                  equal_exprt{ch, from_integer('\n', unsignedbv_typet{8})}}};
+            else // isascii
+              pred = binary_relation_exprt{
+                ch, ID_le, from_integer(127, unsignedbv_typet{8})};
+            result = and_exprt{result, or_exprt{not_exprt{in_range}, pred}};
+          }
+          return result;
+        }
         if(
           method_name == "startswith" || method_name == "endswith" ||
-          method_name == "isalpha" || method_name == "isdigit" ||
-          method_name == "isalnum" || method_name == "isspace" ||
-          method_name == "isupper" || method_name == "islower" ||
-          method_name == "istitle" || method_name == "isnumeric" ||
-          method_name == "isdecimal" || method_name == "isidentifier" ||
-          method_name == "isprintable" || method_name == "isascii")
+          method_name == "istitle" || method_name == "isidentifier" ||
+          method_name == "isprintable")
         {
           return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
         }

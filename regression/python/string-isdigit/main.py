@@ -1,0 +1,5 @@
+assert "123".isdigit()
+assert not "12a".isdigit()
+assert "abc".isalpha()
+assert not "ab1".isalpha()
+assert "ab1".isalnum()
