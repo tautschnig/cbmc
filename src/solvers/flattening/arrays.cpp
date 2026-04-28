@@ -31,18 +31,12 @@ arrayst::arrayst(
   propt &_prop,
   message_handlert &_message_handler,
   bool _get_array_constraints)
-  : equalityt(_prop, _message_handler),
-    ns(_ns),
-    log(_message_handler),
+  : map_theoryt(_ns, _prop, _message_handler, _get_array_constraints),
     message_handler(_message_handler)
 {
-  lazy_arrays = false;        // will be set to true when --refine is used
-  incremental_cache = false;  // for incremental solving
-  // get_array_constraints is true when --show-array-constraints is used
-  get_array_constraints = _get_array_constraints;
 }
 
-void arrayst::record_array_index(const index_exprt &index)
+void map_theoryt::record_array_index(const index_exprt &index)
 {
   // we are not allowed to put the index directly in the
   //   entry for the root of the equivalence class
@@ -93,7 +87,7 @@ void arrayst::record_array_let_binding(
   prop.l_set_to_true(eq_lit);
 }
 
-void arrayst::collect_indices()
+void map_theoryt::collect_indices()
 {
   for(std::size_t i=0; i<arrays.size(); i++)
   {
@@ -101,7 +95,7 @@ void arrayst::collect_indices()
   }
 }
 
-void arrayst::collect_indices(const exprt &expr)
+void map_theoryt::collect_indices(const exprt &expr)
 {
   if(expr.id()!=ID_index)
   {
@@ -141,7 +135,7 @@ void arrayst::collect_indices(const exprt &expr)
   }
 }
 
-void arrayst::collect_arrays(const exprt &a)
+void map_theoryt::collect_arrays(const exprt &a)
 {
   const array_typet &array_type = to_array_type(a.type());
 
@@ -262,7 +256,7 @@ void arrayst::collect_arrays(const exprt &a)
 }
 
 /// adds array constraints (refine=true...lazily for the refinement loop)
-void arrayst::add_array_constraint(const lazy_constraintt &lazy, bool refine)
+void map_theoryt::add_array_constraint(const lazy_constraintt &lazy, bool refine)
 {
   if(lazy_arrays && refine)
   {
@@ -337,7 +331,7 @@ void arrayst::add_array_constraints()
   add_array_Ackermann_constraints();
 }
 
-void arrayst::add_array_Ackermann_constraints()
+void map_theoryt::add_array_Ackermann_constraints()
 {
   // this is quadratic!
 
@@ -400,7 +394,7 @@ void arrayst::add_array_Ackermann_constraints()
 }
 
 /// merge the indices into the root
-void arrayst::update_index_map(std::size_t i)
+void map_theoryt::update_index_map(std::size_t i)
 {
   if(arrays.is_root_number(i))
     return;
@@ -414,7 +408,7 @@ void arrayst::update_index_map(std::size_t i)
   root_index_set.insert(index_set.begin(), index_set.end());
 }
 
-void arrayst::update_index_map(bool update_all)
+void map_theoryt::update_index_map(bool update_all)
 {
   // iterate over non-roots
   // possible reasons why update is needed:
@@ -448,7 +442,7 @@ void arrayst::update_index_map(bool update_all)
 #endif
 }
 
-void arrayst::add_array_constraints_equality(
+void map_theoryt::add_array_constraints_equality(
   const index_sett &index_set,
   const array_equalityt &array_equality)
 {
@@ -891,7 +885,7 @@ void arrayst::add_array_constraints_if(
   }
 }
 
-std::string arrayst::enum_to_string(constraint_typet type)
+std::string map_theoryt::enum_to_string(constraint_typet type)
 {
   switch(type)
   {
@@ -918,7 +912,7 @@ std::string arrayst::enum_to_string(constraint_typet type)
   }
 }
 
-void arrayst::display_array_constraint_count()
+void map_theoryt::display_array_constraint_count()
 {
   json_objectt json_result;
   json_objectt &json_array_theory =
