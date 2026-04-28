@@ -1583,12 +1583,55 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Is")
     {
+      // PLR §6.10.3: Identity comparison
+      // For tagged unions, "x is None" checks tag == NONE
+      if(
+        is_python_value_type(current_left.type()) && right.is_constant() &&
+        right.type().id() == ID_signedbv)
+      {
+        mp_integer rv;
+        if(
+          !to_integer(to_constant_expr(right), rv) &&
+          rv == mp_integer{-4611686018427387904LL})
+        {
+          cmp = python_value_is(current_left, python_type_tagt::NONE);
+          goto done_cmp;
+        }
+      }
+      if(
+        is_python_value_type(right.type()) && current_left.is_constant() &&
+        current_left.type().id() == ID_signedbv)
+      {
+        mp_integer lv;
+        if(
+          !to_integer(to_constant_expr(current_left), lv) &&
+          lv == mp_integer{-4611686018427387904LL})
+        {
+          cmp = python_value_is(right, python_type_tagt::NONE);
+          goto done_cmp;
+        }
+      }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
       cmp = equal_exprt{current_left, right};
     }
     else if(op == "IsNot")
     {
+      // PLR §6.10.3: "x is not None" checks tag != NONE
+      if(
+        is_python_value_type(current_left.type()) && right.is_constant() &&
+        right.type().id() == ID_signedbv)
+      {
+        mp_integer rv;
+        if(
+          !to_integer(to_constant_expr(right), rv) &&
+          rv == mp_integer{-4611686018427387904LL})
+        {
+          cmp =
+            not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
+          goto done_cmp;
+        }
+      }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
       cmp = notequal_exprt{current_left, right};
@@ -1599,6 +1642,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       return nil_exprt{};
     }
 
+  done_cmp:
     if(result.is_nil())
       result = cmp;
     else
