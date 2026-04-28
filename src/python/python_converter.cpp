@@ -1749,10 +1749,42 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(obj_name == "re")
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
-        // PLR stdlib: random module
+        // PLib: random module — constrained nondet for randint
         if(obj_name == "random")
+        {
+          if(
+            method_name == "randint" && args.is_array() &&
+            as_array(args).size() >= 2)
+          {
+            auto it = as_array(args).begin();
+            exprt lo = convert_expression(*it);
+            ++it;
+            exprt hi = convert_expression(*it);
+            // Return nondet int with assume(lo <= result <= hi)
+            side_effect_expr_nondett nondet{
+              python_int_type(), get_location(expr)};
+            static unsigned rand_ctr = 0;
+            std::string tmp = "__rand_" + std::to_string(rand_ctr++);
+            std::string tq = qualify_name(tmp);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, python_int_type(), "python"};
+              ts.base_name = tmp;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{tv, nondet});
+            pending_checks.push_back(code_assumet{and_exprt{
+              binary_relation_exprt{tv, ID_ge, lo},
+              binary_relation_exprt{tv, ID_le, hi}}});
+            return std::move(tv);
+          }
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
+        }
         return side_effect_expr_nondett{python_int_type(), get_location(expr)};
       }
     }
@@ -2230,17 +2262,20 @@ exprt python_convertert::convert_call(const jsont &expr)
           const code_typet &method_type = to_code_type(method_sym->type);
           exprt::operandst arguments;
           // Pass address of object as self (pointer-based model)
-          if(obj.type().id() == ID_pointer)
-            arguments.push_back(obj);
-          else if(obj.id() == ID_side_effect)
+          // Skip for @staticmethod (no self/cls parameter)
+          bool has_self = !method_type.parameters().empty() &&
+                          method_type.parameters()[0].type().id() == ID_pointer;
+          if(has_self)
           {
-            // Can't take address of nondet/side_effect — use nondet pointer
-            arguments.push_back(side_effect_expr_nondett{
-              pointer_typet{obj.type(), config.ansi_c.pointer_width},
-              get_location(expr)});
+            if(obj.type().id() == ID_pointer)
+              arguments.push_back(obj);
+            else if(obj.id() == ID_side_effect)
+              arguments.push_back(side_effect_expr_nondett{
+                pointer_typet{obj.type(), config.ansi_c.pointer_width},
+                get_location(expr)});
+            else
+              arguments.push_back(address_of_exprt{obj});
           }
-          else
-            arguments.push_back(address_of_exprt{obj});
           if(args.is_array())
           {
             for(const auto &arg : as_array(args))
@@ -2525,10 +2560,90 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
-  // PLib builtins: hex/oct/bin — return nondet string
-  else if(
-    func_name == "hex" || func_name == "oct" || func_name == "bin" ||
-    func_name == "repr" || func_name == "ascii")
+  // PLib builtins: hex/oct/bin — compute for constants, nondet otherwise
+  else if(func_name == "hex" || func_name == "oct" || func_name == "bin")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(arg.is_constant() && arg.type().id() == ID_signedbv)
+      {
+        mp_integer val;
+        if(!to_integer(to_constant_expr(arg), val))
+        {
+          std::string result;
+          bool negative = val < 0;
+          mp_integer abs_val = negative ? -val : val;
+          if(func_name == "hex")
+          {
+            std::string digits;
+            if(abs_val == 0)
+              digits = "0";
+            else
+            {
+              mp_integer tmp = abs_val;
+              while(tmp > 0)
+              {
+                int d = (tmp % 16).to_long();
+                digits = std::string(1, "0123456789abcdef"[d]) + digits;
+                tmp /= 16;
+              }
+            }
+            result = (negative ? "-0x" : "0x") + digits;
+          }
+          else if(func_name == "oct")
+          {
+            std::string digits;
+            if(abs_val == 0)
+              digits = "0";
+            else
+            {
+              mp_integer tmp = abs_val;
+              while(tmp > 0)
+              {
+                digits = std::to_string((tmp % 8).to_long()) + digits;
+                tmp /= 8;
+              }
+            }
+            result = (negative ? "-0o" : "0o") + digits;
+          }
+          else // bin
+          {
+            std::string digits;
+            if(abs_val == 0)
+              digits = "0";
+            else
+            {
+              mp_integer tmp = abs_val;
+              while(tmp > 0)
+              {
+                digits = ((tmp % 2) == 1 ? "1" : "0") + digits;
+                tmp /= 2;
+              }
+            }
+            result = (negative ? "-0b" : "0b") + digits;
+          }
+          // Build string literal
+          struct_typet str_type = python_string_type();
+          const auto &data_type =
+            to_array_type(str_type.components()[1].type());
+          exprt::operandst chars;
+          for(char c : result)
+            chars.push_back(
+              from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
+          while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+            chars.push_back(from_integer(0, unsignedbv_typet{8}));
+          return struct_exprt{
+            {from_integer(
+               static_cast<long long>(result.size()), python_int_type()),
+             array_exprt{std::move(chars), data_type}},
+            str_type};
+        }
+      }
+    }
+    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+  }
+  else if(func_name == "repr" || func_name == "ascii")
   {
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
@@ -4405,6 +4520,56 @@ codet python_convertert::convert_statement(const jsont &stmt)
     else
       result = code_skipt{};
   }
+  // PLR §8.6: The match statement — desugar to if-elif chain
+  else if(node_type == "Match")
+  {
+    exprt subject = convert_expression(json_member(stmt, "subject"));
+    const jsont &cases = json_member(stmt, "cases");
+    if(!cases.is_array() || subject.is_nil())
+      return code_skipt{};
+
+    // Build if-elif chain from cases (reverse order)
+    codet chain = code_skipt{};
+    std::vector<const jsont *> case_list;
+    for(const auto &c : as_array(cases))
+      case_list.push_back(&c);
+
+    for(auto it = case_list.rbegin(); it != case_list.rend(); ++it)
+    {
+      const jsont &match_case = **it;
+      const jsont &pattern = json_member(match_case, "pattern");
+      const jsont &body = json_member(match_case, "body");
+
+      code_blockt case_body;
+      if(body.is_array())
+      {
+        for(const auto &s : as_array(body))
+          case_body.add(convert_statement(s));
+      }
+
+      // MatchValue: case <constant>
+      if(is_node_type(pattern, "MatchValue"))
+      {
+        exprt val = convert_expression(json_member(pattern, "value"));
+        if(!val.is_nil())
+        {
+          exprt cond = equal_exprt{subject, safe_typecast(val, subject.type())};
+          chain =
+            code_ifthenelset{cond, std::move(case_body), std::move(chain)};
+          continue;
+        }
+      }
+      // MatchAs with name=None: case _ (wildcard/default)
+      if(is_node_type(pattern, "MatchAs"))
+      {
+        chain = std::move(case_body);
+        continue;
+      }
+      // Unsupported pattern — use as default
+      chain = std::move(case_body);
+    }
+    result = std::move(chain);
+  }
   else if(node_type == "With")
     result = convert_with(stmt);
   else if(node_type == "Try" || node_type == "TryStar")
@@ -6197,17 +6362,22 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       {
         std::string method_name = json_string(json_member(item, "name"));
 
-        // PLR §8.7: Check for @classmethod decorator
+        // PLR §8.7: Check for @classmethod/@staticmethod decorator
         bool is_classmethod = false;
+        bool is_staticmethod = false;
         const jsont &decorators = json_member(item, "decorator_list");
         if(decorators.is_array())
         {
           for(const auto &dec : as_array(decorators))
           {
-            if(
-              is_node_type(dec, "Name") &&
-              json_string(json_member(dec, "id")) == "classmethod")
-              is_classmethod = true;
+            if(is_node_type(dec, "Name"))
+            {
+              std::string dname = json_string(json_member(dec, "id"));
+              if(dname == "classmethod")
+                is_classmethod = true;
+              if(dname == "staticmethod")
+                is_staticmethod = true;
+            }
           }
         }
 
@@ -6221,8 +6391,10 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           for(const auto &param : as_array(params))
           {
             std::string param_name = json_string(json_member(param, "arg"));
-            // Skip cls parameter for @classmethod
-            if(is_classmethod && (param_name == "cls" || param_name == "self"))
+            // Skip cls/self parameter for @classmethod/@staticmethod
+            if(
+              (is_classmethod || is_staticmethod) &&
+              (param_name == "cls" || param_name == "self"))
               continue;
             typet param_type;
             if(param_name == "self")
