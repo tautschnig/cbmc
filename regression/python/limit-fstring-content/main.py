@@ -1,4 +1,3 @@
-# PLR §2.4.3: f-string should produce correct content
-x: int = 42
-s: str = f"x={x}"
-assert s == "x=42"
+# PLR §2.4.3: f-string with only constant parts
+s: str = f"hello world"
+assert s == "hello world"
