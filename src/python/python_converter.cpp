@@ -353,6 +353,19 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
   return side_effect_expr_nondett{target, source_locationt{}};
 }
 
+long python_convertert::exception_type_hash(const std::string &type_name) const
+{
+  // Use class_tag_ids if the exception type is a known class
+  auto it = class_tag_ids.find(type_name);
+  if(it != class_tag_ids.end())
+    return static_cast<long>(it->second) + 10000; // offset to avoid collision
+  // Fallback: sum of ASCII values
+  long hash = 0;
+  for(char c : type_name)
+    hash += static_cast<unsigned char>(c);
+  return hash;
+}
+
 exprt python_convertert::safe_zero(const typet &type) const
 {
   if(
@@ -849,9 +862,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
       if(exc_type_sym != nullptr)
       {
-        long type_hash = 0;
-        for(char c : std::string{"TypeError"})
-          type_hash += static_cast<unsigned char>(c);
+        long type_hash = exception_type_hash("TypeError");
         pending_checks.push_back(code_frontend_assignt{
           exc_type_sym->symbol_expr(),
           from_integer(type_hash, python_int_type())});
@@ -1123,9 +1134,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
       if(exc_type_sym != nullptr)
       {
-        long type_hash = 0;
-        for(char c : std::string{"TypeError"})
-          type_hash += static_cast<unsigned char>(c);
+        long type_hash = exception_type_hash("TypeError");
         pending_checks.push_back(code_frontend_assignt{
           exc_type_sym->symbol_expr(),
           from_integer(type_hash, python_int_type())});
@@ -1153,9 +1162,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
       if(exc_type_sym != nullptr)
       {
-        long type_hash = 0;
-        for(char c : std::string{"TypeError"})
-          type_hash += static_cast<unsigned char>(c);
+        long type_hash = exception_type_hash("TypeError");
         pending_checks.push_back(code_frontend_assignt{
           exc_type_sym->symbol_expr(),
           from_integer(type_hash, python_int_type())});
@@ -2067,8 +2074,102 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "replace" || method_name == "format")
         {
-          // PLib stdtypes: str.replace() and str.format()
-          // Return nondet string (sound overapproximation)
+          // PLib stdtypes: str.format() — substitute {} placeholders
+          if(
+            method_name == "format" && obj.id() == ID_struct &&
+            obj.operands().size() == 2 && obj.operands()[0].is_constant())
+          {
+            // Extract format string
+            mp_integer flen;
+            if(!to_integer(to_constant_expr(obj.operands()[0]), flen))
+            {
+              std::string fmt;
+              const auto &fdata = obj.operands()[1];
+              for(mp_integer i = 0; i < flen; ++i)
+              {
+                std::size_t idx = i.to_ulong();
+                if(
+                  idx < fdata.operands().size() &&
+                  fdata.operands()[idx].is_constant())
+                {
+                  mp_integer ch;
+                  if(!to_integer(to_constant_expr(fdata.operands()[idx]), ch))
+                    fmt += static_cast<char>(ch.to_ulong());
+                }
+              }
+              // Simple {} substitution with string args
+              std::string result;
+              std::size_t arg_idx = 0;
+              exprt::operandst arg_exprs;
+              if(args.is_array())
+              {
+                for(const auto &a : as_array(args))
+                  arg_exprs.push_back(convert_expression(a));
+              }
+              bool all_const = true;
+              for(std::size_t i = 0; i < fmt.size(); i++)
+              {
+                if(i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}')
+                {
+                  if(
+                    arg_idx < arg_exprs.size() &&
+                    is_python_string_type(arg_exprs[arg_idx].type()) &&
+                    arg_exprs[arg_idx].id() == ID_struct)
+                  {
+                    // Extract constant string arg
+                    const auto &sa = arg_exprs[arg_idx];
+                    mp_integer slen;
+                    if(
+                      sa.operands().size() == 2 &&
+                      sa.operands()[0].is_constant() &&
+                      !to_integer(to_constant_expr(sa.operands()[0]), slen))
+                    {
+                      for(mp_integer j = 0; j < slen; ++j)
+                      {
+                        std::size_t si = j.to_ulong();
+                        if(
+                          si < sa.operands()[1].operands().size() &&
+                          sa.operands()[1].operands()[si].is_constant())
+                        {
+                          mp_integer sc;
+                          if(!to_integer(
+                               to_constant_expr(
+                                 sa.operands()[1].operands()[si]),
+                               sc))
+                            result += static_cast<char>(sc.to_ulong());
+                        }
+                      }
+                    }
+                    else
+                      all_const = false;
+                  }
+                  else
+                    all_const = false;
+                  arg_idx++;
+                  i++; // skip }
+                }
+                else
+                  result += fmt[i];
+              }
+              if(all_const)
+              {
+                struct_typet str_type = python_string_type();
+                const auto &data_type =
+                  to_array_type(str_type.components()[1].type());
+                exprt::operandst chars;
+                for(char c : result)
+                  chars.push_back(from_integer(
+                    static_cast<unsigned char>(c), unsignedbv_typet{8}));
+                while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+                  chars.push_back(from_integer(0, unsignedbv_typet{8}));
+                return struct_exprt{
+                  {from_integer(
+                     static_cast<long long>(result.size()), python_int_type()),
+                   array_exprt{std::move(chars), data_type}},
+                  str_type};
+              }
+            }
+          }
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
@@ -3602,16 +3703,24 @@ exprt python_convertert::convert_call(const jsont &expr)
 
           if(!obj_class.empty())
           {
-            std::string check = obj_class;
-            while(!check.empty())
+            // BFS through inheritance hierarchy (supports multiple inheritance)
+            std::vector<std::string> queue = {obj_class};
+            std::set<std::string> visited;
+            while(!queue.empty())
             {
+              std::string check = queue.back();
+              queue.pop_back();
+              if(visited.count(check))
+                continue;
+              visited.insert(check);
               if(check == cls_name)
                 return true_exprt{};
               auto base_it = class_bases.find(check);
-              if(base_it != class_bases.end() && !base_it->second.empty())
-                check = base_it->second[0];
-              else
-                break;
+              if(base_it != class_bases.end())
+              {
+                for(const auto &b : base_it->second)
+                  queue.push_back(b);
+              }
             }
             return false_exprt{};
           }
@@ -4151,9 +4260,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
       if(exc_type_sym != nullptr)
       {
-        long type_hash = 0;
-        for(char c : std::string{"TypeError"})
-          type_hash += static_cast<unsigned char>(c);
+        long type_hash = exception_type_hash("TypeError");
         pending_checks.push_back(code_frontend_assignt{
           exc_type_sym->symbol_expr(),
           from_integer(type_hash, python_int_type())});
@@ -5321,9 +5428,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
         if(exc_type_sym != nullptr)
         {
           // TypeError hash
-          long type_hash = 0;
-          for(char c : std::string{"TypeError"})
-            type_hash += static_cast<unsigned char>(c);
+          long type_hash = exception_type_hash("TypeError");
           type_error.add(code_frontend_assignt{
             exc_type_sym->symbol_expr(),
             from_integer(type_hash, python_int_type())});
@@ -6385,10 +6490,18 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // PLR §7.6: if function doesn't end with return, append return None
   if(return_type.id() != ID_empty)
   {
-    mp_integer none_val = mp_integer(1) << 62;
-    none_val = -none_val;
-    body_block.add(code_frontend_returnt{
-      safe_typecast(from_integer(none_val, python_int_type()), return_type)});
+    exprt none_expr;
+    if(is_python_value_type(return_type))
+      none_expr = make_python_value(
+        python_type_tagt::NONE, from_integer(0, signedbv_typet{64}));
+    else
+    {
+      mp_integer none_val = mp_integer(1) << 62;
+      none_val = -none_val;
+      none_expr =
+        safe_typecast(from_integer(none_val, python_int_type()), return_type);
+    }
+    body_block.add(code_frontend_returnt{none_expr});
   }
 
   // Update the symbol with the body
@@ -6428,8 +6541,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
   }
 
-  // Inherit fields from base classes (layout-compatible for dispatch)
+  // PLR §8.9: Inherit fields from base classes (supports multiple inheritance)
   const jsont &bases = json_member(stmt, "bases");
+  std::set<std::string> inherited_fields;
   if(bases.is_array())
   {
     for(const auto &base : as_array(bases))
@@ -6442,9 +6556,11 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           const auto &base_type = class_types[base_name];
           for(const auto &comp : base_type.components())
           {
-            // Skip __class_tag (added separately)
-            if(id2string(comp.get_name()) == "__class_tag")
+            std::string fname = id2string(comp.get_name());
+            // Skip __class_tag and already-inherited fields (diamond)
+            if(fname == "__class_tag" || inherited_fields.count(fname))
               continue;
+            inherited_fields.insert(fname);
             components.push_back(comp);
           }
         }
@@ -6943,9 +7059,7 @@ codet python_convertert::convert_raise(const jsont &stmt)
   if(exc_type_sym != nullptr)
   {
     // Use a simple hash: sum of character values
-    long type_hash = 0;
-    for(char c : exc_type)
-      type_hash += static_cast<unsigned char>(c);
+    long type_hash = exception_type_hash(exc_type);
     code_frontend_assignt set_type{
       exc_type_sym->symbol_expr(), from_integer(type_hash, python_int_type())};
     set_type.add_source_location() = loc;
@@ -7173,9 +7287,7 @@ codet python_convertert::convert_try(const jsont &stmt)
         std::string htype = json_string(json_member(handler_type, "id"));
         if(htype != "Exception" && !htype.empty())
         {
-          long type_hash = 0;
-          for(char c : htype)
-            type_hash += static_cast<unsigned char>(c);
+          long type_hash = exception_type_hash(htype);
           condition = and_exprt{
             condition,
             equal_exprt{
