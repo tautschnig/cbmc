@@ -3220,6 +3220,38 @@ exprt python_convertert::convert_call(const jsont &expr)
         // Tagged union: dispatch on tag
         if(is_python_value_type(arg.type()))
           return unwrap_value(arg, python_int_type());
+        // int("60") — parse constant string to int
+        if(
+          is_python_string_type(arg.type()) && arg.id() == ID_struct &&
+          arg.operands().size() == 2 && arg.operands()[0].is_constant())
+        {
+          mp_integer slen;
+          if(!to_integer(to_constant_expr(arg.operands()[0]), slen))
+          {
+            std::string s;
+            for(mp_integer i = 0; i < slen; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(
+                idx < arg.operands()[1].operands().size() &&
+                arg.operands()[1].operands()[idx].is_constant())
+              {
+                mp_integer ch;
+                if(!to_integer(
+                     to_constant_expr(arg.operands()[1].operands()[idx]), ch))
+                  s += static_cast<char>(ch.to_ulong());
+              }
+            }
+            try
+            {
+              long long val = std::stoll(s);
+              return from_integer(val, python_int_type());
+            }
+            catch(...)
+            {
+            }
+          }
+        }
         return safe_typecast(arg, python_int_type());
       }
     }
@@ -3246,6 +3278,41 @@ exprt python_convertert::convert_call(const jsont &expr)
               ieee_floatt::rounding_modet::ROUND_TO_EVEN};
             fv.from_integer(iv);
             return fv.to_expr();
+          }
+        }
+        // float("60") — parse constant string to float
+        if(
+          is_python_string_type(arg.type()) && arg.id() == ID_struct &&
+          arg.operands().size() == 2 && arg.operands()[0].is_constant())
+        {
+          mp_integer slen;
+          if(!to_integer(to_constant_expr(arg.operands()[0]), slen))
+          {
+            std::string s;
+            for(mp_integer i = 0; i < slen; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(
+                idx < arg.operands()[1].operands().size() &&
+                arg.operands()[1].operands()[idx].is_constant())
+              {
+                mp_integer ch;
+                if(!to_integer(
+                     to_constant_expr(arg.operands()[1].operands()[idx]), ch))
+                  s += static_cast<char>(ch.to_ulong());
+              }
+            }
+            try
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_double(std::stod(s));
+              return fv.to_expr();
+            }
+            catch(...)
+            {
+            }
           }
         }
         return typecast_exprt{arg, double_type()};
@@ -3822,7 +3889,29 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      // str(x) — convert to string (simplified: return nondet string)
+      exprt arg = convert_expression(*as_array(args).begin());
+      // str(int_constant) — convert at conversion time
+      if(arg.is_constant() && arg.type().id() == ID_signedbv)
+      {
+        mp_integer iv;
+        if(!to_integer(to_constant_expr(arg), iv))
+        {
+          std::string s = integer2string(iv);
+          struct_typet str_type = python_string_type();
+          const auto &data_type =
+            to_array_type(str_type.components()[1].type());
+          exprt::operandst chars;
+          for(char c : s)
+            chars.push_back(
+              from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
+          while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+            chars.push_back(from_integer(0, unsignedbv_typet{8}));
+          return struct_exprt{
+            {from_integer(static_cast<long long>(s.size()), python_int_type()),
+             array_exprt{std::move(chars), data_type}},
+            str_type};
+        }
+      }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
@@ -4384,6 +4473,17 @@ exprt python_convertert::convert_call(const jsont &expr)
     auto alias_it = function_aliases.find(qualify_name(func_name));
     if(alias_it != function_aliases.end())
       sym = symbol_table.lookup(alias_it->second);
+  }
+
+  if(sym == nullptr || sym->type.id() != ID_code)
+  {
+    // Try module scope (forward references from inside functions)
+    if(!current_function.empty())
+    {
+      sym = symbol_table.lookup(irep_idt{"python::" + func_name});
+      if(sym != nullptr && sym->type.id() != ID_code)
+        sym = nullptr;
+    }
   }
 
   if(sym == nullptr || sym->type.id() != ID_code)
@@ -7066,6 +7166,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     func_symbol.is_lvalue = true;
     symbol_table.add(func_symbol);
   }
+  else
+  {
+    // Update pre-registered placeholder with real signature
+    symbol_table.get_writeable_ref(symbol_id).type = func_type;
+  }
 
   // Create parameter symbols
   for(const auto &p : parameters)
@@ -8233,6 +8338,55 @@ bool python_convertert::convert()
   }
 
   // First pass: register all function and class definitions
+  // Sub-pass 1a: register class definitions first (needed for type annotations)
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "ClassDef"))
+        convert_class_def(stmt);
+    }
+  }
+  // Sub-pass 1b: register all function signatures (without bodies)
+  // so forward references between functions work
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(
+        is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef"))
+      {
+        // Skip @overload decorated functions
+        const jsont &decorators = json_member(stmt, "decorator_list");
+        bool is_overload = false;
+        if(decorators.is_array())
+        {
+          for(const auto &dec : as_array(decorators))
+          {
+            if(
+              is_node_type(dec, "Name") &&
+              json_string(json_member(dec, "id")) == "overload")
+              is_overload = true;
+          }
+        }
+        if(is_overload)
+          continue;
+        std::string fname = json_string(json_member(stmt, "name"));
+        irep_idt sym_id{"python::" + fname};
+        if(symbol_table.lookup(sym_id) == nullptr)
+        {
+          code_typet fn_type{{}, python_int_type()};
+          symbolt fn_sym{sym_id, fn_type, "python"};
+          fn_sym.base_name = fname;
+          fn_sym.location = get_location(stmt);
+          fn_sym.is_lvalue = true;
+          symbol_table.add(fn_sym);
+        }
+      }
+    }
+  }
+  // Sub-pass 1c: convert function bodies (signatures already registered)
   if(body.is_array())
   {
     for(const auto &stmt : as_array(body))
@@ -8240,8 +8394,6 @@ bool python_convertert::convert()
       if((is_node_type(stmt, "FunctionDef") ||
           is_node_type(stmt, "AsyncFunctionDef")))
         convert_function_def(stmt);
-      else if(is_node_type(stmt, "ClassDef"))
-        convert_class_def(stmt);
     }
   }
 
