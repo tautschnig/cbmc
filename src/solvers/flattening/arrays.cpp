@@ -127,6 +127,10 @@ void arrayst::record_array_let_binding(
   prop.l_set_to_true(eq_lit);
 }
 
+// ============================================================
+// Map theory: index tracking
+// ============================================================
+
 void map_theoryt::collect_indices()
 {
   for(std::size_t i=0; i<arrays.size(); i++)
@@ -313,14 +317,27 @@ void map_theoryt::collect_arrays(const exprt &a)
 }
 
 /// adds array constraints (refine=true...lazily for the refinement loop)
-void map_theoryt::add_array_constraint(const lazy_constraintt &lazy, bool refine)
+// ============================================================
+// Map theory: constraint management (lazy vs eager)
+// ============================================================
+
+/// Add an array constraint, choosing the appropriate strategy:
+/// - lazy_arrays && refine: store for later activation by refinement loop
+/// - cdclt_propagator && Ackermann: register with propagator for model checking
+/// - otherwise: convert and assert immediately
+void map_theoryt::add_array_constraint(
+  const lazy_constraintt &lazy,
+  bool refine)
 {
+  // Strategy 1: Lazy mode — store for refinement loop activation
   if(lazy_arrays && refine)
   {
     lazy_array_constraints.push_back(lazy);
+    return;
   }
-  else if(
-    cdclt_propagator && refine && lazy.type == lazy_typet::ARRAY_ACKERMANN)
+
+  // Strategy 2: CDCL(T) propagator — register Ackermann guard for model checking
+  if(cdclt_propagator && refine && lazy.type == lazy_typet::ARRAY_ACKERMANN)
   {
     // CDCL(T): store the constraint for lazy evaluation.
     // Only convert the guard (cheap). The conclusion expression is
@@ -619,7 +636,11 @@ void arrayst::add_array_constraints()
 /// where a ≈_i b in the WEG, generate i=j → a[i]=b[j].
 /// This replaces the quadratic Ackermann constraints with targeted
 /// constraints based on weak equivalence paths.
-void arrayst::add_array_read_over_weakeq_constraints()
+// ============================================================
+// Map theory: congruence (Ackermann / read-over-weakeq)
+// ============================================================
+
+void map_theoryt::add_array_read_over_weakeq_constraints()
 {
   // Read-over-weakeq (Lemma 1): for each pair of select terms a[i], b[j]
   // where a ≈_i b (weakly equivalent modulo i) in the WEG, generate
@@ -711,7 +732,7 @@ void map_theoryt::add_array_Ackermann_constraints()
   std::cout << "arrays.size(): " << arrays.size() << '\n';
 #endif
 
-  // Build set of "derived symbols": symbols that are transitively
+  // Derived symbol analysis: identify symbols that are transitively
   // equated to a derived array (with, if, etc.) via asserted-true
   // equalities. A symbol is derived if it equals a derived expression
   // OR another derived symbol. Computed as a fixed point.
@@ -911,6 +932,10 @@ void map_theoryt::update_index_map(bool update_all)
 #endif
 }
 
+// ============================================================
+// Map theory: equality constraints
+// ============================================================
+
 void map_theoryt::add_array_constraints_equality(
   const index_sett &index_set,
   const array_equalityt &array_equality)
@@ -978,6 +1003,10 @@ void map_theoryt::add_array_constraints_equality(
     prop.lcnf(clause);
   }
 }
+
+// ============================================================
+// Array-specific encoding (store, if, array_of, etc.)
+// ============================================================
 
 void arrayst::add_array_constraints(
   const index_sett &index_set,
@@ -1491,7 +1520,7 @@ void map_theoryt::display_array_constraint_count()
   log.status() << ",\n" << json_result;
 }
 
-void arrayst::setup_cdclt_propagator()
+void map_theoryt::setup_cdclt_propagator()
 {
   auto *cadical = dynamic_cast<satcheck_cadical_baset *>(&prop);
   if(!cadical)
