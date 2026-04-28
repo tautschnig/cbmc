@@ -41,7 +41,11 @@ public:
   // NOLINTNEXTLINE(readability/identifiers)
   typedef map_theoryt SUB;
 
+  /// Record an array equality a == b. Returns the equality literal.
+  /// Creates an equality edge in the WEG.
   literalt record_array_equality(const equal_exprt &expr);
+  /// Record that array a is read at index i (from a[i] in the formula).
+  /// Adds i to the index set for a's equivalence class.
 
   /// When true, use read-over-weakeq (WEG-based) instead of
   /// element-wise + Ackermann constraints.
@@ -51,6 +55,9 @@ public:
   /// array theory. For unbounded-array-typed bindings this connects the
   /// two expressions in the union-find so that element-wise constraints
   /// propagate correctly.
+  /// Record a let binding symbol == value for an array-typed let.
+  /// Creates an equality edge in the WEG connecting the fresh symbol
+  /// to the binding value (a store expression).
   void record_array_let_binding(const symbol_exprt &symbol, const exprt &value);
 
 protected:
@@ -61,21 +68,9 @@ protected:
     add_array_constraints();
   }
 
-  // the list of all equalities between arrays
-  // references to objects in this container need to be stable as
-  // elements are added while references are held
-
-  // this is used to find the clusters of arrays being compared
-
-  /// Weak equivalence graph (Christ & Hoenicke). Built alongside the
-  /// union-find; used for read-over-weakeq constraint generation.
-  weak_equivalence_grapht weg;
-
-  // this tracks the array indicies for each array
-  // references to values in this container need to be stable as
-  // elements are added while references are held
-
-  // adds array constraints lazily
+  /// A deferred array select: free BV returned instead of ITE chain.
+  /// The refinement loop bit-blasts these by erasing the bv_cache entry
+  /// and re-converting with lazy_arrays=false.
   struct lazy_selectt
   {
     bvt bv;
@@ -84,9 +79,11 @@ protected:
   };
   std::vector<lazy_selectt> lazy_selects;
 
+  std::map<exprt, bool> expr_map;
 
   // adds all the constraints eagerly
   void add_array_constraints();
+  // --- Map theory: congruence and extensionality ---
   void add_array_constraints(
     const index_sett &index_set, const exprt &expr);
   void add_array_constraints_if(
@@ -108,8 +105,6 @@ protected:
   /// the symbol to its definition. Used by convert_index to inline
   /// definitions for the 2D ITE encoding.
   std::unordered_map<exprt, exprt, irep_hash> array_2d_definitions;
-
-    // (maybe this function should be partially moved here from boolbv)
 };
 
 #endif // CPROVER_SOLVERS_FLATTENING_ARRAYS_H

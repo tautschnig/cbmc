@@ -8,24 +8,23 @@ Author: Daniel Kroening, kroening@kroening.com
 
 /// \file
 /// Map Theory — base class for arrayst, providing map-theoretic
-/// reasoning (index tracking, equality tracking, Ackermann constraints).
+/// reasoning (index tracking, equality tracking, Ackermann constraints,
+/// read-over-weakeq, extensionality, CDCL(T) propagation).
 
 #ifndef CPROVER_SOLVERS_FLATTENING_MAP_THEORY_H
 #define CPROVER_SOLVERS_FLATTENING_MAP_THEORY_H
 
-#include <list>
-#include <set>
-#include <unordered_set>
-
+#include <util/message.h>
 #include <util/union_find.h>
 
 #include "arrays_weg.h"
 #include "equality.h"
 
+#include <list>
+#include <set>
+#include <unordered_set>
+
 class array_propagatort;
-class equal_exprt;
-class index_exprt;
-class symbol_exprt;
 
 class map_theoryt : public equalityt
 {
@@ -85,23 +84,27 @@ protected:
   // -- Lazy constraint management --
   enum class lazy_typet
   {
-    ARRAY_ACKERMANN,
+    ARRAY_TYPECAST,
     ARRAY_WITH,
     ARRAY_IF,
     ARRAY_OF,
-    ARRAY_TYPECAST,
-    ARRAY_CONSTANT,
     ARRAY_COMPREHENSION,
-    ARRAY_LET
+    ARRAY_ACKERMANN,
+    ARRAY_LET,
+    ARRAY_CONSTANT
   };
 
+  /// A \p lazy_constraintt represents an array constraint whose
+  /// bit-blasting is deferred. The \p type field records which
+  /// array axiom produced it, and \p lazy holds the expression
+  /// that will be passed to \p prop when the constraint is
+  /// eventually activated.
   struct lazy_constraintt
   {
     lazy_typet type;
     exprt lazy;
-
-    /// Guard literal for assumption-based lazy solving.
-    /// When set, the constraint is guard → lazy.
+    /// Guard literal for CDCL(T) propagation. When the propagator
+    /// decides this constraint should fire, it asserts guard → lazy.
     literalt guard = const_literal(false);
 
     lazy_constraintt(lazy_typet _type, const exprt &_lazy)
@@ -114,10 +117,8 @@ protected:
   bool lazy_arrays;
   bool incremental_cache;
   bool get_array_constraints;
-  std::map<exprt, bool> expr_map;
 
   void add_array_constraint(const lazy_constraintt &lazy, bool refine = true);
-  void freeze_lazy_constraints();
 
   // -- CDCL(T) propagator --
   class array_propagatort *cdclt_propagator = nullptr;
@@ -131,27 +132,29 @@ protected:
     const array_equalityt &array_equality);
 
   // -- Extensionality --
-  std::size_t extensionality_counter = 0;
   std::unordered_set<irep_idt> diff_indices;
   std::unordered_set<unsigned> asserted_true_literals;
+  std::size_t extensionality_counter = 0;
 
   // -- Constraint counting --
   enum class constraint_typet
   {
-    ARRAY_ACKERMANN,
+    ARRAY_TYPECAST,
     ARRAY_WITH,
     ARRAY_IF,
     ARRAY_OF,
-    ARRAY_TYPECAST,
-    ARRAY_CONSTANT,
     ARRAY_COMPREHENSION,
+    ARRAY_ACKERMANN,
     ARRAY_EQUALITY,
-    ARRAY_LET
+    ARRAY_LET,
+    ARRAY_CONSTANT
   };
   typedef std::map<constraint_typet, size_t> array_constraint_countt;
   array_constraint_countt array_constraint_count;
   std::string enum_to_string(constraint_typet type);
   void display_array_constraint_count();
+
+  void freeze_lazy_constraints();
 
   // -- Eager conversion --
   void finish_eager_conversion() override

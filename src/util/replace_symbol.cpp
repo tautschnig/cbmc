@@ -177,6 +177,9 @@ bool replace_symbolt::have_to_replace(const exprt &dest) const
 
 bool replace_symbolt::replace(typet &dest) const
 {
+  if(!have_to_replace(dest))
+    return true;
+
   bool result=true;
 
   if(dest.has_subtype())
