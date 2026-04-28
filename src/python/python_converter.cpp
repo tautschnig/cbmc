@@ -574,8 +574,46 @@ exprt python_convertert::convert_expression(const jsont &expr)
     result = convert_list_comp(expr);
   else if(node_type == "JoinedStr")
   {
-    // PLR §2.4.3: f-strings — return nondet string (sound overapproximation)
-    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+    // PLR §2.4.3: f-strings — concatenate literal parts with formatted values
+    const jsont &values = json_member(expr, "values");
+    if(!values.is_array() || as_array(values).empty())
+      return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+
+    // Build result by concatenating all parts
+    struct_typet str_type = python_string_type();
+    const auto &data_type = to_array_type(str_type.components()[1].type());
+
+    // Collect all bytes from constant parts; use nondet for formatted values
+    std::string all_bytes;
+    bool all_constant = true;
+    for(const auto &v : as_array(values))
+    {
+      if(is_node_type(v, "Constant"))
+      {
+        const jsont &val = json_member(v, "value");
+        if(val.is_string())
+          all_bytes += val.value;
+        else
+          all_constant = false;
+      }
+      else
+        all_constant = false; // FormattedValue — can't track content
+    }
+
+    if(!all_constant)
+      return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+
+    // All parts are constant — build the string literal
+    exprt::operandst chars;
+    for(char ch : all_bytes)
+      chars.push_back(
+        from_integer(static_cast<unsigned char>(ch), unsignedbv_typet{8}));
+    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+      chars.push_back(from_integer(0, unsignedbv_typet{8}));
+    array_exprt data_expr{std::move(chars), data_type};
+    exprt length_expr =
+      from_integer(static_cast<long long>(all_bytes.size()), python_int_type());
+    result = struct_exprt{{length_expr, data_expr}, str_type};
   }
   else if(node_type == "Lambda")
     result = convert_lambda(expr);
@@ -2614,6 +2652,90 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
     }
     return struct_exprt{{real_val, imag_val}, complex_type};
+  }
+  // PLR §4.9: set(iterable) — deduplicate elements
+  else if(func_name == "set")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(is_python_list_type(arg.type()))
+      {
+        const auto &list_st = to_struct_type(arg.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt src_data{arg, "data", data_type};
+        member_exprt src_len{arg, "length", signedbv_typet{64}};
+
+        // Create result list
+        static unsigned set_counter = 0;
+        std::string tmp_name = "__set_" + std::to_string(set_counter++);
+        std::string tmp_qname = qualify_name(tmp_name);
+        irep_idt tmp_id{tmp_qname};
+        if(symbol_table.lookup(tmp_id) == nullptr)
+        {
+          symbolt tmp_sym{tmp_id, arg.type(), "python"};
+          tmp_sym.base_name = tmp_name;
+          tmp_sym.is_lvalue = true;
+          tmp_sym.is_state_var = true;
+          symbol_table.add(tmp_sym);
+        }
+        symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+        member_exprt dst_data{tmp, "data", data_type};
+        member_exprt dst_len{tmp, "length", signedbv_typet{64}};
+
+        // Initialize result length to 0
+        pending_checks.push_back(
+          code_frontend_assignt{dst_len, from_integer(0, signedbv_typet{64})});
+
+        // For each input element, check if already in result
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt in_bounds = binary_relation_exprt{idx, ID_lt, src_len};
+          exprt elem = index_exprt{src_data, idx};
+
+          // Check if elem is already in result[0..dst_len)
+          // Build: found = result[0]==elem || result[1]==elem || ...
+          static unsigned found_ctr = 0;
+          std::string fn = "__set_found_" + std::to_string(found_ctr++);
+          std::string fq = qualify_name(fn);
+          irep_idt fi{fq};
+          if(symbol_table.lookup(fi) == nullptr)
+          {
+            symbolt fs{fi, bool_typet{}, "python"};
+            fs.base_name = fn;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            symbol_table.add(fs);
+          }
+          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
+
+          for(std::size_t j = 0; j < PYTHON_MAX_LIST_LENGTH; j++)
+          {
+            exprt jdx = from_integer(j, signedbv_typet{64});
+            exprt j_in_result = binary_relation_exprt{jdx, ID_lt, dst_len};
+            exprt match = equal_exprt{index_exprt{dst_data, jdx}, elem};
+            pending_checks.push_back(code_ifthenelset{
+              and_exprt{j_in_result, match},
+              code_frontend_assignt{found, true_exprt{}}});
+          }
+
+          // If not found and in bounds, add to result
+          code_blockt add_block;
+          add_block.add(
+            code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
+          add_block.add(code_frontend_assignt{
+            dst_len, plus_exprt{dst_len, from_integer(1, signedbv_typet{64})}});
+          pending_checks.push_back(code_ifthenelset{
+            and_exprt{in_bounds, not_exprt{found}}, std::move(add_block)});
+        }
+
+        return std::move(tmp);
+      }
+    }
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
   }
   // list() / reversed() / enumerate() — return nondet list
   else if(
