@@ -6336,27 +6336,35 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       rhs = typecast_exprt{rhs, lhs.type()};
   }
 
+  // Unwrap tagged unions for arithmetic
+  exprt arith_lhs = lhs;
+  if(is_python_value_type(arith_lhs.type()))
+    arith_lhs = unwrap_value(
+      arith_lhs, rhs.type().id() != ID_struct ? rhs.type() : python_int_type());
+  if(is_python_value_type(rhs.type()))
+    rhs = unwrap_value(rhs, arith_lhs.type());
+
   exprt new_rhs;
   if(op == "Add")
-    new_rhs = plus_exprt{lhs, rhs};
+    new_rhs = plus_exprt{arith_lhs, rhs};
   else if(op == "Sub")
-    new_rhs = minus_exprt{lhs, rhs};
+    new_rhs = minus_exprt{arith_lhs, rhs};
   else if(op == "Mult")
-    new_rhs = mult_exprt{lhs, rhs};
+    new_rhs = mult_exprt{arith_lhs, rhs};
   else if(op == "FloorDiv")
-    new_rhs = div_exprt{lhs, rhs};
+    new_rhs = div_exprt{arith_lhs, rhs};
   else if(op == "Mod")
-    new_rhs = mod_exprt{lhs, rhs};
+    new_rhs = mod_exprt{arith_lhs, rhs};
   else if(op == "BitOr")
-    new_rhs = bitor_exprt{lhs, rhs};
+    new_rhs = bitor_exprt{arith_lhs, rhs};
   else if(op == "BitAnd")
-    new_rhs = bitand_exprt{lhs, rhs};
+    new_rhs = bitand_exprt{arith_lhs, rhs};
   else if(op == "BitXor")
-    new_rhs = bitxor_exprt{lhs, rhs};
+    new_rhs = bitxor_exprt{arith_lhs, rhs};
   else if(op == "LShift")
-    new_rhs = shl_exprt{lhs, rhs};
+    new_rhs = shl_exprt{arith_lhs, rhs};
   else if(op == "RShift")
-    new_rhs = ashr_exprt{lhs, rhs};
+    new_rhs = ashr_exprt{arith_lhs, rhs};
   else
   {
     log.error() << "Unsupported augmented assignment operator: " << op
@@ -6364,6 +6372,11 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     return code_skipt{};
   }
 
+  // Wrap result back into tagged union if needed
+  if(is_python_value_type(lhs.type()) && !is_python_value_type(new_rhs.type()))
+    new_rhs = wrap_value(new_rhs);
+  if(new_rhs.type() != lhs.type())
+    new_rhs = safe_typecast(new_rhs, lhs.type());
   code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
   return std::move(assign);
