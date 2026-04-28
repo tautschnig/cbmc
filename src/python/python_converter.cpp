@@ -30,6 +30,7 @@
 #include <util/c_types.h>
 #include <util/config.h>
 #include <util/cprover_prefix.h>
+#include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/json.h>
 #include <util/mathematical_types.h>
@@ -1973,114 +1974,204 @@ exprt python_convertert::convert_call(const jsont &expr)
             get_location(expr)};
           return std::move(call);
         }
-        // PLR stdlib: math module functions
+        // PLR stdlib: math module functions — delegate to imported_math_funcs
         if(obj_name == "math")
         {
-          exprt arg =
+          // Math constants
+          if(
+            method_name == "pi" || method_name == "e" || method_name == "inf" ||
+            method_name == "nan" || method_name == "tau")
+          {
+            ieee_floatt val{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            if(method_name == "pi")
+              val.from_double(3.14159265358979324);
+            else if(method_name == "e")
+              val.from_double(2.71828182845904524);
+            else if(method_name == "tau")
+              val.from_double(6.28318530717958648);
+            else if(method_name == "inf")
+              val.make_plus_infinity();
+            else
+              val.make_NaN();
+            return val.to_expr();
+          }
+          // Register and route through the math handler
+          imported_math_funcs.insert(method_name);
+          // Inline: call convert_call with the math function name
+          // by constructing a synthetic Name-based Call node
+          std::string saved_func = func_name;
+          func_name = method_name;
+          exprt math_arg =
             args.is_array() && !as_array(args).empty()
               ? convert_expression(*as_array(args).begin())
               : side_effect_expr_nondett{double_type(), get_location(expr)};
-          if(arg.type().id() != ID_floatbv)
-            arg = safe_typecast(arg, double_type());
+          if(math_arg.type().id() != ID_floatbv)
+            math_arg = safe_typecast(math_arg, double_type());
 
-          if(method_name == "ceil")
-          {
-            // ceil(x) → smallest integer >= x
-            // Model: typecast to int, then if result < x, add 1
+          // Exact models
+          if(func_name == "ceil")
             return plus_exprt{
-              typecast_exprt{arg, python_int_type()},
+              typecast_exprt{math_arg, python_int_type()},
               if_exprt{
                 binary_relation_exprt{
                   typecast_exprt{
-                    typecast_exprt{arg, python_int_type()}, double_type()},
+                    typecast_exprt{math_arg, python_int_type()}, double_type()},
                   ID_lt,
-                  arg},
+                  math_arg},
                 from_integer(1, python_int_type()),
                 from_integer(0, python_int_type())}};
-          }
-          if(method_name == "floor")
-          {
-            // floor(x) → largest integer <= x
+          if(func_name == "floor")
             return minus_exprt{
-              typecast_exprt{arg, python_int_type()},
+              typecast_exprt{math_arg, python_int_type()},
               if_exprt{
                 binary_relation_exprt{
                   typecast_exprt{
-                    typecast_exprt{arg, python_int_type()}, double_type()},
+                    typecast_exprt{math_arg, python_int_type()}, double_type()},
                   ID_gt,
-                  arg},
+                  math_arg},
                 from_integer(1, python_int_type()),
                 from_integer(0, python_int_type())}};
-          }
-          if(method_name == "fabs")
+          if(func_name == "fabs")
             return if_exprt{
-              binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
-              unary_minus_exprt{arg},
-              arg};
-          if(method_name == "sqrt")
+              binary_relation_exprt{math_arg, ID_lt, safe_zero(double_type())},
+              unary_minus_exprt{math_arg},
+              math_arg};
+          if(func_name == "trunc")
+            return typecast_exprt{math_arg, python_int_type()};
+          if(func_name == "isnan")
+            return isnan_exprt{math_arg};
+          if(func_name == "isinf")
+            return isinf_exprt{math_arg};
+          if(func_name == "isfinite")
+            return and_exprt{
+              not_exprt{isnan_exprt{math_arg}},
+              not_exprt{isinf_exprt{math_arg}}};
+          if(func_name == "copysign")
           {
-            // For constant args, compute at conversion time
-            if(arg.is_constant())
-            {
-              ieee_floatt fv{
-                ieee_float_spect::double_precision(),
-                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-              fv.from_expr(to_constant_expr(arg));
-              double val = std::stod(fv.to_ansi_c_string());
-              if(val >= 0)
-              {
-                ieee_floatt result{
-                  ieee_float_spect::double_precision(),
-                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-                result.from_double(std::sqrt(val));
-                return result.to_expr();
-              }
-            }
-            return side_effect_expr_nondett{double_type(), get_location(expr)};
+            exprt arg2 =
+              as_array(args).size() >= 2
+                ? convert_expression(*std::next(as_array(args).begin()))
+                : math_arg;
+            if(arg2.type().id() != ID_floatbv)
+              arg2 = safe_typecast(arg2, double_type());
+            exprt abs_x = if_exprt{
+              binary_relation_exprt{math_arg, ID_lt, safe_zero(double_type())},
+              unary_minus_exprt{math_arg},
+              math_arg};
+            return if_exprt{
+              binary_relation_exprt{arg2, ID_lt, safe_zero(double_type())},
+              unary_minus_exprt{abs_x},
+              abs_x};
           }
-          // Trig/log/exp for constant args
-          if(
-            (method_name == "sin" || method_name == "cos" ||
-             method_name == "tan" || method_name == "asin" ||
-             method_name == "acos" || method_name == "atan" ||
-             method_name == "log" || method_name == "exp" ||
-             method_name == "log2" || method_name == "log10") &&
-            arg.is_constant())
+          if(func_name == "isclose")
+          {
+            exprt arg2 =
+              as_array(args).size() >= 2
+                ? convert_expression(*std::next(as_array(args).begin()))
+                : math_arg;
+            if(arg2.type().id() != ID_floatbv)
+              arg2 = safe_typecast(arg2, double_type());
+            ieee_floatt tol{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            tol.from_double(1e-9);
+            exprt diff = if_exprt{
+              binary_relation_exprt{
+                minus_exprt{math_arg, arg2}, ID_lt, safe_zero(double_type())},
+              unary_minus_exprt{minus_exprt{math_arg, arg2}},
+              minus_exprt{math_arg, arg2}};
+            return binary_relation_exprt{diff, ID_le, tol.to_expr()};
+          }
+          // Constant evaluation
+          if(math_arg.is_constant())
           {
             ieee_floatt fv{
               ieee_float_spect::double_precision(),
               ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fv.from_expr(to_constant_expr(arg));
+            fv.from_expr(to_constant_expr(math_arg));
             double val = std::stod(fv.to_ansi_c_string());
             double res = 0;
-            if(method_name == "sin")
+            bool computed = true;
+            if(func_name == "sqrt" && val >= 0)
+              res = std::sqrt(val);
+            else if(func_name == "sin")
               res = std::sin(val);
-            else if(method_name == "cos")
+            else if(func_name == "cos")
               res = std::cos(val);
-            else if(method_name == "tan")
+            else if(func_name == "tan")
               res = std::tan(val);
-            else if(method_name == "asin")
+            else if(func_name == "asin" && val >= -1 && val <= 1)
               res = std::asin(val);
-            else if(method_name == "acos")
+            else if(func_name == "acos" && val >= -1 && val <= 1)
               res = std::acos(val);
-            else if(method_name == "atan")
+            else if(func_name == "atan")
               res = std::atan(val);
-            else if(method_name == "log")
+            else if(func_name == "log" && val > 0)
               res = std::log(val);
-            else if(method_name == "exp")
-              res = std::exp(val);
-            else if(method_name == "log2")
+            else if(func_name == "log2" && val > 0)
               res = std::log2(val);
-            else if(method_name == "log10")
+            else if(func_name == "log10" && val > 0)
               res = std::log10(val);
-            ieee_floatt result{
+            else if(func_name == "exp")
+              res = std::exp(val);
+            else
+              computed = false;
+            if(computed)
+            {
+              ieee_floatt result{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              result.from_double(res);
+              return result.to_expr();
+            }
+          }
+          // Nondet with constraints
+          {
+            side_effect_expr_nondett nondet_ret{
+              double_type(), get_location(expr)};
+            static unsigned math_attr_ctr = 0;
+            std::string tn = "__math_attr_" + std::to_string(math_attr_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, double_type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{tv, nondet_ret});
+            ieee_floatt fone{
               ieee_float_spect::double_precision(),
               ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            result.from_double(res);
-            return result.to_expr();
+            fone.from_double(1.0);
+            ieee_floatt fneg{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fneg.from_double(-1.0);
+            ieee_floatt fz{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fz.from_double(0.0);
+            if(func_name == "sin" || func_name == "cos")
+            {
+              pending_checks.push_back(
+                code_assumet{binary_relation_exprt{tv, ID_ge, fneg.to_expr()}});
+              pending_checks.push_back(
+                code_assumet{binary_relation_exprt{tv, ID_le, fone.to_expr()}});
+            }
+            else if(func_name == "sqrt")
+              pending_checks.push_back(
+                code_assumet{binary_relation_exprt{tv, ID_ge, fz.to_expr()}});
+            else if(func_name == "exp" || func_name == "exp2")
+              pending_checks.push_back(
+                code_assumet{binary_relation_exprt{tv, ID_gt, fz.to_expr()}});
+            return std::move(tv);
           }
-          // Unknown math function — return nondet
-          return side_effect_expr_nondett{double_type(), get_location(expr)};
         }
         // PLR stdlib: re module — return nondet for all methods
         if(obj_name == "re")
@@ -4509,6 +4600,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(arg.type().id() != ID_floatbv)
       arg = safe_typecast(arg, double_type());
 
+    // Exact models for ceil, floor, fabs, trunc, copysign, isnan, etc.
     if(func_name == "ceil")
       return plus_exprt{
         typecast_exprt{arg, python_int_type()},
@@ -4536,23 +4628,152 @@ exprt python_convertert::convert_call(const jsont &expr)
         binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
         unary_minus_exprt{arg},
         arg};
-    if(func_name == "sqrt" && arg.is_constant())
+    if(func_name == "trunc")
+      return typecast_exprt{arg, python_int_type()};
+    if(func_name == "isnan")
+      return isnan_exprt{arg};
+    if(func_name == "isinf")
+      return isinf_exprt{arg};
+    if(func_name == "isfinite")
+      return and_exprt{
+        not_exprt{isnan_exprt{arg}}, not_exprt{isinf_exprt{arg}}};
+    if(func_name == "copysign")
+    {
+      exprt arg2 = as_array(args).size() >= 2
+                     ? convert_expression(*std::next(as_array(args).begin()))
+                     : arg;
+      if(arg2.type().id() != ID_floatbv)
+        arg2 = safe_typecast(arg2, double_type());
+      exprt abs_x = if_exprt{
+        binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
+        unary_minus_exprt{arg},
+        arg};
+      return if_exprt{
+        binary_relation_exprt{arg2, ID_lt, safe_zero(double_type())},
+        unary_minus_exprt{abs_x},
+        abs_x};
+    }
+    if(func_name == "isclose")
+    {
+      exprt arg2 = as_array(args).size() >= 2
+                     ? convert_expression(*std::next(as_array(args).begin()))
+                     : arg;
+      if(arg2.type().id() != ID_floatbv)
+        arg2 = safe_typecast(arg2, double_type());
+      ieee_floatt tol{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      tol.from_double(1e-9);
+      exprt diff = if_exprt{
+        binary_relation_exprt{
+          minus_exprt{arg, arg2}, ID_lt, safe_zero(double_type())},
+        unary_minus_exprt{minus_exprt{arg, arg2}},
+        minus_exprt{arg, arg2}};
+      return binary_relation_exprt{diff, ID_le, tol.to_expr()};
+    }
+
+    // Constant evaluation for trig/log/exp/sqrt
+    if(arg.is_constant())
     {
       ieee_floatt fv{
         ieee_float_spect::double_precision(),
         ieee_floatt::rounding_modet::ROUND_TO_EVEN};
       fv.from_expr(to_constant_expr(arg));
       double val = std::stod(fv.to_ansi_c_string());
-      if(val >= 0)
+      double res = 0;
+      bool computed = true;
+      if(func_name == "sqrt" && val >= 0)
+        res = std::sqrt(val);
+      else if(func_name == "sin")
+        res = std::sin(val);
+      else if(func_name == "cos")
+        res = std::cos(val);
+      else if(func_name == "tan")
+        res = std::tan(val);
+      else if(func_name == "asin" && val >= -1 && val <= 1)
+        res = std::asin(val);
+      else if(func_name == "acos" && val >= -1 && val <= 1)
+        res = std::acos(val);
+      else if(func_name == "atan")
+        res = std::atan(val);
+      else if(func_name == "log" && val > 0)
+        res = std::log(val);
+      else if(func_name == "log2" && val > 0)
+        res = std::log2(val);
+      else if(func_name == "log10" && val > 0)
+        res = std::log10(val);
+      else if(func_name == "exp")
+        res = std::exp(val);
+      else if(func_name == "exp2")
+        res = std::exp2(val);
+      else
+        computed = false;
+      if(computed)
       {
         ieee_floatt result{
           ieee_float_spect::double_precision(),
           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        result.from_double(std::sqrt(val));
+        result.from_double(res);
         return result.to_expr();
       }
     }
-    // Other math functions: fall through to registered symbol
+
+    // Nondet-with-constraints models (matching C frontend math.c pattern)
+    side_effect_expr_nondett nondet_ret{double_type(), get_location(expr)};
+    static unsigned math_tmp_ctr = 0;
+    std::string tmp_name = "__math_ret_" + std::to_string(math_tmp_ctr++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, double_type(), "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+    symbol_exprt tmp_var = symbol_table.lookup_ref(tmp_id).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{tmp_var, nondet_ret});
+
+    ieee_floatt fone{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    fone.from_double(1.0);
+    ieee_floatt fneg_one{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    fneg_one.from_double(-1.0);
+    ieee_floatt fzero{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    fzero.from_double(0.0);
+
+    if(func_name == "sin" || func_name == "cos")
+    {
+      pending_checks.push_back(code_assumet{
+        binary_relation_exprt{tmp_var, ID_ge, fneg_one.to_expr()}});
+      pending_checks.push_back(
+        code_assumet{binary_relation_exprt{tmp_var, ID_le, fone.to_expr()}});
+    }
+    else if(func_name == "sqrt")
+    {
+      pending_checks.push_back(
+        code_assumet{binary_relation_exprt{tmp_var, ID_ge, fzero.to_expr()}});
+    }
+    else if(func_name == "exp" || func_name == "exp2" || func_name == "expm1")
+    {
+      pending_checks.push_back(
+        code_assumet{binary_relation_exprt{tmp_var, ID_gt, fzero.to_expr()}});
+    }
+    else if(func_name == "factorial" || func_name == "comb")
+    {
+      // Returns int >= 0
+      pending_checks.push_back(
+        code_assumet{binary_relation_exprt{tmp_var, ID_ge, fzero.to_expr()}});
+    }
+    // log, tan, asin, acos, atan, etc.: unconstrained nondet (sound)
+
+    return std::move(tmp_var);
   }
 
   // Check function aliases (lambda assignments: double = lambda x: x*2)
