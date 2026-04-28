@@ -1,0 +1,8 @@
+(set-logic QF_ABV)
+(declare-fun buf () (Array (_ BitVec 32) (_ BitVec 8)))
+(declare-fun i () (_ BitVec 32))
+(assert (let ((?v_0 (concat (_ bv0 24) (select buf i)))) (and (bvule (_ bv0 32) ?v_0) (bvule ?v_0 (_ bv3 32)))))
+(assert (let ((?v_0 (concat (_ bv0 24) (select buf (concat (_ bv0 24) (select buf i)))))) (and (bvule (_ bv0 32) ?v_0) (bvule ?v_0 (_ bv3 32)))))
+(assert (let ((?v_0 (concat (_ bv0 24) (select buf (concat (_ bv0 24) (select buf (concat (_ bv0 24) (select buf i)))))))) (not (and (bvule (_ bv0 32) ?v_0) (bvule ?v_0 (_ bv3 32))))))
+(check-sat)
+(exit)
