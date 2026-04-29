@@ -5426,7 +5426,10 @@ exprt python_convertert::convert_call(const jsont &expr)
       for(const auto &[name, val] : unmatched_kw)
       {
         key_elems.push_back(build_string_struct(name));
-        val_elems.push_back(safe_typecast(val, vals_arr_type.element_type()));
+        if(is_python_value_type(vals_arr_type.element_type()))
+          val_elems.push_back(wrap_value(val));
+        else
+          val_elems.push_back(safe_typecast(val, vals_arr_type.element_type()));
       }
       while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
       {
