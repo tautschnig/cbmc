@@ -9165,6 +9165,33 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           components.push_back(struct_typet::componentt{attr_name, attr_type});
         }
       }
+      else if(is_node_type(item, "Assign"))
+      {
+        const jsont &targets = json_member(item, "targets");
+        if(targets.is_array())
+        {
+          for(const auto &t : as_array(targets))
+          {
+            if(is_node_type(t, "Name"))
+            {
+              std::string attr_name = json_string(json_member(t, "id"));
+              // Infer type from value
+              const jsont &val = json_member(item, "value");
+              typet attr_type = python_int_type();
+              if(is_node_type(val, "Constant"))
+              {
+                const jsont &v = json_member(val, "value");
+                if(v.is_string())
+                  attr_type = python_string_type();
+                else if(v.is_true() || v.is_false())
+                  attr_type = python_int_type();
+              }
+              components.push_back(
+                struct_typet::componentt{attr_name, attr_type});
+            }
+          }
+        }
+      }
     }
   }
 
@@ -9262,6 +9289,38 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   struct_typet::componentst tagged_components;
   tagged_components.push_back(
     struct_typet::componentt{"__class_tag", signedbv_typet{32}});
+  // Inherit parent class attributes
+  if(bases.is_array())
+  {
+    for(const auto &base : as_array(bases))
+    {
+      if(is_node_type(base, "Name"))
+      {
+        std::string base_name = json_string(json_member(base, "id"));
+        if(class_types.count(base_name))
+        {
+          const auto &parent = to_struct_type(class_types[base_name]);
+          for(const auto &pc : parent.components())
+          {
+            if(pc.get_name() == "__class_tag")
+              continue; // already added
+            // Only add if not already defined in child
+            bool found = false;
+            for(const auto &c : components)
+            {
+              if(c.get_name() == pc.get_name())
+              {
+                found = true;
+                break;
+              }
+            }
+            if(!found)
+              tagged_components.push_back(pc);
+          }
+        }
+      }
+    }
+  }
   for(auto &c : components)
     tagged_components.push_back(std::move(c));
 
@@ -9345,6 +9404,29 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                   exprt rv = convert_expression(json_member(item, "value"));
                   val = safe_typecast(rv, comp.type());
                 }
+              }
+            }
+          }
+        }
+      }
+      // If still zero and attribute is inherited, copy from parent
+      if(val == safe_zero(comp.type()) && class_bases.count(class_name))
+      {
+        for(const auto &base_name : class_bases[class_name])
+        {
+          irep_idt parent_id{"python::" + base_name};
+          const symbolt *parent_sym = symbol_table.lookup(parent_id);
+          if(parent_sym != nullptr && parent_sym->value.id() == ID_struct)
+          {
+            const auto &parent_st = to_struct_type(parent_sym->value.type());
+            if(parent_st.has_component(comp.get_name()))
+            {
+              auto idx = parent_st.component_number(comp.get_name());
+              if(idx < parent_sym->value.operands().size())
+              {
+                val = parent_sym->value.operands()[idx];
+                if(val.type() != comp.type())
+                  val = safe_typecast(val, comp.type());
               }
             }
           }
