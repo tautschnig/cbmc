@@ -2144,7 +2144,24 @@ exprt python_convertert::convert_call(const jsont &expr)
               ? convert_expression(*as_array(args).begin())
               : side_effect_expr_nondett{double_type(), get_location(expr)};
           if(math_arg.type().id() != ID_floatbv)
-            math_arg = safe_typecast(math_arg, double_type());
+          {
+            if(math_arg.is_constant() && math_arg.type().id() == ID_signedbv)
+            {
+              mp_integer iv;
+              if(!to_integer(to_constant_expr(math_arg), iv))
+              {
+                ieee_floatt fv{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                fv.from_integer(iv);
+                math_arg = fv.to_expr();
+              }
+              else
+                math_arg = safe_typecast(math_arg, double_type());
+            }
+            else
+              math_arg = safe_typecast(math_arg, double_type());
+          }
 
           // Exact models
           if(func_name == "ceil")
@@ -4930,7 +4947,25 @@ exprt python_convertert::convert_call(const jsont &expr)
                   ? convert_expression(*as_array(args).begin())
                   : side_effect_expr_nondett{double_type(), get_location(expr)};
     if(arg.type().id() != ID_floatbv)
-      arg = safe_typecast(arg, double_type());
+    {
+      // Convert constant ints to float constants for exact evaluation
+      if(arg.is_constant() && arg.type().id() == ID_signedbv)
+      {
+        mp_integer iv;
+        if(!to_integer(to_constant_expr(arg), iv))
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_integer(iv);
+          arg = fv.to_expr();
+        }
+        else
+          arg = safe_typecast(arg, double_type());
+      }
+      else
+        arg = safe_typecast(arg, double_type());
+    }
 
     // Exact models for ceil, floor, fabs, trunc, copysign, isnan, etc.
     if(func_name == "ceil")
