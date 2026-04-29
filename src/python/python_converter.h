@@ -66,6 +66,11 @@ private:
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
+  // Closure captures: maps qualified nested function name to list of
+  // (outer_param_qualified_name, param_name, type) for captured variables
+  std::
+    map<std::string, std::vector<std::tuple<std::string, std::string, typet>>>
+      closure_captures;
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::optional<std::string> extract_string_value(const exprt &e) const;

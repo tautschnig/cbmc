@@ -179,6 +179,60 @@ static exprt build_string_struct(const std::string &s)
     str_type};
 }
 
+// Helper: collect all Name references in a JSON AST subtree
+// Uses operator[] which returns json_nullt for missing keys
+static void collect_name_refs(const jsont &node, std::set<std::string> &names)
+{
+  if(node.is_object())
+  {
+    const jsont &type_node = node["_type"];
+    const jsont &id_node = node["id"];
+    if(
+      type_node.is_string() && type_node.value == "Name" &&
+      id_node.is_string() && !id_node.value.empty())
+    {
+      names.insert(id_node.value);
+    }
+    // Recurse into known fields that contain sub-ASTs
+    static const char *fields[] = {
+      "body",        "orelse", "handlers", "finalbody",  "test",
+      "value",       "values", "targets",  "target",     "iter",
+      "args",        "elts",   "keys",     "left",       "right",
+      "func",        "slice",  "elt",      "generators", "ifs",
+      "comparators", "ops",    "exc",      "returns",    "decorator_list",
+      nullptr};
+    for(const char **f = fields; *f; ++f)
+    {
+      const jsont &child = node[*f];
+      if(!child.is_null())
+        collect_name_refs(child, names);
+    }
+  }
+  else if(node.is_array())
+  {
+    for(const auto &elem : to_json_array(node))
+      collect_name_refs(elem, names);
+  }
+}
+
+// Helper: collect parameter names from a FunctionDef's args
+static std::set<std::string> collect_param_names(const jsont &func_def)
+{
+  std::set<std::string> params;
+  const jsont &args_node = func_def["args"];
+  const jsont &param_list = args_node["args"];
+  if(param_list.is_array())
+  {
+    for(const auto &p : to_json_array(param_list))
+    {
+      const jsont &arg_node = p["arg"];
+      if(arg_node.is_string())
+        params.insert(arg_node.value);
+    }
+  }
+  return params;
+}
+
 std::string python_convertert::qualify_name(const std::string &name) const
 {
   // If inside a function and the name is declared global, use module scope
@@ -5232,6 +5286,23 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // Add closure captures as extra arguments BEFORE padding
+  {
+    auto cap_it2 = closure_captures.find(id2string(sym->name));
+    if(cap_it2 != closure_captures.end())
+    {
+      for(const auto &[outer_id, name, type] : cap_it2->second)
+      {
+        const symbolt *outer_sym = symbol_table.lookup(irep_idt{outer_id});
+        if(outer_sym != nullptr)
+          arguments.push_back(outer_sym->symbol_expr());
+        else
+          arguments.push_back(
+            side_effect_expr_nondett{type, get_location(expr)});
+      }
+    }
+  }
+
   // Fill in defaults for any remaining nil arguments.
   // Defaults are stored in the FunctionDef AST; look up the function's
   // definition to find them.
@@ -8056,6 +8127,22 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   code_typet func_type{parameters, return_type};
 
+  // Add closure captures as extra parameters
+  irep_idt func_qid{"python::" + func_name};
+  auto cap_it = closure_captures.find(id2string(func_qid));
+  if(cap_it != closure_captures.end())
+  {
+    for(const auto &[outer_id, name, type] : cap_it->second)
+    {
+      code_typet::parametert p{type};
+      std::string cap_param_id = "python::" + func_name + "::" + name;
+      p.set_identifier(cap_param_id);
+      p.set_base_name(name);
+      parameters.push_back(p);
+    }
+    func_type = code_typet{parameters, return_type};
+  }
+
   if(has_yield)
     generator_functions.insert(func_name);
 
@@ -8128,6 +8215,43 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   const jsont &body = json_member(stmt, "body");
+
+  // Detect closures: scan for nested FunctionDefs that reference
+  // our parameters (free variables). Add captured vars as extra params.
+  if(body.is_array())
+  {
+    std::set<std::string> our_params;
+    for(const auto &p : parameters)
+      our_params.insert(std::string{id2string(p.get_base_name())});
+    for(const auto &s : as_array(body))
+    {
+      if(is_node_type(s, "FunctionDef") || is_node_type(s, "AsyncFunctionDef"))
+      {
+        std::string nested_name = json_string(json_member(s, "name"));
+        std::set<std::string> nested_params = collect_param_names(s);
+        std::set<std::string> refs;
+        collect_name_refs(json_member(s, "body"), refs);
+        std::vector<std::tuple<std::string, std::string, typet>> captures;
+        for(const auto &ref : refs)
+        {
+          if(nested_params.count(ref) || !our_params.count(ref))
+            continue;
+          for(const auto &p : parameters)
+          {
+            if(id2string(p.get_base_name()) == ref)
+            {
+              captures.push_back(
+                {id2string(p.get_identifier()), ref, p.type()});
+              break;
+            }
+          }
+        }
+        if(!captures.empty())
+          closure_captures["python::" + nested_name] = captures;
+      }
+    }
+  }
+
   if(body.is_array())
   {
     for(const auto &s : as_array(body))
