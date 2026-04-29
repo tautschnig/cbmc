@@ -262,7 +262,9 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     // PLib stdtypes: Truth Value Testing (precise)
     // Falsy: None, False, 0, 0.0, empty string "", empty list []
     exprt bool_true = and_exprt{
-      python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)};
+      python_value_is(e, python_type_tagt::BOOL),
+      notequal_exprt{
+        python_value_bool(e), from_integer(0, signedbv_typet{32})}};
     exprt int_true = and_exprt{
       python_value_is(e, python_type_tagt::INT),
       notequal_exprt{python_value_int(e), from_integer(0, signedbv_typet{64})}};
@@ -452,7 +454,9 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     // BOOL→bool_val, STR/LIST→true (non-empty assumed)
     return or_exprt{
       and_exprt{
-        python_value_is(e, python_type_tagt::BOOL), python_value_bool(e)},
+        python_value_is(e, python_type_tagt::BOOL),
+        notequal_exprt{
+          python_value_bool(e), from_integer(0, signedbv_typet{32})}},
       and_exprt{
         python_value_is(e, python_type_tagt::INT),
         notequal_exprt{
