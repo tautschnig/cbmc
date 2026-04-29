@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+**kwargs parameters are not supported. The kwarg field in the AST
+is ignored, so kwargs is an unknown variable inside the function.
+At call sites, keyword arguments that don't match positional params
+are discarded. Fix: model **kwargs as a dict parameter, pack
+unmatched keywords into a dict at call sites.
