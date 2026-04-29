@@ -81,6 +81,17 @@ protected:
   bool unbounded_ints = false;
   std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;
   std::size_t max_list_length = PYTHON_MAX_LIST_LENGTH;
+
+  /// Search paths for module resolution (from PYTHONPATH + source dir)
+  std::vector<std::string> python_paths;
+
+  /// Already-parsed module ASTs (to avoid re-parsing)
+  std::map<std::string, jsont> parsed_modules;
+
+  /// Resolve and parse a Python module, returning its AST JSON.
+  /// Returns nullptr if not found.
+  const jsont *
+  resolve_module(const std::string &module_name, message_handlert &handler);
 };
 
 std::unique_ptr<languaget> new_python_language();

@@ -21,6 +21,7 @@
 #include "expr2python.h"
 #include "python_converter.h"
 
+#include <cstdlib>
 #include <fstream>
 
 std::set<std::string> python_languaget::extensions() const
@@ -86,6 +87,35 @@ bool python_languaget::parse(
 
   messaget log{message_handler};
 
+  // Initialize module search paths from PYTHONPATH and source directory
+  if(python_paths.empty())
+  {
+    // Add source file's directory
+    auto last_sep = path.rfind('/');
+    if(last_sep != std::string::npos)
+      python_paths.push_back(path.substr(0, last_sep));
+    else
+      python_paths.push_back(".");
+
+    // Add PYTHONPATH entries
+    const char *pypath = getenv("PYTHONPATH");
+    if(pypath != nullptr)
+    {
+      std::string pp{pypath};
+      std::size_t pos = 0;
+      while(pos < pp.size())
+      {
+        auto sep = pp.find(':', pos);
+        if(sep == std::string::npos)
+          sep = pp.size();
+        std::string entry = pp.substr(pos, sep - pos);
+        if(!entry.empty())
+          python_paths.push_back(entry);
+        pos = sep + 1;
+      }
+    }
+  }
+
   // Create temp file for JSON output
   temporary_filet json_file{"cbmc_python_ast_", ".json"};
   std::string json_path = json_file();
@@ -142,6 +172,9 @@ bool python_languaget::typecheck(
 {
   python_convertert converter{symbol_table, parse_tree, message_handler};
   converter.set_unbounded_ints(unbounded_ints);
+  converter.set_module_resolver(
+    [this, &message_handler](const std::string &name) -> const jsont *
+    { return resolve_module(name, message_handler); });
   return converter.convert();
 }
 
@@ -259,6 +292,83 @@ void python_languaget::show_parse(std::ostream &out, message_handlert &)
 }
 
 python_languaget::python_languaget() = default;
+const jsont *python_languaget::resolve_module(
+  const std::string &module_name,
+  message_handlert &handler)
+{
+  // Check cache
+  auto it = parsed_modules.find(module_name);
+  if(it != parsed_modules.end())
+    return &it->second;
+
+  messaget log{handler};
+
+  // Convert module.name to module/name
+  std::string rel_path = module_name;
+  for(auto &c : rel_path)
+  {
+    if(c == '.')
+      c = '/';
+  }
+
+  // Search for module/__init__.py or module.py
+  std::string found_path;
+  for(const auto &dir : python_paths)
+  {
+    std::string pkg_init = dir + "/" + rel_path + "/__init__.py";
+    std::string mod_file = dir + "/" + rel_path + ".py";
+    if(std::ifstream{pkg_init}.good())
+    {
+      found_path = pkg_init;
+      break;
+    }
+    if(std::ifstream{mod_file}.good())
+    {
+      found_path = mod_file;
+      break;
+    }
+  }
+
+  if(found_path.empty())
+  {
+    // Module not found — not an error, just return null
+    parsed_modules[module_name] = jsont{};
+    return nullptr;
+  }
+
+  log.status() << "Resolving import: " << module_name << " → " << found_path
+               << messaget::eom;
+
+  // Parse the module using the same AST-to-JSON approach
+  temporary_filet json_file{"cbmc_python_mod_", ".json"};
+  std::string json_path = json_file();
+  temporary_filet stderr_file{"cbmc_python_moderr_", ".txt"};
+  std::string stderr_path = stderr_file();
+
+  int ret = run(
+    "python3",
+    {"python3", "-c", PYTHON_AST_TO_JSON_CODE, found_path, json_path},
+    "",
+    "",
+    stderr_path);
+
+  if(ret != 0)
+  {
+    parsed_modules[module_name] = jsont{};
+    return nullptr;
+  }
+
+  jsont module_ast;
+  if(parse_json(json_path, handler, module_ast))
+  {
+    parsed_modules[module_name] = jsont{};
+    return nullptr;
+  }
+
+  parsed_modules[module_name] = std::move(module_ast);
+  return &parsed_modules[module_name];
+}
+
 python_languaget::~python_languaget() = default;
 
 std::unique_ptr<languaget> new_python_language()

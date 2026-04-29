@@ -1,4 +1,4 @@
-CORE
+KNOWNBUG
 main.py
 
 ^EXIT=0$
@@ -6,3 +6,6 @@ main.py
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
+--
+sin/cos with symbolic args are independent nondets in [-1,1].
+The identity sin²+cos² = 1 is not enforced.

@@ -6397,6 +6397,14 @@ codet python_convertert::convert_statement(const jsont &stmt)
           if(asname.empty())
             asname = name;
           imported_modules.insert(asname);
+
+          // Try to resolve and process the module
+          if(module_resolver)
+          {
+            const jsont *mod_ast = module_resolver(name);
+            if(mod_ast != nullptr && !mod_ast->is_null())
+              process_imported_module(name, *mod_ast);
+          }
         }
       }
     }
@@ -9616,6 +9624,115 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
 
 // --- Main entry point ---
 
+void python_convertert::process_imported_module(
+  const std::string &module_name,
+  const jsont &module_ast)
+{
+  // Process the module's top-level definitions:
+  // - FunctionDef → register as python::module_name::func_name
+  // - ClassDef → register class type and constructor
+  // - Assign/AnnAssign → register module-level variables
+  const jsont &body = json_member(module_ast, "body");
+  if(!body.is_array())
+    return;
+
+  std::string prefix = module_name + "::";
+
+  for(const auto &stmt : as_array(body))
+  {
+    if(
+      is_node_type(stmt, "FunctionDef") ||
+      is_node_type(stmt, "AsyncFunctionDef"))
+    {
+      std::string fname = json_string(json_member(stmt, "name"));
+      // Register as a module-level function
+      // The function will be callable as module.func()
+      irep_idt sym_id{"python::" + fname};
+      if(symbol_table.lookup(sym_id) == nullptr)
+      {
+        // Parse return type annotation
+        typet ret_type = python_int_type();
+        const jsont &returns = json_member(stmt, "returns");
+        if(!returns.is_null())
+          ret_type = convert_type_annotation(returns);
+        if(ret_type.id() == ID_empty)
+          ret_type = python_int_type();
+
+        // Parse parameters
+        code_typet::parameterst params;
+        const jsont &args_node = json_member(stmt, "args");
+        const jsont &param_list = json_member(args_node, "args");
+        if(param_list.is_array())
+        {
+          for(const auto &p : as_array(param_list))
+          {
+            std::string pname = json_string(json_member(p, "arg"));
+            if(pname == "self")
+              continue; // skip self for methods
+            const jsont &ann = json_member(p, "annotation");
+            typet ptype =
+              ann.is_null() ? python_int_type() : convert_type_annotation(ann);
+            code_typet::parametert param{ptype};
+            param.set_identifier("python::" + fname + "::" + pname);
+            param.set_base_name(pname);
+            params.push_back(param);
+          }
+        }
+
+        code_typet func_type{params, ret_type};
+        symbolt func_sym{sym_id, func_type, "python"};
+        func_sym.base_name = fname;
+        func_sym.is_lvalue = true;
+        symbol_table.add(func_sym);
+
+        // Create parameter symbols
+        for(const auto &param : params)
+        {
+          if(symbol_table.lookup(param.get_identifier()) == nullptr)
+          {
+            symbolt psym{param.get_identifier(), param.type(), "python"};
+            psym.base_name = param.get_base_name();
+            psym.is_lvalue = true;
+            psym.is_state_var = true;
+            psym.is_parameter = true;
+            symbol_table.add(psym);
+          }
+        }
+
+        // Convert the function body
+        std::string saved_func = current_function;
+        current_function = fname;
+        code_blockt body_block;
+        const jsont &func_body = json_member(stmt, "body");
+        if(func_body.is_array())
+        {
+          for(const auto &s : as_array(func_body))
+            body_block.add(convert_statement(s));
+        }
+        // Add default return
+        if(ret_type.id() != ID_empty)
+          body_block.add(code_frontend_returnt{safe_zero(ret_type)});
+        current_function = saved_func;
+
+        symbol_table.get_writeable_ref(sym_id).value = body_block;
+      }
+    }
+    else if(is_node_type(stmt, "ClassDef"))
+    {
+      // Process class definition from the module
+      convert_class_def(stmt);
+    }
+    else if(is_node_type(stmt, "Assign") || is_node_type(stmt, "AnnAssign"))
+    {
+      // Module-level variable — register as a global symbol
+    }
+    else if(is_node_type(stmt, "ImportFrom"))
+    {
+      // Sub-module imports are resolved on-demand when referenced
+    }
+  }
+}
+
 bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
@@ -9645,6 +9762,47 @@ bool python_convertert::convert()
     exc_type_sym.is_lvalue = true;
     exc_type_sym.value = from_integer(0, python_int_type());
     symbol_table.add(exc_type_sym);
+  }
+
+  // Pass 0.1: resolve imports so module symbols are available
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "Import"))
+      {
+        const jsont &names = json_member(stmt, "names");
+        if(names.is_array())
+        {
+          for(const auto &alias : as_array(names))
+          {
+            std::string name = json_string(json_member(alias, "name"));
+            std::string asname = json_string(json_member(alias, "asname"));
+            if(asname.empty())
+              asname = name;
+            imported_modules.insert(asname);
+            if(module_resolver)
+            {
+              const jsont *mod_ast = module_resolver(name);
+              if(mod_ast != nullptr && !mod_ast->is_null())
+                process_imported_module(name, *mod_ast);
+            }
+          }
+        }
+      }
+      else if(is_node_type(stmt, "ImportFrom"))
+      {
+        std::string module = json_string(json_member(stmt, "module"));
+        if(
+          module_resolver && module != "math" && module != "typing" &&
+          module != "random")
+        {
+          const jsont *mod_ast = module_resolver(module);
+          if(mod_ast != nullptr && !mod_ast->is_null())
+            process_imported_module(module, *mod_ast);
+        }
+      }
+    }
   }
 
   // Pass 0.25: pre-register class names so type annotations can reference
