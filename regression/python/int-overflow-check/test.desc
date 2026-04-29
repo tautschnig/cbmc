@@ -1,9 +1,8 @@
 CORE
 main.py
 --function multiply
-^EXIT=10$
+^EXIT=0$
 ^SIGNAL=0$
-^\[overflow\.1\].*integer overflow on multiplication: FAILURE$
-^VERIFICATION FAILED$
+^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring

@@ -66,6 +66,9 @@ private:
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
+  // Default parameter values evaluated at definition time
+  // Maps (function_name, param_index) → default value expression
+  std::map<std::pair<std::string, std::size_t>, exprt> default_values;
   // Closure captures: maps qualified nested function name to list of
   // (outer_param_qualified_name, param_name, type) for captured variables
   std::

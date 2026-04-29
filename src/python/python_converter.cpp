@@ -1103,6 +1103,15 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
       return from_integer(0, python_int_type());
     }
+    if(op == "Div")
+    {
+      // (a+bi)/(c+di) = ((ac+bd) + (bc-ad)i) / (c²+d²)
+      exprt denom = plus_exprt{mult_exprt{rr, rr}, mult_exprt{ri, ri}};
+      exprt real_num = plus_exprt{mult_exprt{lr, rr}, mult_exprt{li, ri}};
+      exprt imag_num = minus_exprt{mult_exprt{li, rr}, mult_exprt{lr, ri}};
+      return struct_exprt{
+        {div_exprt{real_num, denom}, div_exprt{imag_num, denom}}, ct};
+    }
     // Other ops: return nondet complex
     return side_effect_expr_nondett{ct, source_locationt{}};
   }
@@ -1361,38 +1370,14 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   if(op == "Add")
   {
-    if(
-      left.type().id() == ID_signedbv && !left.is_constant() &&
-      !right.is_constant())
-      add_check(
-        not_exprt{plus_overflow_exprt{left, right}},
-        "overflow",
-        "integer overflow on addition",
-        get_location(expr));
     return plus_exprt{left, right};
   }
   else if(op == "Sub")
   {
-    if(
-      left.type().id() == ID_signedbv && !left.is_constant() &&
-      !right.is_constant())
-      add_check(
-        not_exprt{minus_overflow_exprt{left, right}},
-        "overflow",
-        "integer overflow on subtraction",
-        get_location(expr));
     return minus_exprt{left, right};
   }
   else if(op == "Mult")
   {
-    if(
-      left.type().id() == ID_signedbv && !left.is_constant() &&
-      !right.is_constant())
-      add_check(
-        not_exprt{mult_overflow_exprt{left, right}},
-        "overflow",
-        "integer overflow on multiplication",
-        get_location(expr));
     return mult_exprt{left, right};
   }
   else if(op == "FloorDiv")
@@ -2712,9 +2697,47 @@ exprt python_convertert::convert_call(const jsont &expr)
             if(result.size() <= PYTHON_MAX_STRING_LENGTH)
               return build_string_struct(result);
           }
-          // Return nondet string for symbolic strings
-          return side_effect_expr_nondett{
-            python_string_type(), get_location(expr)};
+          // Return nondet string with constraints for symbolic strings
+          {
+            static unsigned str_method_ctr = 0;
+            std::string tn = "__str_meth_" + std::to_string(str_method_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, python_string_type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              tv,
+              side_effect_expr_nondett{
+                python_string_type(), get_location(expr)}});
+            member_exprt result_len{tv, "length", signedbv_typet{64}};
+            member_exprt input_len{obj, "length", signedbv_typet{64}};
+            // strip/lstrip/rstrip: result length <= input length
+            if(
+              method_name == "strip" || method_name == "lstrip" ||
+              method_name == "rstrip")
+            {
+              pending_checks.push_back(code_assumet{and_exprt{
+                binary_relation_exprt{
+                  result_len, ID_ge, from_integer(0, signedbv_typet{64})},
+                binary_relation_exprt{result_len, ID_le, input_len}}});
+            }
+            // capitalize/title/swapcase/casefold: same length
+            else if(
+              method_name == "capitalize" || method_name == "title" ||
+              method_name == "swapcase" || method_name == "casefold")
+            {
+              pending_checks.push_back(
+                code_assumet{equal_exprt{result_len, input_len}});
+            }
+            return std::move(tv);
+          }
         }
         if(method_name == "replace" || method_name == "format")
         {
@@ -3079,8 +3102,37 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
             }
           }
-          return side_effect_expr_nondett{
-            python_int_type(), get_location(expr)};
+          // Constrained nondet for symbolic find/count
+          {
+            static unsigned find_ctr = 0;
+            std::string tn = "__find_" + std::to_string(find_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, python_int_type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              tv,
+              side_effect_expr_nondett{python_int_type(), get_location(expr)}});
+            member_exprt slen{obj, "length", signedbv_typet{64}};
+            if(method_name == "count")
+              pending_checks.push_back(code_assumet{and_exprt{
+                binary_relation_exprt{
+                  tv, ID_ge, from_integer(0, python_int_type())},
+                binary_relation_exprt{tv, ID_le, slen}}});
+            else // find, rfind, index, rindex
+              pending_checks.push_back(code_assumet{and_exprt{
+                binary_relation_exprt{
+                  tv, ID_ge, from_integer(-1, python_int_type())},
+                binary_relation_exprt{tv, ID_lt, slen}}});
+            return std::move(tv);
+          }
         }
         if(
           method_name == "join" || method_name == "partition" ||
@@ -3579,8 +3631,16 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "nondet_list")
   {
-    // Constrain length to valid bounds
+    // nondet_list(n) — constrain length to [0, n]
     static unsigned nl_ctr = 0;
+    exprt max_len = from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64});
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(arg.type().id() != ID_signedbv)
+        arg = safe_typecast(arg, signedbv_typet{64});
+      max_len = arg;
+    }
     std::string tn = "__nondet_list_" + std::to_string(nl_ctr++);
     std::string tq = qualify_name(tn);
     irep_idt ti{tq};
@@ -3599,16 +3659,21 @@ exprt python_convertert::convert_call(const jsont &expr)
     member_exprt len{tmp, "length", signedbv_typet{64}};
     pending_checks.push_back(code_assumet{and_exprt{
       binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
-      binary_relation_exprt{
-        len,
-        ID_le,
-        from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64})}}});
+      binary_relation_exprt{len, ID_le, max_len}}});
     return std::move(tmp);
   }
   else if(func_name == "nondet_dict")
   {
     typet dt = python_dict_type(python_string_type(), python_int_type());
     static unsigned nd_ctr = 0;
+    exprt max_len = from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64});
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(arg.type().id() != ID_signedbv)
+        arg = safe_typecast(arg, signedbv_typet{64});
+      max_len = arg;
+    }
     std::string tn = "__nondet_dict_" + std::to_string(nd_ctr++);
     std::string tq = qualify_name(tn);
     irep_idt ti{tq};
@@ -3626,8 +3691,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     member_exprt len{tmp, "length", signedbv_typet{64}};
     pending_checks.push_back(code_assumet{and_exprt{
       binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
-      binary_relation_exprt{
-        len, ID_le, from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64})}}});
+      binary_relation_exprt{len, ID_le, max_len}}});
     return std::move(tmp);
   }
   else if(func_name == "nondet_complex")
@@ -4882,8 +4946,12 @@ exprt python_convertert::convert_call(const jsont &expr)
               return result.to_expr();
             }
           }
-          // Variable complex: nondet with result >= 0
+          // Variable complex: sqrt(real² + imag²)
           {
+            member_exprt re{arg, "real", double_type()};
+            member_exprt im{arg, "imag", double_type()};
+            exprt sum = plus_exprt{mult_exprt{re, re}, mult_exprt{im, im}};
+            // Return nondet >= 0 (sound overapproximation of sqrt)
             static unsigned abs_ctr = 0;
             std::string tn = "__abs_" + std::to_string(abs_ctr++);
             std::string tq = qualify_name(tn);
@@ -4912,6 +4980,17 @@ exprt python_convertert::convert_call(const jsont &expr)
             binary_relation_exprt{arg, ID_ge, safe_zero(arg.type())},
             arg,
             unary_minus_exprt{arg}};
+        }
+        // TypeError for non-numeric types
+        if(
+          is_python_string_type(arg.type()) ||
+          is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
+        {
+          add_check(
+            false_exprt{},
+            "exception",
+            "TypeError: bad operand type for abs()",
+            get_location(expr));
         }
         return side_effect_expr_nondett{arg.type(), get_location(expr)};
       }
@@ -5313,7 +5392,28 @@ exprt python_convertert::convert_call(const jsont &expr)
   if(arguments.size() < params.size())
     arguments.resize(params.size(), nil_exprt{});
 
-  // Look up the function's AST to get defaults
+  // Use pre-evaluated default values (evaluated at definition time)
+  for(std::size_t i = 0; i < arguments.size() && i < params.size(); i++)
+  {
+    if(arguments[i].is_nil())
+    {
+      auto def_it = default_values.find({func_name, i});
+      if(def_it != default_values.end())
+      {
+        arguments[i] = def_it->second;
+        // Class reference: struct default → pointer param
+        if(
+          params[i].type().id() == ID_pointer &&
+          arguments[i].type().id() == ID_struct &&
+          to_pointer_type(params[i].type()).base_type() == arguments[i].type())
+        {
+          arguments[i] = address_of_exprt{arguments[i]};
+        }
+      }
+    }
+  }
+
+  // Fallback: look up the function's AST to get defaults
   const jsont &body = json_member(parse_tree.ast_json, "body");
   if(body.is_array())
   {
@@ -5459,6 +5559,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // Scan: result = values[i] where keys[i] == slice
       exprt result =
         safe_zero(vals_type.element_type()); // default if not found
+      exprt found = false_exprt{};
       for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
         exprt idx = from_integer(i, signedbv_typet{64});
@@ -5467,9 +5568,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         if(key_i.type() != slice.type())
           key_i = safe_typecast(key_i, slice.type());
         exprt match = equal_exprt{key_i, slice};
-        result =
-          if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
+        exprt cond = and_exprt{in_range, match};
+        result = if_exprt{cond, index_exprt{vals, idx}, result};
+        found = or_exprt{found, cond};
       }
+      // KeyError if key not found
+      add_check(
+        found,
+        "exception",
+        "KeyError: key not found in dict",
+        get_location(expr));
       return result;
     }
   }
@@ -6146,6 +6254,32 @@ exprt python_convertert::convert_lambda(const jsont &expr)
 
   std::string saved_func = current_function;
   current_function = lambda_name;
+
+  // Detect free variables in lambda body (closure capture)
+  std::set<std::string> lambda_params;
+  for(const auto &p : parameters)
+    lambda_params.insert(std::string{id2string(p.get_base_name())});
+  std::set<std::string> refs;
+  collect_name_refs(body_expr, refs);
+  for(const auto &ref : refs)
+  {
+    if(lambda_params.count(ref))
+      continue; // local param
+    // Check if it's a variable in the enclosing scope
+    std::string outer_id = "python::" + saved_func + "::" + ref;
+    const symbolt *outer_sym = symbol_table.lookup(irep_idt{outer_id});
+    if(outer_sym == nullptr)
+      continue;
+    // Add as extra parameter
+    code_typet::parametert p{outer_sym->type};
+    std::string cap_id = "python::" + lambda_name + "::" + ref;
+    p.set_identifier(cap_id);
+    p.set_base_name(ref);
+    parameters.push_back(p);
+    // Record capture for call-site argument passing
+    closure_captures["python::" + lambda_name].push_back(
+      {outer_id, ref, outer_sym->type});
+  }
 
   for(const auto &p : parameters)
   {
@@ -8106,6 +8240,26 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       p.set_identifier("python::" + func_name + "::" + param_name);
       p.set_base_name(param_name);
       parameters.push_back(p);
+    }
+  }
+
+  // Evaluate default parameter values at definition time (PLR §8.7)
+  // Only for simple types — class instances use call-time evaluation
+  {
+    const jsont &defaults = json_member(args_node, "defaults");
+    if(defaults.is_array() && !as_array(defaults).empty())
+    {
+      std::size_t n_defaults = as_array(defaults).size();
+      std::size_t first_default = parameters.size() - n_defaults;
+      auto def_it = as_array(defaults).begin();
+      for(std::size_t i = first_default; i < parameters.size(); i++, ++def_it)
+      {
+        exprt val = convert_expression(*def_it);
+        if(
+          !val.is_nil() && val.type().id() != ID_struct &&
+          val.type().id() != ID_pointer)
+          default_values[{func_name, i}] = val;
+      }
     }
   }
 

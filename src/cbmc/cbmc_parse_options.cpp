@@ -170,6 +170,17 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option(
       "python-max-list-length", cmdline.get_value("python-max-list-length"));
 
+  // PLR §3.2: Python integers have arbitrary precision — no overflow.
+  // Disable signed overflow checks for Python source files.
+  for(const auto &arg : cmdline.args)
+  {
+    if(arg.size() >= 3 && arg.substr(arg.size() - 3) == ".py")
+    {
+      options.set_option("signed-overflow-check", false);
+      break;
+    }
+  }
+
   if(cmdline.isset("cover") && cmdline.isset("unwinding-assertions"))
   {
     log.error()
