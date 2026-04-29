@@ -839,10 +839,61 @@ exprt python_convertert::convert_constant(const jsont &expr)
     }
 
     // Detect complex number literals (e.g., "2j", "(1+2j)")
-    if(!str_val.empty() && (str_val.back() == 'j' || str_val.back() == ')'))
+    if(!str_val.empty() && str_val.back() == 'j')
     {
-      // Model complex as nondet float (simplified)
-      return side_effect_expr_nondett{double_type(), get_location(expr)};
+      // Parse imaginary part: "2j" → imag=2.0, real=0.0
+      std::string imag_str = str_val.substr(0, str_val.size() - 1);
+      double imag_val = imag_str.empty() ? 1.0 : std::stod(imag_str);
+      ieee_floatt real_f{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      real_f.from_double(0.0);
+      ieee_floatt imag_f{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      imag_f.from_double(imag_val);
+      struct_typet::componentst comps;
+      comps.push_back(struct_typet::componentt{"real", double_type()});
+      comps.push_back(struct_typet::componentt{"imag", double_type()});
+      struct_typet ct{comps};
+      ct.set_tag("python_complex");
+      return struct_exprt{{real_f.to_expr(), imag_f.to_expr()}, ct};
+    }
+    if(str_val.size() >= 4 && str_val.front() == '(' && str_val.back() == ')')
+    {
+      // "(1+2j)" format — parse as complex
+      std::string inner = str_val.substr(1, str_val.size() - 2);
+      if(!inner.empty() && inner.back() == 'j')
+      {
+        inner.pop_back(); // remove 'j'
+        double real_val = 0.0, imag_val = 0.0;
+        // Find the last + or - that separates real and imag
+        size_t sep = inner.rfind('+');
+        if(sep == std::string::npos || sep == 0)
+          sep = inner.rfind('-');
+        if(sep != std::string::npos && sep > 0)
+        {
+          real_val = std::stod(inner.substr(0, sep));
+          std::string imag_s = inner.substr(sep);
+          imag_val = imag_s.empty() ? 1.0 : std::stod(imag_s);
+        }
+        else
+          imag_val = inner.empty() ? 1.0 : std::stod(inner);
+        ieee_floatt rf{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        rf.from_double(real_val);
+        ieee_floatt imf{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        imf.from_double(imag_val);
+        struct_typet::componentst comps;
+        comps.push_back(struct_typet::componentt{"real", double_type()});
+        comps.push_back(struct_typet::componentt{"imag", double_type()});
+        struct_typet ct{comps};
+        ct.set_tag("python_complex");
+        return struct_exprt{{rf.to_expr(), imf.to_expr()}, ct};
+      }
     }
 
     // String literal → python_str struct { length, data[] }
