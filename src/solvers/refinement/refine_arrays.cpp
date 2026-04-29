@@ -203,7 +203,7 @@ void bv_refinementt::arrays_overapproximated()
   {
     if(entry.simplified == false_exprt())
     {
-      prop.l_set_to_true(convert(entry.constraint));
+      prop.l_set_to_true(convert(simplify_expr(entry.constraint, ns)));
       nb_active++;
       lazy_array_constraints.erase(entry.list_it);
       if(!lazy_selects.empty())
@@ -223,12 +223,14 @@ void bv_refinementt::arrays_overapproximated()
   unsigned nb_ackermann = 0;
   for(const auto &v : ackermann_violations)
   {
-    prop.l_set_to_true(convert(implies_exprt{
-      equal_exprt{
-        v.idx1, typecast_exprt::conditional_cast(v.idx2, v.idx1.type())},
-      equal_exprt{
-        index_exprt{v.arr, v.idx1, v.element_type},
-        index_exprt{v.arr, v.idx2, v.element_type}}}));
+    prop.l_set_to_true(convert(simplify_expr(
+      implies_exprt{
+        equal_exprt{
+          v.idx1, typecast_exprt::conditional_cast(v.idx2, v.idx1.type())},
+        equal_exprt{
+          index_exprt{v.arr, v.idx1, v.element_type},
+          index_exprt{v.arr, v.idx2, v.element_type}}},
+      ns)));
     nb_ackermann++;
     if(lazy_selects.empty() && nb_ackermann >= MAX_ACTIVATIONS)
       break;

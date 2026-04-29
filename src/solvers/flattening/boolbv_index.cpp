@@ -152,9 +152,11 @@ bvt boolbvt::convert_index(const index_exprt &expr)
           while(arr.id() == ID_with)
           {
             const with_exprt &w = to_with_expr(arr);
-            const literalt idx_eq = convert(equal_exprt{
-              index,
-              typecast_exprt::conditional_cast(w.where(), index.type())});
+            const literalt idx_eq = convert(simplify_expr(
+              equal_exprt{
+                index,
+                typecast_exprt::conditional_cast(w.where(), index.type())},
+              ns));
 
             if(!idx_eq.is_constant())
             {
@@ -245,20 +247,27 @@ bvt boolbvt::convert_index(const index_exprt &expr)
               {
                 const with_exprt &iw = to_with_expr(w.new_value());
                 const literalt both = prop.land(
-                  convert(equal_exprt{
-                    outer_idx,
-                    typecast_exprt::conditional_cast(
-                      w.where(), outer_idx.type())}),
-                  convert(equal_exprt{
-                    inner_idx,
-                    typecast_exprt::conditional_cast(
-                      iw.where(), inner_idx.type())}));
+                  convert(simplify_expr(
+                    equal_exprt{
+                      outer_idx,
+                      typecast_exprt::conditional_cast(
+                        w.where(), outer_idx.type())},
+                    ns)),
+                  convert(simplify_expr(
+                    equal_exprt{
+                      inner_idx,
+                      typecast_exprt::conditional_cast(
+                        iw.where(), inner_idx.type())},
+                    ns)));
                 return bv_utils.select(
                   both, convert_bv(iw.new_value()), flatten_2d(w.old()));
               }
-              const literalt oeq = convert(equal_exprt{
-                outer_idx,
-                typecast_exprt::conditional_cast(w.where(), outer_idx.type())});
+              const literalt oeq = convert(simplify_expr(
+                equal_exprt{
+                  outer_idx,
+                  typecast_exprt::conditional_cast(
+                    w.where(), outer_idx.type())},
+                ns));
               return bv_utils.select(
                 oeq,
                 convert_bv(index_exprt{w.new_value(), inner_idx, expr.type()}),
@@ -293,9 +302,12 @@ bvt boolbvt::convert_index(const index_exprt &expr)
           bv_width.get_width_opt(expr.type()).has_value())
         {
           const with_exprt &with_expr = to_with_expr(array);
-          const literalt idx_eq = convert(equal_exprt{
-            index,
-            typecast_exprt::conditional_cast(with_expr.where(), index.type())});
+          const literalt idx_eq = convert(simplify_expr(
+            equal_exprt{
+              index,
+              typecast_exprt::conditional_cast(
+                with_expr.where(), index.type())},
+            ns));
           const bvt bv_val = convert_bv(with_expr.new_value());
           const bvt bv_old =
             convert_bv(index_exprt{with_expr.old(), index, expr.type()});
