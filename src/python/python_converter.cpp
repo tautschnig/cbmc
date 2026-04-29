@@ -922,19 +922,63 @@ exprt python_convertert::convert_constant(const jsont &expr)
     if(str_val.size() >= 3 && str_val[0] == 'b' && str_val[1] == '\'')
     {
       // Extract bytes content between b' and '
-      std::string bytes_content = str_val.substr(2, str_val.size() - 3);
+      std::string raw = str_val.substr(2, str_val.size() - 3);
+      // Parse escape sequences: \xNN, \n, \t, \r, \\, etc.
+      std::vector<unsigned char> bytes;
+      for(std::size_t i = 0; i < raw.size(); i++)
+      {
+        if(raw[i] == '\\' && i + 1 < raw.size())
+        {
+          char next = raw[i + 1];
+          if(next == 'x' && i + 3 < raw.size())
+          {
+            std::string hex = raw.substr(i + 2, 2);
+            bytes.push_back(
+              static_cast<unsigned char>(std::stoi(hex, nullptr, 16)));
+            i += 3;
+          }
+          else if(next == 'n')
+          {
+            bytes.push_back('\n');
+            i++;
+          }
+          else if(next == 't')
+          {
+            bytes.push_back('\t');
+            i++;
+          }
+          else if(next == 'r')
+          {
+            bytes.push_back('\r');
+            i++;
+          }
+          else if(next == '\\')
+          {
+            bytes.push_back('\\');
+            i++;
+          }
+          else if(next == '0')
+          {
+            bytes.push_back(0);
+            i++;
+          }
+          else
+            bytes.push_back(static_cast<unsigned char>(raw[i]));
+        }
+        else
+          bytes.push_back(static_cast<unsigned char>(raw[i]));
+      }
       // Model as list of integers
       typet lt = python_list_type(python_int_type());
       const auto &data_type =
         to_array_type(to_struct_type(lt).components()[1].type());
       exprt::operandst elems;
-      for(unsigned char c : bytes_content)
-        elems.push_back(from_integer(c, python_int_type()));
+      for(unsigned char b : bytes)
+        elems.push_back(from_integer(b, python_int_type()));
       while(elems.size() < PYTHON_MAX_LIST_LENGTH)
         elems.push_back(from_integer(0, python_int_type()));
       return struct_exprt{
-        {from_integer(
-           static_cast<long long>(bytes_content.size()), python_int_type()),
+        {from_integer(static_cast<long long>(bytes.size()), python_int_type()),
          array_exprt{std::move(elems), data_type}},
         lt};
     }
@@ -4117,6 +4161,15 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // Evaluate unary minus on constants
+      if(
+        arg.id() == ID_unary_minus && arg.operands().size() == 1 &&
+        arg.operands()[0].is_constant())
+      {
+        mp_integer v;
+        if(!to_integer(to_constant_expr(arg.operands()[0]), v))
+          arg = from_integer(-v, arg.type());
+      }
       if(arg.is_constant() && arg.type().id() == ID_signedbv)
       {
         mp_integer val;
@@ -4273,6 +4326,27 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt arg = convert_expression(*as_array(args).begin());
       if(is_python_string_type(arg.type()))
       {
+        // For constant strings, compute Unicode code point
+        auto sv = extract_string_value(arg);
+        if(sv.has_value() && !sv.value().empty())
+        {
+          const std::string &s = sv.value();
+          unsigned char c0 = static_cast<unsigned char>(s[0]);
+          long cp = c0;
+          if(c0 >= 0xC0 && c0 < 0xE0 && s.size() >= 2)
+            cp = ((c0 & 0x1F) << 6) | (static_cast<unsigned char>(s[1]) & 0x3F);
+          else if(c0 >= 0xE0 && c0 < 0xF0 && s.size() >= 3)
+            cp = ((c0 & 0x0F) << 12) |
+                 ((static_cast<unsigned char>(s[1]) & 0x3F) << 6) |
+                 (static_cast<unsigned char>(s[2]) & 0x3F);
+          else if(c0 >= 0xF0 && s.size() >= 4)
+            cp = ((c0 & 0x07) << 18) |
+                 ((static_cast<unsigned char>(s[1]) & 0x3F) << 12) |
+                 ((static_cast<unsigned char>(s[2]) & 0x3F) << 6) |
+                 (static_cast<unsigned char>(s[3]) & 0x3F);
+          return from_integer(cp, python_int_type());
+        }
+        // Symbolic: return first byte
         struct_typet str_type = python_string_type();
         const auto &data_type = to_array_type(str_type.components()[1].type());
         member_exprt data{arg, "data", data_type};
