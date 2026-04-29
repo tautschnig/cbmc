@@ -13,6 +13,7 @@
 
 #include "python_parse_tree.h"
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -39,6 +40,13 @@ public:
     unbounded_ints = v;
   }
 
+  /// Set module resolver for import handling
+  using module_resolver_t = std::function<const jsont *(const std::string &)>;
+  void set_module_resolver(module_resolver_t resolver)
+  {
+    module_resolver = std::move(resolver);
+  }
+
 private:
   symbol_table_baset &symbol_table;
   const python_parse_treet &parse_tree;
@@ -56,6 +64,12 @@ private:
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
+  module_resolver_t module_resolver;
+
+  /// Process an imported module's AST to register its definitions
+  void process_imported_module(
+    const std::string &module_name,
+    const jsont &module_ast);
 
   /// Map from class name to its struct type
   std::map<std::string, struct_typet> class_types;
