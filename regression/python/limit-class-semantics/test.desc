@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Class attribute vs instance attribute distinction: modifying
+Child.class_var should not affect Base.class_var. Our model copies
+the class struct, so modifications to the child's copy don't
+propagate correctly. Also: __class__ attribute, type() builtin,
+property decorators. Affects ~33 ESBMC tests.

@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Multi-level closure capture: inner() references x from outer() but
+our closure detection only captures from the immediate parent.
+Also covers: for-loop variable scoping (enumerate unpacking),
+comprehension variable leaking, and global/nonlocal declarations.
+Affects ~54 ESBMC tests.

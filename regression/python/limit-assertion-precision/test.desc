@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Assertion fails because function return values are nondet when the
+function body has already been converted but the call-site doesn't
+inline the result. Symbolic execution should handle this, but our
+model may lose precision through type mismatches or missing return
+value propagation. Affects ~289 ESBMC tests.

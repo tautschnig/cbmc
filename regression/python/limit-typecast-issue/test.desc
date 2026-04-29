@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Functions with untyped parameters return python_value_type (tagged
+union). When the caller assigns to a typed variable, the typecast
+from tagged union to the target type loses information or produces
+nondet. Fix: improve unwrap_value to handle more target types, or
+infer return type from call-site context. Affects ~29 ESBMC tests.

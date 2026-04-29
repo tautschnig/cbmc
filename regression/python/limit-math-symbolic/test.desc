@@ -1,0 +1,15 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Math functions with symbolic (non-constant) arguments return nondet
+with range constraints (sin in [-1,1]) matching CBMC's C frontend.
+Tests requiring exact values (sin(1.5708) ≈ 1.0) fail because the
+solver can find counterexamples within the constrained range.
+Fix would require a more precise math model or interval arithmetic.
+Affects ~81 ESBMC tests.
