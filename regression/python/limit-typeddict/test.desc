@@ -1,0 +1,15 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+TypedDict types are not recognized. TypedDict creates struct-like
+types via class syntax or function calls, but our converter treats
+them as regular classes without dict semantics. The variable p gets
+a class struct type instead of a dict type, so p["x"] fails.
+Fix: detect TypedDict in class bases or function calls, create a
+dict type with the specified fields, and handle subscript access.
