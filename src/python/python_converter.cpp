@@ -493,6 +493,15 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       return notequal_exprt{
         member_exprt{e, "length", signedbv_typet{64}},
         from_integer(0, signedbv_typet{64})};
+    // Complex truthiness: 0+0j is falsy
+    if(
+      e.type().id() == ID_struct &&
+      to_struct_type(e.type()).get_tag() == "python_complex")
+      return or_exprt{
+        notequal_exprt{
+          member_exprt{e, "real", double_type()}, safe_zero(double_type())},
+        notequal_exprt{
+          member_exprt{e, "imag", double_type()}, safe_zero(double_type())}};
     // Other structs (class instances) are always truthy
     return true_exprt{};
   }
@@ -4696,12 +4705,37 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt b = convert_expression(*it);
       a = safe_typecast(a, python_int_type());
       b = safe_typecast(b, python_int_type());
+      // Use float type if either arg is float
+      typet result_type = python_int_type();
+      if(a.type().id() == ID_floatbv || b.type().id() == ID_floatbv)
+      {
+        result_type = double_type();
+        a = safe_typecast(a, double_type());
+        b = safe_typecast(b, double_type());
+      }
       struct_typet::componentst comps;
-      comps.push_back(struct_typet::componentt{"_0", python_int_type()});
-      comps.push_back(struct_typet::componentt{"_1", python_int_type()});
+      comps.push_back(struct_typet::componentt{"_0", result_type});
+      comps.push_back(struct_typet::componentt{"_1", result_type});
       struct_typet tuple_type{comps};
       tuple_type.set_tag("python_tuple");
       // PLR §6.7: divmod uses floor division and Python modulo
+      if(result_type.id() == ID_floatbv)
+      {
+        // Float divmod: quotient = floor(a/b), remainder = a - quotient*b
+        // Use typecast to int for floor
+        exprt q_raw = div_exprt{a, b};
+        exprt q_int = typecast_exprt{q_raw, python_int_type()};
+        exprt q_float = typecast_exprt{q_int, double_type()};
+        // Adjust for negative: if q_raw < q_float, subtract 1
+        exprt floor_q = minus_exprt{
+          q_float,
+          if_exprt{
+            binary_relation_exprt{q_float, ID_gt, q_raw},
+            typecast_exprt{from_integer(1, python_int_type()), double_type()},
+            typecast_exprt{from_integer(0, python_int_type()), double_type()}}};
+        exprt py_mod = minus_exprt{a, mult_exprt{floor_q, b}};
+        return struct_exprt{{floor_q, py_mod}, tuple_type};
+      }
       exprt quotient = div_exprt{a, b};
       exprt remainder = mod_exprt{a, b};
       exprt has_remainder =
