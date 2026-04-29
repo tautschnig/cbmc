@@ -5724,12 +5724,14 @@ exprt python_convertert::convert_list(const jsont &expr)
   }
 
   typet elem_type = elements[0].type();
-  // Check for mixed types
+  // Check for mixed types — use tagged union for heterogeneous lists
+  bool is_heterogeneous = false;
   for(const auto &e : elements)
   {
     if(e.type() != elem_type)
     {
-      elem_type = python_int_type();
+      is_heterogeneous = true;
+      elem_type = python_value_type();
       break;
     }
   }
@@ -5741,7 +5743,9 @@ exprt python_convertert::convert_list(const jsont &expr)
   exprt::operandst data_elems;
   for(auto &e : elements)
   {
-    if(e.type() != elem_type)
+    if(is_heterogeneous)
+      e = wrap_value(e);
+    else if(e.type() != elem_type)
       e = typecast_exprt{e, elem_type};
     data_elems.push_back(e);
   }
@@ -9403,17 +9407,17 @@ bool python_convertert::convert()
                   {
                     // Infer element type from first constant
                     typet elem_type = python_int_type();
+                    bool mixed_types = false;
                     if(elts.is_array() && !as_array(elts).empty())
                     {
                       const jsont &first = *as_array(elts).begin();
                       const jsont &fv = json_member(first, "value");
-                      if(
-                        fv.is_string() && !fv.value.empty() &&
-                        fv.value[0] != 'b')
+                      bool first_is_str = fv.is_string() && !fv.value.empty() &&
+                                          fv.value[0] != 'b';
+                      bool first_is_num = fv.is_number();
+                      if(first_is_str)
                         elem_type = python_string_type();
-                      else if(fv.is_true() || fv.is_false())
-                        elem_type = bool_typet{};
-                      else if(fv.is_number())
+                      else if(first_is_num)
                       {
                         std::string vs = fv.value;
                         if(
@@ -9421,7 +9425,18 @@ bool python_convertert::convert()
                           vs.find('e') != std::string::npos)
                           elem_type = double_type();
                       }
+                      // Check all elements for consistency
+                      for(const auto &e : as_array(elts))
+                      {
+                        const jsont &ev = json_member(e, "value");
+                        bool is_str = ev.is_string() && !ev.value.empty() &&
+                                      ev.value[0] != 'b';
+                        if(first_is_str != is_str)
+                          mixed_types = true;
+                      }
                     }
+                    if(mixed_types)
+                      elem_type = python_value_type();
                     var_type = python_list_type(elem_type);
                   }
                   else
