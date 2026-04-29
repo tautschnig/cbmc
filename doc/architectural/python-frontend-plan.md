@@ -1566,3 +1566,135 @@ first element to `a`, remaining to `b` as a list.
 | Semantic simplifications | 6 | 1-2 weeks |
 | Unsupported features | 6 | 4-6 weeks |
 | **Total** | **27** | **~10-14 weeks** |
+
+
+## 10. Module Resolution and Keyword Arguments
+
+### 10.1 PYTHONPATH Module Resolution (DONE)
+
+Implemented in commit 2f3815aeac. The frontend reads `PYTHONPATH` from the
+environment and the source file's directory. When `import MODULE` is
+encountered, it searches for `MODULE/__init__.py` or `MODULE.py` in the
+search paths, parses the AST, and processes `FunctionDef`/`ClassDef`
+definitions. Unknown type annotations trigger on-demand sub-module
+resolution (e.g., `S3` → `boto3.S3`).
+
+### 10.2 Keyword Arguments (`**kwargs`) — Implementation Plan
+
+**Status:** Not implemented. All `**kwargs` parameters and keyword-only
+arguments are silently ignored.
+
+**Impact:** ~150+ ESBMC tests, all boto3 verification benchmarks.
+
+**Root cause:** The Python AST represents `**kwargs` as:
+- Definition: `args.kwarg = arg(arg='kwargs')` (the catch-all parameter)
+- Definition: `args.kwonlyargs = [arg(arg='key')]` (keyword-only params after `*`)
+- Call site: `keywords = [keyword(arg='Bucket', value=...)]`
+
+Our converter reads `args.args` (positional params) but ignores `args.kwarg`
+and `args.kwonlyargs`. At call sites, we match keywords to positional params
+by name but discard unmatched keywords.
+
+**Implementation plan (3 phases):**
+
+#### Phase 1: `**kwargs` as dict parameter (~30 lines)
+
+In `convert_function_def`, check `args.kwarg`:
+```
+const jsont &kwarg = json_member(args_node, "kwarg");
+if(!kwarg.is_null()) {
+    std::string kw_name = json_string(json_member(kwarg, "arg"));
+    // Create a dict parameter: kwargs: dict[str, Any]
+    typet kw_type = python_dict_type(python_string_type(), python_int_type());
+    code_typet::parametert p{kw_type};
+    p.set_identifier("python::" + func_name + "::" + kw_name);
+    p.set_base_name(kw_name);
+    parameters.push_back(p);
+}
+```
+
+Inside the function body, `kwargs["Key"]` is already handled by the dict
+subscript handler — it scans the keys array for a match.
+
+#### Phase 2: Pack keyword arguments into dict at call site (~40 lines)
+
+In `convert_call`, after matching keywords to positional params, collect
+unmatched keywords and pack them into a dict:
+```
+// Collect unmatched keywords
+for(const auto &kw : keywords) {
+    if(!matched_to_positional) {
+        // Add to kwargs dict: keys[i] = "Key", values[i] = value
+    }
+}
+// Build dict struct and pass as the kwargs parameter
+```
+
+The dict is built as a `struct_exprt` with the keyword names as constant
+string keys and the values as the corresponding expressions.
+
+#### Phase 3: Keyword-only arguments (`*` separator) (~15 lines)
+
+In `convert_function_def`, also process `args.kwonlyargs`:
+```
+const jsont &kwonly = json_member(args_node, "kwonlyargs");
+// These are regular parameters that can only be passed by name.
+// Add them to the parameter list; the call-site keyword matching
+// already handles them.
+```
+
+**Testing:** The `delete_s3_object.py` benchmark with boto3 stubs is the
+primary test case. The stub's `delete_object(self, **kwargs)` receives
+`Bucket=bucket_name, Key=object_key` as a dict, and the assertion
+`len(kwargs["Key"]) >= 1` should pass.
+
+### 10.3 TypedDict Type Annotations — Root Cause Analysis
+
+**Status:** TypedDict types default to `int`.
+
+**Root cause:** TypedDict types are created via function calls, not class
+statements:
+```python
+DeleteObjectRequest = TypedDict('DeleteObjectRequest', {
+    'Bucket': Required[str],
+    'Key': Required[str],
+})
+```
+
+This appears in the AST as an `Assign` node with a `Call` RHS, not as a
+`ClassDef`. Our `process_imported_module` only processes `ClassDef` and
+`FunctionDef` nodes, so TypedDict definitions are silently skipped.
+
+**Impact:** Type annotations like `Unpack[DeleteObjectRequest]` resolve
+`DeleteObjectRequest` to `int` (default), losing the struct information.
+This means `kwargs["Key"]` returns `int` instead of `str`.
+
+**Fix plan:** In `process_imported_module`, detect `Assign` nodes where
+the RHS is `Call(func=Name(id='TypedDict'), ...)`. Extract the field names
+and types from the dict literal argument. Create a struct type with those
+fields. Register it in `class_types` so type annotations can reference it.
+
+For the `Unpack[T]` annotation, treat it as equivalent to `T` (the
+TypedDict struct). When `**kwargs: Unpack[DeleteObjectRequest]` is
+encountered, the kwargs dict has the TypedDict's fields as its schema.
+
+**Effort:** ~50 lines for TypedDict parsing, ~20 lines for Unpack handling.
+
+### 10.4 Current KNOWNBUG Inventory
+
+After all fixes in this session, the KNOWNBUG tests are:
+
+| Test | Category | Impact | Status |
+|------|----------|--------|--------|
+| limit-math-symbolic | Math with symbolic args | 81 | Fundamental limitation |
+| limit-unknown-func | Higher-order functions | 73 | Needs function pointers |
+| limit-typecast-issue | Untyped param returns | 29 | Partial fix (float only) |
+| limit-iteration | Tuple unpacking in for | 19 | Needs for-loop refactor |
+| limit-exception-flow | Exception in called func | 19 | Needs div-by-zero model |
+| limit-unknown-method | join(), dict.items() | 38 | Needs method impl |
+| limit-lambda-higher-order | Lambda from function | 5 | Needs value capture |
+| limit-loop-unsound | String list iteration | 42 | Timeout issue |
+| limit-generator-infinite | Lazy generators | — | Weeks of work |
+| limit-async-concurrent | Async/threads | — | Weeks of work |
+| limit-overflow-nondet-arith | Unbounded ints | — | Needs --z3 |
+| math-symbolic-arg | sin²+cos²≠1 | — | Fundamental limitation |
