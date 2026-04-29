@@ -14,6 +14,7 @@
 #include "python_parse_tree.h"
 
 #include <map>
+#include <optional>
 #include <set>
 
 /// Converts a Python JSON AST into CBMC's symbol table representation.
@@ -65,6 +66,9 @@ private:
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
+  // Track constant string values for string method evaluation
+  std::map<irep_idt, std::string> string_constants;
+  std::optional<std::string> extract_string_value(const exprt &e) const;
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
