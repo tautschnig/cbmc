@@ -1909,7 +1909,19 @@ exprt python_convertert::convert_compare(const jsont &expr)
       current_left.type() != right.type() && op != "In" && op != "NotIn" &&
       op != "Is" && op != "IsNot")
     {
-      if(current_left.type().id() == ID_floatbv)
+      // PLR §6.10.1: string vs numeric → never equal
+      if(
+        (is_python_string_type(current_left.type()) !=
+         is_python_string_type(right.type())) &&
+        !is_python_value_type(current_left.type()) &&
+        !is_python_value_type(right.type()))
+      {
+        if(is_python_string_type(current_left.type()))
+          right = build_string_struct("__NEVER_EQUAL__");
+        else
+          current_left = build_string_struct("__NEVER_EQUAL__");
+      }
+      else if(current_left.type().id() == ID_floatbv)
       {
         // If right is an int constant, convert it exactly to float
         if(right.is_constant() && right.type().id() == ID_signedbv)
@@ -5273,7 +5285,9 @@ exprt python_convertert::convert_call(const jsont &expr)
     exprt arg = args.is_array() && !as_array(args).empty()
                   ? convert_expression(*as_array(args).begin())
                   : side_effect_expr_nondett{double_type(), get_location(expr)};
-    if(arg.type().id() != ID_floatbv)
+    if(
+      arg.type().id() != ID_floatbv && func_name != "factorial" &&
+      func_name != "comb")
     {
       // Convert constant ints to float constants for exact evaluation
       if(arg.is_constant() && arg.type().id() == ID_signedbv)
@@ -5369,47 +5383,85 @@ exprt python_convertert::convert_call(const jsont &expr)
     // Constant evaluation for trig/log/exp/sqrt
     if(arg.is_constant())
     {
-      ieee_floatt fv{
-        ieee_float_spect::double_precision(),
-        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      fv.from_expr(to_constant_expr(arg));
-      double val = std::stod(fv.to_ansi_c_string());
-      double res = 0;
-      bool computed = true;
-      if(func_name == "sqrt" && val >= 0)
-        res = std::sqrt(val);
-      else if(func_name == "sin")
-        res = std::sin(val);
-      else if(func_name == "cos")
-        res = std::cos(val);
-      else if(func_name == "tan")
-        res = std::tan(val);
-      else if(func_name == "asin" && val >= -1 && val <= 1)
-        res = std::asin(val);
-      else if(func_name == "acos" && val >= -1 && val <= 1)
-        res = std::acos(val);
-      else if(func_name == "atan")
-        res = std::atan(val);
-      else if(func_name == "log" && val > 0)
-        res = std::log(val);
-      else if(func_name == "log2" && val > 0)
-        res = std::log2(val);
-      else if(func_name == "log10" && val > 0)
-        res = std::log10(val);
-      else if(func_name == "exp")
-        res = std::exp(val);
-      else if(func_name == "exp2")
-        res = std::exp2(val);
-      else
-        computed = false;
-      if(computed)
+      // factorial and comb: integer args, integer result
+      if(func_name == "factorial" && arg.type().id() == ID_signedbv)
       {
-        ieee_floatt result{
+        mp_integer n;
+        if(!to_integer(to_constant_expr(arg), n) && n >= 0 && n <= 20)
+        {
+          mp_integer result{1};
+          for(mp_integer i = 2; i <= n; ++i)
+            result *= i;
+          return from_integer(result, python_int_type());
+        }
+      }
+      if(
+        func_name == "comb" && arg.type().id() == ID_signedbv &&
+        args.is_array() && as_array(args).size() >= 2)
+      {
+        exprt arg2 = convert_expression(*std::next(as_array(args).begin()));
+        if(arg2.is_constant() && arg2.type().id() == ID_signedbv)
+        {
+          mp_integer n, k;
+          if(
+            !to_integer(to_constant_expr(arg), n) &&
+            !to_integer(to_constant_expr(arg2), k) && n >= 0 && k >= 0 &&
+            k <= n && n <= 30)
+          {
+            // C(n, k) = n! / (k! * (n-k)!)
+            mp_integer result{1};
+            for(mp_integer i = 0; i < k; ++i)
+              result = result * (n - i) / (i + 1);
+            return from_integer(result, python_int_type());
+          }
+        }
+      }
+
+      // Float functions
+      if(arg.type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
           ieee_float_spect::double_precision(),
           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        result.from_double(res);
-        return result.to_expr();
-      }
+        fv.from_expr(to_constant_expr(arg));
+        double val = std::stod(fv.to_ansi_c_string());
+        double res = 0;
+        bool computed = true;
+        if(func_name == "sqrt" && val >= 0)
+          res = std::sqrt(val);
+        else if(func_name == "sin")
+          res = std::sin(val);
+        else if(func_name == "cos")
+          res = std::cos(val);
+        else if(func_name == "tan")
+          res = std::tan(val);
+        else if(func_name == "asin" && val >= -1 && val <= 1)
+          res = std::asin(val);
+        else if(func_name == "acos" && val >= -1 && val <= 1)
+          res = std::acos(val);
+        else if(func_name == "atan")
+          res = std::atan(val);
+        else if(func_name == "log" && val > 0)
+          res = std::log(val);
+        else if(func_name == "log2" && val > 0)
+          res = std::log2(val);
+        else if(func_name == "log10" && val > 0)
+          res = std::log10(val);
+        else if(func_name == "exp")
+          res = std::exp(val);
+        else if(func_name == "exp2")
+          res = std::exp2(val);
+        else
+          computed = false;
+        if(computed)
+        {
+          ieee_floatt result{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          result.from_double(res);
+          return result.to_expr();
+        }
+      } // end if(arg.type().id() == ID_floatbv)
     }
 
     // Nondet-with-constraints models (matching C frontend math.c pattern)
