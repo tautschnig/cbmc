@@ -177,6 +177,7 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     if(arg.size() >= 3 && arg.substr(arg.size() - 3) == ".py")
     {
       options.set_option("signed-overflow-check", false);
+      options.set_option("div-by-zero-check", false);
       break;
     }
   }

@@ -1446,11 +1446,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
       return from_integer(0, python_int_type());
     }
-    add_check(
-      notequal_exprt{right, safe_zero(right.type())},
-      "division-by-zero",
-      "division by zero",
-      get_location(expr));
+    // Python handles division by zero as ZeroDivisionError exception,
+    // not as a property check. Set the exception flag instead.
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
@@ -1546,12 +1543,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
       return from_integer(0, python_int_type());
     }
-    add_check(
-      notequal_exprt{right, safe_zero(right.type())},
-      "division-by-zero",
-      "division by zero in modulo",
-      get_location(expr));
-    // Also set Python exception for try/except handling
+    // Python handles modulo by zero as ZeroDivisionError exception
     {
       const symbolt *exc_sym =
         symbol_table.lookup("python::__exception_active");
@@ -7205,6 +7197,53 @@ codet python_convertert::convert_assign(const jsont &stmt)
         auto it = lambda_returning_functions.find(called);
         if(it != lambda_returning_functions.end())
         {
+          code_blockt lam_block;
+          // Bind call arguments to closure captures
+          const jsont &call_args =
+            json_member(json_member(stmt, "value"), "args");
+          if(call_args.is_array())
+          {
+            irep_idt fid{"python::" + called};
+            const symbolt *fsym = symbol_table.lookup(fid);
+            if(fsym != nullptr && fsym->type.id() == ID_code)
+            {
+              const auto &fp = to_code_type(fsym->type).parameters();
+              auto ai = as_array(call_args).begin();
+              for(std::size_t i = 0;
+                  i < fp.size() && ai != as_array(call_args).end();
+                  i++, ++ai)
+              {
+                exprt av = convert_expression(*ai);
+                std::string pid = id2string(fp[i].get_identifier());
+                auto ci = closure_captures.find(id2string(it->second));
+                if(ci != closure_captures.end())
+                {
+                  for(auto &cap : ci->second)
+                  {
+                    if(std::get<0>(cap) == pid)
+                    {
+                      static unsigned lb = 0;
+                      std::string tn = "__lam_bind_" + std::to_string(lb++);
+                      std::string tq = qualify_name(tn);
+                      irep_idt ti{tq};
+                      if(symbol_table.lookup(ti) == nullptr)
+                      {
+                        symbolt ts{ti, av.type(), "python"};
+                        ts.base_name = tn;
+                        ts.is_lvalue = true;
+                        ts.is_state_var = true;
+                        ts.is_static_lifetime = true;
+                        symbol_table.add(ts);
+                      }
+                      lam_block.add(code_frontend_assignt{
+                        symbol_table.lookup_ref(ti).symbol_expr(), av});
+                      std::get<0>(cap) = id2string(ti);
+                    }
+                  }
+                }
+              }
+            }
+          }
           for(const auto &target : as_array(targets))
           {
             if(is_node_type(target, "Name"))
@@ -7213,7 +7252,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
               function_aliases[qualify_name(var_name)] = it->second;
             }
           }
-          return code_skipt{};
+          if(lam_block.statements().empty())
+            return code_skipt{};
+          return std::move(lam_block);
         }
       }
     }
@@ -8471,6 +8512,17 @@ codet python_convertert::convert_return(const jsont &stmt)
       ret_val.type() != to_code_type(func_sym->type).return_type())
     {
       typet ret_type = to_code_type(func_sym->type).return_type();
+
+      // Track functions that return lambdas (before type update)
+      if(
+        ret_val.id() == ID_symbol && ret_val.type().id() == ID_code &&
+        !current_function.empty())
+      {
+        lambda_returning_functions[current_function] =
+          to_symbol_expr(ret_val).get_identifier();
+        ret_val = from_integer(0, python_int_type());
+      }
+
       // If declared type is int (default) but actual return is float,
       // update function type (avoids truncation). Only for scalar types.
       if(
@@ -8495,17 +8547,6 @@ codet python_convertert::convert_return(const jsont &stmt)
           ret_val = safe_typecast(ret_val, ret_type);
       }
     }
-  }
-
-  // Track functions that return lambdas
-  if(
-    ret_val.id() == ID_symbol && ret_val.type().id() == ID_code &&
-    !current_function.empty())
-  {
-    lambda_returning_functions[current_function] =
-      to_symbol_expr(ret_val).get_identifier();
-    // Return 0 as placeholder — the caller will use the alias
-    ret_val = from_integer(0, python_int_type());
   }
 
   code_frontend_returnt ret{ret_val};
