@@ -1152,6 +1152,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(is_python_value_type(right.type()))
     right = unwrap_value(right, left.type());
 
+  // Guard: if types are incompatible after unwrapping, cast to match
+  if(
+    left.type() != right.type() && op == "Add" &&
+    (is_python_string_type(left.type()) ||
+     is_python_string_type(right.type())) &&
+    !(is_python_string_type(left.type()) &&
+      is_python_string_type(right.type())))
+  {
+    // String + non-string: return nondet string (type error in Python)
+    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+  }
+
   // PLR §6.7: String repetition: "ab" * 3 → "ababab"
   if(
     op == "Mult" &&
@@ -1391,18 +1403,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
     // C division truncates toward zero. Adjust for negative results:
     // floor_div(a, b) = a/b - (1 if (a%b != 0 and sign(a) != sign(b)) else 0)
-    exprt quotient = div_exprt{left, right};
-    exprt remainder = mod_exprt{left, right};
-    exprt has_remainder =
-      notequal_exprt{remainder, from_integer(0, left.type())};
-    exprt diff_sign = binary_relation_exprt{
-      bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
-    return minus_exprt{
-      quotient,
-      if_exprt{
-        and_exprt{has_remainder, diff_sign},
-        from_integer(1, left.type()),
-        from_integer(0, left.type())}};
+    if(left.type().id() == ID_signedbv || left.type().id() == ID_unsignedbv)
+    {
+      exprt quotient = div_exprt{left, right};
+      exprt remainder = mod_exprt{left, right};
+      exprt has_remainder =
+        notequal_exprt{remainder, from_integer(0, left.type())};
+      exprt diff_sign = binary_relation_exprt{
+        bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
+      return minus_exprt{
+        quotient,
+        if_exprt{
+          and_exprt{has_remainder, diff_sign},
+          from_integer(1, left.type()),
+          from_integer(0, left.type())}};
+    }
+    return div_exprt{left, right};
   }
   else if(op == "Mod")
   {
@@ -1469,14 +1485,17 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
     }
     // PLR §6.7: Python modulo: result has same sign as divisor
-    // C modulo: result has same sign as dividend
-    // Fix: if remainder != 0 and signs differ, add divisor
-    exprt c_mod = mod_exprt{left, right};
-    exprt has_rem = notequal_exprt{c_mod, from_integer(0, left.type())};
-    exprt diff_sign = binary_relation_exprt{
-      bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
-    return if_exprt{
-      and_exprt{has_rem, diff_sign}, plus_exprt{c_mod, right}, c_mod};
+    if(left.type().id() == ID_signedbv || left.type().id() == ID_unsignedbv)
+    {
+      exprt c_mod = mod_exprt{left, right};
+      exprt has_rem = notequal_exprt{c_mod, from_integer(0, left.type())};
+      exprt diff_sign = binary_relation_exprt{
+        bitxor_exprt{left, right}, ID_lt, from_integer(0, left.type())};
+      return if_exprt{
+        and_exprt{has_rem, diff_sign}, plus_exprt{c_mod, right}, c_mod};
+    }
+    // Non-integer types: return nondet
+    return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
   else if(op == "Pow")
   {
@@ -5590,6 +5609,15 @@ exprt python_convertert::convert_list(const jsont &expr)
   }
 
   typet elem_type = elements[0].type();
+  // Check for mixed types
+  for(const auto &e : elements)
+  {
+    if(e.type() != elem_type)
+    {
+      elem_type = python_int_type();
+      break;
+    }
+  }
   struct_typet list_type = python_list_type(elem_type);
   array_typet data_type{
     elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
