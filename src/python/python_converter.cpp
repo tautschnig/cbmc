@@ -739,9 +739,9 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   {
     // Try to resolve from imported modules
     // Only for names that look like class names (uppercase first letter)
-    // and haven't been resolved yet
+    // Only when processing the main source file (not imported modules)
     if(
-      module_resolver && !type_name.empty() &&
+      module_resolver && !processing_import && !type_name.empty() &&
       std::isupper(static_cast<unsigned char>(type_name[0])))
     {
       for(const auto &mod : imported_modules)
@@ -9977,6 +9977,8 @@ void python_convertert::process_imported_module(
   const std::string &module_name,
   const jsont &module_ast)
 {
+  bool saved_processing = processing_import;
+  processing_import = true;
   // Process the module's top-level definitions:
   // - FunctionDef → register as python::module_name::func_name
   // - ClassDef → register class type and constructor
@@ -10080,6 +10082,7 @@ void python_convertert::process_imported_module(
       // Sub-module imports are resolved on-demand when referenced
     }
   }
+  processing_import = saved_processing;
 }
 
 bool python_convertert::convert()
