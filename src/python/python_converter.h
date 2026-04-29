@@ -64,7 +64,10 @@ private:
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
-  bool processing_import = false; // true when inside process_imported_module
+  bool processing_import = false;
+  // Deferred method bodies for on-demand conversion
+  std::map<irep_idt, const jsont *>
+    deferred_method_bodies; // true when inside process_imported_module
   module_resolver_t module_resolver;
 
   /// Process an imported module's AST to register its definitions

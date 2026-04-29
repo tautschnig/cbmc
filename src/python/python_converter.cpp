@@ -9395,22 +9395,24 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         }
 
         // Convert method body
-        std::string saved_func = current_function;
-        current_function = class_name + "::" + method_name;
-
-        code_blockt method_body;
-        const jsont &method_body_json = json_member(item, "body");
-        if(method_body_json.is_array())
         {
-          for(const auto &s : as_array(method_body_json))
-            method_body.add(convert_statement(s));
+          std::string saved_func = current_function;
+          current_function = class_name + "::" + method_name;
+
+          code_blockt method_body;
+          const jsont &method_body_json = json_member(item, "body");
+          if(method_body_json.is_array())
+          {
+            for(const auto &s : as_array(method_body_json))
+              method_body.add(convert_statement(s));
+          }
+
+          current_function = saved_func;
+
+          symbolt *sym_ptr = symbol_table.get_writeable(func_id);
+          if(sym_ptr != nullptr)
+            sym_ptr->value = method_body;
         }
-
-        current_function = saved_func;
-
-        symbolt *sym_ptr = symbol_table.get_writeable(func_id);
-        if(sym_ptr != nullptr)
-          sym_ptr->value = method_body;
       }
     }
 
