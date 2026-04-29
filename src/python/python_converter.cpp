@@ -123,6 +123,62 @@ void python_convertert::add_check(
   pending_checks.push_back(std::move(assertion));
 }
 
+// Helper: extract std::string from a constant string struct expression
+// Also checks string_constants map for tracked symbol values
+std::optional<std::string>
+python_convertert::extract_string_value(const exprt &e) const
+{
+  // Direct struct literal
+  if(
+    e.id() == ID_struct && e.operands().size() >= 2 &&
+    e.operands()[0].is_constant())
+  {
+    mp_integer slen;
+    if(!to_integer(to_constant_expr(e.operands()[0]), slen))
+    {
+      std::string s;
+      for(mp_integer i = 0; i < slen; ++i)
+      {
+        auto idx = i.to_ulong();
+        if(idx >= e.operands()[1].operands().size())
+          return std::nullopt;
+        if(!e.operands()[1].operands()[idx].is_constant())
+          return std::nullopt;
+        mp_integer ch;
+        if(to_integer(to_constant_expr(e.operands()[1].operands()[idx]), ch))
+          return std::nullopt;
+        s += static_cast<char>(ch.to_ulong());
+      }
+      return s;
+    }
+  }
+  // Symbol — check tracked constants
+  if(e.id() == ID_symbol)
+  {
+    auto it = string_constants.find(to_symbol_expr(e).get_identifier());
+    if(it != string_constants.end())
+      return it->second;
+  }
+  return std::nullopt;
+}
+
+// Helper: build a string struct from a std::string
+static exprt build_string_struct(const std::string &s)
+{
+  struct_typet str_type = python_string_type();
+  const auto &data_type = to_array_type(str_type.components()[1].type());
+  exprt::operandst chars;
+  for(char c : s)
+    chars.push_back(
+      from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
+  while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+    chars.push_back(from_integer(0, unsignedbv_typet{8}));
+  return struct_exprt{
+    {from_integer(static_cast<long long>(s.size()), signedbv_typet{64}),
+     array_exprt{std::move(chars), data_type}},
+    str_type};
+}
+
 std::string python_convertert::qualify_name(const std::string &name) const
 {
   // If inside a function and the name is declared global, use module scope
@@ -2430,7 +2486,88 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "encode" || method_name == "decode" ||
           method_name == "removeprefix" || method_name == "removesuffix")
         {
-          // Return nondet string with same length
+          // Try exact computation for constant strings
+          auto str_val = extract_string_value(obj);
+          if(str_val.has_value())
+          {
+            std::string s = str_val.value();
+            std::string result;
+            if(method_name == "strip")
+            {
+              size_t start = s.find_first_not_of(" \t\n\r\f\v");
+              size_t end = s.find_last_not_of(" \t\n\r\f\v");
+              result = (start == std::string::npos)
+                         ? ""
+                         : s.substr(start, end - start + 1);
+            }
+            else if(method_name == "lstrip")
+            {
+              size_t start = s.find_first_not_of(" \t\n\r\f\v");
+              result = (start == std::string::npos) ? "" : s.substr(start);
+            }
+            else if(method_name == "rstrip")
+            {
+              size_t end = s.find_last_not_of(" \t\n\r\f\v");
+              result = (end == std::string::npos) ? "" : s.substr(0, end + 1);
+            }
+            else if(method_name == "capitalize")
+            {
+              result = s;
+              if(!result.empty())
+              {
+                result[0] = static_cast<char>(
+                  std::toupper(static_cast<unsigned char>(result[0])));
+                for(size_t i = 1; i < result.size(); i++)
+                  result[i] = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(result[i])));
+              }
+            }
+            else if(method_name == "title")
+            {
+              result = s;
+              bool next_upper = true;
+              for(size_t i = 0; i < result.size(); i++)
+              {
+                if(std::isalpha(static_cast<unsigned char>(result[i])))
+                {
+                  result[i] =
+                    next_upper
+                      ? static_cast<char>(
+                          std::toupper(static_cast<unsigned char>(result[i])))
+                      : static_cast<char>(
+                          std::tolower(static_cast<unsigned char>(result[i])));
+                  next_upper = false;
+                }
+                else
+                  next_upper = true;
+              }
+            }
+            else if(method_name == "swapcase")
+            {
+              result = s;
+              for(auto &c : result)
+              {
+                if(std::isupper(static_cast<unsigned char>(c)))
+                  c = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
+                else if(std::islower(static_cast<unsigned char>(c)))
+                  c = static_cast<char>(
+                    std::toupper(static_cast<unsigned char>(c)));
+              }
+            }
+            else if(method_name == "casefold")
+            {
+              result = s;
+              for(auto &c : result)
+                c = static_cast<char>(
+                  std::tolower(static_cast<unsigned char>(c)));
+            }
+            else
+              result = s; // fallback for unhandled methods
+            if(result.size() <= PYTHON_MAX_STRING_LENGTH)
+              return build_string_struct(result);
+          }
+          // Return nondet string for symbolic strings
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
@@ -2742,6 +2879,61 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "rfind" || method_name == "rindex" ||
           method_name == "count")
         {
+          auto str_val = extract_string_value(obj);
+          if(str_val.has_value() && args.is_array() && !as_array(args).empty())
+          {
+            exprt arg_expr = convert_expression(*as_array(args).begin());
+            auto arg_val = extract_string_value(arg_expr);
+            if(arg_val.has_value())
+            {
+              const std::string &s = str_val.value();
+              const std::string &sub = arg_val.value();
+              if(method_name == "find")
+              {
+                auto pos = s.find(sub);
+                return from_integer(
+                  pos == std::string::npos ? -1 : static_cast<long long>(pos),
+                  python_int_type());
+              }
+              if(method_name == "rfind")
+              {
+                auto pos = s.rfind(sub);
+                return from_integer(
+                  pos == std::string::npos ? -1 : static_cast<long long>(pos),
+                  python_int_type());
+              }
+              if(method_name == "index" || method_name == "rindex")
+              {
+                auto pos =
+                  (method_name == "index") ? s.find(sub) : s.rfind(sub);
+                if(pos == std::string::npos)
+                {
+                  // Raise ValueError
+                  const symbolt *exc_sym =
+                    symbol_table.lookup("python::__exception_active");
+                  if(exc_sym)
+                    pending_checks.push_back(code_frontend_assignt{
+                      exc_sym->symbol_expr(), true_exprt{}});
+                  return from_integer(-1, python_int_type());
+                }
+                return from_integer(
+                  static_cast<long long>(pos), python_int_type());
+              }
+              if(method_name == "count")
+              {
+                long long cnt = 0;
+                size_t pos = 0;
+                while((pos = s.find(sub, pos)) != std::string::npos)
+                {
+                  cnt++;
+                  pos += sub.empty() ? 1 : sub.size();
+                }
+                if(sub.empty())
+                  cnt = static_cast<long long>(s.size() + 1);
+                return from_integer(cnt, python_int_type());
+              }
+            }
+          }
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
@@ -6175,6 +6367,13 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
 
   code_frontend_assignt assign{sym2.symbol_expr(), rhs};
   assign.add_source_location() = loc;
+  // Track constant string values
+  if(is_python_string_type(rhs.type()))
+  {
+    auto sv = extract_string_value(rhs);
+    if(sv.has_value())
+      string_constants[symbol_id] = sv.value();
+  }
   return std::move(assign);
 }
 
@@ -6801,6 +7000,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
     code_frontend_assignt assign{sym.symbol_expr(), typed_rhs};
     assign.add_source_location() = loc;
+    // Track constant string values
+    if(is_python_string_type(typed_rhs.type()))
+    {
+      auto sv = extract_string_value(typed_rhs);
+      if(sv.has_value())
+        string_constants[sym.name] = sv.value();
+    }
     block.add(std::move(assign));
   }
 
