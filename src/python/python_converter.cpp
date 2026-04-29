@@ -5330,7 +5330,18 @@ exprt python_convertert::convert_call(const jsont &expr)
           for(std::size_t i = first_default; i < params.size(); i++, ++def_it)
           {
             if(arguments[i].is_nil())
+            {
               arguments[i] = convert_expression(*def_it);
+              // Class reference: struct default → pointer param
+              if(
+                params[i].type().id() == ID_pointer &&
+                arguments[i].type().id() == ID_struct &&
+                to_pointer_type(params[i].type()).base_type() ==
+                  arguments[i].type())
+              {
+                arguments[i] = address_of_exprt{arguments[i]};
+              }
+            }
           }
         }
         break;
@@ -5342,7 +5353,29 @@ exprt python_convertert::convert_call(const jsont &expr)
   for(std::size_t i = 0; i < arguments.size() && i < params.size(); i++)
   {
     if(arguments[i].is_nil())
-      arguments[i] = safe_zero(params[i].type());
+    {
+      if(params[i].type().id() == ID_pointer)
+      {
+        // For pointer params (class references), create a temp object
+        static unsigned ref_tmp_ctr = 0;
+        std::string tn = "__ref_tmp_" + std::to_string(ref_tmp_ctr++);
+        std::string tq = qualify_name(tn);
+        irep_idt ti{tq};
+        typet base = to_pointer_type(params[i].type()).base_type();
+        if(symbol_table.lookup(ti) == nullptr)
+        {
+          symbolt ts{ti, base, "python"};
+          ts.base_name = tn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        arguments[i] =
+          address_of_exprt{symbol_table.lookup_ref(ti).symbol_expr()};
+      }
+      else
+        arguments[i] = safe_zero(params[i].type());
+    }
   }
 
   // Remove trailing nil arguments beyond param count
@@ -5353,7 +5386,18 @@ exprt python_convertert::convert_call(const jsont &expr)
   for(std::size_t i = 0; i < arguments.size() && i < params.size(); i++)
   {
     if(!arguments[i].is_nil() && arguments[i].type() != params[i].type())
-      arguments[i] = safe_typecast(arguments[i], params[i].type());
+    {
+      // Class reference: struct arg → pointer param → take address_of
+      if(
+        params[i].type().id() == ID_pointer &&
+        arguments[i].type().id() == ID_struct &&
+        to_pointer_type(params[i].type()).base_type() == arguments[i].type())
+      {
+        arguments[i] = address_of_exprt{arguments[i]};
+      }
+      else
+        arguments[i] = safe_typecast(arguments[i], params[i].type());
+    }
   }
 
   side_effect_expr_function_callt call{
@@ -7980,7 +8024,15 @@ codet python_convertert::convert_return(const jsont &stmt)
         symbol_table.get_writeable_ref(func_id).type = new_type;
       }
       else
-        ret_val = safe_typecast(ret_val, ret_type);
+      {
+        // Dereference pointer returns for class reference params
+        if(
+          ret_val.type().id() == ID_pointer && ret_type.id() == ID_struct &&
+          to_pointer_type(ret_val.type()).base_type() == ret_type)
+          ret_val = dereference_exprt{ret_val};
+        else
+          ret_val = safe_typecast(ret_val, ret_type);
+      }
     }
   }
 
@@ -8030,6 +8082,17 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       typet param_type = annotation.is_null()
                            ? python_value_type()
                            : convert_type_annotation(annotation);
+
+      // PLR §4.2.1: Class instances are passed by reference.
+      // If param type is a class struct, use pointer type.
+      if(
+        param_type.id() == ID_struct &&
+        id2string(to_struct_type(param_type).get_tag()).find("python_class_") !=
+          std::string::npos &&
+        param_name != "self") // self is already handled
+      {
+        param_type = pointer_type(param_type);
+      }
 
       code_typet::parametert p{param_type};
       p.set_identifier("python::" + func_name + "::" + param_name);
