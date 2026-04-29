@@ -1,0 +1,11 @@
+KNOWNBUG
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+For loop over string list times out or produces incorrect results
+due to complex string struct element types. Affects ~42 ESBMC tests.

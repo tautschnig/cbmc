@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Dict access with missing key should raise KeyError but returns
+a default value. We don't check if the key exists before returning.
+Affects ~8 ESBMC tests.

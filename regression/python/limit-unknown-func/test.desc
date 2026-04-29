@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Higher-order functions: calling through a Callable parameter is not
+supported. The parameter f is a code-typed symbol but the call f(x)
+cannot resolve which function to invoke. Also covers unimplemented
+builtins (enumerate, zip, map, filter, sorted with key, etc.).
+Affects ~73 ESBMC tests.

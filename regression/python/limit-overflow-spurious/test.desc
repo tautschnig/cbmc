@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+--no-signed-overflow-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Python integers don't overflow, but CBMC generates signed overflow
+checks for all arithmetic. With 64-bit ints, small constants don't
+trigger this, but nondet values or large expressions do.
+Fix: pass --no-signed-overflow-check by default for Python, or use
+unsigned types. Affects ~10 ESBMC tests.
