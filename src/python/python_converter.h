@@ -69,6 +69,10 @@ private:
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
   std::map<std::pair<std::string, std::size_t>, exprt> default_values;
+  // Functions that return lambdas: maps function name to lambda id
+  std::map<std::string, irep_idt> lambda_returning_functions;
+  // Bound methods: maps variable name → (method_id, self_expr)
+  std::map<std::string, std::pair<irep_idt, exprt>> bound_methods;
   // Closure captures: maps qualified nested function name to list of
   // (outer_param_qualified_name, param_name, type) for captured variables
   std::
