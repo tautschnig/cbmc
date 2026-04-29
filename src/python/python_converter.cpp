@@ -327,6 +327,27 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::STR, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
+  // List: materialize into temp and store pointer
+  if(is_python_list_type(e.type()))
+  {
+    static unsigned list_wrap_counter = 0;
+    std::string tmp_name = "__list_val_" + std::to_string(list_wrap_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, e.type(), "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+    pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
+    return make_python_value(
+      python_type_tagt::LIST, address_of_exprt{tmp_sym.symbol_expr()});
+  }
+
   // For struct types (class instances, dicts, etc.) that don't fit
   // in the tagged union, return a nondet value. The struct can't be
   // stored in the int/float/bool/str/list fields.
@@ -3550,6 +3571,69 @@ exprt python_convertert::convert_call(const jsont &expr)
               arguments.push_back(convert_expression(arg));
           }
 
+          // Handle keyword arguments for method calls
+          const jsont &method_keywords = json_member(expr, "keywords");
+          if(method_keywords.is_array() && !as_array(method_keywords).empty())
+          {
+            const auto &mparams = method_type.parameters();
+            arguments.resize(mparams.size(), nil_exprt{});
+            std::vector<std::pair<std::string, exprt>> unmatched;
+            for(const auto &kw : as_array(method_keywords))
+            {
+              std::string kw_name = json_string(json_member(kw, "arg"));
+              exprt kw_val = convert_expression(json_member(kw, "value"));
+              bool matched = false;
+              for(std::size_t i = 0; i < mparams.size(); i++)
+              {
+                if(id2string(mparams[i].get_base_name()) == kw_name)
+                {
+                  arguments[i] = kw_val;
+                  matched = true;
+                  break;
+                }
+              }
+              if(!matched)
+                unmatched.push_back({kw_name, kw_val});
+            }
+            if(
+              !unmatched.empty() && !mparams.empty() &&
+              is_python_dict_type(mparams.back().type()))
+            {
+              std::size_t ki = mparams.size() - 1;
+              typet dt = mparams.back().type();
+              const auto &dst = to_struct_type(dt);
+              const auto &kat = to_array_type(dst.components()[1].type());
+              const auto &vat = to_array_type(dst.components()[2].type());
+              exprt::operandst ks, vs;
+              for(const auto &[n, v] : unmatched)
+              {
+                ks.push_back(build_string_struct(n));
+                if(is_python_value_type(vat.element_type()))
+                  vs.push_back(wrap_value(v));
+                else
+                  vs.push_back(safe_typecast(v, vat.element_type()));
+              }
+              while(ks.size() < PYTHON_MAX_DICT_SIZE)
+              {
+                ks.push_back(safe_zero(kat.element_type()));
+                vs.push_back(safe_zero(vat.element_type()));
+              }
+              arguments[ki] = struct_exprt{
+                {from_integer(
+                   static_cast<long long>(unmatched.size()),
+                   signedbv_typet{64}),
+                 array_exprt{std::move(ks), kat},
+                 array_exprt{std::move(vs), vat}},
+                dt};
+            }
+            for(std::size_t i = 0; i < arguments.size() && i < mparams.size();
+                i++)
+            {
+              if(arguments[i].is_nil())
+                arguments[i] = safe_zero(mparams[i].type());
+            }
+          }
+
           // Check for dynamic dispatch: if subclasses override this method,
           // dispatch based on __class_tag
           std::vector<std::pair<std::string, irep_idt>> dispatch_targets;
@@ -5858,6 +5942,19 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
     log.error() << "Tuple indexing requires a constant index" << messaget::eom;
     return nil_exprt{};
+  }
+
+  // Tagged union subscript: unwrap to list and index
+  if(is_python_value_type(value.type()))
+  {
+    exprt list_val = python_value_list(value);
+    if(is_python_list_type(list_val.type()))
+    {
+      const auto &list_st = to_struct_type(list_val.type());
+      const auto &data_type = to_array_type(list_st.components()[1].type());
+      member_exprt data{list_val, "data", data_type};
+      return index_exprt{data, slice};
+    }
   }
 
   log.error() << "Subscript not yet supported for this type" << messaget::eom;
@@ -9191,6 +9288,36 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           }
         }
 
+        // kwonlyargs and **kwargs for class methods
+        const jsont &kwonlyargs_m = json_member(args_node, "kwonlyargs");
+        if(kwonlyargs_m.is_array())
+        {
+          for(const auto &param : as_array(kwonlyargs_m))
+          {
+            std::string pn = json_string(json_member(param, "arg"));
+            const jsont &ann = json_member(param, "annotation");
+            typet pt =
+              ann.is_null() ? python_int_type() : convert_type_annotation(ann);
+            code_typet::parametert p{pt};
+            p.set_identifier(
+              "python::" + class_name + "::" + method_name + "::" + pn);
+            p.set_base_name(pn);
+            parameters.push_back(p);
+          }
+        }
+        const jsont &kwarg_m = json_member(args_node, "kwarg");
+        if(!kwarg_m.is_null())
+        {
+          std::string kw_name = json_string(json_member(kwarg_m, "arg"));
+          typet kw_type =
+            python_dict_type(python_string_type(), python_value_type());
+          code_typet::parametert p{kw_type};
+          p.set_identifier(
+            "python::" + class_name + "::" + method_name + "::" + kw_name);
+          p.set_base_name(kw_name);
+          parameters.push_back(p);
+        }
+
         const jsont &returns = json_member(item, "returns");
         typet return_type = returns.is_null()
                               ? python_int_type()
@@ -10092,64 +10219,154 @@ bool python_convertert::convert()
                 }
                 else if(is_node_type(val, "List"))
                 {
-                  // Only pre-register with int element type if elements
-                  // are simple constants. Skip for complex elements
-                  // (constructors, variables) — let pass 2 handle it.
                   const jsont &elts = json_member(val, "elts");
-                  bool simple = true;
-                  if(elts.is_array())
+                  // Check for list of tuples first
+                  if(
+                    elts.is_array() && !as_array(elts).empty() &&
+                    is_node_type(*as_array(elts).begin(), "Tuple"))
                   {
-                    for(const auto &e : as_array(elts))
+                    const jsont &first_elt = *as_array(elts).begin();
+                    const jsont &telts = json_member(first_elt, "elts");
+                    struct_typet::componentst comps;
+                    int tidx = 0;
+                    if(telts.is_array())
                     {
-                      if(!is_node_type(e, "Constant"))
+                      for(const auto &te : as_array(telts))
                       {
-                        simple = false;
-                        break;
+                        (void)te;
+                        comps.push_back(struct_typet::componentt{
+                          "_" + std::to_string(tidx++), python_int_type()});
                       }
                     }
-                  }
-                  if(simple)
-                  {
-                    // Infer element type from first constant
-                    typet elem_type = python_int_type();
-                    bool mixed_types = false;
-                    if(elts.is_array() && !as_array(elts).empty())
-                    {
-                      const jsont &first = *as_array(elts).begin();
-                      const jsont &fv = json_member(first, "value");
-                      bool first_is_str = fv.is_string() && !fv.value.empty() &&
-                                          fv.value[0] != 'b';
-                      bool first_is_num = fv.is_number();
-                      if(first_is_str)
-                        elem_type = python_string_type();
-                      else if(first_is_num)
-                      {
-                        std::string vs = fv.value;
-                        if(
-                          vs.find('.') != std::string::npos ||
-                          vs.find('e') != std::string::npos)
-                          elem_type = double_type();
-                      }
-                      // Check all elements for consistency
-                      for(const auto &e : as_array(elts))
-                      {
-                        const jsont &ev = json_member(e, "value");
-                        bool is_str = ev.is_string() && !ev.value.empty() &&
-                                      ev.value[0] != 'b';
-                        if(first_is_str != is_str)
-                          mixed_types = true;
-                      }
-                    }
-                    if(mixed_types)
-                      elem_type = python_value_type();
-                    var_type = python_list_type(elem_type);
+                    struct_typet tuple_type{comps};
+                    tuple_type.set_tag("python_tuple");
+                    var_type = python_list_type(tuple_type);
                   }
                   else
-                    continue; // defer to pass 2
+                  {
+                    // Only pre-register with int element type if elements
+                    // are simple constants.
+                    bool simple = true;
+                    if(elts.is_array())
+                    {
+                      for(const auto &e : as_array(elts))
+                      {
+                        if(!is_node_type(e, "Constant"))
+                        {
+                          simple = false;
+                          break;
+                        }
+                      }
+                    }
+                    if(simple)
+                    {
+                      // Infer element type from first constant
+                      typet elem_type = python_int_type();
+                      bool mixed_types = false;
+                      if(elts.is_array() && !as_array(elts).empty())
+                      {
+                        const jsont &first = *as_array(elts).begin();
+                        const jsont &fv = json_member(first, "value");
+                        bool first_is_str = fv.is_string() &&
+                                            !fv.value.empty() &&
+                                            fv.value[0] != 'b';
+                        bool first_is_num = fv.is_number();
+                        if(first_is_str)
+                          elem_type = python_string_type();
+                        else if(first_is_num)
+                        {
+                          std::string vs = fv.value;
+                          if(
+                            vs.find('.') != std::string::npos ||
+                            vs.find('e') != std::string::npos)
+                            elem_type = double_type();
+                        }
+                        // Check all elements for consistency
+                        for(const auto &e : as_array(elts))
+                        {
+                          const jsont &ev = json_member(e, "value");
+                          bool is_str = ev.is_string() && !ev.value.empty() &&
+                                        ev.value[0] != 'b';
+                          if(first_is_str != is_str)
+                            mixed_types = true;
+                        }
+                      }
+                      if(mixed_types)
+                        elem_type = python_value_type();
+                      var_type = python_list_type(elem_type);
+                    }
+                    else
+                      continue; // defer to pass 2
+                  }             // end else (non-tuple list)
+                }
+                else if(is_node_type(val, "Tuple"))
+                {
+                  // Tuple literal — infer struct type from elements
+                  const jsont &telts = json_member(val, "elts");
+                  if(telts.is_array())
+                  {
+                    struct_typet::componentst comps;
+                    int tidx = 0;
+                    for(const auto &te : as_array(telts))
+                    {
+                      typet ct = python_int_type();
+                      if(is_node_type(te, "Constant"))
+                      {
+                        const jsont &tv = json_member(te, "value");
+                        if(tv.is_string())
+                          ct = python_string_type();
+                        else if(tv.is_number())
+                        {
+                          std::string vs = tv.value;
+                          if(vs.find('.') != std::string::npos)
+                            ct = double_type();
+                        }
+                      }
+                      comps.push_back(struct_typet::componentt{
+                        "_" + std::to_string(tidx++), ct});
+                    }
+                    struct_typet tuple_type{comps};
+                    tuple_type.set_tag("python_tuple");
+                    var_type = tuple_type;
+                  }
+                  else
+                    continue;
+                }
+                else if(is_node_type(val, "List"))
+                {
+                  // List of tuples — check if elements are Tuple nodes
+                  const jsont &lelts = json_member(val, "elts");
+                  if(lelts.is_array() && !as_array(lelts).empty())
+                  {
+                    const jsont &first_elt = *as_array(lelts).begin();
+                    if(is_node_type(first_elt, "Tuple"))
+                    {
+                      // Infer tuple element type
+                      const jsont &telts = json_member(first_elt, "elts");
+                      struct_typet::componentst comps;
+                      int tidx = 0;
+                      if(telts.is_array())
+                      {
+                        for(const auto &te : as_array(telts))
+                        {
+                          (void)te;
+                          comps.push_back(struct_typet::componentt{
+                            "_" + std::to_string(tidx++), python_int_type()});
+                        }
+                      }
+                      struct_typet tuple_type{comps};
+                      tuple_type.set_tag("python_tuple");
+                      var_type = python_list_type(tuple_type);
+                    }
+                    else
+                      continue;
+                  }
+                  else
+                    continue;
                 }
                 else if(
-                  is_node_type(val, "Tuple") || is_node_type(val, "Dict") ||
-                  is_node_type(val, "Call") || is_node_type(val, "ListComp") ||
+                  is_node_type(val, "Dict") || is_node_type(val, "Call") ||
+                  is_node_type(val, "ListComp") ||
                   is_node_type(val, "Lambda") || is_node_type(val, "Set") ||
                   is_node_type(val, "Subscript") ||
                   is_node_type(val, "BinOp") || is_node_type(val, "UnaryOp") ||
