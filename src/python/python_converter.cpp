@@ -8244,11 +8244,9 @@ codet python_convertert::convert_return(const jsont &stmt)
       ret_val.type() != to_code_type(func_sym->type).return_type())
     {
       typet ret_type = to_code_type(func_sym->type).return_type();
-      // If declared type is int (default) but actual return is a different
-      // concrete type, update function type (avoids truncation)
-      if(
-        ret_type == python_int_type() && ret_val.type() != ret_type &&
-        ret_val.type().id() != ID_empty)
+      // If declared type is int (default) but actual return is float,
+      // update function type (avoids truncation). Only for scalar types.
+      if(ret_type == python_int_type() && ret_val.type().id() == ID_floatbv)
       {
         code_typet new_type = to_code_type(func_sym->type);
         new_type.return_type() = ret_val.type();
