@@ -51,7 +51,8 @@ inline struct_typet python_value_type()
   components.push_back(
     struct_typet::componentt{"__int_val", signedbv_typet{64}});
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
-  components.push_back(struct_typet::componentt{"__bool_val", bool_typet{}});
+  components.push_back(
+    struct_typet::componentt{"__bool_val", signedbv_typet{32}});
   // Pointers to heap-allocated complex types (keeps union small)
   components.push_back(struct_typet::componentt{
     "__str_ptr", pointer_typet{python_string_type(), 64}});
@@ -83,7 +84,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
       ieee_float_spect::double_precision(),
       ieee_floatt::rounding_modet::ROUND_TO_EVEN}
       .to_expr();
-  exprt bool_val = false_exprt{};
+  exprt bool_val = from_integer(0, signedbv_typet{32});
   exprt str_ptr = null_pointer_exprt{
     pointer_typet{python_string_type(), 64}};
   exprt list_ptr = null_pointer_exprt{
@@ -100,7 +101,9 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     float_val = value;
     break;
   case python_type_tagt::BOOL:
-    bool_val = value;
+    bool_val = value.type().id() == ID_bool
+                 ? typecast_exprt{value, signedbv_typet{32}}
+                 : value;
     break;
   case python_type_tagt::STR:
     str_ptr = value.type().id() == ID_pointer
@@ -141,7 +144,7 @@ inline member_exprt python_value_float(const exprt &value)
 /// Extract the bool field from a tagged-union value.
 inline member_exprt python_value_bool(const exprt &value)
 {
-  return member_exprt{value, "__bool_val", bool_typet{}};
+  return member_exprt{value, "__bool_val", signedbv_typet{32}};
 }
 
 /// Extract the string pointer from a tagged-union value.
