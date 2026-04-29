@@ -3272,8 +3272,9 @@ exprt python_convertert::convert_call(const jsont &expr)
             if(key_expr.type() != keys_type.element_type())
               key_expr = safe_typecast(key_expr, keys_type.element_type());
 
-            // Default value (second arg or 0)
-            exprt default_val = safe_zero(vals_type.element_type());
+            // Default value: None if not specified, else second arg
+            exprt default_val = from_integer(
+              mp_integer{-4611686018427387904LL}, vals_type.element_type());
             ++arg_it;
             if(arg_it != as_array(args).end())
               default_val = safe_typecast(
