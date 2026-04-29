@@ -4031,30 +4031,14 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(is_python_value_type(arg.type()))
           return unwrap_value(arg, python_int_type());
         // int("60") — parse constant string to int
-        if(
-          is_python_string_type(arg.type()) && arg.id() == ID_struct &&
-          arg.operands().size() == 2 && arg.operands()[0].is_constant())
+        if(is_python_string_type(arg.type()))
         {
-          mp_integer slen;
-          if(!to_integer(to_constant_expr(arg.operands()[0]), slen))
+          auto sv = extract_string_value(arg);
+          if(sv.has_value())
           {
-            std::string s;
-            for(mp_integer i = 0; i < slen; ++i)
-            {
-              auto idx = i.to_ulong();
-              if(
-                idx < arg.operands()[1].operands().size() &&
-                arg.operands()[1].operands()[idx].is_constant())
-              {
-                mp_integer ch;
-                if(!to_integer(
-                     to_constant_expr(arg.operands()[1].operands()[idx]), ch))
-                  s += static_cast<char>(ch.to_ulong());
-              }
-            }
             try
             {
-              long long val = std::stoll(s);
+              long long val = std::stoll(sv.value());
               return from_integer(val, python_int_type());
             }
             catch(...)
@@ -4091,33 +4075,17 @@ exprt python_convertert::convert_call(const jsont &expr)
           }
         }
         // float("60") — parse constant string to float
-        if(
-          is_python_string_type(arg.type()) && arg.id() == ID_struct &&
-          arg.operands().size() == 2 && arg.operands()[0].is_constant())
+        if(is_python_string_type(arg.type()))
         {
-          mp_integer slen;
-          if(!to_integer(to_constant_expr(arg.operands()[0]), slen))
+          auto sv = extract_string_value(arg);
+          if(sv.has_value())
           {
-            std::string s;
-            for(mp_integer i = 0; i < slen; ++i)
-            {
-              auto idx = i.to_ulong();
-              if(
-                idx < arg.operands()[1].operands().size() &&
-                arg.operands()[1].operands()[idx].is_constant())
-              {
-                mp_integer ch;
-                if(!to_integer(
-                     to_constant_expr(arg.operands()[1].operands()[idx]), ch))
-                  s += static_cast<char>(ch.to_ulong());
-              }
-            }
             try
             {
               ieee_floatt fv{
                 ieee_float_spect::double_precision(),
                 ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-              fv.from_double(std::stod(s));
+              fv.from_double(std::stod(sv.value()));
               return fv.to_expr();
             }
             catch(...)
@@ -4768,6 +4736,21 @@ exprt python_convertert::convert_call(const jsont &expr)
              array_exprt{std::move(chars), data_type}},
             str_type};
         }
+      }
+      // str(float_constant)
+      if(arg.is_constant() && arg.type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fv.from_expr(to_constant_expr(arg));
+        std::string s = fv.to_ansi_c_string();
+        if(s.find(".") != std::string::npos)
+        {
+          while(s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.')
+            s.pop_back();
+        }
+        return build_string_struct(s);
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
