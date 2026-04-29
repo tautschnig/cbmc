@@ -3134,9 +3134,23 @@ exprt python_convertert::convert_call(const jsont &expr)
             return std::move(tv);
           }
         }
-        if(
-          method_name == "join" || method_name == "partition" ||
-          method_name == "rpartition")
+        if(method_name == "join")
+        {
+          // sep.join(lst) — for constant sep and list of constant strings
+          if(args.is_array() && !as_array(args).empty())
+          {
+            exprt list_arg = convert_expression(*as_array(args).begin());
+            auto sep_val = extract_string_value(obj);
+            if(sep_val.has_value() && is_python_list_type(list_arg.type()))
+            {
+              // Try to extract constant string elements
+              // For now, return nondet — exact join needs element extraction
+            }
+          }
+          return side_effect_expr_nondett{
+            python_string_type(), get_location(expr)};
+        }
+        if(method_name == "partition" || method_name == "rpartition")
         {
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
@@ -5369,6 +5383,15 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // Prepend bound self for bound method calls
+  {
+    auto bm_it = bound_methods.find(qualify_name(func_name));
+    if(bm_it != bound_methods.end())
+    {
+      arguments.insert(arguments.begin(), bm_it->second.second);
+    }
+  }
+
   // Add closure captures as extra arguments BEFORE padding
   {
     auto cap_it2 = closure_captures.find(id2string(sym->name));
@@ -6997,6 +7020,70 @@ codet python_convertert::convert_assign(const jsont &stmt)
     return code_skipt{};
   }
 
+  // Check if RHS is a call to a lambda-returning function
+  if(rhs.id() == ID_side_effect)
+  {
+    const auto &se = to_side_effect_expr(rhs);
+    if(se.get_statement() == ID_function_call && !se.operands().empty())
+    {
+      const exprt &func_op = se.operands()[0];
+      if(func_op.id() == ID_symbol)
+      {
+        std::string called =
+          id2string(to_symbol_expr(func_op).get_identifier());
+        // Strip "python::" prefix
+        if(called.substr(0, 8) == "python::")
+          called = called.substr(8);
+        auto it = lambda_returning_functions.find(called);
+        if(it != lambda_returning_functions.end())
+        {
+          for(const auto &target : as_array(targets))
+          {
+            if(is_node_type(target, "Name"))
+            {
+              std::string var_name = json_string(json_member(target, "id"));
+              function_aliases[qualify_name(var_name)] = it->second;
+            }
+          }
+          return code_skipt{};
+        }
+      }
+    }
+  }
+
+  // Detect bound method assignment: method = obj.func
+  {
+    const jsont &val_node = json_member(stmt, "value");
+    if(is_node_type(val_node, "Attribute"))
+    {
+      std::string attr = json_string(json_member(val_node, "attr"));
+      exprt obj_expr = convert_expression(json_member(val_node, "value"));
+      if(
+        !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+        id2string(to_struct_type(obj_expr.type()).get_tag())
+            .find("python_class_") != std::string::npos)
+      {
+        std::string tag = id2string(to_struct_type(obj_expr.type()).get_tag());
+        std::string cls_name = tag.substr(13);
+        irep_idt method_id{"python::" + cls_name + "::" + attr};
+        if(symbol_table.lookup(method_id) != nullptr)
+        {
+          for(const auto &target : as_array(targets))
+          {
+            if(is_node_type(target, "Name"))
+            {
+              std::string var_name = json_string(json_member(target, "id"));
+              std::string qname = qualify_name(var_name);
+              function_aliases[qname] = method_id;
+              bound_methods[qname] = {method_id, address_of_exprt{obj_expr}};
+            }
+          }
+          return code_skipt{};
+        }
+      }
+    }
+  }
+
   code_blockt block;
 
   for(const auto &target : as_array(targets))
@@ -8157,9 +8244,11 @@ codet python_convertert::convert_return(const jsont &stmt)
       ret_val.type() != to_code_type(func_sym->type).return_type())
     {
       typet ret_type = to_code_type(func_sym->type).return_type();
-      // If declared type is int (default) but actual return is float,
-      // update function type to float (avoids truncation)
-      if(ret_type == python_int_type() && ret_val.type().id() == ID_floatbv)
+      // If declared type is int (default) but actual return is a different
+      // concrete type, update function type (avoids truncation)
+      if(
+        ret_type == python_int_type() && ret_val.type() != ret_type &&
+        ret_val.type().id() != ID_empty)
       {
         code_typet new_type = to_code_type(func_sym->type);
         new_type.return_type() = ret_val.type();
@@ -8176,6 +8265,17 @@ codet python_convertert::convert_return(const jsont &stmt)
           ret_val = safe_typecast(ret_val, ret_type);
       }
     }
+  }
+
+  // Track functions that return lambdas
+  if(
+    ret_val.id() == ID_symbol && ret_val.type().id() == ID_code &&
+    !current_function.empty())
+  {
+    lambda_returning_functions[current_function] =
+      to_symbol_expr(ret_val).get_identifier();
+    // Return 0 as placeholder — the caller will use the alias
+    ret_val = from_integer(0, python_int_type());
   }
 
   code_frontend_returnt ret{ret_val};
@@ -8442,12 +8542,38 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   const jsont &body = json_member(stmt, "body");
 
   // Detect closures: scan for nested FunctionDefs that reference
-  // our parameters (free variables). Add captured vars as extra params.
+  // our parameters or local variables (free variables).
   if(body.is_array())
   {
+    // Collect our parameters
     std::set<std::string> our_params;
     for(const auto &p : parameters)
       our_params.insert(std::string{id2string(p.get_base_name())});
+
+    // Also collect local variable names (assigned in our body)
+    // These are Name targets in Assign/AnnAssign statements
+    for(const auto &s : as_array(body))
+    {
+      if(is_node_type(s, "AnnAssign"))
+      {
+        const jsont &tgt = json_member(s, "target");
+        if(is_node_type(tgt, "Name"))
+          our_params.insert(json_string(json_member(tgt, "id")));
+      }
+      else if(is_node_type(s, "Assign"))
+      {
+        const jsont &tgts = json_member(s, "targets");
+        if(tgts.is_array())
+        {
+          for(const auto &t : as_array(tgts))
+          {
+            if(is_node_type(t, "Name"))
+              our_params.insert(json_string(json_member(t, "id")));
+          }
+        }
+      }
+    }
+
     for(const auto &s : as_array(body))
     {
       if(is_node_type(s, "FunctionDef") || is_node_type(s, "AsyncFunctionDef"))
@@ -8461,14 +8587,58 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         {
           if(nested_params.count(ref) || !our_params.count(ref))
             continue;
-          for(const auto &p : parameters)
+          // Find the variable's symbol and type
+          std::string var_id = "python::" + func_name + "::" + ref;
+          const symbolt *var_sym = symbol_table.lookup(irep_idt{var_id});
+          if(var_sym == nullptr)
           {
-            if(id2string(p.get_base_name()) == ref)
+            // Try as a parameter
+            bool found = false;
+            for(const auto &p : parameters)
             {
-              captures.push_back(
-                {id2string(p.get_identifier()), ref, p.type()});
-              break;
+              if(id2string(p.get_base_name()) == ref)
+              {
+                captures.push_back(
+                  {id2string(p.get_identifier()), ref, p.type()});
+                found = true;
+                break;
+              }
             }
+            // Local variable not yet in symbol table — create it
+            if(!found)
+            {
+              typet var_type = python_int_type();
+              // Try to infer type from AnnAssign annotation
+              for(const auto &bs : as_array(body))
+              {
+                if(is_node_type(bs, "AnnAssign"))
+                {
+                  const jsont &tgt = json_member(bs, "target");
+                  if(
+                    is_node_type(tgt, "Name") &&
+                    json_string(json_member(tgt, "id")) == ref)
+                  {
+                    var_type =
+                      convert_type_annotation(json_member(bs, "annotation"));
+                    break;
+                  }
+                }
+              }
+              // Create the symbol so it exists for the nested function
+              if(symbol_table.lookup(irep_idt{var_id}) == nullptr)
+              {
+                symbolt new_sym{irep_idt{var_id}, var_type, "python"};
+                new_sym.base_name = ref;
+                new_sym.is_lvalue = true;
+                new_sym.is_state_var = true;
+                symbol_table.add(new_sym);
+              }
+              captures.push_back({var_id, ref, var_type});
+            }
+          }
+          else
+          {
+            captures.push_back({var_id, ref, var_sym->type});
           }
         }
         if(!captures.empty())
@@ -9384,7 +9554,47 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
     // Function and class definitions are handled in the first pass
     if((is_node_type(stmt, "FunctionDef") ||
         is_node_type(stmt, "AsyncFunctionDef")))
+    {
+      // Evaluate default parameter values NOW (pass 2) when variables
+      // have their definition-time values (PLR §8.7)
+      std::string fname = json_string(json_member(stmt, "name"));
+      const jsont &func_args = json_member(stmt, "args");
+      const jsont &defaults = json_member(func_args, "defaults");
+      const jsont &params_json = json_member(func_args, "args");
+      if(defaults.is_array() && params_json.is_array())
+      {
+        std::size_t n_params = as_array(params_json).size();
+        std::size_t n_defaults = as_array(defaults).size();
+        std::size_t first_default = n_params - n_defaults;
+        auto def_it = as_array(defaults).begin();
+        for(std::size_t i = first_default; i < n_params; i++, ++def_it)
+        {
+          exprt val = convert_expression(*def_it);
+          if(!val.is_nil())
+          {
+            // Create a temp to freeze the value at definition time
+            static unsigned def_freeze_ctr = 0;
+            std::string tn =
+              "__def_" + fname + "_" + std::to_string(def_freeze_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, val.type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              ts.is_static_lifetime = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt frozen = symbol_table.lookup_ref(ti).symbol_expr();
+            block.add(code_frontend_assignt{frozen, val});
+            default_values[{fname, i}] = frozen;
+          }
+        }
+      }
       continue;
+    }
     if(is_node_type(stmt, "ClassDef"))
     {
       // Add class object initialization
