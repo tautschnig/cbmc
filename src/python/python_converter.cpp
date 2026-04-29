@@ -5387,23 +5387,59 @@ exprt python_convertert::convert_call(const jsont &expr)
   const jsont &keywords = json_member(expr, "keywords");
   if(keywords.is_array() && !as_array(keywords).empty())
   {
-    // Extend arguments to full parameter count with placeholders
     arguments.resize(params.size(), nil_exprt{});
+
+    // Collect unmatched keywords for **kwargs
+    std::vector<std::pair<std::string, exprt>> unmatched_kw;
 
     for(const auto &kw : as_array(keywords))
     {
       std::string kw_name = json_string(json_member(kw, "arg"));
       exprt kw_val = convert_expression(json_member(kw, "value"));
 
-      // Find the parameter index by name
+      bool matched = false;
       for(std::size_t i = 0; i < params.size(); i++)
       {
         if(id2string(params[i].get_base_name()) == kw_name)
         {
           arguments[i] = kw_val;
+          matched = true;
           break;
         }
       }
+      if(!matched)
+        unmatched_kw.push_back({kw_name, kw_val});
+    }
+
+    // Pack unmatched keywords into a dict for the last param if it's a dict
+    if(
+      !unmatched_kw.empty() && !params.empty() &&
+      is_python_dict_type(params.back().type()))
+    {
+      std::size_t kwargs_idx = params.size() - 1;
+      typet dict_type = params.back().type();
+      const auto &dict_st = to_struct_type(dict_type);
+      const auto &keys_arr_type = to_array_type(dict_st.components()[1].type());
+      const auto &vals_arr_type = to_array_type(dict_st.components()[2].type());
+
+      exprt::operandst key_elems, val_elems;
+      for(const auto &[name, val] : unmatched_kw)
+      {
+        key_elems.push_back(build_string_struct(name));
+        val_elems.push_back(safe_typecast(val, vals_arr_type.element_type()));
+      }
+      while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+      {
+        key_elems.push_back(safe_zero(keys_arr_type.element_type()));
+        val_elems.push_back(safe_zero(vals_arr_type.element_type()));
+      }
+      exprt length = from_integer(
+        static_cast<long long>(unmatched_kw.size()), signedbv_typet{64});
+      arguments[kwargs_idx] = struct_exprt{
+        {length,
+         array_exprt{std::move(key_elems), keys_arr_type},
+         array_exprt{std::move(val_elems), vals_arr_type}},
+        dict_type};
     }
   }
 
@@ -7890,6 +7926,12 @@ codet python_convertert::convert_for(const jsont &stmt)
   typet int_type = python_int_type();
 
   std::string var_name = json_string(json_member(target, "id"));
+  // For tuple targets (for a, b in ...), use a synthetic name
+  if(var_name.empty() && is_node_type(target, "Tuple"))
+  {
+    static unsigned tuple_iter_ctr = 0;
+    var_name = "__tuple_iter_" + std::to_string(tuple_iter_ctr++);
+  }
   std::string qualified_name = qualify_name(var_name);
 
   // Check for range() call
@@ -8115,22 +8157,75 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   // x = iterable.data[__idx] (typecast if needed)
   exprt elem_val = index_exprt{data, idx_var};
-  // For string iteration, wrap the char byte in a single-char string struct
-  if(is_string && is_python_string_type(loop_var.type()))
+
+  // Handle tuple unpacking: for a, b in list_of_tuples
+  if(is_node_type(target, "Tuple") && is_list)
   {
-    struct_typet str_type = python_string_type();
-    const auto &str_data_type = to_array_type(str_type.components()[1].type());
-    exprt::operandst chars;
-    chars.push_back(elem_val);
-    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-      chars.push_back(from_integer(0, unsignedbv_typet{8}));
-    array_exprt char_data{std::move(chars), str_data_type};
-    exprt len_one = from_integer(1, signedbv_typet{64});
-    elem_val = struct_exprt{{len_one, char_data}, str_type};
+    const jsont &elts = json_member(target, "elts");
+    if(elts.is_array())
+    {
+      std::size_t tidx = 0;
+      for(const auto &elt : as_array(elts))
+      {
+        if(is_node_type(elt, "Name"))
+        {
+          std::string elt_name = json_string(json_member(elt, "id"));
+          std::string elt_qname = qualify_name(elt_name);
+          irep_idt elt_id{elt_qname};
+          if(symbol_table.lookup(elt_id) == nullptr)
+          {
+            symbolt elt_sym{elt_id, python_int_type(), "python"};
+            elt_sym.base_name = elt_name;
+            elt_sym.is_lvalue = true;
+            elt_sym.is_state_var = true;
+            symbol_table.add(elt_sym);
+          }
+          symbol_exprt elt_var = symbol_table.lookup_ref(elt_id).symbol_expr();
+          // Access tuple field: elem._0, elem._1, etc.
+          std::string field = "_" + std::to_string(tidx);
+          if(
+            elem_val.type().id() == ID_struct &&
+            to_struct_type(elem_val.type()).has_component(field))
+          {
+            exprt field_val = member_exprt{
+              elem_val,
+              field,
+              to_struct_type(elem_val.type()).get_component(field).type()};
+            if(field_val.type() != elt_var.type())
+              field_val = safe_typecast(field_val, elt_var.type());
+            body_block.add(code_frontend_assignt{elt_var, field_val});
+          }
+          else
+          {
+            // Fallback: use nondet
+            body_block.add(code_frontend_assignt{
+              elt_var, side_effect_expr_nondett{elt_var.type(), loc}});
+          }
+        }
+        tidx++;
+      }
+    }
   }
-  else if(elem_val.type() != loop_var.type())
-    elem_val = safe_typecast(elem_val, loop_var.type());
-  body_block.add(code_frontend_assignt{loop_var, elem_val});
+  else
+  {
+    // For string iteration, wrap the char byte in a single-char string struct
+    if(is_string && is_python_string_type(loop_var.type()))
+    {
+      struct_typet str_type = python_string_type();
+      const auto &str_data_type =
+        to_array_type(str_type.components()[1].type());
+      exprt::operandst chars;
+      chars.push_back(elem_val);
+      while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+        chars.push_back(from_integer(0, unsignedbv_typet{8}));
+      array_exprt char_data{std::move(chars), str_data_type};
+      exprt len_one = from_integer(1, signedbv_typet{64});
+      elem_val = struct_exprt{{len_one, char_data}, str_type};
+    }
+    else if(elem_val.type() != loop_var.type())
+      elem_val = safe_typecast(elem_val, loop_var.type());
+    body_block.add(code_frontend_assignt{loop_var, elem_val});
+  } // end else (non-tuple target)
 
   // user body
   const jsont &body = json_member(stmt, "body");
@@ -8278,7 +8373,12 @@ codet python_convertert::convert_return(const jsont &stmt)
       typet ret_type = to_code_type(func_sym->type).return_type();
       // If declared type is int (default) but actual return is float,
       // update function type (avoids truncation). Only for scalar types.
-      if(ret_type == python_int_type() && ret_val.type().id() == ID_floatbv)
+      if(
+        ret_type == python_int_type() &&
+        (ret_val.type().id() == ID_floatbv ||
+         is_python_value_type(ret_val.type()) ||
+         is_python_string_type(ret_val.type()) ||
+         is_python_list_type(ret_val.type())))
       {
         code_typet new_type = to_code_type(func_sym->type);
         new_type.return_type() = ret_val.type();
@@ -8371,6 +8471,37 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       p.set_base_name(param_name);
       parameters.push_back(p);
     }
+  }
+
+  // PLR §8.7: keyword-only arguments (after * in parameter list)
+  const jsont &kwonlyargs = json_member(args_node, "kwonlyargs");
+  if(kwonlyargs.is_array())
+  {
+    for(const auto &param : as_array(kwonlyargs))
+    {
+      std::string param_name = json_string(json_member(param, "arg"));
+      const jsont &annotation = json_member(param, "annotation");
+      typet param_type = annotation.is_null()
+                           ? python_int_type()
+                           : convert_type_annotation(annotation);
+      code_typet::parametert p{param_type};
+      p.set_identifier("python::" + func_name + "::" + param_name);
+      p.set_base_name(param_name);
+      parameters.push_back(p);
+    }
+  }
+
+  // PLR §8.7: **kwargs — catch-all keyword argument dict
+  const jsont &kwarg = json_member(args_node, "kwarg");
+  std::string kwargs_name;
+  if(!kwarg.is_null())
+  {
+    kwargs_name = json_string(json_member(kwarg, "arg"));
+    typet kw_type = python_dict_type(python_string_type(), python_value_type());
+    code_typet::parametert p{kw_type};
+    p.set_identifier("python::" + func_name + "::" + kwargs_name);
+    p.set_base_name(kwargs_name);
+    parameters.push_back(p);
   }
 
   // Evaluate default parameter values at definition time (PLR §8.7)
