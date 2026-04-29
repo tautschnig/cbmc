@@ -716,8 +716,30 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return class_types[type_name];
   else
   {
-    log.warning() << "Unknown Python type annotation: " << type_name
-                  << ", defaulting to int" << messaget::eom;
+    // Try to resolve from imported modules
+    // Only for names that look like class names (uppercase first letter)
+    // and haven't been resolved yet
+    if(
+      module_resolver && !type_name.empty() &&
+      std::isupper(static_cast<unsigned char>(type_name[0])))
+    {
+      for(const auto &mod : imported_modules)
+      {
+        std::string sub_mod = mod + "." + type_name;
+        const jsont *sub_ast = module_resolver(sub_mod);
+        if(sub_ast != nullptr && !sub_ast->is_null())
+        {
+          process_imported_module(sub_mod, *sub_ast);
+          if(class_types.count(type_name))
+            return class_types[type_name];
+        }
+      }
+    }
+    if(
+      type_name != "Any" && type_name != "S3" && !type_name.empty() &&
+      !std::isupper(static_cast<unsigned char>(type_name[0])))
+      log.warning() << "Unknown Python type annotation: " << type_name
+                    << ", defaulting to int" << messaget::eom;
     return python_int_type();
   }
 }
@@ -992,6 +1014,8 @@ exprt python_convertert::convert_name(const jsont &expr)
     return false_exprt{};
   else if(id == "None")
     return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
+  else if(id == "__name__")
+    return build_string_struct("__main__");
 
   // Look up in symbol table — check versioned names first, then
   // function-scoped, then global
@@ -9487,6 +9511,29 @@ codet python_convertert::convert_try(const jsont &stmt)
       code_blockt except_block;
       except_block.add(
         code_frontend_assignt{exc_sym->symbol_expr(), false_exprt{}});
+
+      // Handle "except Type as name:" — create the name variable
+      const jsont &handler_name = json_member(handler, "name");
+      if(
+        !handler_name.is_null() && handler_name.is_string() &&
+        !handler_name.value.empty())
+      {
+        std::string ename = handler_name.value;
+        std::string eqname = qualify_name(ename);
+        irep_idt eid{eqname};
+        if(symbol_table.lookup(eid) == nullptr)
+        {
+          symbolt esym{eid, python_int_type(), "python"};
+          esym.base_name = ename;
+          esym.is_lvalue = true;
+          esym.is_state_var = true;
+          symbol_table.add(esym);
+        }
+        // Assign a nondet value (exception object)
+        except_block.add(code_frontend_assignt{
+          symbol_table.lookup_ref(eid).symbol_expr(),
+          side_effect_expr_nondett{python_int_type(), source_locationt{}}});
+      }
 
       const jsont &handler_body = json_member(handler, "body");
       if(handler_body.is_array())
