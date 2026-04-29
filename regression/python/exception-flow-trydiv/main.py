@@ -1,7 +1,9 @@
 def safe_div(a: int, b: int) -> int:
+    result: int = 0
     try:
-        return a // b
+        result = a // b
     except ZeroDivisionError:
-        return 0
+        result = 0
+    return result
 
 assert safe_div(10, 0) == 0

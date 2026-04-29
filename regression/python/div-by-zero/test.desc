@@ -3,7 +3,7 @@ main.py
 --function divide
 ^EXIT=10$
 ^SIGNAL=0$
-^\[division-by-zero\.1\].*division by zero: FAILURE$
+^\[exception\.1\].*uncaught exception: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
