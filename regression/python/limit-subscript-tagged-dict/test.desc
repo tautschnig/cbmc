@@ -1,0 +1,13 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Subscript on python_value_type dict values: d["outer"] returns
+python_value_type, then ["inner"] on that fails because subscript
+only handles list unwrapping, not dict unwrapping.
+Fix: in tagged union subscript handler, also try dict unwrapping.

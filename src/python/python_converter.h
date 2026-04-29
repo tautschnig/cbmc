@@ -64,6 +64,7 @@ private:
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
+  bool processing_import = false; // true when inside process_imported_module
   module_resolver_t module_resolver;
 
   /// Process an imported module's AST to register its definitions
