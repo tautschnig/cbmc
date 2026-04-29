@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Standard library modules (collections, itertools, functools, etc.)
+not modeled. Only math, random, typing, re are partially supported.
+Affects ~34 ESBMC tests.
