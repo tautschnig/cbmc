@@ -3040,15 +3040,75 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
-        if(
-          method_name == "keys" || method_name == "values" ||
-          method_name == "items")
+        if(method_name == "keys")
+        {
+          // d.keys() → list of d.keys[0..d.length-1]
+          const auto &dict_st = to_struct_type(obj_base_type);
+          const auto &keys_type = to_array_type(dict_st.components()[1].type());
+          typet key_type = keys_type.element_type();
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt keys{obj, "keys", keys_type};
+          struct_typet list_type = python_list_type(key_type);
+          const auto &list_data_type =
+            to_array_type(list_type.components()[1].type());
+          exprt::operandst elems;
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+            elems.push_back(
+              index_exprt{keys, from_integer(i, signedbv_typet{64})});
+          while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+            elems.push_back(safe_zero(key_type));
+          return struct_exprt{
+            {length, array_exprt{std::move(elems), list_data_type}}, list_type};
+        }
+        if(method_name == "values")
+        {
+          const auto &dict_st = to_struct_type(obj_base_type);
+          const auto &vals_type = to_array_type(dict_st.components()[2].type());
+          typet val_type = vals_type.element_type();
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt vals{obj, "values", vals_type};
+          struct_typet list_type = python_list_type(val_type);
+          const auto &list_data_type =
+            to_array_type(list_type.components()[1].type());
+          exprt::operandst elems;
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+            elems.push_back(
+              index_exprt{vals, from_integer(i, signedbv_typet{64})});
+          while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+            elems.push_back(safe_zero(val_type));
+          return struct_exprt{
+            {length, array_exprt{std::move(elems), list_data_type}}, list_type};
+        }
+        if(method_name == "items")
+        {
+          // Returns list of tuples — simplified to nondet for now
           return side_effect_expr_nondett{
             python_list_type(python_int_type()), get_location(expr)};
+        }
+        if(method_name == "clear")
+        {
+          // d.clear() → set d.length = 0
+          if(obj.id() == ID_symbol)
+          {
+            member_exprt length{obj, "length", signedbv_typet{64}};
+            pending_checks.push_back(code_frontend_assignt{
+              length, from_integer(0, signedbv_typet{64})});
+          }
+          return from_integer(0, python_int_type()); // returns None
+        }
+        if(method_name == "copy")
+        {
+          return obj; // shallow copy = same struct
+        }
+        if(method_name == "update")
+        {
+          // d.update(other) — copy entries from other into d
+          // Simplified: just return None, actual mutation is complex
+          return from_integer(0, python_int_type());
+        }
         if(
           method_name == "setdefault" || method_name == "pop" ||
-          method_name == "popitem" || method_name == "update" ||
-          method_name == "clear" || method_name == "copy")
+          method_name == "popitem")
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
       }
