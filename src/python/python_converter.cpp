@@ -6549,14 +6549,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
           if(asname.empty())
             asname = name;
           imported_modules.insert(asname);
-
-          // Try to resolve and process the module
-          if(module_resolver)
-          {
-            const jsont *mod_ast = module_resolver(name);
-            if(mod_ast != nullptr && !mod_ast->is_null())
-              process_imported_module(name, *mod_ast);
-          }
+          // Module resolved on-demand when functions are called
         }
       }
     }
@@ -10133,12 +10126,7 @@ bool python_convertert::convert()
             if(asname.empty())
               asname = name;
             imported_modules.insert(asname);
-            if(module_resolver)
-            {
-              const jsont *mod_ast = module_resolver(name);
-              if(mod_ast != nullptr && !mod_ast->is_null())
-                process_imported_module(name, *mod_ast);
-            }
+            // Module resolved on-demand when types/functions are needed
           }
         }
       }
