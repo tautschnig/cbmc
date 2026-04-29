@@ -1698,3 +1698,78 @@ After all fixes in this session, the KNOWNBUG tests are:
 | limit-async-concurrent | Async/threads | — | Weeks of work |
 | limit-overflow-nondet-arith | Unbounded ints | — | Needs --z3 |
 | math-symbolic-arg | sin²+cos²≠1 | — | Fundamental limitation |
+
+
+## 11. Performance Optimization — String Model
+
+### Current Model: Fixed-Size Array
+
+```c
+struct python_string {
+    int64_t length;
+    unsigned char data[256];  // PYTHON_MAX_STRING_LENGTH
+};
+```
+
+Every string occupies 264 bytes regardless of actual content. This causes:
+
+- **Dict keys bloat**: 16 keys × 256 bytes = 4KB per dict, just for keys
+- **GOTO program bloat**: string comparisons expand to 256-element array
+  comparisons; a single `kwargs["Key"]` lookup generates ~65KB of GOTO IR
+- **Solver overhead**: the SAT encoding includes variables for all 256 bytes
+  even when only 3 are used
+- **S3 stub processing**: 108 methods × kwargs dict = ~500KB of struct data
+
+### Proposed Model: Pointer-Based
+
+```c
+struct python_string {
+    int64_t length;
+    unsigned char *data;  // pointer to dynamically-sized array
+};
+```
+
+Benefits:
+- Each string is exactly as long as needed (no padding)
+- Dict keys shrink from 4KB to 128 bytes (16 pointers)
+- String literals are pointer assignments, not 256-element array copies
+- CBMC's solver handles pointer-to-array comparisons efficiently
+
+### Impact Estimate
+
+The `delete_s3_object.py` benchmark currently takes 1.15s. Breakdown:
+- 0.15s: python3 AST-to-JSON for S3.py
+- 0.85s: C++ processing of S3 class (108 methods, 31 bodies)
+- 0.10s: CBMC solving
+- 0.05s: CBMC overhead
+
+The pointer-based model would primarily reduce the 0.85s C++ processing
+time (smaller struct types, fewer array elements to construct) and the
+0.10s solving time (fewer SAT variables). Estimated improvement: 2-4x.
+
+### Implementation Plan
+
+~200-300 lines of changes across:
+1. `python_types.h`: change `python_string_type()` to use pointer
+2. `python_value_type.h`: update `__str_ptr` field
+3. `build_string_struct()`: allocate array, return pointer
+4. `extract_string_value()`: dereference pointer to read
+5. String concatenation: allocate new array for result
+6. String comparison: element-by-element through pointers
+7. Dict key comparison: compare pointed-to arrays
+8. `in` operator: iterate through pointed-to array
+9. String methods: update all handlers
+
+### Alternative: Configurable Bound
+
+The `--python-max-string-length` option is registered but not wired to
+the `PYTHON_MAX_STRING_LENGTH` constant. Wiring it up would allow users
+to trade precision for performance (e.g., `--python-max-string-length 32`
+for programs with short strings).
+
+### Priority
+
+Deferred — correctness and feature work takes priority. The current 1.15s
+for the boto3 benchmark is acceptable for development. The pointer-based
+model should be implemented when performance becomes a blocker for larger
+benchmarks.
