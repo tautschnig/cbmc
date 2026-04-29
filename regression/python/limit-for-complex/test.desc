@@ -1,0 +1,11 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+enumerate() in for loops not supported. Also: zip(), nested
+comprehensions with variable shadowing. Affects ~32 ESBMC tests.

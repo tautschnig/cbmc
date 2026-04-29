@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Float arithmetic precision: divmod remainder and other float
+computations may not match expected values due to known
+floating-point bugs in the CBMC back-end.
