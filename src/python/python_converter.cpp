@@ -3854,18 +3854,14 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
     }
-    // Suppress warnings for known methods on nondet objects
+    // Suppress warnings for known regex/common methods on nondet objects
     if(
       method_name != "search" && method_name != "match" &&
       method_name != "group" && method_name != "groups" &&
-      method_name != "span")
-      // Suppress warnings for known regex/common methods on nondet objects
-      if(
-        method_name != "search" && method_name != "match" &&
-        method_name != "group" && method_name != "groups" &&
-        method_name != "span" && method_name != "findall" &&
-        method_name != "sub" && method_name != "split")
-        log.warning() << "Unknown method: " << method_name << messaget::eom;
+      method_name != "span" && method_name != "findall" &&
+      method_name != "sub" && method_name != "split" &&
+      method_name != "compile" && method_name != "pattern")
+      log.warning() << "Unknown method: " << method_name << messaget::eom;
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
 
@@ -6961,7 +6957,28 @@ codet python_convertert::convert_statement(const jsont &stmt)
           else if(module == "typing")
           {
             // Names like Any, Optional, List, Dict are type aliases
-            // They don't need runtime symbols
+          }
+          else if(
+            module == "urllib.parse" || module == "os" || module == "os.path" ||
+            module == "sys" || module == "json" || module == "datetime" ||
+            module == "time" || module == "collections" ||
+            module == "functools" || module == "itertools" || module == "io" ||
+            module == "pathlib" || module == "hashlib" || module == "base64" ||
+            module == "copy" || module == "enum" || module == "dataclasses" ||
+            module == "abc")
+          {
+            // Stdlib modules: register imported names as nondet functions
+            irep_idt fid{"python::" + asname};
+            if(symbol_table.lookup(fid) == nullptr)
+            {
+              code_typet ft{
+                {code_typet::parametert{python_value_type()}},
+                python_value_type()};
+              symbolt fs{fid, ft, "python"};
+              fs.base_name = asname;
+              fs.is_lvalue = true;
+              symbol_table.add(fs);
+            }
           }
         }
       }
