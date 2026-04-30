@@ -4512,15 +4512,51 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
-  // list() / reversed() / enumerate() — return nondet list
-  else if(
-    func_name == "list" || func_name == "reversed" || func_name == "enumerate")
+  // list() / reversed() — return copy or nondet
+  else if(func_name == "list" || func_name == "reversed")
   {
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
       if(is_python_list_type(arg.type()))
-        return arg; // list(lst) = copy
+        return arg;
+    }
+    return side_effect_expr_nondett{
+      python_list_type(python_int_type()), get_location(expr)};
+  }
+  // enumerate(iterable) → list of (index, element) tuples
+  else if(func_name == "enumerate")
+  {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(is_python_list_type(arg.type()))
+      {
+        const auto &list_st = to_struct_type(arg.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        typet elem_type = data_type.element_type();
+        member_exprt length{arg, "length", signedbv_typet{64}};
+        member_exprt data{arg, "data", data_type};
+        struct_typet::componentst comps;
+        comps.push_back(struct_typet::componentt{"_0", python_int_type()});
+        comps.push_back(struct_typet::componentt{"_1", elem_type});
+        struct_typet tuple_type{comps};
+        tuple_type.set_tag("python_tuple");
+        struct_typet result_list_type = python_list_type(tuple_type);
+        const auto &result_data_type =
+          to_array_type(result_list_type.components()[1].type());
+        exprt::operandst elems;
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          elems.push_back(struct_exprt{
+            {from_integer(i, python_int_type()), index_exprt{data, idx}},
+            tuple_type});
+        }
+        return struct_exprt{
+          {length, array_exprt{std::move(elems), result_data_type}},
+          result_list_type};
+      }
     }
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
@@ -8335,6 +8371,32 @@ codet python_convertert::convert_for(const jsont &stmt)
   if(iterable.is_nil())
     return code_skipt{};
 
+  // If the iterable is a complex expression (e.g., enumerate() result),
+  // store it in a temp symbol so it doesn't get simplified away.
+  code_blockt pre_loop;
+  if(iterable.id() != ID_symbol && iterable.type().id() == ID_struct)
+  {
+    static unsigned iter_tmp_ctr = 0;
+    std::string tn = "__iter_tmp_" + std::to_string(iter_tmp_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt ti{tq};
+    if(symbol_table.lookup(ti) == nullptr)
+    {
+      symbolt ts{ti, iterable.type(), "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    // Flush pending checks (e.g., from enumerate's wrap_value)
+    for(auto &pc : pending_checks)
+      pre_loop.add(std::move(pc));
+    pending_checks.clear();
+    pre_loop.add(code_frontend_assignt{
+      symbol_table.lookup_ref(ti).symbol_expr(), iterable});
+    iterable = symbol_table.lookup_ref(ti).symbol_expr();
+  }
+
   bool is_list = is_python_list_type(iterable.type());
   bool is_string = is_python_string_type(iterable.type());
   bool is_dict = is_python_dict_type(iterable.type());
@@ -8553,6 +8615,13 @@ codet python_convertert::convert_for(const jsont &stmt)
   while_stmt.add_source_location() = loc;
   result.add(std::move(while_stmt));
 
+  // Prepend pre-loop setup (temp for complex iterables)
+  if(!pre_loop.statements().empty())
+  {
+    for(auto &s : result.statements())
+      pre_loop.add(std::move(s));
+    return std::move(pre_loop);
+  }
   return std::move(result);
 }
 
