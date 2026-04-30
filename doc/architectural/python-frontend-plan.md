@@ -2068,3 +2068,63 @@ operations handle `integer_typet`.
 | **Deep** | limit-generator-infinite, limit-async-concurrent | weeks | — |
 | **Config** | limit-overflow-nondet-arith | 1 day | — |
 | **Stubs** | limit-import-resolution | ongoing | ~34 tests |
+
+
+## 13. Python Verification Benchmarks Results
+
+### Current Results (51 benchmarks, stubs-full-python)
+
+| Result | Count | Description |
+|--------|-------|-------------|
+| CLEAN | 27 | Clean code verified successfully |
+| TP | 0 | True positive (bug found in buggy code) |
+| MISS | 9 | Missed bug (buggy code passes) |
+| FP | 0 | False positive (clean code fails) |
+| TOERR | 12 | Tool error (crash or type error) |
+| TIMEOUT | 3 | Exceeded 30s timeout |
+| OOM | 0 | Out of memory |
+
+### TOERR Root Causes
+
+**Exit 6 — type mismatch (7 benchmarks):**
+`expected signedbv` error during GOTO conversion. Occurs when dict
+values are lists or other struct types. The dict value type is
+`python_value_type` but operations on the unwrapped value expect
+`signedbv`. Fix: improve tagged union unwrapping for dict values.
+KNOWNBUG: `limit-type-mismatch-goto`.
+
+**Exit 134 — from_integer crash (5 benchmarks):**
+`from_integer` called on struct type. Occurs when class instances
+are stored in dicts or passed through untyped functions. The
+`safe_zero(struct_type)` or `from_integer(0, struct_type)` crashes.
+Fix: guard all `from_integer` calls with type checks.
+KNOWNBUG: `limit-from-integer-crash`.
+
+### MISS Root Causes
+
+The 9 missed bugs are from removing the `uncaught exception` check
+(which caused 3 false positives). The check was too coarse — it
+fired whenever any exception flag was set, even inside try blocks.
+
+**Fix plan:** Re-add the uncaught exception check but make it smarter:
+only fire if the exception was raised OUTSIDE any try block, or if
+the exception type doesn't match any handler. This requires tracking
+whether the current code path is inside a try block at the GOTO level,
+not just at the converter level.
+
+### TIMEOUT Root Causes
+
+3 benchmarks timeout at 30s: `demo_glue_service`, `glue_job_runner`,
+`sagemaker_labeling_job`. These are large files with many AWS service
+calls. The S3 stub processing (2841 lines, 108 methods) is the
+bottleneck. Fix: pointer-based string model (Section 11) and
+on-demand method body conversion.
+
+### Priority for Next Improvements
+
+1. **Fix TOERR (12→0):** Guard `from_integer` and `safe_zero` calls
+   with type checks. ~20 lines, high impact.
+2. **Smart uncaught exception check (0 TP → some TP):** Re-add with
+   try-block awareness. ~30 lines, recovers missed bugs.
+3. **Performance (3 timeouts):** Pointer-based string model or
+   on-demand method body conversion. Major effort.
