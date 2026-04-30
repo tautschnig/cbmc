@@ -1,13 +1,9 @@
-KNOWNBUG
+CORE
 main.py
 
 ^EXIT=10$
 ^SIGNAL=0$
+^\[exception\.1\].*uncaught exception: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring
---
-1/0 sets ZeroDivisionError exception flag but no property check
-fires because the uncaught exception check was removed (too many
-false positives). The exception flag is set but doesn't prevent
-subsequent code from executing.
