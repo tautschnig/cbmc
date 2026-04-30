@@ -290,8 +290,6 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     return python_value_str(e);
   else if(is_python_list_type(target_type))
     return python_value_list(e);
-  else if(is_python_dict_type(target_type))
-    return python_value_dict(e);
 
   // Default: extract int
   return python_value_int(e);
@@ -329,100 +327,28 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::STR, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
-  // List: convert to list[python_value_type] and store pointer
+  // List: materialize into temp and store pointer
   if(is_python_list_type(e.type()))
   {
-    typet pv_list_type = python_list_type(python_value_type());
-    const auto &pv_data_type =
-      to_array_type(to_struct_type(pv_list_type).components()[1].type());
-
-    const auto &src_st = to_struct_type(e.type());
-    const auto &src_data_type = to_array_type(src_st.components()[1].type());
-    member_exprt src_len{e, "length", signedbv_typet{64}};
-    member_exprt src_data{e, "data", src_data_type};
-
-    exprt::operandst wrapped_elems;
-    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-    {
-      exprt elem = index_exprt{src_data, from_integer(i, signedbv_typet{64})};
-      wrapped_elems.push_back(wrap_value(elem));
-    }
-
-    exprt new_list = struct_exprt{
-      {src_len, array_exprt{std::move(wrapped_elems), pv_data_type}},
-      pv_list_type};
-
     static unsigned list_wrap_counter = 0;
     std::string tmp_name = "__list_val_" + std::to_string(list_wrap_counter++);
     std::string tmp_qname = qualify_name(tmp_name);
     irep_idt tmp_id{tmp_qname};
     if(symbol_table.lookup(tmp_id) == nullptr)
     {
-      symbolt tmp_sym{tmp_id, pv_list_type, "python"};
+      symbolt tmp_sym{tmp_id, e.type(), "python"};
       tmp_sym.base_name = tmp_name;
       tmp_sym.is_lvalue = true;
       tmp_sym.is_state_var = true;
       symbol_table.add(tmp_sym);
     }
     const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
-    pending_checks.push_back(
-      code_frontend_assignt{tmp_sym.symbol_expr(), new_list});
+    pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
     return make_python_value(
       python_type_tagt::LIST, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
-  // Dict: convert values to python_value_type and store pointer
-  if(is_python_dict_type(e.type()))
-  {
-    typet pv_dict_type =
-      python_dict_type(python_string_type(), python_value_type());
-    const auto &src_st = to_struct_type(e.type());
-    const auto &src_keys_type = to_array_type(src_st.components()[1].type());
-    const auto &src_vals_type = to_array_type(src_st.components()[2].type());
-    member_exprt src_len{e, "length", signedbv_typet{64}};
-    member_exprt src_keys{e, "keys", src_keys_type};
-    member_exprt src_vals{e, "values", src_vals_type};
-
-    const auto &pv_st = to_struct_type(pv_dict_type);
-    const auto &pv_keys_type = to_array_type(pv_st.components()[1].type());
-    const auto &pv_vals_type = to_array_type(pv_st.components()[2].type());
-
-    // Copy keys as-is, wrap values
-    exprt::operandst new_keys, new_vals;
-    for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
-    {
-      exprt idx = from_integer(i, signedbv_typet{64});
-      new_keys.push_back(index_exprt{src_keys, idx});
-      exprt val = index_exprt{src_vals, idx};
-      new_vals.push_back(wrap_value(val));
-    }
-
-    exprt new_dict = struct_exprt{
-      {src_len,
-       array_exprt{std::move(new_keys), pv_keys_type},
-       array_exprt{std::move(new_vals), pv_vals_type}},
-      pv_dict_type};
-
-    static unsigned dict_wrap_counter = 0;
-    std::string tmp_name = "__dict_val_" + std::to_string(dict_wrap_counter++);
-    std::string tmp_qname = qualify_name(tmp_name);
-    irep_idt tmp_id{tmp_qname};
-    if(symbol_table.lookup(tmp_id) == nullptr)
-    {
-      symbolt tmp_sym{tmp_id, pv_dict_type, "python"};
-      tmp_sym.base_name = tmp_name;
-      tmp_sym.is_lvalue = true;
-      tmp_sym.is_state_var = true;
-      symbol_table.add(tmp_sym);
-    }
-    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
-    pending_checks.push_back(
-      code_frontend_assignt{tmp_sym.symbol_expr(), new_dict});
-    return make_python_value(
-      python_type_tagt::DICT, address_of_exprt{tmp_sym.symbol_expr()});
-  }
-
-  // For struct types (class instances) that don't fit in the tagged union
+  // For struct types (class instances, dicts, etc.) that don't fit
   // in the tagged union, return a nondet value. The struct can't be
   // stored in the int/float/bool/str/list fields.
   if(
@@ -600,18 +526,6 @@ long python_convertert::exception_type_hash(const std::string &type_name) const
 
 exprt python_convertert::safe_zero(const typet &type) const
 {
-  // Resolve struct_tag_typet to actual struct for zero construction
-  if(type.id() == ID_struct_tag)
-  {
-    const auto &tag = to_struct_tag_type(type);
-    const symbolt *sym = symbol_table.lookup(tag.get_identifier());
-    if(sym != nullptr && sym->is_type)
-    {
-      exprt result = safe_zero(sym->type);
-      result.type() = type; // keep the tag type
-      return result;
-    }
-  }
   if(
     type.id() == ID_signedbv || type.id() == ID_unsignedbv ||
     type.id() == ID_integer || type.id() == ID_natural ||
@@ -2018,21 +1932,11 @@ exprt python_convertert::convert_compare(const jsont &expr)
     if(current_left.is_nil() || right.is_nil())
       return nil_exprt{};
 
-    // Unwrap tagged-union values (skip for In/NotIn — container stays wrapped)
-    if(op != "In" && op != "NotIn")
-    {
-      if(is_python_value_type(current_left.type()))
-        current_left = unwrap_value(current_left, right.type());
-      if(is_python_value_type(right.type()))
-        right = unwrap_value(right, current_left.type());
-    }
-    else if(
-      is_python_value_type(current_left.type()) &&
-      !is_python_value_type(right.type()))
-    {
-      // For "x in lst": unwrap x but keep lst
+    // Unwrap tagged-union values
+    if(is_python_value_type(current_left.type()))
       current_left = unwrap_value(current_left, right.type());
-    }
+    if(is_python_value_type(right.type()))
+      right = unwrap_value(right, current_left.type());
 
     // Type promotion for comparisons (skip for In/NotIn/Is/IsNot)
     if(
@@ -2202,37 +2106,6 @@ exprt python_convertert::convert_compare(const jsont &expr)
           in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
         }
         cmp = (op == "In") ? in_expr : not_exprt{in_expr};
-      }
-      else if(is_python_value_type(right.type()))
-      {
-        exprt list_val = python_value_list(right);
-        if(is_python_list_type(list_val.type()))
-        {
-          const auto &list_st = to_struct_type(list_val.type());
-          const auto &data_type = to_array_type(list_st.components()[1].type());
-          member_exprt list_len{list_val, "length", signedbv_typet{64}};
-          member_exprt list_data{list_val, "data", data_type};
-          exprt in_expr = false_exprt{};
-          for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-          {
-            exprt idx = from_integer(i, signedbv_typet{64});
-            exprt in_range = binary_relation_exprt{idx, ID_lt, list_len};
-            exprt elem = index_exprt{list_data, idx};
-            exprt unwrapped = unwrap_value(elem, current_left.type());
-            exprt cmp_left = current_left;
-            if(is_python_value_type(cmp_left.type()))
-              cmp_left = unwrap_value(cmp_left, python_int_type());
-            if(is_python_value_type(unwrapped.type()))
-              unwrapped = unwrap_value(unwrapped, cmp_left.type());
-            if(cmp_left.type() != unwrapped.type())
-              unwrapped = safe_typecast(unwrapped, cmp_left.type());
-            exprt match = equal_exprt{cmp_left, unwrapped};
-            in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
-          }
-          cmp = (op == "In") ? in_expr : not_exprt{in_expr};
-        }
-        else
-          cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
       }
       else
       {
@@ -6269,10 +6142,9 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     return nil_exprt{};
   }
 
-  // Tagged union subscript: try list, then dict
+  // Tagged union subscript: unwrap to list and index
   if(is_python_value_type(value.type()))
   {
-    // Try list subscript
     exprt list_val = python_value_list(value);
     if(is_python_list_type(list_val.type()))
     {
@@ -6280,30 +6152,6 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       const auto &data_type = to_array_type(list_st.components()[1].type());
       member_exprt data{list_val, "data", data_type};
       return index_exprt{data, slice};
-    }
-    // Try dict subscript
-    exprt dict_val = python_value_dict(value);
-    if(is_python_dict_type(dict_val.type()))
-    {
-      const auto &dict_st = to_struct_type(dict_val.type());
-      const auto &keys_type = to_array_type(dict_st.components()[1].type());
-      const auto &vals_type = to_array_type(dict_st.components()[2].type());
-      member_exprt length{dict_val, "length", signedbv_typet{64}};
-      member_exprt keys{dict_val, "keys", keys_type};
-      member_exprt vals{dict_val, "values", vals_type};
-      exprt key = slice;
-      if(key.type() != keys_type.element_type())
-        key = safe_typecast(key, keys_type.element_type());
-      exprt result = safe_zero(vals_type.element_type());
-      for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
-      {
-        exprt idx = from_integer(i, signedbv_typet{64});
-        exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-        exprt match = equal_exprt{index_exprt{keys, idx}, key};
-        result =
-          if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
-      }
-      return result;
     }
   }
 
@@ -7953,7 +7801,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
         // Inside if/else: type change at a branch point.
         // Use python_value_type for the variable.
         // Create a tagged-union variable and wrap the value.
-        typet val_type = python_value_type();
+        struct_typet val_type = python_value_type();
         unsigned &ver = version_counters[qualified_name];
         ver++;
         std::string versioned_name =
@@ -10579,19 +10427,6 @@ void python_convertert::process_imported_module(
 bool python_convertert::convert()
 {
   const jsont &body = json_member(parse_tree.ast_json, "body");
-
-  // Register python_value_type as a named type in the symbol table.
-  // This enables self-referential types (list[python_value_type])
-  // via struct_tag_typet.
-  {
-    irep_idt tag_id{PYTHON_VALUE_TAG};
-    if(symbol_table.lookup(tag_id) == nullptr)
-    {
-      type_symbolt type_sym{tag_id, python_value_struct_def(), "python"};
-      type_sym.base_name = "python_value";
-      symbol_table.add(type_sym);
-    }
-  }
 
   // Create __python_exception_active flag early (needed during function
   // body conversion for raise statements)
