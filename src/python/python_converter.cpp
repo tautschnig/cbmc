@@ -290,6 +290,8 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     return python_value_str(e);
   else if(is_python_list_type(target_type))
     return python_value_list(e);
+  else if(is_python_dict_type(target_type))
+    return python_value_dict(e);
 
   // Default: extract int
   return python_value_int(e);
@@ -369,7 +371,58 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::LIST, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
-  // For struct types (class instances, dicts, etc.) that don't fit
+  // Dict: convert values to python_value_type and store pointer
+  if(is_python_dict_type(e.type()))
+  {
+    typet pv_dict_type =
+      python_dict_type(python_string_type(), python_value_type());
+    const auto &pv_st = to_struct_type(pv_dict_type);
+    const auto &pv_keys_type = to_array_type(pv_st.components()[1].type());
+    const auto &pv_vals_type = to_array_type(pv_st.components()[2].type());
+
+    const auto &src_st = to_struct_type(e.type());
+    const auto &src_keys_type = to_array_type(src_st.components()[1].type());
+    const auto &src_vals_type = to_array_type(src_st.components()[2].type());
+    member_exprt src_len{e, "length", signedbv_typet{64}};
+    member_exprt src_keys{e, "keys", src_keys_type};
+    member_exprt src_vals{e, "values", src_vals_type};
+
+    exprt::operandst new_keys, new_vals;
+    for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      exprt key = index_exprt{src_keys, idx};
+      if(key.type() != pv_keys_type.element_type())
+        key = safe_typecast(key, pv_keys_type.element_type());
+      new_keys.push_back(key);
+      new_vals.push_back(wrap_value(index_exprt{src_vals, idx}));
+    }
+
+    exprt new_dict = struct_exprt{
+      {src_len,
+       array_exprt{std::move(new_keys), pv_keys_type},
+       array_exprt{std::move(new_vals), pv_vals_type}},
+      pv_dict_type};
+
+    static unsigned dict_wrap_ctr = 0;
+    std::string tn = "__dict_val_" + std::to_string(dict_wrap_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt ti{tq};
+    if(symbol_table.lookup(ti) == nullptr)
+    {
+      symbolt ts{ti, pv_dict_type, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    const symbolt &ts = symbol_table.lookup_ref(ti);
+    pending_checks.push_back(code_frontend_assignt{ts.symbol_expr(), new_dict});
+    return make_python_value(
+      python_type_tagt::DICT, address_of_exprt{ts.symbol_expr()});
+  }
+
+  // For struct types (class instances) that don't fit
   // in the tagged union, return a nondet value. The struct can't be
   // stored in the int/float/bool/str/list fields.
   if(
@@ -6221,9 +6274,10 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     return nil_exprt{};
   }
 
-  // Tagged union subscript: unwrap to list and index
+  // Tagged union subscript: try list index, then dict lookup
   if(is_python_value_type(value.type()))
   {
+    // List subscript
     exprt list_val = python_value_list(value);
     if(is_python_list_type(list_val.type()))
     {
@@ -6231,6 +6285,30 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       const auto &data_type = to_array_type(list_st.components()[1].type());
       member_exprt data{list_val, "data", data_type};
       return index_exprt{data, slice};
+    }
+    // Dict subscript
+    exprt dict_val = python_value_dict(value);
+    if(is_python_dict_type(dict_val.type()))
+    {
+      const auto &dict_st = to_struct_type(dict_val.type());
+      const auto &keys_type = to_array_type(dict_st.components()[1].type());
+      const auto &vals_type = to_array_type(dict_st.components()[2].type());
+      member_exprt length{dict_val, "length", signedbv_typet{64}};
+      member_exprt keys{dict_val, "keys", keys_type};
+      member_exprt vals{dict_val, "values", vals_type};
+      exprt key = slice;
+      if(key.type() != keys_type.element_type())
+        key = safe_typecast(key, keys_type.element_type());
+      exprt result = safe_zero(vals_type.element_type());
+      for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+        exprt match = equal_exprt{index_exprt{keys, idx}, key};
+        result =
+          if_exprt{and_exprt{in_range, match}, index_exprt{vals, idx}, result};
+      }
+      return result;
     }
   }
 
