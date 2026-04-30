@@ -774,7 +774,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     type_name == "Iterable" || type_name == "Sequence" ||
     type_name == "Mapping" || type_name == "Type" || type_name == "ClassVar" ||
     type_name == "Final")
-    return python_int_type(); // typing module types default to int
+    return python_value_type();
   else if(class_types.count(type_name))
     return class_types[type_name];
   else
