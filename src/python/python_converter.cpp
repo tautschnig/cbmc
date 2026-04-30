@@ -5581,6 +5581,14 @@ exprt python_convertert::convert_call(const jsont &expr)
     // Unknown function — return nondet value (sound overapproximation)
     log.warning() << "Unknown function '" << func_name
                   << "', returning nondet value" << messaget::eom;
+    if(!no_body_check)
+    {
+      add_check(
+        false_exprt{},
+        "no-body",
+        "no body for callee " + func_name,
+        get_location(expr));
+    }
     side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }

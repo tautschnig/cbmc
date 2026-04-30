@@ -40,6 +40,7 @@ void python_languaget::set_language_options(
 {
   function_entry_point = options.get_option("function");
   unbounded_ints = options.get_bool_option("python-unbounded-ints");
+  no_body_check = options.get_bool_option("python-no-body-check");
   std::string max_str = options.get_option("python-max-string-length");
   if(!max_str.empty())
     max_string_length = std::stoul(max_str);
@@ -172,6 +173,7 @@ bool python_languaget::typecheck(
 {
   python_convertert converter{symbol_table, parse_tree, message_handler};
   converter.set_unbounded_ints(unbounded_ints);
+  converter.set_no_body_check(no_body_check);
   converter.set_module_resolver(
     [this, &message_handler](const std::string &name) -> const jsont *
     { return resolve_module(name, message_handler); });
