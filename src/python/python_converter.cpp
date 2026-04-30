@@ -8430,6 +8430,11 @@ codet python_convertert::convert_for(const jsont &stmt)
     new_sym.is_state_var = true;
     symbol_table.add(new_sym);
   }
+  else if(symbol_table.lookup_ref(var_id).type != elem_type)
+  {
+    // Update type to match iterable element type (e.g., tuple from enumerate)
+    symbol_table.get_writeable_ref(var_id).type = elem_type;
+  }
   symbol_exprt loop_var = symbol_table.lookup_ref(var_id).symbol_expr();
 
   // Create index variable
