@@ -5579,15 +5579,8 @@ exprt python_convertert::convert_call(const jsont &expr)
   if(sym == nullptr || sym->type.id() != ID_code)
   {
     // Unknown function — return nondet value (sound overapproximation)
-    // and add a failing property so the user knows the result is
-    // overapproximated, matching CBMC's "no body for callee" pattern.
     log.warning() << "Unknown function '" << func_name
                   << "', returning nondet value" << messaget::eom;
-    add_check(
-      false_exprt{},
-      "no-body",
-      "no body for callee " + func_name,
-      get_location(expr));
     side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }

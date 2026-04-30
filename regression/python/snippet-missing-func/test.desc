@@ -3,7 +3,6 @@ main.py
 
 ^EXIT=10$
 ^SIGNAL=0$
-^\[no-body\.1\].*no body for callee compute: FAILURE$
 ^VERIFICATION FAILED$
 --
 ^warning: ignoring

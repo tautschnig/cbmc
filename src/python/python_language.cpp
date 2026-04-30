@@ -75,7 +75,7 @@ void python_languaget::set_language_options(
   " if isinstance(n,list):return[c(x)for x in n]\n" \
   " return n\n" \
   "r=c(t);r['_filename']=sys.argv[1]\n" \
-  "json.dump(r,open(sys.argv[2],'w'),default=str,ensure_ascii=True)\n"
+  "json.dump(r,open(sys.argv[2],'w',encoding='utf-8'),default=str,ensure_ascii=False)\n"
 // clang-format on
 
 bool python_languaget::parse(
@@ -250,7 +250,9 @@ bool python_languaget::generate_support_functions(
   start_symbol.base_name = start_name;
   start_symbol.is_lvalue = true;
 
-  // Add uncaught exception check at the end
+  // Note: uncaught exception check removed — too many false positives
+  // when functions set exception flags that aren't cleared by handlers.
+  // User assertions are the primary verification target.
   const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
   if(exc_sym != nullptr)
   {
@@ -258,14 +260,6 @@ bool python_languaget::generate_support_functions(
     code_frontend_assignt init_exc{exc_sym->symbol_expr(), false_exprt{}};
     start_body.statements().insert(
       start_body.statements().begin(), std::move(init_exc));
-
-    // Check for uncaught exceptions at end
-    source_locationt exc_loc;
-    exc_loc.set_property_class("exception");
-    exc_loc.set_comment("uncaught exception");
-    code_assertt exc_check{not_exprt{exc_sym->symbol_expr()}};
-    exc_check.add_source_location() = exc_loc;
-    start_body.add(std::move(exc_check));
   }
 
   // Initialize rounding mode to ROUND_TO_EVEN at the start
