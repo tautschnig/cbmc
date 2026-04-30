@@ -3788,6 +3788,8 @@ exprt python_convertert::convert_call(const jsont &expr)
             {
               if(arguments[i].is_nil())
                 arguments[i] = safe_zero(mparams[i].type());
+              else if(arguments[i].type() != mparams[i].type())
+                arguments[i] = safe_typecast(arguments[i], mparams[i].type());
             }
           }
 
@@ -7344,6 +7346,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 for(const auto &a : as_array(call_args))
                   init_args.push_back(convert_expression(a));
               }
+              // Match argument types to parameter types
+              const auto &init_params =
+                to_code_type(init_sym->type).parameters();
+              for(std::size_t ai = 0;
+                  ai < init_args.size() && ai < init_params.size();
+                  ai++)
+              {
+                if(init_args[ai].type() != init_params[ai].type())
+                  init_args[ai] =
+                    safe_typecast(init_args[ai], init_params[ai].type());
+              }
               side_effect_expr_function_callt call{
                 init_sym->symbol_expr(),
                 std::move(init_args),
@@ -8785,6 +8798,14 @@ codet python_convertert::convert_return(const jsont &stmt)
           for(const auto &a : as_array(call_args))
             args.push_back(convert_expression(a));
         }
+        // Match argument types to parameter types
+        const auto &init_params = to_code_type(init_sym->type).parameters();
+        for(std::size_t ai = 0; ai < args.size() && ai < init_params.size();
+            ai++)
+        {
+          if(args[ai].type() != init_params[ai].type())
+            args[ai] = safe_typecast(args[ai], init_params[ai].type());
+        }
         side_effect_expr_function_callt call{
           init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
         block.add(code_expressiont{call});
@@ -10112,6 +10133,14 @@ codet python_convertert::convert_with(const jsont &stmt)
             {
               for(const auto &a : as_array(call_args))
                 args.push_back(convert_expression(a));
+            }
+            // Match argument types to parameter types
+            const auto &init_params = to_code_type(init_sym->type).parameters();
+            for(std::size_t ai = 0; ai < args.size() && ai < init_params.size();
+                ai++)
+            {
+              if(args[ai].type() != init_params[ai].type())
+                args[ai] = safe_typecast(args[ai], init_params[ai].type());
             }
             side_effect_expr_function_callt call{
               init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
