@@ -2128,3 +2128,110 @@ on-demand method body conversion.
    try-block awareness. ~30 lines, recovers missed bugs.
 3. **Performance (3 timeouts):** Pointer-based string model or
    on-demand method body conversion. Major effort.
+
+
+### 12.17 for-enumerate — enumerate tuple unpacking regression
+
+**Test:** `for i, n in enumerate(numbers): total += n`
+
+**Root cause:** `enumerate()` builds a list of `(index, element)` tuples.
+The for-loop tuple unpacking assigns `n := nondet` instead of extracting
+the tuple's `_1` field. The issue is that the list element type from
+`enumerate` (a tuple struct) doesn't match the pre-registered variable
+type, causing the tuple field extraction to fall back to nondet.
+
+**Fix (~10 lines):** In the for-loop tuple unpacking code, when
+`elem_val.type()` is a struct with `_0`/`_1` components, extract fields
+directly regardless of the loop variable's pre-registered type. The
+current code checks `to_struct_type(elem_val.type()).has_component(field)`
+which should work — need to debug why it doesn't fire for enumerate results.
+
+**Effort:** Small — likely a type mismatch between the enumerate tuple
+struct and the list element type.
+
+### 12.18 limit-from-integer-crash — from_integer on struct type
+
+**Test:** Dict with class instance values causes `from_integer` crash.
+
+**Root cause:** `from_integer(0, struct_type)` is called when creating
+default values for dict entries or function parameters with class types.
+The `safe_zero` function handles structs by recursing into components,
+but some code paths call `from_integer` directly without checking the type.
+
+**Fix (~15 lines):** Audit all `from_integer` calls in the converter and
+guard them with type checks:
+```cpp
+if(type.id() == ID_signedbv || type.id() == ID_unsignedbv ||
+   type.id() == ID_integer || type.id() == ID_bool)
+  return from_integer(val, type);
+else
+  return safe_zero(type);
+```
+
+Key locations to fix:
+- Dict value default in subscript handler
+- Function parameter default values
+- Comparison operators with mixed types
+
+**Effort:** ~15 lines across 3-4 locations.
+
+### 12.19 limit-type-mismatch-goto — expected signedbv type error
+
+**Test:** Dict with list values causes `expected signedbv` during GOTO.
+
+**Root cause:** Dict values are `python_value_type` (tagged union). When
+a dict value is used in an arithmetic context (e.g., `total += d["key"]`),
+the tagged union is not unwrapped before the operation. The GOTO converter
+expects `signedbv` but gets the tagged union struct.
+
+**Fix (~10 lines):** In arithmetic operators (`+`, `-`, `*`, etc.), when
+an operand is `python_value_type`, unwrap it to the expected type before
+creating the arithmetic expression. This is already done in `convert_bin_op`
+but may be missing in some code paths (e.g., augmented assignment, or
+operations inside imported module bodies).
+
+**Effort:** ~10 lines — find and fix the specific code path.
+
+### 12.20 runtime-error-divzero — division by zero not detected
+
+**Test:** `1 / 0` should fail but passes.
+
+**Root cause:** The `uncaught exception` check at program end was removed
+because it caused too many false positives. Division by zero sets the
+`__exception_active` flag but no property check fires.
+
+**Fix options:**
+1. **Smart exception check:** Re-add the uncaught exception check but
+   only fire if the exception was raised outside any try block. Requires
+   tracking try-block depth at the GOTO level. (~30 lines)
+2. **Per-statement exception check:** After each expression statement at
+   module level, add `assert(!__exception_active)`. This catches div-by-zero
+   immediately. (~10 lines in `convert_module_body`)
+3. **Configurable:** Add `--python-exception-check` flag to enable/disable.
+
+**Recommended:** Option 2 — per-statement checks at module level only.
+This catches runtime errors without the false positives from function-level
+exception flags.
+
+### Updated KNOWNBUG Summary
+
+| # | KNOWNBUG | Has plan? | Feasibility |
+|---|----------|-----------|-------------|
+| 1 | for-enumerate | §12.17 ✅ | Small fix — debug type mismatch |
+| 2 | limit-async-concurrent | §12.15 ✅ | Deep — weeks |
+| 3 | limit-attr-nondet | §12.3 ✅ | Not fixable — fundamental |
+| 4 | limit-float-precision | §12.4 ✅ | Out of scope — back-end |
+| 5 | limit-from-integer-crash | §12.18 ✅ | ~15 lines |
+| 6 | limit-generator-infinite | §12.14 ✅ | Deep — weeks |
+| 7 | limit-import-resolution | §12.7 ✅ | Ongoing — stubs |
+| 8 | limit-in-tagged-union | §12.1 ✅ | Blocked — fixed list type |
+| 9 | limit-loop-unsound | §12.12 ✅ | Blocked — string model |
+| 10 | limit-math-symbolic | §12.9 ✅ | Fundamental |
+| 11 | limit-overflow-nondet-arith | §12.16 ✅ | Config — already works with --z3 |
+| 12 | limit-re-module-usage | §12.8 ✅ | ~20 lines |
+| 13 | limit-set-operations | §12.6 ✅ | Blocked — O(n²) too slow |
+| 14 | limit-subscript-tagged-dict | §12.2 ✅ | Blocked — no dict in union |
+| 15 | limit-type-mismatch-goto | §12.19 ✅ | ~10 lines |
+| 16 | limit-unknown-func | §12.11 ✅ | High risk — function pointers |
+| 17 | math-symbolic-arg | §12.10 ✅ | Fundamental |
+| 18 | runtime-error-divzero | §12.20 ✅ | ~10 lines |
