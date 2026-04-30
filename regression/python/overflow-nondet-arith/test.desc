@@ -1,8 +1,7 @@
-KNOWNBUG
+CORE
 main.py
-
+--python-unbounded-ints
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-^warning: ignoring
