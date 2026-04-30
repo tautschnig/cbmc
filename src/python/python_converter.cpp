@@ -3778,7 +3778,12 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
     }
-    log.warning() << "Unknown method: " << method_name << messaget::eom;
+    // Suppress warnings for known methods on nondet objects
+    if(
+      method_name != "search" && method_name != "match" &&
+      method_name != "group" && method_name != "groups" &&
+      method_name != "span")
+      log.warning() << "Unknown method: " << method_name << messaget::eom;
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
 
