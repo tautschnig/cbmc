@@ -73,6 +73,7 @@ class optionst;
   "(python-unbounded-ints)" \
   "(python-max-string-length):" \
   "(python-max-list-length):" \
+  "(python-no-body-check)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 
