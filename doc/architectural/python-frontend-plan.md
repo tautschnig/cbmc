@@ -1773,3 +1773,298 @@ Deferred — correctness and feature work takes priority. The current 1.15s
 for the boto3 benchmark is acceptable for development. The pointer-based
 model should be implemented when performance becomes a blocker for larger
 benchmarks.
+
+
+## 12. KNOWNBUG Implementation Plans
+
+Each KNOWNBUG test represents a category of wrong results. This section
+provides detailed implementation plans for all 16 KNOWNBUGs.
+
+### 12.1 limit-in-tagged-union — `in` on tagged union (~20 tests)
+
+**Test:** `"key" in d` where `d` is `python_value_type`.
+
+**Root cause:** The `in` operator only handles `list`, `string`, and `dict`
+types. When the container is a `python_value_type` (from an untyped
+function parameter), the handler falls through to "not supported".
+
+**Fix (~15 lines):** In the `In`/`NotIn` handler in `convert_compare`,
+add a case for `python_value_type`:
+```
+if(is_python_value_type(right.type())) {
+    // Dispatch: if tag==DICT, unwrap to dict and scan keys
+    // if tag==LIST, unwrap to list and scan elements
+    // if tag==STR, unwrap to string and scan chars
+    exprt dict_result = /* dict in check using python_value_dict(right) */;
+    exprt list_result = /* list in check using python_value_list(right) */;
+    return if_exprt{python_value_is(right, DICT), dict_result,
+           if_exprt{python_value_is(right, LIST), list_result, false_exprt{}}};
+}
+```
+
+**Effort:** ~15 lines. Straightforward — reuse existing `in` logic for
+each concrete type, wrapped in tag dispatch.
+
+### 12.2 limit-subscript-tagged-dict — nested dict subscript (~3 tests)
+
+**Test:** `d["outer"]["inner"]` where `d["outer"]` returns `python_value_type`.
+
+**Root cause:** The tagged union subscript handler only unwraps to list
+(added for `limit-typecast-issue`). It doesn't unwrap to dict.
+
+**Fix (~10 lines):** In the tagged union subscript handler (after the
+list unwrap), add dict unwrap:
+```
+// Also try dict unwrap
+exprt dict_val = python_value_dict(value);  // needs new accessor
+if(is_python_dict_type(dict_val.type())) {
+    // Reuse dict subscript scan logic
+}
+```
+
+**Blocker:** The `python_value_type` doesn't have a `__dict_ptr` field.
+Adding one would increase the struct size. Alternative: use the `__list_ptr`
+field to store dicts (both are struct pointers). Or add a new field.
+
+**Effort:** ~20 lines + 5 lines in `python_value_type.h`.
+
+### 12.3 limit-attr-nondet — attribute access on tagged union (~12 tests)
+
+**Test:** `obj.length` where `obj` is `python_value_type`.
+
+**Root cause:** `convert_attribute` checks if the value is a struct with
+the named component. `python_value_type` doesn't have arbitrary attributes.
+
+**Fix:** This is fundamentally hard — the tagged union can't have arbitrary
+attributes. The fix would require either:
+1. Unwrap to the concrete type and access the attribute (but we don't
+   know which type at conversion time)
+2. Use a property map (dict-like) for attribute access
+
+**Assessment:** Not fixable without major refactoring. The tagged union
+model doesn't support arbitrary attribute access. This is a fundamental
+limitation of untyped parameters.
+
+**Workaround:** Add type annotations to function parameters.
+
+### 12.4 limit-float-precision — float arithmetic back-end (~23 tests)
+
+**Test:** `divmod(7.5, 2.0)` remainder doesn't match expected value.
+
+**Root cause:** Known floating-point bugs in the CBMC back-end (solver
+encoding of IEEE 754 operations).
+
+**Fix:** Not in our frontend — requires CBMC back-end fixes.
+
+**Assessment:** Out of scope for the Python frontend.
+
+### 12.5 limit-for-complex — enumerate() in for loops (~32 tests)
+
+**Test:** `for i, n in enumerate(numbers):`
+
+**Root cause:** `enumerate()` is not implemented. It should return a list
+of `(index, element)` tuples.
+
+**Fix (~30 lines):** In `convert_call`, add an `enumerate` handler:
+```
+if(func_name == "enumerate") {
+    exprt iterable = convert_expression(arg);
+    // Build list of (i, elem) tuples:
+    // for each index i in [0, length), create tuple{i, data[i]}
+    // Return list of tuples
+}
+```
+
+Then the existing tuple-unpacking for-loop handler will work.
+
+Also needed: `zip()` (~20 lines, similar pattern — build list of tuples
+from two iterables).
+
+**Effort:** ~50 lines total for enumerate + zip.
+
+### 12.6 limit-set-operations — set difference/union/intersection (~24 tests)
+
+**Test:** `a - b` where `a` and `b` are sets.
+
+**Root cause:** Set operations (-, |, &, ^) are not implemented. Our set
+model uses the same dedup array as lists but has no operator support.
+
+**Fix (~40 lines):** In `convert_bin_op`, add set operation handlers:
+```
+if(is_python_set_type(left.type()) && is_python_set_type(right.type())) {
+    if(op == "Sub") {  // set difference
+        // For each element in left, check if NOT in right
+        // Build new set with only non-matching elements
+    }
+    // Similar for BitOr (union), BitAnd (intersection), BitXor (symmetric)
+}
+```
+
+**Effort:** ~40 lines. Each operation is an O(n²) scan.
+
+### 12.7 limit-import-resolution — stdlib modules (~34 tests)
+
+**Test:** `from collections import Counter`
+
+**Root cause:** Only `math`, `random`, `typing`, and `re` are recognized.
+Other stdlib modules (collections, itertools, functools, os, sys, etc.)
+are silently ignored.
+
+**Fix options:**
+1. **Stub library:** Create minimal Python stubs for common stdlib modules
+   (Counter as a dict subclass, defaultdict, etc.). ~100 lines per module.
+2. **PYTHONPATH resolution:** Use the system Python's stdlib. But stdlib
+   modules are complex and would slow down processing.
+3. **Nondet models:** Return nondet for unknown stdlib functions with
+   appropriate type constraints.
+
+**Assessment:** Option 1 is most practical for verification. Start with
+`collections.Counter` (most commonly used in ESBMC tests).
+
+**Effort:** ~50 lines per module stub.
+
+### 12.8 limit-re-module-usage — re.compile/search (~6 tests)
+
+**Test:** `re.compile("[a-z]+").search("hello")`
+
+**Root cause:** `re.compile()` returns nondet, `pattern.search()` is an
+unknown method.
+
+**Fix (~20 lines):** Model `re.compile()` as returning a "pattern" class
+instance. Model `pattern.search()` as returning nondet (None or match).
+Model `pattern.match()` similarly. For constant patterns and strings,
+could compute exact results using C++ `<regex>`.
+
+**Effort:** ~20 lines for nondet model, ~50 lines for exact matching.
+
+### 12.9 limit-math-symbolic — math with symbolic args (~94 tests)
+
+**Test:** `math.sin(x)` where `x` is a variable.
+
+**Root cause:** Math functions with non-constant arguments return
+constrained nondet (sin in [-1,1], sqrt >= 0, etc.). Tests that require
+exact values (sin(1.5708) ≈ 1.0) fail because the solver can find
+counterexamples within the constrained range.
+
+**Assessment:** This is a fundamental limitation of the nondet-with-
+constraints approach, matching CBMC's C frontend (src/ansi-c/library/math.c).
+The only fix would be interval arithmetic or linking to actual math
+library implementations, neither of which is practical for BMC.
+
+**No fix planned.** The constrained nondet model is sound.
+
+### 12.10 math-symbolic-arg — sin²+cos²≠1 (~0 additional tests)
+
+**Test:** `sin(x)*sin(x) + cos(x)*cos(x) > 0.99`
+
+**Root cause:** `sin(x)` and `cos(x)` are independent nondets. The
+identity sin²+cos² = 1 is not enforced.
+
+**Fix:** Would require adding `assume(sin(x)^2 + cos(x)^2 == 1)` when
+both sin and cos are called with the same argument. This is complex
+(need to track which math calls share arguments) and fragile.
+
+**No fix planned.** Fundamental limitation.
+
+### 12.11 limit-unknown-func — higher-order functions (~51 tests)
+
+**Test:** `apply(f, x)` where `f: Callable[[int], int]`.
+
+**Root cause:** Calling through a `Callable` parameter is not supported.
+The parameter `f` is a code-typed symbol but the call `f(x)` cannot
+resolve which function to invoke.
+
+**Fix:** Map `Callable` parameters to CBMC function pointers. Use the
+`remove_function_pointers` GOTO transformation pass to resolve calls.
+This requires:
+1. Convert `Callable` type annotation to `code_typet` pointer
+2. At call sites, pass `address_of(function_symbol)`
+3. Let CBMC's function pointer removal handle dispatch
+
+**Effort:** ~50 lines in converter + CBMC infrastructure support.
+**Risk:** High — function pointer removal may not work well with our
+Python-specific types.
+
+### 12.12 limit-loop-unsound — string list iteration timeout (~42 tests)
+
+**Test:** `for s in string_list:` times out.
+
+**Root cause:** Each string is a 264-byte struct. A list of 64 strings
+is ~17KB. The for-loop creates a while-loop that iterates over this
+array. With default unwinding, CBMC tries to unwind fully, which is
+very slow for large struct arrays.
+
+**Fix:** The pointer-based string model (Section 11) would reduce string
+size from 264 bytes to 16 bytes (length + pointer). This would make
+string list iteration ~16x faster.
+
+**Alternative:** Use `--unwind N` with a small N. But this may miss bugs.
+
+**Blocked on:** Section 11 (pointer-based string model).
+
+### 12.13 limit-missing-runtime-errors — missing error detection (~92 wrong-pass)
+
+**Test:** `1 / 0` should fail but passes.
+
+**Root cause:** We removed division-by-zero property checks (Python models
+them as exceptions). The exception flag is set but doesn't prevent
+subsequent code from executing at module level. Also: undefined variables
+(NameError), invalid chr() args, type errors in builtins.
+
+**Fix (multi-part):**
+1. **Division by zero at module level:** Add `assert(!__exception_active)`
+   after each expression statement at module level. (~5 lines)
+2. **Undefined variables:** In `convert_name`, when a symbol is not found,
+   set `__exception_active` and return nondet. (~10 lines)
+3. **Type errors in builtins:** Already partially done (abs). Extend to
+   chr(), int(), float(), len(), etc. (~30 lines)
+
+**Effort:** ~45 lines total.
+
+### 12.14 limit-generator-infinite — lazy generators (deep)
+
+**Root cause:** Generators with `yield` need coroutine-like state machine
+transformation. Our eager evaluation model converts generators to lists,
+which doesn't work for infinite generators.
+
+**Fix:** Transform generator functions into state machine classes:
+- Each `yield` becomes a state transition
+- `__next__()` resumes from the saved state
+- Local variables are stored in the state object
+
+**Effort:** 2-3 weeks. Major architectural change.
+
+### 12.15 limit-async-concurrent — async/threads (deep)
+
+**Root cause:** `async def` and `await` need CBMC thread primitives
+(`__CPROVER_thread_create`, etc.) for concurrent verification.
+
+**Fix:** Map `async def` to thread creation, `await` to thread join.
+Use CBMC's existing concurrency support.
+
+**Effort:** 2-3 weeks. Requires understanding CBMC's thread model.
+
+### 12.16 limit-overflow-nondet-arith — unbounded ints (configuration)
+
+**Root cause:** Python integers have arbitrary precision. Our 64-bit
+`signedbv` model overflows for large values. The `--python-unbounded-ints`
+option is registered but uses `mathematical_integer` type which requires
+the Z3 solver (`--z3`).
+
+**Fix:** Wire up `--python-unbounded-ints` to actually use `integer_typet`
+throughout the converter. Ensure all arithmetic, comparison, and typecast
+operations handle `integer_typet`.
+
+**Effort:** ~30 lines to wire up, but extensive testing needed with Z3.
+
+### Updated Priority Assessment
+
+| Priority | KNOWNBUGs | Effort | Impact |
+|----------|-----------|--------|--------|
+| **Quick wins** | limit-in-tagged-union, limit-subscript-tagged-dict, limit-missing-runtime-errors | 1-2 days | ~115 tests |
+| **Medium** | limit-for-complex (enumerate), limit-set-operations, limit-re-module-usage | 2-3 days | ~62 tests |
+| **Blocked** | limit-loop-unsound (needs string model), limit-float-precision (back-end) | — | ~65 tests |
+| **Fundamental** | limit-math-symbolic, math-symbolic-arg, limit-attr-nondet, limit-unknown-func | — | ~157 tests |
+| **Deep** | limit-generator-infinite, limit-async-concurrent | weeks | — |
+| **Config** | limit-overflow-nondet-arith | 1 day | — |
+| **Stubs** | limit-import-resolution | ongoing | ~34 tests |
