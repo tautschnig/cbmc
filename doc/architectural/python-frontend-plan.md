@@ -2235,3 +2235,51 @@ exception flags.
 | 16 | limit-unknown-func | §12.11 ✅ | High risk — function pointers |
 | 17 | math-symbolic-arg | §12.10 ✅ | Fundamental |
 | 18 | runtime-error-divzero | §12.20 ✅ | ~10 lines |
+
+
+## 14. Tagged Union Recursive Type — Unblocking Plan
+
+### Problem
+
+`python_value_type` needs `__list_ptr: pointer_to(list[python_value_type])`
+to preserve element types when lists are stored in the tagged union.
+Currently `__list_ptr` points to `list[int]`, losing type information.
+
+### Blocker
+
+CBMC uses **structural type equality**. A self-referential struct requires
+the inner reference to be structurally identical to the outer struct. But
+the outer struct isn't fully defined when the inner reference is created.
+
+An empty stub struct with the same tag doesn't work — the simplifier
+rejects it because the structures differ.
+
+### Solution: `struct_tag_typet`
+
+CBMC's C frontend handles recursive structs (e.g., `struct node { node *next }`)
+using `struct_tag_typet` — a **named type reference** that refers to a
+struct by its tag in the symbol table, not by its inline structure.
+
+The fix:
+1. Register `python_value_type` as a named type in the symbol table
+   (like the C frontend does for `struct` declarations)
+2. Use `struct_tag_typet{"python_value"}` wherever `python_value_type()`
+   is currently used as a type reference
+3. The `__list_ptr` field becomes
+   `pointer_typet{python_list_type(struct_tag_typet{"python_value"}), 64}`
+
+This breaks the recursion because `struct_tag_typet` is a reference
+(like a forward declaration), not an inline definition.
+
+### Impact
+
+This change would unblock:
+- **limit-in-tagged-union** (~20 tests): `in` on lists through tagged union
+- **limit-subscript-tagged-dict** (~3 tests): nested dict subscript
+- **Heterogeneous list precision**: list elements preserve their types
+
+### Effort
+
+~50 lines to refactor `python_value_type` to use `struct_tag_typet`.
+Plus ~30 lines to update all places that create or check the type.
+Medium effort, low risk (well-established CBMC pattern).
