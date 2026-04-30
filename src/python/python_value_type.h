@@ -37,7 +37,6 @@ enum class python_type_tagt
   BOOL = 3,
   STR = 4,
   LIST = 5,
-  DICT = 6,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -69,10 +68,6 @@ inline struct_typet python_value_struct_def()
   // list[python_value_type] — self-referential via struct_tag_typet
   components.push_back(struct_typet::componentt{
     "__list_ptr", pointer_typet{python_list_type(python_value_type()), 64}});
-  components.push_back(struct_typet::componentt{
-    "__dict_ptr",
-    pointer_typet{
-      python_dict_type(python_string_type(), python_value_type()), 64}});
 
   struct_typet result{components};
   result.set_tag("python_value");
@@ -106,8 +101,6 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     pointer_typet{python_string_type(), 64}};
   exprt list_ptr = null_pointer_exprt{
     pointer_typet{python_list_type(python_value_type()), 64}};
-  exprt dict_ptr = null_pointer_exprt{pointer_typet{
-    python_dict_type(python_string_type(), python_value_type()), 64}};
 
   switch(tag)
   {
@@ -134,17 +127,12 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                  ? value
                  : address_of_exprt{value};
     break;
-  case python_type_tagt::DICT:
-    dict_ptr =
-      value.type().id() == ID_pointer ? value : address_of_exprt{value};
-    break;
   case python_type_tagt::NONE:
     break;
   }
 
   struct_exprt result{
-    {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr, dict_ptr},
-    vtype};
+    {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr}, vtype};
   // Set the expression type to the canonical tag type
   result.type() = python_value_type();
   return result;
@@ -188,16 +176,6 @@ inline dereference_exprt python_value_list(const exprt &value)
     value,
     "__list_ptr",
     pointer_typet{python_list_type(python_value_type()), 64}}};
-}
-
-/// Extract the dict pointer from a tagged-union value.
-inline dereference_exprt python_value_dict(const exprt &value)
-{
-  return dereference_exprt{member_exprt{
-    value,
-    "__dict_ptr",
-    pointer_typet{
-      python_dict_type(python_string_type(), python_value_type()), 64}}};
 }
 
 /// Check if a tagged-union value has a specific tag.
