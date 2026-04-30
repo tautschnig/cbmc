@@ -2283,3 +2283,32 @@ This change would unblock:
 ~50 lines to refactor `python_value_type` to use `struct_tag_typet`.
 Plus ~30 lines to update all places that create or check the type.
 Medium effort, low risk (well-established CBMC pattern).
+
+
+### Attempt 2: Partial struct_tag_typet (failed)
+
+Using `struct_tag_typet` only for the list element type while keeping
+`struct_typet` everywhere else causes crashes in CBMC's pointer analysis
+(`value_set.cpp`). The analysis compares types and finds `struct_tag_typet`
+≠ `struct_typet` even though they refer to the same struct.
+
+**Root cause:** CBMC's pointer analysis expects consistent type usage.
+Mixing `struct_tag_typet` (in list elements) with `struct_typet` (in
+function parameters, variables, etc.) creates type mismatches.
+
+**Required fix:** Use `struct_tag_typet{"tag-python_value"}` as THE
+canonical type for `python_value_type` everywhere:
+- Function parameter types
+- Variable types
+- Expression types
+- Return types
+- All comparisons and typecasts
+
+This means `python_value_type()` should return `struct_tag_typet` (not
+`struct_typet`), and the actual struct definition lives only in the
+symbol table. All code that checks `is_python_value_type(t)` needs to
+handle both `struct_typet` with tag "python_value" AND
+`struct_tag_typet{"tag-python_value"}`.
+
+**Effort:** ~100 lines. Every call to `python_value_type()`,
+`is_python_value_type()`, `python_value_int()`, etc. needs updating.
