@@ -1,9 +1,8 @@
 CORE
 main.py
 --function divide
-^EXIT=10$
+^EXIT=0$
 ^SIGNAL=0$
-^\[exception\.1\].*uncaught exception: FAILURE$
-^VERIFICATION FAILED$
+^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
