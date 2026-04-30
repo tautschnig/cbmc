@@ -1741,8 +1741,33 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
     }
     typet float_type = double_type();
-    return div_exprt{
-      safe_typecast(left, float_type), safe_typecast(right, float_type)};
+    // Set ZeroDivisionError for division by zero
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt is_zero = equal_exprt{right, safe_zero(right.type())};
+        pending_checks.push_back(code_ifthenelset{
+          is_zero,
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+        if(exc_type_sym != nullptr)
+          pending_checks.push_back(code_ifthenelset{
+            is_zero,
+            code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(
+                exception_type_hash("ZeroDivisionError"), python_int_type())}});
+      }
+    }
+    exprt fl = safe_typecast(left, float_type);
+    exprt fr = safe_typecast(right, float_type);
+    return if_exprt{
+      equal_exprt{right, safe_zero(right.type())},
+      safe_zero(float_type),
+      div_exprt{fl, fr}};
   }
   else if(op == "BitOr")
   {
@@ -10188,6 +10213,24 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
 
     codet code = convert_statement(stmt);
     block.add(std::move(code));
+
+    // Check for uncaught exceptions after each module-level statement
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    if(
+      exc_sym != nullptr && !is_node_type(stmt, "FunctionDef") &&
+      !is_node_type(stmt, "AsyncFunctionDef") &&
+      !is_node_type(stmt, "ClassDef") && !is_node_type(stmt, "Import") &&
+      !is_node_type(stmt, "ImportFrom") && !is_node_type(stmt, "Try") &&
+      !is_node_type(stmt, "If") && !is_node_type(stmt, "While") &&
+      !is_node_type(stmt, "For"))
+    {
+      source_locationt eloc = get_location(stmt);
+      eloc.set_property_class("exception");
+      eloc.set_comment("uncaught exception");
+      code_assertt exc_check{not_exprt{exc_sym->symbol_expr()}};
+      exc_check.add_source_location() = eloc;
+      block.add(std::move(exc_check));
+    }
   }
 
   return block;
