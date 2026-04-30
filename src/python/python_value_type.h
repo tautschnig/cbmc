@@ -39,11 +39,21 @@ enum class python_type_tagt
   LIST = 5,
 };
 
-/// Return the CBMC struct type representing a Python tagged-union value.
-/// Layout: { int tag; int64 int_val; double float_val; bool bool_val;
-///           python_str str_val; python_list list_val; }
-/// All fields are always present (no C union — simpler for the solver).
-inline struct_typet python_value_type()
+/// Tag name for the python_value type in the symbol table.
+#define PYTHON_VALUE_TAG "tag-python_value"
+
+/// Return the canonical type reference for Python tagged-union values.
+/// This is a struct_tag_typet that refers to the actual struct definition
+/// in the symbol table (registered by python_convertert::convert()).
+/// Using struct_tag_typet enables self-referential types (list[python_value]).
+inline struct_tag_typet python_value_type()
+{
+  return struct_tag_typet{PYTHON_VALUE_TAG};
+}
+
+/// Return the actual struct definition for the Python tagged-union.
+/// Only used to register the type in the symbol table.
+inline struct_typet python_value_struct_def()
 {
   struct_typet::componentst components;
 
@@ -53,11 +63,11 @@ inline struct_typet python_value_type()
   components.push_back(struct_typet::componentt{"__float_val", double_type()});
   components.push_back(
     struct_typet::componentt{"__bool_val", signedbv_typet{32}});
-  // Pointers to heap-allocated complex types (keeps union small)
   components.push_back(struct_typet::componentt{
     "__str_ptr", pointer_typet{python_string_type(), 64}});
+  // list[python_value_type] — self-referential via struct_tag_typet
   components.push_back(struct_typet::componentt{
-    "__list_ptr", pointer_typet{python_list_type(signedbv_typet{64}), 64}});
+    "__list_ptr", pointer_typet{python_list_type(python_value_type()), 64}});
 
   struct_typet result{components};
   result.set_tag("python_value");
@@ -67,15 +77,17 @@ inline struct_typet python_value_type()
 /// Check if a type is the Python tagged-union value type.
 inline bool is_python_value_type(const typet &type)
 {
-  if(type.id() != ID_struct)
-    return false;
-  return to_struct_type(type).get_tag() == "python_value";
+  if(type.id() == ID_struct_tag)
+    return to_struct_tag_type(type).get_identifier() == PYTHON_VALUE_TAG;
+  if(type.id() == ID_struct)
+    return to_struct_type(type).get_tag() == "python_value";
+  return false;
 }
 
 /// Build a tagged-union value expression from a concrete typed value.
 inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
 {
-  struct_typet vtype = python_value_type();
+  struct_typet vtype = python_value_struct_def();
 
   exprt tag_expr = from_integer(static_cast<int>(tag), signedbv_typet{32});
   exprt int_val = from_integer(0, signedbv_typet{64});
@@ -88,7 +100,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   exprt str_ptr = null_pointer_exprt{
     pointer_typet{python_string_type(), 64}};
   exprt list_ptr = null_pointer_exprt{
-    pointer_typet{python_list_type(signedbv_typet{64}), 64}};
+    pointer_typet{python_list_type(python_value_type()), 64}};
 
   switch(tag)
   {
@@ -119,8 +131,11 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     break;
   }
 
-  return struct_exprt{
+  struct_exprt result{
     {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr}, vtype};
+  // Set the expression type to the canonical tag type
+  result.type() = python_value_type();
+  return result;
 }
 
 /// Extract the tag from a tagged-union value.
@@ -158,8 +173,9 @@ inline dereference_exprt python_value_str(const exprt &value)
 inline dereference_exprt python_value_list(const exprt &value)
 {
   return dereference_exprt{member_exprt{
-    value, "__list_ptr",
-    pointer_typet{python_list_type(signedbv_typet{64}), 64}}};
+    value,
+    "__list_ptr",
+    pointer_typet{python_list_type(python_value_type()), 64}}};
 }
 
 /// Check if a tagged-union value has a specific tag.
