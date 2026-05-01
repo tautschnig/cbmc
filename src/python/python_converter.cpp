@@ -2751,12 +2751,15 @@ exprt python_convertert::convert_call(const jsont &expr)
             {
               pending_checks.push_back(
                 code_assumet{binary_relation_exprt{tv, ID_ge, fz.to_expr()}});
-              // Constrain: result * result == arg (for perfect squares)
+              // Constrain: result * result == arg (for non-negative args)
               exprt float_arg = math_arg;
               if(math_arg.type().id() != ID_floatbv)
                 float_arg = typecast_exprt(math_arg, double_type());
-              pending_checks.push_back(code_assumet{
-                ieee_float_equal_exprt{mult_exprt{tv, tv}, float_arg}});
+              exprt arg_nonneg =
+                binary_relation_exprt{float_arg, ID_ge, fz.to_expr()};
+              pending_checks.push_back(code_assumet{implies_exprt{
+                arg_nonneg,
+                ieee_float_equal_exprt{mult_exprt{tv, tv}, float_arg}}});
             }
             else if(func_name == "exp" || func_name == "exp2")
               pending_checks.push_back(
