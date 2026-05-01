@@ -5,8 +5,7 @@ main.py
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-^warning: ignoring
 --
-Standard library modules (collections, itertools, functools, etc.)
-not modeled. Only math, random, typing, re are partially supported.
-Affects ~34 ESBMC tests.
+Counter returns nondet (no body). The assertion c[1] == 2 fails
+because the nondet dict doesn't track element counts.
+With --python-no-body-check, verification succeeds (no crash).

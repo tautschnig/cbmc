@@ -7017,16 +7017,16 @@ codet python_convertert::convert_statement(const jsont &stmt)
             module == "copy" || module == "enum" || module == "dataclasses" ||
             module == "abc")
           {
-            // Stdlib modules: register imported names as nondet functions
+            // Stdlib modules: register imported names as variables (not
+            // functions) so the unknown-function handler returns nondet
+            // instead of CBMC trying to inline a no-body function.
             irep_idt fid{"python::" + asname};
             if(symbol_table.lookup(fid) == nullptr)
             {
-              code_typet ft{
-                {code_typet::parametert{python_value_type()}},
-                python_value_type()};
-              symbolt fs{fid, ft, "python"};
+              symbolt fs{fid, python_int_type(), "python"};
               fs.base_name = asname;
               fs.is_lvalue = true;
+              fs.is_state_var = true;
               symbol_table.add(fs);
             }
           }
