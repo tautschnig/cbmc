@@ -7481,7 +7481,9 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
   if(
     sym.type != rhs.type() && rhs.type().id() == ID_struct &&
-    (sym.type == python_int_type() || sym.type.id() != ID_struct))
+    (sym.type == python_int_type() || sym.type.id() != ID_struct ||
+     (is_python_list_type(sym.type) && is_python_list_type(rhs.type())) ||
+     (is_python_dict_type(sym.type) && is_python_dict_type(rhs.type()))))
   {
     symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
   }
