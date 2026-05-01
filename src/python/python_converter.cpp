@@ -5087,6 +5087,9 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // str(string) — return as-is
+      if(is_python_string_type(arg.type()))
+        return arg;
       // str(int_constant) — convert at conversion time
       if(arg.is_constant() && arg.type().id() == ID_signedbv)
       {
