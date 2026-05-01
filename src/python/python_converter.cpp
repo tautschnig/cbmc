@@ -771,7 +771,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   else if(type_name == "dict" || type_name == "Dict")
     return python_int_type(); // dict type not fully modeled
   else if(type_name == "set" || type_name == "Set")
-    return python_list_type(python_int_type()); // sets modeled as lists
+    return python_set_type();
   else if(type_name == "tuple" || type_name == "Tuple")
     return python_int_type(); // unparameterized tuple
   else if(
@@ -851,7 +851,55 @@ exprt python_convertert::convert_expression(const jsont &expr)
   else if(node_type == "Dict")
     result = convert_dict(expr);
   else if(node_type == "Set")
-    result = convert_list(expr);
+  {
+    // PLR §6.2.6: Set displays — bitmap for int sets, list for others
+    const jsont &elts = json_member(expr, "elts");
+    if(!elts.is_array() || as_array(elts).empty())
+    {
+      result = struct_exprt{
+        {from_integer(0, unsignedbv_typet{64}),
+         from_integer(0, signedbv_typet{64})},
+        python_set_type()};
+    }
+    else
+    {
+      // Check if all elements are constant integers
+      bool all_int_constant = true;
+      std::vector<mp_integer> values;
+      for(const auto &elt : as_array(elts))
+      {
+        exprt val = convert_expression(elt);
+        if(val.is_constant() && val.type().id() == ID_signedbv)
+        {
+          mp_integer iv;
+          if(!to_integer(to_constant_expr(val), iv))
+            values.push_back(iv);
+          else
+            all_int_constant = false;
+        }
+        else
+          all_int_constant = false;
+      }
+      if(all_int_constant && !values.empty())
+      {
+        mp_integer bitmap{0};
+        for(const auto &v : values)
+        {
+          if(v >= 0 && v < 64)
+            bitmap = bitmap + power(2, v);
+        }
+        result = struct_exprt{
+          {from_integer(bitmap, unsignedbv_typet{64}),
+           from_integer(0, signedbv_typet{64})},
+          python_set_type()};
+      }
+      else
+      {
+        // Non-integer set: fall back to list model
+        result = convert_list(expr);
+      }
+    }
+  }
   else if(node_type == "ListComp")
     result = convert_list_comp(expr);
   else if(node_type == "JoinedStr")
@@ -1412,6 +1460,26 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         code_frontend_assignt{index_exprt{tmp_data, idx}, val});
     }
     return std::move(tmp);
+  }
+
+  // Set operations: bitmap-based
+  if(is_python_set_type(left.type()) && is_python_set_type(right.type()))
+  {
+    member_exprt lb{left, "bitmap", unsignedbv_typet{64}};
+    member_exprt rb{right, "bitmap", unsignedbv_typet{64}};
+    member_exprt lo{left, "offset", signedbv_typet{64}};
+    exprt result_bitmap;
+    if(op == "Sub")
+      result_bitmap = bitand_exprt{lb, bitnot_exprt{rb}};
+    else if(op == "BitOr") // a | b (union)
+      result_bitmap = bitor_exprt{lb, rb};
+    else if(op == "BitAnd") // a & b (intersection)
+      result_bitmap = bitand_exprt{lb, rb};
+    else if(op == "BitXor") // a ^ b (symmetric difference)
+      result_bitmap = bitxor_exprt{lb, rb};
+    else
+      return minus_exprt{left, right}; // fallback for non-set ops
+    return struct_exprt{{result_bitmap, lo}, python_set_type()};
   }
 
   // List concatenation: [1,2] + [3,4] → [1,2,3,4]
@@ -2084,15 +2152,45 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Eq")
     {
-      if(current_left.type() != right.type())
-        right = safe_typecast(right, current_left.type());
-      cmp = equal_exprt{current_left, right};
+      if(
+        is_python_set_type(current_left.type()) &&
+        is_python_set_type(right.type()))
+      {
+        cmp = and_exprt{
+          equal_exprt{
+            member_exprt{current_left, "bitmap", unsignedbv_typet{64}},
+            member_exprt{right, "bitmap", unsignedbv_typet{64}}},
+          equal_exprt{
+            member_exprt{current_left, "offset", signedbv_typet{64}},
+            member_exprt{right, "offset", signedbv_typet{64}}}};
+      }
+      else
+      {
+        if(current_left.type() != right.type())
+          right = safe_typecast(right, current_left.type());
+        cmp = equal_exprt{current_left, right};
+      }
     }
     else if(op == "NotEq")
     {
-      if(current_left.type() != right.type())
-        right = safe_typecast(right, current_left.type());
-      cmp = notequal_exprt{current_left, right};
+      if(
+        is_python_set_type(current_left.type()) &&
+        is_python_set_type(right.type()))
+      {
+        cmp = or_exprt{
+          notequal_exprt{
+            member_exprt{current_left, "bitmap", unsignedbv_typet{64}},
+            member_exprt{right, "bitmap", unsignedbv_typet{64}}},
+          notequal_exprt{
+            member_exprt{current_left, "offset", signedbv_typet{64}},
+            member_exprt{right, "offset", signedbv_typet{64}}}};
+      }
+      else
+      {
+        if(current_left.type() != right.type())
+          right = safe_typecast(right, current_left.type());
+        cmp = notequal_exprt{current_left, right};
+      }
     }
     else if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
     {
@@ -2106,13 +2204,37 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "In" || op == "NotIn")
     {
-      // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
-      if(is_python_list_type(right.type()))
+      // Set membership: x in s → (s.bitmap >> x) & 1
+      exprt container = right;
+      exprt item = current_left;
+      if(is_python_value_type(container.type()))
       {
-        const auto &list_st = to_struct_type(right.type());
+        // Try to detect if it's a set by checking the tag
+        // For now, only handle concrete set types
+      }
+      if(is_python_set_type(container.type()))
+      {
+        member_exprt bm{container, "bitmap", unsignedbv_typet{64}};
+        member_exprt off{container, "offset", signedbv_typet{64}};
+        exprt shifted_item = item;
+        if(shifted_item.type() != signedbv_typet{64})
+          shifted_item = safe_typecast(shifted_item, signedbv_typet{64});
+        // Cast to unsigned for shift
+        exprt shift_amount = typecast_exprt{shifted_item, unsignedbv_typet{64}};
+        exprt shifted = lshr_exprt{bm, shift_amount};
+        exprt bit =
+          bitand_exprt{shifted, from_integer(1, unsignedbv_typet{64})};
+        exprt in_set =
+          notequal_exprt{bit, from_integer(0, unsignedbv_typet{64})};
+        cmp = (op == "In") ? in_set : exprt{not_exprt{in_set}};
+      }
+      // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
+      else if(is_python_list_type(container.type()))
+      {
+        const auto &list_st = to_struct_type(container.type());
         const auto &data_type = to_array_type(list_st.components()[1].type());
-        member_exprt data{right, "data", data_type};
-        member_exprt length{right, "length", signedbv_typet{64}};
+        member_exprt data{container, "data", data_type};
+        member_exprt length{container, "length", signedbv_typet{64}};
 
         // Build disjunction for up to PYTHON_MAX_LIST_LENGTH elements
         // guarded by index < length
@@ -2130,21 +2252,21 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         cmp = (op == "In") ? in_expr : not_exprt{in_expr};
       }
-      else if(is_python_string_type(right.type()))
+      else if(is_python_string_type(container.type()))
       {
         // PLR §6.10.2: "x in s" for strings — check character membership
-        const auto &str_st = to_struct_type(right.type());
+        const auto &str_st = to_struct_type(container.type());
         const auto &data_type = to_array_type(str_st.components()[1].type());
-        member_exprt data{right, "data", data_type};
-        member_exprt length{right, "length", signedbv_typet{64}};
+        member_exprt data{container, "data", data_type};
+        member_exprt length{container, "length", signedbv_typet{64}};
 
         exprt search_byte;
-        if(is_python_string_type(current_left.type()))
+        if(is_python_string_type(item.type()))
           search_byte = index_exprt{
-            member_exprt{current_left, "data", data_type},
+            member_exprt{item, "data", data_type},
             from_integer(0, signedbv_typet{64})};
         else
-          search_byte = safe_typecast(current_left, unsignedbv_typet{8});
+          search_byte = safe_typecast(item, unsignedbv_typet{8});
 
         exprt in_expr = false_exprt{};
         for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
@@ -2157,9 +2279,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         cmp = (op == "In") ? in_expr : not_exprt{in_expr};
       }
-      else if(is_python_value_type(right.type()))
+      else if(is_python_value_type(container.type()))
       {
-        exprt list_val = python_value_list(right);
+        exprt list_val = python_value_list(container);
         if(is_python_list_type(list_val.type()))
         {
           const auto &list_st = to_struct_type(list_val.type());
