@@ -27,7 +27,7 @@
 /// Maximum length for Python strings in verification.
 /// Can be overridden with --python-max-string-length.
 #ifndef PYTHON_MAX_STRING_LENGTH
-#  define PYTHON_MAX_STRING_LENGTH 256
+#  define PYTHON_MAX_STRING_LENGTH 64
 #endif
 
 /// Maximum length for Python lists in verification.
