@@ -4070,20 +4070,52 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
 
   // Handle nondet functions
-  if(func_name == "nondet_int")
+  if(func_name == "nondet_int" || func_name == "__VERIFIER_nondet_int")
   {
     side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }
-  else if(func_name == "nondet_float")
+  else if(func_name == "nondet_float" || func_name == "__VERIFIER_nondet_float")
   {
     side_effect_expr_nondett nondet{double_type(), get_location(expr)};
     return std::move(nondet);
   }
-  else if(func_name == "nondet_bool")
+  else if(func_name == "nondet_bool" || func_name == "__VERIFIER_nondet_bool")
   {
     side_effect_expr_nondett nondet{bool_typet{}, get_location(expr)};
     return std::move(nondet);
+  }
+  else if(func_name == "randint")
+  {
+    // from random import randint — constrained nondet
+    if(args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      exprt lo = convert_expression(*it);
+      ++it;
+      exprt hi = convert_expression(*it);
+      side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
+      static unsigned ri_ctr = 0;
+      std::string tn = "__randint_" + std::to_string(ri_ctr++);
+      std::string tq = qualify_name(tn);
+      irep_idt ti{tq};
+      if(symbol_table.lookup(ti) == nullptr)
+      {
+        symbolt ts{ti, python_int_type(), "python"};
+        ts.base_name = tn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        symbol_table.add(ts);
+      }
+      symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{tv, nondet});
+      pending_checks.push_back(
+        code_assumet{binary_relation_exprt{tv, ID_ge, lo}});
+      pending_checks.push_back(
+        code_assumet{binary_relation_exprt{tv, ID_le, hi}});
+      return tv;
+    }
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   else if(func_name == "nondet_str" || func_name == "nondet_string")
   {
@@ -5308,6 +5340,11 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   // PLib builtins: type(obj) — return the type of an object
   // We model this as a static type tag for comparison with type names.
+  else if(func_name == "hasattr" || func_name == "callable")
+  {
+    // PLR §2: hasattr/callable return bool
+    return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+  }
   else if(func_name == "type")
   {
     if(args.is_array() && !as_array(args).empty())
@@ -7206,7 +7243,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
             module == "functools" || module == "itertools" || module == "io" ||
             module == "pathlib" || module == "hashlib" || module == "base64" ||
             module == "copy" || module == "enum" || module == "dataclasses" ||
-            module == "abc")
+            module == "abc" || module == "random")
           {
             // Stdlib modules: register imported names as variables (not
             // functions) so the unknown-function handler returns nondet
