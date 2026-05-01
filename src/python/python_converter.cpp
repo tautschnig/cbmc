@@ -2168,7 +2168,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         if(current_left.type() != right.type())
           right = safe_typecast(right, current_left.type());
-        cmp = equal_exprt{current_left, right};
+        if(current_left.type().id() == ID_floatbv)
+          cmp = ieee_float_equal_exprt{current_left, right};
+        else
+          cmp = equal_exprt{current_left, right};
       }
     }
     else if(op == "NotEq")
@@ -2189,7 +2192,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         if(current_left.type() != right.type())
           right = safe_typecast(right, current_left.type());
-        cmp = notequal_exprt{current_left, right};
+        if(current_left.type().id() == ID_floatbv)
+          cmp = ieee_float_notequal_exprt{current_left, right};
+        else
+          cmp = notequal_exprt{current_left, right};
       }
     }
     else if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
