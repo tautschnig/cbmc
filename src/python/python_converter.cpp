@@ -5629,8 +5629,29 @@ exprt python_convertert::convert_call(const jsont &expr)
         for(const auto &arg : as_array(args))
           init_args.push_back(convert_expression(arg));
       }
-      // Pad missing args with defaults
+      // Handle keyword arguments
       const code_typet &init_type = to_code_type(init_sym->type);
+      const jsont &keywords = json_member(expr, "keywords");
+      if(keywords.is_array())
+      {
+        for(const auto &kw : as_array(keywords))
+        {
+          std::string kw_name = json_string(json_member(kw, "arg"));
+          exprt kw_val = convert_expression(json_member(kw, "value"));
+          // Find the parameter index for this keyword
+          for(std::size_t pi = 0; pi < init_type.parameters().size(); pi++)
+          {
+            if(id2string(init_type.parameters()[pi].get_base_name()) == kw_name)
+            {
+              while(init_args.size() <= pi)
+                init_args.push_back(nil_exprt{});
+              init_args[pi] = kw_val;
+              break;
+            }
+          }
+        }
+      }
+      // Pad missing args with defaults
       while(init_args.size() < init_type.parameters().size())
         init_args.push_back(
           safe_zero(init_type.parameters()[init_args.size()].type()));
@@ -7662,12 +7683,41 @@ codet python_convertert::convert_assign(const jsont &stmt)
               arguments.push_back(convert_expression(arg));
           }
 
-          // Pad missing arguments with defaults (safe_zero for each param type)
+          // Handle keyword arguments
           const code_typet &init_type = to_code_type(init_sym->type);
+          const jsont &kw_args = json_member(value, "keywords");
+          if(kw_args.is_array())
+          {
+            for(const auto &kw : as_array(kw_args))
+            {
+              std::string kw_name = json_string(json_member(kw, "arg"));
+              exprt kw_val = convert_expression(json_member(kw, "value"));
+              for(std::size_t pi = 0; pi < init_type.parameters().size(); pi++)
+              {
+                if(
+                  id2string(init_type.parameters()[pi].get_base_name()) ==
+                  kw_name)
+                {
+                  while(arguments.size() <= pi)
+                    arguments.push_back(nil_exprt{});
+                  arguments[pi] = kw_val;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Pad missing arguments with defaults (safe_zero for each param type)
           while(arguments.size() < init_type.parameters().size())
           {
             std::size_t idx = arguments.size();
             arguments.push_back(safe_zero(init_type.parameters()[idx].type()));
+          }
+          // Replace nil entries (gaps from keyword matching) with defaults
+          for(std::size_t i = 0; i < arguments.size(); i++)
+          {
+            if(arguments[i].is_nil() && i < init_type.parameters().size())
+              arguments[i] = safe_zero(init_type.parameters()[i].type());
           }
 
           // Typecast arguments to match parameter types
