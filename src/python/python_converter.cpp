@@ -534,6 +534,13 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     return true_exprt{};
   }
 
+  // List/dict type coercion: list[float] → list[int] etc.
+  // The struct layout is the same (length + data array), only element type differs.
+  if(
+    (is_python_list_type(e.type()) && is_python_list_type(target)) ||
+    (is_python_dict_type(e.type()) && is_python_dict_type(target)))
+    return typecast_exprt{e, target};
+
   // Struct-to-scalar or other incompatible: return a nondet value
   // of the target type (overapproximation, avoids crash)
   return side_effect_expr_nondett{target, source_locationt{}};
