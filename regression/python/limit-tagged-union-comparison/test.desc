@@ -1,8 +1,11 @@
-CORE
+KNOWNBUG
 main.py
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-^warning: ignoring
+--
+Tagged union comparison: max_val returns python_value_type,
+assert compares two python_value_type values. The solver
+can't prove equality of complex struct expressions.

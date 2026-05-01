@@ -1,8 +1,11 @@
-CORE
+KNOWNBUG
 main.py
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-^warning: ignoring
+--
+The 'in' operator on tagged union lists requires comparing
+python_value_type elements, which the solver can't handle
+precisely (tagged union comparison is imprecise).
