@@ -4211,13 +4211,8 @@ exprt python_convertert::convert_call(const jsont &expr)
             elem = safe_typecast(elem, ft.parameters()[0].type());
           side_effect_expr_function_callt call{
             func_arg, {elem}, ret_type, get_location(expr)};
-          // Use nondet for the result element (exact call is complex)
-          // TODO: inline the function call for full precision
           pending_checks.push_back(code_ifthenelset{
-            guard,
-            code_frontend_assignt{
-              index_exprt{dst_data, idx},
-              side_effect_expr_nondett{ret_type, source_locationt{}}}});
+            guard, code_frontend_assignt{index_exprt{dst_data, idx}, call}});
         }
         return std::move(tmp);
       }
