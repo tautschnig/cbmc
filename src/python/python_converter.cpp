@@ -293,9 +293,9 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   else if(is_python_dict_type(target_type))
     return side_effect_expr_nondett{target_type, source_locationt{}};
   else if(target_type.id() == ID_struct && !is_python_value_type(target_type))
-    // Class struct: can't extract from tagged union, return nondet
     return side_effect_expr_nondett{target_type, source_locationt{}};
-  else if(target_type.id() == ID_struct_tag)
+  else if(
+    target_type.id() == ID_struct_tag && !is_python_value_type(target_type))
     return side_effect_expr_nondett{target_type, source_locationt{}};
 
   // Default: extract int
