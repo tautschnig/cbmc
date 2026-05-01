@@ -1772,6 +1772,31 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       if(exp_val == 0)
         return from_integer(1, left.type());
 
+      // Constant base and exponent: compute at conversion time
+      if(left.is_constant() && left.type().id() == ID_signedbv)
+      {
+        mp_integer base_val;
+        if(!to_integer(to_constant_expr(left), base_val))
+        {
+          mp_integer result_val{1};
+          for(mp_integer i = 0; i < exp_val; ++i)
+            result_val *= base_val;
+          if(negative)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_integer(result_val);
+            ieee_floatt one{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            one.from_integer(1);
+            return div_exprt{one.to_expr(), fv.to_expr()};
+          }
+          return from_integer(result_val, left.type());
+        }
+      }
+
       // Unroll: base * base * ... (up to reasonable limit)
       if(exp_val <= 16)
       {
