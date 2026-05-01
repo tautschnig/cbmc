@@ -2741,8 +2741,16 @@ exprt python_convertert::convert_call(const jsont &expr)
                 code_assumet{binary_relation_exprt{tv, ID_le, fone.to_expr()}});
             }
             else if(func_name == "sqrt")
+            {
               pending_checks.push_back(
                 code_assumet{binary_relation_exprt{tv, ID_ge, fz.to_expr()}});
+              // Constrain: result * result == arg (for perfect squares)
+              exprt float_arg = math_arg;
+              if(math_arg.type().id() != ID_floatbv)
+                float_arg = typecast_exprt(math_arg, double_type());
+              pending_checks.push_back(code_assumet{
+                ieee_float_equal_exprt{mult_exprt{tv, tv}, float_arg}});
+            }
             else if(func_name == "exp" || func_name == "exp2")
               pending_checks.push_back(
                 code_assumet{binary_relation_exprt{tv, ID_gt, fz.to_expr()}});
@@ -5129,7 +5137,8 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
-    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+    // str() with no arguments → empty string
+    return build_string_struct("");
   }
   // all(genexp) / any(genexp) — unroll for literal iterables
   else if(func_name == "all" || func_name == "any")
