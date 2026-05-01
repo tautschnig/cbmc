@@ -1977,7 +1977,18 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
     operand = unwrap_value(operand, python_int_type());
 
   if(op == "USub")
+  {
+    if(
+      operand.type().id() == ID_struct &&
+      to_struct_type(operand.type()).get_tag() == "python_complex")
+    {
+      return struct_exprt{
+        {unary_minus_exprt{member_exprt{operand, "real", double_type()}},
+         unary_minus_exprt{member_exprt{operand, "imag", double_type()}}},
+        operand.type()};
+    }
     return unary_minus_exprt{operand};
+  }
   else if(op == "UAdd")
     return operand;
   else if(op == "Not")
@@ -2093,8 +2104,36 @@ exprt python_convertert::convert_compare(const jsont &expr)
       current_left.type() != right.type() && op != "In" && op != "NotIn" &&
       op != "Is" && op != "IsNot")
     {
+      // Complex promotion: promote numeric to complex(val, 0.0)
+      auto is_complex = [](const typet &t)
+      {
+        return t.id() == ID_struct &&
+               to_struct_type(t).get_tag() == "python_complex";
+      };
+      if(is_complex(current_left.type()) && !is_complex(right.type()))
+      {
+        exprt r_float = right;
+        if(right.type().id() != ID_floatbv)
+          r_float = safe_typecast(right, double_type());
+        struct_typet ct{
+          {struct_typet::componentt{"real", double_type()},
+           struct_typet::componentt{"imag", double_type()}}};
+        ct.set_tag("python_complex");
+        right = struct_exprt{{r_float, safe_zero(double_type())}, ct};
+      }
+      else if(is_complex(right.type()) && !is_complex(current_left.type()))
+      {
+        exprt l_float = current_left;
+        if(current_left.type().id() != ID_floatbv)
+          l_float = safe_typecast(current_left, double_type());
+        struct_typet ct{
+          {struct_typet::componentt{"real", double_type()},
+           struct_typet::componentt{"imag", double_type()}}};
+        ct.set_tag("python_complex");
+        current_left = struct_exprt{{l_float, safe_zero(double_type())}, ct};
+      }
       // PLR §6.10.1: string vs numeric → never equal
-      if(
+      else if(
         (is_python_string_type(current_left.type()) !=
          is_python_string_type(right.type())) &&
         !is_python_value_type(current_left.type()) &&
