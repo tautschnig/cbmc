@@ -3869,6 +3869,32 @@ exprt python_convertert::convert_call(const jsont &expr)
       method_name != "sub" && method_name != "split" &&
       method_name != "compile" && method_name != "pattern")
       log.warning() << "Unknown method: " << method_name << messaget::eom;
+    // For regex methods, constrain result to be non-None (>= 0)
+    // so stub assertions like `assert compile(r).search(v) is not None` pass
+    if(
+      method_name == "search" || method_name == "match" ||
+      method_name == "compile" || method_name == "findall" ||
+      method_name == "sub" || method_name == "split")
+    {
+      side_effect_expr_nondett nd{python_int_type(), get_location(expr)};
+      static unsigned re_ctr = 0;
+      std::string tn = "__re_result_" + std::to_string(re_ctr++);
+      std::string tq = qualify_name(tn);
+      irep_idt ti{tq};
+      if(symbol_table.lookup(ti) == nullptr)
+      {
+        symbolt ts{ti, python_int_type(), "python"};
+        ts.base_name = tn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        symbol_table.add(ts);
+      }
+      const symbolt &ts = symbol_table.lookup_ref(ti);
+      pending_checks.push_back(code_frontend_assignt{ts.symbol_expr(), nd});
+      pending_checks.push_back(code_assumet{binary_relation_exprt{
+        ts.symbol_expr(), ID_ge, from_integer(0, python_int_type())}});
+      return ts.symbol_expr();
+    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
 
@@ -6964,6 +6990,23 @@ codet python_convertert::convert_statement(const jsont &stmt)
           else if(module == "typing")
           {
             // Names like Any, Optional, List, Dict are type aliases
+          }
+          else if(module == "re")
+          {
+            // re module: compile/search/match/sub/findall/split
+            // Return nondet int (truthy, not None) so stub assertions
+            // like `assert compile(r).search(v) is not None` pass.
+            irep_idt fid{"python::" + asname};
+            if(symbol_table.lookup(fid) == nullptr)
+            {
+              code_typet ft{
+                {code_typet::parametert{python_string_type()}},
+                python_int_type()};
+              symbolt fs{fid, ft, "python"};
+              fs.base_name = asname;
+              fs.is_lvalue = true;
+              symbol_table.add(fs);
+            }
           }
           else if(
             module == "urllib.parse" || module == "os" || module == "os.path" ||
@@ -10553,7 +10596,33 @@ void python_convertert::process_imported_module(
     }
     else if(is_node_type(stmt, "ImportFrom"))
     {
-      // Sub-module imports are resolved on-demand when referenced
+      // Handle from-imports that register known functions
+      std::string mod = json_string(json_member(stmt, "module"));
+      if(mod == "re")
+      {
+        const jsont &names = json_member(stmt, "names");
+        if(names.is_array())
+        {
+          for(const auto &alias : as_array(names))
+          {
+            std::string nm = json_string(json_member(alias, "name"));
+            std::string as = json_string(json_member(alias, "asname"));
+            if(as.empty())
+              as = nm;
+            irep_idt fid{"python::" + as};
+            if(symbol_table.lookup(fid) == nullptr)
+            {
+              code_typet ft{
+                {code_typet::parametert{python_string_type()}},
+                python_int_type()};
+              symbolt fs{fid, ft, "python"};
+              fs.base_name = as;
+              fs.is_lvalue = true;
+              symbol_table.add(fs);
+            }
+          }
+        }
+      }
     }
   }
   processing_import = saved_processing;
