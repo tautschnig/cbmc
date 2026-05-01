@@ -98,6 +98,28 @@ inline bool is_python_dict_type(const typet &type)
   return id2string(st.get_tag()).substr(0, 11) == "python_dict";
 }
 
+/// Return the CBMC type for a Python set (bitmap representation).
+/// struct { uint64 bitmap; int64 offset; }
+/// Bit i set ↔ element (offset + i) is in the set.
+inline struct_typet python_set_type()
+{
+  struct_typet::componentst components;
+  components.push_back(
+    struct_typet::componentt{"bitmap", unsignedbv_typet{64}});
+  components.push_back(struct_typet::componentt{"offset", signedbv_typet{64}});
+  struct_typet result{components};
+  result.set_tag("python_set");
+  return result;
+}
+
+/// Check if a type is a Python set (bitmap).
+inline bool is_python_set_type(const typet &type)
+{
+  if(type.id() != ID_struct)
+    return false;
+  return to_struct_type(type).get_tag() == "python_set";
+}
+
 #define PYTHON_MAX_DICT_SIZE 16
 
 /// Return the CBMC type for an array-based Python dict.
