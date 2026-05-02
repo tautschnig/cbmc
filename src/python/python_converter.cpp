@@ -1754,6 +1754,25 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       return if_exprt{
         and_exprt{has_rem, diff_sign}, plus_exprt{c_mod, right}, c_mod};
     }
+    // Float modulo: x % y = x - floor(x/y) * y
+    if(left.type().id() == ID_floatbv || right.type().id() == ID_floatbv)
+    {
+      exprt fl = left, fr = right;
+      if(fl.type().id() != ID_floatbv)
+        fl = typecast_exprt{fl, double_type()};
+      if(fr.type().id() != ID_floatbv)
+        fr = typecast_exprt{fr, double_type()};
+      // floor(x/y) * y
+      exprt quotient = div_exprt{fl, fr};
+      // Use if_exprt to implement floor for positive/negative
+      exprt truncated = typecast_exprt{
+        typecast_exprt{quotient, signedbv_typet{64}}, double_type()};
+      exprt floored = if_exprt{
+        binary_relation_exprt{quotient, ID_lt, truncated},
+        minus_exprt{truncated, double_to_floatbv(1.0)},
+        truncated};
+      return minus_exprt{fl, mult_exprt{floored, fr}};
+    }
     // Non-integer types: return nondet
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
