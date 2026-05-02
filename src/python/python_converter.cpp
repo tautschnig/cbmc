@@ -5555,6 +5555,14 @@ exprt python_convertert::convert_call(const jsont &expr)
                 match = true;
               else if(tname == "list" && is_python_list_type(obj.type()))
                 match = true;
+              else if(tname == "set" && is_python_set_type(obj.type()))
+                match = true;
+              else if(tname == "dict" && is_python_dict_type(obj.type()))
+                match = true;
+              else if(
+                tname == "complex" && obj.type().id() == ID_struct &&
+                to_struct_type(obj.type()).get_tag() == "python_complex")
+                match = true;
               if(match)
                 return true_exprt{};
             }
@@ -5597,6 +5605,12 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(cls_name == "tuple" && is_python_tuple_type(obj.type()))
           return true_exprt{};
         if(cls_name == "dict" && is_python_dict_type(obj.type()))
+          return true_exprt{};
+        if(cls_name == "set" && is_python_set_type(obj.type()))
+          return true_exprt{};
+        if(
+          cls_name == "complex" && obj.type().id() == ID_struct &&
+          to_struct_type(obj.type()).get_tag() == "python_complex")
           return true_exprt{};
 
         // If checking against a built-in type and obj is a different
