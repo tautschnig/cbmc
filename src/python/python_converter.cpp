@@ -43,6 +43,7 @@
 #include "python_value_type.h"
 
 #include <cmath>
+#include <iomanip>
 #include <sstream>
 
 python_convertert::python_convertert(
@@ -1770,6 +1771,72 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     if(is_complex(left.type()))
       return side_effect_expr_nondett{left.type(), source_locationt{}};
 
+    // Constant base and exponent: compute pow() at conversion time
+    // Handle typecast(constant) as constant (from int→float promotion)
+    auto get_double = [](const exprt &e, double &out) -> bool
+    {
+      const exprt *ce = &e;
+      if(ce->id() == ID_typecast && ce->operands().size() == 1)
+        ce = &ce->operands()[0];
+      if(!ce->is_constant())
+        return false;
+      if(ce->type().id() == ID_signedbv)
+      {
+        mp_integer iv;
+        if(to_integer(to_constant_expr(*ce), iv))
+          return false;
+        out = iv.to_long();
+        return true;
+      }
+      if(ce->type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fv.from_expr(to_constant_expr(*ce));
+        out = std::stod(fv.to_ansi_c_string());
+        return true;
+      }
+      return false;
+    };
+    double base_d, exp_d;
+    if(get_double(left, base_d) && get_double(right, exp_d))
+    {
+      double result_d = std::pow(base_d, exp_d);
+      if(
+        right.type().id() == ID_floatbv || exp_d < 0 ||
+        exp_d != std::floor(exp_d))
+      {
+        ieee_floatt rv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        std::ostringstream oss;
+        oss << std::setprecision(17) << result_d;
+        std::string rs = oss.str();
+        auto dot = rs.find('.');
+        if(dot != std::string::npos)
+        {
+          std::string frac_s = rs.substr(dot + 1);
+          while(!frac_s.empty() && frac_s.back() == '0')
+            frac_s.pop_back();
+          if(frac_s.empty())
+            rv.from_integer(mp_integer{rs.substr(0, dot).c_str()});
+          else
+          {
+            std::string full = rs.substr(0, dot) + frac_s;
+            rv.from_base10(
+              mp_integer{-static_cast<long long>(frac_s.size())},
+              mp_integer{full.c_str()});
+          }
+        }
+        else
+          rv.from_integer(mp_integer{rs.c_str()});
+        return rv.to_expr();
+      }
+      return from_integer(
+        mp_integer{static_cast<long long>(result_d)}, left.type());
+    }
+
     if(exp_known)
     {
       bool negative = exp_val < 0;
@@ -1843,7 +1910,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // Variable exponent: build if-then-else chain for b=0..16
     // (only for scalar types — complex handled above)
     {
-      exprt result = safe_zero(left.type()); // b==0 case: return 0 for safety
+      exprt result = from_integer(1, left.type()); // x**0 == 1
       for(int i = 16; i >= 1; i--)
       {
         exprt power = left;
