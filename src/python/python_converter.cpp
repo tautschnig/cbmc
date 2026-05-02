@@ -4523,6 +4523,21 @@ exprt python_convertert::convert_call(const jsont &expr)
           is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
           return member_exprt{arg, "length", python_int_type()};
 
+        // Tuple: number of components
+        if(is_python_tuple_type(arg.type()))
+        {
+          const auto &st = to_struct_type(arg.type());
+          return from_integer(st.components().size(), python_int_type());
+        }
+
+        // Set (bitmap): popcount
+        if(is_python_set_type(arg.type()))
+        {
+          // Approximate: count bits in bitmap
+          member_exprt bm{arg, "bitmap", unsignedbv_typet{64}};
+          return popcount_exprt{bm, python_int_type()};
+        }
+
         // Tagged union: dispatch on tag
         if(is_python_value_type(arg.type()))
         {
