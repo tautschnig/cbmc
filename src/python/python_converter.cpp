@@ -43,6 +43,8 @@
 #include "python_value_type.h"
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <sstream>
 
@@ -164,6 +166,15 @@ python_convertert::extract_string_value(const exprt &e) const
 }
 
 // Helper: build a string struct from a std::string
+/// Convert a C++ double to a CBMC floatbv constant expression.
+static constant_exprt double_to_floatbv(double d)
+{
+  uint64_t bits;
+  static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64 bits");
+  std::memcpy(&bits, &d, sizeof(bits));
+  return constant_exprt{integer2bvrep(mp_integer{bits}, 64), double_type()};
+}
+
 static exprt build_string_struct(const std::string &s)
 {
   struct_typet str_type = python_string_type();
@@ -1807,31 +1818,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         right.type().id() == ID_floatbv || exp_d < 0 ||
         exp_d != std::floor(exp_d))
       {
-        ieee_floatt rv{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        std::ostringstream oss;
-        oss << std::setprecision(17) << result_d;
-        std::string rs = oss.str();
-        auto dot = rs.find('.');
-        if(dot != std::string::npos)
-        {
-          std::string frac_s = rs.substr(dot + 1);
-          while(!frac_s.empty() && frac_s.back() == '0')
-            frac_s.pop_back();
-          if(frac_s.empty())
-            rv.from_integer(mp_integer{rs.substr(0, dot).c_str()});
-          else
-          {
-            std::string full = rs.substr(0, dot) + frac_s;
-            rv.from_base10(
-              mp_integer{-static_cast<long long>(frac_s.size())},
-              mp_integer{full.c_str()});
-          }
-        }
-        else
-          rv.from_integer(mp_integer{rs.c_str()});
-        return rv.to_expr();
+        return double_to_floatbv(result_d);
       }
       return from_integer(
         mp_integer{static_cast<long long>(result_d)}, left.type());
@@ -2773,47 +2760,97 @@ exprt python_convertert::convert_call(const jsont &expr)
               minus_exprt{math_arg, arg2}};
             return binary_relation_exprt{diff, ID_le, tol.to_expr()};
           }
-          // Constant evaluation
-          if(math_arg.is_constant())
+          // Constant evaluation (handle typecast from int→float)
           {
-            ieee_floatt fv{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fv.from_expr(to_constant_expr(math_arg));
-            double val = std::stod(fv.to_ansi_c_string());
-            double res = 0;
-            bool computed = true;
-            if(func_name == "sqrt" && val >= 0)
-              res = std::sqrt(val);
-            else if(func_name == "sin")
-              res = std::sin(val);
-            else if(func_name == "cos")
-              res = std::cos(val);
-            else if(func_name == "tan")
-              res = std::tan(val);
-            else if(func_name == "asin" && val >= -1 && val <= 1)
-              res = std::asin(val);
-            else if(func_name == "acos" && val >= -1 && val <= 1)
-              res = std::acos(val);
-            else if(func_name == "atan")
-              res = std::atan(val);
-            else if(func_name == "log" && val > 0)
-              res = std::log(val);
-            else if(func_name == "log2" && val > 0)
-              res = std::log2(val);
-            else if(func_name == "log10" && val > 0)
-              res = std::log10(val);
-            else if(func_name == "exp")
-              res = std::exp(val);
-            else
-              computed = false;
-            if(computed)
+            const exprt *ce = &math_arg;
+            if(ce->id() == ID_typecast && ce->operands().size() == 1)
+              ce = &ce->operands()[0];
+            double val = 0;
+            bool have_val = false;
+            if(ce->is_constant() && ce->type().id() == ID_floatbv)
             {
-              ieee_floatt result{
+              ieee_floatt fv{
                 ieee_float_spect::double_precision(),
                 ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-              result.from_double(res);
-              return result.to_expr();
+              fv.from_expr(to_constant_expr(*ce));
+              val = std::stod(fv.to_ansi_c_string());
+              have_val = true;
+            }
+            else if(ce->is_constant() && ce->type().id() == ID_signedbv)
+            {
+              mp_integer iv;
+              if(!to_integer(to_constant_expr(*ce), iv))
+              {
+                val = iv.to_long();
+                have_val = true;
+              }
+            }
+            if(have_val)
+            {
+              double res = 0;
+              bool computed = true;
+              if(func_name == "sqrt" && val >= 0)
+                res = std::sqrt(val);
+              else if(func_name == "sin")
+                res = std::sin(val);
+              else if(func_name == "cos")
+                res = std::cos(val);
+              else if(func_name == "tan")
+                res = std::tan(val);
+              else if(func_name == "asin" && val >= -1 && val <= 1)
+                res = std::asin(val);
+              else if(func_name == "acos" && val >= -1 && val <= 1)
+                res = std::acos(val);
+              else if(func_name == "atan")
+                res = std::atan(val);
+              else if(func_name == "log" && val > 0)
+                res = std::log(val);
+              else if(func_name == "log2" && val > 0)
+                res = std::log2(val);
+              else if(func_name == "log10" && val > 0)
+                res = std::log10(val);
+              else if(func_name == "exp")
+                res = std::exp(val);
+              else if(func_name == "exp2")
+                res = std::exp2(val);
+              else if(func_name == "floor")
+                res = std::floor(val);
+              else if(func_name == "ceil")
+                res = std::ceil(val);
+              else if(func_name == "fabs")
+                res = std::fabs(val);
+              else if(func_name == "degrees")
+                res = val * 180.0 / M_PI;
+              else if(func_name == "radians")
+                res = val * M_PI / 180.0;
+              else if(func_name == "sinh")
+                res = std::sinh(val);
+              else if(func_name == "cosh")
+                res = std::cosh(val);
+              else if(func_name == "tanh")
+                res = std::tanh(val);
+              else if(func_name == "asinh")
+                res = std::asinh(val);
+              else if(func_name == "acosh" && val >= 1)
+                res = std::acosh(val);
+              else if(func_name == "atanh" && val > -1 && val < 1)
+                res = std::atanh(val);
+              else if(func_name == "erf")
+                res = std::erf(val);
+              else if(func_name == "erfc")
+                res = std::erfc(val);
+              else if(func_name == "gamma" || func_name == "lgamma")
+                res = std::lgamma(val);
+              else if(func_name == "cbrt")
+                res = std::cbrt(val);
+              else if(func_name == "expm1")
+                res = std::expm1(val);
+              else if(func_name == "log1p" && val > -1)
+                res = std::log1p(val);
+              else
+                computed = false;
+              if(computed)
+                return double_to_floatbv(res);
             }
           }
           // Nondet with constraints
