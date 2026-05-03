@@ -2872,6 +2872,63 @@ exprt python_convertert::convert_call(const jsont &expr)
                 return double_to_floatbv(res);
             }
           }
+          // Two-arg constant evaluation: pow, atan2, fmod, log(x, base)
+          if(as_array(args).size() >= 2)
+          {
+            exprt arg2 = convert_expression(*std::next(as_array(args).begin()));
+            if(arg2.type().id() != ID_floatbv)
+              arg2 = safe_typecast(arg2, double_type());
+            double v1 = 0, v2 = 0;
+            auto gd = [](const exprt &e, double &out) -> bool
+            {
+              const exprt *c = &e;
+              if(c->id() == ID_typecast && c->operands().size() == 1)
+                c = &c->operands()[0];
+              if(!c->is_constant())
+                return false;
+              if(c->type().id() == ID_signedbv)
+              {
+                mp_integer iv;
+                if(to_integer(to_constant_expr(*c), iv))
+                  return false;
+                out = iv.to_long();
+                return true;
+              }
+              if(c->type().id() == ID_floatbv)
+              {
+                ieee_floatt fv{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                fv.from_expr(to_constant_expr(*c));
+                out = std::stod(fv.to_ansi_c_string());
+                return true;
+              }
+              return false;
+            };
+            if(gd(math_arg, v1) && gd(arg2, v2))
+            {
+              double res = 0;
+              bool ok = true;
+              if(func_name == "pow")
+                res = std::pow(v1, v2);
+              else if(func_name == "atan2")
+                res = std::atan2(v1, v2);
+              else if(func_name == "fmod")
+                res = std::fmod(v1, v2);
+              else if(func_name == "log" && v2 > 0 && v1 > 0)
+                res = std::log(v1) / std::log(v2);
+              else if(func_name == "copysign")
+                res = std::copysign(v1, v2);
+              else if(func_name == "hypot")
+                res = std::hypot(v1, v2);
+              else if(func_name == "remainder")
+                res = std::remainder(v1, v2);
+              else
+                ok = false;
+              if(ok)
+                return double_to_floatbv(res);
+            }
+          }
           // Nondet with constraints
           {
             side_effect_expr_nondett nondet_ret{
