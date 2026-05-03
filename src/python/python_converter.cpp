@@ -7313,48 +7313,9 @@ codet python_convertert::convert_statement(const jsont &stmt)
           if(module == "math")
           {
             imported_math_funcs.insert(asname);
-            typet ret = double_type();
-            code_typet::parameterst params;
-            if(
-              name == "sqrt" || name == "floor" || name == "ceil" ||
-              name == "fabs" || name == "log" || name == "exp" ||
-              name == "sin" || name == "cos" || name == "tan")
+            // Constants: register as global variables
+            if(name == "pi" || name == "e")
             {
-              code_typet::parametert p{double_type()};
-              p.set_identifier("python::" + asname + "::__p0");
-              p.set_base_name("__p0");
-              params.push_back(p);
-            }
-            else if(name == "pow" || name == "fmod")
-            {
-              code_typet::parametert p0{double_type()};
-              p0.set_identifier("python::" + asname + "::__p0");
-              p0.set_base_name("__p0");
-              params.push_back(p0);
-              code_typet::parametert p1{double_type()};
-              p1.set_identifier("python::" + asname + "::__p1");
-              p1.set_base_name("__p1");
-              params.push_back(p1);
-            }
-            else if(name == "frexp" || name == "modf")
-            {
-              // Returns tuple (float, int) — use tuple type
-              code_typet::parametert p{double_type()};
-              p.set_identifier("python::" + asname + "::__p0");
-              p.set_base_name("__p0");
-              params.push_back(p);
-              ret = python_tuple_type({double_type(), python_int_type()});
-            }
-            else if(name == "radians" || name == "degrees")
-            {
-              code_typet::parametert p{double_type()};
-              p.set_identifier("python::" + asname + "::__p0");
-              p.set_base_name("__p0");
-              params.push_back(p);
-            }
-            else if(name == "pi" || name == "e")
-            {
-              // Constants — register as global variables
               irep_idt sym_id{"python::" + asname};
               if(symbol_table.lookup(sym_id) == nullptr)
               {
@@ -7370,40 +7331,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
               }
               continue;
             }
-            else
-              continue; // Unknown math function
-
-            code_typet func_type{params, ret};
-            irep_idt func_id{"python::" + asname};
-            if(symbol_table.lookup(func_id) == nullptr)
-            {
-              symbolt func_sym{func_id, func_type, "python"};
-              func_sym.base_name = asname;
-              func_sym.is_lvalue = true;
-              // Body: return nondet value of return type
-              code_blockt body;
-              body.add(code_frontend_returnt{
-                side_effect_expr_nondett{ret, source_locationt{}}});
-              func_sym.value = body;
-              symbol_table.add(func_sym);
-
-              // Create parameter symbols
-              for(std::size_t pi = 0; pi < params.size(); pi++)
-              {
-                std::string pname = "__p" + std::to_string(pi);
-                irep_idt pid{"python::" + asname + "::" + pname};
-                if(symbol_table.lookup(pid) == nullptr)
-                {
-                  symbolt psym{pid, params[pi].type(), "python"};
-                  psym.base_name = pname;
-                  psym.is_parameter = true;
-                  psym.is_lvalue = true;
-                  psym.is_state_var = true;
-                  symbol_table.add(psym);
-                }
-                // Set parameter identifier in the type
-              }
-            }
+            // Other math functions: just registered in imported_math_funcs
           }
           // typing module — type aliases, no-op
           else if(module == "typing")
