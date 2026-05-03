@@ -6585,6 +6585,42 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     exprt slice = convert_expression(json_member(expr, "slice"));
     if(!slice.is_nil())
     {
+      // Constant-key optimization: resolve at conversion time
+      auto key_str = extract_string_value(slice);
+      if(key_str.has_value())
+      {
+        const exprt *dict_val = nullptr;
+        if(value.id() == ID_struct)
+          dict_val = &value;
+        else if(value.id() == ID_symbol)
+        {
+          auto it = dict_literals.find(to_symbol_expr(value).get_identifier());
+          if(it != dict_literals.end())
+            dict_val = &it->second;
+        }
+        if(
+          dict_val != nullptr && dict_val->operands().size() >= 3 &&
+          dict_val->operands()[0].is_constant())
+        {
+          mp_integer len_val;
+          if(!to_integer(to_constant_expr(dict_val->operands()[0]), len_val))
+          {
+            const exprt &keys_arr = dict_val->operands()[1];
+            const exprt &vals_arr = dict_val->operands()[2];
+            for(mp_integer i = 0; i < len_val; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx < keys_arr.operands().size())
+              {
+                auto kv = extract_string_value(keys_arr.operands()[idx]);
+                if(kv.has_value() && kv.value() == key_str.value())
+                  return vals_arr.operands()[idx];
+              }
+            }
+          }
+        }
+      }
+
       const auto &dict_st = to_struct_type(value.type());
       const auto &keys_type = to_array_type(dict_st.components()[1].type());
       const auto &vals_type = to_array_type(dict_st.components()[2].type());
