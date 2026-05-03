@@ -3684,8 +3684,39 @@ exprt python_convertert::convert_call(const jsont &expr)
             auto sep_val = extract_string_value(obj);
             if(sep_val.has_value() && is_python_list_type(list_arg.type()))
             {
-              // Try to extract constant string elements
-              // For now, return nondet — exact join needs element extraction
+              // Extract constant string elements from the list
+              const auto &list_st = to_struct_type(list_arg.type());
+              to_array_type(list_st.components()[1].type());
+              if(
+                list_arg.id() == ID_struct && list_arg.operands().size() >= 2 &&
+                list_arg.operands()[0].is_constant())
+              {
+                mp_integer len;
+                if(!to_integer(to_constant_expr(list_arg.operands()[0]), len))
+                {
+                  std::string result;
+                  bool all_const = true;
+                  const exprt &data_arr = list_arg.operands()[1];
+                  for(mp_integer i = 0; i < len; ++i)
+                  {
+                    auto idx = i.to_ulong();
+                    if(idx < data_arr.operands().size())
+                    {
+                      auto sv = extract_string_value(data_arr.operands()[idx]);
+                      if(sv.has_value())
+                      {
+                        if(i > 0)
+                          result += sep_val.value();
+                        result += sv.value();
+                      }
+                      else
+                        all_const = false;
+                    }
+                  }
+                  if(all_const)
+                    return build_string_struct(result);
+                }
+              }
             }
           }
           return side_effect_expr_nondett{
