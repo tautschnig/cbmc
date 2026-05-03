@@ -2460,6 +2460,51 @@ exprt python_convertert::convert_compare(const jsont &expr)
         else
           cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
       }
+      else if(is_python_dict_type(container.type()))
+      {
+        // key in dict: constant-key optimization
+        auto key_str = extract_string_value(item);
+        const exprt *dict_val = &container;
+        if(container.id() == ID_symbol)
+        {
+          auto it =
+            dict_literals.find(to_symbol_expr(container).get_identifier());
+          if(it != dict_literals.end())
+            dict_val = &it->second;
+        }
+        if(
+          key_str.has_value() && dict_val->id() == ID_struct &&
+          dict_val->operands().size() >= 2 &&
+          dict_val->operands()[0].is_constant())
+        {
+          mp_integer len_val;
+          if(!to_integer(to_constant_expr(dict_val->operands()[0]), len_val))
+          {
+            const exprt &keys_arr = dict_val->operands()[1];
+            bool found = false;
+            for(mp_integer i = 0; i < len_val; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx < keys_arr.operands().size())
+              {
+                auto kv = extract_string_value(keys_arr.operands()[idx]);
+                if(kv.has_value() && kv.value() == key_str.value())
+                {
+                  found = true;
+                  break;
+                }
+              }
+            }
+            cmp = (op == "In")
+                    ? (found ? exprt{true_exprt{}} : exprt{false_exprt{}})
+                    : (found ? exprt{false_exprt{}} : exprt{true_exprt{}});
+          }
+          else
+            cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+        }
+        else
+          cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+      }
       else
       {
         log.warning() << "'in' operator only supported for lists"
@@ -7521,6 +7566,15 @@ codet python_convertert::convert_statement(const jsont &stmt)
           // PLR §7.5: del d["key"] on dict — scan, shift, decrement
           else if(!obj.is_nil() && is_python_dict_type(obj.type()))
           {
+            // Invalidate dict literal tracking
+            if(
+              json_member(target, "value").is_object() &&
+              is_node_type(json_member(target, "value"), "Name"))
+            {
+              std::string vn =
+                json_string(json_member(json_member(target, "value"), "id"));
+              dict_literals.erase(irep_idt{qualify_name(vn)});
+            }
             exprt key = convert_expression(json_member(target, "slice"));
             if(!key.is_nil())
             {
@@ -7778,6 +7832,8 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     if(sv.has_value())
       string_constants[symbol_id] = sv.value();
   }
+  if(is_python_dict_type(rhs.type()) && rhs.id() == ID_struct)
+    dict_literals[symbol_id] = rhs;
   return std::move(assign);
 }
 
@@ -8564,6 +8620,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
       if(sv.has_value())
         string_constants[sym.name] = sv.value();
     }
+    if(is_python_dict_type(typed_rhs.type()) && typed_rhs.id() == ID_struct)
+      dict_literals[sym.name] = typed_rhs;
     block.add(std::move(assign));
   }
 
