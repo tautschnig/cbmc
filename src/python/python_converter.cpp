@@ -2381,6 +2381,50 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // x in lst → disjunction: lst.data[0]==x or lst.data[1]==x or ...
       else if(is_python_list_type(container.type()))
       {
+        // Constant-string optimization: resolve at conversion time
+        auto item_str = extract_string_value(item);
+        if(
+          item_str.has_value() &&
+          is_python_string_type(
+            to_array_type(
+              to_struct_type(container.type()).components()[1].type())
+              .element_type()))
+        {
+          const exprt *list_val = &container;
+          if(container.id() == ID_symbol)
+          {
+            // Check string_constants for each element
+          }
+          if(
+            list_val->id() == ID_struct && list_val->operands().size() >= 2 &&
+            list_val->operands()[0].is_constant())
+          {
+            mp_integer len_val;
+            if(!to_integer(to_constant_expr(list_val->operands()[0]), len_val))
+            {
+              const exprt &data_arr = list_val->operands()[1];
+              bool found = false;
+              for(mp_integer i = 0; i < len_val; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx < data_arr.operands().size())
+                {
+                  auto ev = extract_string_value(data_arr.operands()[idx]);
+                  if(ev.has_value() && ev.value() == item_str.value())
+                  {
+                    found = true;
+                    break;
+                  }
+                }
+              }
+              cmp = (op == "In")
+                      ? (found ? exprt{true_exprt{}} : exprt{false_exprt{}})
+                      : (found ? exprt{false_exprt{}} : exprt{true_exprt{}});
+              goto done_cmp;
+            }
+          }
+        }
+
         const auto &list_st = to_struct_type(container.type());
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt data{container, "data", data_type};
