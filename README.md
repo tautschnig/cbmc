@@ -26,8 +26,9 @@ for details.
 
 CBMC also includes a TypeScript front-end (experimental) for verifying
 TypeScript programs. It uses the TypeScript Compiler API for parsing and
-type-checking, then converts the typed AST to GOTO programs. See
-`doc/architectural/typescript-frontend-plan.md` for details.
+type-checking, then converts the typed AST to GOTO programs. See the
+[TypeScript Verification Guide](doc/typescript-verification-guide.md)
+for details.
 
 
 Versions
