@@ -1480,6 +1480,153 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return symbol_exprt{res_id, list_type};
       }
     }
+    // Array.reduce: fold array with accumulator
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "reduce" && args.is_array() && to_json_array(args).size() >= 2)
+    {
+      const auto &arg_arr = to_json_array(args);
+      auto it = arg_arr.begin();
+      const jsont &callback = *it;
+      ++it;
+      exprt init_val = convert_expression(*it);
+
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+
+        static unsigned reduce_ctr = 0;
+        std::string cb_name = "__ts_reduce_cb_" + std::to_string(reduce_ctr++);
+        convert_function_declaration_with_name(callback, cb_name);
+        irep_idt cb_id{"typescript::" + cb_name};
+
+        // Create accumulator variable
+        std::string acc_name = "__ts_reduce_acc_" + std::to_string(reduce_ctr);
+        std::string acc_q = "typescript::" + acc_name;
+        irep_idt acc_id{acc_q};
+        typet acc_type = init_val.type();
+        {
+          symbolt as{acc_id, acc_type, "typescript"};
+          as.base_name = acc_name;
+          as.is_lvalue = true;
+          as.is_state_var = true;
+          if(symbol_table.lookup(acc_id) == nullptr)
+            symbol_table.add(as);
+        }
+        pending_stmts.push_back(
+          code_frontend_assignt{symbol_exprt{acc_id, acc_type}, init_val});
+
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= data.operands().size())
+            break;
+          side_effect_expr_function_callt call{
+            symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
+            {symbol_exprt{acc_id, acc_type}, data.operands()[idx]},
+            acc_type,
+            source_locationt{}};
+          pending_stmts.push_back(
+            code_frontend_assignt{symbol_exprt{acc_id, acc_type}, call});
+        }
+        return symbol_exprt{acc_id, acc_type};
+      }
+    }
+    // Array.slice: extract subarray
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "slice" && args.is_array())
+    {
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer src_len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), src_len);
+        const exprt &data = src.operands()[1];
+
+        // Get start and end indices
+        int start_idx = 0, end_idx = src_len.to_long();
+        const auto &arg_arr = to_json_array(args);
+        auto ait = arg_arr.begin();
+        if(ait != arg_arr.end())
+        {
+          exprt sv = convert_expression(*ait);
+          if(sv.is_constant() && sv.type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(sv));
+            start_idx = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
+          ++ait;
+        }
+        if(ait != arg_arr.end())
+        {
+          exprt ev = convert_expression(*ait);
+          if(ev.is_constant() && ev.type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(ev));
+            end_idx = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
+        }
+        if(start_idx < 0)
+          start_idx = 0;
+        if(end_idx > src_len.to_long())
+          end_idx = src_len.to_long();
+
+        typet elem_type = double_type();
+        if(!data.operands().empty())
+          elem_type = data.operands()[0].type();
+
+        exprt::operandst result_elts;
+        for(int i = start_idx; i < end_idx; ++i)
+        {
+          if(static_cast<std::size_t>(i) < data.operands().size())
+            result_elts.push_back(data.operands()[i]);
+        }
+        std::size_t actual = result_elts.size();
+        std::size_t max_len = 64;
+        while(result_elts.size() < max_len)
+          result_elts.push_back(from_integer(0, elem_type));
+        array_typet arr_type{
+          elem_type, from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type;
+        list_type.components().push_back(
+          struct_typet::componentt{"length", signedbv_typet{64}});
+        list_type.components().push_back(
+          struct_typet::componentt{"data", arr_type});
+        list_type.set_tag("typescript_array");
+        return struct_exprt{
+          {from_integer(actual, signedbv_typet{64}),
+           array_exprt{std::move(result_elts), arr_type}},
+          list_type};
+      }
+    }
     // Array methods: push, pop
     if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
     {
