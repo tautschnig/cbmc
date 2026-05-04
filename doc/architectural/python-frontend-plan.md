@@ -2254,22 +2254,41 @@ to preserve element types when lists are stored in the tagged union.
 
 ## 15. Current State and Unblocking Plans
 
-### 15.1 Current Metrics (2026-05-01)
+### 15.1 Current Metrics (2026-05-04)
 
-**Regression tests:** 303 total, 292 CORE, 11 KNOWNBUG
+**Regression tests:** 306 total, 294 CORE, 12 KNOWNBUG
 
 **Benchmark (51 AWS SDK tests):**
 
 | Result | Count | Description |
 |--------|-------|-------------|
-| CLEAN | 21 | Clean code verified successfully |
-| TP | 3 | True positive (bug found in buggy code) |
+| CLEAN | 25 | Clean code verified successfully |
+| TP | 4 | True positive (bug found in buggy code) |
 | MISS | 6 | Missed bug (buggy code passes) |
-| FP | 9 | False positive (clean code fails) |
+| FP | 4 | False positive (clean code fails) |
 | TOERR | 9 | Tool error (crash or type error) |
 | TIMEOUT | 3 | Exceeded 30s timeout |
 
-**ESBMC suite:** 3090 tests, ~1407 correct, 5 crashes
+**ESBMC suite (3090 tests):**
+- Wrong-fail: 584 (should pass but we fail)
+- Wrong-pass: 139 (should fail but we pass)
+- Crashes: 10
+- Total wrong: 723
+
+**Progress from project start:**
+- ESBMC wrong-fail: 721 → 584 (137 fixed, 19% improvement)
+- ESBMC crashes: 20 → 10 (50% reduction)
+- Benchmark CLEAN: 25 → 25 (stable after Any→python_value_type)
+- Benchmark TP: 2 → 4 (2 more bugs detected)
+
+**Key techniques that fixed the most tests:**
+1. `try_eval_double()` — recursive expression evaluator (~30 tests)
+2. `float_constants` / `string_constants` / `dict_literals` tracking (~25 tests)
+3. Constant-time string/dict operations via `extract_string_value` (~20 tests)
+4. IEEE float equality (`ieee_float_equal_exprt`) (~15 tests)
+5. Math function constant evaluation (`double_to_floatbv`) (~15 tests)
+6. `from math import` conflict fix (~10 tests)
+7. Keyword args in constructors (~5 tests)
 
 ### 15.2 Root Cause Analysis of Benchmark Issues
 
@@ -2393,7 +2412,7 @@ GOTO program size and speed up parsing. Also, lazy method body conversion
 (only convert methods that are actually called) would skip unused stub
 methods. ~100 lines for lazy conversion.
 
-### 15.3 Remaining 11 KNOWNBUGs — Updated Plans
+### 15.3 Remaining 12 KNOWNBUGs — Updated Plans
 
 #### 15.3.1 limit-subscript-tagged-dict — Dict subscript on tagged union
 
@@ -2753,15 +2772,42 @@ The 6 lost CLEANs are from stub precision issues (Category A FPs above),
 not from our frontend. The correct fix is to improve the stubs or add
 `compile` to the `re` module handler.
 
-### 15.6 Priority Roadmap
+### 15.6 Priority Roadmap (Updated 2026-05-04)
+
+**Completed items (from original roadmap):**
+- ✅ Register `compile` in re module handler (4 FP → CLEAN)
+- ✅ Constructor-to-function fallback (limit-import-resolution crash fixed)
+- ✅ Bitmap set model (limit-set-operations → CORE)
+- ✅ Inline known higher-order functions (map with known functions)
+
+**Remaining high-priority items:**
 
 | Priority | Item | Effort | Impact | Unblocks |
 |----------|------|--------|--------|----------|
-| 1 | Register `compile` in re module handler | ~5 lines | 5 FP → CLEAN | Stub assertions |
-| 2 | Constructor-to-function fallback | ~5 lines | 1 KNOWNBUG | limit-import-resolution |
-| 3 | Constant-key dict subscript optimization | ~60 lines | 1 KNOWNBUG | limit-subscript-tagged-dict |
-| 4 | Bitmap set model | ~80 lines | 1 KNOWNBUG | limit-set-operations |
-| 5 | Pointer-based string model | ~120 lines | 1 KNOWNBUG + perf | limit-loop-unsound, timeouts |
-| 6 | Inline known higher-order functions | ~30 lines | 1 KNOWNBUG | limit-unknown-func (partial) |
-| 7 | Dict key tracking (key_present array) | ~30 lines | 1 FP | bedrock_model_discovery |
-| 8 | Universal symex type guard | ~5 lines | 5 TOERR | expected signedbv crashes |
+| 1 | Adopt `refined_string_typet` | ~200 lines | ~100 wrong-fail | String comparison, __dict_ptr |
+| 2 | Exception propagation in conditionals | ~30 lines | ~30 wrong-pass | div-by-zero in if branches |
+| 3 | Class attribute vs instance attribute | ~20 lines | ~10 wrong-fail | class-level defaults |
+| 4 | `super()` improvements | ~15 lines | ~5 wrong-fail | MRO edge cases |
+| 5 | Dict key tracking (key_present array) | ~30 lines | 1 FP | bedrock_model_discovery |
+| 6 | Universal symex type guard | ~5 lines | 5 TOERR | expected signedbv crashes |
+
+**ESBMC wrong-fail breakdown (584 remaining):**
+
+| Category | ~Tests | Status |
+|----------|--------|--------|
+| String comparison on dynamic strings | ~80 | Needs refined_string_typet |
+| Math on non-tracked variables | ~40 | Fundamental (nondet) |
+| Complex number edge cases | ~40 | Partially fixed |
+| Class features | ~30 | Partially fixed |
+| Exception handling | ~25 | Partially fixed |
+| Index OOB false positives | ~25 | Needs list length tracking |
+| Regex | ~11 | Fundamental |
+| Misc (combinations) | ~330 | Mixed |
+
+**ESBMC wrong-pass breakdown (139 remaining):**
+
+| Category | ~Tests | Status |
+|----------|--------|--------|
+| Missing runtime error detection | ~80 | Needs TypeError/ValueError |
+| assert False after raise | ~30 | Needs exception propagation |
+| Logical short-circuit | ~30 | Needs deeper and/or model |
