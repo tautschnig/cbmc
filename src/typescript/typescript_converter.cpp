@@ -89,6 +89,10 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
+  // Class types
+  auto cls_it = class_types.find(ts_type);
+  if(cls_it != class_types.end())
+    return cls_it->second;
   // Union types: string | null, number | undefined, etc.
   if(ts_type.find(" | ") != std::string::npos)
   {
@@ -147,6 +151,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return from_integer(0, signedbv_typet{64});
   if(kind == "Identifier")
     return convert_identifier(node);
+  // ES2024 sec-this-keyword
+  if(kind == "ThisKeyword")
+  {
+    // Look up this parameter in current function
+    std::string this_id = "typescript::" + current_function + "::this";
+    const symbolt *this_sym = symbol_table.lookup(irep_idt{this_id});
+    if(this_sym != nullptr)
+      return dereference_exprt{this_sym->symbol_expr()};
+    return nil_exprt{};
+  }
   if(kind == "BinaryExpression")
     return convert_binary_expression(node);
   if(kind == "PrefixUnaryExpression" || kind == "PostfixUnaryExpression")
@@ -207,6 +221,53 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     if(then_e.type() != else_e.type())
       else_e = typecast_exprt{else_e, then_e.type()};
     return if_exprt{cond, then_e, else_e};
+  }
+  // ES2024 sec-new-operator
+  if(kind == "NewExpression")
+  {
+    std::string cls_name = json_string(json_member(json_member(node, "expression"), "text"));
+    auto cls_it = class_types.find(cls_name);
+    if(cls_it != class_types.end())
+    {
+      // Create temp object
+      static unsigned new_ctr = 0;
+      std::string tmp_name = "__new_" + cls_name + "_" + std::to_string(new_ctr++);
+      std::string tmp_qname = "typescript::" +
+        (current_function.empty() ? "" : current_function + "::") + tmp_name;
+      irep_idt tmp_id{tmp_qname};
+      if(symbol_table.lookup(tmp_id) == nullptr)
+      {
+        symbolt ts{tmp_id, cls_it->second, "typescript"};
+        ts.base_name = tmp_name;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        symbol_table.add(ts);
+      }
+      symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+      // Call constructor
+      irep_idt ctor_id{"typescript::" + cls_name + "::__init__"};
+      const symbolt *ctor = symbol_table.lookup(ctor_id);
+      if(ctor != nullptr)
+      {
+        exprt::operandst args;
+        args.push_back(address_of_exprt{tmp});
+        const jsont &call_args = json_member(node, "arguments");
+        if(call_args.is_array())
+          for(const auto &a : to_json_array(call_args))
+            args.push_back(convert_expression(a));
+        // Type-match args to params
+        const auto &params = to_code_type(ctor->type).parameters();
+        for(std::size_t i = 0; i < args.size() && i < params.size(); i++)
+          if(args[i].type() != params[i].type())
+            args[i] = typecast_exprt(args[i], params[i].type());
+        pending_stmts.push_back(code_expressiont{
+          side_effect_expr_function_callt{
+            ctor->symbol_expr(), std::move(args),
+            empty_typet{}, get_location(node)}});
+      }
+      return tmp;
+    }
+    return nil_exprt{};
   }
   // ES2024 sec-template-literals
   if(kind == "TemplateExpression")
@@ -574,7 +635,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   }
 
   // ES2024 sec-assignment-operators: simple assignment
-  if(op == "EqualsToken")
+  if(op == "EqualsToken" || op == "FirstAssignment")
   {
     // This is handled at the statement level
     return right;
@@ -645,12 +706,41 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     }
   }
 
-  // Handle Math.* built-in functions
+  // Handle method calls: obj.method(args)
   if(is_kind(callee, "PropertyAccessExpression"))
   {
-    std::string obj = json_string(json_member(json_member(callee, "expression"), "text"));
+    std::string obj_name = json_string(json_member(json_member(callee, "expression"), "text"));
     std::string method = json_string(json_member(json_member(callee, "name"), "text"));
-    if(obj == "Math" && args.is_array())
+    // Check for class method calls
+    exprt obj_expr = convert_expression(json_member(callee, "expression"));
+    if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(obj_expr.type());
+      std::string tag = id2string(st.get_tag());
+      if(tag.substr(0, 17) == "typescript_class_")
+      {
+        std::string cls = tag.substr(17);
+        irep_idt method_id{"typescript::" + cls + "::" + method};
+        const symbolt *msym = symbol_table.lookup(method_id);
+        if(msym != nullptr && msym->type.id() == ID_code)
+        {
+          exprt::operandst margs;
+          margs.push_back(address_of_exprt{obj_expr});
+          if(args.is_array())
+            for(const auto &a : to_json_array(args))
+              margs.push_back(convert_expression(a));
+          const auto &mparams = to_code_type(msym->type).parameters();
+          for(std::size_t i = 0; i < margs.size() && i < mparams.size(); i++)
+            if(margs[i].type() != mparams[i].type())
+              margs[i] = typecast_exprt(margs[i], mparams[i].type());
+          return side_effect_expr_function_callt{
+            msym->symbol_expr(), std::move(margs),
+            to_code_type(msym->type).return_type(), get_location(node)};
+        }
+      }
+    }
+    // Handle Math.* built-in functions
+    if(obj_name == "Math" && args.is_array())
     {
       // ES2024 sec-math.*: constant evaluation at conversion time
       std::vector<double> arg_vals;
@@ -837,8 +927,12 @@ codet typescript_convertert::convert_statement(const jsont &node)
           const symbolt &sym = symbol_table.lookup_ref(sym_id);
           if(rhs.type() != sym.type)
             rhs = typecast_exprt(rhs, sym.type);
+          // Flush pending stmts BEFORE assignment (constructor calls etc.)
+          for(auto &s : pending_stmts)
+            block.add(std::move(s));
+          pending_stmts.clear();
           block.add(code_frontend_assignt{sym.symbol_expr(), rhs});
-          // Track string constants
+        // Track string constants
           if(is_typescript_string_type(rhs.type()) &&
              rhs.id() == ID_struct && rhs.operands().size() >= 2 &&
              rhs.operands()[0].is_constant())
@@ -956,10 +1050,148 @@ codet typescript_convertert::convert_statement(const jsont &node)
   if(kind == "InterfaceDeclaration" || kind == "TypeAliasDeclaration")
     return code_skipt{};
 
-  // ES2024 sec-class-definitions — handled in first pass
+  // ES2024 sec-class-definitions
   if(kind == "ClassDeclaration")
   {
-    convert_function_declaration(node);
+    std::string cls_name = json_string(json_member(json_member(node, "name"), "text"));
+    if(cls_name.empty())
+      return code_skipt{};
+    // Build struct type from property declarations
+    struct_typet cls_type;
+    cls_type.set_tag("typescript_class_" + cls_name);
+    const jsont &members = json_member(node, "members");
+    if(members.is_array())
+    {
+      for(const auto &m : to_json_array(members))
+      {
+        std::string mk = json_string(json_member(m, "_kind"));
+        if(mk == "PropertyDeclaration")
+        {
+          std::string pname = json_string(json_member(json_member(m, "name"), "text"));
+          std::string ptype = json_string(json_member(m, "_type"));
+          cls_type.components().push_back(
+            struct_typet::componentt{pname, convert_type(ptype)});
+        }
+      }
+    }
+    // Register class type
+    class_types[cls_name] = cls_type;
+    // Process constructor and methods
+    if(members.is_array())
+    {
+      for(const auto &m : to_json_array(members))
+      {
+        std::string mk = json_string(json_member(m, "_kind"));
+        if(mk == "Constructor")
+        {
+          // Constructor: cls_name::__init__(this_ptr, params...)
+          std::string ctor_name = cls_name + "::__init__";
+          code_typet::parameterst params;
+          // this pointer
+          code_typet::parametert this_param{pointer_typet{cls_type, 64}};
+          this_param.set_identifier("typescript::" + ctor_name + "::this");
+          this_param.set_base_name("this");
+          params.push_back(this_param);
+          // other params
+          const jsont &ctor_params = json_member(m, "parameters");
+          if(ctor_params.is_array())
+          {
+            for(const auto &p : to_json_array(ctor_params))
+            {
+              std::string pn = json_string(json_member(json_member(p, "name"), "text"));
+              std::string pt = json_string(json_member(p, "_type"));
+              code_typet::parametert cp{convert_type(pt)};
+              cp.set_identifier("typescript::" + ctor_name + "::" + pn);
+              cp.set_base_name(pn);
+              params.push_back(cp);
+            }
+          }
+          code_typet ft{params, empty_typet{}};
+          irep_idt fid{"typescript::" + ctor_name};
+          symbolt fs{fid, ft, "typescript"};
+          fs.base_name = ctor_name;
+          fs.is_lvalue = true;
+          // Create param symbols
+          for(const auto &p : params)
+          {
+            irep_idt pid = p.get_identifier();
+            if(symbol_table.lookup(pid) == nullptr)
+            {
+              symbolt ps{pid, p.type(), "typescript"};
+              ps.base_name = id2string(p.get_base_name());
+              ps.is_parameter = true;
+              ps.is_lvalue = true;
+              ps.is_state_var = true;
+              symbol_table.add(ps);
+            }
+          }
+          // Convert body
+          const jsont &body = json_member(m, "body");
+          if(body.is_object())
+          {
+            std::string saved = current_function;
+            current_function = ctor_name;
+            fs.value = convert_block(body);
+            current_function = saved;
+          }
+          if(symbol_table.lookup(fid) == nullptr)
+            symbol_table.add(fs);
+        }
+        else if(mk == "MethodDeclaration")
+        {
+          std::string mname = json_string(json_member(json_member(m, "name"), "text"));
+          std::string full_name = cls_name + "::" + mname;
+          std::string ret_str = json_string(json_member(m, "_returnType"));
+          typet ret_type = ret_str.empty() ? empty_typet{} : convert_type(ret_str);
+          code_typet::parameterst params;
+          code_typet::parametert this_param{pointer_typet{cls_type, 64}};
+          this_param.set_identifier("typescript::" + full_name + "::this");
+          this_param.set_base_name("this");
+          params.push_back(this_param);
+          const jsont &mparams = json_member(m, "parameters");
+          if(mparams.is_array())
+          {
+            for(const auto &p : to_json_array(mparams))
+            {
+              std::string pn = json_string(json_member(json_member(p, "name"), "text"));
+              std::string pt = json_string(json_member(p, "_type"));
+              code_typet::parametert cp{convert_type(pt)};
+              cp.set_identifier("typescript::" + full_name + "::" + pn);
+              cp.set_base_name(pn);
+              params.push_back(cp);
+            }
+          }
+          code_typet ft{params, ret_type};
+          irep_idt fid{"typescript::" + full_name};
+          symbolt fs{fid, ft, "typescript"};
+          fs.base_name = full_name;
+          fs.is_lvalue = true;
+          for(const auto &p : params)
+          {
+            irep_idt pid = p.get_identifier();
+            if(symbol_table.lookup(pid) == nullptr)
+            {
+              symbolt ps{pid, p.type(), "typescript"};
+              ps.base_name = id2string(p.get_base_name());
+              ps.is_parameter = true;
+              ps.is_lvalue = true;
+              ps.is_state_var = true;
+              symbol_table.add(ps);
+            }
+          }
+          const jsont &body = json_member(m, "body");
+          if(body.is_object())
+          {
+            std::string saved = current_function;
+            current_function = full_name;
+            fs.value = convert_block(body);
+            current_function = saved;
+          }
+          if(symbol_table.lookup(fid) == nullptr)
+            symbol_table.add(fs);
+        }
+      }
+    }
     return code_skipt{};
   }
 
@@ -1101,6 +1333,10 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         const symbolt &sym = symbol_table.lookup_ref(sym_id);
         if(rhs.type() != sym.type)
           rhs = typecast_exprt{rhs, sym.type};
+        // Flush pending stmts (constructor calls from NewExpression)
+        for(auto &s : pending_stmts)
+          block.add(std::move(s));
+        pending_stmts.clear();
         code_frontend_assignt assign{sym.symbol_expr(), rhs};
         assign.add_source_location() = get_location(decl);
         block.add(std::move(assign));
@@ -1234,14 +1470,14 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
     if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken" ||
        op == "MinusEqualsToken" || op == "AsteriskEqualsToken" ||
        op == "SlashEqualsToken" || op == "PercentEqualsToken" ||
-       op == "EqualsToken")
+       op == "EqualsToken" || op == "FirstAssignment")
     {
       exprt lhs = convert_expression(json_member(expr_node, "left"));
       exprt rhs = convert_expression(json_member(expr_node, "right"));
       if(!lhs.is_nil() && !rhs.is_nil())
       {
         exprt new_val = rhs;
-        if(op != "EqualsToken")
+        if(op != "EqualsToken" && op != "FirstAssignment")
         {
           if(lhs.type() != rhs.type())
             rhs = typecast_exprt{rhs, lhs.type()};
@@ -1264,6 +1500,16 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
   }
   // Fallback: evaluate expression
   exprt e = convert_expression(expr_node);
+  if(!pending_stmts.empty())
+  {
+    code_blockt block;
+    for(auto &s : pending_stmts)
+      block.add(std::move(s));
+    pending_stmts.clear();
+    if(!e.is_nil())
+      block.add(code_expressiont{e});
+    return std::move(block);
+  }
   if(e.is_nil())
     return code_skipt{};
   return code_expressiont{e};

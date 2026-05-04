@@ -40,7 +40,9 @@ private:
   messaget log;
 
   std::string current_function; // empty at module level
-  std::map<irep_idt, std::string> string_constants; // track known string values
+  std::map<irep_idt, std::string> string_constants;
+  std::map<std::string, struct_typet> class_types;
+  std::vector<codet> pending_stmts; // stmts to emit before current expr
 
   // --- Helpers ---
   static const jsont &json_member(const jsont &obj, const std::string &key);
