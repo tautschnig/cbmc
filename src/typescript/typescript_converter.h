@@ -4,15 +4,16 @@
 #ifndef CPROVER_TYPESCRIPT_TYPESCRIPT_CONVERTER_H
 #define CPROVER_TYPESCRIPT_TYPESCRIPT_CONVERTER_H
 
+#include <util/json.h>
 #include <util/message.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol_table_base.h>
 
 #include <json/json_parser.h>
+
 #include <map>
 #include <set>
-#include <util/json.h>
 
 /// Converts a TypeScript JSON AST (produced by ts_ast_to_json.js)
 /// into GOTO program symbols in the symbol table.
@@ -47,7 +48,8 @@ private:
   std::map<std::string, struct_typet> class_types;
   std::vector<codet> pending_stmts;
   // Default parameter values: func_id → {param_index → default_expr}
-  std::map<irep_idt, std::map<std::size_t, exprt>> default_values; // stmts to emit before current expr
+  std::map<irep_idt, std::map<std::size_t, exprt>>
+    default_values; // stmts to emit before current expr
 
   // --- Helpers ---
   static const jsont &json_member(const jsont &obj, const std::string &key);

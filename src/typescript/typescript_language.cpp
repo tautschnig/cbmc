@@ -2,16 +2,17 @@
 /// TypeScript language frontend for CBMC — implementation
 
 #include "typescript_language.h"
-#include "typescript_converter.h"
 
-#include <util/message.h>
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
-#include <util/symbol.h>
-#include <util/std_expr.h>
+#include <util/message.h>
 #include <util/run.h>
+#include <util/std_expr.h>
 #include <util/suffix.h>
+#include <util/symbol.h>
 #include <util/tempfile.h>
+
+#include "typescript_converter.h"
 
 #include <fstream>
 
@@ -315,17 +316,12 @@ fs.writeFileSync(outputFile, JSON.stringify(n2j(sourceFile)));
   temporary_filet stderr_tmp{"cbmc_ts_err_", ".txt"};
   std::string stderr_path = stderr_tmp();
 
-  int result = run(
-    "node",
-    {"node", script_path, path, json_path},
-    "",
-    "",
-    stderr_path);
+  int result =
+    run("node", {"node", script_path, path, json_path}, "", "", stderr_path);
 
   if(result != 0)
   {
-    log.error() << "Failed to parse TypeScript file: " << path
-                << messaget::eom;
+    log.error() << "Failed to parse TypeScript file: " << path << messaget::eom;
     return true;
   }
 

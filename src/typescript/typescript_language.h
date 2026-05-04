@@ -4,8 +4,8 @@
 #ifndef CPROVER_TYPESCRIPT_TYPESCRIPT_LANGUAGE_H
 #define CPROVER_TYPESCRIPT_TYPESCRIPT_LANGUAGE_H
 
-#include <langapi/language.h>
 #include <json/json_parser.h>
+#include <langapi/language.h>
 
 class typescript_languaget : public languaget
 {
@@ -28,15 +28,11 @@ public:
     const optionst &options,
     message_handlert &message_handler) override;
 
-  bool from_expr(
-    const exprt &expr,
-    std::string &code,
-    const namespacet &ns) override;
+  bool from_expr(const exprt &expr, std::string &code, const namespacet &ns)
+    override;
 
-  bool from_type(
-    const typet &type,
-    std::string &code,
-    const namespacet &ns) override;
+  bool from_type(const typet &type, std::string &code, const namespacet &ns)
+    override;
 
   bool to_expr(
     const std::string &code,
@@ -45,9 +41,8 @@ public:
     const namespacet &ns,
     message_handlert &message_handler) override;
 
-  void show_parse(
-    std::ostream &out,
-    message_handlert &message_handler) override;
+  void
+  show_parse(std::ostream &out, message_handlert &message_handler) override;
 
   std::string id() const override
   {

@@ -35,8 +35,7 @@ inline typet typescript_boolean_type()
 inline refined_string_typet typescript_string_type()
 {
   return refined_string_typet{
-    signedbv_typet{32},
-    pointer_typet{unsignedbv_typet{16}, 64}};
+    signedbv_typet{32}, pointer_typet{unsignedbv_typet{16}, 64}};
 }
 
 inline bool is_typescript_string_type(const typet &type)
