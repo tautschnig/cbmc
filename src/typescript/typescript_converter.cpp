@@ -89,6 +89,38 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
+  // Object literal types: { x: number; y: number; }
+  if(ts_type.size() > 2 && ts_type[0] == '{' && ts_type.back() == '}')
+  {
+    // Parse the type string to extract property names and types
+    struct_typet st;
+    std::string inner = ts_type.substr(2, ts_type.size() - 4); // remove "{ " and " }"
+    // Split by "; "
+    std::size_t pos = 0;
+    while(pos < inner.size())
+    {
+      auto semi = inner.find(';', pos);
+      if(semi == std::string::npos)
+        semi = inner.size();
+      std::string field = inner.substr(pos, semi - pos);
+      // Trim
+      while(!field.empty() && field[0] == ' ') field.erase(0, 1);
+      while(!field.empty() && field.back() == ' ') field.pop_back();
+      auto colon = field.find(':');
+      if(colon != std::string::npos)
+      {
+        std::string fname = field.substr(0, colon);
+        std::string ftype = field.substr(colon + 1);
+        while(!fname.empty() && fname.back() == ' ') fname.pop_back();
+        while(!ftype.empty() && ftype[0] == ' ') ftype.erase(0, 1);
+        st.components().push_back(
+          struct_typet::componentt{fname, convert_type(ftype)});
+      }
+      pos = semi + 1;
+      while(pos < inner.size() && inner[pos] == ' ') pos++;
+    }
+    return st;
+  }
   // Class types
   auto cls_it = class_types.find(ts_type);
   if(cls_it != class_types.end())
@@ -1046,6 +1078,53 @@ codet typescript_convertert::convert_statement(const jsont &node)
     return result;
   }
 
+  // TSH: Enums
+  if(kind == "EnumDeclaration")
+  {
+    std::string enum_name = json_string(json_member(json_member(node, "name"), "text"));
+    const jsont &members = json_member(node, "members");
+    if(members.is_array())
+    {
+      int value = 0;
+      for(const auto &m : to_json_array(members))
+      {
+        std::string mname = json_string(json_member(json_member(m, "name"), "text"));
+        // Check for explicit initializer
+        const jsont &init = json_member(m, "initializer");
+        if(init.is_object())
+        {
+          exprt val = convert_expression(init);
+          if(val.is_constant())
+          {
+            mp_integer iv;
+            if(!to_integer(to_constant_expr(val), iv))
+              value = iv.to_long();
+          }
+        }
+        // Create symbol: EnumName.MemberName = value
+        std::string qn = "typescript::" + enum_name + "." + mname;
+        irep_idt sid{qn};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt s{sid, double_type(), "typescript"};
+          s.base_name = enum_name + "." + mname;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          s.is_static_lifetime = true;
+          // Store as float constant
+          uint64_t bits;
+          double dval = static_cast<double>(value);
+          std::memcpy(&bits, &dval, sizeof(bits));
+          s.value = constant_exprt{
+            integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
+            double_type()};
+          symbol_table.add(s);
+        }
+        value++;
+      }
+    }
+    return code_skipt{};
+  }
   // TSH: Object Types.md — interface declarations (type-only, no runtime code)
   if(kind == "InterfaceDeclaration" || kind == "TypeAliasDeclaration")
     return code_skipt{};
@@ -1290,7 +1369,90 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
   code_blockt block;
   for(const auto &decl : to_json_array(declarations))
   {
-    std::string var_name = json_string(json_member(json_member(decl, "name"), "text"));
+    const jsont &name_node = json_member(decl, "name");
+    std::string name_kind = json_string(json_member(name_node, "_kind"));
+    // Handle destructuring: const { x, y } = point
+    if(name_kind == "ObjectBindingPattern")
+    {
+      const jsont &init = json_member(decl, "initializer");
+      if(!init.is_object())
+        continue;
+      exprt rhs = convert_expression(init);
+      if(rhs.is_nil())
+        continue;
+      const jsont &elements = json_member(name_node, "elements");
+      if(elements.is_array() && rhs.type().id() == ID_struct)
+      {
+        const auto &st = to_struct_type(rhs.type());
+        for(const auto &elem : to_json_array(elements))
+        {
+          std::string prop = json_string(json_member(json_member(elem, "name"), "text"));
+          if(prop.empty() || !st.has_component(prop))
+            continue;
+          typet pt = st.get_component(prop).type();
+          std::string qn = "typescript::" +
+            (current_function.empty() ? "" : current_function + "::") + prop;
+          irep_idt pid{qn};
+          if(symbol_table.lookup(pid) == nullptr)
+          {
+            symbolt ps{pid, pt, "typescript"};
+            ps.base_name = prop;
+            ps.is_lvalue = true;
+            ps.is_state_var = true;
+            ps.is_static_lifetime = current_function.empty();
+            symbol_table.add(ps);
+          }
+          block.add(code_frontend_assignt{
+            symbol_table.lookup_ref(pid).symbol_expr(),
+            member_exprt{rhs, prop, pt}});
+        }
+      }
+      continue;
+    }
+    // Handle array destructuring: const [a, b] = arr
+    if(name_kind == "ArrayBindingPattern")
+    {
+      const jsont &init = json_member(decl, "initializer");
+      if(!init.is_object())
+        continue;
+      exprt rhs = convert_expression(init);
+      if(rhs.is_nil())
+        continue;
+      const jsont &elements = json_member(name_node, "elements");
+      if(elements.is_array() && rhs.type().id() == ID_struct)
+      {
+        const auto &st = to_struct_type(rhs.type());
+        if(st.has_component("data"))
+        {
+          exprt data = member_exprt{rhs, "data", st.get_component("data").type()};
+          std::size_t idx = 0;
+          for(const auto &elem : to_json_array(elements))
+          {
+            std::string ename = json_string(json_member(json_member(elem, "name"), "text"));
+            if(ename.empty()) { idx++; continue; }
+            typet et = to_array_type(st.get_component("data").type()).element_type();
+            std::string qn = "typescript::" +
+              (current_function.empty() ? "" : current_function + "::") + ename;
+            irep_idt eid{qn};
+            if(symbol_table.lookup(eid) == nullptr)
+            {
+              symbolt es{eid, et, "typescript"};
+              es.base_name = ename;
+              es.is_lvalue = true;
+              es.is_state_var = true;
+              es.is_static_lifetime = current_function.empty();
+              symbol_table.add(es);
+            }
+            block.add(code_frontend_assignt{
+              symbol_table.lookup_ref(eid).symbol_expr(),
+              index_exprt{data, from_integer(idx, signedbv_typet{64})}});
+            idx++;
+          }
+        }
+      }
+      continue;
+    }
+    std::string var_name = json_string(json_member(name_node, "text"));
     // Check for arrow/function expression BEFORE creating variable
     const jsont &init_check = json_member(decl, "initializer");
     if(init_check.is_object())

@@ -245,6 +245,23 @@ function n2j(node) {
     case ts.SyntaxKind.DefaultClause:
       r.statements = node.statements.map(n2j);
       break;
+    case ts.SyntaxKind.ObjectBindingPattern:
+    case ts.SyntaxKind.ArrayBindingPattern:
+      r.elements = node.elements.map(n2j);
+      break;
+    case ts.SyntaxKind.BindingElement:
+      r.name = n2j(node.name);
+      if(node.propertyName) r.propertyName = n2j(node.propertyName);
+      if(node.initializer) r.initializer = n2j(node.initializer);
+      break;
+    case ts.SyntaxKind.EnumDeclaration:
+      if(node.name) r.name = n2j(node.name);
+      r.members = node.members.map(n2j);
+      break;
+    case ts.SyntaxKind.EnumMember:
+      r.name = n2j(node.name);
+      if(node.initializer) r.initializer = n2j(node.initializer);
+      break;
     case ts.SyntaxKind.BreakStatement:
       break;
     case ts.SyntaxKind.ConditionalExpression:
