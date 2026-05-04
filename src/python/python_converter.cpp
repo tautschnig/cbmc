@@ -5125,7 +5125,24 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
+      {
+        // Check for __bool__ dunder
+        if(arg.type().id() == ID_struct)
+        {
+          std::string tag = id2string(to_struct_type(arg.type()).get_tag());
+          std::string cls =
+            tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+          irep_idt bid{"python::" + cls + "::__bool__"};
+          const symbolt *bsym = symbol_table.lookup(bid);
+          if(bsym != nullptr)
+            return side_effect_expr_function_callt{
+              bsym->symbol_expr(),
+              {address_of_exprt{arg}},
+              bool_typet{},
+              get_location(expr)};
+        }
         return safe_typecast(arg, bool_typet{});
+      }
     }
     return false_exprt{};
   }
@@ -5235,6 +5252,24 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "repr" || func_name == "ascii")
   {
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil() && arg.type().id() == ID_struct)
+      {
+        std::string tag = id2string(to_struct_type(arg.type()).get_tag());
+        std::string cls =
+          tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+        irep_idt rid{"python::" + cls + "::__repr__"};
+        const symbolt *rsym = symbol_table.lookup(rid);
+        if(rsym != nullptr)
+          return side_effect_expr_function_callt{
+            rsym->symbol_expr(),
+            {address_of_exprt{arg}},
+            python_string_type(),
+            get_location(expr)};
+      }
+    }
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
   // PLib builtins: hash/id — return nondet int
