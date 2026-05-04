@@ -5673,18 +5673,64 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      exprt arg = convert_expression(*as_array(args).begin());
-      if(arg.type().id() == ID_floatbv)
+      auto ait = as_array(args).begin();
+      exprt arg = convert_expression(*ait);
+      // Constant evaluation
+      double val = 0;
+      bool have_val = false;
+      if(arg.id() == ID_symbol)
       {
-        // round(x) = floor(x + 0.5)
-        ieee_floatt half{
+        auto it = float_constants.find(to_symbol_expr(arg).get_identifier());
+        if(it != float_constants.end())
+        {
+          val = it->second;
+          have_val = true;
+        }
+      }
+      const exprt *ce = &arg;
+      if(ce->id() == ID_typecast && ce->operands().size() == 1)
+        ce = &ce->operands()[0];
+      if(!have_val && ce->is_constant() && ce->type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
           ieee_float_spect::double_precision(),
           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        half.from_double(0.5);
-        exprt sum = plus_exprt{arg, half.to_expr()};
-        return typecast_exprt{sum, python_int_type()};
+        fv.from_expr(to_constant_expr(*ce));
+        val = std::stod(fv.to_ansi_c_string());
+        have_val = true;
       }
-      return arg; // int → int
+      if(!have_val && ce->is_constant() && ce->type().id() == ID_signedbv)
+      {
+        mp_integer iv;
+        if(!to_integer(to_constant_expr(*ce), iv))
+        {
+          val = iv.to_long();
+          have_val = true;
+        }
+      }
+      if(have_val)
+      {
+        int ndigits = 0;
+        ++ait;
+        if(ait != as_array(args).end())
+        {
+          exprt nd = convert_expression(*ait);
+          const exprt *nce = &nd;
+          if(nce->id() == ID_typecast && nce->operands().size() == 1)
+            nce = &nce->operands()[0];
+          if(nce->is_constant() && nce->type().id() == ID_signedbv)
+          {
+            mp_integer nv;
+            if(!to_integer(to_constant_expr(*nce), nv))
+              ndigits = nv.to_long();
+          }
+        }
+        double factor = std::pow(10.0, ndigits);
+        double rounded = std::round(val * factor) / factor;
+        if(ndigits > 0)
+          return double_to_floatbv(rounded);
+        return from_integer(static_cast<long long>(rounded), python_int_type());
+      }
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
@@ -5961,8 +6007,14 @@ exprt python_convertert::convert_call(const jsont &expr)
   // We model this as a static type tag for comparison with type names.
   else if(func_name == "hasattr" || func_name == "callable")
   {
-    // PLR §2: hasattr/callable return bool
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+  }
+  else if(
+    func_name == "TypeVar" || func_name == "NewType" ||
+    func_name == "overload" || func_name == "dataclass" || func_name == "field")
+  {
+    // typing/dataclass decorators and constructors — return nondet
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   else if(func_name == "type")
   {
@@ -6200,11 +6252,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               iv.from_expr(to_constant_expr(im));
               double rd = std::stod(rv.to_ansi_c_string());
               double id = std::stod(iv.to_ansi_c_string());
-              ieee_floatt result{
-                ieee_float_spect::double_precision(),
-                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-              result.from_double(std::sqrt(rd * rd + id * id));
-              return result.to_expr();
+              return double_to_floatbv(std::sqrt(rd * rd + id * id));
             }
           }
           // Variable complex: sqrt(real² + imag²)
@@ -6231,6 +6279,9 @@ exprt python_convertert::convert_call(const jsont &expr)
               side_effect_expr_nondett{double_type(), source_locationt{}}});
             pending_checks.push_back(code_assumet{
               binary_relation_exprt{tmp, ID_ge, safe_zero(double_type())}});
+            // Constrain: result² == real² + imag²
+            pending_checks.push_back(
+              code_assumet{ieee_float_equal_exprt{mult_exprt{tmp, tmp}, sum}});
             return std::move(tmp);
           }
         }
@@ -6553,13 +6604,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         else
           computed = false;
         if(computed)
-        {
-          ieee_floatt result{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          result.from_double(res);
-          return result.to_expr();
-        }
+          return double_to_floatbv(res);
       } // end if(arg.type().id() == ID_floatbv)
     }
 
@@ -7866,7 +7911,19 @@ codet python_convertert::convert_statement(const jsont &stmt)
             module == "functools" || module == "itertools" || module == "io" ||
             module == "pathlib" || module == "hashlib" || module == "base64" ||
             module == "copy" || module == "enum" || module == "dataclasses" ||
-            module == "abc" || module == "random")
+            module == "abc" || module == "random" || module == "decimal" ||
+            module == "operator" || module == "string" || module == "struct" ||
+            module == "csv" || module == "logging" || module == "unittest" ||
+            module == "argparse" || module == "textwrap" ||
+            module == "contextlib" || module == "warnings" ||
+            module == "traceback" || module == "inspect" ||
+            module == "threading" || module == "multiprocessing" ||
+            module == "subprocess" || module == "shutil" ||
+            module == "tempfile" || module == "glob" || module == "fnmatch" ||
+            module == "socket" || module == "http" || module == "http.client" ||
+            module == "urllib" || module == "urllib.request" ||
+            module == "cmath" || module == "statistics" ||
+            module == "fractions" || module == "numbers")
           {
             // Stdlib modules: register imported names as variables (not
             // functions) so the unknown-function handler returns nondet
