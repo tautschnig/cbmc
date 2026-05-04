@@ -1270,6 +1270,55 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                      sv.substr(sv.size() - str_args[0].size()) == str_args[0]
                    ? exprt{true_exprt{}}
                    : exprt{false_exprt{}};
+        if(method == "replace" && str_args.size() >= 2)
+        {
+          auto pos = sv.find(str_args[0]);
+          if(pos != std::string::npos)
+          {
+            std::string r = sv;
+            r.replace(pos, str_args[0].size(), str_args[1]);
+            return convert_string_literal_from_text(r);
+          }
+          return convert_string_literal_from_text(sv);
+        }
+        if(method == "split" && !str_args.empty())
+        {
+          std::string delim = str_args[0];
+          std::vector<std::string> parts;
+          std::string tmp = sv;
+          while(true)
+          {
+            auto pos = tmp.find(delim);
+            if(pos == std::string::npos)
+            {
+              parts.push_back(tmp);
+              break;
+            }
+            parts.push_back(tmp.substr(0, pos));
+            tmp = tmp.substr(pos + delim.size());
+          }
+          // Build array of strings
+          exprt::operandst elts;
+          typet elem_type = typescript_string_type();
+          for(const auto &p : parts)
+            elts.push_back(convert_string_literal_from_text(p));
+          std::size_t actual = elts.size();
+          std::size_t max_len = 64;
+          while(elts.size() < max_len)
+            elts.push_back(convert_string_literal_from_text(""));
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type;
+          list_type.components().push_back(
+            struct_typet::componentt{"length", signedbv_typet{64}});
+          list_type.components().push_back(
+            struct_typet::componentt{"data", arr_type});
+          list_type.set_tag("typescript_array");
+          return struct_exprt{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(elts), arr_type}},
+            list_type};
+        }
       }
       // Nondet fallback for non-constant strings
       return side_effect_expr_nondett{double_type(), get_location(node)};
