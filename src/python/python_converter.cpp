@@ -2916,7 +2916,18 @@ exprt python_convertert::convert_call(const jsont &expr)
               ce = &ce->operands()[0];
             double val = 0;
             bool have_val = false;
-            if(ce->is_constant() && ce->type().id() == ID_floatbv)
+            // Check tracked float constants for symbols
+            if(ce->id() == ID_symbol)
+            {
+              auto fc_it =
+                float_constants.find(to_symbol_expr(*ce).get_identifier());
+              if(fc_it != float_constants.end())
+              {
+                val = fc_it->second;
+                have_val = true;
+              }
+            }
+            if(!have_val && ce->is_constant() && ce->type().id() == ID_floatbv)
             {
               ieee_floatt fv{
                 ieee_float_spect::double_precision(),
@@ -7953,6 +7964,26 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       dict_literals.erase(symbol_id);
   }
+  // Track numeric constants
+  if(rhs.is_constant())
+  {
+    if(rhs.type().id() == ID_signedbv)
+    {
+      mp_integer iv;
+      if(!to_integer(to_constant_expr(rhs), iv))
+        float_constants[symbol_id] = iv.to_long();
+    }
+    else if(rhs.type().id() == ID_floatbv)
+    {
+      ieee_floatt fv{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      fv.from_expr(to_constant_expr(rhs));
+      float_constants[symbol_id] = std::stod(fv.to_ansi_c_string());
+    }
+  }
+  else
+    float_constants.erase(symbol_id);
   return std::move(assign);
 }
 
@@ -8748,6 +8779,25 @@ codet python_convertert::convert_assign(const jsont &stmt)
       else
         dict_literals.erase(sym.name);
     }
+    if(typed_rhs.is_constant())
+    {
+      if(typed_rhs.type().id() == ID_signedbv)
+      {
+        mp_integer iv;
+        if(!to_integer(to_constant_expr(typed_rhs), iv))
+          float_constants[sym.name] = iv.to_long();
+      }
+      else if(typed_rhs.type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fv.from_expr(to_constant_expr(typed_rhs));
+        float_constants[sym.name] = std::stod(fv.to_ansi_c_string());
+      }
+    }
+    else
+      float_constants.erase(sym.name);
     block.add(std::move(assign));
   }
 
@@ -8960,6 +9010,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     irep_idt sid = to_symbol_expr(lhs).get_identifier();
     string_constants.erase(sid);
     dict_literals.erase(sid);
+    float_constants.erase(sid);
   }
   code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
