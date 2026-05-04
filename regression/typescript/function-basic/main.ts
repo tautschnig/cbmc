@@ -1,4 +1,9 @@
-// ES2024 §15.2: Function Definitions
+// ES2024 sec-function-definitions: Function Definitions
+// "A function definition defines a function object."
+//
+// ES2024 sec-function-calls: Function Calls
+// "The production CallExpression : CoverCallExpressionAndAsyncArrowHead
+//  is evaluated as follows..."
 function add(a: number, b: number): number {
   return a + b;
 }

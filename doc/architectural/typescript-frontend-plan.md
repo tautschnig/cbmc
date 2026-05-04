@@ -8,15 +8,104 @@ Produce correct verification results — soundness over completeness.
 
 ## 2. Language References
 
-- **ECMAScript 2024 (ECMA-262)**: Runtime semantics for JavaScript
-  https://tc39.es/ecma262/2024/
-- **TypeScript Handbook**: Type system, narrowing, generics
-  https://www.typescriptlang.org/docs/handbook/intro.html
-- **TypeScript Compiler API**: Parsing and type checking
-  https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API
+### 2.1 Runtime Semantics: ECMAScript 2024 (ECMA-262)
 
-Note: The old TypeScript Language Specification (v1.8, 2016) is archived
-and outdated. The Handbook + ECMAScript spec are authoritative.
+Local copy: `~/ecma262/spec.html`
+Online: https://tc39.es/ecma262/2024/
+
+All runtime behavior (operator semantics, type coercion, control flow,
+built-in methods) is defined by ECMA-262. We cite sections using the
+format `ES2024 §sec-id: Title`.
+
+Key sections for the TypeScript frontend:
+
+**Types (ES2024 §6.1):**
+- `sec-ecmascript-language-types-undefined-type`: The Undefined Type
+- `sec-ecmascript-language-types-null-type`: The Null Type
+- `sec-ecmascript-language-types-boolean-type`: The Boolean Type
+- `sec-ecmascript-language-types-string-type`: The String Type
+- `sec-ecmascript-language-types-number-type`: The Number Type
+- `sec-object-type`: The Object Type
+
+**Type Conversion (ES2024 §7.1):**
+- `sec-toboolean`: ToBoolean
+- `sec-tonumber-applied-to-the-string-type`: ToNumber Applied to String
+- `sec-stringtonumber`: StringToNumber
+
+**Operators (ES2024 §13):**
+- `sec-addition-operator-plus`: The Addition Operator (+)
+- `sec-subtraction-operator-minus`: The Subtraction Operator (-)
+- `sec-typeof-operator`: The typeof Operator
+- `sec-logical-not-operator`: Logical NOT Operator (!)
+- `sec-relational-operators`: Relational Operators
+- `sec-equality-operators`: Equality Operators
+- `sec-isstrictlyequal`: IsStrictlyEqual (===)
+- `sec-assignment-operators`: Assignment Operators
+- `sec-conditional-operator`: Conditional Operator (?:)
+- `sec-bitwise-shift-operators`: Bitwise Shift Operators
+- `sec-binary-bitwise-operators`: Binary Bitwise Operators
+
+**Statements (ES2024 §14):**
+- `sec-let-and-const-declarations`: Let and Const Declarations
+- `sec-variable-statement`: Variable Statement
+- `sec-continue-statement`: The continue Statement
+- `sec-break-statement`: The break Statement
+- `sec-for-in-and-for-of-statements`: for-in, for-of, for-await-of
+
+**Functions (ES2024 §15):**
+- `sec-function-definitions`: Function Definitions
+- `sec-arrow-function-definitions`: Arrow Function Definitions
+- `sec-class-definitions`: Class Definitions
+- `sec-async-function-definitions`: Async Function Definitions
+
+**Built-in Objects (ES2024 §19-28):**
+- `sec-math.*`: Math methods (abs, floor, ceil, sqrt, sin, cos, etc.)
+- `sec-string.prototype.*`: String methods (charAt, indexOf, slice, etc.)
+- `sec-array.prototype.*`: Array methods (push, pop, map, filter, etc.)
+- `sec-json.parse`, `sec-json.stringify`: JSON operations
+- `sec-promise-objects`: Promise Objects
+- `sec-error-objects`: Error Objects
+
+**Number Arithmetic (ES2024 §6.1.6.1):**
+- `sec-numeric-types-number-remainder`: Number::remainder
+- `sec-numeric-types-number-leftShift`: Number::leftShift
+- `sec-numeric-types-number-bitwiseAND`: Number::bitwiseAND
+- `sec-numeric-types-number-bitwiseOR`: Number::bitwiseOR
+- `sec-numeric-types-number-bitwiseXOR`: Number::bitwiseXOR
+
+### 2.2 Type System: TypeScript Handbook
+
+Local copy: `~/TypeScript-Website/packages/documentation/copy/en/handbook-v2/`
+Online: https://www.typescriptlang.org/docs/handbook/intro.html
+
+The TypeScript type system is defined by the Handbook and the compiler
+implementation. We cite Handbook sections using the format
+`TSH: <filename>`.
+
+Key sections:
+- `TSH: Basics.md` — Type annotations, type inference
+- `TSH: Everyday Types.md` — Primitives, arrays, unions, type aliases
+- `TSH: Narrowing.md` — Type guards, control flow analysis
+- `TSH: More on Functions.md` — Function types, overloads, generics
+- `TSH: Object Types.md` — Interfaces, optional properties
+- `TSH: Classes.md` — Class declarations, inheritance, access modifiers
+- `TSH: Modules.md` — Import/export
+- `TSH: Type Manipulation/Generics.md` — Generic types
+
+Note: The TypeScript compiler is the ultimate authority for type system
+behavior. When the Handbook is ambiguous, the compiler's behavior is
+definitive.
+
+### 2.3 Verification-Specific Semantics
+
+Defined in this document. Not part of any language standard.
+
+- `console.assert(cond)` → CBMC assertion property
+- `nondet_number()` → CBMC nondet value (floatbv[64])
+- `nondet_boolean()` → CBMC nondet value (bool)
+- `nondet_string()` → CBMC nondet value (refined_string)
+- `__CPROVER_assume(cond)` → CBMC assume statement
+- `__CPROVER_assert(cond, msg)` → CBMC named assertion
 
 ## 3. Design Decisions
 
@@ -45,16 +134,17 @@ and expression has a known type at compile time. This means:
 - Direct mapping from TS types to CBMC types
 
 **Type mapping:**
-| TypeScript | CBMC |
-|-----------|------|
-| `number` | `floatbv[64]` (IEEE 754 double) |
-| `boolean` | `bool` |
-| `string` | `refined_string_typet` (CBMC string solver) |
-| `null` | `pointer_typet` (null pointer) |
-| `undefined` | `signedbv[64]` (sentinel value) |
-| `T[]` | `struct { length: int64, data: T[MAX] }` |
-| `interface/class` | `struct_typet` |
-| `T | null` | `struct { tag: int, value: T, is_null: bool }` |
+
+| TypeScript | CBMC | ES2024 Reference |
+|-----------|------|-----------------|
+| `number` | `floatbv[64]` (IEEE 754 double) | `sec-ecmascript-language-types-number-type` |
+| `boolean` | `bool` | `sec-ecmascript-language-types-boolean-type` |
+| `string` | `refined_string_typet` | `sec-ecmascript-language-types-string-type` |
+| `null` | sentinel value or pointer | `sec-ecmascript-language-types-null-type` |
+| `undefined` | sentinel value | `sec-ecmascript-language-types-undefined-type` |
+| `T[]` | `struct { length: int64, data: T[MAX] }` | `sec-array-initializer` |
+| `interface/class` | `struct_typet` | `sec-object-type` |
+| `T \| null` | tagged union or optional | TSH: Everyday Types.md |
 
 ### 3.3 String Model: Use `refined_string_typet` from Day 1
 
@@ -69,22 +159,48 @@ For TypeScript, we use `refined_string_typet` from the start:
 - Built-in support for concat, substring, indexOf, etc.
 - Enable `--refine-strings` automatically for `.ts` files
 
+ES2024 `sec-ecmascript-language-types-string-type`: "The String type is
+the set of all ordered sequences of zero or more 16-bit unsigned integer
+values ("elements") up to a maximum length of 2^53 - 1 elements."
+
+Note: ECMAScript strings are UTF-16. CBMC's `refined_string_typet` uses
+`unsignedbv{16}` for Java (UTF-16). We use the same for TypeScript.
+
 ### 3.4 Number Model: IEEE 754 Double
 
-TypeScript's `number` is IEEE 754 double-precision floating-point.
-Use `floatbv[64]` (double_type()) for all numbers.
+ES2024 `sec-ecmascript-language-types-number-type`: "The Number type has
+exactly 18,437,736,874,454,810,627 values, representing the
+double-precision 64-bit format IEEE 754-2019 values."
+
+Use `floatbv[64]` (double_type()) for all `number` values.
 
 For integer operations (bitwise, array indexing), typecast to
-`signedbv[32]` or `signedbv[64]` as needed.
+`signedbv[32]` per ES2024 `sec-numeric-types-number-bitwiseAND` which
+specifies ToInt32 conversion.
 
-### 3.5 Architecture
+### 3.5 Equality Semantics
+
+ES2024 `sec-isstrictlyequal`: IsStrictlyEqual(x, y)
+- TypeScript uses `===` (strict equality) by default
+- No implicit type coercion (unlike `==`)
+- For numbers: use `ieee_float_equal_exprt` (handles -0.0 === 0.0)
+- For strings: use `cprover_string_equal_func`
+- For booleans: use `equal_exprt`
+- For objects: reference equality (pointer comparison)
+
+ES2024 `sec-islooselyequal`: IsLooselyEqual(x, y)
+- TypeScript discourages `==` but it's valid JavaScript
+- Involves type coercion per the Abstract Equality Comparison algorithm
+- Lower priority for implementation
+
+### 3.6 Architecture
 
 ```
 TypeScript source (.ts)
     ↓
 ts_ast_to_json.js (Node.js + TypeScript Compiler API)
     ↓
-JSON AST with types
+JSON AST with types (_type field on every node)
     ↓
 typescript_languaget::parse() (C++ — read JSON)
     ↓
@@ -95,7 +211,7 @@ GOTO program
 CBMC verification (with --refine-strings)
 ```
 
-### 3.6 Directory Layout
+### 3.7 Directory Layout
 
 ```
 src/typescript/
@@ -109,16 +225,16 @@ src/typescript/
   module_dependencies.txt    — CBMC module deps
 
 regression/typescript/
-  assert-number/             — basic number tests
-  assert-boolean/            — boolean logic
-  assert-string/             — string operations
-  function-basic/            — function calls
-  if-else/                   — control flow
-  while-loop/                — loops
-  array-basic/               — arrays
-  interface-basic/           — interfaces/objects
-  nondet-basic/              — verification primitives
-  null-safety/               — null/undefined handling
+  assert-number/             — ES2024 §6.1.6.1 number arithmetic
+  assert-boolean/            — ES2024 §6.1.1 boolean logic
+  assert-string/             — ES2024 §6.1.4 string operations
+  function-basic/            — ES2024 §15.2 function definitions
+  if-else/                   — ES2024 §14.6 if statement
+  while-loop/                — ES2024 §14.7.3 while statement
+  array-basic/               — ES2024 §23.1 array objects
+  interface-basic/           — TSH: Object Types.md
+  nondet-basic/              — Verification primitives
+  null-safety/               — TSH: Narrowing.md
 ```
 
 ## 4. Implementation Phases
@@ -130,65 +246,66 @@ regression/typescript/
 - Register `.ts` file extension
 
 ### Phase 2: Scalar expressions (target: 5 CORE tests)
-- Arithmetic: `+`, `-`, `*`, `/`, `%`
-- Comparison: `===`, `!==`, `<`, `>`, `<=`, `>=`
-- Logical: `&&`, `||`, `!`
-- Assignment: `=`, `+=`, `-=`, etc.
+- Arithmetic: `+`, `-`, `*`, `/`, `%` (ES2024 §13.15)
+- Comparison: `===`, `!==`, `<`, `>`, `<=`, `>=` (ES2024 §13.12-13.13)
+- Logical: `&&`, `||`, `!` (ES2024 §13.14)
+- Assignment: `=`, `+=`, `-=`, etc. (ES2024 §13.15)
 
 ### Phase 3: Control flow (target: 8 CORE tests)
-- `if`/`else`
-- `while`, `for`, `for...of`
-- `break`, `continue`
-- `switch`/`case`
+- `if`/`else` (ES2024 §14.6)
+- `while`, `for`, `for...of` (ES2024 §14.7)
+- `break`, `continue` (ES2024 §14.8-14.9)
+- `switch`/`case` (ES2024 §14.12)
 
 ### Phase 4: Functions (target: 10 CORE tests)
-- Function declarations and calls
+- Function declarations and calls (ES2024 §15.2)
 - Parameters with types
-- Return values
-- Arrow functions
+- Return values (ES2024 §14.10)
+- Arrow functions (ES2024 §15.3)
 
 ### Phase 5: Strings (target: 12 CORE tests)
-- `refined_string_typet` integration
-- String literals, concatenation, comparison
-- `length`, `charAt`, `indexOf`, `substring`
-- Template literals
+- `refined_string_typet` integration with `--refine-strings`
+- String literals, concatenation (ES2024 `sec-addition-operator-plus`)
+- `length` (ES2024 `sec-string.prototype`), `charAt`, `indexOf`
+- Template literals (ES2024 `sec-template-literals`)
 
 ### Phase 6: Arrays (target: 15 CORE tests)
-- Array literals and indexing
-- `push`, `pop`, `length`
-- `for...of` iteration
+- Array literals and indexing (ES2024 `sec-array-initializer`)
+- `push`, `pop`, `length` (ES2024 `sec-array.prototype.*`)
+- `for...of` iteration (ES2024 `sec-for-in-and-for-of-statements`)
 - Bounds checking
 
 ### Phase 7: Objects and interfaces (target: 18 CORE tests)
-- Interface definitions
-- Object literals
-- Property access
-- Structural typing
+- Interface definitions (TSH: Object Types.md)
+- Object literals (ES2024 `sec-object-initializer`)
+- Property access (ES2024 `sec-property-accessors`)
+- Structural typing (TSH: Object Types.md)
 
 ### Phase 8: Classes (target: 20 CORE tests)
-- Class declarations
+- Class declarations (ES2024 `sec-class-definitions`)
 - Constructor, methods
 - Inheritance (`extends`)
 - `this` binding
 
 ### Phase 9: Advanced types (target: 22 CORE tests)
-- Union types (`T | null`)
-- Type narrowing
-- Optional properties
-- Generics (basic)
+- Union types (TSH: Everyday Types.md)
+- Type narrowing (TSH: Narrowing.md)
+- Optional properties (TSH: Object Types.md)
+- Generics (TSH: Type Manipulation/Generics.md)
 
 ## 5. Verification Primitives
 
 ```typescript
-// Nondet values
+// Nondet values — return unconstrained symbolic values
 declare function nondet_number(): number;
 declare function nondet_boolean(): boolean;
 declare function nondet_string(): string;
 
-// Assumptions
+// Assumptions — constrain symbolic values
 declare function __CPROVER_assume(cond: boolean): void;
 
-// Assertions (also: console.assert)
+// Assertions — verification properties
+// Also: console.assert(cond) maps to CBMC assertion
 declare function __CPROVER_assert(cond: boolean, msg: string): void;
 ```
 
@@ -207,13 +324,14 @@ declare function __CPROVER_assert(cond: boolean, msg: string): void;
    compute the result in C++ instead of generating solver constraints.
 
 5. **Track constant values** — Maintain maps of known constant values
-   (like `string_constants`, `dict_literals`) for conversion-time
-   optimization.
+   for conversion-time optimization.
 
-6. **Test incrementally** — Run regression after every change. Commit
-   frequently with descriptive messages.
+6. **Test incrementally** — Run regression after every change.
 
 7. **`clang-format-15` before every commit** — Enforced by CI.
 
-8. **IEEE float equality** — Use `ieee_float_equal_exprt` for float
-   comparisons (handles `-0.0 == 0.0`).
+8. **IEEE float equality** — Use `ieee_float_equal_exprt` for number
+   comparisons per ES2024 `sec-isstrictlyequal`.
+
+9. **Cross-reference everything** — Every implementation decision must
+   cite the relevant ES2024 section or TSH page.
