@@ -2097,6 +2097,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       return side_effect_expr_nondett{double_type(), get_location(node)};
     if(func_name == "nondet_boolean")
       return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+    if(func_name == "nondet_string")
+      return side_effect_expr_nondett{
+        typescript_string_type(), get_location(node)};
     if(func_name == "__CPROVER_assume")
     {
       // Handled at statement level
