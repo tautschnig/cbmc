@@ -414,13 +414,48 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     typet elem_type = double_type(); // default
     for(const auto &elt : to_json_array(elts))
     {
-      exprt val = convert_expression(elt);
-      if(!val.is_nil())
+      std::string elt_kind = json_string(json_member(elt, "_kind"));
+      if(elt_kind == "SpreadElement")
       {
-        elem_type = val.type();
-        elements.push_back(val);
+        // Expand spread: copy elements from source array
+        exprt src = convert_expression(json_member(elt, "expression"));
+        // Resolve symbol to its value
+        if(src.id() == ID_symbol)
+        {
+          const symbolt *s = symbol_table.lookup(
+            to_symbol_expr(src).get_identifier());
+          if(s && !s->value.is_nil())
+            src = s->value;
+        }
+        if(!src.is_nil() && src.id() == ID_struct &&
+           src.operands().size() >= 2)
+        {
+          const exprt &data = src.operands()[1];
+          mp_integer len{0};
+          if(src.operands()[0].is_constant())
+            to_integer(to_constant_expr(src.operands()[0]), len);
+          for(mp_integer i = 0; i < len; ++i)
+          {
+            auto idx = i.to_ulong();
+            if(idx < data.operands().size())
+            {
+              elem_type = data.operands()[idx].type();
+              elements.push_back(data.operands()[idx]);
+            }
+          }
+        }
+      }
+      else
+      {
+        exprt val = convert_expression(elt);
+        if(!val.is_nil())
+        {
+          elem_type = val.type();
+          elements.push_back(val);
+        }
       }
     }
+    std::size_t actual_len = elements.size();
     // Build list struct { length, data[] }
     std::size_t max_len = 64;
     while(elements.size() < max_len)
@@ -432,10 +467,6 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     list_type.components().push_back(
       struct_typet::componentt{"data", arr_type});
     list_type.set_tag("typescript_array");
-    std::size_t actual_len = 0;
-    for(const auto &elt : to_json_array(elts))
-      if(!convert_expression(elt).is_nil())
-        actual_len++;
     return struct_exprt{
       {from_integer(actual_len, signedbv_typet{64}),
        array_exprt{std::move(elements), arr_type}},
@@ -797,6 +828,13 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return right;
   }
 
+  // ES2024 sec-nullish-coalescing: ??
+  if(op == "QuestionQuestionToken")
+  {
+    // x ?? y → x !== null && x !== undefined ? x : y
+    // For numbers: x is never null, so just return x
+    return left;
+  }
   // ES2024 sec-assignment-operators: compound assignment
   if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken")
     return plus_exprt{left, right};
@@ -994,6 +1032,83 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // Nondet fallback for non-constant strings
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
+    // Array.map: create new array by applying callback to each element
+    if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+       method == "map" && args.is_array() && !to_json_array(args).empty())
+    {
+      const jsont &callback = *to_json_array(args).begin();
+      // Resolve source array to its value
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s = symbol_table.lookup(
+          to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+
+        // Convert callback as a named function
+        static unsigned map_ctr = 0;
+        std::string cb_name = "__ts_map_cb_" + std::to_string(map_ctr++);
+        convert_function_declaration_with_name(callback, cb_name);
+        irep_idt cb_id{"typescript::" + cb_name};
+
+        // Build result array by calling callback for each element
+        exprt::operandst result_elts;
+        typet elem_type = double_type();
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx < data.operands().size())
+          {
+            // Create call: cb(element)
+            side_effect_expr_function_callt call{
+              symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
+              {data.operands()[idx]},
+              double_type(),
+              source_locationt{}};
+            elem_type = call.type();
+            // Store call result in temp
+            std::string tmp = "__ts_map_tmp_" +
+              std::to_string(map_ctr) + "_" + std::to_string(idx);
+            std::string tmp_q = "typescript::" + tmp;
+            irep_idt tmp_id{tmp_q};
+            symbolt tmp_sym{tmp_id, elem_type, "typescript"};
+            tmp_sym.base_name = tmp;
+            tmp_sym.is_lvalue = true;
+            tmp_sym.is_state_var = true;
+            if(symbol_table.lookup(tmp_id) == nullptr)
+              symbol_table.add(tmp_sym);
+            pending_stmts.push_back(
+              code_frontend_assignt{symbol_exprt{tmp_id, elem_type}, call});
+            result_elts.push_back(symbol_exprt{tmp_id, elem_type});
+          }
+        }
+        std::size_t actual_len = result_elts.size();
+        std::size_t max_len = 64;
+        while(result_elts.size() < max_len)
+          result_elts.push_back(from_integer(0, elem_type));
+        array_typet arr_type{
+          elem_type, from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type;
+        list_type.components().push_back(
+          struct_typet::componentt{"length", signedbv_typet{64}});
+        list_type.components().push_back(
+          struct_typet::componentt{"data", arr_type});
+        list_type.set_tag("typescript_array");
+        return struct_exprt{
+          {from_integer(actual_len, signedbv_typet{64}),
+           array_exprt{std::move(result_elts), arr_type}},
+          list_type};
+      }
+    }
     // Array methods: push, pop
     if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
     {
@@ -1178,7 +1293,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       // Typecast null args to match parameter types
       const auto &fp = func_type.parameters();
-      for(std::size_t i = 0; i < arguments.size() && i < fp.size(); i++)
+      std::size_t typecast_limit = fp.size();
+      if(rest_param_functions.count(func_id) > 0 && typecast_limit > 0)
+        typecast_limit--; // don't typecast rest args individually
+      for(std::size_t i = 0; i < arguments.size() && i < typecast_limit; i++)
       {
         if(arguments[i].type() != fp[i].type())
         {
@@ -1190,9 +1308,12 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             arguments[i] = typecast_exprt(arguments[i], fp[i].type());
         }
       }
-      // Fill missing args with defaults
+      // Fill missing args with defaults (skip rest param)
+      std::size_t fill_limit = fp.size();
+      if(rest_param_functions.count(func_id) > 0 && fill_limit > 0)
+        fill_limit--;
       auto def_it = default_values.find(func_id);
-      while(arguments.size() < fp.size())
+      while(arguments.size() < fill_limit)
       {
         std::size_t idx = arguments.size();
         if(def_it != default_values.end())
@@ -1206,6 +1327,42 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         arguments.push_back(
           side_effect_expr_nondett{fp[idx].type(), get_location(node)});
+      }
+      // Pack extra args into array for rest param functions
+      if(rest_param_functions.count(func_id) > 0 && !fp.empty())
+      {
+        std::size_t regular_count = fp.size() - 1;
+        if(arguments.size() > regular_count)
+        {
+          exprt::operandst rest_elts;
+          typet elem_type = double_type();
+          for(std::size_t i = regular_count; i < arguments.size(); ++i)
+          {
+            elem_type = arguments[i].type();
+            rest_elts.push_back(arguments[i]);
+          }
+          arguments.resize(regular_count);
+          std::size_t actual = rest_elts.size();
+          std::size_t max_len = 64;
+          while(rest_elts.size() < max_len)
+            rest_elts.push_back(from_integer(0, elem_type));
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type;
+          list_type.components().push_back(
+            struct_typet::componentt{"length", signedbv_typet{64}});
+          list_type.components().push_back(
+            struct_typet::componentt{"data", arr_type});
+          list_type.set_tag("typescript_array");
+          struct_exprt arr{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(rest_elts), arr_type}},
+            list_type};
+          if(arr.type() != fp.back().type())
+            arguments.push_back(typecast_exprt{arr, fp.back().type()});
+          else
+            arguments.push_back(arr);
+        }
       }
       return side_effect_expr_function_callt{
         sym->symbol_expr(),
@@ -1302,6 +1459,18 @@ codet typescript_convertert::convert_statement(const jsont &node)
                 }
               }
               string_constants[sym_id] = sv;
+            }
+          }
+          // Set symbol value for constant arrays (enables spread)
+          {
+            const exprt &val = rhs.id() == ID_typecast
+              ? to_typecast_expr(rhs).op() : rhs;
+            if(val.id() == ID_struct && val.type().id() == ID_struct &&
+               to_struct_type(val.type()).get_tag() == "typescript_array")
+            {
+              symbolt *ws = symbol_table.get_writeable(sym_id);
+              if(ws != nullptr)
+                ws->value = val;
             }
           }
         }
@@ -1907,6 +2076,18 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
             }
           }
         }
+        // Set symbol value for constant arrays (enables spread)
+        {
+          const exprt &val = rhs.id() == ID_typecast
+            ? to_typecast_expr(rhs).op() : rhs;
+          if(val.id() == ID_struct && val.type().id() == ID_struct &&
+             to_struct_type(val.type()).get_tag() == "typescript_array")
+          {
+            symbolt *ws = symbol_table.get_writeable(sym_id);
+            if(ws != nullptr)
+              ws->value = val;
+          }
+        }
       }
     }
   }
@@ -2201,6 +2382,11 @@ void typescript_convertert::convert_function_declaration_with_name(
       std::string pname = json_string(json_member(json_member(p, "name"), "text"));
       std::string ptype_str = json_string(json_member(p, "_type"));
       typet ptype = convert_type(ptype_str);
+
+      // Track rest parameters
+      if(json_member(p, "isRest").is_true())
+        rest_param_functions.insert(
+          irep_idt{"typescript::" + func_name});
 
       code_typet::parametert param{ptype};
       param.set_identifier("typescript::" + func_name + "::" + pname);

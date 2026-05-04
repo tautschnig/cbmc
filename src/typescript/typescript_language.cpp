@@ -119,6 +119,7 @@ function n2j(node) {
       r.name = n2j(node.name);
       if(node.type) r.typeAnnotation = n2j(node.type);
       if(node.initializer) r.initializer = n2j(node.initializer);
+      if(node.dotDotDotToken) r.isRest = true;
       break;
     case ts.SyntaxKind.Block:
       r.statements = node.statements.map(n2j);

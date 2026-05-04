@@ -24,6 +24,11 @@ CBMC also includes a Python front-end for verifying Python 3 programs.
 See the [Python Verification Guide](doc/python-verification-guide.md)
 for details.
 
+CBMC also includes a TypeScript front-end (experimental) for verifying
+TypeScript programs. It uses the TypeScript Compiler API for parsing and
+type-checking, then converts the typed AST to GOTO programs. See
+`doc/architectural/typescript-frontend-plan.md` for details.
+
 
 Versions
 ========

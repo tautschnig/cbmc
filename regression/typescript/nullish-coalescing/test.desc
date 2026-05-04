@@ -6,4 +6,4 @@ main.ts
 ^VERIFICATION SUCCESSFUL$
 --
 --
-Array map with arrow function.
+Nullish coalescing operator.

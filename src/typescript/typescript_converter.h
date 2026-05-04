@@ -11,6 +11,7 @@
 
 #include <json/json_parser.h>
 #include <map>
+#include <set>
 #include <util/json.h>
 
 /// Converts a TypeScript JSON AST (produced by ts_ast_to_json.js)
@@ -41,6 +42,7 @@ private:
 
   std::string current_function; // empty at module level
   std::map<irep_idt, std::string> string_constants;
+  std::set<irep_idt> rest_param_functions; // functions with rest params
   std::map<std::string, struct_typet> class_types;
   std::vector<codet> pending_stmts;
   // Default parameter values: func_id → {param_index → default_expr}

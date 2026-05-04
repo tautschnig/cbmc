@@ -1,9 +1,9 @@
 CORE
 main.ts
-
+--unwind 12 --no-unwinding-assertions
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 --
-Array map with arrow function.
+Break in for loop.
