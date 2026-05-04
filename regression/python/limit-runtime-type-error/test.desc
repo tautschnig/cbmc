@@ -1,0 +1,11 @@
+KNOWNBUG
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^assertion.1.*Python assertion: SUCCESS
+--
+Missing TypeError: int + str should raise TypeError, making
+assert False unreachable. Currently returns nondet string.
