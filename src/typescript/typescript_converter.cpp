@@ -334,13 +334,66 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ES2024 sec-addition-operator-plus
   if(op == "PlusToken")
   {
-    // String concatenation
+    // ES2024 sec-addition-operator-plus: String concatenation
     if(is_typescript_string_type(left.type()) ||
        is_typescript_string_type(right.type()))
     {
-      // For now, return nondet string (exact concat needs array copy)
-      return side_effect_expr_nondett{
-        typescript_string_type(), source_locationt{}};
+      // Ensure both are strings
+      exprt sl = left, sr = right;
+      if(!is_typescript_string_type(sl.type()))
+        sl = side_effect_expr_nondett{typescript_string_type(), source_locationt{}};
+      if(!is_typescript_string_type(sr.type()))
+        sr = side_effect_expr_nondett{typescript_string_type(), source_locationt{}};
+      // Try constant evaluation
+      auto extract = [this](const exprt &e) -> std::string {
+        // Check tracked constants for symbols
+        if(e.id() == ID_symbol)
+        {
+          auto it = string_constants.find(
+            to_symbol_expr(e).get_identifier());
+          if(it != string_constants.end())
+            return it->second;
+        }
+        if(e.id() != ID_struct || e.operands().size() < 2 ||
+           !e.operands()[0].is_constant())
+          return std::string();
+        mp_integer len;
+        if(to_integer(to_constant_expr(e.operands()[0]), len))
+          return std::string();
+        std::string s;
+        const exprt &data = e.operands()[1];
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx < data.operands().size() && data.operands()[idx].is_constant())
+          {
+            mp_integer ch;
+            if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
+              s += static_cast<char>(ch.to_ulong());
+          }
+        }
+        return s;
+      };
+      std::string ls = extract(sl);
+      std::string rs = extract(sr);
+      if(!ls.empty() || !rs.empty())
+      {
+        // Build concatenated string
+        std::string result = ls + rs;
+        struct_typet str_type = typescript_string_type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        exprt::operandst chars;
+        for(char c : result)
+          chars.push_back(from_integer(static_cast<unsigned char>(c),
+                                       unsignedbv_typet{16}));
+        while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+          chars.push_back(from_integer(0, unsignedbv_typet{16}));
+        return struct_exprt{
+          {from_integer(result.size(), signedbv_typet{64}),
+           array_exprt{std::move(chars), data_type}},
+          str_type};
+      }
+      return side_effect_expr_nondett{typescript_string_type(), source_locationt{}};
     }
     return plus_exprt{left, right};
   }
@@ -652,7 +705,6 @@ codet typescript_convertert::convert_statement(const jsont &node)
       std::string qualified = "typescript::" +
         (current_function.empty() ? "" : current_function + "::") + var_name;
       irep_idt sym_id{qualified};
-      if(symbol_table.lookup(sym_id) == nullptr)
       {
         symbolt new_sym{sym_id, var_type, "typescript"};
         new_sym.base_name = var_name;
@@ -660,15 +712,39 @@ codet typescript_convertert::convert_statement(const jsont &node)
         new_sym.is_state_var = true;
         symbol_table.add(new_sym);
       }
-      const symbolt &sym = symbol_table.lookup_ref(sym_id);
       if(init.is_object())
       {
         exprt rhs = convert_expression(init);
         if(!rhs.is_nil())
         {
+          const symbolt &sym = symbol_table.lookup_ref(sym_id);
           if(rhs.type() != sym.type)
-            rhs = typecast_exprt{rhs, sym.type};
+            rhs = typecast_exprt(rhs, sym.type);
           block.add(code_frontend_assignt{sym.symbol_expr(), rhs});
+          // Track string constants
+          if(is_typescript_string_type(rhs.type()) &&
+             rhs.id() == ID_struct && rhs.operands().size() >= 2 &&
+             rhs.operands()[0].is_constant())
+          {
+            mp_integer len;
+            if(!to_integer(to_constant_expr(rhs.operands()[0]), len))
+            {
+              std::string sv;
+              const exprt &data = rhs.operands()[1];
+              for(mp_integer i = 0; i < len; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx < data.operands().size() &&
+                   data.operands()[idx].is_constant())
+                {
+                  mp_integer ch;
+                  if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
+                    sv += static_cast<char>(ch.to_ulong());
+                }
+              }
+              string_constants[sym_id] = sv;
+            }
+          }
         }
       }
     }
@@ -805,7 +881,6 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       (current_function.empty() ? "" : current_function + "::") + var_name;
     irep_idt sym_id{qualified};
 
-    if(symbol_table.lookup(sym_id) == nullptr)
     {
       symbolt new_sym{sym_id, var_type, "typescript"};
       new_sym.base_name = var_name;
@@ -816,7 +891,6 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       symbol_table.add(new_sym);
     }
 
-    const symbolt &sym = symbol_table.lookup_ref(sym_id);
 
     const jsont &init = json_member(decl, "initializer");
     if(!init.is_null() && !init.is_object())
@@ -828,11 +902,36 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       exprt rhs = convert_expression(init);
       if(!rhs.is_nil())
       {
+        const symbolt &sym = symbol_table.lookup_ref(sym_id);
         if(rhs.type() != sym.type)
           rhs = typecast_exprt{rhs, sym.type};
         code_frontend_assignt assign{sym.symbol_expr(), rhs};
         assign.add_source_location() = get_location(decl);
         block.add(std::move(assign));
+        // Track string constants
+        if(is_typescript_string_type(rhs.type()) &&
+           rhs.id() == ID_struct && rhs.operands().size() >= 2 &&
+           rhs.operands()[0].is_constant())
+        {
+          mp_integer len;
+          if(!to_integer(to_constant_expr(rhs.operands()[0]), len))
+          {
+            std::string sv;
+            const exprt &data = rhs.operands()[1];
+            for(mp_integer i = 0; i < len; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx < data.operands().size() &&
+                 data.operands()[idx].is_constant())
+              {
+                mp_integer ch;
+                if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
+                  sv += static_cast<char>(ch.to_ulong());
+              }
+            }
+            string_constants[sym_id] = sv;
+          }
+        }
       }
     }
   }
@@ -1118,7 +1217,6 @@ void typescript_convertert::convert_function_declaration_with_name(
   for(const auto &param : params)
   {
     irep_idt pid = param.get_identifier();
-    if(symbol_table.lookup(pid) == nullptr)
     {
       symbolt psym{pid, param.type(), "typescript"};
       psym.base_name = id2string(param.get_base_name());
@@ -1190,7 +1288,6 @@ void typescript_convertert::convert_module_body(const jsont &statements)
   code_blockt full_body;
   {
     irep_idt rm_id{"__CPROVER_rounding_mode"};
-    if(symbol_table.lookup(rm_id) == nullptr)
     {
       symbolt rm_sym{rm_id, signedbv_typet{32}, "typescript"};
       rm_sym.base_name = "__CPROVER_rounding_mode";
@@ -1209,7 +1306,6 @@ void typescript_convertert::convert_module_body(const jsont &statements)
   std::string start_name = "__CPROVER__start";
   irep_idt start_id{start_name};
 
-  if(symbol_table.lookup(start_id) == nullptr)
   {
     code_typet start_type{{}, empty_typet{}};
     symbolt start_sym{start_id, start_type, "typescript"};

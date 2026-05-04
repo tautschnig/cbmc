@@ -10,6 +10,7 @@
 #include <util/symbol_table_base.h>
 
 #include <json/json_parser.h>
+#include <map>
 #include <util/json.h>
 
 /// Converts a TypeScript JSON AST (produced by ts_ast_to_json.js)
@@ -39,6 +40,7 @@ private:
   messaget log;
 
   std::string current_function; // empty at module level
+  std::map<irep_idt, std::string> string_constants; // track known string values
 
   // --- Helpers ---
   static const jsont &json_member(const jsont &obj, const std::string &key);
