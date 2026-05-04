@@ -3627,42 +3627,46 @@ exprt python_convertert::convert_call(const jsont &expr)
               {
                 if(i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}')
                 {
-                  if(
-                    arg_idx < arg_exprs.size() &&
-                    is_python_string_type(arg_exprs[arg_idx].type()) &&
-                    arg_exprs[arg_idx].id() == ID_struct)
+                  if(arg_idx < arg_exprs.size())
                   {
-                    // Extract constant string arg
-                    const auto &sa = arg_exprs[arg_idx];
-                    mp_integer slen;
-                    if(
-                      sa.operands().size() == 2 &&
-                      sa.operands()[0].is_constant() &&
-                      !to_integer(to_constant_expr(sa.operands()[0]), slen))
+                    // Try to extract constant string value
+                    auto sv = extract_string_value(arg_exprs[arg_idx]);
+                    if(sv.has_value())
                     {
-                      for(mp_integer j = 0; j < slen; ++j)
-                      {
-                        std::size_t si = j.to_ulong();
-                        if(
-                          si < sa.operands()[1].operands().size() &&
-                          sa.operands()[1].operands()[si].is_constant())
-                        {
-                          mp_integer sc;
-                          if(!to_integer(
-                               to_constant_expr(
-                                 sa.operands()[1].operands()[si]),
-                               sc))
-                            result += static_cast<char>(sc.to_ulong());
-                        }
-                      }
+                      result += sv.value();
+                    }
+                    else if(
+                      arg_exprs[arg_idx].is_constant() &&
+                      arg_exprs[arg_idx].type().id() == ID_signedbv)
+                    {
+                      mp_integer iv;
+                      if(!to_integer(to_constant_expr(arg_exprs[arg_idx]), iv))
+                        result += integer2string(iv);
+                      else
+                        all_const = false;
                     }
                     else
-                      all_const = false;
+                    {
+                      // Try float constant
+                      auto fv = try_eval_double(arg_exprs[arg_idx]);
+                      if(fv.has_value())
+                      {
+                        std::ostringstream oss;
+                        double d = fv.value();
+                        if(d == std::floor(d) && std::abs(d) < 1e15)
+                          oss << static_cast<long long>(d);
+                        else
+                          oss << d;
+                        result += oss.str();
+                      }
+                      else
+                        all_const = false;
+                    }
                   }
                   else
                     all_const = false;
                   arg_idx++;
-                  i++; // skip }
+                  i++; // skip '}'
                 }
                 else
                   result += fmt[i];
