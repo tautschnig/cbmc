@@ -22,6 +22,7 @@
 #include <util/floatbv_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
+#include <util/string_expr.h>
 #include <util/symbol.h>
 
 #include <goto-programs/goto_functions.h>
@@ -218,7 +219,11 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     exprt obj = convert_expression(json_member(node, "expression"));
     std::string prop = json_string(json_member(json_member(node, "name"), "text"));
     if(is_typescript_string_type(obj.type()) && prop == "length")
-      return member_exprt{obj, "length", signedbv_typet{64}};
+    {
+      // refined_string_typet has length as first component
+      const auto &rst = to_refined_string_type(obj.type());
+      return member_exprt{obj, "length", rst.get_index_type()};
+    }
     if(obj.type().id() == ID_struct)
     {
       const auto &st = to_struct_type(obj.type());
@@ -496,18 +501,49 @@ exprt typescript_convertert::convert_numeric_literal(const jsont &node)
 exprt typescript_convertert::convert_string_literal_from_text(
   const std::string &text)
 {
-  struct_typet str_type = typescript_string_type();
-  const auto &data_type = to_array_type(str_type.components()[1].type());
+  // Create a refined_string_exprt using CBMC's string solver infrastructure.
+  // The string is represented as {length, content_pointer}.
+  // For constant strings, we create an array symbol and point to it.
+  refined_string_typet str_type = typescript_string_type();
+
+  // Create array for string content
+  static unsigned str_arr_ctr = 0;
+  std::string arr_name = "__ts_str_" + std::to_string(str_arr_ctr++);
+  std::string arr_qname = "typescript::" + arr_name;
+  irep_idt arr_id{arr_qname};
+
+  array_typet arr_type{
+    unsignedbv_typet{16},
+    from_integer(text.size() > 0 ? text.size() : 1, signedbv_typet{32})};
+
   exprt::operandst chars;
   for(char c : text)
     chars.push_back(
       from_integer(static_cast<unsigned char>(c), unsignedbv_typet{16}));
-  while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+  if(chars.empty())
     chars.push_back(from_integer(0, unsignedbv_typet{16}));
-  return struct_exprt{
-    {from_integer(static_cast<long long>(text.size()), signedbv_typet{64}),
-     array_exprt{std::move(chars), data_type}},
-    str_type};
+
+  if(symbol_table.lookup(arr_id) == nullptr)
+  {
+    symbolt arr_sym{arr_id, arr_type, "typescript"};
+    arr_sym.base_name = arr_name;
+    arr_sym.is_lvalue = true;
+    arr_sym.is_state_var = true;
+    arr_sym.is_static_lifetime = true;
+    arr_sym.value = array_exprt{std::move(chars), arr_type};
+    symbol_table.add(arr_sym);
+  }
+
+  // Create pointer to the array
+  exprt content_ptr = address_of_exprt{
+    index_exprt{
+      symbol_table.lookup_ref(arr_id).symbol_expr(),
+      from_integer(0, signedbv_typet{32})}};
+
+  exprt length = from_integer(
+    static_cast<int>(text.size()), signedbv_typet{32});
+
+  return refined_string_exprt{length, content_ptr, str_type};
 }
 
 exprt typescript_convertert::convert_string_literal(const jsont &node)
@@ -585,61 +621,53 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     if(is_typescript_string_type(left.type()) ||
        is_typescript_string_type(right.type()))
     {
-      // Ensure both are strings
-      exprt sl = left, sr = right;
-      if(!is_typescript_string_type(sl.type()))
-        sl = side_effect_expr_nondett{typescript_string_type(), source_locationt{}};
-      if(!is_typescript_string_type(sr.type()))
-        sr = side_effect_expr_nondett{typescript_string_type(), source_locationt{}};
       // Try constant evaluation
-      auto extract = [this](const exprt &e) -> std::string {
-        // Check tracked constants for symbols
-        if(e.id() == ID_symbol)
-        {
-          auto it = string_constants.find(
-            to_symbol_expr(e).get_identifier());
-          if(it != string_constants.end())
-            return it->second;
+      auto ext = [this](const exprt &e) -> std::string {
+        if(e.id() == ID_symbol) {
+          auto it = string_constants.find(to_symbol_expr(e).get_identifier());
+          if(it != string_constants.end()) return it->second;
         }
-        if(e.id() != ID_struct || e.operands().size() < 2 ||
-           !e.operands()[0].is_constant())
-          return std::string();
-        mp_integer len;
-        if(to_integer(to_constant_expr(e.operands()[0]), len))
-          return std::string();
-        std::string s;
-        const exprt &data = e.operands()[1];
-        for(mp_integer i = 0; i < len; ++i)
+        // For refined_string_exprt: {length, content_ptr}
+        if(e.id() == ID_struct && e.operands().size() >= 2 &&
+           e.operands()[0].is_constant())
         {
-          auto idx = i.to_ulong();
-          if(idx < data.operands().size() && data.operands()[idx].is_constant())
+          mp_integer len;
+          if(!to_integer(to_constant_expr(e.operands()[0]), len))
           {
-            mp_integer ch;
-            if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
-              s += static_cast<char>(ch.to_ulong());
+            // Content pointer: address_of(arr[0])
+            const exprt &ptr = e.operands()[1];
+            if(ptr.id() == ID_address_of &&
+               ptr.operands()[0].id() == ID_index &&
+               ptr.operands()[0].operands()[0].id() == ID_symbol)
+            {
+              irep_idt arr_id = to_symbol_expr(
+                ptr.operands()[0].operands()[0]).get_identifier();
+              const symbolt *arr_sym = symbol_table.lookup(arr_id);
+              if(arr_sym != nullptr && !arr_sym->value.is_nil())
+              {
+                std::string s;
+                const exprt &arr = arr_sym->value;
+                for(mp_integer i = 0; i < len; ++i)
+                {
+                  auto idx = i.to_ulong();
+                  if(idx < arr.operands().size() &&
+                     arr.operands()[idx].is_constant())
+                  {
+                    mp_integer ch;
+                    if(!to_integer(to_constant_expr(arr.operands()[idx]), ch))
+                      s += static_cast<char>(ch.to_ulong());
+                  }
+                }
+                return s;
+              }
+            }
           }
         }
-        return s;
+        return "";
       };
-      std::string ls = extract(sl);
-      std::string rs = extract(sr);
+      std::string ls = ext(left), rs = ext(right);
       if(!ls.empty() || !rs.empty())
-      {
-        // Build concatenated string
-        std::string result = ls + rs;
-        struct_typet str_type = typescript_string_type();
-        const auto &data_type = to_array_type(str_type.components()[1].type());
-        exprt::operandst chars;
-        for(char c : result)
-          chars.push_back(from_integer(static_cast<unsigned char>(c),
-                                       unsignedbv_typet{16}));
-        while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
-          chars.push_back(from_integer(0, unsignedbv_typet{16}));
-        return struct_exprt{
-          {from_integer(result.size(), signedbv_typet{64}),
-           array_exprt{std::move(chars), data_type}},
-          str_type};
-      }
+        return convert_string_literal_from_text(ls + rs);
       return side_effect_expr_nondett{typescript_string_type(), source_locationt{}};
     }
     return plus_exprt{left, right};
@@ -682,17 +710,28 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
            e.operands()[0].is_constant()) {
           mp_integer len;
           if(!to_integer(to_constant_expr(e.operands()[0]), len)) {
-            std::string s;
-            const exprt &data = e.operands()[1];
-            for(mp_integer i = 0; i < len; ++i) {
-              auto idx = i.to_ulong();
-              if(idx < data.operands().size() && data.operands()[idx].is_constant()) {
-                mp_integer ch;
-                if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
-                  s += static_cast<char>(ch.to_ulong());
+            // Check for refined_string: {length, address_of(arr[0])}
+            const exprt &ptr = e.operands()[1];
+            if(ptr.id() == ID_address_of &&
+               ptr.operands()[0].id() == ID_index &&
+               ptr.operands()[0].operands()[0].id() == ID_symbol) {
+              irep_idt aid = to_symbol_expr(
+                ptr.operands()[0].operands()[0]).get_identifier();
+              const symbolt *as = symbol_table.lookup(aid);
+              if(as && !as->value.is_nil()) {
+                std::string s;
+                for(mp_integer i = 0; i < len; ++i) {
+                  auto idx = i.to_ulong();
+                  if(idx < as->value.operands().size() &&
+                     as->value.operands()[idx].is_constant()) {
+                    mp_integer ch;
+                    if(!to_integer(to_constant_expr(as->value.operands()[idx]), ch))
+                      s += static_cast<char>(ch.to_ulong());
+                  }
+                }
+                return "S:" + s;
               }
             }
-            return "S:" + s;
           }
         }
         return "";
@@ -1705,7 +1744,7 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         code_frontend_assignt assign{sym.symbol_expr(), rhs};
         assign.add_source_location() = get_location(decl);
         block.add(std::move(assign));
-        // Track string constants
+        // Track string constants (works with refined_string_exprt)
         if(is_typescript_string_type(rhs.type()) &&
            rhs.id() == ID_struct && rhs.operands().size() >= 2 &&
            rhs.operands()[0].is_constant())
@@ -1713,20 +1752,33 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
           mp_integer len;
           if(!to_integer(to_constant_expr(rhs.operands()[0]), len))
           {
-            std::string sv;
-            const exprt &data = rhs.operands()[1];
-            for(mp_integer i = 0; i < len; ++i)
+            // refined_string: {length, address_of(arr[0])}
+            const exprt &ptr = rhs.operands()[1];
+            if(ptr.id() == ID_address_of &&
+               ptr.operands()[0].id() == ID_index &&
+               ptr.operands()[0].operands()[0].id() == ID_symbol)
             {
-              auto idx = i.to_ulong();
-              if(idx < data.operands().size() &&
-                 data.operands()[idx].is_constant())
+              irep_idt aid = to_symbol_expr(
+                ptr.operands()[0].operands()[0]).get_identifier();
+              const symbolt *as = symbol_table.lookup(aid);
+              if(as && !as->value.is_nil())
               {
-                mp_integer ch;
-                if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
-                  sv += static_cast<char>(ch.to_ulong());
+                std::string sv;
+                for(mp_integer i = 0; i < len; ++i)
+                {
+                  auto idx = i.to_ulong();
+                  if(idx < as->value.operands().size() &&
+                     as->value.operands()[idx].is_constant())
+                  {
+                    mp_integer ch;
+                    if(!to_integer(
+                         to_constant_expr(as->value.operands()[idx]), ch))
+                      sv += static_cast<char>(ch.to_ulong());
+                  }
+                }
+                string_constants[sym_id] = sv;
               }
             }
-            string_constants[sym_id] = sv;
           }
         }
       }
@@ -1961,7 +2013,25 @@ codet typescript_convertert::convert_return_statement(const jsont &node)
   {
     exprt val = convert_expression(expr);
     if(!val.is_nil())
+    {
+      // Typecast return value to match function's return type
+      if(!current_function.empty())
+      {
+        irep_idt fid{"typescript::" + current_function};
+        // Handle nested function names (Class::method)
+        auto dot = current_function.find("::");
+        if(dot == std::string::npos)
+          fid = irep_idt{"typescript::" + current_function};
+        const symbolt *fsym = symbol_table.lookup(fid);
+        if(fsym != nullptr && fsym->type.id() == ID_code)
+        {
+          typet ret_type = to_code_type(fsym->type).return_type();
+          if(ret_type.id() != ID_empty && val.type() != ret_type)
+            val = typecast_exprt(val, ret_type);
+        }
+      }
       return code_frontend_returnt{val};
+    }
   }
   return code_frontend_returnt{};
 }
@@ -2037,6 +2107,11 @@ void typescript_convertert::convert_function_declaration_with_name(
   }
 
   // Convert function body
+  // Add function symbol to table BEFORE body conversion
+  // (so return type can be looked up during body conversion)
+  if(symbol_table.lookup(func_id) == nullptr)
+    symbol_table.add(func_sym);
+
   // Store default parameter values
   {
     const jsont &fn_params = json_member(node, "parameters");
@@ -2148,6 +2223,7 @@ void typescript_convertert::convert_module_body(const jsont &statements)
 
 bool typescript_convertert::convert()
 {
+
   const jsont &statements = json_member(ast_json, "statements");
   convert_module_body(statements);
   return false; // success

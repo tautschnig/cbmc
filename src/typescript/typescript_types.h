@@ -6,9 +6,10 @@
 
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
-#include <util/ieee_float.h>
-#include <util/std_types.h>
 #include <util/c_types.h>
+#include <util/ieee_float.h>
+#include <util/refined_string_type.h>
+#include <util/std_types.h>
 
 /// TypeScript `number` type — IEEE 754 double-precision float.
 /// ES2024 sec-ecmascript-language-types-number-type
@@ -24,35 +25,23 @@ inline typet typescript_boolean_type()
   return bool_typet{};
 }
 
-/// Maximum string length for TypeScript strings.
-/// TODO: Replace with refined_string_typet for variable-length strings.
-#define TYPESCRIPT_MAX_STRING_LENGTH 64
-
-/// TypeScript `string` type — fixed-size array model.
+/// TypeScript `string` type — uses CBMC's refined_string_typet.
 /// ES2024 sec-ecmascript-language-types-string-type:
 /// "The String type is the set of all ordered sequences of zero or more
 ///  16-bit unsigned integer values."
-/// TODO: Migrate to refined_string_typet with --refine-strings
-inline struct_typet typescript_string_type()
+///
+/// refined_string_typet is a struct { length: index_type, content: pointer }
+/// handled by CBMC's string solver (--refine-strings).
+inline refined_string_typet typescript_string_type()
 {
-  struct_typet::componentst components;
-  components.push_back(
-    struct_typet::componentt{"length", signedbv_typet{64}});
-  components.push_back(struct_typet::componentt{
-    "data",
-    array_typet{
-      unsignedbv_typet{16},
-      from_integer(TYPESCRIPT_MAX_STRING_LENGTH, signedbv_typet{64})}});
-  struct_typet result{components};
-  result.set_tag("typescript_str");
-  return result;
+  return refined_string_typet{
+    signedbv_typet{32},
+    pointer_typet{unsignedbv_typet{16}, 64}};
 }
 
 inline bool is_typescript_string_type(const typet &type)
 {
-  if(type.id() != ID_struct)
-    return false;
-  return to_struct_type(type).get_tag() == "typescript_str";
+  return is_refined_string_type(type);
 }
 
 #endif // CPROVER_TYPESCRIPT_TYPESCRIPT_TYPES_H
