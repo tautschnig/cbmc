@@ -14,6 +14,7 @@
 #include <util/arith_tools.h>
 #include <util/irep.h>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
@@ -147,6 +148,65 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     if(then_e.type() != else_e.type())
       else_e = typecast_exprt{else_e, then_e.type()};
     return if_exprt{cond, then_e, else_e};
+  }
+  // ES2024 sec-object-initializer
+  if(kind == "ObjectLiteralExpression")
+  {
+    // Build struct from properties
+    std::string ts_type = json_string(json_member(node, "_type"));
+    const jsont &props = json_member(node, "properties");
+    if(!props.is_array())
+      return nil_exprt{};
+    struct_typet::componentst components;
+    exprt::operandst fields;
+    for(const auto &prop : to_json_array(props))
+    {
+      std::string pname = json_string(json_member(json_member(prop, "name"), "text"));
+      exprt val = convert_expression(json_member(prop, "initializer"));
+      if(val.is_nil())
+        continue;
+      components.push_back(struct_typet::componentt{pname, val.type()});
+      fields.push_back(val);
+    }
+    struct_typet st{components};
+    return struct_exprt{std::move(fields), st};
+  }
+  // ES2024 sec-array-initializer
+  if(kind == "ArrayLiteralExpression")
+  {
+    const jsont &elts = json_member(node, "elements");
+    if(!elts.is_array() || to_json_array(elts).empty())
+      return nil_exprt{};
+    exprt::operandst elements;
+    typet elem_type = double_type(); // default
+    for(const auto &elt : to_json_array(elts))
+    {
+      exprt val = convert_expression(elt);
+      if(!val.is_nil())
+      {
+        elem_type = val.type();
+        elements.push_back(val);
+      }
+    }
+    // Build list struct { length, data[] }
+    std::size_t max_len = 64;
+    while(elements.size() < max_len)
+      elements.push_back(from_integer(0, elem_type));
+    array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
+    struct_typet list_type;
+    list_type.components().push_back(
+      struct_typet::componentt{"length", signedbv_typet{64}});
+    list_type.components().push_back(
+      struct_typet::componentt{"data", arr_type});
+    list_type.set_tag("typescript_array");
+    std::size_t actual_len = 0;
+    for(const auto &elt : to_json_array(elts))
+      if(!convert_expression(elt).is_nil())
+        actual_len++;
+    return struct_exprt{
+      {from_integer(actual_len, signedbv_typet{64}),
+       array_exprt{std::move(elements), arr_type}},
+      list_type};
   }
   log.warning() << "Unsupported expression: " << kind << messaget::eom;
   return nil_exprt{};
@@ -415,6 +475,102 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     }
   }
 
+  // Handle Math.* built-in functions
+  if(is_kind(callee, "PropertyAccessExpression"))
+  {
+    std::string obj = json_string(json_member(json_member(callee, "expression"), "text"));
+    std::string method = json_string(json_member(json_member(callee, "name"), "text"));
+    if(obj == "Math" && args.is_array())
+    {
+      // ES2024 sec-math.*: constant evaluation at conversion time
+      std::vector<double> arg_vals;
+      bool all_const = true;
+      for(const auto &a : to_json_array(args))
+      {
+        exprt val = convert_expression(a);
+        // Try to extract constant double
+        const exprt *ce = &val;
+        if(ce->id() == ID_typecast && ce->operands().size() == 1)
+          ce = &ce->operands()[0];
+        // Handle unary minus on constant: -5 → constant
+        if(ce->id() == ID_unary_minus && ce->operands().size() == 1)
+        {
+          const exprt *inner = &ce->operands()[0];
+          if(inner->id() == ID_typecast && inner->operands().size() == 1)
+            inner = &inner->operands()[0];
+          if(inner->is_constant() && inner->type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{ieee_float_spect::double_precision(),
+                           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(*inner));
+            arg_vals.push_back(-std::stod(fv.to_ansi_c_string()));
+            continue;
+          }
+        }
+        if(ce->is_constant() && ce->type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{ieee_float_spect::double_precision(),
+                         ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(*ce));
+          arg_vals.push_back(std::stod(fv.to_ansi_c_string()));
+        }
+        else
+          all_const = false;
+      }
+      if(all_const && !arg_vals.empty())
+      {
+        double res = 0;
+        bool ok = true;
+        if(method == "sqrt" && arg_vals[0] >= 0) res = std::sqrt(arg_vals[0]);
+        else if(method == "abs") res = std::fabs(arg_vals[0]);
+        else if(method == "floor") res = std::floor(arg_vals[0]);
+        else if(method == "ceil") res = std::ceil(arg_vals[0]);
+        else if(method == "round") res = std::round(arg_vals[0]);
+        else if(method == "sin") res = std::sin(arg_vals[0]);
+        else if(method == "cos") res = std::cos(arg_vals[0]);
+        else if(method == "log") res = std::log(arg_vals[0]);
+        else if(method == "exp") res = std::exp(arg_vals[0]);
+        else if(method == "pow" && arg_vals.size() >= 2)
+          res = std::pow(arg_vals[0], arg_vals[1]);
+        else if(method == "max" && arg_vals.size() >= 2)
+          res = std::max(arg_vals[0], arg_vals[1]);
+        else if(method == "min" && arg_vals.size() >= 2)
+          res = std::min(arg_vals[0], arg_vals[1]);
+        else ok = false;
+        if(ok)
+        {
+          uint64_t bits;
+          std::memcpy(&bits, &res, sizeof(bits));
+          std::string bs = std::to_string(bits);
+          return constant_exprt{
+            integer2bvrep(mp_integer{bs.c_str()}, 64), double_type()};
+        }
+      }
+      // Symbolic Math operations for non-constant args
+      if(!to_json_array(args).empty())
+      {
+        exprt arg0 = convert_expression(*to_json_array(args).begin());
+        if(!arg0.is_nil())
+        {
+          if(arg0.type() != double_type())
+            arg0 = typecast_exprt{arg0, double_type()};
+          if(method == "abs")
+          {
+            uint64_t zbits; double zero = 0.0;
+            std::memcpy(&zbits, &zero, sizeof(zbits));
+            exprt fzero = constant_exprt{
+              integer2bvrep(mp_integer{std::to_string(zbits).c_str()}, 64),
+              double_type()};
+            return if_exprt{
+              binary_relation_exprt{arg0, ID_ge, fzero},
+              arg0, unary_minus_exprt{arg0}};
+          }
+        }
+      }
+      // Nondet fallback
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
+  }
   // Handle regular function calls
   if(is_kind(callee, "Identifier"))
   {
