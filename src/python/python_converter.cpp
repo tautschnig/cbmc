@@ -1535,7 +1535,17 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     !(is_python_string_type(left.type()) &&
       is_python_string_type(right.type())))
   {
-    // String + non-string: return nondet string (type error in Python)
+    // String + non-string: TypeError in Python
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    if(exc_sym != nullptr)
+      pending_checks.push_back(
+        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+    const symbolt *exc_type_sym =
+      symbol_table.lookup("python::__exception_type");
+    if(exc_type_sym != nullptr)
+      pending_checks.push_back(code_frontend_assignt{
+        exc_type_sym->symbol_expr(),
+        from_integer(exception_type_hash("TypeError"), python_int_type())});
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
   }
 
