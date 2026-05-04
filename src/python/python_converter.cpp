@@ -1803,11 +1803,20 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
     // Constant base and exponent: compute pow() at conversion time
     // Handle typecast(constant) as constant (from int→float promotion)
-    auto get_double = [](const exprt &e, double &out) -> bool
+    auto get_double = [this](const exprt &e, double &out) -> bool
     {
       const exprt *ce = &e;
       if(ce->id() == ID_typecast && ce->operands().size() == 1)
         ce = &ce->operands()[0];
+      if(ce->id() == ID_symbol)
+      {
+        auto it = float_constants.find(to_symbol_expr(*ce).get_identifier());
+        if(it != float_constants.end())
+        {
+          out = it->second;
+          return true;
+        }
+      }
       if(!ce->is_constant())
         return false;
       if(ce->type().id() == ID_signedbv)
@@ -3020,11 +3029,21 @@ exprt python_convertert::convert_call(const jsont &expr)
             if(arg2.type().id() != ID_floatbv)
               arg2 = safe_typecast(arg2, double_type());
             double v1 = 0, v2 = 0;
-            auto gd = [](const exprt &e, double &out) -> bool
+            auto gd = [this](const exprt &e, double &out) -> bool
             {
               const exprt *c = &e;
               if(c->id() == ID_typecast && c->operands().size() == 1)
                 c = &c->operands()[0];
+              if(c->id() == ID_symbol)
+              {
+                auto it =
+                  float_constants.find(to_symbol_expr(*c).get_identifier());
+                if(it != float_constants.end())
+                {
+                  out = it->second;
+                  return true;
+                }
+              }
               if(!c->is_constant())
                 return false;
               if(c->type().id() == ID_signedbv)
