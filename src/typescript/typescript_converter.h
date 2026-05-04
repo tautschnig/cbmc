@@ -40,7 +40,8 @@ private:
   const jsont &ast_json;
   messaget log;
 
-  std::string current_function; // empty at module level
+  std::string current_function;
+  std::string current_class; // empty at module level
   std::map<irep_idt, std::string> string_constants;
   std::set<irep_idt> rest_param_functions; // functions with rest params
   std::map<std::string, struct_typet> class_types;

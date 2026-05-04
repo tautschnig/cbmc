@@ -900,6 +900,60 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     }
   }
 
+  // Handle super() calls — call parent constructor
+  if(is_kind(callee, "SuperKeyword") && !current_class.empty())
+  {
+    // Find parent by checking which class's fields are a subset
+    exprt::operandst call_args;
+    if(args.is_array())
+    {
+      for(const auto &arg : to_json_array(args))
+        call_args.push_back(convert_expression(arg));
+    }
+    for(const auto &[cname, ctype] : class_types)
+    {
+      if(cname == current_class) continue;
+      // Check for parent constructor (Class::Class or Class::__init__)
+      irep_idt ctor_id{"typescript::" + cname + "::" + cname};
+      const symbolt *ctor = symbol_table.lookup(ctor_id);
+      if(ctor == nullptr)
+      {
+        ctor_id = irep_idt{"typescript::" + cname + "::__init__"};
+        ctor = symbol_table.lookup(ctor_id);
+      }
+      if(ctor != nullptr && ctor->type.id() == ID_code)
+      {
+        // Pass this pointer + args
+        const auto &ctor_params = to_code_type(ctor->type).parameters();
+        exprt::operandst full_args;
+        // this pointer: use current function's this parameter
+        std::string this_id = "typescript::" + current_class +
+          "::__init__::this";
+        const symbolt *this_sym = symbol_table.lookup(irep_idt{this_id});
+        if(this_sym != nullptr)
+        {
+          exprt this_arg = this_sym->symbol_expr();
+          if(!ctor_params.empty() && this_arg.type() != ctor_params[0].type())
+            this_arg = typecast_exprt{this_arg, ctor_params[0].type()};
+          full_args.push_back(this_arg);
+        }
+        for(auto &a : call_args)
+          full_args.push_back(a);
+        // Typecast args
+        for(std::size_t i = 0; i < full_args.size() && i < ctor_params.size(); ++i)
+        {
+          if(full_args[i].type() != ctor_params[i].type())
+            full_args[i] = typecast_exprt{full_args[i], ctor_params[i].type()};
+        }
+        return side_effect_expr_function_callt{
+          symbol_exprt{ctor_id, ctor->type},
+          std::move(full_args),
+          to_code_type(ctor->type).return_type(),
+          get_location(node)};
+      }
+    }
+    return nil_exprt{};
+  }
   // Handle method calls: obj.method(args)
   if(is_kind(callee, "PropertyAccessExpression"))
   {
@@ -1105,6 +1159,124 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         list_type.set_tag("typescript_array");
         return struct_exprt{
           {from_integer(actual_len, signedbv_typet{64}),
+           array_exprt{std::move(result_elts), arr_type}},
+          list_type};
+      }
+    }
+    // Array.filter: create new array with elements passing predicate
+    if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+       method == "filter" && args.is_array() && !to_json_array(args).empty())
+    {
+      const jsont &callback = *to_json_array(args).begin();
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s = symbol_table.lookup(
+          to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+
+        static unsigned filter_ctr = 0;
+        std::string cb_name = "__ts_filter_cb_" + std::to_string(filter_ctr++);
+        convert_function_declaration_with_name(callback, cb_name);
+        irep_idt cb_id{"typescript::" + cb_name};
+
+        // For each element, call predicate and conditionally include
+        exprt::operandst result_elts;
+        typet elem_type = double_type();
+        std::string len_name = "__ts_filter_len_" + std::to_string(filter_ctr);
+        std::string len_q = "typescript::" + len_name;
+        irep_idt len_id{len_q};
+        {
+          symbolt ls{len_id, signedbv_typet{64}, "typescript"};
+          ls.base_name = len_name;
+          ls.is_lvalue = true;
+          ls.is_state_var = true;
+          if(symbol_table.lookup(len_id) == nullptr)
+            symbol_table.add(ls);
+        }
+        pending_stmts.push_back(code_frontend_assignt{
+          symbol_exprt{len_id, signedbv_typet{64}},
+          from_integer(0, signedbv_typet{64})});
+
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= data.operands().size()) break;
+          elem_type = data.operands()[idx].type();
+
+          // Call predicate
+          std::string tmp = "__ts_filter_pred_" +
+            std::to_string(filter_ctr) + "_" + std::to_string(idx);
+          std::string tmp_q = "typescript::" + tmp;
+          irep_idt tmp_id{tmp_q};
+          {
+            symbolt ts{tmp_id, bool_typet{}, "typescript"};
+            ts.base_name = tmp;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            if(symbol_table.lookup(tmp_id) == nullptr)
+              symbol_table.add(ts);
+          }
+          side_effect_expr_function_callt pred_call{
+            symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
+            {data.operands()[idx]},
+            bool_typet{},
+            source_locationt{}};
+          pending_stmts.push_back(
+            code_frontend_assignt{symbol_exprt{tmp_id, bool_typet{}}, pred_call});
+
+          // if(pred) { result[len] = elem; len++; }
+          symbol_exprt len_sym{len_id, signedbv_typet{64}};
+          // Use a fixed slot for this element
+          std::string slot = "__ts_filter_slot_" +
+            std::to_string(filter_ctr) + "_" + std::to_string(idx);
+          std::string slot_q = "typescript::" + slot;
+          irep_idt slot_id{slot_q};
+          {
+            symbolt ss{slot_id, elem_type, "typescript"};
+            ss.base_name = slot;
+            ss.is_lvalue = true;
+            ss.is_state_var = true;
+            if(symbol_table.lookup(slot_id) == nullptr)
+              symbol_table.add(ss);
+          }
+          // Conditional: if pred, assign element and increment length
+          code_ifthenelset cond{
+            symbol_exprt{tmp_id, bool_typet{}},
+            code_blockt{{
+              code_frontend_assignt{
+                symbol_exprt{slot_id, elem_type},
+                data.operands()[idx]},
+              code_frontend_assignt{
+                len_sym,
+                plus_exprt{len_sym, from_integer(1, signedbv_typet{64})}}
+            }}};
+          pending_stmts.push_back(std::move(cond));
+          result_elts.push_back(symbol_exprt{slot_id, elem_type});
+        }
+        // Pad to max_len
+        std::size_t max_len = 64;
+        while(result_elts.size() < max_len)
+          result_elts.push_back(from_integer(0, elem_type));
+        array_typet arr_type{
+          elem_type, from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type;
+        list_type.components().push_back(
+          struct_typet::componentt{"length", signedbv_typet{64}});
+        list_type.components().push_back(
+          struct_typet::componentt{"data", arr_type});
+        list_type.set_tag("typescript_array");
+        return struct_exprt{
+          {symbol_exprt{len_id, signedbv_typet{64}},
            array_exprt{std::move(result_elts), arr_type}},
           list_type};
       }
@@ -1633,6 +1805,44 @@ codet typescript_convertert::convert_statement(const jsont &node)
     // Build struct type from property declarations
     struct_typet cls_type;
     cls_type.set_tag("typescript_class_" + cls_name);
+
+    // Check for inheritance: class Dog extends Animal
+    std::string parent_name;
+    const jsont &heritage = json_member(node, "heritage");
+    if(heritage.is_array())
+    {
+      for(const auto &clause : to_json_array(heritage))
+      {
+        const jsont &children = json_member(clause, "_children");
+        if(children.is_array())
+        {
+          for(const auto &child : to_json_array(children))
+          {
+            const jsont &ch2 = json_member(child, "_children");
+            if(ch2.is_array())
+            {
+              for(const auto &id : to_json_array(ch2))
+              {
+                std::string t = json_string(json_member(id, "text"));
+                if(!t.empty())
+                  parent_name = t;
+              }
+            }
+          }
+        }
+      }
+    }
+    // Copy parent fields
+    if(!parent_name.empty())
+    {
+      auto pit = class_types.find(parent_name);
+      if(pit != class_types.end())
+      {
+        for(const auto &comp : pit->second.components())
+          cls_type.components().push_back(comp);
+      }
+    }
+
     const jsont &members = json_member(node, "members");
     if(members.is_array())
     {
@@ -1650,6 +1860,8 @@ codet typescript_convertert::convert_statement(const jsont &node)
     }
     // Register class type
     class_types[cls_name] = cls_type;
+    std::string saved_class = current_class;
+    current_class = cls_name;
     // Process constructor and methods
     if(members.is_array())
     {
@@ -1766,6 +1978,7 @@ codet typescript_convertert::convert_statement(const jsont &node)
         }
       }
     }
+    current_class = saved_class;
     return code_skipt{};
   }
 

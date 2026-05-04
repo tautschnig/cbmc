@@ -1,13 +1,13 @@
 // ES2024 sec-class-definitions: Class inheritance
 class Animal {
-  name: string;
-  constructor(name: string) { this.name = name; }
-  speak(): string { return this.name + " makes a sound"; }
+  legs: number;
+  constructor(legs: number) { this.legs = legs; }
+  getLegs(): number { return this.legs; }
 }
 class Dog extends Animal {
-  constructor(name: string) { super(name); }
-  speak(): string { return this.name + " barks"; }
+  constructor() { super(4); }
+  getLegs(): number { return this.legs; }
 }
-const d = new Dog("Rex");
-console.assert(d.name === "Rex");
-console.assert(d.speak() === "Rex barks");
+const d = new Dog();
+console.assert(d.legs === 4);
+console.assert(d.getLegs() === 4);

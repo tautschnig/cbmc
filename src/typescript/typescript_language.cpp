@@ -182,6 +182,7 @@ function n2j(node) {
     case ts.SyntaxKind.ClassDeclaration:
       if(node.name) r.name = n2j(node.name);
       r.members = node.members.map(n2j);
+      if(node.heritageClauses) r.heritage = node.heritageClauses.map(n2j);
       break;
     case ts.SyntaxKind.PropertyDeclaration:
       r.name = n2j(node.name);
