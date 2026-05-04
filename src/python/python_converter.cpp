@@ -4187,6 +4187,27 @@ exprt python_convertert::convert_call(const jsont &expr)
           return std::move(tmp);
         }
 
+        // PLib stdtypes: list.index(value) — return index of first occurrence
+        if(method_name == "index")
+        {
+          if(args.is_array() && !as_array(args).empty())
+          {
+            exprt search = convert_expression(*as_array(args).begin());
+            if(search.type() != data_type.element_type())
+              search = safe_typecast(search, data_type.element_type());
+            // Build if-then-else chain: check from end to start
+            exprt result = from_integer(-1, python_int_type()); // not found
+            for(int i = PYTHON_MAX_LIST_LENGTH - 1; i >= 0; i--)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+              exprt match = equal_exprt{index_exprt{data, idx}, search};
+              result = if_exprt{and_exprt{in_range, match}, idx, result};
+            }
+            return result;
+          }
+        }
+
         // PLib stdtypes: list.extend(iterable)
         if(method_name == "extend")
         {
