@@ -661,6 +661,18 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ES2024 sec-addition-operator-plus
   if(op == "PlusToken")
   {
+    // ES2024 sec-addition-operator-plus: Numeric addition
+    if(
+      left.type().id() == ID_floatbv && right.type().id() == ID_floatbv &&
+      !is_typescript_string_type(left.type()) &&
+      !is_typescript_string_type(right.type()))
+    {
+      exprt rm =
+        symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+      ieee_float_op_exprt result{left, ID_floatbv_plus, right, rm};
+      result.type() = left.type();
+      return std::move(result);
+    }
     // ES2024 sec-addition-operator-plus: String concatenation
     if(
       is_typescript_string_type(left.type()) ||
@@ -730,7 +742,17 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   if(op == "AsteriskToken")
     return mult_exprt{left, right};
   if(op == "SlashToken")
+  {
+    if(left.type().id() == ID_floatbv)
+    {
+      exprt rm =
+        symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+      ieee_float_op_exprt result{left, ID_floatbv_div, right, rm};
+      result.type() = left.type();
+      return std::move(result);
+    }
     return div_exprt{left, right};
+  }
   // ES2024 sec-numeric-types-number-remainder
   if(op == "PercentToken")
   {
