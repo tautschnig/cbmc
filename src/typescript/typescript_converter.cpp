@@ -2675,6 +2675,67 @@ codet typescript_convertert::convert_statement(const jsont &node)
     class_types[cls_name] = cls_type;
     std::string saved_class = current_class;
     current_class = cls_name;
+    // Check if class has a constructor
+    bool has_constructor = false;
+    if(members.is_array())
+    {
+      for(const auto &m : to_json_array(members))
+        if(json_string(json_member(m, "_kind")) == "Constructor")
+          has_constructor = true;
+    }
+    // If no constructor, generate one that applies property initializers
+    if(!has_constructor && members.is_array())
+    {
+      std::string ctor_name = cls_name + "::__init__";
+      code_typet::parameterst ctor_params;
+      code_typet::parametert this_param{pointer_typet{cls_type, 64}};
+      this_param.set_identifier("typescript::" + ctor_name + "::this");
+      this_param.set_base_name("this");
+      ctor_params.push_back(this_param);
+      code_typet ctor_type{ctor_params, empty_typet{}};
+      irep_idt ctor_id{"typescript::" + ctor_name};
+      symbolt ctor_sym{ctor_id, ctor_type, "typescript"};
+      ctor_sym.base_name = ctor_name;
+      // Create this parameter symbol
+      {
+        irep_idt tid{"typescript::" + ctor_name + "::this"};
+        symbolt ts{tid, pointer_typet{cls_type, 64}, "typescript"};
+        ts.base_name = "this";
+        ts.is_parameter = true;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        if(symbol_table.lookup(tid) == nullptr)
+          symbol_table.add(ts);
+      }
+      // Body: assign initializers
+      code_blockt body;
+      symbol_exprt this_sym{
+        "typescript::" + ctor_name + "::this", pointer_typet{cls_type, 64}};
+      for(const auto &m : to_json_array(members))
+      {
+        if(json_string(json_member(m, "_kind")) != "PropertyDeclaration")
+          continue;
+        const jsont &init = json_member(m, "initializer");
+        if(!init.is_object())
+          continue;
+        std::string pname =
+          json_string(json_member(json_member(m, "name"), "text"));
+        exprt val = convert_expression(init);
+        if(val.is_nil())
+          continue;
+        if(cls_type.has_component(pname))
+        {
+          typet comp_type = cls_type.component_type(pname);
+          if(val.type() != comp_type)
+            val = typecast_exprt{val, comp_type};
+          body.add(code_frontend_assignt{
+            member_exprt{dereference_exprt{this_sym}, pname, comp_type}, val});
+        }
+      }
+      ctor_sym.value = std::move(body);
+      if(symbol_table.lookup(ctor_id) == nullptr)
+        symbol_table.add(ctor_sym);
+    }
     // Process constructor and methods
     if(members.is_array())
     {
