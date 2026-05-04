@@ -595,6 +595,9 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       typeof_result = "undefined";
     return convert_string_literal_from_text(typeof_result);
   }
+  // ES2024 sec-await: AwaitExpression — model as identity (sequential)
+  if(kind == "AwaitExpression" || kind == "NonNullExpression")
+    return convert_expression(json_member(node, "expression"));
   // TSH: Type Assertions — x as T
   if(kind == "AsExpression" || kind == "TypeAssertionExpression")
   {
@@ -2151,6 +2154,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // Handled at statement level
       return nil_exprt{};
     }
+    if(func_name == "__CPROVER_assert")
+    {
+      // Handled at statement level
+      return nil_exprt{};
+    }
 
     // Regular function call
     irep_idt func_id{"typescript::" + func_name};
@@ -3309,6 +3317,27 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
     if(callee_kind == "Identifier")
     {
       std::string fn = json_string(json_member(callee_node, "text"));
+      if(fn == "__CPROVER_assert")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array())
+        {
+          const auto &arr = to_json_array(call_args);
+          if(!arr.empty())
+          {
+            exprt cond = convert_expression(*arr.begin());
+            if(!cond.is_nil())
+            {
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              code_assertt assertion{cond};
+              assertion.add_source_location() = get_location(expr_node);
+              return std::move(assertion);
+            }
+          }
+        }
+        return code_skipt{};
+      }
       if(fn == "__CPROVER_assume")
       {
         const jsont &call_args = json_member(expr_node, "arguments");
