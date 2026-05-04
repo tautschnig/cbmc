@@ -2698,6 +2698,25 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
         cmp = (op == "In") ? in_expr : exprt{not_exprt{in_expr}};
       }
+      else if(container.type().id() == ID_struct)
+      {
+        std::string tag = id2string(to_struct_type(container.type()).get_tag());
+        std::string cls =
+          tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+        irep_idt cid{"python::" + cls + "::__contains__"};
+        const symbolt *csym = symbol_table.lookup(cid);
+        if(csym != nullptr)
+        {
+          exprt call = side_effect_expr_function_callt{
+            csym->symbol_expr(),
+            {address_of_exprt{container}, item},
+            bool_typet{},
+            get_location(expr)};
+          cmp = (op == "In") ? call : exprt{not_exprt{call}};
+        }
+        else
+          cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+      }
       else
       {
         log.warning() << "'in' operator only supported for lists"
@@ -6019,7 +6038,11 @@ exprt python_convertert::convert_call(const jsont &expr)
 
               exprt result = (func_name == "all") ? exprt{true_exprt{}}
                                                   : exprt{false_exprt{}};
-              for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+              for(std::size_t i = 0;
+                  i < std::min(
+                        static_cast<std::size_t>(16),
+                        static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH));
+                  i++)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});
                 exprt in_range = binary_relation_exprt{idx, ID_lt, length};
