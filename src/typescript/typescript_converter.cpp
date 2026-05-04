@@ -739,8 +739,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     if(left.type().id() == ID_floatbv)
     {
       // a % b = a - trunc(a / b) * b
-      exprt rm = symbol_exprt{
-        "__CPROVER_rounding_mode", signedbv_typet{32}};
+      exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
       ieee_float_op_exprt div{left, ID_floatbv_div, right, rm};
       div.type() = left.type();
       // trunc: convert to integer and back
@@ -1354,15 +1353,13 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           symbol_exprt res_sym{res_id, list_type};
           code_ifthenelset cond{
             symbol_exprt{pred_id, bool_typet{}},
-            code_blockt{{code_frontend_assignt{
-                           index_exprt{
-                             member_exprt{res_sym, "data", arr_type}, wi_sym},
-                           data.operands()[idx]},
-                         code_frontend_assignt{
-                           wi_sym,
-                           plus_exprt{
-                             wi_sym,
-                             from_integer(1, signedbv_typet{64})}}}}};
+            code_blockt{
+              {code_frontend_assignt{
+                 index_exprt{member_exprt{res_sym, "data", arr_type}, wi_sym},
+                 data.operands()[idx]},
+               code_frontend_assignt{
+                 wi_sym,
+                 plus_exprt{wi_sym, from_integer(1, signedbv_typet{64})}}}}};
           pending_stmts.push_back(std::move(cond));
         }
         // Set result.length = wi
@@ -2502,7 +2499,9 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             {
               if(cond.type().id() != ID_bool)
                 cond = typecast_exprt{cond, bool_typet{}};
-              return code_assertt{cond};
+              code_assertt assertion{cond};
+              assertion.add_source_location() = get_location(expr_node);
+              return std::move(assertion);
             }
           }
         }
@@ -2805,7 +2804,8 @@ void typescript_convertert::convert_function_declaration_with_name(
   if(!current_function.empty())
   {
     // Collect identifiers used in the body
-    std::function<void(const jsont &)> scan = [&](const jsont &n) {
+    std::function<void(const jsont &)> scan = [&](const jsont &n)
+    {
       if(!n.is_object())
         return;
       std::string k = json_string(json_member(n, "_kind"));
@@ -2822,8 +2822,7 @@ void typescript_convertert::convert_function_declaration_with_name(
         if(is_local)
           return;
         // Check if it's a variable in the enclosing scope
-        std::string outer_id =
-          "typescript::" + current_function + "::" + text;
+        std::string outer_id = "typescript::" + current_function + "::" + text;
         const symbolt *outer_sym = symbol_table.lookup(irep_idt{outer_id});
         if(outer_sym != nullptr)
         {
@@ -2837,7 +2836,8 @@ void typescript_convertert::convert_function_declaration_with_name(
         }
       }
       // Recurse into json children
-      auto recurse_json = [&](const jsont &child) {
+      auto recurse_json = [&](const jsont &child)
+      {
         if(child.is_object())
           scan(child);
         else if(child.is_array())
@@ -2846,12 +2846,12 @@ void typescript_convertert::convert_function_declaration_with_name(
       };
       // Check known child fields
       static const char *fields[] = {
-        "expression", "left", "right", "body", "statements",
-        "thenStatement", "elseStatement", "statement", "arguments",
-        "elements", "properties", "declarations", "declarationList",
-        "initializer", "condition", "incrementor", "operand",
-        "head", "templateSpans", "name", "members", "parameters",
-        "_children", nullptr};
+        "expression",      "left",          "right",         "body",
+        "statements",      "thenStatement", "elseStatement", "statement",
+        "arguments",       "elements",      "properties",    "declarations",
+        "declarationList", "initializer",   "condition",     "incrementor",
+        "operand",         "head",          "templateSpans", "name",
+        "members",         "parameters",    "_children",     nullptr};
       for(const char **f = fields; *f; ++f)
       {
         const jsont &child = json_member(n, *f);
