@@ -538,6 +538,54 @@ exprt typescript_convertert::convert_numeric_literal(const jsont &node)
     integer2bvrep(mp_integer{bits_str.c_str()}, 64), double_type()};
 }
 
+std::string typescript_convertert::extract_string_value(const exprt &e)
+{
+  // Check string_constants map
+  if(e.id() == ID_symbol)
+  {
+    auto it = string_constants.find(to_symbol_expr(e).get_identifier());
+    if(it != string_constants.end())
+      return "S:" + it->second;
+  }
+  // Check refined_string_exprt: {length, address_of(arr[0])}
+  if(
+    e.id() == ID_struct && e.operands().size() >= 2 &&
+    e.operands()[0].is_constant())
+  {
+    mp_integer len;
+    if(!to_integer(to_constant_expr(e.operands()[0]), len))
+    {
+      const exprt &ptr = e.operands()[1];
+      if(
+        ptr.id() == ID_address_of && ptr.operands()[0].id() == ID_index &&
+        ptr.operands()[0].operands()[0].id() == ID_symbol)
+      {
+        irep_idt aid =
+          to_symbol_expr(ptr.operands()[0].operands()[0]).get_identifier();
+        const symbolt *as = symbol_table.lookup(aid);
+        if(as && !as->value.is_nil())
+        {
+          std::string s;
+          for(mp_integer i = 0; i < len; ++i)
+          {
+            auto idx = i.to_ulong();
+            if(
+              idx < as->value.operands().size() &&
+              as->value.operands()[idx].is_constant())
+            {
+              mp_integer ch;
+              if(!to_integer(to_constant_expr(as->value.operands()[idx]), ch))
+                s += static_cast<char>(ch.to_ulong());
+            }
+          }
+          return "S:" + s;
+        }
+      }
+    }
+  }
+  return "";
+}
+
 exprt typescript_convertert::convert_string_literal_from_text(
   const std::string &text)
 {
@@ -667,8 +715,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       !is_typescript_string_type(left.type()) &&
       !is_typescript_string_type(right.type()))
     {
-      exprt rm =
-        symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+      exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
       ieee_float_op_exprt result{left, ID_floatbv_plus, right, rm};
       result.type() = left.type();
       return std::move(result);
@@ -745,8 +792,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   {
     if(left.type().id() == ID_floatbv)
     {
-      exprt rm =
-        symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+      exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
       ieee_float_op_exprt result{left, ID_floatbv_div, right, rm};
       result.type() = left.type();
       return std::move(result);

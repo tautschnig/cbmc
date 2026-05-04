@@ -73,6 +73,9 @@ private:
   exprt convert_numeric_literal(const jsont &node);
   exprt convert_string_literal(const jsont &node);
   exprt convert_string_literal_from_text(const std::string &text);
+  /// Extract constant string value from an expression.
+  /// Returns the string prefixed with "S:" if found, empty string otherwise.
+  std::string extract_string_value(const exprt &e);
   exprt convert_boolean_literal(const jsont &node);
 
   // --- Statement conversion ---
