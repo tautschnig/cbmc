@@ -3471,9 +3471,8 @@ exprt python_convertert::convert_call(const jsont &expr)
         {
           // PLib stdtypes: str.replace(old, new) for constant strings
           if(
-            method_name == "replace" && obj.id() == ID_struct &&
-            obj.operands().size() == 2 && obj.operands()[0].is_constant() &&
-            args.is_array() && as_array(args).size() >= 2)
+            method_name == "replace" && args.is_array() &&
+            as_array(args).size() >= 2)
           {
             auto ait = as_array(args).begin();
             exprt old_expr = convert_expression(*ait);
@@ -3482,28 +3481,10 @@ exprt python_convertert::convert_call(const jsont &expr)
             // Extract all three as constant strings
             auto extract_str = [&](const exprt &e) -> std::string
             {
-              if(
-                e.id() != ID_struct || e.operands().size() != 2 ||
-                !e.operands()[0].is_constant())
-                return "";
-              mp_integer len;
-              if(to_integer(to_constant_expr(e.operands()[0]), len))
-                return "";
-              std::string s;
-              for(mp_integer i = 0; i < len; ++i)
-              {
-                auto idx = i.to_ulong();
-                if(
-                  idx < e.operands()[1].operands().size() &&
-                  e.operands()[1].operands()[idx].is_constant())
-                {
-                  mp_integer ch;
-                  if(!to_integer(
-                       to_constant_expr(e.operands()[1].operands()[idx]), ch))
-                    s += static_cast<char>(ch.to_ulong());
-                }
-              }
-              return s;
+              auto sv = extract_string_value(e);
+              if(sv.has_value())
+                return sv.value();
+              return "";
             };
             std::string src = extract_str(obj);
             std::string old_s = extract_str(old_expr);
@@ -3542,28 +3523,12 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
           }
           // PLib stdtypes: str.format() — substitute {} placeholders
-          if(
-            method_name == "format" && obj.id() == ID_struct &&
-            obj.operands().size() == 2 && obj.operands()[0].is_constant())
+          if(method_name == "format")
           {
-            // Extract format string
-            mp_integer flen;
-            if(!to_integer(to_constant_expr(obj.operands()[0]), flen))
+            auto fmt_sv = extract_string_value(obj);
+            if(fmt_sv.has_value())
             {
-              std::string fmt;
-              const auto &fdata = obj.operands()[1];
-              for(mp_integer i = 0; i < flen; ++i)
-              {
-                std::size_t idx = i.to_ulong();
-                if(
-                  idx < fdata.operands().size() &&
-                  fdata.operands()[idx].is_constant())
-                {
-                  mp_integer ch;
-                  if(!to_integer(to_constant_expr(fdata.operands()[idx]), ch))
-                    fmt += static_cast<char>(ch.to_ulong());
-                }
-              }
+              std::string fmt = fmt_sv.value();
               // Simple {} substitution with string args
               std::string result;
               std::size_t arg_idx = 0;
