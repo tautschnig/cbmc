@@ -1,0 +1,10 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Function calls with same args return independent nondet values.
+Needs function memoization to prove f(x) == f(x).
