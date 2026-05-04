@@ -1,0 +1,9 @@
+KNOWNBUG
+main.ts
+--unwind 12
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+While loop with accumulator.

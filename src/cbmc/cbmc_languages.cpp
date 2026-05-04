@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <langapi/mode.h>
 #include <python/python_language.h>
 #include <statement-list/statement_list_language.h>
+#include <typescript/typescript_language.h>
 
 #include "cbmc_parse_options.h"
 
@@ -25,4 +26,5 @@ void cbmc_parse_optionst::register_languages()
   register_language(new_cpp_language);
   register_language(new_json_symtab_language);
   register_language(new_python_language);
+  register_language(new_typescript_language);
 }

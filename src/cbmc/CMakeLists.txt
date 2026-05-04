@@ -25,6 +25,7 @@ target_link_libraries(cbmc-lib
     python-frontend
     solvers
     statement-list
+    typescript
     util
     xml
 )
