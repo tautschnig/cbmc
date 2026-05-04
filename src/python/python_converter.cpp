@@ -9475,6 +9475,38 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     new_rhs = shl_exprt{arith_lhs, rhs};
   else if(op == "RShift")
     new_rhs = ashr_exprt{arith_lhs, rhs};
+  else if(op == "Pow")
+  {
+    // x **= y — use constant evaluation if possible
+    auto base_ev = try_eval_double(arith_lhs);
+    auto exp_ev = try_eval_double(rhs);
+    if(base_ev.has_value() && exp_ev.has_value())
+    {
+      double result_d = std::pow(base_ev.value(), exp_ev.value());
+      if(arith_lhs.type().id() == ID_floatbv)
+        new_rhs = double_to_floatbv(result_d);
+      else
+        new_rhs =
+          from_integer(static_cast<long long>(result_d), arith_lhs.type());
+    }
+    else
+    {
+      // Fallback: if-then-else chain for small exponents
+      new_rhs = arith_lhs; // x**1 as default
+      for(int i = 16; i >= 1; i--)
+      {
+        exprt power = arith_lhs;
+        for(int j = 1; j < i; j++)
+          power = mult_exprt{power, arith_lhs};
+        new_rhs = if_exprt{
+          equal_exprt{rhs, from_integer(i, rhs.type())}, power, new_rhs};
+      }
+      new_rhs = if_exprt{
+        equal_exprt{rhs, from_integer(0, rhs.type())},
+        from_integer(1, arith_lhs.type()),
+        new_rhs};
+    }
+  }
   else
   {
     log.error() << "Unsupported augmented assignment operator: " << op
