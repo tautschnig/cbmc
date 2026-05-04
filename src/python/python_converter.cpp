@@ -5834,6 +5834,27 @@ exprt python_convertert::convert_call(const jsont &expr)
       // str(string) — return as-is
       if(is_python_string_type(arg.type()))
         return arg;
+      // str(class_instance) — call __str__ if available
+      if(arg.type().id() == ID_struct)
+      {
+        const auto &tag = to_struct_type(arg.type()).get_tag();
+        if(id2string(tag).substr(0, 13) == "python_class_")
+        {
+          std::string cls = id2string(tag).substr(13); // strip "python_class_"
+          irep_idt str_id{"python::" + cls + "::__str__"};
+          const symbolt *str_sym = symbol_table.lookup(str_id);
+          if(str_sym != nullptr)
+          {
+            exprt self_ptr = address_of_exprt{arg};
+            side_effect_expr_function_callt call{
+              str_sym->symbol_expr(),
+              {self_ptr},
+              python_string_type(),
+              get_location(expr)};
+            return std::move(call);
+          }
+        }
+      }
       // str(int_constant) — convert at conversion time
       if(arg.is_constant() && arg.type().id() == ID_signedbv)
       {
