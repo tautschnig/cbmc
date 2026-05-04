@@ -1338,6 +1338,14 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           return convert_string_literal_from_text(sv);
         }
+        if(method == "repeat" && !num_args.empty())
+        {
+          int count = num_args[0];
+          std::string result;
+          for(int i = 0; i < count; ++i)
+            result += sv;
+          return convert_string_literal_from_text(result);
+        }
         if(method == "split" && !str_args.empty())
         {
           std::string delim = str_args[0];
@@ -1813,6 +1821,43 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                  symbol_exprt{flag_id, bool_typet{}}, true_exprt{}}}}});
         }
         return symbol_exprt{res_id, elem_type};
+      }
+    }
+    // Array.includes: check if element exists
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "includes" && args.is_array() && !to_json_array(args).empty())
+    {
+      exprt target = convert_expression(*to_json_array(args).begin());
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        // OR together equality checks for each element
+        exprt result = false_exprt{};
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= data.operands().size())
+            break;
+          exprt eq =
+            target.type().id() == ID_floatbv
+              ? exprt{ieee_float_equal_exprt{data.operands()[idx], target}}
+              : exprt{equal_exprt{data.operands()[idx], target}};
+          result = or_exprt{result, eq};
+        }
+        return result;
       }
     }
     // Array.every/some: boolean array predicates
