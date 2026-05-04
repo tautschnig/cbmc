@@ -1023,6 +1023,18 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     // For numbers: x is never null, so just return x
     return left;
   }
+  // ES2024 sec-assignment-operators: logical assignment
+  if(op == "AmpersandAmpersandEqualsToken")
+  {
+    // x &&= y → if(x) x = y
+    // For numbers: truthy means non-zero
+    return if_exprt{typecast_exprt{left, bool_typet{}}, right, left};
+  }
+  if(op == "BarBarEqualsToken")
+  {
+    // x ||= y → if(!x) x = y
+    return if_exprt{typecast_exprt{left, bool_typet{}}, left, right};
+  }
   // ES2024 sec-assignment-operators: compound assignment
   if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken")
     return plus_exprt{left, right};
@@ -1605,6 +1617,182 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           {from_integer(actual, signedbv_typet{64}),
            array_exprt{std::move(result_elts), arr_type}},
           list_type};
+      }
+    }
+    // Array.find: return first element matching predicate
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "find" && args.is_array() && !to_json_array(args).empty())
+    {
+      const jsont &callback = *to_json_array(args).begin();
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        static unsigned find_ctr = 0;
+        unsigned fc = find_ctr++;
+        std::string cb_name = "__ts_find_cb_" + std::to_string(fc);
+        convert_function_declaration_with_name(callback, cb_name);
+        irep_idt cb_id{"typescript::" + cb_name};
+        typet elem_type = double_type();
+        if(!data.operands().empty())
+          elem_type = data.operands()[0].type();
+        // Result variable
+        std::string res_name = "__ts_find_res_" + std::to_string(fc);
+        irep_idt res_id{"typescript::" + res_name};
+        {
+          symbolt rs{res_id, elem_type, "typescript"};
+          rs.base_name = res_name;
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          if(symbol_table.lookup(res_id) == nullptr)
+            symbol_table.add(rs);
+        }
+        // Found flag
+        std::string flag_name = "__ts_find_flag_" + std::to_string(fc);
+        irep_idt flag_id{"typescript::" + flag_name};
+        {
+          symbolt fs{flag_id, bool_typet{}, "typescript"};
+          fs.base_name = flag_name;
+          fs.is_lvalue = true;
+          fs.is_state_var = true;
+          if(symbol_table.lookup(flag_id) == nullptr)
+            symbol_table.add(fs);
+        }
+        pending_stmts.push_back(code_frontend_assignt{
+          symbol_exprt{flag_id, bool_typet{}}, false_exprt{}});
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= data.operands().size())
+            break;
+          std::string p =
+            "__ts_find_p_" + std::to_string(fc) + "_" + std::to_string(idx);
+          irep_idt pid{"typescript::" + p};
+          {
+            symbolt ps{pid, bool_typet{}, "typescript"};
+            ps.base_name = p;
+            ps.is_lvalue = true;
+            ps.is_state_var = true;
+            if(symbol_table.lookup(pid) == nullptr)
+              symbol_table.add(ps);
+          }
+          pending_stmts.push_back(code_frontend_assignt{
+            symbol_exprt{pid, bool_typet{}},
+            side_effect_expr_function_callt{
+              symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
+              {data.operands()[idx]},
+              bool_typet{},
+              source_locationt{}}});
+          // if(!found && pred) { result = elem; found = true; }
+          pending_stmts.push_back(code_ifthenelset{
+            and_exprt{
+              not_exprt{symbol_exprt{flag_id, bool_typet{}}},
+              symbol_exprt{pid, bool_typet{}}},
+            code_blockt{
+              {code_frontend_assignt{
+                 symbol_exprt{res_id, elem_type}, data.operands()[idx]},
+               code_frontend_assignt{
+                 symbol_exprt{flag_id, bool_typet{}}, true_exprt{}}}}});
+        }
+        return symbol_exprt{res_id, elem_type};
+      }
+    }
+    // Array.every/some: boolean array predicates
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      (method == "every" || method == "some") && args.is_array() &&
+      !to_json_array(args).empty())
+    {
+      const jsont &callback = *to_json_array(args).begin();
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        static unsigned es_ctr = 0;
+        unsigned fc = es_ctr++;
+        std::string cb_name = "__ts_es_cb_" + std::to_string(fc);
+        convert_function_declaration_with_name(callback, cb_name);
+        irep_idt cb_id{"typescript::" + cb_name};
+        // Result: every starts true, some starts false
+        std::string res_name = "__ts_es_res_" + std::to_string(fc);
+        irep_idt res_id{"typescript::" + res_name};
+        {
+          symbolt rs{res_id, bool_typet{}, "typescript"};
+          rs.base_name = res_name;
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          if(symbol_table.lookup(res_id) == nullptr)
+            symbol_table.add(rs);
+        }
+        pending_stmts.push_back(code_frontend_assignt{
+          symbol_exprt{res_id, bool_typet{}},
+          method == "every" ? exprt{true_exprt{}} : exprt{false_exprt{}}});
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= data.operands().size())
+            break;
+          std::string p =
+            "__ts_es_p_" + std::to_string(fc) + "_" + std::to_string(idx);
+          irep_idt pid{"typescript::" + p};
+          {
+            symbolt ps{pid, bool_typet{}, "typescript"};
+            ps.base_name = p;
+            ps.is_lvalue = true;
+            ps.is_state_var = true;
+            if(symbol_table.lookup(pid) == nullptr)
+              symbol_table.add(ps);
+          }
+          pending_stmts.push_back(code_frontend_assignt{
+            symbol_exprt{pid, bool_typet{}},
+            side_effect_expr_function_callt{
+              symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
+              {data.operands()[idx]},
+              bool_typet{},
+              source_locationt{}}});
+          if(method == "every")
+          {
+            // every: result = result && pred
+            pending_stmts.push_back(code_frontend_assignt{
+              symbol_exprt{res_id, bool_typet{}},
+              and_exprt{
+                symbol_exprt{res_id, bool_typet{}},
+                symbol_exprt{pid, bool_typet{}}}});
+          }
+          else
+          {
+            // some: result = result || pred
+            pending_stmts.push_back(code_frontend_assignt{
+              symbol_exprt{res_id, bool_typet{}},
+              or_exprt{
+                symbol_exprt{res_id, bool_typet{}},
+                symbol_exprt{pid, bool_typet{}}}});
+          }
+        }
+        return symbol_exprt{res_id, bool_typet{}};
       }
     }
     // Array methods: push, pop
@@ -2858,7 +3046,9 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
       op == "FirstCompoundAssignment" || op == "PlusEqualsToken" ||
       op == "MinusEqualsToken" || op == "AsteriskEqualsToken" ||
       op == "SlashEqualsToken" || op == "PercentEqualsToken" ||
-      op == "EqualsToken" || op == "FirstAssignment")
+      op == "AmpersandAmpersandEqualsToken" || op == "BarBarEqualsToken" ||
+      op == "QuestionQuestionEqualsToken" || op == "EqualsToken" ||
+      op == "FirstAssignment")
     {
       exprt lhs = convert_expression(json_member(expr_node, "left"));
       exprt rhs = convert_expression(json_member(expr_node, "right"));
@@ -2877,6 +3067,12 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             new_val = mult_exprt{lhs, rhs};
           else if(op == "SlashEqualsToken")
             new_val = div_exprt{lhs, rhs};
+          else if(op == "AmpersandAmpersandEqualsToken")
+            new_val = if_exprt{typecast_exprt{lhs, bool_typet{}}, rhs, lhs};
+          else if(op == "BarBarEqualsToken")
+            new_val = if_exprt{typecast_exprt{lhs, bool_typet{}}, lhs, rhs};
+          else if(op == "QuestionQuestionEqualsToken")
+            new_val = lhs; // non-null types: just keep lhs
           else
             new_val = mod_exprt{lhs, rhs};
         }
