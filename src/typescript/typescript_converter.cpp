@@ -559,34 +559,46 @@ codet typescript_convertert::convert_statement(const jsont &node)
     const jsont &clauses = json_member(case_block, "clauses");
     if(disc.is_nil() || !clauses.is_array())
       return code_skipt{};
-    // Convert to if-else chain
-    codet result = code_skipt{};
-    (void)0; // switch cases
-    for(auto it = to_json_array(clauses).begin();
-        it != to_json_array(clauses).end(); ++it)
+    // Convert to if-else chain (process default first, then cases in reverse)
+    const auto &clause_arr = to_json_array(clauses);
+    // Find default clause
+    codet default_body = code_skipt{};
+    for(const auto &clause : clause_arr)
     {
-      std::string clause_kind = json_string(json_member(*it, "_kind"));
+      if(json_string(json_member(clause, "_kind")) == "DefaultClause")
+      {
+        code_blockt body;
+        const jsont &stmts = json_member(clause, "statements");
+        if(stmts.is_array())
+          for(const auto &s : to_json_array(stmts))
+            body.add(convert_statement(s));
+        default_body = std::move(body);
+        break;
+      }
+    }
+    // Build if-else chain from last case to first
+    codet result = std::move(default_body);
+    std::vector<std::reference_wrapper<const jsont>> cases;
+    for(const auto &clause : clause_arr)
+      if(json_string(json_member(clause, "_kind")) != "DefaultClause")
+        cases.push_back(std::cref(clause));
+    for(auto it = cases.rbegin(); it != cases.rend(); ++it)
+    {
+      const jsont &clause = it->get();
       code_blockt body;
-      const jsont &stmts = json_member(*it, "statements");
+      const jsont &stmts = json_member(clause, "statements");
       if(stmts.is_array())
         for(const auto &s : to_json_array(stmts))
           body.add(convert_statement(s));
-      if(clause_kind == "DefaultClause")
+      exprt case_val = convert_expression(json_member(clause, "expression"));
+      if(!case_val.is_nil())
       {
-        result = std::move(body);
-      }
-      else
-      {
-        exprt case_val = convert_expression(json_member(*it, "expression"));
-        if(!case_val.is_nil())
-        {
-          if(case_val.type() != disc.type())
-            case_val = typecast_exprt{case_val, disc.type()};
-          exprt cond = disc.type().id() == ID_floatbv
-            ? exprt{ieee_float_equal_exprt{disc, case_val}}
-            : exprt{equal_exprt{disc, case_val}};
-          result = code_ifthenelset{cond, std::move(body), std::move(result)};
-        }
+        if(case_val.type() != disc.type())
+          case_val = typecast_exprt{case_val, disc.type()};
+        exprt cond = disc.type().id() == ID_floatbv
+          ? exprt{ieee_float_equal_exprt{disc, case_val}}
+          : exprt{equal_exprt{disc, case_val}};
+        result = code_ifthenelset{cond, std::move(body), std::move(result)};
       }
     }
     return result;
@@ -964,6 +976,12 @@ void typescript_convertert::convert_function_declaration_with_name(
 
   if(symbol_table.lookup(func_id) == nullptr)
     symbol_table.add(func_sym);
+  else if(!func_sym.value.is_nil())
+  {
+    // Update existing symbol with body (e.g., declare → definition)
+    symbol_table.get_writeable_ref(func_id).value = func_sym.value;
+    symbol_table.get_writeable_ref(func_id).type = func_sym.type;
+  }
 }
 
 // --- Module body ---
@@ -973,21 +991,18 @@ void typescript_convertert::convert_module_body(const jsont &statements)
   if(!statements.is_array())
     return;
 
-  // First pass: register all function declarations
-  for(const auto &stmt : to_json_array(statements))
-  {
-    std::string kind = json_string(json_member(stmt, "_kind"));
-    if(kind == "FunctionDeclaration")
-      convert_function_declaration(stmt);
-  }
-
-  // Second pass: convert module-level statements into __CPROVER__start body
+  // Single pass: process all statements in order
+  // Function declarations are registered AND their bodies converted.
+  // Non-function statements go into __CPROVER__start body.
   code_blockt start_body;
   for(const auto &stmt : to_json_array(statements))
   {
     std::string kind = json_string(json_member(stmt, "_kind"));
     if(kind == "FunctionDeclaration")
-      continue; // already handled
+    {
+      convert_function_declaration(stmt);
+      continue;
+    }
     codet code = convert_statement(stmt);
     start_body.add(std::move(code));
   }
