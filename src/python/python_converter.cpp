@@ -2312,6 +2312,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         if(current_left.type() != right.type())
           right = safe_typecast(right, current_left.type());
+        // Constant-string equality: resolve at conversion time
+        if(
+          is_python_string_type(current_left.type()) &&
+          is_python_string_type(right.type()))
+        {
+          auto lv = extract_string_value(current_left);
+          auto rv = extract_string_value(right);
+          if(lv.has_value() && rv.has_value())
+          {
+            cmp = lv.value() == rv.value() ? exprt{true_exprt{}}
+                                           : exprt{false_exprt{}};
+            goto done_cmp;
+          }
+        }
         if(current_left.type().id() == ID_floatbv)
           cmp = ieee_float_equal_exprt{current_left, right};
         else
@@ -2336,6 +2350,19 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         if(current_left.type() != right.type())
           right = safe_typecast(right, current_left.type());
+        if(
+          is_python_string_type(current_left.type()) &&
+          is_python_string_type(right.type()))
+        {
+          auto lv = extract_string_value(current_left);
+          auto rv = extract_string_value(right);
+          if(lv.has_value() && rv.has_value())
+          {
+            cmp = lv.value() != rv.value() ? exprt{true_exprt{}}
+                                           : exprt{false_exprt{}};
+            goto done_cmp;
+          }
+        }
         if(current_left.type().id() == ID_floatbv)
           cmp = ieee_float_notequal_exprt{current_left, right};
         else
@@ -7911,9 +7938,16 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     auto sv = extract_string_value(rhs);
     if(sv.has_value())
       string_constants[symbol_id] = sv.value();
+    else
+      string_constants.erase(symbol_id);
   }
-  if(is_python_dict_type(rhs.type()) && rhs.id() == ID_struct)
-    dict_literals[symbol_id] = rhs;
+  if(is_python_dict_type(rhs.type()))
+  {
+    if(rhs.id() == ID_struct)
+      dict_literals[symbol_id] = rhs;
+    else
+      dict_literals.erase(symbol_id);
+  }
   return std::move(assign);
 }
 
@@ -8693,15 +8727,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
     code_frontend_assignt assign{sym.symbol_expr(), typed_rhs};
     assign.add_source_location() = loc;
-    // Track constant string values
+    // Track constant string values (invalidate if non-constant)
     if(is_python_string_type(typed_rhs.type()))
     {
       auto sv = extract_string_value(typed_rhs);
       if(sv.has_value())
         string_constants[sym.name] = sv.value();
+      else
+        string_constants.erase(sym.name);
     }
-    if(is_python_dict_type(typed_rhs.type()) && typed_rhs.id() == ID_struct)
-      dict_literals[sym.name] = typed_rhs;
+    if(is_python_dict_type(typed_rhs.type()))
+    {
+      if(typed_rhs.id() == ID_struct)
+        dict_literals[sym.name] = typed_rhs;
+      else
+        dict_literals.erase(sym.name);
+    }
     block.add(std::move(assign));
   }
 
@@ -8793,6 +8834,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       const symbolt *sym = symbol_table.lookup(irep_idt{qname});
       if(sym != nullptr)
       {
+        string_constants.erase(sym->name);
         block.add(code_frontend_assignt{sym->symbol_expr(), tmp});
         return std::move(block);
       }
@@ -8907,6 +8949,13 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     new_rhs = wrap_value(new_rhs);
   if(new_rhs.type() != lhs.type())
     new_rhs = safe_typecast(new_rhs, lhs.type());
+  // Invalidate constant tracking for modified variables
+  if(lhs.id() == ID_symbol)
+  {
+    irep_idt sid = to_symbol_expr(lhs).get_identifier();
+    string_constants.erase(sid);
+    dict_literals.erase(sid);
+  }
   code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
   return std::move(assign);
@@ -10618,6 +10667,43 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           inc_len.add_source_location() = loc;
           block.add(std::move(inc_len));
 
+          return std::move(block);
+        }
+      }
+      else if(method == "insert")
+      {
+        exprt obj = convert_expression(json_member(func, "value"));
+        const jsont &call_args = json_member(value, "args");
+        if(
+          !obj.is_nil() && is_python_list_type(obj.type()) &&
+          call_args.is_array() && as_array(call_args).size() >= 2)
+        {
+          auto arg_it = as_array(call_args).begin();
+          exprt idx_expr = convert_expression(*arg_it);
+          ++arg_it;
+          exprt val = convert_expression(*arg_it);
+          source_locationt loc = get_location(stmt);
+          const auto &list_st = to_struct_type(obj.type());
+          const auto &data_type = to_array_type(list_st.components()[1].type());
+          member_exprt length{obj, "length", python_int_type()};
+          member_exprt data{obj, "data", data_type};
+          if(val.type() != data_type.element_type())
+            val = safe_typecast(val, data_type.element_type());
+          code_blockt block;
+          for(int i = PYTHON_MAX_LIST_LENGTH - 1; i >= 1; i--)
+          {
+            exprt ii = from_integer(i, python_int_type());
+            exprt prev = from_integer(i - 1, python_int_type());
+            block.add(code_ifthenelset{
+              and_exprt{
+                binary_relation_exprt{prev, ID_ge, idx_expr},
+                binary_relation_exprt{prev, ID_lt, length}},
+              code_frontend_assignt{
+                index_exprt{data, ii}, index_exprt{data, prev}}});
+          }
+          block.add(code_frontend_assignt{index_exprt{data, idx_expr}, val});
+          block.add(code_frontend_assignt{
+            length, plus_exprt{length, from_integer(1, python_int_type())}});
           return std::move(block);
         }
       }
