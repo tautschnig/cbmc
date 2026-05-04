@@ -194,8 +194,39 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
     if(cond.has_value())
       return cond.value() != 0.0 ? try_eval_double(ce->operands()[1])
                                  : try_eval_double(ce->operands()[2]);
-    // If condition unknown, try the true branch (common case: guard is false)
-    return try_eval_double(ce->operands()[2]);
+    // If condition unknown, can't evaluate
+    return std::nullopt;
+  }
+  // Modulo
+  if(
+    (ce->id() == ID_mod || ce->id() == ID_floatbv_mod) &&
+    ce->operands().size() == 2)
+  {
+    auto l = try_eval_double(ce->operands()[0]);
+    auto r = try_eval_double(ce->operands()[1]);
+    if(l.has_value() && r.has_value() && r.value() != 0)
+      return std::fmod(l.value(), r.value());
+  }
+  // Comparisons — return 1.0 for true, 0.0 for false
+  if(ce->operands().size() == 2)
+  {
+    auto l = try_eval_double(ce->operands()[0]);
+    auto r = try_eval_double(ce->operands()[1]);
+    if(l.has_value() && r.has_value())
+    {
+      if(ce->id() == ID_lt)
+        return l.value() < r.value() ? 1.0 : 0.0;
+      if(ce->id() == ID_le)
+        return l.value() <= r.value() ? 1.0 : 0.0;
+      if(ce->id() == ID_gt)
+        return l.value() > r.value() ? 1.0 : 0.0;
+      if(ce->id() == ID_ge)
+        return l.value() >= r.value() ? 1.0 : 0.0;
+      if(ce->id() == ID_equal)
+        return l.value() == r.value() ? 1.0 : 0.0;
+      if(ce->id() == ID_notequal)
+        return l.value() != r.value() ? 1.0 : 0.0;
+    }
   }
   return std::nullopt;
 }
@@ -4961,6 +4992,30 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
     }
+    // Check for __len__ dunder method on class instances
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil() && arg.type().id() == ID_struct)
+      {
+        std::string tag = id2string(to_struct_type(arg.type()).get_tag());
+        // Try python_class_X::__len__ or just X::__len__
+        for(const auto &prefix :
+            {"python::" + tag + "::__len__",
+             "python::" +
+               (tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag) +
+               "::__len__"})
+        {
+          const symbolt *len_sym = symbol_table.lookup(irep_idt{prefix});
+          if(len_sym != nullptr)
+            return side_effect_expr_function_callt{
+              len_sym->symbol_expr(),
+              {address_of_exprt{arg}},
+              python_int_type(),
+              get_location(expr)};
+        }
+      }
+    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   // Built-in type constructors: int(), float(), bool()
@@ -5803,7 +5858,34 @@ exprt python_convertert::convert_call(const jsont &expr)
           }
         }
       }
-      // str(int_constant) — convert at conversion time
+      // str(int/float) — convert at conversion time using try_eval_double
+      {
+        auto ev = try_eval_double(arg);
+        if(ev.has_value())
+        {
+          double d = ev.value();
+          std::string s;
+          if(
+            d == std::floor(d) && std::abs(d) < 1e15 &&
+            (arg.type().id() == ID_signedbv || arg.type().id() == ID_integer ||
+             (arg.id() == ID_symbol && arg.type().id() != ID_floatbv)))
+            s = std::to_string(static_cast<long long>(d));
+          else
+          {
+            std::ostringstream oss;
+            oss << d;
+            s = oss.str();
+            // Python-style: remove trailing zeros after decimal
+            if(s.find('.') != std::string::npos)
+            {
+              while(s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.')
+                s.pop_back();
+            }
+          }
+          return build_string_struct(s);
+        }
+      }
+      // str(int_constant) — legacy path
       if(arg.is_constant() && arg.type().id() == ID_signedbv)
       {
         mp_integer iv;
