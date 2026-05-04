@@ -3622,6 +3622,22 @@ exprt python_convertert::convert_call(const jsont &expr)
           args.is_array() && !as_array(args).empty())
         {
           exprt prefix = convert_expression(*as_array(args).begin());
+          // Constant-string optimization
+          auto obj_sv = extract_string_value(obj);
+          auto pre_sv = extract_string_value(prefix);
+          if(obj_sv.has_value() && pre_sv.has_value())
+          {
+            bool result;
+            if(method_name == "startswith")
+              result = obj_sv.value().substr(0, pre_sv.value().size()) ==
+                       pre_sv.value();
+            else
+              result = obj_sv.value().size() >= pre_sv.value().size() &&
+                       obj_sv.value().substr(
+                         obj_sv.value().size() - pre_sv.value().size()) ==
+                         pre_sv.value();
+            return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
+          }
           if(is_python_string_type(prefix.type()))
           {
             const auto &str_st = to_struct_type(obj_base_type);
@@ -3658,6 +3674,36 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "islower" || method_name == "isspace" ||
           method_name == "isascii")
         {
+          // Constant-string optimization
+          auto sv = extract_string_value(obj);
+          if(sv.has_value())
+          {
+            const std::string &s = sv.value();
+            bool result = !s.empty();
+            for(char c : s)
+            {
+              unsigned char uc = static_cast<unsigned char>(c);
+              if(
+                method_name == "isdigit" || method_name == "isdecimal" ||
+                method_name == "isnumeric")
+                result = result && std::isdigit(uc);
+              else if(method_name == "isalpha")
+                result = result && (std::isalpha(uc) || uc >= 0x80);
+              else if(method_name == "isalnum")
+                result = result && (std::isalnum(uc) || uc >= 0x80);
+              else if(method_name == "isupper")
+                result = result && (!std::isalpha(uc) || std::isupper(uc));
+              else if(method_name == "islower")
+                result = result && (!std::isalpha(uc) || std::islower(uc));
+              else if(method_name == "isspace")
+                result = result && std::isspace(uc);
+              else if(method_name == "isascii")
+                result = result && (uc < 128);
+            }
+            if(method_name == "isascii" && s.empty())
+              result = true; // empty string is ASCII
+            return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
+          }
           const auto &str_st = to_struct_type(obj_base_type);
           const auto &data_type = to_array_type(str_st.components()[1].type());
           member_exprt data{obj, "data", data_type};
