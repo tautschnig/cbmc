@@ -2321,8 +2321,23 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         if(current_left.type() != right.type())
           right = safe_typecast(right, current_left.type());
-        // Constant-string equality: resolve at conversion time
+        // Complex equality: compare components with ieee_float_equal
         if(
+          current_left.type().id() == ID_struct &&
+          to_struct_type(current_left.type()).get_tag() == "python_complex" &&
+          right.type().id() == ID_struct &&
+          to_struct_type(right.type()).get_tag() == "python_complex")
+        {
+          cmp = and_exprt{
+            ieee_float_equal_exprt{
+              member_exprt{current_left, "real", double_type()},
+              member_exprt{right, "real", double_type()}},
+            ieee_float_equal_exprt{
+              member_exprt{current_left, "imag", double_type()},
+              member_exprt{right, "imag", double_type()}}};
+        }
+        // Constant-string equality: resolve at conversion time
+        else if(
           is_python_string_type(current_left.type()) &&
           is_python_string_type(right.type()))
         {
@@ -2334,8 +2349,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
+          cmp = equal_exprt{current_left, right};
         }
-        if(current_left.type().id() == ID_floatbv)
+        else if(current_left.type().id() == ID_floatbv)
           cmp = ieee_float_equal_exprt{current_left, right};
         else
           cmp = equal_exprt{current_left, right};
@@ -2371,8 +2387,21 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
+          cmp = notequal_exprt{current_left, right};
         }
-        if(current_left.type().id() == ID_floatbv)
+        else if(
+          current_left.type().id() == ID_struct &&
+          to_struct_type(current_left.type()).get_tag() == "python_complex")
+        {
+          cmp = or_exprt{
+            ieee_float_notequal_exprt{
+              member_exprt{current_left, "real", double_type()},
+              member_exprt{right, "real", double_type()}},
+            ieee_float_notequal_exprt{
+              member_exprt{current_left, "imag", double_type()},
+              member_exprt{right, "imag", double_type()}}};
+        }
+        else if(current_left.type().id() == ID_floatbv)
           cmp = ieee_float_notequal_exprt{current_left, right};
         else
           cmp = notequal_exprt{current_left, right};
