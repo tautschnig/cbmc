@@ -1093,12 +1093,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     {
       // Try to get constant string value
       std::string sv;
-      if(obj_expr.id() == ID_symbol)
       {
-        auto it =
-          string_constants.find(to_symbol_expr(obj_expr).get_identifier());
-        if(it != string_constants.end())
-          sv = it->second;
+        std::string raw = extract_string_value(obj_expr);
+        if(!raw.empty())
+          sv = raw.substr(2);
       }
       // Get method arguments as constant strings/numbers
       std::vector<std::string> str_args;
@@ -1109,54 +1107,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         {
           exprt av = convert_expression(a);
           // Try to extract string constant
-          if(av.id() == ID_symbol)
+          std::string sv = extract_string_value(av);
+          if(!sv.empty())
           {
-            auto it =
-              string_constants.find(to_symbol_expr(av).get_identifier());
-            if(it != string_constants.end())
-            {
-              str_args.push_back(it->second);
-              continue;
-            }
-          }
-          if(
-            av.id() == ID_struct && av.operands().size() >= 2 &&
-            av.operands()[0].is_constant() &&
-            av.operands()[1].id() == ID_address_of)
-          {
-            // Extract from refined_string_exprt
-            mp_integer len;
-            if(!to_integer(to_constant_expr(av.operands()[0]), len))
-            {
-              const exprt &ptr = av.operands()[1];
-              if(
-                ptr.operands()[0].id() == ID_index &&
-                ptr.operands()[0].operands()[0].id() == ID_symbol)
-              {
-                const symbolt *as = symbol_table.lookup(
-                  to_symbol_expr(ptr.operands()[0].operands()[0])
-                    .get_identifier());
-                if(as && !as->value.is_nil())
-                {
-                  std::string s;
-                  for(mp_integer i = 0; i < len; ++i)
-                  {
-                    auto idx = i.to_ulong();
-                    if(
-                      idx < as->value.operands().size() &&
-                      as->value.operands()[idx].is_constant())
-                    {
-                      mp_integer ch;
-                      if(!to_integer(
-                           to_constant_expr(as->value.operands()[idx]), ch))
-                        s += static_cast<char>(ch.to_ulong());
-                    }
-                  }
-                  str_args.push_back(s);
-                  continue;
-                }
-              }
-            }
+            str_args.push_back(sv.substr(2));
+            continue;
           }
           // Try number
           if(av.is_constant() && av.type().id() == ID_floatbv)
