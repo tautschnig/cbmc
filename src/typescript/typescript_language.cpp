@@ -279,6 +279,7 @@ function n2j(node) {
       r.expression = n2j(node.expression);
       break;
     case ts.SyntaxKind.SpreadElement:
+    case ts.SyntaxKind.SpreadAssignment:
       r.expression = n2j(node.expression);
       break;
     case ts.SyntaxKind.TypeOfExpression:

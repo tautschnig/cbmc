@@ -430,6 +430,31 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     exprt::operandst fields;
     for(const auto &prop : to_json_array(props))
     {
+      std::string pk = json_string(json_member(prop, "_kind"));
+      if(pk == "SpreadAssignment")
+      {
+        // { ...obj } — copy all fields from source object
+        exprt src = convert_expression(json_member(prop, "expression"));
+        if(src.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(src).get_identifier());
+          if(s && !s->value.is_nil())
+            src = s->value;
+        }
+        if(src.id() == ID_struct && src.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(src.type());
+          for(std::size_t i = 0;
+              i < st.components().size() && i < src.operands().size();
+              ++i)
+          {
+            components.push_back(st.components()[i]);
+            fields.push_back(src.operands()[i]);
+          }
+        }
+        continue;
+      }
       std::string pname =
         json_string(json_member(json_member(prop, "name"), "text"));
       exprt val = convert_expression(json_member(prop, "initializer"));
@@ -1099,6 +1124,38 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     {
       // This is handled at the statement level
       return nil_exprt{};
+    }
+    // Number static methods
+    if(obj == "Number")
+    {
+      exprt::operandst call_args;
+      if(args.is_array())
+        for(const auto &a : to_json_array(args))
+          call_args.push_back(convert_expression(a));
+      if(method == "isInteger" && !call_args.empty())
+      {
+        // x === Math.floor(x)
+        if(call_args[0].is_constant() && call_args[0].type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(call_args[0]));
+          double d = std::stod(fv.to_ansi_c_string());
+          return d == std::floor(d) ? exprt{true_exprt{}}
+                                    : exprt{false_exprt{}};
+        }
+        return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+      }
+      if(method == "isNaN" && !call_args.empty())
+      {
+        // isnan check
+        return isnan_exprt{call_args[0]};
+      }
+      if(method == "isFinite" && !call_args.empty())
+        return not_exprt{
+          or_exprt{isnan_exprt{call_args[0]}, isinf_exprt{call_args[0]}}};
+      return side_effect_expr_nondett{bool_typet{}, get_location(node)};
     }
   }
 
@@ -2255,7 +2312,44 @@ codet typescript_convertert::convert_statement(const jsont &node)
         {
           const symbolt &sym = symbol_table.lookup_ref(sym_id);
           if(rhs.type() != sym.type)
-            rhs = typecast_exprt(rhs, sym.type);
+          {
+            // For struct-to-struct, reorder fields instead of typecast
+            if(
+              rhs.id() == ID_struct && rhs.type().id() == ID_struct &&
+              sym.type.id() == ID_struct)
+            {
+              const auto &src_st = to_struct_type(rhs.type());
+              const auto &tgt_st = to_struct_type(sym.type);
+              exprt::operandst reordered;
+              bool can_reorder = true;
+              for(const auto &tc : tgt_st.components())
+              {
+                bool found = false;
+                for(std::size_t i = 0; i < src_st.components().size(); ++i)
+                {
+                  if(
+                    src_st.components()[i].get_name() == tc.get_name() &&
+                    i < rhs.operands().size())
+                  {
+                    reordered.push_back(rhs.operands()[i]);
+                    found = true;
+                    break;
+                  }
+                }
+                if(!found)
+                {
+                  can_reorder = false;
+                  break;
+                }
+              }
+              if(can_reorder && reordered.size() == tgt_st.components().size())
+                rhs = struct_exprt{std::move(reordered), sym.type};
+              else
+                rhs = typecast_exprt(rhs, sym.type);
+            }
+            else
+              rhs = typecast_exprt(rhs, sym.type);
+          }
           // Flush pending stmts BEFORE assignment (constructor calls etc.)
           for(auto &s : pending_stmts)
             block.add(std::move(s));
@@ -2267,13 +2361,11 @@ codet typescript_convertert::convert_statement(const jsont &node)
             if(!sv.empty())
               string_constants[sym_id] = sv.substr(2);
           }
-          // Set symbol value for constant arrays (enables spread)
+          // Set symbol value for constant structs (enables spread)
           {
             const exprt &val =
               rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-            if(
-              val.id() == ID_struct && val.type().id() == ID_struct &&
-              to_struct_type(val.type()).get_tag() == "typescript_array")
+            if(val.id() == ID_struct && val.type().id() == ID_struct)
             {
               symbolt *ws = symbol_table.get_writeable(sym_id);
               if(ws != nullptr)
@@ -2939,7 +3031,43 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       {
         const symbolt &sym = symbol_table.lookup_ref(sym_id);
         if(rhs.type() != sym.type)
-          rhs = typecast_exprt{rhs, sym.type};
+        {
+          if(
+            rhs.id() == ID_struct && rhs.type().id() == ID_struct &&
+            sym.type.id() == ID_struct)
+          {
+            const auto &src_st = to_struct_type(rhs.type());
+            const auto &tgt_st = to_struct_type(sym.type);
+            exprt::operandst reordered;
+            bool can_reorder = true;
+            for(const auto &tc : tgt_st.components())
+            {
+              bool found = false;
+              for(std::size_t i = 0; i < src_st.components().size(); ++i)
+              {
+                if(
+                  src_st.components()[i].get_name() == tc.get_name() &&
+                  i < rhs.operands().size())
+                {
+                  reordered.push_back(rhs.operands()[i]);
+                  found = true;
+                  break;
+                }
+              }
+              if(!found)
+              {
+                can_reorder = false;
+                break;
+              }
+            }
+            if(can_reorder && reordered.size() == tgt_st.components().size())
+              rhs = struct_exprt{std::move(reordered), sym.type};
+            else
+              rhs = typecast_exprt{rhs, sym.type};
+          }
+          else
+            rhs = typecast_exprt{rhs, sym.type};
+        }
         // Flush pending stmts (constructor calls from NewExpression)
         for(auto &s : pending_stmts)
           block.add(std::move(s));
@@ -2985,13 +3113,11 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
             }
           }
         }
-        // Set symbol value for constant arrays (enables spread)
+        // Set symbol value for constant structs (enables spread)
         {
           const exprt &val =
             rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-          if(
-            val.id() == ID_struct && val.type().id() == ID_struct &&
-            to_struct_type(val.type()).get_tag() == "typescript_array")
+          if(val.id() == ID_struct && val.type().id() == ID_struct)
           {
             symbolt *ws = symbol_table.get_writeable(sym_id);
             if(ws != nullptr)
