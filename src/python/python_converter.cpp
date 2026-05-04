@@ -5788,6 +5788,32 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
 
+      // Handle isinstance(x, type(None)) — check for NoneType
+      if(
+        !obj.is_nil() && is_node_type(*it, "Call") &&
+        is_node_type(json_member(*it, "func"), "Name") &&
+        json_string(json_member(json_member(*it, "func"), "id")) == "type")
+      {
+        const jsont &type_args = json_member(*it, "args");
+        if(
+          type_args.is_array() && !as_array(type_args).empty() &&
+          is_node_type(*as_array(type_args).begin(), "Constant") &&
+          json_member(*as_array(type_args).begin(), "value").is_null())
+        {
+          // isinstance(x, type(None)) — check if x is None
+          if(is_python_value_type(obj.type()))
+            return python_value_is(obj, python_type_tagt::NONE);
+          if(obj.type().id() == ID_signedbv)
+          {
+            // None sentinel check
+            return equal_exprt{
+              obj,
+              from_integer(mp_integer{-4611686018427387904LL}, obj.type())};
+          }
+          return false_exprt{};
+        }
+      }
+
       if(!obj.is_nil() && !cls_name.empty())
       {
         // Tagged union: isinstance checks the tag field
