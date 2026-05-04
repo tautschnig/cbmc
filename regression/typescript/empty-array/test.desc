@@ -1,9 +1,7 @@
-CORE
+KNOWNBUG
 main.ts
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
---
-Higher-order function (function as parameter).

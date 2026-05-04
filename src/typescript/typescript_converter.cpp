@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <sstream>
 
 // --- JSON helpers ---
 
@@ -92,6 +93,37 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
+  // Function types: "(x: number) => number"
+  if(ts_type.find("=>") != std::string::npos && ts_type[0] == '(')
+  {
+    auto arrow = ts_type.rfind("=>");
+    std::string ret_str = ts_type.substr(arrow + 2);
+    while(!ret_str.empty() && ret_str[0] == ' ')
+      ret_str.erase(0, 1);
+    typet ret_type = convert_type(ret_str);
+    code_typet::parameterst params;
+    auto paren_end = ts_type.find(')');
+    if(paren_end != std::string::npos && paren_end > 1)
+    {
+      std::string param_str = ts_type.substr(1, paren_end - 1);
+      std::istringstream ss(param_str);
+      std::string token;
+      while(std::getline(ss, token, ','))
+      {
+        auto colon = token.find(':');
+        if(colon != std::string::npos)
+        {
+          std::string pt = token.substr(colon + 1);
+          while(!pt.empty() && pt[0] == ' ')
+            pt.erase(0, 1);
+          while(!pt.empty() && pt.back() == ' ')
+            pt.pop_back();
+          params.push_back(code_typet::parametert{convert_type(pt)});
+        }
+      }
+    }
+    return pointer_typet{code_typet{params, ret_type}, 64};
+  }
   // Object literal types: { x: number; y: number; }
   if(ts_type.size() > 2 && ts_type[0] == '{' && ts_type.back() == '}')
   {
@@ -1586,6 +1618,42 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     // Regular function call
     irep_idt func_id{"typescript::" + func_name};
     const symbolt *sym = symbol_table.lookup(func_id);
+
+    // Check for function-typed variable/parameter (higher-order function)
+    if(sym == nullptr || sym->type.id() != ID_code)
+    {
+      // Try as local variable: current_function::func_name
+      if(!current_function.empty())
+      {
+        irep_idt local_id{"typescript::" + current_function + "::" + func_name};
+        const symbolt *local_sym = symbol_table.lookup(local_id);
+        if(
+          local_sym != nullptr && (local_sym->type.id() == ID_pointer ||
+                                   local_sym->type.id() == ID_code))
+        {
+          // This is a function-typed parameter — emit indirect call
+          exprt::operandst arguments;
+          if(args.is_array())
+          {
+            for(const auto &arg : to_json_array(args))
+              arguments.push_back(convert_expression(arg));
+          }
+          // Determine return type from the pointer/code type
+          typet ret_type = double_type();
+          typet callee_type = local_sym->type;
+          if(callee_type.id() == ID_pointer)
+            callee_type = to_pointer_type(callee_type).base_type();
+          if(callee_type.id() == ID_code)
+            ret_type = to_code_type(callee_type).return_type();
+          // Dereference if pointer
+          exprt callee_expr = local_sym->symbol_expr();
+          if(local_sym->type.id() == ID_pointer)
+            callee_expr = dereference_exprt{callee_expr};
+          return side_effect_expr_function_callt{
+            callee_expr, std::move(arguments), ret_type, get_location(node)};
+        }
+      }
+    }
     if(sym != nullptr && sym->type.id() == ID_code)
     {
       const code_typet &func_type = to_code_type(sym->type);
@@ -1593,7 +1661,15 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       if(args.is_array())
       {
         for(const auto &arg : to_json_array(args))
-          arguments.push_back(convert_expression(arg));
+        {
+          exprt val = convert_expression(arg);
+          // If argument is a function symbol, take its address
+          if(val.id() == ID_symbol && val.type().id() == ID_code)
+          {
+            val = address_of_exprt{val};
+          }
+          arguments.push_back(val);
+        }
       }
       // Typecast null args to match parameter types
       const auto &fp = func_type.parameters();
