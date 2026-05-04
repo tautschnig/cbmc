@@ -733,7 +733,27 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return div_exprt{left, right};
   // ES2024 sec-numeric-types-number-remainder
   if(op == "PercentToken")
+  {
+    // ES2024 sec-numeric-types-number-remainder:
+    // For floats, % is fmod: a - trunc(a/b) * b
+    if(left.type().id() == ID_floatbv)
+    {
+      // a % b = a - trunc(a / b) * b
+      exprt rm = symbol_exprt{
+        "__CPROVER_rounding_mode", signedbv_typet{32}};
+      ieee_float_op_exprt div{left, ID_floatbv_div, right, rm};
+      div.type() = left.type();
+      // trunc: convert to integer and back
+      exprt trunc = floatbv_typecast_exprt{
+        typecast_exprt{div, signedbv_typet{64}}, rm, left.type()};
+      ieee_float_op_exprt prod{trunc, ID_floatbv_mult, right, rm};
+      prod.type() = left.type();
+      ieee_float_op_exprt result{left, ID_floatbv_minus, prod, rm};
+      result.type() = left.type();
+      return std::move(result);
+    }
     return mod_exprt{left, right};
+  }
 
   // ES2024 sec-isstrictlyequal: ===
   if(op == "EqualsEqualsEqualsToken")
@@ -1255,87 +1275,20 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         const exprt &data = src.operands()[1];
 
         static unsigned filter_ctr = 0;
-        std::string cb_name = "__ts_filter_cb_" + std::to_string(filter_ctr++);
+        unsigned fc = filter_ctr++;
+        std::string cb_name = "__ts_filter_cb_" + std::to_string(fc);
         convert_function_declaration_with_name(callback, cb_name);
         irep_idt cb_id{"typescript::" + cb_name};
 
-        // For each element, call predicate and conditionally include
-        exprt::operandst result_elts;
         typet elem_type = double_type();
-        std::string len_name = "__ts_filter_len_" + std::to_string(filter_ctr);
-        std::string len_q = "typescript::" + len_name;
-        irep_idt len_id{len_q};
-        {
-          symbolt ls{len_id, signedbv_typet{64}, "typescript"};
-          ls.base_name = len_name;
-          ls.is_lvalue = true;
-          ls.is_state_var = true;
-          if(symbol_table.lookup(len_id) == nullptr)
-            symbol_table.add(ls);
-        }
-        pending_stmts.push_back(code_frontend_assignt{
-          symbol_exprt{len_id, signedbv_typet{64}},
-          from_integer(0, signedbv_typet{64})});
+        if(len > 0 && !data.operands().empty())
+          elem_type = data.operands()[0].type();
 
-        for(mp_integer i = 0; i < len; ++i)
-        {
-          auto idx = i.to_ulong();
-          if(idx >= data.operands().size())
-            break;
-          elem_type = data.operands()[idx].type();
-
-          // Call predicate
-          std::string tmp = "__ts_filter_pred_" + std::to_string(filter_ctr) +
-                            "_" + std::to_string(idx);
-          std::string tmp_q = "typescript::" + tmp;
-          irep_idt tmp_id{tmp_q};
-          {
-            symbolt ts{tmp_id, bool_typet{}, "typescript"};
-            ts.base_name = tmp;
-            ts.is_lvalue = true;
-            ts.is_state_var = true;
-            if(symbol_table.lookup(tmp_id) == nullptr)
-              symbol_table.add(ts);
-          }
-          side_effect_expr_function_callt pred_call{
-            symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
-            {data.operands()[idx]},
-            bool_typet{},
-            source_locationt{}};
-          pending_stmts.push_back(code_frontend_assignt{
-            symbol_exprt{tmp_id, bool_typet{}}, pred_call});
-
-          // if(pred) { result[len] = elem; len++; }
-          symbol_exprt len_sym{len_id, signedbv_typet{64}};
-          // Use a fixed slot for this element
-          std::string slot = "__ts_filter_slot_" + std::to_string(filter_ctr) +
-                             "_" + std::to_string(idx);
-          std::string slot_q = "typescript::" + slot;
-          irep_idt slot_id{slot_q};
-          {
-            symbolt ss{slot_id, elem_type, "typescript"};
-            ss.base_name = slot;
-            ss.is_lvalue = true;
-            ss.is_state_var = true;
-            if(symbol_table.lookup(slot_id) == nullptr)
-              symbol_table.add(ss);
-          }
-          // Conditional: if pred, assign element and increment length
-          code_ifthenelset cond{
-            symbol_exprt{tmp_id, bool_typet{}},
-            code_blockt{
-              {code_frontend_assignt{
-                 symbol_exprt{slot_id, elem_type}, data.operands()[idx]},
-               code_frontend_assignt{
-                 len_sym,
-                 plus_exprt{len_sym, from_integer(1, signedbv_typet{64})}}}}};
-          pending_stmts.push_back(std::move(cond));
-          result_elts.push_back(symbol_exprt{slot_id, elem_type});
-        }
-        // Pad to max_len
+        // Create result array symbol
+        std::string res_name = "__ts_filter_res_" + std::to_string(fc);
+        std::string res_q = "typescript::" + res_name;
+        irep_idt res_id{res_q};
         std::size_t max_len = 64;
-        while(result_elts.size() < max_len)
-          result_elts.push_back(from_integer(0, elem_type));
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
         struct_typet list_type;
@@ -1344,10 +1297,81 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         list_type.components().push_back(
           struct_typet::componentt{"data", arr_type});
         list_type.set_tag("typescript_array");
-        return struct_exprt{
-          {symbol_exprt{len_id, signedbv_typet{64}},
-           array_exprt{std::move(result_elts), arr_type}},
-          list_type};
+        {
+          symbolt rs{res_id, list_type, "typescript"};
+          rs.base_name = res_name;
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          if(symbol_table.lookup(res_id) == nullptr)
+            symbol_table.add(rs);
+        }
+
+        // Create write index
+        std::string wi_name = "__ts_filter_wi_" + std::to_string(fc);
+        std::string wi_q = "typescript::" + wi_name;
+        irep_idt wi_id{wi_q};
+        {
+          symbolt ws{wi_id, signedbv_typet{64}, "typescript"};
+          ws.base_name = wi_name;
+          ws.is_lvalue = true;
+          ws.is_state_var = true;
+          if(symbol_table.lookup(wi_id) == nullptr)
+            symbol_table.add(ws);
+        }
+        symbol_exprt wi_sym{wi_id, signedbv_typet{64}};
+        pending_stmts.push_back(
+          code_frontend_assignt{wi_sym, from_integer(0, signedbv_typet{64})});
+
+        // For each source element: call predicate, if true copy to result[wi++]
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= data.operands().size())
+            break;
+
+          // Call predicate
+          std::string pred_name =
+            "__ts_fp_" + std::to_string(fc) + "_" + std::to_string(idx);
+          std::string pred_q = "typescript::" + pred_name;
+          irep_idt pred_id{pred_q};
+          {
+            symbolt ps{pred_id, bool_typet{}, "typescript"};
+            ps.base_name = pred_name;
+            ps.is_lvalue = true;
+            ps.is_state_var = true;
+            if(symbol_table.lookup(pred_id) == nullptr)
+              symbol_table.add(ps);
+          }
+          side_effect_expr_function_callt pred_call{
+            symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
+            {data.operands()[idx]},
+            bool_typet{},
+            source_locationt{}};
+          pending_stmts.push_back(code_frontend_assignt{
+            symbol_exprt{pred_id, bool_typet{}}, pred_call});
+
+          // if(pred) { result.data[wi] = elem; wi++; }
+          symbol_exprt res_sym{res_id, list_type};
+          code_ifthenelset cond{
+            symbol_exprt{pred_id, bool_typet{}},
+            code_blockt{{code_frontend_assignt{
+                           index_exprt{
+                             member_exprt{res_sym, "data", arr_type}, wi_sym},
+                           data.operands()[idx]},
+                         code_frontend_assignt{
+                           wi_sym,
+                           plus_exprt{
+                             wi_sym,
+                             from_integer(1, signedbv_typet{64})}}}}};
+          pending_stmts.push_back(std::move(cond));
+        }
+        // Set result.length = wi
+        pending_stmts.push_back(code_frontend_assignt{
+          member_exprt{
+            symbol_exprt{res_id, list_type}, "length", signedbv_typet{64}},
+          wi_sym});
+
+        return symbol_exprt{res_id, list_type};
       }
     }
     // Array methods: push, pop
@@ -1567,6 +1591,16 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             arguments[i] = convert_string_literal_from_text("");
           else if(arguments[i].type().id() != fp[i].type().id())
             arguments[i] = typecast_exprt(arguments[i], fp[i].type());
+        }
+      }
+      // Fill captured variable args
+      if(captured_var_map.count(func_id) > 0)
+      {
+        for(const auto &[cv_name, cv_outer_id] : captured_var_map[func_id])
+        {
+          const symbolt *cv_sym = symbol_table.lookup(cv_outer_id);
+          if(cv_sym != nullptr)
+            arguments.push_back(cv_sym->symbol_expr());
         }
       }
       // Fill missing args with defaults (skip rest param)
@@ -2764,10 +2798,114 @@ void typescript_convertert::convert_function_declaration_with_name(
   }
 
   // Convert function body
+  // Detect captured variables from enclosing scope
+  // If this is a nested function (current_function is set), scan body for
+  // identifiers that match enclosing function's parameters/locals
+  std::vector<std::pair<std::string, typet>> captured_vars;
+  if(!current_function.empty())
+  {
+    // Collect identifiers used in the body
+    std::function<void(const jsont &)> scan = [&](const jsont &n) {
+      if(!n.is_object())
+        return;
+      std::string k = json_string(json_member(n, "_kind"));
+      if(k == "Identifier")
+      {
+        std::string text = json_string(json_member(n, "text"));
+        if(text.empty())
+          return;
+        // Check if it's a parameter of THIS function
+        bool is_local = false;
+        for(const auto &p : params)
+          if(id2string(p.get_base_name()) == text)
+            is_local = true;
+        if(is_local)
+          return;
+        // Check if it's a variable in the enclosing scope
+        std::string outer_id =
+          "typescript::" + current_function + "::" + text;
+        const symbolt *outer_sym = symbol_table.lookup(irep_idt{outer_id});
+        if(outer_sym != nullptr)
+        {
+          // Check not already captured
+          bool already = false;
+          for(const auto &cv : captured_vars)
+            if(cv.first == text)
+              already = true;
+          if(!already)
+            captured_vars.emplace_back(text, outer_sym->type);
+        }
+      }
+      // Recurse into json children
+      auto recurse_json = [&](const jsont &child) {
+        if(child.is_object())
+          scan(child);
+        else if(child.is_array())
+          for(const auto &c : to_json_array(child))
+            scan(c);
+      };
+      // Check known child fields
+      static const char *fields[] = {
+        "expression", "left", "right", "body", "statements",
+        "thenStatement", "elseStatement", "statement", "arguments",
+        "elements", "properties", "declarations", "declarationList",
+        "initializer", "condition", "incrementor", "operand",
+        "head", "templateSpans", "name", "members", "parameters",
+        "_children", nullptr};
+      for(const char **f = fields; *f; ++f)
+      {
+        const jsont &child = json_member(n, *f);
+        recurse_json(child);
+      }
+    };
+    const jsont &body_node = json_member(node, "body");
+    if(body_node.is_object())
+      scan(body_node);
+
+    // Add captured vars as extra parameters
+    for(const auto &[cv_name, cv_type] : captured_vars)
+    {
+      code_typet::parametert cp{cv_type};
+      cp.set_identifier("typescript::" + func_name + "::" + cv_name);
+      cp.set_base_name(cv_name);
+      params.push_back(cp);
+      // Create parameter symbol
+      irep_idt cpid{"typescript::" + func_name + "::" + cv_name};
+      if(symbol_table.lookup(cpid) == nullptr)
+      {
+        symbolt cps{cpid, cv_type, "typescript"};
+        cps.base_name = cv_name;
+        cps.is_parameter = true;
+        cps.is_lvalue = true;
+        cps.is_state_var = true;
+        symbol_table.add(cps);
+      }
+    }
+    // Update function type with new params
+    func_type = code_typet{params, ret_type};
+    func_sym.type = func_type;
+    // Store capture info for call sites
+    if(!captured_vars.empty())
+    {
+      auto &cv = captured_var_map[func_id];
+      for(const auto &[cv_name, cv_type] : captured_vars)
+      {
+        std::string outer_id =
+          "typescript::" + current_function + "::" + cv_name;
+        cv.emplace_back(cv_name, irep_idt{outer_id});
+      }
+    }
+  }
+
   // Add function symbol to table BEFORE body conversion
   // (so return type can be looked up during body conversion)
   if(symbol_table.lookup(func_id) == nullptr)
     symbol_table.add(func_sym);
+  else
+  {
+    // Update type if we added captured params
+    symbol_table.get_writeable_ref(func_id).type = func_type;
+  }
 
   // Store default parameter values
   {

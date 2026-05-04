@@ -44,7 +44,10 @@ private:
   std::string current_function;
   std::string current_class; // empty at module level
   std::map<irep_idt, std::string> string_constants;
-  std::set<irep_idt> rest_param_functions; // functions with rest params
+  std::set<irep_idt> rest_param_functions;
+  // Captured variables: func_id -> [(param_name, outer_symbol_id)]
+  std::map<irep_idt, std::vector<std::pair<std::string, irep_idt>>>
+    captured_var_map; // functions with rest params
   std::map<std::string, struct_typet> class_types;
   std::vector<codet> pending_stmts;
   // Default parameter values: func_id → {param_index → default_expr}
