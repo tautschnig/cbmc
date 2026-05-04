@@ -12,6 +12,7 @@
 #include <util/symbol.h>
 #include <util/tempfile.h>
 
+#include "expr2typescript.h"
 #include "typescript_converter.h"
 
 #include <fstream>
@@ -401,7 +402,7 @@ bool typescript_languaget::from_expr(
   std::string &code,
   const namespacet &ns)
 {
-  code = expr.pretty();
+  code = expr2typescript(expr, ns);
   return false;
 }
 
@@ -410,7 +411,7 @@ bool typescript_languaget::from_type(
   std::string &code,
   const namespacet &ns)
 {
-  code = type.pretty();
+  code = type2typescript(type, ns);
   return false;
 }
 
