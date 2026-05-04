@@ -262,6 +262,24 @@ function n2j(node) {
       r.name = n2j(node.name);
       if(node.initializer) r.initializer = n2j(node.initializer);
       break;
+    case ts.SyntaxKind.TryStatement:
+      r.tryBlock = n2j(node.tryBlock);
+      if(node.catchClause) r.catchClause = n2j(node.catchClause);
+      if(node.finallyBlock) r.finallyBlock = n2j(node.finallyBlock);
+      break;
+    case ts.SyntaxKind.CatchClause:
+      if(node.variableDeclaration) r.variableDeclaration = n2j(node.variableDeclaration);
+      r.block = n2j(node.block);
+      break;
+    case ts.SyntaxKind.ThrowStatement:
+      r.expression = n2j(node.expression);
+      break;
+    case ts.SyntaxKind.SpreadElement:
+      r.expression = n2j(node.expression);
+      break;
+    case ts.SyntaxKind.TypeOfExpression:
+      r.expression = n2j(node.expression);
+      break;
     case ts.SyntaxKind.BreakStatement:
       break;
     case ts.SyntaxKind.ConditionalExpression:

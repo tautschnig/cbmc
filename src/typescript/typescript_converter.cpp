@@ -427,6 +427,22 @@ exprt typescript_convertert::convert_expression(const jsont &node)
        array_exprt{std::move(elements), arr_type}},
       list_type};
   }
+  // ES2024 sec-typeof-operator
+  if(kind == "TypeOfExpression")
+  {
+    // Return a string constant based on the expression's type
+    exprt operand = convert_expression(json_member(node, "expression"));
+    std::string ts_type = json_string(json_member(json_member(node, "expression"), "_type"));
+    std::string typeof_result = "object"; // default
+    if(ts_type == "number") typeof_result = "number";
+    else if(ts_type == "string") typeof_result = "string";
+    else if(ts_type == "boolean") typeof_result = "boolean";
+    else if(ts_type == "undefined") typeof_result = "undefined";
+    return convert_string_literal_from_text(typeof_result);
+  }
+  // ES2024 sec-spread-element
+  if(kind == "SpreadElement")
+    return convert_expression(json_member(node, "expression"));
   log.warning() << "Unsupported expression: " << kind << messaget::eom;
   return nil_exprt{};
 }
@@ -1428,6 +1444,48 @@ codet typescript_convertert::convert_statement(const jsont &node)
     block.add(code_whilet{cond, std::move(loop_body)});
     return std::move(block);
   }
+  // ES2024 sec-try-statement
+  if(kind == "TryStatement")
+  {
+    code_blockt block;
+    // Convert try block
+    const jsont &try_block = json_member(node, "tryBlock");
+    if(try_block.is_object())
+      block.add(convert_block(try_block));
+    // Convert catch clause (simplified: always execute catch after try)
+    const jsont &catch_clause = json_member(node, "catchClause");
+    if(catch_clause.is_object())
+    {
+      const jsont &catch_block = json_member(catch_clause, "block");
+      if(catch_block.is_object())
+      {
+        // Create catch variable if present
+        const jsont &var_decl = json_member(catch_clause, "variableDeclaration");
+        if(var_decl.is_object())
+        {
+          std::string vname = json_string(json_member(json_member(var_decl, "name"), "text"));
+          if(!vname.empty())
+          {
+            std::string qn = "typescript::" +
+              (current_function.empty() ? "" : current_function + "::") + vname;
+            if(symbol_table.lookup(irep_idt{qn}) == nullptr)
+            {
+              symbolt vs{irep_idt{qn}, double_type(), "typescript"};
+              vs.base_name = vname;
+              vs.is_lvalue = true;
+              vs.is_state_var = true;
+              symbol_table.add(vs);
+            }
+          }
+        }
+        block.add(convert_block(catch_block));
+      }
+    }
+    return std::move(block);
+  }
+  // ES2024 sec-throw-statement
+  if(kind == "ThrowStatement")
+    return code_skipt{}; // simplified: throw is a no-op for now
   log.warning() << "Unsupported statement kind: " << kind << messaget::eom;
   return code_skipt{};
 }
