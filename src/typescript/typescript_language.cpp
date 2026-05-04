@@ -169,6 +169,58 @@ function n2j(node) {
       if(node.incrementor) r.incrementor = n2j(node.incrementor);
       r.statement = n2j(node.statement);
       break;
+    case ts.SyntaxKind.ForOfStatement:
+      r.initializer = n2j(node.initializer);
+      r.expression = n2j(node.expression);
+      r.statement = n2j(node.statement);
+      break;
+    case ts.SyntaxKind.NewExpression:
+      r.expression = n2j(node.expression);
+      r.arguments = node.arguments ? node.arguments.map(n2j) : [];
+      break;
+    case ts.SyntaxKind.ClassDeclaration:
+      if(node.name) r.name = n2j(node.name);
+      r.members = node.members.map(n2j);
+      break;
+    case ts.SyntaxKind.PropertyDeclaration:
+      r.name = n2j(node.name);
+      if(node.type) r.typeAnnotation = n2j(node.type);
+      if(node.initializer) r.initializer = n2j(node.initializer);
+      break;
+    case ts.SyntaxKind.Constructor:
+      r.parameters = node.parameters.map(n2j);
+      if(node.body) r.body = n2j(node.body);
+      break;
+    case ts.SyntaxKind.MethodDeclaration:
+      if(node.name) r.name = n2j(node.name);
+      r.parameters = node.parameters.map(n2j);
+      if(node.type) r.returnType = n2j(node.type);
+      if(node.body) r.body = n2j(node.body);
+      try {
+        const sig = checker.getSignatureFromDeclaration(node);
+        if(sig) {
+          r._returnType = checker.typeToString(sig.getReturnType());
+          r._paramTypes = sig.getParameters().map(p =>
+            checker.typeToString(checker.getTypeOfSymbolAtLocation(p, node)));
+        }
+      } catch(e) {}
+      break;
+    case ts.SyntaxKind.ThisKeyword:
+      r.text = "this";
+      break;
+    case ts.SyntaxKind.TemplateExpression:
+      r.head = n2j(node.head);
+      r.templateSpans = node.templateSpans.map(n2j);
+      break;
+    case ts.SyntaxKind.TemplateHead:
+    case ts.SyntaxKind.TemplateMiddle:
+    case ts.SyntaxKind.TemplateTail:
+      r.text = node.text;
+      break;
+    case ts.SyntaxKind.TemplateSpan:
+      r.expression = n2j(node.expression);
+      r.literal = n2j(node.literal);
+      break;
     case ts.SyntaxKind.ArrayLiteralExpression:
       r.elements = node.elements.map(n2j);
       break;
@@ -178,6 +230,22 @@ function n2j(node) {
     case ts.SyntaxKind.PropertyAssignment:
       r.name = n2j(node.name);
       r.initializer = n2j(node.initializer);
+      break;
+    case ts.SyntaxKind.SwitchStatement:
+      r.expression = n2j(node.expression);
+      r.caseBlock = n2j(node.caseBlock);
+      break;
+    case ts.SyntaxKind.CaseBlock:
+      r.clauses = node.clauses.map(n2j);
+      break;
+    case ts.SyntaxKind.CaseClause:
+      r.expression = n2j(node.expression);
+      r.statements = node.statements.map(n2j);
+      break;
+    case ts.SyntaxKind.DefaultClause:
+      r.statements = node.statements.map(n2j);
+      break;
+    case ts.SyntaxKind.BreakStatement:
       break;
     case ts.SyntaxKind.ConditionalExpression:
       r.condition = n2j(node.condition);

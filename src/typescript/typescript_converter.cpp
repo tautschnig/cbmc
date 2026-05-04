@@ -114,20 +114,9 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   if(kind == "PrefixUnaryExpression" || kind == "PostfixUnaryExpression")
     return convert_prefix_unary_expression(node);
   // ES2024 sec-arrow-function-definitions
+  // Arrow functions in expression context (not variable initializer)
   if(kind == "ArrowFunction" || kind == "FunctionExpression")
-  {
-    // Create an anonymous function and return its symbol
-    static unsigned anon_ctr = 0;
-    std::string func_name = "__anon_" + std::to_string(anon_ctr++);
-    jsont func_node = node; // copy
-    // Temporarily set a name for the function
-    convert_function_declaration_with_name(node, func_name);
-    irep_idt func_id{"typescript::" + func_name};
-    const symbolt *sym = symbol_table.lookup(func_id);
-    if(sym != nullptr)
-      return sym->symbol_expr();
-    return nil_exprt{};
-  }
+    return nil_exprt{}; // handled in convert_variable_statement
   if(kind == "CallExpression")
     return convert_call_expression(node);
   // ES2024 sec-property-accessors
@@ -491,6 +480,17 @@ codet typescript_convertert::convert_statement(const jsont &node)
     for(const auto &decl : to_json_array(declarations))
     {
       std::string var_name = json_string(json_member(json_member(decl, "name"), "text"));
+      // Check for arrow/function expression BEFORE creating variable
+      const jsont &init = json_member(decl, "initializer");
+      if(init.is_object())
+      {
+        std::string init_kind = json_string(json_member(init, "_kind"));
+        if(init_kind == "ArrowFunction" || init_kind == "FunctionExpression")
+        {
+          convert_function_declaration_with_name(init, var_name);
+          continue;
+        }
+      }
       std::string ts_type = json_string(json_member(decl, "_type"));
       typet var_type = convert_type(ts_type);
       std::string qualified = "typescript::" +
@@ -505,7 +505,6 @@ codet typescript_convertert::convert_statement(const jsont &node)
         symbol_table.add(new_sym);
       }
       const symbolt &sym = symbol_table.lookup_ref(sym_id);
-      const jsont &init = json_member(decl, "initializer");
       if(init.is_object())
       {
         exprt rhs = convert_expression(init);
@@ -632,6 +631,17 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
   for(const auto &decl : to_json_array(declarations))
   {
     std::string var_name = json_string(json_member(json_member(decl, "name"), "text"));
+    // Check for arrow/function expression BEFORE creating variable
+    const jsont &init_check = json_member(decl, "initializer");
+    if(init_check.is_object())
+    {
+      std::string ik = json_string(json_member(init_check, "_kind"));
+      if(ik == "ArrowFunction" || ik == "FunctionExpression")
+      {
+        convert_function_declaration_with_name(init_check, var_name);
+        continue;
+      }
+    }
     std::string ts_type = json_string(json_member(decl, "_type"));
     typet var_type = convert_type(ts_type);
 
@@ -969,7 +979,19 @@ void typescript_convertert::convert_function_declaration_with_name(
   {
     std::string saved_function = current_function;
     current_function = func_name;
-    codet body_code = convert_block(body);
+    std::string body_kind = json_string(json_member(body, "_kind"));
+    codet body_code = code_skipt{};
+    if(body_kind == "Block")
+    {
+      body_code = convert_block(body);
+    }
+    else
+    {
+      // Concise arrow function: body is an expression → wrap in return
+      exprt expr = convert_expression(body);
+      if(!expr.is_nil())
+        body_code = code_frontend_returnt{expr};
+    }
     current_function = saved_function;
     func_sym.value = body_code;
   }
