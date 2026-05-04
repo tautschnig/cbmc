@@ -327,7 +327,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   }
 
   // ES2024 sec-relational-operators
-  if(op == "LessThanToken")
+  if(op == "LessThanToken" || op == "FirstBinaryOperator")
     return binary_relation_exprt{left, ID_lt, right};
   if(op == "GreaterThanToken")
     return binary_relation_exprt{left, ID_gt, right};
@@ -360,6 +360,18 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     // This is handled at the statement level
     return right;
   }
+
+  // ES2024 sec-assignment-operators: compound assignment
+  if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken")
+    return plus_exprt{left, right};
+  if(op == "MinusEqualsToken")
+    return minus_exprt{left, right};
+  if(op == "AsteriskEqualsToken")
+    return mult_exprt{left, right};
+  if(op == "SlashEqualsToken")
+    return div_exprt{left, right};
+  if(op == "PercentEqualsToken")
+    return mod_exprt{left, right};
 
   log.warning() << "Unsupported binary operator: " << op << messaget::eom;
   return nil_exprt{};
@@ -465,6 +477,50 @@ codet typescript_convertert::convert_statement(const jsont &node)
   // ES2024 sec-variable-statement / sec-let-and-const-declarations
   if(kind == "FirstStatement" || kind == "VariableStatement")
     return convert_variable_statement(node);
+  if(kind == "VariableDeclarationList")
+  {
+    // Wrap in a pseudo-statement for the variable handler
+    // The for-loop initializer is a bare VariableDeclarationList
+    jsont wrapper;
+    // Create a wrapper with declarationList field
+    // Actually, just handle it directly
+    const jsont &declarations = json_member(node, "declarations");
+    if(!declarations.is_array())
+      return code_skipt{};
+    code_blockt block;
+    for(const auto &decl : to_json_array(declarations))
+    {
+      std::string var_name = json_string(json_member(json_member(decl, "name"), "text"));
+      std::string ts_type = json_string(json_member(decl, "_type"));
+      typet var_type = convert_type(ts_type);
+      std::string qualified = "typescript::" +
+        (current_function.empty() ? "" : current_function + "::") + var_name;
+      irep_idt sym_id{qualified};
+      if(symbol_table.lookup(sym_id) == nullptr)
+      {
+        symbolt new_sym{sym_id, var_type, "typescript"};
+        new_sym.base_name = var_name;
+        new_sym.is_lvalue = true;
+        new_sym.is_state_var = true;
+        symbol_table.add(new_sym);
+      }
+      const symbolt &sym = symbol_table.lookup_ref(sym_id);
+      const jsont &init = json_member(decl, "initializer");
+      if(init.is_object())
+      {
+        exprt rhs = convert_expression(init);
+        if(!rhs.is_nil())
+        {
+          if(rhs.type() != sym.type)
+            rhs = typecast_exprt{rhs, sym.type};
+          block.add(code_frontend_assignt{sym.symbol_expr(), rhs});
+        }
+      }
+    }
+    if(block.statements().size() == 1)
+      return block.statements().front();
+    return std::move(block);
+  }
 
   if(kind == "ExpressionStatement")
     return convert_expression_statement(node);
@@ -490,6 +546,58 @@ codet typescript_convertert::convert_statement(const jsont &node)
 
   // ES2024 sec-function-definitions
   if(kind == "FunctionDeclaration")
+  {
+    convert_function_declaration(node);
+    return code_skipt{};
+  }
+
+  // ES2024 sec-switch-statement
+  if(kind == "SwitchStatement")
+  {
+    exprt disc = convert_expression(json_member(node, "expression"));
+    const jsont &case_block = json_member(node, "caseBlock");
+    const jsont &clauses = json_member(case_block, "clauses");
+    if(disc.is_nil() || !clauses.is_array())
+      return code_skipt{};
+    // Convert to if-else chain
+    codet result = code_skipt{};
+    (void)0; // switch cases
+    for(auto it = to_json_array(clauses).begin();
+        it != to_json_array(clauses).end(); ++it)
+    {
+      std::string clause_kind = json_string(json_member(*it, "_kind"));
+      code_blockt body;
+      const jsont &stmts = json_member(*it, "statements");
+      if(stmts.is_array())
+        for(const auto &s : to_json_array(stmts))
+          body.add(convert_statement(s));
+      if(clause_kind == "DefaultClause")
+      {
+        result = std::move(body);
+      }
+      else
+      {
+        exprt case_val = convert_expression(json_member(*it, "expression"));
+        if(!case_val.is_nil())
+        {
+          if(case_val.type() != disc.type())
+            case_val = typecast_exprt{case_val, disc.type()};
+          exprt cond = disc.type().id() == ID_floatbv
+            ? exprt{ieee_float_equal_exprt{disc, case_val}}
+            : exprt{equal_exprt{disc, case_val}};
+          result = code_ifthenelset{cond, std::move(body), std::move(result)};
+        }
+      }
+    }
+    return result;
+  }
+
+  // TSH: Object Types.md — interface declarations (type-only, no runtime code)
+  if(kind == "InterfaceDeclaration" || kind == "TypeAliasDeclaration")
+    return code_skipt{};
+
+  // ES2024 sec-class-definitions — handled in first pass
+  if(kind == "ClassDeclaration")
   {
     convert_function_declaration(node);
     return code_skipt{};
@@ -612,6 +720,72 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
           }
         }
         return code_skipt{};
+      }
+    }
+  }
+  // Handle postfix increment/decrement: i++ → i = i + 1
+  if(expr_kind == "PostfixUnaryExpression")
+  {
+    std::string op = json_string(json_member(expr_node, "operator"));
+    exprt operand = convert_expression(json_member(expr_node, "operand"));
+    if(!operand.is_nil())
+    {
+      exprt one = from_integer(1, operand.type());
+      exprt new_val = (op == "PlusPlusToken")
+        ? exprt{plus_exprt{operand, one}}
+        : exprt{minus_exprt{operand, one}};
+      return code_frontend_assignt{operand, new_val};
+    }
+  }
+  // Handle prefix increment/decrement: ++i → i = i + 1
+  if(expr_kind == "PrefixUnaryExpression")
+  {
+    std::string op = json_string(json_member(expr_node, "operator"));
+    if(op == "PlusPlusToken" || op == "MinusMinusToken")
+    {
+      exprt operand = convert_expression(json_member(expr_node, "operand"));
+      if(!operand.is_nil())
+      {
+        exprt one = from_integer(1, operand.type());
+        exprt new_val = (op == "PlusPlusToken")
+          ? exprt{plus_exprt{operand, one}}
+          : exprt{minus_exprt{operand, one}};
+        return code_frontend_assignt{operand, new_val};
+      }
+    }
+  }
+  // Handle compound assignments: x += 1 → x = x + 1
+  if(expr_kind == "BinaryExpression")
+  {
+    std::string op = json_string(json_member(expr_node, "operator"));
+    if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken" ||
+       op == "MinusEqualsToken" || op == "AsteriskEqualsToken" ||
+       op == "SlashEqualsToken" || op == "PercentEqualsToken" ||
+       op == "EqualsToken")
+    {
+      exprt lhs = convert_expression(json_member(expr_node, "left"));
+      exprt rhs = convert_expression(json_member(expr_node, "right"));
+      if(!lhs.is_nil() && !rhs.is_nil())
+      {
+        exprt new_val = rhs;
+        if(op != "EqualsToken")
+        {
+          if(lhs.type() != rhs.type())
+            rhs = typecast_exprt{rhs, lhs.type()};
+          if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken")
+            new_val = plus_exprt{lhs, rhs};
+          else if(op == "MinusEqualsToken")
+            new_val = minus_exprt{lhs, rhs};
+          else if(op == "AsteriskEqualsToken")
+            new_val = mult_exprt{lhs, rhs};
+          else if(op == "SlashEqualsToken")
+            new_val = div_exprt{lhs, rhs};
+          else
+            new_val = mod_exprt{lhs, rhs};
+        }
+        if(new_val.type() != lhs.type())
+          new_val = typecast_exprt{new_val, lhs.type()};
+        return code_frontend_assignt{lhs, new_val};
       }
     }
   }
