@@ -867,8 +867,134 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
   {
     std::string obj_name = json_string(json_member(json_member(callee, "expression"), "text"));
     std::string method = json_string(json_member(json_member(callee, "name"), "text"));
-    // Array methods: push, pop
+    // String methods: indexOf, includes, substring, etc.
     exprt obj_expr = convert_expression(json_member(callee, "expression"));
+    if(!obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()))
+    {
+      // Try to get constant string value
+      std::string sv;
+      if(obj_expr.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(obj_expr).get_identifier());
+        if(it != string_constants.end())
+          sv = it->second;
+      }
+      // Get method arguments as constant strings/numbers
+      std::vector<std::string> str_args;
+      std::vector<int> num_args;
+      if(args.is_array())
+      {
+        for(const auto &a : to_json_array(args))
+        {
+          exprt av = convert_expression(a);
+          // Try to extract string constant
+          if(av.id() == ID_symbol)
+          {
+            auto it = string_constants.find(to_symbol_expr(av).get_identifier());
+            if(it != string_constants.end()) { str_args.push_back(it->second); continue; }
+          }
+          if(av.id() == ID_struct && av.operands().size() >= 2 &&
+             av.operands()[0].is_constant() && av.operands()[1].id() == ID_address_of)
+          {
+            // Extract from refined_string_exprt
+            mp_integer len;
+            if(!to_integer(to_constant_expr(av.operands()[0]), len))
+            {
+              const exprt &ptr = av.operands()[1];
+              if(ptr.operands()[0].id() == ID_index &&
+                 ptr.operands()[0].operands()[0].id() == ID_symbol)
+              {
+                const symbolt *as = symbol_table.lookup(
+                  to_symbol_expr(ptr.operands()[0].operands()[0]).get_identifier());
+                if(as && !as->value.is_nil())
+                {
+                  std::string s;
+                  for(mp_integer i = 0; i < len; ++i)
+                  {
+                    auto idx = i.to_ulong();
+                    if(idx < as->value.operands().size() && as->value.operands()[idx].is_constant())
+                    {
+                      mp_integer ch;
+                      if(!to_integer(to_constant_expr(as->value.operands()[idx]), ch))
+                        s += static_cast<char>(ch.to_ulong());
+                    }
+                  }
+                  str_args.push_back(s);
+                  continue;
+                }
+              }
+            }
+          }
+          // Try number
+          if(av.is_constant() && av.type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{ieee_float_spect::double_precision(),
+                           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(av));
+            num_args.push_back(static_cast<int>(std::stod(fv.to_ansi_c_string())));
+          }
+          str_args.push_back("");
+        }
+      }
+      if(!sv.empty())
+      {
+        if(method == "indexOf" && !str_args.empty())
+        {
+          auto pos = sv.find(str_args[0]);
+          int result = (pos == std::string::npos) ? -1 : static_cast<int>(pos);
+          uint64_t bits; double dv = static_cast<double>(result);
+          std::memcpy(&bits, &dv, sizeof(bits));
+          return constant_exprt{integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64), double_type()};
+        }
+        if(method == "includes" && !str_args.empty())
+          return sv.find(str_args[0]) != std::string::npos ? exprt{true_exprt{}} : exprt{false_exprt{}};
+        if(method == "substring" && num_args.size() >= 2)
+        {
+          int start = num_args[0], end = num_args[1];
+          if(start < 0) start = 0;
+          if(end > static_cast<int>(sv.size())) end = sv.size();
+          return convert_string_literal_from_text(sv.substr(start, end - start));
+        }
+        if(method == "substring" && num_args.size() >= 1)
+          return convert_string_literal_from_text(sv.substr(num_args[0]));
+        if(method == "toUpperCase")
+        {
+          std::string upper = sv;
+          for(auto &c : upper) c = std::toupper(c);
+          return convert_string_literal_from_text(upper);
+        }
+        if(method == "toLowerCase")
+        {
+          std::string lower = sv;
+          for(auto &c : lower) c = std::tolower(c);
+          return convert_string_literal_from_text(lower);
+        }
+        if(method == "trim")
+        {
+          auto s = sv;
+          s.erase(0, s.find_first_not_of(" \t\n\r"));
+          s.erase(s.find_last_not_of(" \t\n\r") + 1);
+          return convert_string_literal_from_text(s);
+        }
+        if(method == "charAt" && !num_args.empty())
+        {
+          int idx = num_args[0];
+          if(idx >= 0 && idx < static_cast<int>(sv.size()))
+            return convert_string_literal_from_text(std::string(1, sv[idx]));
+          return convert_string_literal_from_text("");
+        }
+        if(method == "startsWith" && !str_args.empty())
+          return sv.substr(0, str_args[0].size()) == str_args[0]
+            ? exprt{true_exprt{}} : exprt{false_exprt{}};
+        if(method == "endsWith" && !str_args.empty())
+          return sv.size() >= str_args[0].size() &&
+                 sv.substr(sv.size() - str_args[0].size()) == str_args[0]
+            ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      }
+      // Nondet fallback for non-constant strings
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
+    // Array methods: push, pop
     if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
     {
       const auto &st = to_struct_type(obj_expr.type());
