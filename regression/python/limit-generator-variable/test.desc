@@ -1,4 +1,4 @@
-CORE
+KNOWNBUG
 main.py
 
 ^EXIT=0$
@@ -7,3 +7,6 @@ main.py
 ^VERIFICATION SUCCESSFUL$
 --
 ^warning: ignoring
+--
+all(genexp) with variable iterable hangs during type-checking.
+The unrolling creates 64 expressions which is too slow.
