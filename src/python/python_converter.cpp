@@ -9453,6 +9453,16 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     new_rhs = mult_exprt{arith_lhs, rhs};
   else if(op == "FloorDiv")
     new_rhs = div_exprt{arith_lhs, rhs};
+  else if(op == "Div")
+  {
+    // True division: result is float
+    exprt fl = arith_lhs, fr = rhs;
+    if(fl.type().id() != ID_floatbv)
+      fl = typecast_exprt{fl, double_type()};
+    if(fr.type().id() != ID_floatbv)
+      fr = typecast_exprt{fr, double_type()};
+    new_rhs = div_exprt{fl, fr};
+  }
   else if(op == "Mod")
     new_rhs = mod_exprt{arith_lhs, rhs};
   else if(op == "BitOr")
@@ -9484,6 +9494,18 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     string_constants.erase(sid);
     dict_literals.erase(sid);
     float_constants.erase(sid);
+  }
+  // Div-by-zero check for /= and //= and %=
+  if(op == "Div" || op == "FloorDiv" || op == "Mod")
+  {
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    if(exc_sym != nullptr)
+    {
+      exprt divisor = rhs;
+      exprt is_zero = equal_exprt{divisor, safe_zero(divisor.type())};
+      pending_checks.push_back(code_ifthenelset{
+        is_zero, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+    }
   }
   code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
