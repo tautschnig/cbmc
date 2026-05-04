@@ -1,0 +1,9 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+Assertion that should fail.

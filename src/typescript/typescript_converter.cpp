@@ -95,7 +95,58 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
 // --- Expression conversion ---
 
 exprt typescript_convertert::convert_expression(const jsont &node)
-{ return true_exprt{}; }
+{
+  std::string kind = json_string(json_member(node, "_kind"));
+  if(kind == "FirstLiteralToken" || kind == "NumericLiteral")
+    return convert_numeric_literal(node);
+  if(kind == "StringLiteral" || kind == "NoSubstitutionTemplateLiteral")
+    return convert_string_literal(node);
+  if(kind == "TrueKeyword")
+    return true_exprt{};
+  if(kind == "FalseKeyword")
+    return false_exprt{};
+  if(kind == "NullKeyword")
+    return from_integer(0, signedbv_typet{64});
+  if(kind == "Identifier")
+    return convert_identifier(node);
+  if(kind == "BinaryExpression")
+    return convert_binary_expression(node);
+  if(kind == "PrefixUnaryExpression" || kind == "PostfixUnaryExpression")
+    return convert_prefix_unary_expression(node);
+  if(kind == "CallExpression")
+    return convert_call_expression(node);
+  // ES2024 sec-property-accessors
+  if(kind == "PropertyAccessExpression")
+  {
+    exprt obj = convert_expression(json_member(node, "expression"));
+    std::string prop = json_string(json_member(json_member(node, "name"), "text"));
+    if(is_typescript_string_type(obj.type()) && prop == "length")
+      return member_exprt{obj, "length", signedbv_typet{64}};
+    if(obj.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(obj.type());
+      if(st.has_component(prop))
+        return member_exprt{obj, prop, st.get_component(prop).type()};
+    }
+    return nil_exprt{};
+  }
+  if(kind == "ParenthesizedExpression")
+    return convert_expression(json_member(node, "expression"));
+  // ES2024 sec-conditional-operator
+  if(kind == "ConditionalExpression")
+  {
+    exprt cond = convert_expression(json_member(node, "condition"));
+    exprt then_e = convert_expression(json_member(node, "whenTrue"));
+    exprt else_e = convert_expression(json_member(node, "whenFalse"));
+    if(cond.type().id() != ID_bool)
+      cond = typecast_exprt{cond, bool_typet{}};
+    if(then_e.type() != else_e.type())
+      else_e = typecast_exprt{else_e, then_e.type()};
+    return if_exprt{cond, then_e, else_e};
+  }
+  log.warning() << "Unsupported expression: " << kind << messaget::eom;
+  return nil_exprt{};
+}
 
 
 
@@ -128,7 +179,10 @@ exprt typescript_convertert::convert_numeric_literal(const jsont &node)
   uint64_t bits;
   static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64 bits");
   std::memcpy(&bits, &val, sizeof(bits));
-  return constant_exprt{integer2bvrep(mp_integer{bits}, 64), double_type()};
+  // Use string conversion to avoid mp_integer constructor issues
+  std::string bits_str = std::to_string(bits);
+  return constant_exprt{
+    integer2bvrep(mp_integer{bits_str.c_str()}, 64), double_type()};
 }
 
 exprt typescript_convertert::convert_string_literal(const jsont &node)
@@ -744,6 +798,26 @@ void typescript_convertert::convert_module_body(const jsont &statements)
   }
 
   // Create __CPROVER__start function
+  // Initialize __CPROVER_rounding_mode at the start
+  code_blockt full_body;
+  {
+    irep_idt rm_id{"__CPROVER_rounding_mode"};
+    if(symbol_table.lookup(rm_id) == nullptr)
+    {
+      symbolt rm_sym{rm_id, signedbv_typet{32}, "typescript"};
+      rm_sym.base_name = "__CPROVER_rounding_mode";
+      rm_sym.is_lvalue = true;
+      rm_sym.is_state_var = true;
+      rm_sym.is_static_lifetime = true;
+      symbol_table.add(rm_sym);
+    }
+    const symbolt &rm = symbol_table.lookup_ref(rm_id);
+    full_body.add(code_frontend_assignt{
+      rm.symbol_expr(), from_integer(0, signedbv_typet{32})});
+  }
+  for(auto &stmt : start_body.statements())
+    full_body.add(std::move(stmt));
+
   std::string start_name = "__CPROVER__start";
   irep_idt start_id{start_name};
 
@@ -753,7 +827,7 @@ void typescript_convertert::convert_module_body(const jsont &statements)
     symbolt start_sym{start_id, start_type, "typescript"};
     start_sym.base_name = start_name;
     start_sym.is_lvalue = true;
-    start_sym.value = start_body;
+    start_sym.value = full_body;
     symbol_table.add(start_sym);
   }
 }

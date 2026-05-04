@@ -5,6 +5,10 @@
 #include "typescript_converter.h"
 
 #include <util/message.h>
+#include <util/arith_tools.h>
+#include <util/bitvector_types.h>
+#include <util/symbol.h>
+#include <util/std_expr.h>
 #include <util/run.h>
 #include <util/suffix.h>
 #include <util/tempfile.h>
@@ -246,14 +250,41 @@ bool typescript_languaget::typecheck(
 
   typescript_convertert converter{
     symbol_table, filename, ast_json, message_handler};
-  return converter.convert();
+  if(converter.convert())
+    return true;
+
+  // Create __CPROVER_rounding_mode (needed for float operations)
+  irep_idt rm_id{"__CPROVER_rounding_mode"};
+  if(symbol_table.lookup(rm_id) == nullptr)
+  {
+    symbolt rm_sym{rm_id, signedbv_typet{32}, "typescript"};
+    rm_sym.base_name = "__CPROVER_rounding_mode";
+    rm_sym.is_lvalue = true;
+    rm_sym.is_state_var = true;
+    rm_sym.is_static_lifetime = true;
+    rm_sym.value = from_integer(0, signedbv_typet{32});
+    symbol_table.add(rm_sym);
+  }
+
+  return false;
 }
 
 bool typescript_languaget::generate_support_functions(
   symbol_table_baset &symbol_table,
   message_handlert &message_handler)
 {
-  // TODO: Generate __CPROVER__start entry point
+  // Create __CPROVER_rounding_mode (needed for float operations)
+  irep_idt rm_id{"__CPROVER_rounding_mode"};
+  if(symbol_table.lookup(rm_id) == nullptr)
+  {
+    symbolt rm_sym{rm_id, signedbv_typet{32}, "typescript"};
+    rm_sym.base_name = "__CPROVER_rounding_mode";
+    rm_sym.is_lvalue = true;
+    rm_sym.is_state_var = true;
+    rm_sym.is_static_lifetime = true;
+    rm_sym.value = from_integer(0, signedbv_typet{32}); // round to nearest
+    symbol_table.add(rm_sym);
+  }
   return false;
 }
 

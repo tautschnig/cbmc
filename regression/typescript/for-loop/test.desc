@@ -1,0 +1,9 @@
+KNOWNBUG
+main.ts
+--unwind 7
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+For loop with counter.
