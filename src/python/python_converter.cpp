@@ -128,6 +128,78 @@ void python_convertert::add_check(
 
 // Helper: extract std::string from a constant string struct expression
 // Also checks string_constants map for tracked symbol values
+std::optional<double> python_convertert::try_eval_double(const exprt &e) const
+{
+  const exprt *ce = &e;
+  if(ce->id() == ID_typecast && ce->operands().size() == 1)
+    ce = &ce->operands()[0];
+  if(ce->id() == ID_symbol)
+  {
+    auto it = float_constants.find(to_symbol_expr(*ce).get_identifier());
+    if(it != float_constants.end())
+      return it->second;
+    return std::nullopt;
+  }
+  if(ce->is_constant() && ce->type().id() == ID_signedbv)
+  {
+    mp_integer iv;
+    if(!to_integer(to_constant_expr(*ce), iv))
+      return static_cast<double>(iv.to_long());
+  }
+  if(ce->is_constant() && ce->type().id() == ID_floatbv)
+  {
+    ieee_floatt fv{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    fv.from_expr(to_constant_expr(*ce));
+    return std::stod(fv.to_ansi_c_string());
+  }
+  // Binary operations
+  if(ce->operands().size() == 2)
+  {
+    auto l = try_eval_double(ce->operands()[0]);
+    auto r = try_eval_double(ce->operands()[1]);
+    if(l.has_value() && r.has_value())
+    {
+      if(ce->id() == ID_plus)
+        return l.value() + r.value();
+      if(ce->id() == ID_minus)
+        return l.value() - r.value();
+      if(ce->id() == ID_mult)
+        return l.value() * r.value();
+      if(ce->id() == ID_div && r.value() != 0)
+        return l.value() / r.value();
+      if(ce->id() == ID_floatbv_plus)
+        return l.value() + r.value();
+      if(ce->id() == ID_floatbv_minus)
+        return l.value() - r.value();
+      if(ce->id() == ID_floatbv_mult)
+        return l.value() * r.value();
+      if(ce->id() == ID_floatbv_div && r.value() != 0)
+        return l.value() / r.value();
+    }
+  }
+  // Unary minus
+  if(ce->id() == ID_unary_minus && ce->operands().size() == 1)
+  {
+    auto v = try_eval_double(ce->operands()[0]);
+    if(v.has_value())
+      return -v.value();
+  }
+  // If-then-else (from div-by-zero guards)
+  if(ce->id() == ID_if && ce->operands().size() == 3)
+  {
+    // Try to evaluate the condition
+    auto cond = try_eval_double(ce->operands()[0]);
+    if(cond.has_value())
+      return cond.value() != 0.0 ? try_eval_double(ce->operands()[1])
+                                 : try_eval_double(ce->operands()[2]);
+    // If condition unknown, try the true branch (common case: guard is false)
+    return try_eval_double(ce->operands()[2]);
+  }
+  return std::nullopt;
+}
+
 std::optional<std::string>
 python_convertert::extract_string_value(const exprt &e) const
 {
@@ -1803,44 +1875,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
     // Constant base and exponent: compute pow() at conversion time
     // Handle typecast(constant) as constant (from int→float promotion)
-    auto get_double = [this](const exprt &e, double &out) -> bool
+    auto ev_base = try_eval_double(left);
+    auto ev_exp = try_eval_double(right);
+    if(ev_base.has_value() && ev_exp.has_value())
     {
-      const exprt *ce = &e;
-      if(ce->id() == ID_typecast && ce->operands().size() == 1)
-        ce = &ce->operands()[0];
-      if(ce->id() == ID_symbol)
-      {
-        auto it = float_constants.find(to_symbol_expr(*ce).get_identifier());
-        if(it != float_constants.end())
-        {
-          out = it->second;
-          return true;
-        }
-      }
-      if(!ce->is_constant())
-        return false;
-      if(ce->type().id() == ID_signedbv)
-      {
-        mp_integer iv;
-        if(to_integer(to_constant_expr(*ce), iv))
-          return false;
-        out = iv.to_long();
-        return true;
-      }
-      if(ce->type().id() == ID_floatbv)
-      {
-        ieee_floatt fv{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        fv.from_expr(to_constant_expr(*ce));
-        out = std::stod(fv.to_ansi_c_string());
-        return true;
-      }
-      return false;
-    };
-    double base_d, exp_d;
-    if(get_double(left, base_d) && get_double(right, exp_d))
-    {
+      double base_d = ev_base.value(), exp_d = ev_exp.value();
       double result_d = std::pow(base_d, exp_d);
       if(
         right.type().id() == ID_floatbv || exp_d < 0 ||
@@ -2828,20 +2867,28 @@ exprt python_convertert::convert_call(const jsont &expr)
             method_name == "pi" || method_name == "e" || method_name == "inf" ||
             method_name == "nan" || method_name == "tau")
           {
-            ieee_floatt val{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
             if(method_name == "pi")
-              val.from_double(3.14159265358979324);
-            else if(method_name == "e")
-              val.from_double(2.71828182845904524);
-            else if(method_name == "tau")
-              val.from_double(6.28318530717958648);
-            else if(method_name == "inf")
+              return double_to_floatbv(M_PI);
+            if(method_name == "e")
+              return double_to_floatbv(M_E);
+            if(method_name == "tau")
+              return double_to_floatbv(2.0 * M_PI);
+            if(method_name == "inf")
+            {
+              ieee_floatt val{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
               val.make_plus_infinity();
-            else
+              return val.to_expr();
+            }
+            // nan
+            {
+              ieee_floatt val{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
               val.make_NaN();
-            return val.to_expr();
+              return val.to_expr();
+            }
           }
           // Register and route through the math handler
           imported_math_funcs.insert(method_name);
@@ -2949,42 +2996,10 @@ exprt python_convertert::convert_call(const jsont &expr)
           }
           // Constant evaluation (handle typecast from int→float)
           {
-            const exprt *ce = &math_arg;
-            if(ce->id() == ID_typecast && ce->operands().size() == 1)
-              ce = &ce->operands()[0];
-            double val = 0;
-            bool have_val = false;
-            // Check tracked float constants for symbols
-            if(ce->id() == ID_symbol)
+            auto eval_result = try_eval_double(math_arg);
+            if(eval_result.has_value())
             {
-              auto fc_it =
-                float_constants.find(to_symbol_expr(*ce).get_identifier());
-              if(fc_it != float_constants.end())
-              {
-                val = fc_it->second;
-                have_val = true;
-              }
-            }
-            if(!have_val && ce->is_constant() && ce->type().id() == ID_floatbv)
-            {
-              ieee_floatt fv{
-                ieee_float_spect::double_precision(),
-                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-              fv.from_expr(to_constant_expr(*ce));
-              val = std::stod(fv.to_ansi_c_string());
-              have_val = true;
-            }
-            else if(ce->is_constant() && ce->type().id() == ID_signedbv)
-            {
-              mp_integer iv;
-              if(!to_integer(to_constant_expr(*ce), iv))
-              {
-                val = iv.to_long();
-                have_val = true;
-              }
-            }
-            if(have_val)
-            {
+              double val = eval_result.value();
               double res = 0;
               bool computed = true;
               if(func_name == "sqrt" && val >= 0)
@@ -3057,45 +3072,11 @@ exprt python_convertert::convert_call(const jsont &expr)
             exprt arg2 = convert_expression(*std::next(as_array(args).begin()));
             if(arg2.type().id() != ID_floatbv)
               arg2 = safe_typecast(arg2, double_type());
-            double v1 = 0, v2 = 0;
-            auto gd = [this](const exprt &e, double &out) -> bool
+            auto ev1 = try_eval_double(math_arg);
+            auto ev2 = try_eval_double(arg2);
+            if(ev1.has_value() && ev2.has_value())
             {
-              const exprt *c = &e;
-              if(c->id() == ID_typecast && c->operands().size() == 1)
-                c = &c->operands()[0];
-              if(c->id() == ID_symbol)
-              {
-                auto it =
-                  float_constants.find(to_symbol_expr(*c).get_identifier());
-                if(it != float_constants.end())
-                {
-                  out = it->second;
-                  return true;
-                }
-              }
-              if(!c->is_constant())
-                return false;
-              if(c->type().id() == ID_signedbv)
-              {
-                mp_integer iv;
-                if(to_integer(to_constant_expr(*c), iv))
-                  return false;
-                out = iv.to_long();
-                return true;
-              }
-              if(c->type().id() == ID_floatbv)
-              {
-                ieee_floatt fv{
-                  ieee_float_spect::double_precision(),
-                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-                fv.from_expr(to_constant_expr(*c));
-                out = std::stod(fv.to_ansi_c_string());
-                return true;
-              }
-              return false;
-            };
-            if(gd(math_arg, v1) && gd(arg2, v2))
-            {
+              double v1 = ev1.value(), v2 = ev2.value();
               double res = 0;
               bool ok = true;
               if(func_name == "pow")
@@ -5704,55 +5685,18 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       auto ait = as_array(args).begin();
       exprt arg = convert_expression(*ait);
-      // Constant evaluation
-      double val = 0;
-      bool have_val = false;
-      if(arg.id() == ID_symbol)
+      auto eval_val = try_eval_double(arg);
+      if(eval_val.has_value())
       {
-        auto it = float_constants.find(to_symbol_expr(arg).get_identifier());
-        if(it != float_constants.end())
-        {
-          val = it->second;
-          have_val = true;
-        }
-      }
-      const exprt *ce = &arg;
-      if(ce->id() == ID_typecast && ce->operands().size() == 1)
-        ce = &ce->operands()[0];
-      if(!have_val && ce->is_constant() && ce->type().id() == ID_floatbv)
-      {
-        ieee_floatt fv{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        fv.from_expr(to_constant_expr(*ce));
-        val = std::stod(fv.to_ansi_c_string());
-        have_val = true;
-      }
-      if(!have_val && ce->is_constant() && ce->type().id() == ID_signedbv)
-      {
-        mp_integer iv;
-        if(!to_integer(to_constant_expr(*ce), iv))
-        {
-          val = iv.to_long();
-          have_val = true;
-        }
-      }
-      if(have_val)
-      {
+        double val = eval_val.value();
         int ndigits = 0;
         ++ait;
         if(ait != as_array(args).end())
         {
           exprt nd = convert_expression(*ait);
-          const exprt *nce = &nd;
-          if(nce->id() == ID_typecast && nce->operands().size() == 1)
-            nce = &nce->operands()[0];
-          if(nce->is_constant() && nce->type().id() == ID_signedbv)
-          {
-            mp_integer nv;
-            if(!to_integer(to_constant_expr(*nce), nv))
-              ndigits = nv.to_long();
-          }
+          auto nev = try_eval_double(nd);
+          if(nev.has_value())
+            ndigits = static_cast<int>(nev.value());
         }
         double factor = std::pow(10.0, ndigits);
         double rounded = std::round(val * factor) / factor;
@@ -7391,6 +7335,42 @@ exprt python_convertert::convert_list(const jsont &expr)
 exprt python_convertert::convert_attribute(const jsont &expr)
 {
   std::string attr = json_string(json_member(expr, "attr"));
+
+  // Math module constants: math.pi, math.e, etc.
+  // Check BEFORE converting value (which would fail for module names)
+  if(
+    json_member(expr, "value").is_object() &&
+    is_node_type(json_member(expr, "value"), "Name"))
+  {
+    std::string obj_name =
+      json_string(json_member(json_member(expr, "value"), "id"));
+    if(obj_name == "math")
+    {
+      if(attr == "pi")
+        return double_to_floatbv(M_PI);
+      if(attr == "e")
+        return double_to_floatbv(M_E);
+      if(attr == "tau")
+        return double_to_floatbv(2.0 * M_PI);
+      if(attr == "inf")
+      {
+        ieee_floatt v{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        v.make_plus_infinity();
+        return v.to_expr();
+      }
+      if(attr == "nan")
+      {
+        ieee_floatt v{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        v.make_NaN();
+        return v.to_expr();
+      }
+    }
+  }
+
   exprt value = convert_expression(json_member(expr, "value"));
 
   if(value.is_nil())
@@ -8319,26 +8299,14 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       dict_literals.erase(symbol_id);
   }
-  // Track numeric constants
-  if(rhs.is_constant())
+  // Track numeric constants (including expressions)
   {
-    if(rhs.type().id() == ID_signedbv)
-    {
-      mp_integer iv;
-      if(!to_integer(to_constant_expr(rhs), iv))
-        float_constants[symbol_id] = iv.to_long();
-    }
-    else if(rhs.type().id() == ID_floatbv)
-    {
-      ieee_floatt fv{
-        ieee_float_spect::double_precision(),
-        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      fv.from_expr(to_constant_expr(rhs));
-      float_constants[symbol_id] = std::stod(fv.to_ansi_c_string());
-    }
+    auto ev = try_eval_double(rhs);
+    if(ev.has_value())
+      float_constants[symbol_id] = ev.value();
+    else
+      float_constants.erase(symbol_id);
   }
-  else
-    float_constants.erase(symbol_id);
   return std::move(assign);
 }
 
@@ -9134,25 +9102,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
       else
         dict_literals.erase(sym.name);
     }
-    if(typed_rhs.is_constant())
     {
-      if(typed_rhs.type().id() == ID_signedbv)
-      {
-        mp_integer iv;
-        if(!to_integer(to_constant_expr(typed_rhs), iv))
-          float_constants[sym.name] = iv.to_long();
-      }
-      else if(typed_rhs.type().id() == ID_floatbv)
-      {
-        ieee_floatt fv{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        fv.from_expr(to_constant_expr(typed_rhs));
-        float_constants[sym.name] = std::stod(fv.to_ansi_c_string());
-      }
+      auto ev = try_eval_double(typed_rhs);
+      if(ev.has_value())
+        float_constants[sym.name] = ev.value();
+      else
+        float_constants.erase(sym.name);
     }
-    else
-      float_constants.erase(sym.name);
     block.add(std::move(assign));
   }
 
