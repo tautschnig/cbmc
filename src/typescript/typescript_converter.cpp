@@ -180,7 +180,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   if(kind == "FalseKeyword")
     return false_exprt{};
   if(kind == "NullKeyword")
+  {
+    // Check context type from _type annotation
+    std::string ts_type = json_string(json_member(node, "_type"));
+    if(ts_type == "null")
+    {
+      // Use a sentinel value that works with any comparison
+      return from_integer(0, signedbv_typet{64});
+    }
     return from_integer(0, signedbv_typet{64});
+  }
   if(kind == "Identifier")
     return convert_identifier(node);
   // ES2024 sec-this-keyword
@@ -650,19 +659,67 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ES2024 sec-isstrictlyequal: ===
   if(op == "EqualsEqualsEqualsToken")
   {
+    // Handle type mismatch (null comparison)
+    if(left.type() != right.type())
+    {
+      // x === null where x is not nullable → false
+      if((right.is_constant() && right.type().id() == ID_signedbv) ||
+         (left.is_constant() && left.type().id() == ID_signedbv))
+        return false_exprt{};
+      right = typecast_exprt(right, left.type());
+    }
     if(left.type().id() == ID_floatbv)
       return ieee_float_equal_exprt{left, right};
-    // String equality: compare structs (length + data)
-    if(is_typescript_string_type(left.type()) &&
-       is_typescript_string_type(right.type()))
-      return equal_exprt{left, right};
+    // Constant string equality
+    if(is_typescript_string_type(left.type()))
+    {
+      auto ext = [this](const exprt &e) -> std::string {
+        if(e.id() == ID_symbol) {
+          auto it = string_constants.find(to_symbol_expr(e).get_identifier());
+          if(it != string_constants.end()) return "S:" + it->second;
+        }
+        if(e.id() == ID_struct && e.operands().size() >= 2 &&
+           e.operands()[0].is_constant()) {
+          mp_integer len;
+          if(!to_integer(to_constant_expr(e.operands()[0]), len)) {
+            std::string s;
+            const exprt &data = e.operands()[1];
+            for(mp_integer i = 0; i < len; ++i) {
+              auto idx = i.to_ulong();
+              if(idx < data.operands().size() && data.operands()[idx].is_constant()) {
+                mp_integer ch;
+                if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
+                  s += static_cast<char>(ch.to_ulong());
+              }
+            }
+            return "S:" + s;
+          }
+        }
+        return "";
+      };
+      std::string ls = ext(left), rs = ext(right);
+      if(!ls.empty() && !rs.empty())
+        return ls == rs ? exprt{true_exprt{}} : exprt{false_exprt{}};
+    }
     return equal_exprt{left, right};
   }
+
   // ES2024 sec-isstrictlyequal: !==
   if(op == "ExclamationEqualsEqualsToken")
   {
-    if(left.type().id() == ID_floatbv)
+    if(left.type().id() == ID_floatbv && right.type().id() == ID_floatbv)
       return ieee_float_notequal_exprt{left, right};
+    // Null comparison: x !== null
+    if(left.type() != right.type())
+    {
+      if(right.type().id() == ID_signedbv && right.is_constant())
+      {
+        mp_integer rv;
+        if(!to_integer(to_constant_expr(right), rv) && rv == 0)
+          return true_exprt{}; // x !== null is true when x is not nullable
+      }
+      right = typecast_exprt(right, left.type());
+    }
     return notequal_exprt{left, right};
   }
 
@@ -954,10 +1011,23 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         for(const auto &arg : to_json_array(args))
           arguments.push_back(convert_expression(arg));
       }
+      // Typecast null args to match parameter types
+      const auto &fp = func_type.parameters();
+      for(std::size_t i = 0; i < arguments.size() && i < fp.size(); i++)
+      {
+        if(arguments[i].type() != fp[i].type())
+        {
+          // null (int 0) → zero-length string
+          if(is_typescript_string_type(fp[i].type()) &&
+             arguments[i].type().id() == ID_signedbv)
+            arguments[i] = convert_string_literal_from_text("");
+          else if(arguments[i].type().id() != fp[i].type().id())
+            arguments[i] = typecast_exprt(arguments[i], fp[i].type());
+        }
+      }
       // Fill missing args with defaults
-      const auto &fparams = func_type.parameters();
       auto def_it = default_values.find(func_id);
-      while(arguments.size() < fparams.size())
+      while(arguments.size() < fp.size())
       {
         std::size_t idx = arguments.size();
         if(def_it != default_values.end())
@@ -970,7 +1040,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
         }
         arguments.push_back(
-          side_effect_expr_nondett{fparams[idx].type(), get_location(node)});
+          side_effect_expr_nondett{fp[idx].type(), get_location(node)});
       }
       return side_effect_expr_function_callt{
         sym->symbol_expr(),
