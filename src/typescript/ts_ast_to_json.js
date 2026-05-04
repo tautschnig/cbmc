@@ -1,3 +1,5 @@
+// NOTE: This file is for DEBUGGING ONLY. The runtime parser is embedded
+// inline in typescript_language.cpp as a raw string literal.
 // TypeScript AST to JSON converter for CBMC
 // Uses the TypeScript Compiler API to parse, type-check, and emit a JSON AST
 // with resolved type information for every node.
