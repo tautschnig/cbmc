@@ -1800,29 +1800,10 @@ codet typescript_convertert::convert_statement(const jsont &node)
           pending_stmts.clear();
           block.add(code_frontend_assignt{sym.symbol_expr(), rhs});
           // Track string constants
-          if(
-            is_typescript_string_type(rhs.type()) && rhs.id() == ID_struct &&
-            rhs.operands().size() >= 2 && rhs.operands()[0].is_constant())
           {
-            mp_integer len;
-            if(!to_integer(to_constant_expr(rhs.operands()[0]), len))
-            {
-              std::string sv;
-              const exprt &data = rhs.operands()[1];
-              for(mp_integer i = 0; i < len; ++i)
-              {
-                auto idx = i.to_ulong();
-                if(
-                  idx < data.operands().size() &&
-                  data.operands()[idx].is_constant())
-                {
-                  mp_integer ch;
-                  if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
-                    sv += static_cast<char>(ch.to_ulong());
-                }
-              }
-              string_constants[sym_id] = sv;
-            }
+            std::string sv = extract_string_value(rhs);
+            if(!sv.empty())
+              string_constants[sym_id] = sv.substr(2);
           }
           // Set symbol value for constant arrays (enables spread)
           {
