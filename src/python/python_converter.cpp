@@ -5901,6 +5901,14 @@ exprt python_convertert::convert_call(const jsont &expr)
       // str(string) — return as-is
       if(is_python_string_type(arg.type()))
         return arg;
+      // str(bool) — "True" or "False"
+      if(arg.type().id() == ID_bool || arg.type().id() == ID_c_bool)
+      {
+        if(arg.is_true())
+          return build_string_struct("True");
+        if(arg.is_false())
+          return build_string_struct("False");
+      }
       // str(class_instance) — call __str__ if available
       if(arg.type().id() == ID_struct)
       {
