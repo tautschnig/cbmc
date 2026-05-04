@@ -620,6 +620,35 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
     if(it != string_constants.end())
       return "S:" + it->second;
   }
+  // Handle member expressions: obj.field
+  if(e.id() == ID_member)
+  {
+    const auto &me = to_member_expr(e);
+    const exprt &compound = me.compound();
+    // Try to resolve the compound to its value
+    if(compound.id() == ID_symbol)
+    {
+      const symbolt *s =
+        symbol_table.lookup(to_symbol_expr(compound).get_identifier());
+      if(s && !s->value.is_nil() && s->value.id() == ID_struct)
+      {
+        // Find the field in the struct
+        if(s->value.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(s->value.type());
+          for(std::size_t i = 0; i < st.components().size(); ++i)
+          {
+            if(
+              st.components()[i].get_name() == me.get_component_name() &&
+              i < s->value.operands().size())
+            {
+              return extract_string_value(s->value.operands()[i]);
+            }
+          }
+        }
+      }
+    }
+  }
   // Check refined_string_exprt: {length, address_of(arr[0])}
   if(
     e.id() == ID_struct && e.operands().size() >= 2 &&
@@ -798,56 +827,10 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       is_typescript_string_type(left.type()) ||
       is_typescript_string_type(right.type()))
     {
-      // Try constant evaluation
-      auto ext = [this](const exprt &e) -> std::string
-      {
-        if(e.id() == ID_symbol)
-        {
-          auto it = string_constants.find(to_symbol_expr(e).get_identifier());
-          if(it != string_constants.end())
-            return it->second;
-        }
-        // For refined_string_exprt: {length, content_ptr}
-        if(
-          e.id() == ID_struct && e.operands().size() >= 2 &&
-          e.operands()[0].is_constant())
-        {
-          mp_integer len;
-          if(!to_integer(to_constant_expr(e.operands()[0]), len))
-          {
-            // Content pointer: address_of(arr[0])
-            const exprt &ptr = e.operands()[1];
-            if(
-              ptr.id() == ID_address_of && ptr.operands()[0].id() == ID_index &&
-              ptr.operands()[0].operands()[0].id() == ID_symbol)
-            {
-              irep_idt arr_id = to_symbol_expr(ptr.operands()[0].operands()[0])
-                                  .get_identifier();
-              const symbolt *arr_sym = symbol_table.lookup(arr_id);
-              if(arr_sym != nullptr && !arr_sym->value.is_nil())
-              {
-                std::string s;
-                const exprt &arr = arr_sym->value;
-                for(mp_integer i = 0; i < len; ++i)
-                {
-                  auto idx = i.to_ulong();
-                  if(
-                    idx < arr.operands().size() &&
-                    arr.operands()[idx].is_constant())
-                  {
-                    mp_integer ch;
-                    if(!to_integer(to_constant_expr(arr.operands()[idx]), ch))
-                      s += static_cast<char>(ch.to_ulong());
-                  }
-                }
-                return s;
-              }
-            }
-          }
-        }
-        return "";
-      };
-      std::string ls = ext(left), rs = ext(right);
+      std::string ls_raw = extract_string_value(left);
+      std::string rs_raw = extract_string_value(right);
+      std::string ls = ls_raw.empty() ? "" : ls_raw.substr(2);
+      std::string rs = rs_raw.empty() ? "" : rs_raw.substr(2);
       if(!ls.empty() || !rs.empty())
         return convert_string_literal_from_text(ls + rs);
       return side_effect_expr_nondett{
@@ -931,54 +914,8 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     // Constant string equality
     if(is_typescript_string_type(left.type()))
     {
-      auto ext = [this](const exprt &e) -> std::string
-      {
-        if(e.id() == ID_symbol)
-        {
-          auto it = string_constants.find(to_symbol_expr(e).get_identifier());
-          if(it != string_constants.end())
-            return "S:" + it->second;
-        }
-        if(
-          e.id() == ID_struct && e.operands().size() >= 2 &&
-          e.operands()[0].is_constant())
-        {
-          mp_integer len;
-          if(!to_integer(to_constant_expr(e.operands()[0]), len))
-          {
-            // Check for refined_string: {length, address_of(arr[0])}
-            const exprt &ptr = e.operands()[1];
-            if(
-              ptr.id() == ID_address_of && ptr.operands()[0].id() == ID_index &&
-              ptr.operands()[0].operands()[0].id() == ID_symbol)
-            {
-              irep_idt aid = to_symbol_expr(ptr.operands()[0].operands()[0])
-                               .get_identifier();
-              const symbolt *as = symbol_table.lookup(aid);
-              if(as && !as->value.is_nil())
-              {
-                std::string s;
-                for(mp_integer i = 0; i < len; ++i)
-                {
-                  auto idx = i.to_ulong();
-                  if(
-                    idx < as->value.operands().size() &&
-                    as->value.operands()[idx].is_constant())
-                  {
-                    mp_integer ch;
-                    if(!to_integer(
-                         to_constant_expr(as->value.operands()[idx]), ch))
-                      s += static_cast<char>(ch.to_ulong());
-                  }
-                }
-                return "S:" + s;
-              }
-            }
-          }
-        }
-        return "";
-      };
-      std::string ls = ext(left), rs = ext(right);
+      std::string ls = extract_string_value(left);
+      std::string rs = extract_string_value(right);
       if(!ls.empty() && !rs.empty())
         return ls == rs ? exprt{true_exprt{}} : exprt{false_exprt{}};
     }
@@ -1860,6 +1797,52 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return result;
       }
     }
+    // Array.indexOf: find index of element
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "indexOf" && args.is_array() && !to_json_array(args).empty())
+    {
+      exprt target = convert_expression(*to_json_array(args).begin());
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        // For constant arrays, find the index at conversion time
+        if(target.is_constant())
+        {
+          for(mp_integer i = 0; i < len; ++i)
+          {
+            auto idx = i.to_ulong();
+            if(idx < data.operands().size() && data.operands()[idx] == target)
+            {
+              double dv = static_cast<double>(i.to_long());
+              uint64_t bits;
+              std::memcpy(&bits, &dv, sizeof(bits));
+              return constant_exprt{
+                integer2bvrep(mp_integer{bits}, 64), double_type()};
+            }
+          }
+          // Not found: return -1
+          double neg1 = -1.0;
+          uint64_t bits;
+          std::memcpy(&bits, &neg1, sizeof(bits));
+          return constant_exprt{
+            integer2bvrep(mp_integer{bits}, 64), double_type()};
+        }
+      }
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     // Array.every/some: boolean array predicates
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -2604,7 +2587,31 @@ codet typescript_convertert::convert_statement(const jsont &node)
   }
   // TSH: Object Types.md — interface declarations (type-only, no runtime code)
   if(kind == "InterfaceDeclaration" || kind == "TypeAliasDeclaration")
+  {
+    // Register interface type in class_types for convert_type lookup
+    if(kind == "InterfaceDeclaration")
+    {
+      std::string iname =
+        json_string(json_member(json_member(node, "name"), "text"));
+      const jsont &imembers = json_member(node, "members");
+      if(!iname.empty() && imembers.is_array())
+      {
+        struct_typet itype;
+        for(const auto &m : to_json_array(imembers))
+        {
+          std::string mname =
+            json_string(json_member(json_member(m, "name"), "text"));
+          std::string mtype_str = json_string(json_member(m, "_type"));
+          if(!mname.empty() && !mtype_str.empty())
+            itype.components().push_back(
+              struct_typet::componentt{mname, convert_type(mtype_str)});
+        }
+        if(!itype.components().empty())
+          class_types[iname] = itype;
+      }
+    }
     return code_skipt{};
+  }
 
   // ES2024 sec-class-definitions
   if(kind == "ClassDeclaration")

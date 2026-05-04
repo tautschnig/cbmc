@@ -188,6 +188,7 @@ function n2j(node) {
       if(node.heritageClauses) r.heritage = node.heritageClauses.map(n2j);
       break;
     case ts.SyntaxKind.PropertyDeclaration:
+    case ts.SyntaxKind.PropertySignature:
       r.name = n2j(node.name);
       if(node.type) r.typeAnnotation = n2j(node.type);
       if(node.initializer) r.initializer = n2j(node.initializer);
@@ -260,6 +261,7 @@ function n2j(node) {
       if(node.initializer) r.initializer = n2j(node.initializer);
       break;
     case ts.SyntaxKind.EnumDeclaration:
+    case ts.SyntaxKind.InterfaceDeclaration:
       if(node.name) r.name = n2j(node.name);
       r.members = node.members.map(n2j);
       break;
