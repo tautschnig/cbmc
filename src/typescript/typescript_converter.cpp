@@ -391,41 +391,21 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       {
         exprt expr = convert_expression(json_member(span, "expression"));
         // Try to extract constant string value
-        if(expr.id() == ID_symbol)
+        std::string sv = extract_string_value(expr);
+        if(!sv.empty())
+          result += sv.substr(2);
+        else if(expr.is_constant() && expr.type().id() == ID_floatbv)
         {
-          auto it =
-            string_constants.find(to_symbol_expr(expr).get_identifier());
-          if(it != string_constants.end())
-            result += it->second;
+          // Convert constant number to string
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(expr));
+          double dval = std::stod(fv.to_ansi_c_string());
+          if(dval == std::floor(dval) && std::abs(dval) < 1e15)
+            result += std::to_string(static_cast<long long>(dval));
           else
-            all_const = false;
-        }
-        else if(
-          is_typescript_string_type(expr.type()) && expr.id() == ID_struct &&
-          expr.operands().size() >= 2)
-        {
-          // Extract from literal
-          mp_integer len;
-          if(
-            expr.operands()[0].is_constant() &&
-            !to_integer(to_constant_expr(expr.operands()[0]), len))
-          {
-            const exprt &data = expr.operands()[1];
-            for(mp_integer i = 0; i < len; ++i)
-            {
-              auto idx = i.to_ulong();
-              if(
-                idx < data.operands().size() &&
-                data.operands()[idx].is_constant())
-              {
-                mp_integer ch;
-                if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
-                  result += static_cast<char>(ch.to_ulong());
-              }
-            }
-          }
-          else
-            all_const = false;
+            result += fv.to_ansi_c_string();
         }
         else
           all_const = false;
