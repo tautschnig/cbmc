@@ -2576,6 +2576,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
         else
           cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
       }
+      else if(is_python_tuple_type(container.type()))
+      {
+        // x in (a, b, c) → x==a or x==b or x==c
+        const auto &st = to_struct_type(container.type());
+        exprt in_expr = false_exprt{};
+        for(const auto &comp : st.components())
+        {
+          exprt elem = member_exprt{container, comp.get_name(), comp.type()};
+          if(item.type() != elem.type())
+            elem = safe_typecast(elem, item.type());
+          in_expr = or_exprt{in_expr, equal_exprt{item, elem}};
+        }
+        cmp = (op == "In") ? in_expr : exprt{not_exprt{in_expr}};
+      }
       else
       {
         log.warning() << "'in' operator only supported for lists"
@@ -4849,7 +4863,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
-        return typecast_exprt{arg, bool_typet{}};
+        return safe_typecast(arg, bool_typet{});
     }
     return false_exprt{};
   }
