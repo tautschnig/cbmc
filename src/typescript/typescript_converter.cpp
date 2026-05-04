@@ -816,10 +816,28 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   }
   // ES2024 sec-subtraction-operator-minus
   if(op == "MinusToken")
+  {
+    if(left.type().id() == ID_floatbv)
+    {
+      exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+      ieee_float_op_exprt result{left, ID_floatbv_minus, right, rm};
+      result.type() = left.type();
+      return std::move(result);
+    }
     return minus_exprt{left, right};
+  }
   // ES2024 sec-multiplicative-operators
   if(op == "AsteriskToken")
+  {
+    if(left.type().id() == ID_floatbv)
+    {
+      exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+      ieee_float_op_exprt result{left, ID_floatbv_mult, right, rm};
+      result.type() = left.type();
+      return std::move(result);
+    }
     return mult_exprt{left, right};
+  }
   if(op == "SlashToken")
   {
     if(left.type().id() == ID_floatbv)
@@ -1875,6 +1893,12 @@ codet typescript_convertert::convert_statement(const jsont &node)
     codet body = convert_statement(json_member(node, "statement"));
     return code_dowhilet{std::move(cond), std::move(body)};
   }
+  // ES2024 sec-break-statement
+  if(kind == "BreakStatement")
+    return code_breakt{};
+  // ES2024 sec-continue-statement
+  if(kind == "ContinueStatement")
+    return code_continuet{};
   // ES2024 sec-for-statement
   if(kind == "ForStatement")
     return convert_for_statement(node);
@@ -1913,7 +1937,11 @@ codet typescript_convertert::convert_statement(const jsont &node)
         const jsont &stmts = json_member(clause, "statements");
         if(stmts.is_array())
           for(const auto &s : to_json_array(stmts))
+          {
+            if(json_string(json_member(s, "_kind")) == "BreakStatement")
+              continue;
             body.add(convert_statement(s));
+          }
         default_body = std::move(body);
         break;
       }
@@ -1931,7 +1959,11 @@ codet typescript_convertert::convert_statement(const jsont &node)
       const jsont &stmts = json_member(clause, "statements");
       if(stmts.is_array())
         for(const auto &s : to_json_array(stmts))
+        {
+          if(json_string(json_member(s, "_kind")) == "BreakStatement")
+            continue;
           body.add(convert_statement(s));
+        }
       exprt case_val = convert_expression(json_member(clause, "expression"));
       if(!case_val.is_nil())
       {

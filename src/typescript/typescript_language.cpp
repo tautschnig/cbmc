@@ -285,6 +285,7 @@ function n2j(node) {
       r.expression = n2j(node.expression);
       break;
     case ts.SyntaxKind.BreakStatement:
+    case ts.SyntaxKind.ContinueStatement:
       break;
     case ts.SyntaxKind.ConditionalExpression:
       r.condition = n2j(node.condition);
