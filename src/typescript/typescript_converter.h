@@ -60,6 +60,7 @@ private:
   exprt convert_identifier(const jsont &node);
   exprt convert_numeric_literal(const jsont &node);
   exprt convert_string_literal(const jsont &node);
+  exprt convert_string_literal_from_text(const std::string &text);
   exprt convert_boolean_literal(const jsont &node);
 
   // --- Statement conversion ---

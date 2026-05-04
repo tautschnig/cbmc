@@ -89,6 +89,43 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
+  // Union types: string | null, number | undefined, etc.
+  if(ts_type.find(" | ") != std::string::npos)
+  {
+    // For T | null or T | undefined, use T's type
+    // (null/undefined modeled as sentinel values)
+    std::string cleaned = ts_type;
+    // Remove " | null" and " | undefined"
+    auto remove_part = [&](const std::string &part) {
+      auto pos = cleaned.find(part);
+      while(pos != std::string::npos)
+      {
+        cleaned.erase(pos, part.size());
+        pos = cleaned.find(part);
+      }
+    };
+    remove_part(" | null");
+    remove_part(" | undefined");
+    remove_part("null | ");
+    remove_part("undefined | ");
+    if(!cleaned.empty())
+      return convert_type(cleaned);
+  }
+  // Array types: number[], string[], etc.
+  if(ts_type.size() > 2 && ts_type.substr(ts_type.size() - 2) == "[]")
+  {
+    std::string elem = ts_type.substr(0, ts_type.size() - 2);
+    typet elem_type = convert_type(elem);
+    std::size_t max_len = 64;
+    array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
+    struct_typet list_type;
+    list_type.components().push_back(
+      struct_typet::componentt{"length", signedbv_typet{64}});
+    list_type.components().push_back(
+      struct_typet::componentt{"data", arr_type});
+    list_type.set_tag("typescript_array");
+    return list_type;
+  }
   // Default: treat as number for now
   return double_type();
 }
@@ -135,6 +172,28 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     }
     return nil_exprt{};
   }
+  // ES2024 sec-element-access: arr[i]
+  if(kind == "ElementAccessExpression")
+  {
+    exprt obj = convert_expression(json_member(node, "expression"));
+    exprt idx = convert_expression(json_member(node, "argumentExpression"));
+    if(!obj.is_nil() && !idx.is_nil())
+    {
+      // Array indexing: arr[i] → arr.data[i]
+      if(obj.type().id() == ID_struct)
+      {
+        const auto &st = to_struct_type(obj.type());
+        if(st.has_component("data"))
+        {
+          exprt data = member_exprt{obj, "data", st.get_component("data").type()};
+          if(idx.type() != signedbv_typet{64})
+            idx = typecast_exprt(idx, signedbv_typet{64});
+          return index_exprt{data, idx};
+        }
+      }
+    }
+    return nil_exprt{};
+  }
   if(kind == "ParenthesizedExpression")
     return convert_expression(json_member(node, "expression"));
   // ES2024 sec-conditional-operator
@@ -148,6 +207,61 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     if(then_e.type() != else_e.type())
       else_e = typecast_exprt{else_e, then_e.type()};
     return if_exprt{cond, then_e, else_e};
+  }
+  // ES2024 sec-template-literals
+  if(kind == "TemplateExpression")
+  {
+    // Concatenate head + spans at conversion time
+    std::string result;
+    bool all_const = true;
+    std::string head_text = json_string(json_member(json_member(node, "head"), "text"));
+    result += head_text;
+    const jsont &spans = json_member(node, "templateSpans");
+    if(spans.is_array())
+    {
+      for(const auto &span : to_json_array(spans))
+      {
+        exprt expr = convert_expression(json_member(span, "expression"));
+        // Try to extract constant string value
+        if(expr.id() == ID_symbol)
+        {
+          auto it = string_constants.find(to_symbol_expr(expr).get_identifier());
+          if(it != string_constants.end())
+            result += it->second;
+          else
+            all_const = false;
+        }
+        else if(is_typescript_string_type(expr.type()) &&
+                expr.id() == ID_struct && expr.operands().size() >= 2)
+        {
+          // Extract from literal
+          mp_integer len;
+          if(expr.operands()[0].is_constant() &&
+             !to_integer(to_constant_expr(expr.operands()[0]), len))
+          {
+            const exprt &data = expr.operands()[1];
+            for(mp_integer i = 0; i < len; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx < data.operands().size() && data.operands()[idx].is_constant())
+              {
+                mp_integer ch;
+                if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
+                  result += static_cast<char>(ch.to_ulong());
+              }
+            }
+          }
+          else
+            all_const = false;
+        }
+        else
+          all_const = false;
+        result += json_string(json_member(json_member(span, "literal"), "text"));
+      }
+    }
+    if(all_const)
+      return convert_string_literal_from_text(result);
+    return side_effect_expr_nondett{typescript_string_type(), get_location(node)};
   }
   // ES2024 sec-object-initializer
   if(kind == "ObjectLiteralExpression")
@@ -249,24 +363,27 @@ exprt typescript_convertert::convert_numeric_literal(const jsont &node)
     integer2bvrep(mp_integer{bits_str.c_str()}, 64), double_type()};
 }
 
-exprt typescript_convertert::convert_string_literal(const jsont &node)
+exprt typescript_convertert::convert_string_literal_from_text(
+  const std::string &text)
 {
-  // ES2024 sec-ecmascript-language-types-string-type
-  std::string text = json_string(json_member(node, "text"));
   struct_typet str_type = typescript_string_type();
   const auto &data_type = to_array_type(str_type.components()[1].type());
-
   exprt::operandst chars;
   for(char c : text)
     chars.push_back(
       from_integer(static_cast<unsigned char>(c), unsignedbv_typet{16}));
   while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
     chars.push_back(from_integer(0, unsignedbv_typet{16}));
-
   return struct_exprt{
     {from_integer(static_cast<long long>(text.size()), signedbv_typet{64}),
      array_exprt{std::move(chars), data_type}},
     str_type};
+}
+
+exprt typescript_convertert::convert_string_literal(const jsont &node)
+{
+  return convert_string_literal_from_text(
+    json_string(json_member(node, "text")));
 }
 
 exprt typescript_convertert::convert_boolean_literal(const jsont &node)
@@ -846,6 +963,85 @@ codet typescript_convertert::convert_statement(const jsont &node)
     return code_skipt{};
   }
 
+  // ES2024 sec-for-in-and-for-of-statements
+  if(kind == "ForOfStatement")
+  {
+    // Convert: for(const x of arr) { body }
+    // → let __i = 0; while(__i < arr.length) { const x = arr.data[__i]; body; __i++; }
+    code_blockt block;
+    // Get the array expression
+    exprt arr = convert_expression(json_member(node, "expression"));
+    if(arr.is_nil())
+      return code_skipt{};
+    // Create iterator variable
+    static unsigned forit_ctr = 0;
+    std::string it_name = "__forit_" + std::to_string(forit_ctr++);
+    std::string it_qname = "typescript::" +
+      (current_function.empty() ? "" : current_function + "::") + it_name;
+    irep_idt it_id{it_qname};
+    if(symbol_table.lookup(it_id) == nullptr)
+    {
+      symbolt it_sym{it_id, signedbv_typet{64}, "typescript"};
+      it_sym.base_name = it_name;
+      it_sym.is_lvalue = true;
+      it_sym.is_state_var = true;
+      symbol_table.add(it_sym);
+    }
+    symbol_exprt it_var = symbol_table.lookup_ref(it_id).symbol_expr();
+    block.add(code_frontend_assignt{it_var, from_integer(0, signedbv_typet{64})});
+    // Get loop variable name
+    const jsont &init_node = json_member(node, "initializer");
+    std::string loop_var;
+    if(is_kind(init_node, "VariableDeclarationList"))
+    {
+      const jsont &decls = json_member(init_node, "declarations");
+      if(decls.is_array() && !to_json_array(decls).empty())
+        loop_var = json_string(json_member(
+          json_member(*to_json_array(decls).begin(), "name"), "text"));
+    }
+    // Create loop variable
+    typet elem_type = double_type();
+    if(arr.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(arr.type());
+      if(st.has_component("data"))
+        elem_type = to_array_type(st.get_component("data").type()).element_type();
+    }
+    std::string lv_qname = "typescript::" +
+      (current_function.empty() ? "" : current_function + "::") + loop_var;
+    irep_idt lv_id{lv_qname};
+    if(!loop_var.empty() && symbol_table.lookup(lv_id) == nullptr)
+    {
+      symbolt lv_sym{lv_id, elem_type, "typescript"};
+      lv_sym.base_name = loop_var;
+      lv_sym.is_lvalue = true;
+      lv_sym.is_state_var = true;
+      symbol_table.add(lv_sym);
+    }
+    // Build while loop
+    exprt arr_len = member_exprt{arr, "length", signedbv_typet{64}};
+    exprt cond = binary_relation_exprt{it_var, ID_lt, arr_len};
+    code_blockt loop_body;
+    if(!loop_var.empty())
+    {
+      const symbolt &lv = symbol_table.lookup_ref(lv_id);
+      if(arr.type().id() == ID_struct)
+      {
+        const auto &st = to_struct_type(arr.type());
+        if(st.has_component("data"))
+        {
+          exprt data = member_exprt{arr, "data", st.get_component("data").type()};
+          loop_body.add(code_frontend_assignt{
+            lv.symbol_expr(), index_exprt{data, it_var}});
+        }
+      }
+    }
+    loop_body.add(convert_statement(json_member(node, "statement")));
+    loop_body.add(code_frontend_assignt{
+      it_var, plus_exprt{it_var, from_integer(1, signedbv_typet{64})}});
+    block.add(code_whilet{cond, std::move(loop_body)});
+    return std::move(block);
+  }
   log.warning() << "Unsupported statement kind: " << kind << messaget::eom;
   return code_skipt{};
 }
