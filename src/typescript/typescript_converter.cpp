@@ -1664,6 +1664,13 @@ codet typescript_convertert::convert_statement(const jsont &node)
   if(kind == "WhileStatement")
     return convert_while_statement(node);
 
+  // ES2024 sec-do-while-statement
+  if(kind == "DoStatement")
+  {
+    exprt cond = convert_expression(json_member(node, "expression"));
+    codet body = convert_statement(json_member(node, "statement"));
+    return code_dowhilet{std::move(cond), std::move(body)};
+  }
   // ES2024 sec-for-statement
   if(kind == "ForStatement")
     return convert_for_statement(node);

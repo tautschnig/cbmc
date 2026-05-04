@@ -161,6 +161,7 @@ function n2j(node) {
       if(node.elseStatement) r.elseStatement = n2j(node.elseStatement);
       break;
     case ts.SyntaxKind.WhileStatement:
+    case ts.SyntaxKind.DoStatement:
       r.expression = n2j(node.expression);
       r.statement = n2j(node.statement);
       break;
