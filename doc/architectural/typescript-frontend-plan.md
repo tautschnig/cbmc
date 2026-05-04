@@ -237,7 +237,39 @@ regression/typescript/
   null-safety/               — TSH: Narrowing.md
 ```
 
-## 4. Implementation Phases
+## 4. Current Status
+
+**50 CORE tests, 3 KNOWNBUG** (as of 2026-05-04)
+
+All phases 1-8 are substantially complete. Phase 9 is partially done.
+
+### Implemented Features
+- **Types**: number (IEEE 754 double), boolean, string (refined_string_typet),
+  arrays (fixed-size struct), objects/interfaces (struct), classes (struct + methods),
+  enums (numeric), generics (resolved by TS compiler)
+- **Variables**: const/let, type annotations, destructuring (object + array)
+- **Operators**: arithmetic, comparison (===, !==, <, >, <=, >=), logical (&&, ||, !),
+  ternary, compound assignment (+=, -=, *=), postfix/prefix increment, nullish coalescing (??)
+- **Control flow**: if/else, while, do-while, for, for-of, switch/case, try/catch, break
+- **Functions**: declarations, arrow functions, generics, optional params with defaults,
+  rest parameters (...args), nested functions (KNOWNBUG — closure capture)
+- **Classes**: declarations, constructors, methods, this pointer, new expression,
+  property access, inheritance (extends), super() calls
+- **Arrays**: literals, indexing, push, pop, length, for-of, map, spread ([...a, ...b])
+- **Strings**: refined_string_typet, literals, length, concatenation, template literals,
+  methods (indexOf, includes, substring, toUpperCase, toLowerCase, trim, charAt,
+  startsWith, endsWith) — all constant-evaluated at conversion time
+- **Verification**: console.assert, nondet_number, __CPROVER_assume, console.log (no-op)
+- **Math**: constant evaluation (sqrt, abs, floor, ceil, sin, cos, etc.) + symbolic Math.abs
+
+### Remaining KNOWNBUGs
+| Test | Issue |
+|------|-------|
+| array-filter | Predicate-based filtering needs runtime evaluation |
+| nested-function | Closure variable capture not implemented |
+| type-narrowing-typeof | Union types need tagged union model |
+
+## 5. Implementation Phases
 
 ### Phase 1: Skeleton (target: 3 CORE tests)
 - `typescript_languaget` class with parse/typecheck/generate_support
