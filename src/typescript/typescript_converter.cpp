@@ -216,6 +216,18 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       if(st.has_component(prop))
         return member_exprt{obj, prop, st.get_component(prop).type()};
     }
+    // Enum member access: Direction.Down
+    {
+      std::string obj_name = json_string(
+        json_member(json_member(node, "expression"), "text"));
+      if(!obj_name.empty())
+      {
+        std::string enum_qn = "typescript::" + obj_name + "." + prop;
+        const symbolt *esym = symbol_table.lookup(irep_idt{enum_qn});
+        if(esym != nullptr)
+          return esym->symbol_expr();
+      }
+    }
     return nil_exprt{};
   }
   // ES2024 sec-element-access: arr[i]
@@ -743,8 +755,43 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
   {
     std::string obj_name = json_string(json_member(json_member(callee, "expression"), "text"));
     std::string method = json_string(json_member(json_member(callee, "name"), "text"));
-    // Check for class method calls
+    // Array methods: push, pop
     exprt obj_expr = convert_expression(json_member(callee, "expression"));
+    if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(obj_expr.type());
+      if(st.get_tag() == "typescript_array" && st.has_component("data"))
+      {
+        if(method == "push" && args.is_array() && !to_json_array(args).empty())
+        {
+          exprt val = convert_expression(*to_json_array(args).begin());
+          exprt len = member_exprt{obj_expr, "length", signedbv_typet{64}};
+          exprt data = member_exprt{obj_expr, "data", st.get_component("data").type()};
+          if(!val.is_nil())
+          {
+            typet et = to_array_type(st.get_component("data").type()).element_type();
+            if(val.type() != et)
+              val = typecast_exprt(val, et);
+            pending_stmts.push_back(
+              code_frontend_assignt{index_exprt{data, len}, val});
+            pending_stmts.push_back(code_frontend_assignt{
+              len, plus_exprt{len, from_integer(1, signedbv_typet{64})}});
+          }
+          return from_integer(0, double_type()); // push returns new length
+        }
+        if(method == "pop")
+        {
+          exprt len = member_exprt{obj_expr, "length", signedbv_typet{64}};
+          exprt new_len = minus_exprt{len, from_integer(1, signedbv_typet{64})};
+          exprt data = member_exprt{obj_expr, "data", st.get_component("data").type()};
+          pending_stmts.push_back(code_frontend_assignt{len, new_len});
+          return index_exprt{data, new_len};
+        }
+        if(method == "length")
+          return member_exprt{obj_expr, "length", signedbv_typet{64}};
+      }
+    }
+    // Check for class method calls
     if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
     {
       const auto &st = to_struct_type(obj_expr.type());
@@ -1123,7 +1170,17 @@ codet typescript_convertert::convert_statement(const jsont &node)
         value++;
       }
     }
-    return code_skipt{};
+    // Generate initialization code for enum members
+    code_blockt enum_init;
+    for(const auto &m : to_json_array(members))
+    {
+      std::string mname = json_string(json_member(json_member(m, "name"), "text"));
+      std::string qn = "typescript::" + enum_name + "." + mname;
+      const symbolt *s = symbol_table.lookup(irep_idt{qn});
+      if(s != nullptr && !s->value.is_nil())
+        enum_init.add(code_frontend_assignt{s->symbol_expr(), s->value});
+    }
+    return std::move(enum_init);
   }
   // TSH: Object Types.md — interface declarations (type-only, no runtime code)
   if(kind == "InterfaceDeclaration" || kind == "TypeAliasDeclaration")
@@ -1549,6 +1606,8 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
       std::string obj_text = json_string(json_member(obj_node, "text"));
       const jsont &method_node = json_member(callee_node, "name");
       std::string method_text = json_string(json_member(method_node, "text"));
+      if(obj_text == "console" && method_text == "log")
+        return code_skipt{};
       if(obj_text == "console" && method_text == "assert")
         {
         const jsont &call_args = json_member(expr_node, "arguments");
