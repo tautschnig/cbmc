@@ -5312,6 +5312,56 @@ exprt python_convertert::convert_call(const jsont &expr)
     return struct_exprt{{real_val, imag_val}, complex_type};
   }
   // PLib stdtypes: set(iterable) — deduplicate elements
+  else if(func_name == "dict")
+  {
+    // dict(a=1, b=2) — construct from keyword arguments
+    const jsont &keywords = json_member(expr, "keywords");
+    if(keywords.is_array() && !as_array(keywords).empty())
+    {
+      typet dict_type =
+        python_dict_type(python_string_type(), python_int_type());
+      // Determine value type from first keyword
+      exprt first_val =
+        convert_expression(json_member(*as_array(keywords).begin(), "value"));
+      dict_type = python_dict_type(python_string_type(), first_val.type());
+      const auto &dict_st = to_struct_type(dict_type);
+      const auto &keys_arr_type = to_array_type(dict_st.components()[1].type());
+      const auto &vals_arr_type = to_array_type(dict_st.components()[2].type());
+
+      exprt::operandst keys, vals;
+      for(const auto &kw : as_array(keywords))
+      {
+        std::string kname = json_string(json_member(kw, "arg"));
+        exprt kval = convert_expression(json_member(kw, "value"));
+        keys.push_back(build_string_struct(kname));
+        if(kval.type() != vals_arr_type.element_type())
+          kval = safe_typecast(kval, vals_arr_type.element_type());
+        vals.push_back(kval);
+      }
+      while(keys.size() < PYTHON_MAX_DICT_SIZE)
+      {
+        keys.push_back(safe_zero(keys_arr_type.element_type()));
+        vals.push_back(safe_zero(vals_arr_type.element_type()));
+      }
+      return struct_exprt{
+        {from_integer(
+           static_cast<long long>(as_array(keywords).size()),
+           python_int_type()),
+         array_exprt{std::move(keys), keys_arr_type},
+         array_exprt{std::move(vals), vals_arr_type}},
+        dict_type};
+    }
+    // dict() with no args — empty dict
+    if(!args.is_array() || as_array(args).empty())
+    {
+      typet dict_type =
+        python_dict_type(python_string_type(), python_int_type());
+      return safe_zero(dict_type);
+    }
+    return side_effect_expr_nondett{
+      python_dict_type(python_string_type(), python_int_type()),
+      get_location(expr)};
+  }
   else if(func_name == "set")
   {
     if(args.is_array() && !as_array(args).empty())
