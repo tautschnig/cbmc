@@ -115,6 +115,16 @@ The source is organized into modular directories by functionality:
 - **`cpp/`** - C++ language front-end
   - C++ specific parsing (depends on `ansi-c`)
 
+- **`python/`** - Python 3 front-end
+  - Parsing Python AST (via inline Python script), type inference, GOTO conversion
+  - 294 CORE regression tests
+
+- **`typescript/`** - TypeScript front-end (experimental)
+  - Uses TypeScript Compiler API (via inline Node.js script) for parsing and type-checking
+  - Converts typed JSON AST to GOTO programs
+  - 61 CORE regression tests
+  - See `doc/architectural/typescript-frontend-plan.md`
+
 #### **Analysis and Verification**
 
 - **`goto-symex/`** - Symbolic execution engine
