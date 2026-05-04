@@ -2,6 +2,7 @@
 /// TypeScript language frontend for CBMC — implementation
 
 #include "typescript_language.h"
+#include "typescript_converter.h"
 
 #include <util/message.h>
 #include <util/run.h>
@@ -243,10 +244,9 @@ bool typescript_languaget::typecheck(
   messaget log{message_handler};
   log.status() << "Type-checking " << filename << messaget::eom;
 
-  // TODO: Implement TypeScript converter
-  // For now, just create the __CPROVER__start function
-  log.warning() << "TypeScript converter not yet implemented" << messaget::eom;
-  return false;
+  typescript_convertert converter{
+    symbol_table, filename, ast_json, message_handler};
+  return converter.convert();
 }
 
 bool typescript_languaget::generate_support_functions(

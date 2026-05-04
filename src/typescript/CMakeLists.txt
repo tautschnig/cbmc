@@ -1,5 +1,6 @@
 add_library(typescript
   typescript_language.cpp
+  typescript_converter.cpp
 )
 
 generic_includes(typescript)
