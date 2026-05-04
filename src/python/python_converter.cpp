@@ -2106,6 +2106,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       left = typecast_exprt{left, signedbv_typet{64}};
       right = typecast_exprt{right, signedbv_typet{64}};
     }
+    // Negative shift raises ValueError
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      if(exc_sym != nullptr)
+      {
+        exprt neg =
+          binary_relation_exprt{right, ID_lt, from_integer(0, right.type())};
+        pending_checks.push_back(code_ifthenelset{
+          neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+      }
+    }
     return shl_exprt{left, right};
   }
   else if(op == "RShift")
@@ -2114,6 +2126,18 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     {
       left = typecast_exprt{left, signedbv_typet{64}};
       right = typecast_exprt{right, signedbv_typet{64}};
+    }
+    // Negative shift raises ValueError
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      if(exc_sym != nullptr)
+      {
+        exprt neg =
+          binary_relation_exprt{right, ID_lt, from_integer(0, right.type())};
+        pending_checks.push_back(code_ifthenelset{
+          neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+      }
     }
     return ashr_exprt{left, right};
   }
@@ -4644,6 +4668,11 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     side_effect_expr_nondett nondet{bool_typet{}, get_location(expr)};
     return std::move(nondet);
+  }
+  else if(func_name == "defaultdict")
+  {
+    // collections.defaultdict — return empty dict
+    return safe_zero(python_dict_type(python_string_type(), python_int_type()));
   }
   else if(func_name == "randint")
   {
@@ -9537,6 +9566,18 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       exprt is_zero = equal_exprt{divisor, safe_zero(divisor.type())};
       pending_checks.push_back(code_ifthenelset{
         is_zero, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+    }
+  }
+  // Negative shift check for <<= and >>=
+  if(op == "LShift" || op == "RShift")
+  {
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    if(exc_sym != nullptr)
+    {
+      exprt neg =
+        binary_relation_exprt{rhs, ID_lt, from_integer(0, rhs.type())};
+      pending_checks.push_back(code_ifthenelset{
+        neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
     }
   }
   code_frontend_assignt assign{lhs, new_rhs};
