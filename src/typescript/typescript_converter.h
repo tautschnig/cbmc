@@ -44,6 +44,7 @@ private:
   std::string current_function;
   std::string current_class; // empty at module level
   std::map<irep_idt, std::string> string_constants;
+  std::map<std::string, std::string> parent_class; // child -> parent
   std::set<irep_idt> rest_param_functions;
   // Captured variables: func_id -> [(param_name, outer_symbol_id)]
   std::map<irep_idt, std::vector<std::pair<std::string, irep_idt>>>

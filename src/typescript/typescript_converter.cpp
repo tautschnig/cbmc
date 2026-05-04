@@ -1892,6 +1892,19 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         std::string cls = tag.substr(17);
         irep_idt method_id{"typescript::" + cls + "::" + method};
         const symbolt *msym = symbol_table.lookup(method_id);
+        // Check parent class if method not found
+        if(msym == nullptr || msym->type.id() != ID_code)
+        {
+          std::string parent = cls;
+          while(parent_class.count(parent) > 0)
+          {
+            parent = parent_class[parent];
+            irep_idt pid{"typescript::" + parent + "::" + method};
+            msym = symbol_table.lookup(pid);
+            if(msym != nullptr && msym->type.id() == ID_code)
+              break;
+          }
+        }
         if(msym != nullptr && msym->type.id() == ID_code)
         {
           exprt::operandst margs;
@@ -2493,6 +2506,7 @@ codet typescript_convertert::convert_statement(const jsont &node)
     // Copy parent fields
     if(!parent_name.empty())
     {
+      parent_class[cls_name] = parent_name;
       auto pit = class_types.find(parent_name);
       if(pit != class_types.end())
       {
