@@ -2268,7 +2268,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       if(rest_param_functions.count(func_id) > 0 && !fp.empty())
       {
         std::size_t regular_count = fp.size() - 1;
-        if(arguments.size() > regular_count)
+        if(arguments.size() >= regular_count)
         {
           exprt::operandst rest_elts;
           typet elem_type = double_type();
