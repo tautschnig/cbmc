@@ -239,7 +239,7 @@ regression/typescript/
 
 ## 4. Current Status
 
-**68 CORE tests, 2 KNOWNBUG** (as of 2026-05-04, updated)
+**83 CORE tests, 1 KNOWNBUG** (as of 2026-05-04, updated)
 
 All phases 1-8 are substantially complete. Phase 9 is partially done.
 
