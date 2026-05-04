@@ -9,6 +9,7 @@
 /// - TSH = TypeScript Handbook, ~/TypeScript-Website/.../handbook-v2/
 
 #include "typescript_converter.h"
+#include "typescript_types.h"
 
 #include <util/arith_tools.h>
 #include <util/irep.h>
@@ -83,7 +84,7 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     return bool_typet{};
   // ES2024 sec-ecmascript-language-types-string-type
   if(ts_type == "string")
-    return signedbv_typet{64}; // TODO: use refined_string_typet
+    return typescript_string_type();
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
@@ -132,10 +133,22 @@ exprt typescript_convertert::convert_numeric_literal(const jsont &node)
 
 exprt typescript_convertert::convert_string_literal(const jsont &node)
 {
-  // TODO: use refined_string_typet and cprover_string_literal_func
-  // For now, return a nondet value
+  // ES2024 sec-ecmascript-language-types-string-type
   std::string text = json_string(json_member(node, "text"));
-  return side_effect_expr_nondett{signedbv_typet{64}, get_location(node)};
+  struct_typet str_type = typescript_string_type();
+  const auto &data_type = to_array_type(str_type.components()[1].type());
+
+  exprt::operandst chars;
+  for(char c : text)
+    chars.push_back(
+      from_integer(static_cast<unsigned char>(c), unsignedbv_typet{16}));
+  while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+    chars.push_back(from_integer(0, unsignedbv_typet{16}));
+
+  return struct_exprt{
+    {from_integer(static_cast<long long>(text.size()), signedbv_typet{64}),
+     array_exprt{std::move(chars), data_type}},
+    str_type};
 }
 
 exprt typescript_convertert::convert_boolean_literal(const jsont &node)
@@ -202,7 +215,17 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
 
   // ES2024 sec-addition-operator-plus
   if(op == "PlusToken")
+  {
+    // String concatenation
+    if(is_typescript_string_type(left.type()) ||
+       is_typescript_string_type(right.type()))
+    {
+      // For now, return nondet string (exact concat needs array copy)
+      return side_effect_expr_nondett{
+        typescript_string_type(), source_locationt{}};
+    }
     return plus_exprt{left, right};
+  }
   // ES2024 sec-subtraction-operator-minus
   if(op == "MinusToken")
     return minus_exprt{left, right};
@@ -220,6 +243,10 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   {
     if(left.type().id() == ID_floatbv)
       return ieee_float_equal_exprt{left, right};
+    // String equality: compare structs (length + data)
+    if(is_typescript_string_type(left.type()) &&
+       is_typescript_string_type(right.type()))
+      return equal_exprt{left, right};
     return equal_exprt{left, right};
   }
   // ES2024 sec-isstrictlyequal: !==
@@ -494,10 +521,37 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         return code_skipt{};
       }
     }
+    // Handle __CPROVER_assume
+    if(callee_kind == "Identifier")
+    {
+      std::string fn = json_string(json_member(callee_node, "text"));
+      if(fn == "__CPROVER_assume")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array())
+        {
+          const auto &arr = to_json_array(call_args);
+          if(!arr.empty())
+          {
+            exprt cond = convert_expression(*arr.begin());
+            if(!cond.is_nil())
+            {
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              return code_assumet{cond};
+            }
+          }
+        }
+        return code_skipt{};
+      }
+    }
   }
-  return code_skipt{};
+  // Fallback: evaluate expression
+  exprt e = convert_expression(expr_node);
+  if(e.is_nil())
+    return code_skipt{};
+  return code_expressiont{e};
 }
-
 // ES2024 sec-if-statement
 codet typescript_convertert::convert_if_statement(const jsont &node)
 {
