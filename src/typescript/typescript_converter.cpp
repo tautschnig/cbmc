@@ -465,8 +465,34 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   if(kind == "ArrayLiteralExpression")
   {
     const jsont &elts = json_member(node, "elements");
-    if(!elts.is_array() || to_json_array(elts).empty())
+    if(!elts.is_array())
       return nil_exprt{};
+    if(to_json_array(elts).empty())
+    {
+      // Empty array: {length: 0, data: [0, 0, ...]}
+      typet elem_type = double_type();
+      // Try to get element type from _type annotation
+      std::string arr_type_str = json_string(json_member(node, "_type"));
+      if(arr_type_str.size() > 2 && arr_type_str.back() == ']')
+      {
+        std::string et = arr_type_str.substr(0, arr_type_str.size() - 2);
+        elem_type = convert_type(et);
+      }
+      std::size_t max_len = 64;
+      exprt::operandst zeros;
+      for(std::size_t i = 0; i < max_len; ++i)
+        zeros.push_back(from_integer(0, elem_type));
+      array_typet at{elem_type, from_integer(max_len, signedbv_typet{64})};
+      struct_typet lt;
+      lt.components().push_back(
+        struct_typet::componentt{"length", signedbv_typet{64}});
+      lt.components().push_back(struct_typet::componentt{"data", at});
+      lt.set_tag("typescript_array");
+      return struct_exprt{
+        {from_integer(0, signedbv_typet{64}),
+         array_exprt{std::move(zeros), at}},
+        lt};
+    }
     exprt::operandst elements;
     typet elem_type = double_type(); // default
     for(const auto &elt : to_json_array(elts))
@@ -545,6 +571,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     else if(ts_type == "undefined")
       typeof_result = "undefined";
     return convert_string_literal_from_text(typeof_result);
+  }
+  // TSH: Type Assertions — x as T
+  if(kind == "AsExpression" || kind == "TypeAssertionExpression")
+  {
+    exprt inner = convert_expression(json_member(node, "expression"));
+    std::string target_type = json_string(json_member(node, "_type"));
+    typet tt = convert_type(target_type);
+    if(!inner.is_nil() && inner.type() != tt && tt.id() != ID_empty)
+      return typecast_exprt{inner, tt};
+    return inner;
   }
   // ES2024 sec-spread-element
   if(kind == "SpreadElement")
@@ -1998,9 +2034,20 @@ codet typescript_convertert::convert_statement(const jsont &node)
           exprt val = convert_expression(init);
           if(val.is_constant())
           {
-            mp_integer iv;
-            if(!to_integer(to_constant_expr(val), iv))
-              value = iv.to_long();
+            if(val.type().id() == ID_floatbv)
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_expr(to_constant_expr(val));
+              value = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+            }
+            else
+            {
+              mp_integer iv;
+              if(!to_integer(to_constant_expr(val), iv))
+                value = iv.to_long();
+            }
           }
         }
         // Create symbol: EnumName.MemberName = value
