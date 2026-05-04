@@ -42,7 +42,9 @@ private:
   std::string current_function; // empty at module level
   std::map<irep_idt, std::string> string_constants;
   std::map<std::string, struct_typet> class_types;
-  std::vector<codet> pending_stmts; // stmts to emit before current expr
+  std::vector<codet> pending_stmts;
+  // Default parameter values: func_id → {param_index → default_expr}
+  std::map<irep_idt, std::map<std::size_t, exprt>> default_values; // stmts to emit before current expr
 
   // --- Helpers ---
   static const jsont &json_member(const jsont &obj, const std::string &key);

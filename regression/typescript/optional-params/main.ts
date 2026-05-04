@@ -1,6 +1,6 @@
 // ES2024 sec-function-definitions: default parameters
-function greet(name: string, greeting: string = "Hello"): string {
-  return greeting + " " + name;
+function add(a: number, b: number = 10): number {
+  return a + b;
 }
-console.assert(greet("Alice") === "Hello Alice");
-console.assert(greet("Bob", "Hi") === "Hi Bob");
+console.assert(add(5) === 15);
+console.assert(add(5, 3) === 8);

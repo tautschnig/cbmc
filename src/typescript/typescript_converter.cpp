@@ -938,6 +938,24 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         for(const auto &arg : to_json_array(args))
           arguments.push_back(convert_expression(arg));
       }
+      // Fill missing args with defaults
+      const auto &fparams = func_type.parameters();
+      auto def_it = default_values.find(func_id);
+      while(arguments.size() < fparams.size())
+      {
+        std::size_t idx = arguments.size();
+        if(def_it != default_values.end())
+        {
+          auto val_it = def_it->second.find(idx);
+          if(val_it != def_it->second.end())
+          {
+            arguments.push_back(val_it->second);
+            continue;
+          }
+        }
+        arguments.push_back(
+          side_effect_expr_nondett{fparams[idx].type(), get_location(node)});
+      }
       return side_effect_expr_function_callt{
         sym->symbol_expr(),
         std::move(arguments),
@@ -1891,6 +1909,25 @@ void typescript_convertert::convert_function_declaration_with_name(
   }
 
   // Convert function body
+  // Store default parameter values
+  {
+    const jsont &fn_params = json_member(node, "parameters");
+    if(fn_params.is_array())
+    {
+      std::size_t pi = 0;
+      for(const auto &p : to_json_array(fn_params))
+      {
+        const jsont &def_init = json_member(p, "initializer");
+        if(def_init.is_object())
+        {
+          exprt def_val = convert_expression(def_init);
+          if(!def_val.is_nil())
+            default_values[func_id][pi] = def_val;
+        }
+        pi++;
+      }
+    }
+  }
   const jsont &body = json_member(node, "body");
   if(body.is_object())
   {
