@@ -113,6 +113,21 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return convert_binary_expression(node);
   if(kind == "PrefixUnaryExpression" || kind == "PostfixUnaryExpression")
     return convert_prefix_unary_expression(node);
+  // ES2024 sec-arrow-function-definitions
+  if(kind == "ArrowFunction" || kind == "FunctionExpression")
+  {
+    // Create an anonymous function and return its symbol
+    static unsigned anon_ctr = 0;
+    std::string func_name = "__anon_" + std::to_string(anon_ctr++);
+    jsont func_node = node; // copy
+    // Temporarily set a name for the function
+    convert_function_declaration_with_name(node, func_name);
+    irep_idt func_id{"typescript::" + func_name};
+    const symbolt *sym = symbol_table.lookup(func_id);
+    if(sym != nullptr)
+      return sym->symbol_expr();
+    return nil_exprt{};
+  }
   if(kind == "CallExpression")
     return convert_call_expression(node);
   // ES2024 sec-property-accessors
@@ -709,6 +724,12 @@ void typescript_convertert::convert_function_declaration(const jsont &node)
   std::string func_name = json_string(json_member(json_member(node, "name"), "text"));
   if(func_name.empty())
     return;
+  convert_function_declaration_with_name(node, func_name);
+}
+
+void typescript_convertert::convert_function_declaration_with_name(
+  const jsont &node, const std::string &func_name)
+{
 
   // Get return type
   std::string ret_type_str = json_string(json_member(node, "_returnType"));

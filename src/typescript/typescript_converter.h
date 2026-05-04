@@ -72,6 +72,9 @@ private:
 
   // --- Function conversion ---
   void convert_function_declaration(const jsont &node);
+  void convert_function_declaration_with_name(
+    const jsont &node,
+    const std::string &name);
 
   // --- Module body ---
   void convert_module_body(const jsont &statements);
