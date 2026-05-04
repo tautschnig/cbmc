@@ -11691,9 +11691,7 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
       exc_sym != nullptr && !is_node_type(stmt, "FunctionDef") &&
       !is_node_type(stmt, "AsyncFunctionDef") &&
       !is_node_type(stmt, "ClassDef") && !is_node_type(stmt, "Import") &&
-      !is_node_type(stmt, "ImportFrom") && !is_node_type(stmt, "Try") &&
-      !is_node_type(stmt, "If") && !is_node_type(stmt, "While") &&
-      !is_node_type(stmt, "For"))
+      !is_node_type(stmt, "ImportFrom") && !is_node_type(stmt, "Try"))
     {
       source_locationt eloc = get_location(stmt);
       eloc.set_property_class("exception");
