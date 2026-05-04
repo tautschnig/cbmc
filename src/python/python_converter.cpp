@@ -3223,8 +3223,52 @@ exprt python_convertert::convert_call(const jsont &expr)
       {
         if(method_name == "split")
         {
-          // PLib stdtypes: str.split(sep)
-          // For constant string and delimiter, split at conversion time
+          // PLib stdtypes: str.split(sep) — constant optimization
+          if(args.is_array() && !as_array(args).empty())
+          {
+            exprt delim_expr = convert_expression(*as_array(args).begin());
+            auto obj_sv = extract_string_value(obj);
+            auto delim_sv = extract_string_value(delim_expr);
+            if(obj_sv.has_value() && delim_sv.has_value())
+            {
+              std::string s = obj_sv.value();
+              std::string d = delim_sv.value();
+              std::vector<std::string> parts;
+              if(!d.empty())
+              {
+                std::size_t pos = 0;
+                while(pos <= s.size())
+                {
+                  auto found = s.find(d, pos);
+                  if(found == std::string::npos)
+                  {
+                    parts.push_back(s.substr(pos));
+                    break;
+                  }
+                  parts.push_back(s.substr(pos, found - pos));
+                  pos = found + d.size();
+                }
+              }
+              else
+                parts.push_back(s);
+
+              struct_typet str_type = python_string_type();
+              typet list_type = python_list_type(str_type);
+              const auto &data_type =
+                to_array_type(to_struct_type(list_type).components()[1].type());
+              exprt::operandst list_elems;
+              for(const auto &p : parts)
+                list_elems.push_back(build_string_struct(p));
+              while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
+                list_elems.push_back(safe_zero(str_type));
+              return struct_exprt{
+                {from_integer(
+                   static_cast<long long>(parts.size()), python_int_type()),
+                 array_exprt{std::move(list_elems), data_type}},
+                list_type};
+            }
+          }
+          // Fallback: original struct-literal handler
           if(
             obj.id() == ID_struct && args.is_array() && !as_array(args).empty())
           {
@@ -4758,8 +4802,76 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && as_array(args).size() >= 2)
     {
       auto it = as_array(args).begin();
+      exprt func_arg = convert_expression(*it);
       ++it;
       exprt list_arg = convert_expression(*it);
+      if(
+        is_python_list_type(list_arg.type()) && func_arg.id() == ID_symbol &&
+        func_arg.type().id() == ID_code)
+      {
+        const auto &list_st = to_struct_type(list_arg.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        const code_typet &ft = to_code_type(func_arg.type());
+        typet result_list_type = list_arg.type();
+        member_exprt src_data{list_arg, "data", data_type};
+        member_exprt src_len{list_arg, "length", signedbv_typet{64}};
+
+        static unsigned filter_ctr = 0;
+        std::string tn = "__filter_" + std::to_string(filter_ctr++);
+        std::string tq = qualify_name(tn);
+        irep_idt ti{tq};
+        if(symbol_table.lookup(ti) == nullptr)
+        {
+          symbolt ts{ti, result_list_type, "python"};
+          ts.base_name = tn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+        const auto &res_data_type = to_array_type(
+          to_struct_type(result_list_type).components()[1].type());
+        member_exprt dst_data{tmp, "data", res_data_type};
+
+        // Counter for result length
+        std::string cn = tn + "_len";
+        std::string cq = qualify_name(cn);
+        irep_idt ci{cq};
+        if(symbol_table.lookup(ci) == nullptr)
+        {
+          symbolt cs{ci, python_int_type(), "python"};
+          cs.base_name = cn;
+          cs.is_lvalue = true;
+          cs.is_state_var = true;
+          symbol_table.add(cs);
+        }
+        symbol_exprt cnt = symbol_table.lookup_ref(ci).symbol_expr();
+        pending_checks.push_back(
+          code_frontend_assignt{cnt, from_integer(0, python_int_type())});
+
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt guard = binary_relation_exprt{idx, ID_lt, src_len};
+          exprt elem = index_exprt{src_data, idx};
+          if(elem.type() != ft.parameters()[0].type())
+            elem = safe_typecast(elem, ft.parameters()[0].type());
+          side_effect_expr_function_callt call{
+            func_arg, {elem}, ft.return_type(), get_location(expr)};
+          // If filter returns truthy, add to result
+          exprt truthy = safe_typecast(call, bool_typet{});
+          exprt include = and_exprt{guard, truthy};
+          pending_checks.push_back(code_ifthenelset{
+            include,
+            code_blockt{
+              {code_frontend_assignt{index_exprt{dst_data, cnt}, elem},
+               code_frontend_assignt{
+                 cnt, plus_exprt{cnt, from_integer(1, python_int_type())}}}}});
+        }
+        pending_checks.push_back(code_frontend_assignt{
+          member_exprt{tmp, "length", python_int_type()}, cnt});
+        return std::move(tmp);
+      }
       if(is_python_list_type(list_arg.type()))
         return side_effect_expr_nondett{list_arg.type(), get_location(expr)};
     }
