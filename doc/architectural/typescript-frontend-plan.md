@@ -239,7 +239,7 @@ regression/typescript/
 
 ## 4. Current Status
 
-**50 CORE tests, 3 KNOWNBUG** (as of 2026-05-04)
+**68 CORE tests, 2 KNOWNBUG** (as of 2026-05-04, updated)
 
 All phases 1-8 are substantially complete. Phase 9 is partially done.
 
@@ -252,7 +252,7 @@ All phases 1-8 are substantially complete. Phase 9 is partially done.
   ternary, compound assignment (+=, -=, *=), postfix/prefix increment, nullish coalescing (??)
 - **Control flow**: if/else, while, do-while, for, for-of, switch/case, try/catch, break
 - **Functions**: declarations, arrow functions, generics, optional params with defaults,
-  rest parameters (...args), nested functions (KNOWNBUG — closure capture)
+  rest parameters (...args), nested functions with closure capture
 - **Classes**: declarations, constructors, methods, this pointer, new expression,
   property access, inheritance (extends), super() calls
 - **Arrays**: literals, indexing, push, pop, length, for-of, map, spread ([...a, ...b])
@@ -265,8 +265,7 @@ All phases 1-8 are substantially complete. Phase 9 is partially done.
 ### Remaining KNOWNBUGs
 | Test | Issue |
 |------|-------|
-| array-filter | Predicate-based filtering needs runtime evaluation |
-| nested-function | Closure variable capture not implemented |
+| higher-order-function | Function as parameter (callback types) |
 | type-narrowing-typeof | Union types need tagged union model |
 
 ## 5. Implementation Phases
