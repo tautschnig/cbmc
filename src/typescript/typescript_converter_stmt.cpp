@@ -546,7 +546,9 @@ codet typescript_convertert::convert_statement(const jsont &node)
           if(symbol_table.lookup(fid) == nullptr)
             symbol_table.add(fs);
         }
-        else if(mk == "MethodDeclaration")
+        else if(
+          mk == "MethodDeclaration" || mk == "GetAccessor" ||
+          mk == "SetAccessor")
         {
           std::string mname =
             json_string(json_member(json_member(m, "name"), "text"));

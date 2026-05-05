@@ -204,8 +204,13 @@ function n2j(node) {
       if(node.body) r.body = n2j(node.body);
       break;
     case ts.SyntaxKind.MethodDeclaration:
-      if(node.name) r.name = n2j(node.name);
-      r.parameters = node.parameters.map(n2j);
+    case ts.SyntaxKind.GetAccessor:
+    case ts.SyntaxKind.SetAccessor:
+      if(node.kind === ts.SyntaxKind.GetAccessor) r.isGetter = true;
+      if(node.kind === ts.SyntaxKind.SetAccessor) r.isSetter = true;
+      if(node.name && node.name.text) r.name = { _kind: "Identifier", text: node.name.text };
+      else if(node.name) r.name = n2j(node.name);
+      r.parameters = node.parameters ? Array.from(node.parameters).map(n2j) : [];
       if(node.type) r.returnType = n2j(node.type);
       if(node.body) r.body = n2j(node.body);
       if(node.modifiers && node.modifiers.some(m => m.kind === ts.SyntaxKind.StaticKeyword))

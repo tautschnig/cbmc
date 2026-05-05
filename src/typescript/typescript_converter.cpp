@@ -330,6 +330,26 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       const auto &st = to_struct_type(obj.type());
       if(st.has_component(prop))
         return member_exprt{obj, prop, st.get_component(prop).type()};
+      // Check for getter method: ClassName::prop
+      std::string cls_tag = id2string(st.get_tag());
+      if(!cls_tag.empty())
+      {
+        // Strip "typescript_class_" prefix if present
+        std::string cls_name_str = cls_tag;
+        if(cls_tag.find("typescript_class_") == 0)
+          cls_name_str = cls_tag.substr(17);
+        irep_idt getter_id{"typescript::" + cls_name_str + "::" + prop};
+        const symbolt *getter = symbol_table.lookup(getter_id);
+        if(getter != nullptr && getter->type.id() == ID_code)
+        {
+          const auto &ft = to_code_type(getter->type);
+          return side_effect_expr_function_callt{
+            symbol_exprt{getter_id, getter->type},
+            {address_of_exprt{obj}},
+            ft.return_type(),
+            get_location(node)};
+        }
+      }
     }
     // Enum member access: Direction.Down
     {
