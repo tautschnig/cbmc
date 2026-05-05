@@ -343,6 +343,11 @@ function n2j(node) {
       break;
     case ts.SyntaxKind.BreakStatement:
     case ts.SyntaxKind.ContinueStatement:
+      if(node.label) r.label = node.label.text;
+      break;
+    case ts.SyntaxKind.LabeledStatement:
+      r.label = node.label.text;
+      r.statement = n2j(node.statement);
       break;
     case ts.SyntaxKind.AsExpression:
     case ts.SyntaxKind.ParenthesizedExpression:

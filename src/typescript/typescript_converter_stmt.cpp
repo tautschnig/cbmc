@@ -172,10 +172,35 @@ codet typescript_convertert::convert_statement(const jsont &node)
   }
   // ES2024 sec-break-statement
   if(kind == "BreakStatement")
+  {
+    std::string label = json_string(json_member(node, "label"));
+    if(!label.empty())
+      return code_gotot{irep_idt{"__ts_label_" + label + "_end"}};
     return code_breakt{};
+  }
   // ES2024 sec-continue-statement
   if(kind == "ContinueStatement")
+  {
+    std::string label = json_string(json_member(node, "label"));
+    if(!label.empty())
+      return code_gotot{irep_idt{"__ts_label_" + label + "_continue"}};
     return code_continuet{};
+  }
+  // ES2024 sec-labelled-statements
+  if(kind == "LabeledStatement")
+  {
+    std::string label = json_string(json_member(node, "label"));
+    const jsont &stmt = json_member(node, "statement");
+    code_blockt block;
+    // Add continue label before the loop
+    block.add(
+      code_labelt{irep_idt{"__ts_label_" + label + "_continue"}, code_skipt{}});
+    block.add(convert_statement(stmt));
+    // Add end label after the loop
+    block.add(
+      code_labelt{irep_idt{"__ts_label_" + label + "_end"}, code_skipt{}});
+    return std::move(block);
+  }
   // ES2024 sec-for-statement
   if(kind == "ForStatement")
     return convert_for_statement(node);
