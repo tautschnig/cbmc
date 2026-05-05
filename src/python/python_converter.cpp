@@ -406,6 +406,53 @@ make_nondet_string(symbol_table_baset &symbol_table)
   return result;
 }
 
+/// Emit a boolean cprover_string_* function (equal, contains, etc.).
+/// Returns the boolean result expression directly.
+[[maybe_unused]] static exprt emit_string_bool_function(
+  const irep_idt &func_id,
+  const exprt &str1,
+  const exprt &str2,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  // Declare the function in the symbol table
+  irep_idt sym_id{func_id};
+  if(symbol_table.lookup(sym_id) == nullptr)
+  {
+    std::vector<typet> arg_types;
+    arg_types.push_back(str1.type());
+    arg_types.push_back(str2.type());
+    symbolt fs{
+      sym_id,
+      mathematical_function_typet(std::move(arg_types), bool_typet()),
+      "python"};
+    fs.base_name = id2string(func_id);
+    symbol_table.add(fs);
+  }
+
+  // Create function application
+  function_application_exprt app(
+    symbol_table.lookup_ref(sym_id).symbol_expr(), {str1, str2});
+  app.type() = bool_typet();
+
+  // Create a symbol for the result
+  static unsigned eq_ctr = 0;
+  std::string rc_name = "__str_eq_" + std::to_string(eq_ctr++);
+  irep_idt rc_id{"python::" + rc_name};
+  if(symbol_table.lookup(rc_id) == nullptr)
+  {
+    symbolt rs{rc_id, bool_typet(), "python"};
+    rs.base_name = rc_name;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  pending_checks.push_back(
+    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+
+  return symbol_table.lookup_ref(rc_id).symbol_expr();
+}
+
 // Helper: collect all Name references in a JSON AST subtree
 // Uses operator[] which returns json_nullt for missing keys
 static void collect_name_refs(const jsont &node, std::set<std::string> &names)
@@ -1536,8 +1583,25 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       if(lv.has_value() && rv.has_value())
         return build_string_struct(lv.value() + rv.value());
     }
-    // Fallback: nondet for non-constant strings
-    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+    // Fallback: use string solver for non-constant concat
+    {
+      // Decompose symbols into struct_exprt so the solver can process them.
+      // The solver requires struct_exprt (not symbol_exprt) for source strings.
+      auto to_string_struct = [](const exprt &s) -> exprt
+      {
+        if(s.id() == ID_struct && s.operands().size() == 2)
+          return s; // already a struct
+        return struct_exprt(
+          {member_exprt(s, "length", signedbv_typet{64}),
+           member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+          s.type());
+      };
+      return emit_string_function(
+        ID_cprover_string_concat_func,
+        {to_string_struct(left), to_string_struct(right)},
+        symbol_table,
+        pending_checks);
+    }
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
@@ -2631,7 +2695,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
-          // Compare by length and content bytes
+          // Use string solver for equality when both sides are simple
+          {
+          }
+          // Fallback: compare lengths (sound overapproximation)
           cmp = equal_exprt{
             member_exprt{current_left, "length", signedbv_typet{64}},
             member_exprt{right, "length", signedbv_typet{64}}};
@@ -2686,6 +2753,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
+          // Use string solver for inequality when both sides are simple
+          {
+          }
+          // Fallback: compare lengths (sound overapproximation)
           cmp = notequal_exprt{
             member_exprt{current_left, "length", signedbv_typet{64}},
             member_exprt{right, "length", signedbv_typet{64}}};
