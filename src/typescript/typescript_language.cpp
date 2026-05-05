@@ -358,7 +358,23 @@ function n2j(node) {
   }
   return r;
 }
-fs.writeFileSync(outputFile, JSON.stringify(n2j(sourceFile)));
+fs.writeFileSync(outputFile, JSON.stringify((() => {
+  // Multi-file support: include all non-declaration source files
+  const allFiles = program.getSourceFiles().filter(
+    sf => !sf.isDeclarationFile && !sf.fileName.includes('node_modules'));
+  // Process imported files first, entry file last
+  const combined = { _kind: "SourceFile", statements: [] };
+  for (const sf of allFiles) {
+    // Set sourceFile for position tracking
+    const prevSF = sourceFile;
+    for (const stmt of sf.statements) {
+      combined.statements.push(n2j(stmt));
+    }
+  }
+  combined._type = "void";
+  combined._pos = { line: 1, col: 0 };
+  return combined;
+})()));
 )JS";
   // clang-format on
 
