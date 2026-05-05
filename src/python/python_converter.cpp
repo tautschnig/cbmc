@@ -516,7 +516,9 @@ make_nondet_string(symbol_table_baset &symbol_table)
   symbol_table_baset &symbol_table,
   std::vector<codet> &pending_checks)
 {
-  // Declare the function with bool return type
+  // Declare the function with c_bool return type (avoids SSA biconditional)
+  // The solver accepts both bool_typet and c_bool (ID_c_bool)
+  const typet c_bool = c_bool_typet(8);
   irep_idt sym_id{func_id};
   if(symbol_table.lookup(sym_id) == nullptr)
   {
@@ -525,7 +527,7 @@ make_nondet_string(symbol_table_baset &symbol_table)
     arg_types.push_back(str2.type());
     symbolt fs{
       sym_id,
-      mathematical_function_typet(std::move(arg_types), bool_typet()),
+      mathematical_function_typet(std::move(arg_types), c_bool),
       "python"};
     fs.base_name = id2string(func_id);
     symbol_table.add(fs);
@@ -534,7 +536,7 @@ make_nondet_string(symbol_table_baset &symbol_table)
   // Create function application
   function_application_exprt app(
     symbol_table.lookup_ref(sym_id).symbol_expr(), {str1, str2});
-  app.type() = bool_typet();
+  app.type() = c_bool;
 
   // Create a symbol for the result
   static unsigned eq_ctr = 0;
@@ -542,7 +544,7 @@ make_nondet_string(symbol_table_baset &symbol_table)
   irep_idt rc_id{"python::" + rc_name};
   if(symbol_table.lookup(rc_id) == nullptr)
   {
-    symbolt rs{rc_id, bool_typet(), "python"};
+    symbolt rs{rc_id, c_bool, "python"};
     rs.base_name = rc_name;
     rs.is_lvalue = true;
     rs.is_state_var = true;
@@ -551,7 +553,9 @@ make_nondet_string(symbol_table_baset &symbol_table)
   pending_checks.push_back(
     code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
 
-  return symbol_table.lookup_ref(rc_id).symbol_expr();
+  // Return as boolean (typecast from c_bool to bool)
+  return typecast_exprt(
+    symbol_table.lookup_ref(rc_id).symbol_expr(), bool_typet());
 }
 
 /// Build a string literal and register it with the string solver.
