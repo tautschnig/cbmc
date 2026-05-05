@@ -494,6 +494,13 @@ union_find_replacet string_identifiers_resolution_from_equations(
       for(const auto &expr : rhs_strings)
         equation_map.add(i, expr);
     }
+    else if(is_char_pointer_type(eq.lhs().type()))
+    {
+      // Include char pointer assignments (e.g., x..data = address_of(array))
+      // so the solver can resolve string content pointers transitively.
+      equation_map.add(i, eq.lhs());
+      equation_map.add(i, eq.rhs());
+    }
     else if(
       eq.lhs().type().id() != ID_pointer &&
       has_subtype(eq.lhs().type(), ID_string, ns))
