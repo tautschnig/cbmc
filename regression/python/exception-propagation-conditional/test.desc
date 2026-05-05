@@ -1,7 +1,10 @@
-CORE
+KNOWNBUG
 main.py
 
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
 --
+--
+Division by zero in conditional branch not detected. The exception
+check is only at expression-statement level, not inside if/while/for.

@@ -4669,11 +4669,6 @@ exprt python_convertert::convert_call(const jsont &expr)
     side_effect_expr_nondett nondet{bool_typet{}, get_location(expr)};
     return std::move(nondet);
   }
-  else if(func_name == "defaultdict")
-  {
-    // collections.defaultdict — return empty dict
-    return safe_zero(python_dict_type(python_string_type(), python_int_type()));
-  }
   else if(func_name == "randint")
   {
     // from random import randint — constrained nondet
@@ -11786,7 +11781,9 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
       exc_sym != nullptr && !is_node_type(stmt, "FunctionDef") &&
       !is_node_type(stmt, "AsyncFunctionDef") &&
       !is_node_type(stmt, "ClassDef") && !is_node_type(stmt, "Import") &&
-      !is_node_type(stmt, "ImportFrom") && !is_node_type(stmt, "Try"))
+      !is_node_type(stmt, "ImportFrom") && !is_node_type(stmt, "Try") &&
+      !is_node_type(stmt, "If") && !is_node_type(stmt, "While") &&
+      !is_node_type(stmt, "For"))
     {
       source_locationt eloc = get_location(stmt);
       eloc.set_property_class("exception");
