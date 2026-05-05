@@ -180,7 +180,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     {
       options.set_option("signed-overflow-check", false);
       options.set_option("div-by-zero-check", false);
-
+      if(!cmdline.isset("z3") && !cmdline.isset("smt2"))
+        options.set_option("refine-strings", true);
       break;
     }
   }
