@@ -1,8 +1,6 @@
 /// \\file
 /// TypeScript to GOTO converter — split implementation
 
-#include "typescript_converter.h"
-
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
@@ -17,6 +15,7 @@
 
 #include <goto-programs/goto_functions.h>
 
+#include "typescript_converter.h"
 #include "typescript_types.h"
 
 #include <cmath>
@@ -130,7 +129,9 @@ codet typescript_convertert::convert_statement(const jsont &node)
           {
             const exprt &val =
               rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-            if(val.id() == ID_struct || val.is_constant())
+            if(
+              val.id() == ID_struct || val.is_constant() ||
+              (val.id() == ID_symbol && val.type().id() == ID_struct))
             {
               symbolt *ws = symbol_table.get_writeable(sym_id);
               if(ws != nullptr)
@@ -1033,7 +1034,9 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         {
           const exprt &val =
             rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-          if(val.id() == ID_struct || val.is_constant())
+          if(
+            val.id() == ID_struct || val.is_constant() ||
+            (val.id() == ID_symbol && val.type().id() == ID_struct))
           {
             symbolt *ws = symbol_table.get_writeable(sym_id);
             if(ws != nullptr)

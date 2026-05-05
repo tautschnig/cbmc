@@ -1,8 +1,6 @@
 /// \\file
 /// TypeScript to GOTO converter — call expression and method handlers
 
-#include "typescript_converter.h"
-
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
@@ -17,6 +15,7 @@
 
 #include <goto-programs/goto_functions.h>
 
+#include "typescript_converter.h"
 #include "typescript_types.h"
 
 #include <cmath>
@@ -437,6 +436,22 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       method == "map" && args.is_array() && !to_json_array(args).empty())
     {
       const jsont &callback = *to_json_array(args).begin();
+      // For chained calls, resolve symbol chains (symbol → symbol → struct)
+      if(obj_expr.id() == ID_symbol)
+      {
+        exprt resolved = obj_expr;
+        for(int depth = 0; depth < 3 && resolved.id() == ID_symbol; ++depth)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(resolved).get_identifier());
+          if(s && !s->value.is_nil())
+            resolved = s->value;
+          else
+            break;
+        }
+        if(resolved.id() == ID_struct)
+          obj_expr = resolved;
+      }
       // Check if callback is a function pointer (Identifier)
       std::string cb_kind = json_string(json_member(callback, "_kind"));
       if(cb_kind == "Identifier")
@@ -720,6 +735,125 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                 signedbv_typet{64}},
               wi_sym});
             return symbol_exprt{res_id, list_type_fp};
+          }
+        }
+      }
+      // Try constant evaluation: for constant arrays, evaluate predicate
+      // at conversion time and return struct_exprt directly
+      {
+        exprt const_src = obj_expr;
+        if(const_src.id() == ID_symbol)
+        {
+          const symbolt *cs =
+            symbol_table.lookup(to_symbol_expr(const_src).get_identifier());
+          if(cs && !cs->value.is_nil())
+            const_src = cs->value;
+        }
+        if(const_src.id() == ID_struct && const_src.operands().size() >= 2)
+        {
+          mp_integer clen{0};
+          if(const_src.operands()[0].is_constant())
+            to_integer(to_constant_expr(const_src.operands()[0]), clen);
+          const exprt &cdata = const_src.operands()[1];
+          // Convert callback and try to evaluate for each element
+          static unsigned cfilter_ctr = 0;
+          std::string ccb_name =
+            "__ts_cfilter_cb_" + std::to_string(cfilter_ctr++);
+          convert_function_declaration_with_name(callback, ccb_name);
+          irep_idt ccb_id{"typescript::" + ccb_name};
+          const symbolt *ccb_sym = symbol_table.lookup(ccb_id);
+          if(ccb_sym != nullptr && ccb_sym->type.id() == ID_code)
+          {
+            // Call predicate for each element and collect results
+            typet elem_type = double_type();
+            if(!cdata.operands().empty())
+              elem_type = cdata.operands()[0].type();
+            exprt::operandst result_elts;
+            // Use pending_stmts to call predicate, then check results
+            std::vector<std::pair<irep_idt, std::size_t>> pred_results;
+            for(mp_integer i = 0; i < clen; ++i)
+            {
+              auto ci = i.to_ulong();
+              if(ci >= cdata.operands().size())
+                break;
+              std::string pn = "__ts_cfp_" + std::to_string(cfilter_ctr) + "_" +
+                               std::to_string(ci);
+              irep_idt pid{"typescript::" + pn};
+              {
+                symbolt ps{pid, bool_typet{}, "typescript"};
+                ps.base_name = pn;
+                ps.is_lvalue = true;
+                ps.is_state_var = true;
+                if(symbol_table.lookup(pid) == nullptr)
+                  symbol_table.add(ps);
+              }
+              pending_stmts.push_back(code_frontend_assignt{
+                symbol_exprt{pid, bool_typet{}},
+                side_effect_expr_function_callt{
+                  symbol_exprt{ccb_id, ccb_sym->type},
+                  {cdata.operands()[ci]},
+                  bool_typet{},
+                  source_locationt{}}});
+              pred_results.emplace_back(pid, ci);
+            }
+            // Build result: for each element where pred is true, include it
+            // Use if_exprt chain to build the result array
+            // Actually, use the same pending_stmts approach but store result
+            std::string res_n = "__ts_cfres_" + std::to_string(cfilter_ctr);
+            irep_idt res_id{"typescript::" + res_n};
+            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+            array_typet arr_type{
+              elem_type, from_integer(max_len, signedbv_typet{64})};
+            struct_typet list_type;
+            list_type.components().push_back(
+              struct_typet::componentt{"length", signedbv_typet{64}});
+            list_type.components().push_back(
+              struct_typet::componentt{"data", arr_type});
+            list_type.set_tag("typescript_array");
+            {
+              symbolt rs{res_id, list_type, "typescript"};
+              rs.base_name = res_n;
+              rs.is_lvalue = true;
+              rs.is_state_var = true;
+              if(symbol_table.lookup(res_id) == nullptr)
+                symbol_table.add(rs);
+            }
+            std::string wi_n = "__ts_cfwi_" + std::to_string(cfilter_ctr);
+            irep_idt wi_id{"typescript::" + wi_n};
+            {
+              symbolt ws{wi_id, signedbv_typet{64}, "typescript"};
+              ws.base_name = wi_n;
+              ws.is_lvalue = true;
+              ws.is_state_var = true;
+              if(symbol_table.lookup(wi_id) == nullptr)
+                symbol_table.add(ws);
+            }
+            symbol_exprt wi_sym{wi_id, signedbv_typet{64}};
+            pending_stmts.push_back(code_frontend_assignt{
+              wi_sym, from_integer(0, signedbv_typet{64})});
+            for(const auto &[pid2, ci2] : pred_results)
+            {
+              pending_stmts.push_back(code_ifthenelset{
+                symbol_exprt{pid2, bool_typet{}},
+                code_blockt{
+                  {code_frontend_assignt{
+                     index_exprt{
+                       member_exprt{
+                         symbol_exprt{res_id, list_type}, "data", arr_type},
+                       wi_sym},
+                     cdata.operands()[ci2]},
+                   code_frontend_assignt{
+                     wi_sym,
+                     plus_exprt{
+                       wi_sym, from_integer(1, signedbv_typet{64})}}}}});
+            }
+            pending_stmts.push_back(code_frontend_assignt{
+              member_exprt{
+                symbol_exprt{res_id, list_type}, "length", signedbv_typet{64}},
+              wi_sym});
+            // Store the result value so chained calls can resolve it
+            // Can't store runtime value, but return the symbol
+            return symbol_exprt{res_id, list_type};
           }
         }
       }
