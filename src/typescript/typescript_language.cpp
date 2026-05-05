@@ -174,6 +174,7 @@ function n2j(node) {
       r.statement = n2j(node.statement);
       break;
     case ts.SyntaxKind.ForOfStatement:
+    case ts.SyntaxKind.ForInStatement:
       r.initializer = n2j(node.initializer);
       r.expression = n2j(node.expression);
       r.statement = n2j(node.statement);

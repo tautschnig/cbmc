@@ -1,0 +1,11 @@
+let a: number = nondet_number();
+let b: number = nondet_number();
+__CPROVER_assume(a > 0);
+__CPROVER_assume(b > 0);
+const old_a: number = a;
+const old_b: number = b;
+const temp: number = a;
+a = b;
+b = temp;
+console.assert(a === old_b);
+console.assert(b === old_a);

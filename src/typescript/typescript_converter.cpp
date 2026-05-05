@@ -2894,6 +2894,57 @@ codet typescript_convertert::convert_statement(const jsont &node)
   }
 
   // ES2024 sec-for-in-and-for-of-statements
+  if(kind == "ForInStatement")
+  {
+    // for (const key in obj) - unroll for constant objects
+    const jsont &expr_node = json_member(node, "expression");
+    exprt obj = convert_expression(expr_node);
+    if(obj.id() == ID_symbol)
+    {
+      const symbolt *s =
+        symbol_table.lookup(to_symbol_expr(obj).get_identifier());
+      if(s && !s->value.is_nil())
+        obj = s->value;
+    }
+    const jsont &init = json_member(node, "initializer");
+    std::string var_name;
+    if(is_kind(init, "VariableDeclarationList"))
+    {
+      const jsont &decls = json_member(init, "declarations");
+      if(decls.is_array() && !to_json_array(decls).empty())
+        var_name = json_string(json_member(
+          json_member(*to_json_array(decls).begin(), "name"), "text"));
+    }
+    if(var_name.empty())
+      return code_skipt{};
+    std::string qname =
+      "typescript::" +
+      (current_function.empty() ? "" : current_function + "::") + var_name;
+    irep_idt var_id{qname};
+    if(symbol_table.lookup(var_id) == nullptr)
+    {
+      symbolt vs{var_id, typescript_string_type(), "typescript"};
+      vs.base_name = var_name;
+      vs.is_lvalue = true;
+      vs.is_state_var = true;
+      symbol_table.add(vs);
+    }
+    code_blockt block;
+    if(obj.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(obj.type());
+      for(const auto &comp : st.components())
+      {
+        std::string key = id2string(comp.get_name());
+        block.add(code_frontend_assignt{
+          symbol_exprt{var_id, typescript_string_type()},
+          convert_string_literal_from_text(key)});
+        string_constants[var_id] = key;
+        block.add(convert_statement(json_member(node, "statement")));
+      }
+    }
+    return std::move(block);
+  }
   if(kind == "ForOfStatement")
   {
     // Convert: for(const x of arr) { body }
