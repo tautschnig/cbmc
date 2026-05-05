@@ -576,8 +576,22 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       exprt val = convert_expression(json_member(prop, "initializer"));
       if(val.is_nil())
         continue;
-      components.push_back(struct_typet::componentt{pname, val.type()});
-      fields.push_back(val);
+      // Check if field already exists (from spread) — override it
+      bool found = false;
+      for(std::size_t ci = 0; ci < components.size(); ++ci)
+      {
+        if(id2string(components[ci].get_name()) == pname)
+        {
+          fields[ci] = val;
+          found = true;
+          break;
+        }
+      }
+      if(!found)
+      {
+        components.push_back(struct_typet::componentt{pname, val.type()});
+        fields.push_back(val);
+      }
     }
     struct_typet st{components};
     return struct_exprt{std::move(fields), st};

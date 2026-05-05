@@ -375,6 +375,8 @@ bool typescript_languaget::typecheck(
     converter.div_by_zero_check =
       options->get_bool_option("float-div-by-zero-check");
   }
+  // Note: --ts-max-array-size could be added as a custom option
+  // For now, TYPESCRIPT_MAX_ARRAY_LENGTH is compile-time constant (16)
   if(converter.convert())
     return true;
 
