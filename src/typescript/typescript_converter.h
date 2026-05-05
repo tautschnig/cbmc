@@ -15,6 +15,9 @@
 #include <map>
 #include <set>
 
+/// Maximum array size for TypeScript arrays (elements beyond this are truncated)
+#define TYPESCRIPT_MAX_ARRAY_LENGTH 16
+
 /// Converts a TypeScript JSON AST (produced by ts_ast_to_json.js)
 /// into GOTO program symbols in the symbol table.
 class typescript_convertert

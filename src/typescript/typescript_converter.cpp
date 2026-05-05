@@ -252,7 +252,7 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   {
     std::string elem = ts_type.substr(0, ts_type.size() - 2);
     typet elem_type = convert_type(elem);
-    std::size_t max_len = 64;
+    std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
     array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
     struct_typet list_type;
     list_type.components().push_back(
@@ -574,7 +574,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         std::string et = arr_type_str.substr(0, arr_type_str.size() - 2);
         elem_type = convert_type(et);
       }
-      std::size_t max_len = 64;
+      std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
       exprt::operandst zeros;
       for(std::size_t i = 0; i < max_len; ++i)
         zeros.push_back(from_integer(0, elem_type));
@@ -635,7 +635,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     }
     std::size_t actual_len = elements.size();
     // Build list struct { length, data[] }
-    std::size_t max_len = 64;
+    std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
     while(elements.size() < max_len)
       elements.push_back(from_integer(0, elem_type));
     array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
@@ -1245,7 +1245,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             method == "keys" ? typet{typescript_string_type()} : double_type();
           if(!elts.empty())
             elem_type = elts[0].type();
-          std::size_t max_len = 64;
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
           while(elts.size() < max_len)
           {
             if(method == "keys")
@@ -1535,7 +1535,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           for(const auto &p : parts)
             elts.push_back(convert_string_literal_from_text(p));
           std::size_t actual = elts.size();
-          std::size_t max_len = 64;
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
           while(elts.size() < max_len)
             elts.push_back(convert_string_literal_from_text(""));
           array_typet arr_type{
@@ -1616,7 +1616,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
         }
         std::size_t actual_len = result_elts.size();
-        std::size_t max_len = 64;
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         while(result_elts.size() < max_len)
           result_elts.push_back(from_integer(0, elem_type));
         array_typet arr_type{
@@ -1669,7 +1669,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         std::string res_name = "__ts_filter_res_" + std::to_string(fc);
         std::string res_q = "typescript::" + res_name;
         irep_idt res_id{res_q};
-        std::size_t max_len = 64;
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
         struct_typet list_type;
@@ -1883,7 +1883,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             result_elts.push_back(data.operands()[i]);
         }
         std::size_t actual = result_elts.size();
-        std::size_t max_len = 64;
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         while(result_elts.size() < max_len)
           result_elts.push_back(from_integer(0, elem_type));
         array_typet arr_type{
@@ -2117,7 +2117,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
         }
         std::size_t actual = reversed.size();
-        std::size_t max_len = 64;
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         while(reversed.size() < max_len)
           reversed.push_back(from_integer(0, elem_type));
         array_typet arr_type{
@@ -2622,7 +2622,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           arguments.resize(regular_count);
           std::size_t actual = rest_elts.size();
-          std::size_t max_len = 64;
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
           while(rest_elts.size() < max_len)
             rest_elts.push_back(from_integer(0, elem_type));
           array_typet arr_type{
