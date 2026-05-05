@@ -3962,8 +3962,9 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "zfill" || method_name == "casefold" ||
           method_name == "center" || method_name == "ljust" ||
           method_name == "rjust" || method_name == "expandtabs" ||
-          method_name == "encode" || method_name == "decode" ||
-          method_name == "removeprefix" || method_name == "removesuffix")
+          method_name == "zfill" || method_name == "encode" ||
+          method_name == "decode" || method_name == "removeprefix" ||
+          method_name == "removesuffix")
         {
           // Try exact computation for constant strings
           auto str_val = extract_string_value(obj);
@@ -3971,23 +3972,36 @@ exprt python_convertert::convert_call(const jsont &expr)
           {
             std::string s = str_val.value();
             std::string result;
-            if(method_name == "strip")
+            if(
+              method_name == "strip" || method_name == "lstrip" ||
+              method_name == "rstrip")
             {
-              size_t start = s.find_first_not_of(" \t\n\r\f\v");
-              size_t end = s.find_last_not_of(" \t\n\r\f\v");
-              result = (start == std::string::npos)
-                         ? ""
-                         : s.substr(start, end - start + 1);
-            }
-            else if(method_name == "lstrip")
-            {
-              size_t start = s.find_first_not_of(" \t\n\r\f\v");
-              result = (start == std::string::npos) ? "" : s.substr(start);
-            }
-            else if(method_name == "rstrip")
-            {
-              size_t end = s.find_last_not_of(" \t\n\r\f\v");
-              result = (end == std::string::npos) ? "" : s.substr(0, end + 1);
+              std::string chars_to_strip = " \t\n\r\f\v";
+              if(args.is_array() && !as_array(args).empty())
+              {
+                auto cv = extract_string_value(
+                  convert_expression(*as_array(args).begin()));
+                if(cv.has_value())
+                  chars_to_strip = cv.value();
+              }
+              if(method_name == "strip")
+              {
+                size_t start = s.find_first_not_of(chars_to_strip);
+                size_t end = s.find_last_not_of(chars_to_strip);
+                result = (start == std::string::npos)
+                           ? ""
+                           : s.substr(start, end - start + 1);
+              }
+              else if(method_name == "lstrip")
+              {
+                size_t start = s.find_first_not_of(chars_to_strip);
+                result = (start == std::string::npos) ? "" : s.substr(start);
+              }
+              else // rstrip
+              {
+                size_t end = s.find_last_not_of(chars_to_strip);
+                result = (end == std::string::npos) ? "" : s.substr(0, end + 1);
+              }
             }
             else if(method_name == "capitalize")
             {
@@ -4070,9 +4084,8 @@ exprt python_convertert::convert_call(const jsont &expr)
                 {
                   int left_pad = pad / 2;
                   int right_pad = pad - left_pad;
-                  result =
-                    std::string(left_pad, fill) + s +
-                    std::string(right_pad, fill);
+                  result = std::string(left_pad, fill) + s +
+                           std::string(right_pad, fill);
                 }
                 else if(method_name == "ljust")
                   result = s + std::string(pad, fill);
@@ -4139,11 +4152,31 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
               if(
                 !suffix.empty() && s.size() >= suffix.size() &&
-                s.compare(
-                  s.size() - suffix.size(), suffix.size(), suffix) == 0)
+                s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0)
                 result = s.substr(0, s.size() - suffix.size());
               else
                 result = s;
+            }
+            else if(method_name == "zfill")
+            {
+              int width = 0;
+              if(args.is_array() && !as_array(args).empty())
+              {
+                auto wv =
+                  try_eval_double(convert_expression(*as_array(args).begin()));
+                if(wv.has_value())
+                  width = static_cast<int>(wv.value());
+              }
+              if(static_cast<int>(s.size()) >= width)
+                result = s;
+              else
+              {
+                int pad = width - static_cast<int>(s.size());
+                if(!s.empty() && (s[0] == '+' || s[0] == '-'))
+                  result = s[0] + std::string(pad, '0') + s.substr(1);
+                else
+                  result = std::string(pad, '0') + s;
+              }
             }
             else
               result = s; // fallback for unhandled methods
@@ -4534,8 +4567,8 @@ exprt python_convertert::convert_call(const jsont &expr)
           auto str_val = extract_string_value(obj);
           if(!str_val.has_value() && obj.id() == ID_symbol)
           {
-            auto it = string_constants.find(
-              to_symbol_expr(obj).get_identifier());
+            auto it =
+              string_constants.find(to_symbol_expr(obj).get_identifier());
             if(it != string_constants.end())
               str_val = it->second;
           }
@@ -4571,24 +4604,33 @@ exprt python_convertert::convert_call(const jsont &expr)
             {
               std::string s = str_val.value();
               int slen = static_cast<int>(s.size());
-              if(start < 0) start += slen;
-              if(start < 0) start = 0;
-              if(end < 0) end = slen;
-              if(end > slen) end = slen;
-              std::string slice = (start < end) ? s.substr(start, end - start) : "";
+              if(start < 0)
+                start += slen;
+              if(start < 0)
+                start = 0;
+              if(end < 0)
+                end = slen;
+              if(end > slen)
+                end = slen;
+              std::string slice =
+                (start < end) ? s.substr(start, end - start) : "";
               const std::string &sub = arg_val.value();
               if(method_name == "find")
               {
                 auto pos = slice.find(sub);
                 return from_integer(
-                  pos == std::string::npos ? -1 : static_cast<long long>(pos + start),
+                  pos == std::string::npos
+                    ? -1
+                    : static_cast<long long>(pos + start),
                   python_int_type());
               }
               if(method_name == "rfind")
               {
                 auto pos = slice.rfind(sub);
                 return from_integer(
-                  pos == std::string::npos ? -1 : static_cast<long long>(pos + start),
+                  pos == std::string::npos
+                    ? -1
+                    : static_cast<long long>(pos + start),
                   python_int_type());
               }
               if(method_name == "index" || method_name == "rindex")
