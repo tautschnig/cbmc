@@ -406,6 +406,107 @@ make_nondet_string(symbol_table_baset &symbol_table)
   return result;
 }
 
+/// Register a string expression with the string solver's array_pool.
+/// Emits ID_cprover_associate_array_to_pointer_func and
+/// ID_cprover_associate_length_to_array_func so the solver knows
+/// about this string's content and length.
+[[maybe_unused]] static void register_string_with_solver(
+  const exprt &str_expr,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  // Extract length and content pointer from the string
+  exprt length =
+    (str_expr.id() == ID_struct && str_expr.operands().size() == 2)
+      ? str_expr.operands()[0]
+      : exprt(member_exprt(str_expr, "length", signedbv_typet{64}));
+  exprt content =
+    (str_expr.id() == ID_struct && str_expr.operands().size() == 2)
+      ? str_expr.operands()[1]
+      : exprt(member_exprt(
+          str_expr, "data", pointer_typet(unsignedbv_typet{8}, 64)));
+
+  // Create a nondet infinite character array symbol
+  static unsigned arr_ctr = 0;
+  std::string arr_name = "__str_arr_" + std::to_string(arr_ctr++);
+  irep_idt arr_id{"python::" + arr_name};
+  array_typet inf_array_type(
+    unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64}));
+  if(symbol_table.lookup(arr_id) == nullptr)
+  {
+    symbolt as{arr_id, inf_array_type, "python"};
+    as.base_name = arr_name;
+    as.is_lvalue = true;
+    as.is_state_var = true;
+    symbol_table.add(as);
+  }
+  exprt array_sym = symbol_table.lookup_ref(arr_id).symbol_expr();
+
+  // Emit: rc = cprover_associate_array_to_pointer_func(array, pointer)
+  {
+    irep_idt fn_id{ID_cprover_associate_array_to_pointer_func};
+    if(symbol_table.lookup(fn_id) == nullptr)
+    {
+      std::vector<typet> arg_types{inf_array_type, content.type()};
+      symbolt fs{
+        fn_id,
+        mathematical_function_typet(std::move(arg_types), signedbv_typet{32}),
+        "python"};
+      fs.base_name = id2string(fn_id);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app(
+      symbol_table.lookup_ref(fn_id).symbol_expr(), {array_sym, content});
+    app.type() = signedbv_typet{32};
+
+    static unsigned rc_ctr = 0;
+    std::string rc_name = "__assoc_rc_" + std::to_string(rc_ctr++);
+    irep_idt rc_id{"python::" + rc_name};
+    if(symbol_table.lookup(rc_id) == nullptr)
+    {
+      symbolt rs{rc_id, signedbv_typet{32}, "python"};
+      rs.base_name = rc_name;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      symbol_table.add(rs);
+    }
+    pending_checks.push_back(
+      code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  }
+
+  // Emit: rc = cprover_associate_length_to_array_func(array, length)
+  {
+    irep_idt fn_id{ID_cprover_associate_length_to_array_func};
+    if(symbol_table.lookup(fn_id) == nullptr)
+    {
+      std::vector<typet> arg_types{inf_array_type, length.type()};
+      symbolt fs{
+        fn_id,
+        mathematical_function_typet(std::move(arg_types), signedbv_typet{32}),
+        "python"};
+      fs.base_name = id2string(fn_id);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app(
+      symbol_table.lookup_ref(fn_id).symbol_expr(), {array_sym, length});
+    app.type() = signedbv_typet{32};
+
+    static unsigned rc2_ctr = 0;
+    std::string rc_name = "__assoc_len_rc_" + std::to_string(rc2_ctr++);
+    irep_idt rc_id{"python::" + rc_name};
+    if(symbol_table.lookup(rc_id) == nullptr)
+    {
+      symbolt rs{rc_id, signedbv_typet{32}, "python"};
+      rs.base_name = rc_name;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      symbol_table.add(rs);
+    }
+    pending_checks.push_back(
+      code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  }
+}
+
 /// Emit a boolean cprover_string_* function (equal, contains, etc.).
 /// Returns the boolean result expression directly.
 [[maybe_unused]] static exprt emit_string_bool_function(
@@ -2695,9 +2796,6 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
-          // Use string solver for equality when both sides are simple
-          {
-          }
           // Fallback: compare lengths (sound overapproximation)
           cmp = equal_exprt{
             member_exprt{current_left, "length", signedbv_typet{64}},
@@ -2752,9 +2850,6 @@ exprt python_convertert::convert_compare(const jsont &expr)
             cmp = lv.value() != rv.value() ? exprt{true_exprt{}}
                                            : exprt{false_exprt{}};
             goto done_cmp;
-          }
-          // Use string solver for inequality when both sides are simple
-          {
           }
           // Fallback: compare lengths (sound overapproximation)
           cmp = notequal_exprt{
