@@ -1071,6 +1071,19 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     }
     if(left.type().id() == ID_floatbv)
     {
+      if(left.is_constant() && right.is_constant())
+      {
+        ieee_floatt lv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        ieee_floatt rv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        lv.from_expr(to_constant_expr(left));
+        rv.from_expr(to_constant_expr(right));
+        lv /= rv;
+        return lv.to_expr();
+      }
       exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
       ieee_float_op_exprt result{left, ID_floatbv_div, right, rm};
       result.type() = left.type();
@@ -3248,6 +3261,16 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // Handled at statement level
       return nil_exprt{};
     }
+    if(func_name == "__CPROVER_havoc_object")
+    {
+      // Handled at statement level
+      return nil_exprt{};
+    }
+    if(func_name == "__CPROVER_cover")
+    {
+      // Handled at statement level
+      return nil_exprt{};
+    }
 
     // Regular function call
     irep_idt func_id{"typescript::" + func_name};
@@ -4508,6 +4531,38 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
     if(callee_kind == "Identifier")
     {
       std::string fn = json_string(json_member(callee_node, "text"));
+      if(fn == "__CPROVER_havoc_object")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt arg = convert_expression(*to_json_array(call_args).begin());
+          if(!arg.is_nil())
+            return code_frontend_assignt{
+              arg,
+              side_effect_expr_nondett{arg.type(), get_location(expr_node)}};
+        }
+        return code_skipt{};
+      }
+      if(fn == "__CPROVER_cover")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt cond = convert_expression(*to_json_array(call_args).begin());
+          if(!cond.is_nil())
+          {
+            if(cond.type().id() != ID_bool)
+              cond = typecast_exprt{cond, bool_typet{}};
+            // Cover goals use assert with "cover" property class
+            code_assertt cover{cond};
+            cover.add_source_location().set_property_class("cover");
+            cover.add_source_location().set_comment("coverage goal");
+            return std::move(cover);
+          }
+        }
+        return code_skipt{};
+      }
       if(fn == "__CPROVER_assert")
       {
         const jsont &call_args = json_member(expr_node, "arguments");
