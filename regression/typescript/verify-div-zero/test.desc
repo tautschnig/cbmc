@@ -1,6 +1,6 @@
 CORE
 main.ts
---unwind 10 --no-unwinding-assertions --no-bounds-check
+--float-div-by-zero-check
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$

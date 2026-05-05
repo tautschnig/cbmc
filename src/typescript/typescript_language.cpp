@@ -6,6 +6,7 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/message.h>
+#include <util/options.h>
 #include <util/run.h>
 #include <util/std_expr.h>
 #include <util/suffix.h>
@@ -23,9 +24,10 @@ std::unique_ptr<languaget> new_typescript_language()
 }
 
 void typescript_languaget::set_language_options(
-  const optionst &options,
+  const optionst &_options,
   message_handlert &message_handler)
 {
+  options = &_options;
 }
 
 /// Parse a TypeScript file by invoking Node.js with the TypeScript
@@ -364,6 +366,13 @@ bool typescript_languaget::typecheck(
 
   typescript_convertert converter{
     symbol_table, filename, ast_json, message_handler};
+  if(options != nullptr)
+  {
+    converter.bounds_check = options->get_bool_option("bounds-check");
+    converter.div_by_zero_check =
+      options->get_bool_option("div-by-zero-check") ||
+      options->get_bool_option("float-div-by-zero-check");
+  }
   if(converter.convert())
     return true;
 

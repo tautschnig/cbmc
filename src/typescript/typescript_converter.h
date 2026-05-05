@@ -23,6 +23,9 @@
 class typescript_convertert
 {
 public:
+  bool bounds_check = false;
+  bool div_by_zero_check = false;
+
   typescript_convertert(
     symbol_table_baset &_symbol_table,
     const std::string &_filename,

@@ -351,7 +351,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     exprt idx = convert_expression(json_member(node, "argumentExpression"));
     // Bounds check: assert idx >= 0 && idx < length
     if(
-      !obj.is_nil() && obj.type().id() == ID_struct &&
+      bounds_check && !obj.is_nil() && obj.type().id() == ID_struct &&
       to_struct_type(obj.type()).get_tag() == "typescript_array" &&
       !idx.is_nil())
     {
@@ -359,8 +359,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       exprt idx_int = idx.type().id() == ID_floatbv
                         ? exprt{typecast_exprt{idx, signedbv_typet{64}}}
                         : idx;
-      // Add bounds check as pending assertion (only if --bounds-check)
-      // For now, just ensure the index is within the data array bounds
+      // assert(idx >= 0 && idx < length)
+      code_assertt bounds_assert{and_exprt{
+        binary_relation_exprt{
+          idx_int, ID_ge, from_integer(0, signedbv_typet{64})},
+        binary_relation_exprt{idx_int, ID_lt, len}}};
+      bounds_assert.add_source_location() = get_location(node);
+      bounds_assert.add_source_location().set_property_class("array-bounds");
+      bounds_assert.add_source_location().set_comment(
+        "array index out of bounds");
+      pending_stmts.push_back(std::move(bounds_assert));
     }
     if(!obj.is_nil() && !idx.is_nil())
     {
@@ -987,6 +995,17 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   }
   if(op == "SlashToken")
   {
+    if(div_by_zero_check)
+    {
+      exprt zero = from_integer(0, right.type());
+      exprt cond = right.type().id() == ID_floatbv
+                     ? exprt{ieee_float_notequal_exprt{right, zero}}
+                     : exprt{notequal_exprt{right, zero}};
+      code_assertt div_assert{cond};
+      div_assert.add_source_location().set_property_class("division-by-zero");
+      div_assert.add_source_location().set_comment("division by zero");
+      pending_stmts.push_back(std::move(div_assert));
+    }
     if(left.type().id() == ID_floatbv)
     {
       exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};

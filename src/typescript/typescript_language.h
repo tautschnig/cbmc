@@ -65,6 +65,7 @@ public:
   }
 
 protected:
+  const optionst *options = nullptr;
   std::string filename;
   jsont ast_json;
 };
