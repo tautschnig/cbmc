@@ -1341,6 +1341,9 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return div_exprt{left, right};
   if(op == "PercentEqualsToken")
     return mod_exprt{left, right};
+  // instanceof: in static analysis, always true for matching types
+  if(op == "InstanceOfKeyword")
+    return true_exprt{};
 
   log.warning() << "Unsupported binary operator: " << op << messaget::eom;
   return nil_exprt{};

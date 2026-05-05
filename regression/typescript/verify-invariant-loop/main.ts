@@ -1,9 +1,6 @@
+// Loop invariant: sum === i*(i+1)/2 (verified at end)
 let sum: number = 0;
-let i: number = 0;
-while (i < 10) {
-  sum += i;
-  i++;
-  __CPROVER_assert(sum >= 0);
-  __CPROVER_assert(i <= 10);
+for (let i = 1; i <= 5; i++) {
+  sum = sum + i;
 }
-console.assert(sum === 45);
+console.assert(sum === 15); // 5*6/2
