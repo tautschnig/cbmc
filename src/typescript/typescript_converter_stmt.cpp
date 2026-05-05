@@ -876,6 +876,13 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         {
           exprt data =
             member_exprt{rhs, "data", st.get_component("data").type()};
+          // Get source array length
+          exprt src_len = member_exprt{rhs, "length", signedbv_typet{64}};
+          mp_integer arr_len{0};
+          if(
+            rhs.id() == ID_struct && !rhs.operands().empty() &&
+            rhs.operands()[0].is_constant())
+            to_integer(to_constant_expr(rhs.operands()[0]), arr_len);
           std::size_t idx = 0;
           for(const auto &elem : to_json_array(elements))
           {
@@ -886,24 +893,77 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
               idx++;
               continue;
             }
-            typet et =
-              to_array_type(st.get_component("data").type()).element_type();
+            bool is_rest = json_member(elem, "isRest").is_true();
             std::string qn =
               "typescript::" +
               (current_function.empty() ? "" : current_function + "::") + ename;
             irep_idt eid{qn};
-            if(symbol_table.lookup(eid) == nullptr)
+            if(is_rest)
             {
-              symbolt es{eid, et, "typescript"};
-              es.base_name = ename;
-              es.is_lvalue = true;
-              es.is_state_var = true;
-              es.is_static_lifetime = current_function.empty();
-              symbol_table.add(es);
+              // Rest element: create sub-array from idx to end
+              typet et =
+                to_array_type(st.get_component("data").type()).element_type();
+              std::size_t rest_len = arr_len > mp_integer(idx)
+                                       ? (arr_len - mp_integer(idx)).to_ulong()
+                                       : 0;
+              std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+              array_typet rest_arr_type{
+                et, from_integer(max_len, signedbv_typet{64})};
+              struct_typet rest_type;
+              rest_type.components().push_back(
+                struct_typet::componentt{"length", signedbv_typet{64}});
+              rest_type.components().push_back(
+                struct_typet::componentt{"data", rest_arr_type});
+              rest_type.set_tag("typescript_array");
+              if(symbol_table.lookup(eid) == nullptr)
+              {
+                symbolt es{eid, rest_type, "typescript"};
+                es.base_name = ename;
+                es.is_lvalue = true;
+                es.is_state_var = true;
+                es.is_static_lifetime = current_function.empty();
+                symbol_table.add(es);
+              }
+              // Build rest array struct
+              exprt::operandst rest_elts;
+              for(std::size_t ri = 0; ri < max_len; ++ri)
+              {
+                if(ri < rest_len)
+                  rest_elts.push_back(index_exprt{
+                    data, from_integer(idx + ri, signedbv_typet{64})});
+                else
+                  rest_elts.push_back(from_integer(0, et));
+              }
+              array_exprt rest_data{std::move(rest_elts), rest_arr_type};
+              struct_exprt rest_val{
+                {from_integer(rest_len, signedbv_typet{64}),
+                 std::move(rest_data)},
+                rest_type};
+              block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(eid).symbol_expr(),
+                std::move(rest_val)});
+              // Store value for downstream resolution
+              symbolt *ws = symbol_table.get_writeable(eid);
+              if(ws)
+                ws->value = symbol_table.lookup_ref(eid).symbol_expr();
             }
-            block.add(code_frontend_assignt{
-              symbol_table.lookup_ref(eid).symbol_expr(),
-              index_exprt{data, from_integer(idx, signedbv_typet{64})}});
+            else
+            {
+              typet et =
+                to_array_type(st.get_component("data").type()).element_type();
+              if(symbol_table.lookup(eid) == nullptr)
+              {
+                symbolt es{eid, et, "typescript"};
+                es.base_name = ename;
+                es.is_lvalue = true;
+                es.is_state_var = true;
+                es.is_static_lifetime = current_function.empty();
+                symbol_table.add(es);
+              }
+              block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(eid).symbol_expr(),
+                index_exprt{data, from_integer(idx, signedbv_typet{64})}});
+            }
             idx++;
           }
         }
