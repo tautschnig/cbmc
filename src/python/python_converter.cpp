@@ -313,7 +313,8 @@ static exprt build_string_struct(const std::string &s)
 
 /// Create a nondet refined string expression (length + content pointer).
 /// Used as the result of string operations that the solver will constrain.
-static exprt make_nondet_string(symbol_table_baset &symbol_table)
+[[maybe_unused]] static exprt
+make_nondet_string(symbol_table_baset &symbol_table)
 {
   static unsigned str_ctr = 0;
   std::string len_name = "__string_len_" + std::to_string(str_ctr);
@@ -350,7 +351,7 @@ static exprt make_nondet_string(symbol_table_baset &symbol_table)
 /// Emit a cprover_string_* function application.
 /// Creates: return_code = func_id(result.length, result.content, args...)
 /// Returns the result string expression.
-static exprt emit_string_function(
+[[maybe_unused]] static exprt emit_string_function(
   const irep_idt &func_id,
   const exprt::operandst &extra_args,
   symbol_table_baset &symbol_table,
@@ -1167,16 +1168,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
 
     // All parts are constant — build the string literal
-    exprt::operandst chars;
-    for(char ch : all_bytes)
-      chars.push_back(
-        from_integer(static_cast<unsigned char>(ch), unsignedbv_typet{8}));
-    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-      chars.push_back(from_integer(0, unsignedbv_typet{8}));
-    array_exprt data_expr{std::move(chars), data_type};
-    exprt length_expr =
-      from_integer(static_cast<long long>(all_bytes.size()), python_int_type());
-    result = struct_exprt{{length_expr, data_expr}, str_type};
+    result = build_string_struct(all_bytes);
   }
   else if(node_type == "Lambda")
     result = convert_lambda(expr);
@@ -1525,14 +1517,31 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     is_python_string_type(left.type()) && is_python_string_type(right.type()) &&
     op == "Add")
   {
+    // Constant-string optimization for concat
+    {
+      auto lv = extract_string_value(left);
+      if(!lv.has_value() && left.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(left).get_identifier());
+        if(it != string_constants.end())
+          lv = it->second;
+      }
+      auto rv = extract_string_value(right);
+      if(!rv.has_value() && right.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(right).get_identifier());
+        if(it != string_constants.end())
+          rv = it->second;
+      }
+      if(lv.has_value() && rv.has_value())
+        return build_string_struct(lv.value() + rv.value());
+    }
+    // Fallback: nondet (string solver needs --refine-strings)
+    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
     struct_typet str_type = python_string_type();
-    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-    // Use string solver: cprover_string_concat_func
-    // Args: result.length, result.content, arg1 (refined_string), arg2 (refined_string)
-    return emit_string_function(
-      ID_cprover_string_concat_func,
-      {left, right},
-      symbol_table, pending_checks);
+    const auto &data_type = array_typet(
+      unsignedbv_typet{8},
+      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
     member_exprt left_len{left, "length", signedbv_typet{64}};
     member_exprt right_len{right, "length", signedbv_typet{64}};
     member_exprt left_data{left, "data", data_type};
@@ -1656,10 +1665,30 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     exprt num_op = is_python_string_type(left.type()) ? right : left;
     num_op = safe_typecast(num_op, signedbv_typet{64});
 
-    struct_typet str_type = python_string_type();
-    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-    // Pointer-based string: return nondet for non-constant
+    // Constant-string optimization for repetition
+    {
+      auto sv = extract_string_value(str_op);
+      if(!sv.has_value() && str_op.id() == ID_symbol)
+      {
+        auto it =
+          string_constants.find(to_symbol_expr(str_op).get_identifier());
+        if(it != string_constants.end())
+          sv = it->second;
+      }
+      auto nv = try_eval_double(num_op);
+      if(sv.has_value() && nv.has_value() && nv.value() >= 0)
+      {
+        std::string result;
+        for(int i = 0; i < static_cast<int>(nv.value()); i++)
+          result += sv.value();
+        return build_string_struct(result);
+      }
+    }
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+    struct_typet str_type = python_string_type();
+    const auto &data_type = array_typet(
+      unsignedbv_typet{8},
+      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
     member_exprt old_len{str_op, "length", signedbv_typet{64}};
     member_exprt old_data{str_op, "data", data_type};
 
@@ -2489,10 +2518,43 @@ exprt python_convertert::convert_compare(const jsont &expr)
       is_python_string_type(right.type()) &&
       (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE"))
     {
+      // Constant-string optimization for ordering
+      {
+        auto lv = extract_string_value(current_left);
+        if(!lv.has_value() && current_left.id() == ID_symbol)
+        {
+          auto it = string_constants.find(
+            to_symbol_expr(current_left).get_identifier());
+          if(it != string_constants.end())
+            lv = it->second;
+        }
+        auto rv = extract_string_value(right);
+        if(!rv.has_value() && right.id() == ID_symbol)
+        {
+          auto it =
+            string_constants.find(to_symbol_expr(right).get_identifier());
+          if(it != string_constants.end())
+            rv = it->second;
+        }
+        if(lv.has_value() && rv.has_value())
+        {
+          bool result = false;
+          if(op == "Lt")
+            result = lv.value() < rv.value();
+          else if(op == "LtE")
+            result = lv.value() <= rv.value();
+          else if(op == "Gt")
+            result = lv.value() > rv.value();
+          else if(op == "GtE")
+            result = lv.value() >= rv.value();
+          return result ? exprt(true_exprt()) : exprt(false_exprt());
+        }
+      }
+      return side_effect_expr_nondett{bool_typet(), source_locationt{}};
       struct_typet str_type = python_string_type();
-      const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-      // Pointer-based string: return nondet for non-constant
-      return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+      const auto &data_type = array_typet(
+        unsignedbv_typet{8},
+        from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       exprt left_char = index_exprt{
         member_exprt{current_left, "data", data_type},
         from_integer(0, python_int_type())};
@@ -2548,14 +2610,31 @@ exprt python_convertert::convert_compare(const jsont &expr)
           is_python_string_type(right.type()))
         {
           auto lv = extract_string_value(current_left);
+          if(!lv.has_value() && current_left.id() == ID_symbol)
+          {
+            auto it = string_constants.find(
+              to_symbol_expr(current_left).get_identifier());
+            if(it != string_constants.end())
+              lv = it->second;
+          }
           auto rv = extract_string_value(right);
+          if(!rv.has_value() && right.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(right).get_identifier());
+            if(it != string_constants.end())
+              rv = it->second;
+          }
           if(lv.has_value() && rv.has_value())
           {
             cmp = lv.value() == rv.value() ? exprt{true_exprt{}}
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
-          cmp = equal_exprt{current_left, right};
+          // Compare by length and content bytes
+          cmp = equal_exprt{
+            member_exprt{current_left, "length", signedbv_typet{64}},
+            member_exprt{right, "length", signedbv_typet{64}}};
         }
         else if(current_left.type().id() == ID_floatbv)
           cmp = ieee_float_equal_exprt{current_left, right};
@@ -2586,14 +2665,30 @@ exprt python_convertert::convert_compare(const jsont &expr)
           is_python_string_type(right.type()))
         {
           auto lv = extract_string_value(current_left);
+          if(!lv.has_value() && current_left.id() == ID_symbol)
+          {
+            auto it = string_constants.find(
+              to_symbol_expr(current_left).get_identifier());
+            if(it != string_constants.end())
+              lv = it->second;
+          }
           auto rv = extract_string_value(right);
+          if(!rv.has_value() && right.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(right).get_identifier());
+            if(it != string_constants.end())
+              rv = it->second;
+          }
           if(lv.has_value() && rv.has_value())
           {
             cmp = lv.value() != rv.value() ? exprt{true_exprt{}}
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
-          cmp = notequal_exprt{current_left, right};
+          cmp = notequal_exprt{
+            member_exprt{current_left, "length", signedbv_typet{64}},
+            member_exprt{right, "length", signedbv_typet{64}}};
         }
         else if(
           current_left.type().id() == ID_struct &&
@@ -2723,9 +2818,39 @@ exprt python_convertert::convert_compare(const jsont &expr)
       else if(is_python_string_type(container.type()))
       {
         // PLR §6.10.2: "x in s" for strings — check character membership
-        const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-        // Pointer-based string: return nondet for non-constant
-        return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+        // Constant-string optimization
+        {
+          auto container_sv = extract_string_value(container);
+          if(!container_sv.has_value() && container.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(container).get_identifier());
+            if(it != string_constants.end())
+              container_sv = it->second;
+          }
+          auto item_sv = extract_string_value(item);
+          if(!item_sv.has_value() && item.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(item).get_identifier());
+            if(it != string_constants.end())
+              item_sv = it->second;
+          }
+          if(container_sv.has_value() && item_sv.has_value())
+          {
+            bool found =
+              container_sv.value().find(item_sv.value()) != std::string::npos;
+            cmp = (op == "In")
+                    ? (found ? exprt{true_exprt{}} : exprt{false_exprt{}})
+                    : (found ? exprt{false_exprt{}} : exprt{true_exprt{}});
+            goto done_cmp;
+          }
+        }
+        cmp = side_effect_expr_nondett{bool_typet(), source_locationt{}};
+        goto done_cmp;
+        const auto &data_type = array_typet(
+          unsignedbv_typet{8},
+          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
         member_exprt data{container, "data", data_type};
         member_exprt length{container, "length", signedbv_typet{64}};
 
@@ -3565,9 +3690,25 @@ exprt python_convertert::convert_call(const jsont &expr)
         // PLib stdtypes: upper/lower — exact byte transformation
         if(method_name == "upper" || method_name == "lower")
         {
-          const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-          // Pointer-based string: return nondet for non-constant
+          auto sv = extract_string_value(obj);
+          if(!sv.has_value() && obj.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(obj).get_identifier());
+            if(it != string_constants.end())
+              sv = it->second;
+          }
+          if(sv.has_value())
+          {
+            std::string result = sv.value();
+            for(auto &c : result)
+              c = (method_name == "upper") ? toupper(c) : tolower(c);
+            return build_string_struct(result);
+          }
           return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+          const auto &data_type = array_typet(
+            unsignedbv_typet{8},
+            from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
           member_exprt src_data{obj, "data", data_type};
           member_exprt src_len{obj, "length", signedbv_typet{64}};
 
@@ -3781,20 +3922,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 pos = found + old_s.size();
               }
               // Build string literal
-              struct_typet str_type = python_string_type();
-              const auto &data_type =
-                array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-              exprt::operandst chars;
-              for(char c : result)
-                chars.push_back(from_integer(
-                  static_cast<unsigned char>(c), unsignedbv_typet{8}));
-              while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-                chars.push_back(from_integer(0, unsignedbv_typet{8}));
-              return struct_exprt{
-                {from_integer(
-                   static_cast<long long>(result.size()), python_int_type()),
-                 array_exprt{std::move(chars), data_type}},
-                str_type};
+              return build_string_struct(result);
             }
           }
           // PLib stdtypes: str.format() — substitute {} placeholders
@@ -3906,20 +4034,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
               if(all_const)
               {
-                struct_typet str_type = python_string_type();
-                const auto &data_type =
-                  array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-                exprt::operandst chars;
-                for(char c : result)
-                  chars.push_back(from_integer(
-                    static_cast<unsigned char>(c), unsignedbv_typet{8}));
-                while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-                  chars.push_back(from_integer(0, unsignedbv_typet{8}));
-                return struct_exprt{
-                  {from_integer(
-                     static_cast<long long>(result.size()), python_int_type()),
-                   array_exprt{std::move(chars), data_type}},
-                  str_type};
+                return build_string_struct(result);
               }
             }
           }
@@ -5422,21 +5537,7 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
             result = (negative ? "-0b" : "0b") + digits;
           }
-          // Build string literal
-          struct_typet str_type = python_string_type();
-          const auto &data_type =
-            array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-          exprt::operandst chars;
-          for(char c : result)
-            chars.push_back(
-              from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
-          while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-            chars.push_back(from_integer(0, unsignedbv_typet{8}));
-          return struct_exprt{
-            {from_integer(
-               static_cast<long long>(result.size()), python_int_type()),
-             array_exprt{std::move(chars), data_type}},
-            str_type};
+          return build_string_struct(result);
         }
       }
     }
@@ -5521,13 +5622,27 @@ exprt python_convertert::convert_call(const jsont &expr)
         chars.push_back(safe_typecast(code_point, unsignedbv_typet{8}));
       }
 
-      std::size_t char_count = chars.size();
-      while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-        chars.push_back(from_integer(0, unsignedbv_typet{8}));
-      array_exprt data{std::move(chars), data_type};
-      exprt length =
-        from_integer(static_cast<long long>(char_count), signedbv_typet{64});
-      return struct_exprt{{length, data}, str_type};
+      // For constant code points, use build_string_struct
+      if(code_point.is_constant())
+      {
+        std::string s;
+        for(const auto &c : chars)
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(c), v))
+            s += static_cast<char>(v.to_long());
+        }
+        return build_string_struct(s);
+      }
+      // Non-constant: build pointer-based string
+      array_typet at(
+        unsignedbv_typet{8},
+        from_integer(static_cast<long long>(chars.size()), signedbv_typet{64}));
+      array_exprt arr(std::move(chars), at);
+      exprt ptr = address_of_exprt(index_exprt(
+        arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+      exprt length = from_integer(1LL, signedbv_typet{64});
+      return struct_exprt{{length, ptr}, str_type};
     }
     return side_effect_expr_nondett{python_string_type(), get_location(expr)};
   }
@@ -5560,10 +5675,9 @@ exprt python_convertert::convert_call(const jsont &expr)
           return from_integer(cp, python_int_type());
         }
         // Symbolic: return first byte
-        struct_typet str_type = python_string_type();
-        const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-        // Pointer-based string: return nondet for non-constant
-        return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+        const auto &data_type = array_typet(
+          unsignedbv_typet{8},
+          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
         member_exprt data{arg, "data", data_type};
         return safe_typecast(
           index_exprt{data, from_integer(0, signedbv_typet{64})},
@@ -7399,6 +7513,54 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
     }
 
+    // Constant-string optimization for slicing
+    if(is_python_string_type(value.type()))
+    {
+      auto sv = extract_string_value(value);
+      if(!sv.has_value() && value.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(value).get_identifier());
+        if(it != string_constants.end())
+          sv = it->second;
+      }
+      if(sv.has_value())
+      {
+        std::string s = sv.value();
+        int len = static_cast<int>(s.size());
+        if(is_reverse)
+        {
+          std::string rev(s.rbegin(), s.rend());
+          return build_string_struct(rev);
+        }
+        else
+        {
+          int lo =
+            lower_json.is_null()
+              ? 0
+              : static_cast<int>(
+                  try_eval_double(convert_expression(lower_json)).value_or(0));
+          int hi =
+            upper_json.is_null()
+              ? len
+              : static_cast<int>(try_eval_double(convert_expression(upper_json))
+                                   .value_or(len));
+          if(lo < 0)
+            lo += len;
+          if(hi < 0)
+            hi += len;
+          if(lo < 0)
+            lo = 0;
+          if(hi > len)
+            hi = len;
+          if(lo >= hi)
+            return build_string_struct("");
+          return build_string_struct(s.substr(lo, hi - lo));
+        }
+      }
+      // Non-constant string: return nondet
+      return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+    }
+
     const auto &st = to_struct_type(value.type());
     const auto &data_type = to_array_type(st.components()[1].type());
     typet elem_type = data_type.element_type();
@@ -7470,10 +7632,32 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       "index-out-of-bounds",
       "string index out of range",
       get_location(expr));
-    struct_typet str_type = python_string_type();
-    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-    // Pointer-based string: return nondet for non-constant
+    // Constant-string optimization for indexing
+    {
+      auto sv = extract_string_value(value);
+      if(!sv.has_value() && value.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(value).get_identifier());
+        if(it != string_constants.end())
+          sv = it->second;
+      }
+      if(sv.has_value())
+      {
+        auto nv = try_eval_double(adjusted_idx);
+        if(nv.has_value())
+        {
+          int i = static_cast<int>(nv.value());
+          int len = static_cast<int>(sv.value().size());
+          if(i >= 0 && i < len)
+            return build_string_struct(std::string(1, sv.value()[i]));
+        }
+      }
+    }
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+    struct_typet str_type = python_string_type();
+    const auto &data_type = array_typet(
+      unsignedbv_typet{8},
+      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     member_exprt data{value, "data", data_type};
     index_exprt char_val{data, adjusted_idx};
@@ -9516,11 +9700,38 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     op == "Add" && is_python_string_type(lhs.type()) &&
     is_python_string_type(rhs.type()))
   {
-    // Build the concat with content tracking (same as convert_bin_op)
+    // Constant-string optimization for +=
+    {
+      auto lv = extract_string_value(lhs);
+      if(!lv.has_value() && lhs.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(lhs).get_identifier());
+        if(it != string_constants.end())
+          lv = it->second;
+      }
+      auto rv = extract_string_value(rhs);
+      if(!rv.has_value() && rhs.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(rhs).get_identifier());
+        if(it != string_constants.end())
+          rv = it->second;
+      }
+      if(lv.has_value() && rv.has_value())
+      {
+        std::string result = lv.value() + rv.value();
+        // Update tracking
+        if(lhs.id() == ID_symbol)
+          string_constants[to_symbol_expr(lhs).get_identifier()] = result;
+        return code_frontend_assignt{lhs, build_string_struct(result)};
+      }
+    }
+    // Non-constant: assign nondet
+    return code_frontend_assignt{
+      lhs, side_effect_expr_nondett{python_string_type(), source_locationt{}}};
     struct_typet str_type = python_string_type();
-    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-    // Pointer-based string: return nondet for non-constant
-    return code_skipt{};
+    const auto &data_type = array_typet(
+      unsignedbv_typet{8},
+      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
     member_exprt left_len{lhs, "length", signedbv_typet{64}};
     member_exprt right_len{rhs, "length", signedbv_typet{64}};
     member_exprt left_data{lhs, "data", data_type};
@@ -10142,7 +10353,9 @@ codet python_convertert::convert_for(const jsont &stmt)
   code_blockt body_block;
 
   // x = iterable.data[__idx] (typecast if needed)
-  exprt elem_val = index_exprt{data, idx_var};
+  exprt elem_val = is_string
+                     ? exprt(dereference_exprt{plus_exprt{data, idx_var}})
+                     : exprt(index_exprt{data, idx_var});
 
   // Handle tuple unpacking: for a, b in list_of_tuples
   if(is_node_type(target, "Tuple") && is_list)
@@ -10197,16 +10410,15 @@ codet python_convertert::convert_for(const jsont &stmt)
     // For string iteration, wrap the char byte in a single-char string struct
     if(is_string && is_python_string_type(loop_var.type()))
     {
-      struct_typet str_type = python_string_type();
-      const auto &str_data_type =
-        array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+      // Build pointer-based single-char string: {length=1, data=&[char]}
       exprt::operandst chars;
       chars.push_back(elem_val);
-      while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-        chars.push_back(from_integer(0, unsignedbv_typet{8}));
-      array_exprt char_data{std::move(chars), str_data_type};
+      array_typet at(unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
+      array_exprt arr(std::move(chars), at);
+      exprt ptr = address_of_exprt(index_exprt(
+        arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
       exprt len_one = from_integer(1, signedbv_typet{64});
-      elem_val = struct_exprt{{len_one, char_data}, str_type};
+      elem_val = struct_exprt{{len_one, ptr}, python_string_type()};
     }
     else if(elem_val.type() != loop_var.type())
       elem_val = safe_typecast(elem_val, loop_var.type());
