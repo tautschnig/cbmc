@@ -350,6 +350,20 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   {
     exprt obj = convert_expression(json_member(node, "expression"));
     exprt idx = convert_expression(json_member(node, "argumentExpression"));
+    // Computed property access: obj["key"] on struct types
+    if(
+      !obj.is_nil() && obj.type().id() == ID_struct &&
+      to_struct_type(obj.type()).get_tag() != "typescript_array")
+    {
+      std::string key = extract_string_value(idx);
+      if(!key.empty())
+      {
+        key = key.substr(2);
+        const auto &st = to_struct_type(obj.type());
+        if(st.has_component(key))
+          return member_exprt{obj, key, st.component_type(key)};
+      }
+    }
     // Bounds check: assert idx >= 0 && idx < length
     if(
       bounds_check && !obj.is_nil() && obj.type().id() == ID_struct &&
@@ -4084,6 +4098,11 @@ codet typescript_convertert::convert_statement(const jsont &node)
   // ES2024 sec-throw-statement
   if(kind == "ThrowStatement")
     return code_skipt{}; // simplified: throw is a no-op for now
+  // ES2024 sec-imports: ImportDeclaration — skip (handled by parser)
+  if(
+    kind == "ImportDeclaration" || kind == "ExportDeclaration" ||
+    kind == "ExportAssignment")
+    return code_skipt{};
   log.warning() << "Unsupported statement kind: " << kind << messaget::eom;
   return code_skipt{};
 }

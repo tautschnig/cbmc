@@ -284,6 +284,24 @@ function n2j(node) {
       if(node.variableDeclaration) r.variableDeclaration = n2j(node.variableDeclaration);
       r.block = n2j(node.block);
       break;
+    case ts.SyntaxKind.ImportDeclaration:
+      if(node.importClause) r.importClause = n2j(node.importClause);
+      if(node.moduleSpecifier) r.moduleSpecifier = n2j(node.moduleSpecifier);
+      break;
+    case ts.SyntaxKind.ExportDeclaration:
+    case ts.SyntaxKind.ExportAssignment:
+      break;
+    case ts.SyntaxKind.ImportClause:
+      if(node.namedBindings) r.namedBindings = n2j(node.namedBindings);
+      if(node.name) r.name = n2j(node.name);
+      break;
+    case ts.SyntaxKind.NamedImports:
+      r.elements = node.elements.map(n2j);
+      break;
+    case ts.SyntaxKind.ImportSpecifier:
+      r.name = n2j(node.name);
+      if(node.propertyName) r.propertyName = n2j(node.propertyName);
+      break;
     case ts.SyntaxKind.ThrowStatement:
       r.expression = n2j(node.expression);
       break;
@@ -293,6 +311,24 @@ function n2j(node) {
       break;
     case ts.SyntaxKind.TypeOfExpression:
       r.expression = n2j(node.expression);
+      break;
+    case ts.SyntaxKind.ImportDeclaration:
+      if(node.importClause) r.importClause = n2j(node.importClause);
+      if(node.moduleSpecifier) r.moduleSpecifier = n2j(node.moduleSpecifier);
+      break;
+    case ts.SyntaxKind.ExportDeclaration:
+    case ts.SyntaxKind.ExportAssignment:
+      break;
+    case ts.SyntaxKind.ImportClause:
+      if(node.namedBindings) r.namedBindings = n2j(node.namedBindings);
+      if(node.name) r.name = n2j(node.name);
+      break;
+    case ts.SyntaxKind.NamedImports:
+      r.elements = node.elements.map(n2j);
+      break;
+    case ts.SyntaxKind.ImportSpecifier:
+      r.name = n2j(node.name);
+      if(node.propertyName) r.propertyName = n2j(node.propertyName);
       break;
     case ts.SyntaxKind.ThrowStatement:
       r.expression = n2j(node.expression);
