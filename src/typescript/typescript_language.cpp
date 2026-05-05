@@ -294,6 +294,9 @@ function n2j(node) {
     case ts.SyntaxKind.TypeOfExpression:
       r.expression = n2j(node.expression);
       break;
+    case ts.SyntaxKind.ThrowStatement:
+      r.expression = n2j(node.expression);
+      break;
     case ts.SyntaxKind.BreakStatement:
     case ts.SyntaxKind.ContinueStatement:
       break;

@@ -1239,6 +1239,9 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return right;
   }
 
+  // ES2024 sec-comma-operator
+  if(op == "CommaToken")
+    return right; // evaluate both, return right
   // ES2024 sec-bitwise-operators
   if(
     op == "AmpersandToken" || op == "BarToken" || op == "CaretToken" ||
@@ -3456,6 +3459,12 @@ codet typescript_convertert::convert_statement(const jsont &node)
     exprt cond = convert_expression(json_member(node, "expression"));
     codet body = convert_statement(json_member(node, "statement"));
     return code_dowhilet{std::move(cond), std::move(body)};
+  }
+  // ES2024 sec-throw-statement
+  if(kind == "ThrowStatement")
+  {
+    // Model throw as assume(false) — makes path unreachable
+    return code_assumet{false_exprt{}};
   }
   // ES2024 sec-break-statement
   if(kind == "BreakStatement")
