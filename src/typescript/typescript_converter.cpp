@@ -412,6 +412,26 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         std::string sv = extract_string_value(expr);
         if(!sv.empty())
           result += sv.substr(2);
+        else if(expr.id() == ID_symbol && expr.type().id() == ID_floatbv)
+        {
+          // Try to resolve symbol to constant value
+          const symbolt *ns =
+            symbol_table.lookup(to_symbol_expr(expr).get_identifier());
+          if(ns && !ns->value.is_nil() && ns->value.is_constant())
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(ns->value));
+            double dval = std::stod(fv.to_ansi_c_string());
+            if(dval == std::floor(dval) && std::abs(dval) < 1e15)
+              result += std::to_string(static_cast<long long>(dval));
+            else
+              result += fv.to_ansi_c_string();
+          }
+          else
+            all_const = false;
+        }
         else if(expr.is_constant() && expr.type().id() == ID_floatbv)
         {
           // Convert constant number to string
@@ -1744,6 +1764,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         pending_stmts.push_back(code_frontend_assignt{
           symbol_exprt{flag_id, bool_typet{}}, false_exprt{}});
+        // Initialize result to 0 (returned if nothing found)
+        pending_stmts.push_back(code_frontend_assignt{
+          symbol_exprt{res_id, elem_type}, from_integer(0, elem_type)});
         for(mp_integer i = 0; i < len; ++i)
         {
           auto idx = i.to_ulong();
@@ -2418,11 +2441,11 @@ codet typescript_convertert::convert_statement(const jsont &node)
             if(!sv.empty())
               string_constants[sym_id] = sv.substr(2);
           }
-          // Set symbol value for constant structs (enables spread)
+          // Set symbol value for constants (enables spread, template literals)
           {
             const exprt &val =
               rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-            if(val.id() == ID_struct && val.type().id() == ID_struct)
+            if(val.id() == ID_struct || val.is_constant())
             {
               symbolt *ws = symbol_table.get_writeable(sym_id);
               if(ws != nullptr)
@@ -3306,11 +3329,11 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
             }
           }
         }
-        // Set symbol value for constant structs (enables spread)
+        // Set symbol value for constants (enables spread, template literals)
         {
           const exprt &val =
             rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-          if(val.id() == ID_struct && val.type().id() == ID_struct)
+          if(val.id() == ID_struct || val.is_constant())
           {
             symbolt *ws = symbol_table.get_writeable(sym_id);
             if(ws != nullptr)
