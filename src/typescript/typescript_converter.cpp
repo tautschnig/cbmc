@@ -1211,6 +1211,64 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // This is handled at the statement level
       return nil_exprt{};
     }
+    // Object static methods
+    if(obj == "Object")
+    {
+      exprt::operandst call_args;
+      if(args.is_array())
+        for(const auto &a : to_json_array(args))
+          call_args.push_back(convert_expression(a));
+      if((method == "keys" || method == "values") && !call_args.empty())
+      {
+        exprt src = call_args[0];
+        if(src.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(src).get_identifier());
+          if(s && !s->value.is_nil())
+            src = s->value;
+        }
+        if(src.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(src.type());
+          exprt::operandst elts;
+          for(std::size_t i = 0; i < st.components().size(); ++i)
+          {
+            if(method == "keys")
+              elts.push_back(convert_string_literal_from_text(
+                id2string(st.components()[i].get_name())));
+            else if(i < src.operands().size())
+              elts.push_back(src.operands()[i]);
+          }
+          std::size_t actual = elts.size();
+          typet elem_type =
+            method == "keys" ? typet{typescript_string_type()} : double_type();
+          if(!elts.empty())
+            elem_type = elts[0].type();
+          std::size_t max_len = 64;
+          while(elts.size() < max_len)
+          {
+            if(method == "keys")
+              elts.push_back(convert_string_literal_from_text(""));
+            else
+              elts.push_back(from_integer(0, elem_type));
+          }
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type;
+          list_type.components().push_back(
+            struct_typet::componentt{"length", signedbv_typet{64}});
+          list_type.components().push_back(
+            struct_typet::componentt{"data", arr_type});
+          list_type.set_tag("typescript_array");
+          return struct_exprt{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(elts), arr_type}},
+            list_type};
+        }
+      }
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     // Number static methods
     if(obj == "Number")
     {
@@ -1423,6 +1481,29 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             return convert_string_literal_from_text(r);
           }
           return convert_string_literal_from_text(sv);
+        }
+        if(method == "padStart" && !num_args.empty())
+        {
+          int target_len = num_args[0];
+          std::string pad = " ";
+          if(!str_args.empty())
+            pad = str_args[0];
+          std::string result = sv;
+          while(static_cast<int>(result.size()) < target_len)
+            result = pad + result;
+          return convert_string_literal_from_text(
+            result.substr(result.size() - target_len));
+        }
+        if(method == "padEnd" && !num_args.empty())
+        {
+          int target_len = num_args[0];
+          std::string pad = " ";
+          if(!str_args.empty())
+            pad = str_args[0];
+          std::string result = sv;
+          while(static_cast<int>(result.size()) < target_len)
+            result += pad;
+          return convert_string_literal_from_text(result.substr(0, target_len));
         }
         if(method == "repeat" && !num_args.empty())
         {
@@ -1947,6 +2028,110 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           result = or_exprt{result, eq};
         }
         return result;
+      }
+    }
+    // Array.join: concatenate elements with separator
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "join" && args.is_array())
+    {
+      std::string sep = ",";
+      if(!to_json_array(args).empty())
+      {
+        exprt sep_expr = convert_expression(*to_json_array(args).begin());
+        std::string sv = extract_string_value(sep_expr);
+        if(!sv.empty())
+          sep = sv.substr(2);
+      }
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        std::string result;
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          if(i > 0)
+            result += sep;
+          auto idx = i.to_ulong();
+          if(
+            idx < data.operands().size() &&
+            data.operands()[idx].is_constant() &&
+            data.operands()[idx].type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(data.operands()[idx]));
+            double d = std::stod(fv.to_ansi_c_string());
+            if(d == std::floor(d) && std::abs(d) < 1e15)
+              result += std::to_string(static_cast<long long>(d));
+            else
+              result += fv.to_ansi_c_string();
+          }
+        }
+        return convert_string_literal_from_text(result);
+      }
+      return side_effect_expr_nondett{
+        typescript_string_type(), get_location(node)};
+    }
+    // Array.reverse: return reversed copy
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "reverse")
+    {
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        exprt::operandst reversed;
+        typet elem_type = double_type();
+        for(mp_integer i = len - 1; i >= 0; --i)
+        {
+          auto idx = i.to_ulong();
+          if(idx < data.operands().size())
+          {
+            elem_type = data.operands()[idx].type();
+            reversed.push_back(data.operands()[idx]);
+          }
+        }
+        std::size_t actual = reversed.size();
+        std::size_t max_len = 64;
+        while(reversed.size() < max_len)
+          reversed.push_back(from_integer(0, elem_type));
+        array_typet arr_type{
+          elem_type, from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type;
+        list_type.components().push_back(
+          struct_typet::componentt{"length", signedbv_typet{64}});
+        list_type.components().push_back(
+          struct_typet::componentt{"data", arr_type});
+        list_type.set_tag("typescript_array");
+        return struct_exprt{
+          {from_integer(actual, signedbv_typet{64}),
+           array_exprt{std::move(reversed), arr_type}},
+          list_type};
       }
     }
     // Array.indexOf: find index of element
