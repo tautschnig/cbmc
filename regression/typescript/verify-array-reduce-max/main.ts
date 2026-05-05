@@ -1,0 +1,3 @@
+const arr: number[] = [3, 7, 2, 9, 4, 1, 8];
+const max: number = arr.reduce((a: number, b: number): number => a > b ? a : b, 0);
+console.assert(max === 9);
