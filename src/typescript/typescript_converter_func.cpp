@@ -256,16 +256,49 @@ void typescript_convertert::convert_module_body(const jsont &statements)
   if(!statements.is_array())
     return;
 
-  // Single pass: process all statements in order
-  // Function declarations are registered AND their bodies converted.
-  // Non-function statements go into __CPROVER__start body.
+  // Pre-scan: collect all function names that are called anywhere
+  // in the module body (to skip converting unused functions)
+  std::set<std::string> called_names;
+  std::function<void(const jsont &)> scan_calls = [&](const jsont &node)
+  {
+    if(!node.is_object())
+      return;
+    std::string nk = json_string(json_member(node, "_kind"));
+    if(nk == "CallExpression")
+    {
+      const jsont &ce = json_member(node, "expression");
+      std::string ck = json_string(json_member(ce, "_kind"));
+      if(ck == "Identifier")
+        called_names.insert(json_string(json_member(ce, "text")));
+    }
+    // Recurse into all object members
+    if(node.is_object())
+    {
+      for(const auto &kv : to_json_object(node))
+      {
+        if(kv.second.is_object())
+          scan_calls(kv.second);
+        else if(kv.second.is_array())
+          for(const auto &elem : to_json_array(kv.second))
+            scan_calls(elem);
+      }
+    }
+  };
+  for(const auto &stmt : to_json_array(statements))
+    scan_calls(stmt);
+
+  // Process all statements in order
+  // Function declarations are converted only if called.
   code_blockt start_body;
   for(const auto &stmt : to_json_array(statements))
   {
     std::string kind = json_string(json_member(stmt, "_kind"));
     if(kind == "FunctionDeclaration")
     {
-      convert_function_declaration(stmt);
+      std::string fname =
+        json_string(json_member(json_member(stmt, "name"), "text"));
+      if(called_names.count(fname) || fname.empty())
+        convert_function_declaration(stmt);
       continue;
     }
     codet code = convert_statement(stmt);
