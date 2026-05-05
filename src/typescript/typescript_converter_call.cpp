@@ -1619,6 +1619,22 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // Array.flat: for number[], returns itself (already flat)
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "flat")
+    {
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      return src;
+    }
     // Array.at: access with index (supports negative)
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
