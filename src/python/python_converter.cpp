@@ -2796,10 +2796,26 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
-          // Fallback: compare lengths (sound overapproximation)
-          cmp = equal_exprt{
-            member_exprt{current_left, "length", signedbv_typet{64}},
-            member_exprt{right, "length", signedbv_typet{64}}};
+          // Use string solver for content equality
+          {
+            auto to_str = [](const exprt &s) -> exprt
+            {
+              if(s.id() == ID_struct && s.operands().size() == 2)
+                return s;
+              return struct_exprt(
+                {member_exprt(s, "length", signedbv_typet{64}),
+                 member_exprt(
+                   s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+                s.type());
+            };
+            cmp = emit_string_bool_function(
+              ID_cprover_string_equal_func,
+              to_str(current_left),
+              to_str(right),
+              symbol_table,
+              pending_checks);
+            goto done_cmp;
+          }
         }
         else if(current_left.type().id() == ID_floatbv)
           cmp = ieee_float_equal_exprt{current_left, right};
@@ -2851,10 +2867,26 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
-          // Fallback: compare lengths (sound overapproximation)
-          cmp = notequal_exprt{
-            member_exprt{current_left, "length", signedbv_typet{64}},
-            member_exprt{right, "length", signedbv_typet{64}}};
+          // Use string solver for content inequality
+          {
+            auto to_str = [](const exprt &s) -> exprt
+            {
+              if(s.id() == ID_struct && s.operands().size() == 2)
+                return s;
+              return struct_exprt(
+                {member_exprt(s, "length", signedbv_typet{64}),
+                 member_exprt(
+                   s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+                s.type());
+            };
+            cmp = not_exprt{emit_string_bool_function(
+              ID_cprover_string_equal_func,
+              to_str(current_left),
+              to_str(right),
+              symbol_table,
+              pending_checks)};
+            goto done_cmp;
+          }
         }
         else if(
           current_left.type().id() == ID_struct &&
