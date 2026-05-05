@@ -5,10 +5,13 @@
 #ifndef CPROVER_TYPESCRIPT_TYPESCRIPT_CONVERTER_H
 #define CPROVER_TYPESCRIPT_TYPESCRIPT_CONVERTER_H
 
+#include <util/arith_tools.h>
+#include <util/bitvector_types.h>
 #include <util/json.h>
 #include <util/message.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
+#include <util/std_types.h>
 #include <util/symbol_table_base.h>
 
 #include <json/json_parser.h>
@@ -74,6 +77,18 @@ private:
   static std::string json_string(const jsont &val);
   static bool is_kind(const jsont &node, const std::string &kind);
   source_locationt get_location(const jsont &node) const;
+
+  /// Build the standard typescript_array struct type for a given data array type.
+  static struct_typet make_array_struct_type(const array_typet &data_type)
+  {
+    struct_typet list_type;
+    list_type.components().push_back(
+      struct_typet::componentt{"length", signedbv_typet{64}});
+    list_type.components().push_back(
+      struct_typet::componentt{"data", data_type});
+    list_type.set_tag("typescript_array");
+    return list_type;
+  }
 
   // --- Expression conversion ---
   exprt convert_expression(const jsont &node);

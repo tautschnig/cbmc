@@ -85,12 +85,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           array_typet arr_type{
             elem_type, from_integer(max_len, signedbv_typet{64})};
-          struct_typet list_type;
-          list_type.components().push_back(
-            struct_typet::componentt{"length", signedbv_typet{64}});
-          list_type.components().push_back(
-            struct_typet::componentt{"data", arr_type});
-          list_type.set_tag("typescript_array");
+          struct_typet list_type = make_array_struct_type(arr_type);
           return struct_exprt{
             {from_integer(actual, signedbv_typet{64}),
              array_exprt{std::move(elts), arr_type}},
@@ -167,12 +162,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             }
             array_typet arr_type{
               ret_type, from_integer(max_len, signedbv_typet{64})};
-            struct_typet list_type;
-            list_type.components().push_back(
-              struct_typet::componentt{"length", signedbv_typet{64}});
-            list_type.components().push_back(
-              struct_typet::componentt{"data", arr_type});
-            list_type.set_tag("typescript_array");
+            struct_typet list_type = make_array_struct_type(arr_type);
             return struct_exprt{
               {from_integer(src_len, signedbv_typet{64}),
                array_exprt{std::move(result_elts), arr_type}},
@@ -518,12 +508,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             elts.push_back(convert_string_literal_from_text(""));
           array_typet arr_type{
             elem_type, from_integer(max_len, signedbv_typet{64})};
-          struct_typet list_type;
-          list_type.components().push_back(
-            struct_typet::componentt{"length", signedbv_typet{64}});
-          list_type.components().push_back(
-            struct_typet::componentt{"data", arr_type});
-          list_type.set_tag("typescript_array");
+          struct_typet list_type = make_array_struct_type(arr_type);
           return struct_exprt{
             {from_integer(actual, signedbv_typet{64}),
              array_exprt{std::move(elts), arr_type}},
@@ -711,12 +696,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           result_elts.push_back(from_integer(0, elem_type));
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type;
-        list_type.components().push_back(
-          struct_typet::componentt{"length", signedbv_typet{64}});
-        list_type.components().push_back(
-          struct_typet::componentt{"data", arr_type});
-        list_type.set_tag("typescript_array");
+        struct_typet list_type = make_array_struct_type(arr_type);
         return struct_exprt{
           {from_integer(actual_len, signedbv_typet{64}),
            array_exprt{std::move(result_elts), arr_type}},
@@ -908,12 +888,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
             array_typet arr_type{
               elem_type, from_integer(max_len, signedbv_typet{64})};
-            struct_typet list_type;
-            list_type.components().push_back(
-              struct_typet::componentt{"length", signedbv_typet{64}});
-            list_type.components().push_back(
-              struct_typet::componentt{"data", arr_type});
-            list_type.set_tag("typescript_array");
+            struct_typet list_type = make_array_struct_type(arr_type);
             {
               symbolt rs{res_id, list_type, "typescript"};
               rs.base_name = res_n;
@@ -993,12 +968,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type;
-        list_type.components().push_back(
-          struct_typet::componentt{"length", signedbv_typet{64}});
-        list_type.components().push_back(
-          struct_typet::componentt{"data", arr_type});
-        list_type.set_tag("typescript_array");
+        struct_typet list_type = make_array_struct_type(arr_type);
         {
           symbolt rs{res_id, list_type, "typescript"};
           rs.base_name = res_name;
@@ -1271,12 +1241,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           result_elts.push_back(from_integer(0, elem_type));
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type;
-        list_type.components().push_back(
-          struct_typet::componentt{"length", signedbv_typet{64}});
-        list_type.components().push_back(
-          struct_typet::componentt{"data", arr_type});
-        list_type.set_tag("typescript_array");
+        struct_typet list_type = make_array_struct_type(arr_type);
         return struct_exprt{
           {from_integer(actual, signedbv_typet{64}),
            array_exprt{std::move(result_elts), arr_type}},
@@ -1607,12 +1572,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           reversed.push_back(from_integer(0, elem_type));
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type;
-        list_type.components().push_back(
-          struct_typet::componentt{"length", signedbv_typet{64}});
-        list_type.components().push_back(
-          struct_typet::componentt{"data", arr_type});
-        list_type.set_tag("typescript_array");
+        struct_typet list_type = make_array_struct_type(arr_type);
         return struct_exprt{
           {from_integer(actual, signedbv_typet{64}),
            array_exprt{std::move(reversed), arr_type}},
@@ -1717,12 +1677,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           filled.push_back(from_integer(0, fill_val.type()));
         array_typet arr_type{
           fill_val.type(), from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type;
-        list_type.components().push_back(
-          struct_typet::componentt{"length", signedbv_typet{64}});
-        list_type.components().push_back(
-          struct_typet::componentt{"data", arr_type});
-        list_type.set_tag("typescript_array");
+        struct_typet list_type = make_array_struct_type(arr_type);
         return struct_exprt{
           {from_integer(len.to_long(), signedbv_typet{64}),
            array_exprt{std::move(filled), arr_type}},
@@ -1785,12 +1740,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           combined.push_back(from_integer(0, elem_type));
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type;
-        list_type.components().push_back(
-          struct_typet::componentt{"length", signedbv_typet{64}});
-        list_type.components().push_back(
-          struct_typet::componentt{"data", arr_type});
-        list_type.set_tag("typescript_array");
+        struct_typet list_type = make_array_struct_type(arr_type);
         return struct_exprt{
           {from_integer(actual, signedbv_typet{64}),
            array_exprt{std::move(combined), arr_type}},
@@ -2347,12 +2297,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             rest_elts.push_back(from_integer(0, elem_type));
           array_typet arr_type{
             elem_type, from_integer(max_len, signedbv_typet{64})};
-          struct_typet list_type;
-          list_type.components().push_back(
-            struct_typet::componentt{"length", signedbv_typet{64}});
-          list_type.components().push_back(
-            struct_typet::componentt{"data", arr_type});
-          list_type.set_tag("typescript_array");
+          struct_typet list_type = make_array_struct_type(arr_type);
           struct_exprt arr{
             {from_integer(actual, signedbv_typet{64}),
              array_exprt{std::move(rest_elts), arr_type}},
