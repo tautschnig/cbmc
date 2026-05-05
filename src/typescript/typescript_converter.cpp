@@ -3194,6 +3194,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     if(func_name == "nondet_string")
       return side_effect_expr_nondett{
         typescript_string_type(), get_location(node)};
+    if(func_name == "nondet_array")
+    {
+      // Create array with nondet elements
+      typet elem_type = double_type();
+      std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+      exprt::operandst elts;
+      for(std::size_t i = 0; i < max_len; ++i)
+        elts.push_back(side_effect_expr_nondett{elem_type, get_location(node)});
+      array_typet arr_type{
+        elem_type, from_integer(max_len, signedbv_typet{64})};
+      struct_typet list_type;
+      list_type.components().push_back(
+        struct_typet::componentt{"length", signedbv_typet{64}});
+      list_type.components().push_back(
+        struct_typet::componentt{"data", arr_type});
+      list_type.set_tag("typescript_array");
+      return struct_exprt{
+        {side_effect_expr_nondett{signedbv_typet{64}, get_location(node)},
+         array_exprt{std::move(elts), arr_type}},
+        list_type};
+    }
     if(func_name == "parseInt" || func_name == "parseFloat")
     {
       // For constant string args, parse at conversion time
@@ -4169,6 +4190,10 @@ codet typescript_convertert::convert_statement(const jsont &node)
         block.add(convert_block(catch_block));
       }
     }
+    // Convert finally block
+    const jsont &finally_block = json_member(node, "finallyBlock");
+    if(finally_block.is_object())
+      block.add(convert_block(finally_block));
     return std::move(block);
   }
   // ES2024 sec-throw-statement
