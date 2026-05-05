@@ -4041,6 +4041,110 @@ exprt python_convertert::convert_call(const jsont &expr)
                 c = static_cast<char>(
                   std::tolower(static_cast<unsigned char>(c)));
             }
+            else if(
+              method_name == "center" || method_name == "ljust" ||
+              method_name == "rjust")
+            {
+              int width = 0;
+              char fill = ' ';
+              if(args.is_array() && !as_array(args).empty())
+              {
+                auto ait = as_array(args).begin();
+                auto wv = try_eval_double(convert_expression(*ait));
+                if(wv.has_value())
+                  width = static_cast<int>(wv.value());
+                ++ait;
+                if(ait != as_array(args).end())
+                {
+                  auto fv = extract_string_value(convert_expression(*ait));
+                  if(fv.has_value() && !fv.value().empty())
+                    fill = fv.value()[0];
+                }
+              }
+              if(static_cast<int>(s.size()) >= width)
+                result = s;
+              else
+              {
+                int pad = width - static_cast<int>(s.size());
+                if(method_name == "center")
+                {
+                  int left_pad = pad / 2;
+                  int right_pad = pad - left_pad;
+                  result =
+                    std::string(left_pad, fill) + s +
+                    std::string(right_pad, fill);
+                }
+                else if(method_name == "ljust")
+                  result = s + std::string(pad, fill);
+                else
+                  result = std::string(pad, fill) + s;
+              }
+            }
+            else if(method_name == "expandtabs")
+            {
+              int tabsize = 8;
+              if(args.is_array() && !as_array(args).empty())
+              {
+                auto tv =
+                  try_eval_double(convert_expression(*as_array(args).begin()));
+                if(tv.has_value())
+                  tabsize = static_cast<int>(tv.value());
+              }
+              result.clear();
+              int col = 0;
+              for(char c : s)
+              {
+                if(c == '\t')
+                {
+                  int spaces = tabsize - (col % tabsize);
+                  result += std::string(spaces, ' ');
+                  col += spaces;
+                }
+                else if(c == '\n' || c == '\r')
+                {
+                  result += c;
+                  col = 0;
+                }
+                else
+                {
+                  result += c;
+                  col++;
+                }
+              }
+            }
+            else if(method_name == "removeprefix")
+            {
+              std::string prefix;
+              if(args.is_array() && !as_array(args).empty())
+              {
+                auto pv = extract_string_value(
+                  convert_expression(*as_array(args).begin()));
+                if(pv.has_value())
+                  prefix = pv.value();
+              }
+              if(!prefix.empty() && s.find(prefix) == 0)
+                result = s.substr(prefix.size());
+              else
+                result = s;
+            }
+            else if(method_name == "removesuffix")
+            {
+              std::string suffix;
+              if(args.is_array() && !as_array(args).empty())
+              {
+                auto sv2 = extract_string_value(
+                  convert_expression(*as_array(args).begin()));
+                if(sv2.has_value())
+                  suffix = sv2.value();
+              }
+              if(
+                !suffix.empty() && s.size() >= suffix.size() &&
+                s.compare(
+                  s.size() - suffix.size(), suffix.size(), suffix) == 0)
+                result = s.substr(0, s.size() - suffix.size());
+              else
+                result = s;
+            }
             else
               result = s; // fallback for unhandled methods
             if(result.size() <= PYTHON_MAX_STRING_LENGTH)
@@ -4428,26 +4532,63 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "count")
         {
           auto str_val = extract_string_value(obj);
+          if(!str_val.has_value() && obj.id() == ID_symbol)
+          {
+            auto it = string_constants.find(
+              to_symbol_expr(obj).get_identifier());
+            if(it != string_constants.end())
+              str_val = it->second;
+          }
           if(str_val.has_value() && args.is_array() && !as_array(args).empty())
           {
-            exprt arg_expr = convert_expression(*as_array(args).begin());
+            auto ait = as_array(args).begin();
+            exprt arg_expr = convert_expression(*ait);
             auto arg_val = extract_string_value(arg_expr);
+            if(!arg_val.has_value() && arg_expr.id() == ID_symbol)
+            {
+              auto it2 = string_constants.find(
+                to_symbol_expr(arg_expr).get_identifier());
+              if(it2 != string_constants.end())
+                arg_val = it2->second;
+            }
+            // Parse optional start/end range
+            int start = 0, end = -1;
+            ++ait;
+            if(ait != as_array(args).end())
+            {
+              auto sv2 = try_eval_double(convert_expression(*ait));
+              if(sv2.has_value())
+                start = static_cast<int>(sv2.value());
+              ++ait;
+              if(ait != as_array(args).end())
+              {
+                auto ev = try_eval_double(convert_expression(*ait));
+                if(ev.has_value())
+                  end = static_cast<int>(ev.value());
+              }
+            }
             if(arg_val.has_value())
             {
-              const std::string &s = str_val.value();
+              std::string s = str_val.value();
+              int slen = static_cast<int>(s.size());
+              if(start < 0) start += slen;
+              if(start < 0) start = 0;
+              if(end < 0) end = slen;
+              if(end > slen) end = slen;
+              std::string slice = (start < end) ? s.substr(start, end - start) : "";
               const std::string &sub = arg_val.value();
               if(method_name == "find")
               {
-                auto pos = s.find(sub);
+                auto pos = slice.find(sub);
                 return from_integer(
-                  pos == std::string::npos ? -1 : static_cast<long long>(pos),
+                  pos == std::string::npos ? -1 : static_cast<long long>(pos + start),
                   python_int_type());
               }
               if(method_name == "rfind")
               {
-                auto pos = s.rfind(sub);
+                auto pos = slice.rfind(sub);
                 return from_integer(
-                  pos == std::string::npos ? -1 : static_cast<long long>(pos),
+                  pos == std::string::npos ? -1 : static_cast<long long>(pos + start),
                   python_int_type());
               }
               if(method_name == "index" || method_name == "rindex")
@@ -4471,13 +4612,13 @@ exprt python_convertert::convert_call(const jsont &expr)
               {
                 long long cnt = 0;
                 size_t pos = 0;
-                while((pos = s.find(sub, pos)) != std::string::npos)
+                while((pos = slice.find(sub, pos)) != std::string::npos)
                 {
                   cnt++;
                   pos += sub.empty() ? 1 : sub.size();
                 }
                 if(sub.empty())
-                  cnt = static_cast<long long>(s.size() + 1);
+                  cnt = static_cast<long long>(slice.size() + 1);
                 return from_integer(cnt, python_int_type());
               }
             }
@@ -5787,9 +5928,13 @@ exprt python_convertert::convert_call(const jsont &expr)
 
       // For constant code points, encode as UTF-8
       mp_integer cp_val;
+      // Try to resolve variable code points via try_eval_double
+      auto cp_dbl = try_eval_double(code_point);
       if(
-        code_point.is_constant() &&
-        !to_integer(to_constant_expr(code_point), cp_val))
+        (code_point.is_constant() &&
+         !to_integer(to_constant_expr(code_point), cp_val)) ||
+        (cp_dbl.has_value() &&
+         (cp_val = static_cast<long long>(cp_dbl.value()), true)))
       {
         long cp = cp_val.to_long();
         if(cp < 0x80)
