@@ -311,6 +311,100 @@ static exprt build_string_struct(const std::string &s)
   return struct_exprt({length, content}, python_string_type());
 }
 
+/// Create a nondet refined string expression (length + content pointer).
+/// Used as the result of string operations that the solver will constrain.
+static exprt make_nondet_string(symbol_table_baset &symbol_table)
+{
+  static unsigned str_ctr = 0;
+  std::string len_name = "__string_len_" + std::to_string(str_ctr);
+  std::string ptr_name = "__string_ptr_" + std::to_string(str_ctr);
+  str_ctr++;
+
+  // Length symbol
+  irep_idt len_id{"python::" + len_name};
+  if(symbol_table.lookup(len_id) == nullptr)
+  {
+    symbolt ls{len_id, signedbv_typet{64}, "python"};
+    ls.base_name = len_name;
+    ls.is_lvalue = true;
+    ls.is_state_var = true;
+    symbol_table.add(ls);
+  }
+
+  // Content pointer symbol
+  irep_idt ptr_id{"python::" + ptr_name};
+  if(symbol_table.lookup(ptr_id) == nullptr)
+  {
+    symbolt ps{ptr_id, pointer_typet(unsignedbv_typet{8}, 64), "python"};
+    ps.base_name = ptr_name;
+    ps.is_lvalue = true;
+    ps.is_state_var = true;
+    symbol_table.add(ps);
+  }
+
+  exprt len_expr = symbol_table.lookup_ref(len_id).symbol_expr();
+  exprt ptr_expr = symbol_table.lookup_ref(ptr_id).symbol_expr();
+  return struct_exprt({len_expr, ptr_expr}, python_string_type());
+}
+
+/// Emit a cprover_string_* function application.
+/// Creates: return_code = func_id(result.length, result.content, args...)
+/// Returns the result string expression.
+static exprt emit_string_function(
+  const irep_idt &func_id,
+  const exprt::operandst &extra_args,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  exprt result = make_nondet_string(symbol_table);
+
+  // Declare the function in the symbol table
+  std::vector<typet> arg_types;
+  arg_types.push_back(signedbv_typet{64}); // result length
+  arg_types.push_back(pointer_typet(unsignedbv_typet{8}, 64)); // result content
+  for(const auto &a : extra_args)
+    arg_types.push_back(a.type());
+
+  irep_idt sym_id{func_id};
+  if(symbol_table.lookup(sym_id) == nullptr)
+  {
+    symbolt fs{
+      sym_id,
+      mathematical_function_typet(std::move(arg_types), signedbv_typet{32}),
+      "python"};
+    fs.base_name = id2string(func_id);
+    symbol_table.add(fs);
+  }
+
+  // Build arguments: [result.length, result.content, extra_args...]
+  exprt::operandst args;
+  args.push_back(result.operands()[0]); // length
+  args.push_back(result.operands()[1]); // content
+  args.insert(args.end(), extra_args.begin(), extra_args.end());
+
+  // Create function application
+  function_application_exprt app(
+    symbol_table.lookup_ref(sym_id).symbol_expr(), args);
+  app.type() = signedbv_typet{32};
+
+  // Assign return code (we ignore it but the solver needs it)
+  static unsigned rc_ctr = 0;
+  std::string rc_name = "__str_rc_" + std::to_string(rc_ctr++);
+  irep_idt rc_id{"python::" + rc_name};
+  if(symbol_table.lookup(rc_id) == nullptr)
+  {
+    symbolt rs{rc_id, signedbv_typet{32}, "python"};
+    rs.base_name = rc_name;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  pending_checks.push_back(
+    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+
+  return result;
+}
+
 // Helper: collect all Name references in a JSON AST subtree
 // Uses operator[] which returns json_nullt for missing keys
 static void collect_name_refs(const jsont &node, std::set<std::string> &names)
@@ -1433,9 +1527,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   {
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-    // Pointer-based string: return nondet for non-constant
-    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
-
+    // Use string solver: cprover_string_concat_func
+    // Args: result.length, result.content, arg1 (refined_string), arg2 (refined_string)
+    return emit_string_function(
+      ID_cprover_string_concat_func,
+      {left, right},
+      symbol_table, pending_checks);
     member_exprt left_len{left, "length", signedbv_typet{64}};
     member_exprt right_len{right, "length", signedbv_typet{64}};
     member_exprt left_data{left, "data", data_type};
