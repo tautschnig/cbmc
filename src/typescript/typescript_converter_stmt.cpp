@@ -1179,6 +1179,75 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      if(fn == "__CPROVER_loop_invariant")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array())
+        {
+          const auto &arr = to_json_array(call_args);
+          if(!arr.empty())
+          {
+            exprt cond = convert_expression(*arr.begin());
+            if(!cond.is_nil())
+            {
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              code_assertt inv{cond};
+              inv.add_source_location() = get_location(expr_node);
+              inv.add_source_location().set_property_class("loop-invariant");
+              inv.add_source_location().set_comment("loop invariant");
+              return std::move(inv);
+            }
+          }
+        }
+        return code_skipt{};
+      }
+      if(fn == "__CPROVER_requires")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array())
+        {
+          const auto &arr = to_json_array(call_args);
+          if(!arr.empty())
+          {
+            exprt cond = convert_expression(*arr.begin());
+            if(!cond.is_nil())
+            {
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              code_assertt req{cond};
+              req.add_source_location() = get_location(expr_node);
+              req.add_source_location().set_property_class("precondition");
+              req.add_source_location().set_comment("precondition");
+              return std::move(req);
+            }
+          }
+        }
+        return code_skipt{};
+      }
+      if(fn == "__CPROVER_ensures")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array())
+        {
+          const auto &arr = to_json_array(call_args);
+          if(!arr.empty())
+          {
+            exprt cond = convert_expression(*arr.begin());
+            if(!cond.is_nil())
+            {
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              code_assertt ens{cond};
+              ens.add_source_location() = get_location(expr_node);
+              ens.add_source_location().set_property_class("postcondition");
+              ens.add_source_location().set_comment("postcondition");
+              return std::move(ens);
+            }
+          }
+        }
+        return code_skipt{};
+      }
     }
   }
   // Handle postfix increment/decrement: i++ → i = i + 1
