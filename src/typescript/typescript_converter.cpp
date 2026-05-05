@@ -1894,9 +1894,24 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(idx < data.operands().size())
           {
             // Create call: cb(element)
+            // Pass element and index to callback
+            exprt::operandst cb_args;
+            cb_args.push_back(data.operands()[idx]);
+            // Add index if callback accepts 2+ params
+            const symbolt &cb_sym_ref = symbol_table.lookup_ref(cb_id);
+            if(
+              cb_sym_ref.type.id() == ID_code &&
+              to_code_type(cb_sym_ref.type).parameters().size() >= 2)
+            {
+              ieee_floatt idx_fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              idx_fv.from_double(static_cast<double>(idx));
+              cb_args.push_back(idx_fv.to_expr());
+            }
             side_effect_expr_function_callt call{
-              symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
-              {data.operands()[idx]},
+              symbol_exprt{cb_id, cb_sym_ref.type},
+              std::move(cb_args),
               double_type(),
               source_locationt{}};
             elem_type = call.type();
