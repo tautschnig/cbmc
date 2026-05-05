@@ -373,7 +373,6 @@ bool typescript_languaget::typecheck(
   {
     converter.bounds_check = options->get_bool_option("bounds-check");
     converter.div_by_zero_check =
-      options->get_bool_option("div-by-zero-check") ||
       options->get_bool_option("float-div-by-zero-check");
   }
   if(converter.convert())
