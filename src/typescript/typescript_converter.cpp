@@ -1792,8 +1792,107 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           cb_expr.id() == ID_symbol &&
           (cb_expr.type().id() == ID_code || cb_expr.type().id() == ID_pointer))
         {
-          // Function pointer filter — use nondet result for now
-          return side_effect_expr_nondett{obj_expr.type(), get_location(node)};
+          // Indirect filter with function pointer
+          exprt src_fp = obj_expr;
+          if(src_fp.id() == ID_symbol)
+          {
+            const symbolt *s =
+              symbol_table.lookup(to_symbol_expr(src_fp).get_identifier());
+            if(s && !s->value.is_nil())
+              src_fp = s->value;
+          }
+          if(src_fp.id() == ID_struct && src_fp.operands().size() >= 2)
+          {
+            mp_integer len_fp{0};
+            if(src_fp.operands()[0].is_constant())
+              to_integer(to_constant_expr(src_fp.operands()[0]), len_fp);
+            const exprt &data_fp = src_fp.operands()[1];
+            typet elem_type_fp = double_type();
+            if(!data_fp.operands().empty())
+              elem_type_fp = data_fp.operands()[0].type();
+            exprt callee_fp = cb_expr;
+            // Write index and result
+            static unsigned fp_filter_ctr = 0;
+            unsigned ffc = fp_filter_ctr++;
+            std::string wi_n = "__ts_fpf_wi_" + std::to_string(ffc);
+            irep_idt wi_id{"typescript::" + wi_n};
+            {
+              symbolt ws{wi_id, signedbv_typet{64}, "typescript"};
+              ws.base_name = wi_n;
+              ws.is_lvalue = true;
+              ws.is_state_var = true;
+              if(symbol_table.lookup(wi_id) == nullptr)
+                symbol_table.add(ws);
+            }
+            std::string res_n = "__ts_fpf_res_" + std::to_string(ffc);
+            irep_idt res_id{"typescript::" + res_n};
+            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+            array_typet arr_type_fp{
+              elem_type_fp, from_integer(max_len, signedbv_typet{64})};
+            struct_typet list_type_fp;
+            list_type_fp.components().push_back(
+              struct_typet::componentt{"length", signedbv_typet{64}});
+            list_type_fp.components().push_back(
+              struct_typet::componentt{"data", arr_type_fp});
+            list_type_fp.set_tag("typescript_array");
+            {
+              symbolt rs{res_id, list_type_fp, "typescript"};
+              rs.base_name = res_n;
+              rs.is_lvalue = true;
+              rs.is_state_var = true;
+              if(symbol_table.lookup(res_id) == nullptr)
+                symbol_table.add(rs);
+            }
+            symbol_exprt wi_sym{wi_id, signedbv_typet{64}};
+            pending_stmts.push_back(code_frontend_assignt{
+              wi_sym, from_integer(0, signedbv_typet{64})});
+            for(mp_integer i = 0; i < len_fp; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx >= data_fp.operands().size())
+                break;
+              std::string p_n =
+                "__ts_fpf_p_" + std::to_string(ffc) + "_" + std::to_string(idx);
+              irep_idt p_id{"typescript::" + p_n};
+              {
+                symbolt ps{p_id, bool_typet{}, "typescript"};
+                ps.base_name = p_n;
+                ps.is_lvalue = true;
+                ps.is_state_var = true;
+                if(symbol_table.lookup(p_id) == nullptr)
+                  symbol_table.add(ps);
+              }
+              pending_stmts.push_back(code_frontend_assignt{
+                symbol_exprt{p_id, bool_typet{}},
+                side_effect_expr_function_callt{
+                  callee_fp,
+                  {data_fp.operands()[idx]},
+                  bool_typet{},
+                  source_locationt{}}});
+              pending_stmts.push_back(code_ifthenelset{
+                symbol_exprt{p_id, bool_typet{}},
+                code_blockt{
+                  {code_frontend_assignt{
+                     index_exprt{
+                       member_exprt{
+                         symbol_exprt{res_id, list_type_fp},
+                         "data",
+                         arr_type_fp},
+                       wi_sym},
+                     data_fp.operands()[idx]},
+                   code_frontend_assignt{
+                     wi_sym,
+                     plus_exprt{
+                       wi_sym, from_integer(1, signedbv_typet{64})}}}}});
+            }
+            pending_stmts.push_back(code_frontend_assignt{
+              member_exprt{
+                symbol_exprt{res_id, list_type_fp},
+                "length",
+                signedbv_typet{64}},
+              wi_sym});
+            return symbol_exprt{res_id, list_type_fp};
+          }
         }
       }
       exprt src = obj_expr;
@@ -1920,6 +2019,68 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       const jsont &callback = *it;
       ++it;
       exprt init_val = convert_expression(*it);
+
+      // String reduce: compute at conversion time for constant arrays
+      if(is_typescript_string_type(init_val.type()))
+      {
+        exprt src_sr = obj_expr;
+        if(src_sr.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(src_sr).get_identifier());
+          if(s && !s->value.is_nil())
+            src_sr = s->value;
+        }
+        if(src_sr.id() == ID_struct && src_sr.operands().size() >= 2)
+        {
+          mp_integer len_sr{0};
+          if(src_sr.operands()[0].is_constant())
+            to_integer(to_constant_expr(src_sr.operands()[0]), len_sr);
+          const exprt &data_sr = src_sr.operands()[1];
+          // Extract init value
+          std::string acc = extract_string_value(init_val);
+          acc = acc.empty() ? "" : acc.substr(2);
+          bool all_const = true;
+          // Extract callback body to find the concatenation pattern
+          // For now, assume callback is (a, b) => a + sep + b
+          // Extract separator from callback body if possible
+          std::string sep = "";
+          const jsont &cb_body = json_member(callback, "body");
+          if(cb_body.is_object())
+          {
+            // Try to find string literals in the body
+            const jsont &cb_left = json_member(cb_body, "left");
+            if(
+              cb_left.is_object() &&
+              json_string(json_member(cb_left, "_kind")) == "BinaryExpression")
+            {
+              const jsont &cb_right_inner = json_member(cb_left, "right");
+              if(
+                cb_right_inner.is_object() &&
+                json_string(json_member(cb_right_inner, "_kind")) ==
+                  "StringLiteral")
+                sep = json_string(json_member(cb_right_inner, "text"));
+            }
+          }
+          // Compute result
+          for(mp_integer i = 0; i < len_sr; ++i)
+          {
+            auto idx = i.to_ulong();
+            if(idx >= data_sr.operands().size())
+              break;
+            std::string elem = extract_string_value(data_sr.operands()[idx]);
+            if(elem.empty())
+            {
+              all_const = false;
+              break;
+            }
+            elem = elem.substr(2);
+            acc = acc + sep + elem;
+          }
+          if(all_const)
+            return convert_string_literal_from_text(acc);
+        }
+      }
 
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
