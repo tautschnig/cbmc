@@ -10148,6 +10148,12 @@ codet python_convertert::convert_if(const jsont &stmt)
   if(test.type() != bool_typet{})
     test = safe_typecast(test, bool_typet{});
 
+  // Flush pending checks from test expression evaluation
+  code_blockt pre_checks;
+  for(auto &check : pending_checks)
+    pre_checks.add(std::move(check));
+  pending_checks.clear();
+
   // Save version state before branches
   auto saved_versions = variable_versions;
   if_else_depth++;
@@ -10183,6 +10189,11 @@ codet python_convertert::convert_if(const jsont &stmt)
     code_ifthenelset if_stmt{
       test, std::move(then_block), std::move(else_block)};
     if_stmt.add_source_location() = get_location(stmt);
+    if(!pre_checks.statements().empty())
+    {
+      pre_checks.add(std::move(if_stmt));
+      return std::move(pre_checks);
+    }
     return std::move(if_stmt);
   }
   else
@@ -10192,6 +10203,11 @@ codet python_convertert::convert_if(const jsont &stmt)
 
     code_ifthenelset if_stmt{test, std::move(then_block)};
     if_stmt.add_source_location() = get_location(stmt);
+    if(!pre_checks.statements().empty())
+    {
+      pre_checks.add(std::move(if_stmt));
+      return std::move(pre_checks);
+    }
     return std::move(if_stmt);
   }
 }
