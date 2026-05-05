@@ -3709,48 +3709,90 @@ exprt python_convertert::convert_call(const jsont &expr)
               bool all_const = true;
               for(std::size_t i = 0; i < fmt.size(); i++)
               {
-                if(i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}')
+                if(fmt[i] == '{' && i + 1 < fmt.size())
                 {
-                  if(arg_idx < arg_exprs.size())
+                  // Find closing }
+                  auto close = fmt.find('}', i + 1);
+                  if(close == std::string::npos)
                   {
-                    // Try to extract constant string value
-                    auto sv = extract_string_value(arg_exprs[arg_idx]);
-                    if(sv.has_value())
+                    result += fmt[i];
+                    continue;
+                  }
+                  std::string spec = fmt.substr(i + 1, close - i - 1);
+                  i = close; // skip to }
+
+                  // Determine which arg to use
+                  std::size_t use_idx = arg_idx;
+                  std::string fmt_spec;
+                  if(spec.empty())
+                  {
+                    // {} — use next arg
+                    use_idx = arg_idx++;
+                  }
+                  else if(std::isdigit(spec[0]))
+                  {
+                    // {0}, {1}, {0:d}, etc.
+                    auto colon = spec.find(':');
+                    use_idx = std::stoul(spec.substr(
+                      0, colon != std::string::npos ? colon : spec.size()));
+                    if(colon != std::string::npos)
+                      fmt_spec = spec.substr(colon + 1);
+                  }
+                  else if(spec[0] == ':')
+                  {
+                    // {:d}, {:.2f}, etc.
+                    fmt_spec = spec.substr(1);
+                    use_idx = arg_idx++;
+                  }
+                  else
+                  {
+                    all_const = false;
+                    continue;
+                  }
+
+                  if(use_idx >= arg_exprs.size())
+                  {
+                    all_const = false;
+                    continue;
+                  }
+
+                  // Extract value
+                  auto sv = extract_string_value(arg_exprs[use_idx]);
+                  if(sv.has_value())
+                  {
+                    result += sv.value();
+                  }
+                  else
+                  {
+                    auto fv = try_eval_double(arg_exprs[use_idx]);
+                    if(fv.has_value())
                     {
-                      result += sv.value();
-                    }
-                    else if(
-                      arg_exprs[arg_idx].is_constant() &&
-                      arg_exprs[arg_idx].type().id() == ID_signedbv)
-                    {
-                      mp_integer iv;
-                      if(!to_integer(to_constant_expr(arg_exprs[arg_idx]), iv))
-                        result += integer2string(iv);
-                      else
-                        all_const = false;
-                    }
-                    else
-                    {
-                      // Try float constant
-                      auto fv = try_eval_double(arg_exprs[arg_idx]);
-                      if(fv.has_value())
+                      double d = fv.value();
+                      if(fmt_spec.empty() || fmt_spec == "d" || fmt_spec == "n")
                       {
-                        std::ostringstream oss;
-                        double d = fv.value();
                         if(d == std::floor(d) && std::abs(d) < 1e15)
-                          oss << static_cast<long long>(d);
+                          result += std::to_string(static_cast<long long>(d));
                         else
+                        {
+                          std::ostringstream oss;
                           oss << d;
+                          result += oss.str();
+                        }
+                      }
+                      else if(fmt_spec[0] == '.')
+                      {
+                        // .Nf format
+                        int prec = std::stoi(fmt_spec.substr(1));
+                        std::ostringstream oss;
+                        oss << std::fixed << std::setprecision(prec) << d;
                         result += oss.str();
                       }
                       else
                         all_const = false;
                     }
+                    else
+                      all_const = false;
                   }
-                  else
-                    all_const = false;
-                  arg_idx++;
-                  i++; // skip '}'
                 }
                 else
                   result += fmt[i];
