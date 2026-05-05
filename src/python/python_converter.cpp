@@ -2562,7 +2562,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
           const exprt *list_val = &container;
           if(container.id() == ID_symbol)
           {
-            // Check string_constants for each element
+            auto it =
+              list_literals.find(to_symbol_expr(container).get_identifier());
+            if(it != list_literals.end())
+              list_val = &it->second;
           }
           if(
             list_val->id() == ID_struct && list_val->operands().size() >= 2 &&
@@ -4096,19 +4099,28 @@ exprt python_convertert::convert_call(const jsont &expr)
             auto sep_val = extract_string_value(obj);
             if(sep_val.has_value() && is_python_list_type(list_arg.type()))
             {
-              // Extract constant string elements from the list
+              // Look up list literal for symbols
+              const exprt *list_val = &list_arg;
+              if(list_arg.id() == ID_symbol)
+              {
+                auto it =
+                  list_literals.find(to_symbol_expr(list_arg).get_identifier());
+                if(it != list_literals.end())
+                  list_val = &it->second;
+              }
               const auto &list_st = to_struct_type(list_arg.type());
               to_array_type(list_st.components()[1].type());
               if(
-                list_arg.id() == ID_struct && list_arg.operands().size() >= 2 &&
-                list_arg.operands()[0].is_constant())
+                list_val->id() == ID_struct &&
+                list_val->operands().size() >= 2 &&
+                list_val->operands()[0].is_constant())
               {
                 mp_integer len;
-                if(!to_integer(to_constant_expr(list_arg.operands()[0]), len))
+                if(!to_integer(to_constant_expr(list_val->operands()[0]), len))
                 {
                   std::string result;
                   bool all_const = true;
-                  const exprt &data_arr = list_arg.operands()[1];
+                  const exprt &data_arr = list_val->operands()[1];
                   for(mp_integer i = 0; i < len; ++i)
                   {
                     auto idx = i.to_ulong();
@@ -8527,6 +8539,13 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       dict_literals.erase(symbol_id);
   }
+  if(is_python_list_type(rhs.type()))
+  {
+    if(rhs.id() == ID_struct)
+      list_literals[symbol_id] = rhs;
+    else
+      list_literals.erase(symbol_id);
+  }
   // Track numeric constants (including expressions)
   {
     auto ev = try_eval_double(rhs);
@@ -9330,6 +9349,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
       else
         dict_literals.erase(sym.name);
     }
+    if(is_python_list_type(typed_rhs.type()))
+    {
+      if(typed_rhs.id() == ID_struct)
+        list_literals[sym.name] = typed_rhs;
+      else
+        list_literals.erase(sym.name);
+    }
     {
       auto ev = try_eval_double(typed_rhs);
       if(ev.has_value())
@@ -9592,6 +9618,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     string_constants.erase(sid);
     dict_literals.erase(sid);
     float_constants.erase(sid);
+    list_literals.erase(sid);
   }
   // Div-by-zero check for /= and //= and %=
   if(op == "Div" || op == "FloorDiv" || op == "Mod")
