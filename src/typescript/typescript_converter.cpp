@@ -2676,6 +2676,60 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // Array.at: access with index (supports negative)
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "at" && args.is_array() && !to_json_array(args).empty())
+    {
+      exprt idx_expr = convert_expression(*to_json_array(args).begin());
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        // Extract constant index (handles unary minus)
+        int idx = 0;
+        bool idx_const = false;
+        if(idx_expr.is_constant() && idx_expr.type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(idx_expr));
+          idx = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          idx_const = true;
+        }
+        else if(
+          idx_expr.id() == ID_unary_minus &&
+          idx_expr.operands()[0].is_constant())
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(idx_expr.operands()[0]));
+          idx = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          idx_const = true;
+        }
+        if(idx_const)
+        {
+          if(idx < 0)
+            idx = len.to_long() + idx;
+          if(idx >= 0 && idx < static_cast<int>(data.operands().size()))
+            return data.operands()[idx];
+        }
+      }
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     // Array.fill: fill array with value
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
