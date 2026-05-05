@@ -1087,6 +1087,14 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
       ieee_float_op_exprt result{left, ID_floatbv_div, right, rm};
       result.type() = left.type();
+      if(nan_check)
+      {
+        code_assertt nan_assert{not_exprt{isnan_exprt{result}}};
+        nan_assert.add_source_location().set_property_class("NaN");
+        nan_assert.add_source_location().set_comment(
+          "NaN check on division result");
+        pending_stmts.push_back(std::move(nan_assert));
+      }
       return std::move(result);
     }
     return div_exprt{left, right};

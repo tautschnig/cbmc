@@ -17,7 +17,7 @@
 #include <set>
 
 /// Maximum array size for TypeScript arrays (elements beyond this are truncated)
-#define TYPESCRIPT_MAX_ARRAY_LENGTH 16
+#define TYPESCRIPT_DEFAULT_MAX_ARRAY_LENGTH 16
 
 /// Converts a TypeScript JSON AST (produced by ts_ast_to_json.js)
 /// into GOTO program symbols in the symbol table.
@@ -27,6 +27,7 @@ public:
   bool bounds_check = false;
   bool div_by_zero_check = false;
   bool nan_check = false;
+  std::size_t TYPESCRIPT_MAX_ARRAY_LENGTH = TYPESCRIPT_DEFAULT_MAX_ARRAY_LENGTH;
 
   typescript_convertert(
     symbol_table_baset &_symbol_table,
