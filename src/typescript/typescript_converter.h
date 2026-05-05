@@ -1,5 +1,6 @@
 /// \file
-/// TypeScript to GOTO converter — header
+/// TypeScript converter class - converts TypeScript JSON AST to GOTO symbols
+/// GOTO converter - header
 
 #ifndef CPROVER_TYPESCRIPT_TYPESCRIPT_CONVERTER_H
 #define CPROVER_TYPESCRIPT_TYPESCRIPT_CONVERTER_H
