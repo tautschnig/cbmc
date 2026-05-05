@@ -199,6 +199,19 @@ array_string_exprt of_argument(array_poolt &array_pool, const exprt &arg)
 array_string_exprt get_string_expr(array_poolt &array_pool, const exprt &expr)
 {
   PRECONDITION(is_refined_string_type(expr.type()));
-  const refined_string_exprt &str = to_string_expr(expr);
-  return array_pool.find(str.content(), str.length());
+  if(expr.id() == ID_struct && expr.operands().size() == 2)
+  {
+    const refined_string_exprt &str = to_string_expr(expr);
+    return array_pool.find(str.content(), str.length());
+  }
+  // For non-struct expressions (symbols, member_exprt, etc.),
+  // decompose into length and content via the struct type's components.
+  const auto &st = to_struct_type(expr.type());
+  PRECONDITION(st.components().size() == 2);
+  const auto &length_comp = st.components()[0];
+  const auto &content_comp = st.components()[1];
+  exprt length = member_exprt(expr, length_comp.get_name(), length_comp.type());
+  exprt content =
+    member_exprt(expr, content_comp.get_name(), content_comp.type());
+  return array_pool.find(content, length);
 }
