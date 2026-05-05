@@ -44,6 +44,9 @@ public:
   /// Main entry point: convert the entire source file.
   bool convert();
 
+  /// Convert a type string (e.g., "number", "string[]") to a CBMC typet.
+  typet convert_type(const std::string &ts_type) const;
+
 private:
   symbol_table_baset &symbol_table;
   std::string filename;
@@ -71,10 +74,6 @@ private:
   static std::string json_string(const jsont &val);
   static bool is_kind(const jsont &node, const std::string &kind);
   source_locationt get_location(const jsont &node) const;
-
-  // --- Type conversion ---
-  // ES2024 sec-ecmascript-language-types: maps TS type strings to CBMC types
-  typet convert_type(const std::string &ts_type) const;
 
   // --- Expression conversion ---
   exprt convert_expression(const jsont &node);
