@@ -727,6 +727,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       typeof_result = "undefined";
     return convert_string_literal_from_text(typeof_result);
   }
+  // ES2024 sec-void-operator
+  if(kind == "VoidExpression")
+  {
+    convert_expression(
+      json_member(node, "expression"));         // evaluate for side effects
+    return from_integer(0, signedbv_typet{64}); // undefined
+  }
+  // ES2024 sec-delete-operator
+  if(kind == "DeleteExpression")
+    return true_exprt{}; // always succeeds in our model
   // ES2024 sec-await: AwaitExpression — model as identity (sequential)
   if(kind == "AwaitExpression" || kind == "NonNullExpression")
     return convert_expression(json_member(node, "expression"));
@@ -1545,7 +1555,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             str_args.push_back(sv.substr(2));
             continue;
           }
-          // Try number
+          // Try number (including unary minus)
           if(av.is_constant() && av.type().id() == ID_floatbv)
           {
             ieee_floatt fv{
@@ -1554,6 +1564,18 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             fv.from_expr(to_constant_expr(av));
             num_args.push_back(
               static_cast<int>(std::stod(fv.to_ansi_c_string())));
+          }
+          else if(
+            av.id() == ID_unary_minus && !av.operands().empty() &&
+            av.operands()[0].is_constant() &&
+            av.operands()[0].type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(av.operands()[0]));
+            num_args.push_back(
+              -static_cast<int>(std::stod(fv.to_ansi_c_string())));
           }
           str_args.push_back("");
         }

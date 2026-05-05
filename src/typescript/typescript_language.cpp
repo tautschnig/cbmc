@@ -338,6 +338,8 @@ function n2j(node) {
       break;
     case ts.SyntaxKind.AsExpression:
     case ts.SyntaxKind.ParenthesizedExpression:
+    case ts.SyntaxKind.VoidExpression:
+    case ts.SyntaxKind.DeleteExpression:
     case ts.SyntaxKind.AwaitExpression:
     case ts.SyntaxKind.NonNullExpression:
       r.expression = n2j(node.expression);
