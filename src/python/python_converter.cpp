@@ -508,7 +508,7 @@ make_nondet_string(symbol_table_baset &symbol_table)
 }
 
 /// Emit a boolean cprover_string_* function (equal, contains, etc.).
-/// Returns the boolean result expression directly.
+/// Returns a boolean expression (comparison of int result with 1).
 [[maybe_unused]] static exprt emit_string_bool_function(
   const irep_idt &func_id,
   const exprt &str1,
@@ -516,7 +516,7 @@ make_nondet_string(symbol_table_baset &symbol_table)
   symbol_table_baset &symbol_table,
   std::vector<codet> &pending_checks)
 {
-  // Declare the function in the symbol table
+  // Declare the function with bool return type
   irep_idt sym_id{func_id};
   if(symbol_table.lookup(sym_id) == nullptr)
   {
@@ -552,6 +552,20 @@ make_nondet_string(symbol_table_baset &symbol_table)
     code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
 
   return symbol_table.lookup_ref(rc_id).symbol_expr();
+}
+
+/// Build a string literal and register it with the string solver.
+/// Uses ID_cprover_string_literal_func so the solver knows the content.
+[[maybe_unused]] static exprt build_solver_string_literal(
+  const std::string &s,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  // Create the literal value as a constant_exprt with string_typet
+  constant_exprt lit_val{s, string_typet{}};
+  // Use emit_string_function to create a nondet string constrained to equal the literal
+  return emit_string_function(
+    ID_cprover_string_literal_func, {lit_val}, symbol_table, pending_checks);
 }
 
 // Helper: collect all Name references in a JSON AST subtree
@@ -8994,6 +9008,12 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(is_python_string_type(rhs.type()))
   {
     auto sv = extract_string_value(rhs);
+    if(!sv.has_value() && rhs.id() == ID_symbol)
+    {
+      auto it = string_constants.find(to_symbol_expr(rhs).get_identifier());
+      if(it != string_constants.end())
+        sv = it->second;
+    }
     if(sv.has_value())
       string_constants[symbol_id] = sv.value();
     else
@@ -9729,6 +9749,20 @@ codet python_convertert::convert_assign(const jsont &stmt)
         code_frontend_assignt assign{new_sym.symbol_expr(), rhs};
         assign.add_source_location() = loc;
         block.add(std::move(assign));
+        // Track string constants for versioned variables
+        if(is_python_string_type(rhs.type()))
+        {
+          auto sv = extract_string_value(rhs);
+          if(!sv.has_value() && rhs.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(rhs).get_identifier());
+            if(it != string_constants.end())
+              sv = it->second;
+          }
+          if(sv.has_value())
+            string_constants[versioned_id] = sv.value();
+        }
         continue;
       }
     }
@@ -9804,6 +9838,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(is_python_string_type(typed_rhs.type()))
     {
       auto sv = extract_string_value(typed_rhs);
+      if(!sv.has_value() && typed_rhs.id() == ID_symbol)
+      {
+        auto it =
+          string_constants.find(to_symbol_expr(typed_rhs).get_identifier());
+        if(it != string_constants.end())
+          sv = it->second;
+      }
       if(sv.has_value())
         string_constants[sym.name] = sv.value();
       else
