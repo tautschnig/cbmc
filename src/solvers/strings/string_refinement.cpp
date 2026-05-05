@@ -376,7 +376,7 @@ static std::vector<exprt>
 extract_strings_from_lhs(const exprt &lhs, const namespacet &ns)
 {
   std::vector<exprt> result;
-  if(lhs.type() == string_typet())
+  if(lhs.type() == string_typet() || is_refined_string_type(lhs.type()))
     result.push_back(lhs);
   else if(lhs.type().id() == ID_struct || lhs.type().id() == ID_struct_tag)
   {
@@ -406,7 +406,9 @@ extract_strings(const exprt &expr, const namespacet &ns)
   std::vector<exprt> result;
   for(auto it = expr.depth_begin(); it != expr.depth_end();)
   {
-    if(it->type() == string_typet() && it->id() != ID_if)
+    if(
+      (it->type() == string_typet() || is_refined_string_type(it->type())) &&
+      it->id() != ID_if)
     {
       result.push_back(*it);
       it.next_sibling_or_parent();
