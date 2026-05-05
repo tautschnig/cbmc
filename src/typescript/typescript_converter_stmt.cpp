@@ -577,7 +577,9 @@ codet typescript_convertert::convert_statement(const jsont &node)
         {
           std::string mname =
             json_string(json_member(json_member(m, "name"), "text"));
-          std::string full_name = cls_name + "::" + mname;
+          bool is_setter = json_member(m, "isSetter").is_true();
+          std::string full_name =
+            cls_name + "::" + (is_setter ? "__set_" : "") + mname;
           std::string ret_str = json_string(json_member(m, "_returnType"));
           typet ret_type =
             ret_str.empty() ? empty_typet{} : convert_type(ret_str);
@@ -1380,6 +1382,37 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
       op == "QuestionQuestionEqualsToken" || op == "EqualsToken" ||
       op == "FirstAssignment")
     {
+      // Check if LHS is a setter property access
+      const jsont &lhs_node = json_member(expr_node, "left");
+      if(is_kind(lhs_node, "PropertyAccessExpression"))
+      {
+        exprt obj_expr =
+          convert_expression(json_member(lhs_node, "expression"));
+        std::string prop =
+          json_string(json_member(json_member(lhs_node, "name"), "text"));
+        if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(obj_expr.type());
+          if(!st.has_component(prop))
+          {
+            std::string cls_tag = id2string(st.get_tag());
+            std::string cls_name = cls_tag;
+            if(cls_tag.find("typescript_class_") == 0)
+              cls_name = cls_tag.substr(17);
+            irep_idt setter_id{"typescript::" + cls_name + "::__set_" + prop};
+            const symbolt *setter = symbol_table.lookup(setter_id);
+            if(setter != nullptr && setter->type.id() == ID_code)
+            {
+              exprt rhs = convert_expression(json_member(expr_node, "right"));
+              return code_expressiont{side_effect_expr_function_callt{
+                symbol_exprt{setter_id, setter->type},
+                {address_of_exprt{obj_expr}, rhs},
+                to_code_type(setter->type).return_type(),
+                get_location(expr_node)}};
+            }
+          }
+        }
+      }
       exprt lhs = convert_expression(json_member(expr_node, "left"));
       exprt rhs = convert_expression(json_member(expr_node, "right"));
       if(!lhs.is_nil() && !rhs.is_nil())
