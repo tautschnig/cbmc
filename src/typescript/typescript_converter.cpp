@@ -530,6 +530,22 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     for(const auto &prop : to_json_array(props))
     {
       std::string pk = json_string(json_member(prop, "_kind"));
+      if(pk == "ShorthandPropertyAssignment")
+      {
+        // { x, y } — shorthand for { x: x, y: y }
+        std::string pname =
+          json_string(json_member(json_member(prop, "name"), "text"));
+        if(!pname.empty())
+        {
+          exprt val = convert_identifier(json_member(prop, "name"));
+          if(!val.is_nil())
+          {
+            components.push_back(struct_typet::componentt{pname, val.type()});
+            fields.push_back(val);
+          }
+        }
+        continue;
+      }
       if(pk == "SpreadAssignment")
       {
         // { ...obj } — copy all fields from source object
@@ -699,7 +715,15 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   if(kind == "SpreadElement")
     return convert_expression(json_member(node, "expression"));
   log.warning() << "Unsupported expression: " << kind << messaget::eom;
-  return nil_exprt{};
+  // Return nondet instead of nil for graceful degradation
+  std::string ts_type = json_string(json_member(node, "_type"));
+  if(!ts_type.empty())
+  {
+    typet t = convert_type(ts_type);
+    if(t.id() != ID_empty)
+      return side_effect_expr_nondett{t, get_location(node)};
+  }
+  return side_effect_expr_nondett{double_type(), get_location(node)};
 }
 
 // ES2024 sec-ecmascript-language-types-number-type

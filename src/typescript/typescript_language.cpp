@@ -190,6 +190,9 @@ function n2j(node) {
       r.members = node.members.map(n2j);
       if(node.heritageClauses) r.heritage = node.heritageClauses.map(n2j);
       break;
+    case ts.SyntaxKind.ShorthandPropertyAssignment:
+      r.name = n2j(node.name);
+      break;
     case ts.SyntaxKind.PropertyDeclaration:
     case ts.SyntaxKind.PropertySignature:
       r.name = n2j(node.name);
