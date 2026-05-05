@@ -22,7 +22,12 @@
 
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
+#include <util/cprover_prefix.h>
+#include <util/mathematical_expr.h>
+#include <util/pointer_expr.h>
+#include <util/refined_string_type.h>
 #include <util/std_types.h>
+#include <util/string_expr.h>
 
 /// Maximum length for Python strings in verification.
 /// Can be overridden with --python-max-string-length.
@@ -40,30 +45,22 @@
 /// This is a struct { signedbv[64] length; unsignedbv[8] data[N]; }
 inline struct_typet python_string_type()
 {
+  // Use refined_string_type tag for string solver compatibility.
+  // Field "data" is a pointer (not array) - same layout as refined_string_typet
+  // but with "data" field name for backward compatibility with existing code.
   struct_typet::componentst components;
-
-  struct_typet::componentt length{"length", signedbv_typet{64}};
-  components.push_back(length);
-
-  struct_typet::componentt data{
-    "data",
-    array_typet{
-      unsignedbv_typet{8},
-      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}};
-  components.push_back(data);
-
-  struct_typet result{components};
-  result.set_tag("python_str");
+  components.push_back(struct_typet::componentt{"length", signedbv_typet{64}});
+  components.push_back(struct_typet::componentt{
+    "data", pointer_typet(unsignedbv_typet{8}, 64)});
+  struct_typet result(components);
+  result.set_tag(CPROVER_PREFIX "refined_string_type");
   return result;
 }
 
 /// Check if a type is a Python string type.
 inline bool is_python_string_type(const typet &type)
 {
-  if(type.id() != ID_struct)
-    return false;
-  const auto &st = to_struct_type(type);
-  return st.get_tag() == "python_str";
+  return is_refined_string_type(type);
 }
 
 /// Build a CBMC struct type for a Python tuple with the given element types.

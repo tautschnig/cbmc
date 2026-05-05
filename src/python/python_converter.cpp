@@ -36,7 +36,9 @@
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/std_code.h>
+#include <util/mathematical_expr.h>
 #include <util/std_expr.h>
+#include <util/string_expr.h>
 #include <util/symbol.h>
 
 #include "python_types.h"
@@ -242,20 +244,33 @@ python_convertert::extract_string_value(const exprt &e) const
     mp_integer slen;
     if(!to_integer(to_constant_expr(e.operands()[0]), slen))
     {
-      std::string s;
-      for(mp_integer i = 0; i < slen; ++i)
+      // New format: operands()[1] is address_of(index(array, 0))
+      const exprt &data_op = e.operands()[1];
+      const exprt *arr = nullptr;
+      if(data_op.id() == ID_address_of &&
+         data_op.operands().size() == 1 &&
+         data_op.operands()[0].id() == ID_index)
+        arr = &data_op.operands()[0].operands()[0];
+      // Legacy format: operands()[1] is array directly
+      if(data_op.id() == ID_array)
+        arr = &data_op;
+      if(arr != nullptr && arr->id() == ID_array)
       {
-        auto idx = i.to_ulong();
-        if(idx >= e.operands()[1].operands().size())
-          return std::nullopt;
-        if(!e.operands()[1].operands()[idx].is_constant())
-          return std::nullopt;
-        mp_integer ch;
-        if(to_integer(to_constant_expr(e.operands()[1].operands()[idx]), ch))
-          return std::nullopt;
-        s += static_cast<char>(ch.to_ulong());
+        std::string s;
+        for(mp_integer i = 0; i < slen; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx >= arr->operands().size())
+            return std::nullopt;
+          if(!arr->operands()[idx].is_constant())
+            return std::nullopt;
+          mp_integer ch;
+          if(to_integer(to_constant_expr(arr->operands()[idx]), ch))
+            return std::nullopt;
+          s += static_cast<char>(ch.to_ulong());
+        }
+        return s;
       }
-      return s;
     }
   }
   // Symbol — check tracked constants
@@ -280,18 +295,20 @@ static constant_exprt double_to_floatbv(double d)
 
 static exprt build_string_struct(const std::string &s)
 {
-  struct_typet str_type = python_string_type();
-  const auto &data_type = to_array_type(str_type.components()[1].type());
+  // Create a refined_string_exprt for the literal.
+  // The content is a pointer to a constant character array.
   exprt::operandst chars;
   for(char c : s)
     chars.push_back(
       from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
-  while(chars.size() < PYTHON_MAX_STRING_LENGTH)
+  if(chars.empty())
     chars.push_back(from_integer(0, unsignedbv_typet{8}));
-  return struct_exprt{
-    {from_integer(static_cast<long long>(s.size()), signedbv_typet{64}),
-     array_exprt{std::move(chars), data_type}},
-    str_type};
+  array_typet at(unsignedbv_typet{8}, from_integer(chars.size(), signedbv_typet{64}));
+  array_exprt arr(std::move(chars), at);
+  exprt content = address_of_exprt(
+    index_exprt(arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+  exprt length = from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
+  return struct_exprt({length, content}, python_string_type());
 }
 
 // Helper: collect all Name references in a JSON AST subtree
@@ -1033,7 +1050,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
 
     // Build result by concatenating all parts
     struct_typet str_type = python_string_type();
-    const auto &data_type = to_array_type(str_type.components()[1].type());
+    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     // Collect all bytes from constant parts; use nondet for formatted values
     std::string all_bytes;
@@ -1260,29 +1277,11 @@ exprt python_convertert::convert_constant(const jsont &expr)
       }
     }
 
-    // String literal → python_str struct { length, data[] }
-    struct_typet str_type = python_string_type();
-    const auto &components = str_type.components();
-    const auto &data_type = to_array_type(components[1].type());
-
-    // Build the data array
-    exprt::operandst chars;
-    for(char ch : str_val)
-      chars.push_back(
-        from_integer(static_cast<unsigned char>(ch), unsignedbv_typet{8}));
-    // Pad with zeros to MAX_STRING_LENGTH
-    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-      chars.push_back(from_integer(0, unsignedbv_typet{8}));
-
-    array_exprt data_expr{std::move(chars), data_type};
-    exprt length_expr =
-      from_integer(static_cast<long long>(str_val.size()), python_int_type());
-
-    struct_exprt result{{length_expr, data_expr}, str_type};
-    return std::move(result);
+    // String literal
+    return build_string_struct(str_val);
   }
 
-  log.error() << "Unsupported constant value" << messaget::eom;
+    log.error() << "Unsupported constant value" << messaget::eom;
   return nil_exprt{};
 }
 
@@ -1433,7 +1432,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     op == "Add")
   {
     struct_typet str_type = python_string_type();
-    const auto &data_type = to_array_type(str_type.components()[1].type());
+    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     member_exprt left_len{left, "length", signedbv_typet{64}};
     member_exprt right_len{right, "length", signedbv_typet{64}};
@@ -1559,7 +1558,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     num_op = safe_typecast(num_op, signedbv_typet{64});
 
     struct_typet str_type = python_string_type();
-    const auto &data_type = to_array_type(str_type.components()[1].type());
+    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
     member_exprt old_len{str_op, "length", signedbv_typet{64}};
     member_exprt old_data{str_op, "data", data_type};
 
@@ -2390,7 +2389,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE"))
     {
       struct_typet str_type = python_string_type();
-      const auto &data_type = to_array_type(str_type.components()[1].type());
+      const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       exprt left_char = index_exprt{
         member_exprt{current_left, "data", data_type},
         from_integer(0, python_int_type())};
@@ -2621,8 +2620,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       else if(is_python_string_type(container.type()))
       {
         // PLR §6.10.2: "x in s" for strings — check character membership
-        const auto &str_st = to_struct_type(container.type());
-        const auto &data_type = to_array_type(str_st.components()[1].type());
+        const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
         member_exprt data{container, "data", data_type};
         member_exprt length{container, "length", signedbv_typet{64}};
 
@@ -3422,7 +3420,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                   // Build list of string structs
                   struct_typet str_type = python_string_type();
                   const auto &data_type =
-                    to_array_type(str_type.components()[1].type());
+                    array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
                   typet list_type = python_list_type(str_type);
                   const auto &list_data_type = to_array_type(
                     to_struct_type(list_type).components()[1].type());
@@ -3462,8 +3460,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         // PLib stdtypes: upper/lower — exact byte transformation
         if(method_name == "upper" || method_name == "lower")
         {
-          const auto &str_st = to_struct_type(obj_base_type);
-          const auto &data_type = to_array_type(str_st.components()[1].type());
+          const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
           member_exprt src_data{obj, "data", data_type};
           member_exprt src_len{obj, "length", signedbv_typet{64}};
 
@@ -3679,7 +3676,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               // Build string literal
               struct_typet str_type = python_string_type();
               const auto &data_type =
-                to_array_type(str_type.components()[1].type());
+                array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
               exprt::operandst chars;
               for(char c : result)
                 chars.push_back(from_integer(
@@ -3804,7 +3801,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               {
                 struct_typet str_type = python_string_type();
                 const auto &data_type =
-                  to_array_type(str_type.components()[1].type());
+                  array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
                 exprt::operandst chars;
                 for(char c : result)
                   chars.push_back(from_integer(
@@ -3846,9 +3843,8 @@ exprt python_convertert::convert_call(const jsont &expr)
           }
           if(is_python_string_type(prefix.type()))
           {
-            const auto &str_st = to_struct_type(obj_base_type);
             const auto &data_type =
-              to_array_type(str_st.components()[1].type());
+              array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
             member_exprt obj_data{obj, "data", data_type};
             member_exprt obj_len{obj, "length", signedbv_typet{64}};
             member_exprt pre_data{prefix, "data", data_type};
@@ -3910,8 +3906,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               result = true; // empty string is ASCII
             return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
           }
-          const auto &str_st = to_struct_type(obj_base_type);
-          const auto &data_type = to_array_type(str_st.components()[1].type());
+          const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
           member_exprt data{obj, "data", data_type};
           member_exprt length{obj, "length", signedbv_typet{64}};
 
@@ -5321,7 +5316,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           // Build string literal
           struct_typet str_type = python_string_type();
           const auto &data_type =
-            to_array_type(str_type.components()[1].type());
+            array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
           exprt::operandst chars;
           for(char c : result)
             chars.push_back(
@@ -5372,7 +5367,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       exprt code_point = convert_expression(*as_array(args).begin());
       struct_typet str_type = python_string_type();
-      const auto &data_type = to_array_type(str_type.components()[1].type());
+      const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       exprt::operandst chars;
 
       // For constant code points, encode as UTF-8
@@ -5457,7 +5452,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         // Symbolic: return first byte
         struct_typet str_type = python_string_type();
-        const auto &data_type = to_array_type(str_type.components()[1].type());
+        const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
         member_exprt data{arg, "data", data_type};
         return safe_typecast(
           index_exprt{data, from_integer(0, signedbv_typet{64})},
@@ -6044,7 +6039,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           std::string s = integer2string(iv);
           struct_typet str_type = python_string_type();
           const auto &data_type =
-            to_array_type(str_type.components()[1].type());
+            array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
           exprt::operandst chars;
           for(char c : s)
             chars.push_back(
@@ -7365,7 +7360,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       "string index out of range",
       get_location(expr));
     struct_typet str_type = python_string_type();
-    const auto &data_type = to_array_type(str_type.components()[1].type());
+    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     member_exprt data{value, "data", data_type};
     index_exprt char_val{data, adjusted_idx};
@@ -9410,7 +9405,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   {
     // Build the concat with content tracking (same as convert_bin_op)
     struct_typet str_type = python_string_type();
-    const auto &data_type = to_array_type(str_type.components()[1].type());
+    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
     member_exprt left_len{lhs, "length", signedbv_typet{64}};
     member_exprt right_len{rhs, "length", signedbv_typet{64}};
     member_exprt left_data{lhs, "data", data_type};
@@ -9490,7 +9485,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     {
       // String concatenation
       struct_typet str_type = python_string_type();
-      const auto &data_type = to_array_type(str_type.components()[1].type());
+      const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       member_exprt left_len{lhs, "length", signedbv_typet{64}};
       member_exprt right_len{rhs, "length", signedbv_typet{64}};
       member_exprt left_data{lhs, "data", data_type};
@@ -10087,7 +10082,7 @@ codet python_convertert::convert_for(const jsont &stmt)
     {
       struct_typet str_type = python_string_type();
       const auto &str_data_type =
-        to_array_type(str_type.components()[1].type());
+        array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       exprt::operandst chars;
       chars.push_back(elem_val);
       while(chars.size() < PYTHON_MAX_STRING_LENGTH)
