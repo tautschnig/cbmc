@@ -1525,6 +1525,25 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           return convert_string_literal_from_text(sv);
         }
+        if(method == "slice")
+        {
+          int start_idx = 0, end_idx = static_cast<int>(sv.size());
+          if(!num_args.empty())
+            start_idx = num_args[0];
+          if(num_args.size() >= 2)
+            end_idx = num_args[1];
+          // Handle negative indices
+          if(start_idx < 0)
+            start_idx = std::max(0, static_cast<int>(sv.size()) + start_idx);
+          if(end_idx < 0)
+            end_idx = std::max(0, static_cast<int>(sv.size()) + end_idx);
+          if(end_idx > static_cast<int>(sv.size()))
+            end_idx = sv.size();
+          if(start_idx >= end_idx)
+            return convert_string_literal_from_text("");
+          return convert_string_literal_from_text(
+            sv.substr(start_idx, end_idx - start_idx));
+        }
         if(method == "padStart" && !num_args.empty())
         {
           int target_len = num_args[0];
@@ -1605,6 +1624,87 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       method == "map" && args.is_array() && !to_json_array(args).empty())
     {
       const jsont &callback = *to_json_array(args).begin();
+      // Check if callback is a function pointer (Identifier)
+      std::string cb_kind = json_string(json_member(callback, "_kind"));
+      if(cb_kind == "Identifier")
+      {
+        // The callback is a variable holding a function pointer
+        exprt cb_expr = convert_expression(callback);
+        if(
+          cb_expr.id() == ID_symbol &&
+          (cb_expr.type().id() == ID_code || cb_expr.type().id() == ID_pointer))
+        {
+          // Use indirect call through function pointer
+          exprt src2 = obj_expr;
+          if(src2.id() == ID_symbol)
+          {
+            const symbolt *s2 =
+              symbol_table.lookup(to_symbol_expr(src2).get_identifier());
+            if(s2 && !s2->value.is_nil())
+              src2 = s2->value;
+          }
+          if(src2.id() == ID_struct && src2.operands().size() >= 2)
+          {
+            mp_integer len2{0};
+            if(src2.operands()[0].is_constant())
+              to_integer(to_constant_expr(src2.operands()[0]), len2);
+            const exprt &data2 = src2.operands()[1];
+            typet elem_type2 = double_type();
+            exprt::operandst result_elts2;
+            typet callee_type = cb_expr.type();
+            if(callee_type.id() == ID_pointer)
+              callee_type = to_pointer_type(callee_type).base_type();
+            typet ret_type2 = callee_type.id() == ID_code
+                                ? to_code_type(callee_type).return_type()
+                                : double_type();
+            exprt callee2 = cb_expr.type().id() == ID_pointer
+                              ? exprt{dereference_exprt{cb_expr}}
+                              : cb_expr;
+            for(mp_integer i = 0; i < len2; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx >= data2.operands().size())
+                break;
+              elem_type2 = ret_type2;
+              std::string tmp = "__ts_map_fp_" + std::to_string(idx);
+              std::string tmp_q = "typescript::" + tmp;
+              irep_idt tmp_id{tmp_q};
+              if(symbol_table.lookup(tmp_id) == nullptr)
+              {
+                symbolt ts{tmp_id, ret_type2, "typescript"};
+                ts.base_name = tmp;
+                ts.is_lvalue = true;
+                ts.is_state_var = true;
+                symbol_table.add(ts);
+              }
+              pending_stmts.push_back(code_frontend_assignt{
+                symbol_exprt{tmp_id, ret_type2},
+                side_effect_expr_function_callt{
+                  callee2,
+                  {data2.operands()[idx]},
+                  ret_type2,
+                  source_locationt{}}});
+              result_elts2.push_back(symbol_exprt{tmp_id, ret_type2});
+            }
+            std::size_t actual2 = result_elts2.size();
+            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+            while(result_elts2.size() < max_len)
+              result_elts2.push_back(from_integer(0, elem_type2));
+            array_typet arr_type2{
+              elem_type2, from_integer(max_len, signedbv_typet{64})};
+            struct_typet list_type2;
+            list_type2.components().push_back(
+              struct_typet::componentt{"length", signedbv_typet{64}});
+            list_type2.components().push_back(
+              struct_typet::componentt{"data", arr_type2});
+            list_type2.set_tag("typescript_array");
+            return struct_exprt{
+              {from_integer(actual2, signedbv_typet{64}),
+               array_exprt{std::move(result_elts2), arr_type2}},
+              list_type2};
+          }
+        }
+      }
       // Resolve source array to its value
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
@@ -1683,6 +1783,19 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       method == "filter" && args.is_array() && !to_json_array(args).empty())
     {
       const jsont &callback = *to_json_array(args).begin();
+      // Check if callback is a function pointer
+      std::string filter_cb_kind = json_string(json_member(callback, "_kind"));
+      if(filter_cb_kind == "Identifier")
+      {
+        exprt cb_expr = convert_expression(callback);
+        if(
+          cb_expr.id() == ID_symbol &&
+          (cb_expr.type().id() == ID_code || cb_expr.type().id() == ID_pointer))
+        {
+          // Function pointer filter — use nondet result for now
+          return side_effect_expr_nondett{obj_expr.type(), get_location(node)};
+        }
+      }
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
       {
@@ -2177,6 +2290,114 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // Array.fill: fill array with value
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "fill" && args.is_array() && !to_json_array(args).empty())
+    {
+      exprt fill_val = convert_expression(*to_json_array(args).begin());
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        exprt::operandst filled;
+        for(mp_integer i = 0; i < len; ++i)
+          filled.push_back(fill_val);
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+        while(filled.size() < max_len)
+          filled.push_back(from_integer(0, fill_val.type()));
+        array_typet arr_type{
+          fill_val.type(), from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type;
+        list_type.components().push_back(
+          struct_typet::componentt{"length", signedbv_typet{64}});
+        list_type.components().push_back(
+          struct_typet::componentt{"data", arr_type});
+        list_type.set_tag("typescript_array");
+        return struct_exprt{
+          {from_integer(len.to_long(), signedbv_typet{64}),
+           array_exprt{std::move(filled), arr_type}},
+          list_type};
+      }
+    }
+    // Array.concat: concatenate two arrays
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "concat" && args.is_array() && !to_json_array(args).empty())
+    {
+      exprt other = convert_expression(*to_json_array(args).begin());
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(other.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(other).get_identifier());
+        if(s && !s->value.is_nil())
+          other = s->value;
+      }
+      if(
+        src.id() == ID_struct && other.id() == ID_struct &&
+        src.operands().size() >= 2 && other.operands().size() >= 2)
+      {
+        mp_integer len1{0}, len2{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len1);
+        if(other.operands()[0].is_constant())
+          to_integer(to_constant_expr(other.operands()[0]), len2);
+        const exprt &d1 = src.operands()[1];
+        const exprt &d2 = other.operands()[1];
+        exprt::operandst combined;
+        typet elem_type = double_type();
+        for(mp_integer i = 0; i < len1; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx < d1.operands().size())
+          {
+            elem_type = d1.operands()[idx].type();
+            combined.push_back(d1.operands()[idx]);
+          }
+        }
+        for(mp_integer i = 0; i < len2; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(idx < d2.operands().size())
+            combined.push_back(d2.operands()[idx]);
+        }
+        std::size_t actual = combined.size();
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+        while(combined.size() < max_len)
+          combined.push_back(from_integer(0, elem_type));
+        array_typet arr_type{
+          elem_type, from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type;
+        list_type.components().push_back(
+          struct_typet::componentt{"length", signedbv_typet{64}});
+        list_type.components().push_back(
+          struct_typet::componentt{"data", arr_type});
+        list_type.set_tag("typescript_array");
+        return struct_exprt{
+          {from_integer(actual, signedbv_typet{64}),
+           array_exprt{std::move(combined), arr_type}},
+          list_type};
+      }
+    }
     // Array.indexOf: find index of element
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -2508,6 +2729,29 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     if(func_name == "nondet_string")
       return side_effect_expr_nondett{
         typescript_string_type(), get_location(node)};
+    if(func_name == "parseInt" || func_name == "parseFloat")
+    {
+      // For constant string args, parse at conversion time
+      if(args.is_array() && !to_json_array(args).empty())
+      {
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        std::string sv = extract_string_value(arg);
+        if(!sv.empty())
+        {
+          try
+          {
+            double d = std::stod(sv.substr(2));
+            if(func_name == "parseInt")
+              d = std::floor(d);
+            return from_integer(0, double_type()); // placeholder
+          }
+          catch(...)
+          {
+          }
+        }
+      }
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     if(func_name == "__CPROVER_assume")
     {
       // Handled at statement level

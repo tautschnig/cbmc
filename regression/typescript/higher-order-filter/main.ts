@@ -1,6 +1,6 @@
-function filterPositive(arr: number[]): number[] {
-  return arr.filter((x: number): boolean => x > 0);
-}
-const result: number[] = filterPositive([-1, 2, -3, 4, -5]);
-console.assert(result.length === 2);
-console.assert(result[0] === 2);
+// Filter with named function variable
+const isEven = (x: number): boolean => x % 2 === 0;
+const arr: number[] = [1, 2, 3, 4, 5, 6];
+const evens: number[] = arr.filter(isEven);
+console.assert(evens.length === 3);
+console.assert(evens[0] === 2);
