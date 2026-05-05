@@ -554,11 +554,16 @@ codet typescript_convertert::convert_statement(const jsont &node)
           std::string ret_str = json_string(json_member(m, "_returnType"));
           typet ret_type =
             ret_str.empty() ? empty_typet{} : convert_type(ret_str);
+          bool is_static =
+            json_member(m, "isStatic").is_true();
           code_typet::parameterst params;
-          code_typet::parametert this_param{pointer_typet{cls_type, 64}};
-          this_param.set_identifier("typescript::" + full_name + "::this");
-          this_param.set_base_name("this");
-          params.push_back(this_param);
+          if(!is_static)
+          {
+            code_typet::parametert this_param{pointer_typet{cls_type, 64}};
+            this_param.set_identifier("typescript::" + full_name + "::this");
+            this_param.set_base_name("this");
+            params.push_back(this_param);
+          }
           const jsont &mparams = json_member(m, "parameters");
           if(mparams.is_array())
           {

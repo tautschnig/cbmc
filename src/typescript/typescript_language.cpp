@@ -208,6 +208,8 @@ function n2j(node) {
       r.parameters = node.parameters.map(n2j);
       if(node.type) r.returnType = n2j(node.type);
       if(node.body) r.body = n2j(node.body);
+      if(node.modifiers && node.modifiers.some(m => m.kind === ts.SyntaxKind.StaticKeyword))
+        r.isStatic = true;
       try {
         const sig = checker.getSignatureFromDeclaration(node);
         if(sig) {

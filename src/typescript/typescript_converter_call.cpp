@@ -196,6 +196,26 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       json_string(json_member(json_member(callee, "expression"), "text"));
     std::string method =
       json_string(json_member(json_member(callee, "name"), "text"));
+
+    // Static method dispatch: ClassName.method(args)
+    if(!obj_name.empty() && !method.empty())
+    {
+      irep_idt static_id{"typescript::" + obj_name + "::" + method};
+      const symbolt *static_sym = symbol_table.lookup(static_id);
+      if(static_sym != nullptr && static_sym->type.id() == ID_code)
+      {
+        exprt::operandst call_args;
+        if(args.is_array())
+          for(const auto &a : to_json_array(args))
+            call_args.push_back(convert_expression(a));
+        return side_effect_expr_function_callt{
+          symbol_exprt{static_id, static_sym->type},
+          std::move(call_args),
+          to_code_type(static_sym->type).return_type(),
+          get_location(node)};
+      }
+    }
+
     // String methods: indexOf, includes, substring, etc.
     exprt obj_expr = convert_expression(json_member(callee, "expression"));
     if(!obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()))
