@@ -3658,18 +3658,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                   exprt::operandst list_elems;
                   for(const auto &part : parts)
                   {
-                    exprt::operandst chars;
-                    for(char c : part)
-                      chars.push_back(from_integer(
-                        static_cast<unsigned char>(c), unsignedbv_typet{8}));
-                    while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-                      chars.push_back(from_integer(0, unsignedbv_typet{8}));
-                    list_elems.push_back(struct_exprt{
-                      {from_integer(
-                         static_cast<long long>(part.size()),
-                         python_int_type()),
-                       array_exprt{std::move(chars), data_type}},
-                      str_type});
+                    list_elems.push_back(build_string_struct(part));
                   }
                   while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
                     list_elems.push_back(safe_zero(str_type));
@@ -6262,19 +6251,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(!to_integer(to_constant_expr(arg), iv))
         {
           std::string s = integer2string(iv);
-          struct_typet str_type = python_string_type();
-          const auto &data_type =
-            array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-          exprt::operandst chars;
-          for(char c : s)
-            chars.push_back(
-              from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
-          while(chars.size() < PYTHON_MAX_STRING_LENGTH)
-            chars.push_back(from_integer(0, unsignedbv_typet{8}));
-          return struct_exprt{
-            {from_integer(static_cast<long long>(s.size()), python_int_type()),
-             array_exprt{std::move(chars), data_type}},
-            str_type};
+          return build_string_struct(s);
         }
       }
       // str(float_constant)
