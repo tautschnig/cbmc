@@ -1,8 +1,6 @@
 /// \\file
 /// TypeScript to GOTO converter — split implementation
 
-#include "typescript_converter.h"
-
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
@@ -17,6 +15,7 @@
 
 #include <goto-programs/goto_functions.h>
 
+#include "typescript_converter.h"
 #include "typescript_types.h"
 
 #include <cmath>
@@ -307,4 +306,3 @@ void typescript_convertert::convert_module_body(const jsont &statements)
 }
 
 // --- Main entry point ---
-

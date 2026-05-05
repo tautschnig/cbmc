@@ -554,8 +554,7 @@ codet typescript_convertert::convert_statement(const jsont &node)
           std::string ret_str = json_string(json_member(m, "_returnType"));
           typet ret_type =
             ret_str.empty() ? empty_typet{} : convert_type(ret_str);
-          bool is_static =
-            json_member(m, "isStatic").is_true();
+          bool is_static = json_member(m, "isStatic").is_true();
           code_typet::parameterst params;
           if(!is_static)
           {
