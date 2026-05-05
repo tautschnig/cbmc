@@ -171,8 +171,61 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   auto cls_it = class_types.find(ts_type);
   if(cls_it != class_types.end())
     return cls_it->second;
-  // Union types: string | null, number | undefined, etc.
+  // Union types: number | string → tagged union struct
   if(ts_type.find(" | ") != std::string::npos)
+  {
+    // Parse union members
+    std::vector<std::string> members;
+    std::string tmp = ts_type;
+    while(true)
+    {
+      auto pos = tmp.find(" | ");
+      if(pos == std::string::npos)
+      {
+        while(!tmp.empty() && tmp[0] == ' ')
+          tmp.erase(0, 1);
+        while(!tmp.empty() && tmp.back() == ' ')
+          tmp.pop_back();
+        if(!tmp.empty())
+          members.push_back(tmp);
+        break;
+      }
+      std::string m = tmp.substr(0, pos);
+      while(!m.empty() && m[0] == ' ')
+        m.erase(0, 1);
+      while(!m.empty() && m.back() == ' ')
+        m.pop_back();
+      if(!m.empty())
+        members.push_back(m);
+      tmp = tmp.substr(pos + 3);
+    }
+    // If one member is null/undefined and the other is a simple type,
+    // strip null (model as the simple type with 0/empty as null sentinel)
+    std::vector<std::string> real_members;
+    for(const auto &m : members)
+      if(m != "null" && m != "undefined")
+        real_members.push_back(m);
+    if(real_members.size() == 1)
+    {
+      type_cache[ts_type] = convert_type(real_members[0]);
+      return type_cache[ts_type];
+    }
+    // Multi-type union: create tagged union struct
+    // { __tag: signedbv[32], __num: floatbv[64], __str: refined_string, __bool: bool }
+    struct_typet union_type;
+    union_type.set_tag("typescript_union");
+    union_type.components().push_back(
+      struct_typet::componentt{"__tag", signedbv_typet{32}});
+    for(std::size_t i = 0; i < real_members.size(); ++i)
+    {
+      std::string fname = "__v" + std::to_string(i);
+      union_type.components().push_back(
+        struct_typet::componentt{fname, convert_type(real_members[i])});
+    }
+    type_cache[ts_type] = union_type;
+    return union_type;
+  }
+  if(false) // old union handler disabled
   {
     // For T | null or T | undefined, use T's type
     // (null/undefined modeled as sentinel values)
@@ -600,11 +653,17 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   // ES2024 sec-typeof-operator
   if(kind == "TypeOfExpression")
   {
-    // Return a string constant based on the expression's type
     exprt operand = convert_expression(json_member(node, "expression"));
     std::string ts_type =
       json_string(json_member(json_member(node, "expression"), "_type"));
-    std::string typeof_result = "object"; // default
+    // For union types, return tag field for runtime typeof check
+    if(
+      !operand.is_nil() && operand.type().id() == ID_struct &&
+      to_struct_type(operand.type()).get_tag() == "typescript_union")
+    {
+      return member_exprt{operand, "__tag", signedbv_typet{32}};
+    }
+    std::string typeof_result = "object";
     if(ts_type == "number")
       typeof_result = "number";
     else if(ts_type == "string")
@@ -818,7 +877,27 @@ exprt typescript_convertert::convert_identifier(const jsont &node)
     name;
   const symbolt *sym = symbol_table.lookup(irep_idt{qualified});
   if(sym != nullptr)
+  {
+    // Union type narrowing: if symbol is union but _type says specific type
+    if(
+      sym->type.id() == ID_struct &&
+      to_struct_type(sym->type).get_tag() == "typescript_union")
+    {
+      std::string ann = json_string(json_member(node, "_type"));
+      if(!ann.empty() && ann.find(" | ") == std::string::npos)
+      {
+        typet target = convert_type(ann);
+        const auto &ust = to_struct_type(sym->type);
+        for(std::size_t c = 1; c < ust.components().size(); ++c)
+        {
+          if(ust.components()[c].type() == target)
+            return member_exprt{
+              sym->symbol_expr(), ust.components()[c].get_name(), target};
+        }
+      }
+    }
     return sym->symbol_expr();
+  }
 
   // Try module scope
   std::string global = "typescript::" + name;
@@ -841,7 +920,10 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return nil_exprt{};
 
   // Type promotion: ensure both sides have the same type
-  if(left.type() != right.type())
+  // (skip for === and !== which handle type mismatches themselves)
+  if(
+    left.type() != right.type() && op != "EqualsEqualsEqualsToken" &&
+    op != "ExclamationEqualsEqualsToken")
   {
     if(left.type().id() == ID_floatbv)
       right = typecast_exprt{right, left.type()};
@@ -940,6 +1022,32 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ES2024 sec-isstrictlyequal: ===
   if(op == "EqualsEqualsEqualsToken")
   {
+    // typeof x === "type_string" on union types
+    // left is __tag (signedbv[32]) from member_exprt, right is a string literal
+    if(
+      left.type().id() == ID_signedbv && left.id() == ID_member &&
+      is_typescript_string_type(right.type()))
+    {
+      std::string rs = extract_string_value(right);
+      if(!rs.empty())
+      {
+        std::string type_name = rs.substr(2);
+        typet target = convert_type(type_name);
+        // Find the tag index by matching the target type in the union
+        const exprt &compound = to_member_expr(left).compound();
+        if(
+          compound.type().id() == ID_struct &&
+          to_struct_type(compound.type()).get_tag() == "typescript_union")
+        {
+          const auto &ust = to_struct_type(compound.type());
+          for(std::size_t c = 1; c < ust.components().size(); ++c)
+          {
+            if(ust.components()[c].type() == target)
+              return equal_exprt{left, from_integer(c - 1, signedbv_typet{32})};
+          }
+        }
+      }
+    }
     // Handle type mismatch (null comparison)
     if(left.type() != right.type())
     {
@@ -2253,6 +2361,33 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             is_typescript_string_type(fp[i].type()) &&
             arguments[i].type().id() == ID_signedbv)
             arguments[i] = convert_string_literal_from_text("");
+          else if(
+            fp[i].type().id() == ID_struct &&
+            to_struct_type(fp[i].type()).get_tag() == "typescript_union")
+          {
+            // Wrap value into union struct
+            const auto &union_st = to_struct_type(fp[i].type());
+            int tag = 0;
+            for(std::size_t c = 1; c < union_st.components().size(); ++c)
+            {
+              if(union_st.components()[c].type() == arguments[i].type())
+              {
+                tag = static_cast<int>(c - 1);
+                break;
+              }
+            }
+            exprt::operandst fields;
+            fields.push_back(from_integer(tag, signedbv_typet{32}));
+            for(std::size_t c = 1; c < union_st.components().size(); ++c)
+            {
+              if(static_cast<int>(c - 1) == tag)
+                fields.push_back(arguments[i]);
+              else
+                fields.push_back(side_effect_expr_nondett{
+                  union_st.components()[c].type(), source_locationt{}});
+            }
+            arguments[i] = struct_exprt{std::move(fields), fp[i].type()};
+          }
           else if(arguments[i].type().id() != fp[i].type().id())
             arguments[i] = typecast_exprt(arguments[i], fp[i].type());
         }

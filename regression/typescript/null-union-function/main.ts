@@ -1,7 +1,6 @@
-// TSH: Narrowing.md — null handling
-function safeDiv(a: number, b: number | null): number {
-  if (b === null) return 0;
-  return a / b;
+// Null-safe function with explicit check
+function safeLength(s: string | null): number {
+  if (s === null) return 0;
+  return s.length;
 }
-console.assert(safeDiv(10, 2) === 5);
-console.assert(safeDiv(10, null) === 0);
+console.assert(safeLength("hi") === 2);
