@@ -121,14 +121,12 @@ message is currently ignored but documents the intent.
 
 ## Limitations
 
-- **Union types** (`number | string`) are not yet supported as tagged unions.
-  The `typeof` narrowing pattern does not work.
-- **Closures** capture variables from the immediately enclosing function only.
-  Multi-level closure chains are not supported.
+- **Union types** (`number | string`) are supported with typeof narrowing.
+- **Closures** capture variables from the immediately enclosing function.
 - **String operations** are evaluated at conversion time for constant strings.
   Symbolic string reasoning (e.g., nondet strings) requires `--refine-strings`.
-- **Module imports** (`import`/`export`) are not supported. All code must be
-  in a single file.
+- **Module imports** are supported for relative imports (`./module`).
+  Third-party packages (node_modules) are not supported.
 - **Async/await**, Promises, generators, and iterators are not supported.
 - **Map**, **Set**, and other built-in collection types are not modeled.
 - **Regular expressions** are not supported.
@@ -169,8 +167,64 @@ console.assert(binarySearch(sorted, 4) === -1);
 cbmc --unwind 10 --no-unwinding-assertions search.ts
 ```
 
+## Multi-File Projects
+
+CBMC supports multi-file TypeScript projects with `import`/`export`:
+
+```typescript
+// math.ts
+export function add(a: number, b: number): number { return a + b; }
+
+// main.ts
+import { add } from './math';
+console.assert(add(2, 3) === 5);
+```
+
+```bash
+cbmc main.ts  # automatically resolves and includes imported files
+```
+
+The TypeScript compiler resolves imports automatically. Supported:
+- Named imports: `import { foo } from './module'`
+- Interface/class imports: `import { MyClass } from './module'`
+- Enum imports: `import { Color } from './module'`
+
+Not yet supported:
+- `node_modules` imports (third-party packages)
+- Dynamic imports (`import()`)
+- Default exports
+
+## Verification Flags
+
+```bash
+# Array bounds checking (on by default)
+cbmc --bounds-check example.ts
+
+# Division by zero checking
+cbmc --float-div-by-zero-check example.ts
+
+# Disable bounds checking
+cbmc --no-bounds-check example.ts
+```
+
+## Additional Verification Primitives
+
+```typescript
+// Make variable nondeterministic
+__CPROVER_havoc_object(x);
+
+// Coverage goal
+__CPROVER_cover(condition);
+
+// Direct assertion (alternative to console.assert)
+__CPROVER_assert(condition);
+
+// Nondeterministic array
+declare function nondet_array(): number[];
+```
+
 ## Architecture
 
 See `doc/architectural/typescript-frontend-plan.md` for the full design
-document, including implementation phases and cross-references to the
-ECMAScript 2024 specification and TypeScript Handbook.
+document, and `doc/architectural/typescript-multifile-plan.md` for the
+multi-file support architecture.
