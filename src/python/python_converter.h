@@ -108,6 +108,7 @@ private:
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::map<irep_idt, exprt> dict_literals; // track dict literal values
+  std::map<irep_idt, exprt> list_literals; // track list literal values
   std::map<irep_idt, double> float_constants; // track float/int constant values
   std::optional<std::string> extract_string_value(const exprt &e) const;
   std::optional<double> try_eval_double(const exprt &e) const;
