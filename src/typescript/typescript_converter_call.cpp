@@ -99,6 +99,90 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
+    // Array static methods
+    if(obj == "Array" && method == "from")
+    {
+      exprt::operandst call_args;
+      const jsont *cb_node = nullptr;
+      if(args.is_array())
+      {
+        std::size_t ai = 0;
+        for(const auto &a : to_json_array(args))
+        {
+          if(ai == 0)
+            call_args.push_back(convert_expression(a));
+          else if(ai == 1)
+            cb_node = &a;
+          ai++;
+        }
+      }
+      if(!call_args.empty())
+      {
+        exprt src = call_args[0];
+        if(src.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(src).get_identifier());
+          if(s && !s->value.is_nil())
+            src = s->value;
+        }
+        // Array.from(existingArray) or Array.from(arr, mapFn)
+        if(
+          src.type().id() == ID_struct &&
+          to_struct_type(src.type()).get_tag() == "typescript_array")
+        {
+          if(cb_node == nullptr)
+            return src;
+          // Array.from(arr, mapFn) — apply map function to each element
+          // Reuse the map handler logic: convert callback, apply to each
+          mp_integer src_len{0};
+          if(src.operands().size() >= 1 && src.operands()[0].is_constant())
+            to_integer(to_constant_expr(src.operands()[0]), src_len);
+          const exprt &data = src.operands()[1];
+          // Convert callback
+          static unsigned from_ctr = 0;
+          std::string cb_name = "__ts_from_cb_" + std::to_string(from_ctr++);
+          convert_function_declaration_with_name(*cb_node, cb_name);
+          irep_idt cb_id{"typescript::" + cb_name};
+          const symbolt *cb_sym = symbol_table.lookup(cb_id);
+          if(cb_sym != nullptr)
+          {
+            typet ret_type = to_code_type(cb_sym->type).return_type();
+            exprt::operandst result_elts;
+            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+            for(std::size_t i = 0; i < max_len; ++i)
+            {
+              if(mp_integer(i) < src_len)
+              {
+                exprt elem = data.operands()[i];
+                exprt idx_val = from_integer(i, double_type());
+                result_elts.push_back(side_effect_expr_function_callt{
+                  symbol_exprt{cb_id, cb_sym->type},
+                  {elem, idx_val},
+                  ret_type,
+                  source_locationt{}});
+              }
+              else
+                result_elts.push_back(from_integer(0, ret_type));
+            }
+            array_typet arr_type{
+              ret_type, from_integer(max_len, signedbv_typet{64})};
+            struct_typet list_type;
+            list_type.components().push_back(
+              struct_typet::componentt{"length", signedbv_typet{64}});
+            list_type.components().push_back(
+              struct_typet::componentt{"data", arr_type});
+            list_type.set_tag("typescript_array");
+            return struct_exprt{
+              {from_integer(src_len, signedbv_typet{64}),
+               array_exprt{std::move(result_elts), arr_type}},
+              list_type};
+          }
+          return src;
+        }
+      }
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     // Number static methods
     if(obj == "Number")
     {
