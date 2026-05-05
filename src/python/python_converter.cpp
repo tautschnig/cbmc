@@ -1433,6 +1433,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   {
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+    // Pointer-based string: return nondet for non-constant
+    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
 
     member_exprt left_len{left, "length", signedbv_typet{64}};
     member_exprt right_len{right, "length", signedbv_typet{64}};
@@ -1559,6 +1561,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+    // Pointer-based string: return nondet for non-constant
+    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
     member_exprt old_len{str_op, "length", signedbv_typet{64}};
     member_exprt old_data{str_op, "data", data_type};
 
@@ -2390,6 +2394,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
     {
       struct_typet str_type = python_string_type();
       const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+      // Pointer-based string: return nondet for non-constant
+      return side_effect_expr_nondett{python_string_type(), source_locationt{}};
       exprt left_char = index_exprt{
         member_exprt{current_left, "data", data_type},
         from_integer(0, python_int_type())};
@@ -2621,6 +2627,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
       {
         // PLR §6.10.2: "x in s" for strings — check character membership
         const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+        // Pointer-based string: return nondet for non-constant
+        return side_effect_expr_nondett{python_string_type(), source_locationt{}};
         member_exprt data{container, "data", data_type};
         member_exprt length{container, "length", signedbv_typet{64}};
 
@@ -3461,6 +3469,8 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(method_name == "upper" || method_name == "lower")
         {
           const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+          // Pointer-based string: return nondet for non-constant
+          return side_effect_expr_nondett{python_string_type(), source_locationt{}};
           member_exprt src_data{obj, "data", data_type};
           member_exprt src_len{obj, "length", signedbv_typet{64}};
 
@@ -3907,6 +3917,8 @@ exprt python_convertert::convert_call(const jsont &expr)
             return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
           }
           const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+          // Pointer-based string: return nondet for non-constant
+          return side_effect_expr_nondett{python_string_type(), source_locationt{}};
           member_exprt data{obj, "data", data_type};
           member_exprt length{obj, "length", signedbv_typet{64}};
 
@@ -5453,6 +5465,8 @@ exprt python_convertert::convert_call(const jsont &expr)
         // Symbolic: return first byte
         struct_typet str_type = python_string_type();
         const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+        // Pointer-based string: return nondet for non-constant
+        return side_effect_expr_nondett{python_string_type(), source_locationt{}};
         member_exprt data{arg, "data", data_type};
         return safe_typecast(
           index_exprt{data, from_integer(0, signedbv_typet{64})},
@@ -7361,6 +7375,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       get_location(expr));
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+    // Pointer-based string: return nondet for non-constant
+    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
 
     member_exprt data{value, "data", data_type};
     index_exprt char_val{data, adjusted_idx};
@@ -9406,6 +9422,8 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     // Build the concat with content tracking (same as convert_bin_op)
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+    // Pointer-based string: return nondet for non-constant
+    return code_skipt{};
     member_exprt left_len{lhs, "length", signedbv_typet{64}};
     member_exprt right_len{rhs, "length", signedbv_typet{64}};
     member_exprt left_data{lhs, "data", data_type};
@@ -9486,6 +9504,8 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       // String concatenation
       struct_typet str_type = python_string_type();
       const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+      // Pointer-based string: return nondet for non-constant
+      return code_skipt{};
       member_exprt left_len{lhs, "length", signedbv_typet{64}};
       member_exprt right_len{rhs, "length", signedbv_typet{64}};
       member_exprt left_data{lhs, "data", data_type};
