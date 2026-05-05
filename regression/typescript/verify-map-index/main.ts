@@ -1,5 +1,5 @@
-const words: number[] = [100, 200, 300];
-const withIndex: number[] = words.map((val: number, idx: number): number => val + idx * 10);
-console.assert(withIndex[0] === 100);
-console.assert(withIndex[1] === 210);
-console.assert(withIndex[2] === 320);
+const arr: number[] = [10, 20, 30, 40, 50];
+const indexed: number[] = arr.map((val: number, idx: number): number => val + idx);
+console.assert(indexed[0] === 10);
+console.assert(indexed[1] === 21);
+console.assert(indexed[4] === 54);
