@@ -180,6 +180,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     {
       options.set_option("signed-overflow-check", false);
       options.set_option("div-by-zero-check", false);
+      // Enable string solver unless user explicitly chose a different solver
+      if(!cmdline.isset("z3") && !cmdline.isset("smt2"))
+        options.set_option("refine-strings", true);
       break;
     }
   }
