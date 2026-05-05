@@ -11,6 +11,7 @@
 #include "typescript_converter.h"
 
 #include <util/arith_tools.h>
+#include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/floatbv_expr.h>
@@ -1039,9 +1040,63 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     }
     return div_exprt{left, right};
   }
+  // ES2024 sec-exponentiation-operator: **
+  if(op == "AsteriskAsteriskToken")
+  {
+    // x ** y — for constant y, unroll; otherwise use nondet
+    if(right.is_constant() && right.type().id() == ID_floatbv)
+    {
+      ieee_floatt fv{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      fv.from_expr(to_constant_expr(right));
+      double exp_val = std::stod(fv.to_ansi_c_string());
+      if(left.is_constant())
+      {
+        ieee_floatt base{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        base.from_expr(to_constant_expr(left));
+        double result = std::pow(std::stod(base.to_ansi_c_string()), exp_val);
+        ieee_floatt res{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        res.from_double(result);
+        return res.to_expr();
+      }
+    }
+    return side_effect_expr_nondett{double_type(), get_location(node)};
+  }
   // ES2024 sec-numeric-types-number-remainder
   if(op == "PercentToken")
   {
+    // ES2024 sec-exponentiation-operator: **
+    if(op == "AsteriskAsteriskToken")
+    {
+      // x ** y — for constant y, unroll; otherwise use nondet
+      if(right.is_constant() && right.type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fv.from_expr(to_constant_expr(right));
+        double exp_val = std::stod(fv.to_ansi_c_string());
+        if(left.is_constant())
+        {
+          ieee_floatt base{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          base.from_expr(to_constant_expr(left));
+          double result = std::pow(std::stod(base.to_ansi_c_string()), exp_val);
+          ieee_floatt res{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          res.from_double(result);
+          return res.to_expr();
+        }
+      }
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     // ES2024 sec-numeric-types-number-remainder:
     // For floats, % is fmod: a - trunc(a/b) * b
     if(left.type().id() == ID_floatbv)
@@ -1170,6 +1225,30 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return right;
   }
 
+  // ES2024 sec-bitwise-operators
+  if(
+    op == "AmpersandToken" || op == "BarToken" || op == "CaretToken" ||
+    op == "LessThanLessThanToken" || op == "GreaterThanGreaterThanToken" ||
+    op == "GreaterThanGreaterThanGreaterThanToken")
+  {
+    // Convert floats to 32-bit integers, apply op, convert back
+    exprt l_int = typecast_exprt{left, signedbv_typet{32}};
+    exprt r_int = typecast_exprt{right, signedbv_typet{32}};
+    exprt result_int;
+    if(op == "AmpersandToken")
+      result_int = bitand_exprt{l_int, r_int};
+    else if(op == "BarToken")
+      result_int = bitor_exprt{l_int, r_int};
+    else if(op == "CaretToken")
+      result_int = bitxor_exprt{l_int, r_int};
+    else if(op == "LessThanLessThanToken")
+      result_int = shl_exprt{l_int, r_int};
+    else if(op == "GreaterThanGreaterThanToken")
+      result_int = ashr_exprt{l_int, r_int};
+    else
+      result_int = lshr_exprt{l_int, r_int};
+    return typecast_exprt{result_int, double_type()};
+  }
   // ES2024 sec-nullish-coalescing: ??
   if(op == "QuestionQuestionToken")
   {
@@ -2774,6 +2853,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     // Handle Math.* built-in functions
     if(obj_name == "Math" && args.is_array())
     {
+      // Math.random() — no args
+      if(method == "random")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
       // ES2024 sec-math.*: constant evaluation at conversion time
       std::vector<double> arg_vals;
       bool all_const = true;
