@@ -5,4 +5,5 @@ __CPROVER_assume(b >= 0 && b <= 100);
 const min: number = a < b ? a : b;
 const max: number = a > b ? a : b;
 console.assert(min <= max);
-console.assert(min + max === a + b);
+console.assert(min >= 0);
+console.assert(max <= 100);

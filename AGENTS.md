@@ -122,7 +122,7 @@ The source is organized into modular directories by functionality:
 - **`typescript/`** - TypeScript front-end (experimental)
   - Uses TypeScript Compiler API (via inline Node.js script) for parsing and type-checking
   - Converts typed JSON AST to GOTO programs
-  - 360 CORE regression tests (split into 4 source files)
+  - 380 CORE regression tests (split into 4 source files)
   - See `doc/architectural/typescript-frontend-plan.md`
 
 #### **Analysis and Verification**
