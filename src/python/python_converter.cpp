@@ -5964,6 +5964,16 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt code_point = convert_expression(*as_array(args).begin());
+      // Range check: chr() requires 0 <= arg <= 0x10ffff
+      add_check(
+        and_exprt{
+          binary_relation_exprt{
+            code_point, ID_ge, from_integer(0, code_point.type())},
+          binary_relation_exprt{
+            code_point, ID_le, from_integer(0x10ffff, code_point.type())}},
+        "value-error",
+        "chr() arg not in range(0x110000)",
+        get_location(expr));
       struct_typet str_type = python_string_type();
       const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       exprt::operandst chars;
