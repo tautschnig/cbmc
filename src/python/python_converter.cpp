@@ -1536,7 +1536,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       if(lv.has_value() && rv.has_value())
         return build_string_struct(lv.value() + rv.value());
     }
-    // Fallback: nondet (string solver needs --refine-strings)
+    // Fallback: nondet for non-constant strings
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(
