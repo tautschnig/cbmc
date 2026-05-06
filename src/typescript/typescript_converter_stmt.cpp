@@ -1336,41 +1336,76 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         const symbolt &sym = symbol_table.lookup_ref(sym_id);
         if(rhs.type() != sym.type)
         {
+          // If target is a union and source is a scalar, construct union struct
           if(
-            rhs.id() == ID_struct && rhs.type().id() == ID_struct &&
-            sym.type.id() == ID_struct)
+            sym.type.id() == ID_struct &&
+            to_struct_type(sym.type).get_tag() == "typescript_union")
           {
-            const auto &src_st = to_struct_type(rhs.type());
-            const auto &tgt_st = to_struct_type(sym.type);
-            exprt::operandst reordered;
-            bool can_reorder = true;
-            for(const auto &tc : tgt_st.components())
+            const auto &ust = to_struct_type(sym.type);
+            // Find matching variant
+            int tag = -1;
+            for(std::size_t c = 1; c < ust.components().size(); ++c)
             {
-              bool found = false;
-              for(std::size_t i = 0; i < src_st.components().size(); ++i)
+              if(ust.components()[c].type() == rhs.type())
               {
-                if(
-                  src_st.components()[i].get_name() == tc.get_name() &&
-                  i < rhs.operands().size())
-                {
-                  reordered.push_back(rhs.operands()[i]);
-                  found = true;
-                  break;
-                }
-              }
-              if(!found)
-              {
-                can_reorder = false;
+                tag = static_cast<int>(c - 1);
                 break;
               }
             }
-            if(can_reorder && reordered.size() == tgt_st.components().size())
-              rhs = struct_exprt{std::move(reordered), sym.type};
+            if(tag >= 0)
+            {
+              // Build union value
+              exprt::operandst ops;
+              ops.push_back(from_integer(tag, signedbv_typet{32}));
+              for(std::size_t c = 1; c < ust.components().size(); ++c)
+              {
+                if(static_cast<int>(c - 1) == tag)
+                  ops.push_back(rhs);
+                else
+                  ops.push_back(side_effect_expr_nondett{
+                    ust.components()[c].type(), source_locationt{}});
+              }
+              rhs = struct_exprt{std::move(ops), sym.type};
+            }
+          }
+          if(rhs.type() != sym.type)
+          {
+            if(
+              rhs.id() == ID_struct && rhs.type().id() == ID_struct &&
+              sym.type.id() == ID_struct)
+            {
+              const auto &src_st = to_struct_type(rhs.type());
+              const auto &tgt_st = to_struct_type(sym.type);
+              exprt::operandst reordered;
+              bool can_reorder = true;
+              for(const auto &tc : tgt_st.components())
+              {
+                bool found = false;
+                for(std::size_t i = 0; i < src_st.components().size(); ++i)
+                {
+                  if(
+                    src_st.components()[i].get_name() == tc.get_name() &&
+                    i < rhs.operands().size())
+                  {
+                    reordered.push_back(rhs.operands()[i]);
+                    found = true;
+                    break;
+                  }
+                }
+                if(!found)
+                {
+                  can_reorder = false;
+                  break;
+                }
+              }
+              if(can_reorder && reordered.size() == tgt_st.components().size())
+                rhs = struct_exprt{std::move(reordered), sym.type};
+              else
+                rhs = typecast_exprt{rhs, sym.type};
+            }
             else
               rhs = typecast_exprt{rhs, sym.type};
           }
-          else
-            rhs = typecast_exprt{rhs, sym.type};
         }
         // Flush pending stmts (constructor calls from NewExpression)
         for(auto &s : pending_stmts)
