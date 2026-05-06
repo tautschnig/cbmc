@@ -174,22 +174,37 @@ void typescript_convertert::convert_function_declaration_with_name(
       scan(body_node);
 
     // Add captured vars as extra parameters
+    // Only add as parameters if the variable is a PARAMETER of the outer
+    // function (immutable capture). For local variables (let/const in outer
+    // scope), access them directly via their symbol (mutable sharing).
     for(const auto &[cv_name, cv_type] : captured_vars)
     {
-      code_typet::parametert cp{cv_type};
-      cp.set_identifier("typescript::" + func_name + "::" + cv_name);
-      cp.set_base_name(cv_name);
-      params.push_back(cp);
-      // Create parameter symbol
-      irep_idt cpid{"typescript::" + func_name + "::" + cv_name};
-      if(symbol_table.lookup(cpid) == nullptr)
+      std::string outer_id = "typescript::" + current_function + "::" + cv_name;
+      const symbolt *outer_sym = symbol_table.lookup(irep_idt{outer_id});
+      bool is_outer_param = outer_sym && outer_sym->is_parameter;
+      if(is_outer_param)
       {
-        symbolt cps{cpid, cv_type, "typescript"};
-        cps.base_name = cv_name;
-        cps.is_parameter = true;
-        cps.is_lvalue = true;
-        cps.is_state_var = true;
-        symbol_table.add(cps);
+        // Immutable capture: pass as extra parameter
+        code_typet::parametert cp{cv_type};
+        cp.set_identifier("typescript::" + func_name + "::" + cv_name);
+        cp.set_base_name(cv_name);
+        params.push_back(cp);
+        irep_idt cpid{"typescript::" + func_name + "::" + cv_name};
+        if(symbol_table.lookup(cpid) == nullptr)
+        {
+          symbolt cps{cpid, cv_type, "typescript"};
+          cps.base_name = cv_name;
+          cps.is_parameter = true;
+          cps.is_lvalue = true;
+          cps.is_state_var = true;
+          symbol_table.add(cps);
+        }
+      }
+      else
+      {
+        // Mutable sharing: do NOT create a local symbol.
+        // The nested function will access the outer variable directly
+        // via convert_identifier's scope fallback mechanism.
       }
     }
     // Update function type with new params

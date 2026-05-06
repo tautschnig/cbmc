@@ -2518,13 +2518,13 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             arguments[i] = typecast_exprt(arguments[i], fp[i].type());
         }
       }
-      // Fill captured variable args
+      // Fill captured variable args (only for parameter captures)
       if(captured_var_map.count(func_id) > 0)
       {
         for(const auto &[cv_name, cv_outer_id] : captured_var_map[func_id])
         {
           const symbolt *cv_sym = symbol_table.lookup(cv_outer_id);
-          if(cv_sym != nullptr)
+          if(cv_sym != nullptr && cv_sym->is_parameter)
             arguments.push_back(cv_sym->symbol_expr());
         }
       }

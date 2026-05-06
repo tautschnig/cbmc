@@ -1060,6 +1060,26 @@ exprt typescript_convertert::convert_identifier(const jsont &node)
     return sym->symbol_expr();
   }
 
+  // Try enclosing function scope (for closures accessing outer locals)
+  if(!current_function.empty())
+  {
+    // Check captured_var_map to find the enclosing scope
+    irep_idt fid{"typescript::" + current_function};
+    auto cv_it = captured_var_map.find(fid);
+    if(cv_it != captured_var_map.end())
+    {
+      for(const auto &[cv_name, cv_outer_id] : cv_it->second)
+      {
+        if(cv_name == name)
+        {
+          const symbolt *outer = symbol_table.lookup(cv_outer_id);
+          if(outer != nullptr)
+            return outer->symbol_expr();
+        }
+      }
+    }
+  }
+
   // Try module scope
   std::string global = "typescript::" + name;
   sym = symbol_table.lookup(irep_idt{global});
@@ -1264,6 +1284,51 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       return std::move(result);
     }
     return mod_exprt{left, right};
+  }
+
+  // ES2024 sec-abstract-equality-comparison: ==
+  // Performs type coercion: null == undefined is true,
+  // number == string coerces string to number
+  if(op == "EqualsEqualsToken")
+  {
+    // null == undefined → true (and vice versa)
+    bool left_null = left.is_zero() && left.type().id() == ID_signedbv;
+    bool right_null = right.is_zero() && right.type().id() == ID_signedbv;
+    if(left_null && right_null)
+      return true_exprt{};
+    // Type coercion: if types differ, cast to common type
+    if(left.type() != right.type())
+    {
+      if(left.type().id() == ID_floatbv && right.type().id() != ID_floatbv)
+        right = typecast_exprt{right, left.type()};
+      else if(right.type().id() == ID_floatbv && left.type().id() != ID_floatbv)
+        left = typecast_exprt{left, right.type()};
+      else if(left.type().id() == ID_bool)
+        left = typecast_exprt{left, right.type()};
+      else if(right.type().id() == ID_bool)
+        right = typecast_exprt{right, left.type()};
+    }
+    if(left.type().id() == ID_floatbv)
+      return ieee_float_equal_exprt{left, right};
+    return equal_exprt{left, right};
+  }
+  // ES2024 sec-abstract-equality-comparison: != (negation of ==)
+  if(op == "ExclamationEqualsToken")
+  {
+    if(left.type() != right.type())
+    {
+      if(left.type().id() == ID_floatbv && right.type().id() != ID_floatbv)
+        right = typecast_exprt{right, left.type()};
+      else if(right.type().id() == ID_floatbv && left.type().id() != ID_floatbv)
+        left = typecast_exprt{left, right.type()};
+      else if(left.type().id() == ID_bool)
+        left = typecast_exprt{left, right.type()};
+      else if(right.type().id() == ID_bool)
+        right = typecast_exprt{right, left.type()};
+    }
+    if(left.type().id() == ID_floatbv)
+      return ieee_float_notequal_exprt{left, right};
+    return notequal_exprt{left, right};
   }
 
   // ES2024 sec-isstrictlyequal: ===
