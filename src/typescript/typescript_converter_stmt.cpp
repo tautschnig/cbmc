@@ -765,6 +765,17 @@ codet typescript_convertert::convert_statement(const jsont &node)
     exprt arr = convert_expression(json_member(node, "expression"));
     if(arr.is_nil())
       return code_skipt{};
+
+    // Detect Map/Set iteration
+    bool is_map = false;
+    bool is_set = false;
+    if(arr.type().id() == ID_struct)
+    {
+      const auto &tag = to_struct_type(arr.type()).get_tag();
+      is_map = (tag == "typescript_class_Map");
+      is_set = (tag == "typescript_class_Set");
+    }
+
     // Create iterator variable
     static unsigned forit_ctr = 0;
     std::string it_name = "__forit_" + std::to_string(forit_ctr++);
@@ -783,53 +794,136 @@ codet typescript_convertert::convert_statement(const jsont &node)
     symbol_exprt it_var = symbol_table.lookup_ref(it_id).symbol_expr();
     block.add(
       code_frontend_assignt{it_var, from_integer(0, signedbv_typet{64})});
-    // Get loop variable name
+
+    // Get loop variable name(s)
     const jsont &init_node = json_member(node, "initializer");
     std::string loop_var;
+    std::string loop_var2; // for Map destructuring [key, value]
     if(is_kind(init_node, "VariableDeclarationList"))
     {
       const jsont &decls = json_member(init_node, "declarations");
       if(decls.is_array() && !to_json_array(decls).empty())
-        loop_var = json_string(json_member(
-          json_member(*to_json_array(decls).begin(), "name"), "text"));
+      {
+        const jsont &decl0 = *to_json_array(decls).begin();
+        const jsont &name_node = json_member(decl0, "name");
+        if(is_kind(name_node, "ArrayBindingPattern") && is_map)
+        {
+          // [key, value] destructuring for Map
+          const jsont &elems = json_member(name_node, "elements");
+          if(elems.is_array())
+          {
+            auto it2 = to_json_array(elems).begin();
+            if(it2 != to_json_array(elems).end())
+            {
+              loop_var =
+                json_string(json_member(json_member(*it2, "name"), "text"));
+              ++it2;
+              if(it2 != to_json_array(elems).end())
+                loop_var2 =
+                  json_string(json_member(json_member(*it2, "name"), "text"));
+            }
+          }
+        }
+        else
+        {
+          loop_var = json_string(json_member(name_node, "text"));
+        }
+      }
     }
-    // Create loop variable
+
+    // Determine element type and create loop variable(s)
     typet elem_type = double_type();
-    if(arr.type().id() == ID_struct)
+    typet key_type = typescript_string_type();
+    typet val_type = double_type();
+    if(!is_map && !is_set && arr.type().id() == ID_struct)
     {
       const auto &st = to_struct_type(arr.type());
       if(st.has_component("data"))
         elem_type =
           to_array_type(st.get_component("data").type()).element_type();
     }
-    std::string lv_qname =
-      "typescript::" +
-      (current_function.empty() ? "" : current_function + "::") + loop_var;
-    irep_idt lv_id{lv_qname};
-    if(!loop_var.empty() && symbol_table.lookup(lv_id) == nullptr)
+    if(is_set)
+      elem_type = double_type();
+
+    // Create loop variable symbol(s)
+    auto create_sym = [&](const std::string &name, const typet &type)
     {
-      symbolt lv_sym{lv_id, elem_type, "typescript"};
-      lv_sym.base_name = loop_var;
-      lv_sym.is_lvalue = true;
-      lv_sym.is_state_var = true;
-      symbol_table.add(lv_sym);
-    }
-    // Build while loop
-    exprt arr_len = member_exprt{arr, "length", signedbv_typet{64}};
-    exprt cond = binary_relation_exprt{it_var, ID_lt, arr_len};
-    code_blockt loop_body;
+      std::string qn =
+        "typescript::" +
+        (current_function.empty() ? "" : current_function + "::") + name;
+      irep_idt id{qn};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt sym{id, type, "typescript"};
+        sym.base_name = name;
+        sym.is_lvalue = true;
+        sym.is_state_var = true;
+        symbol_table.add(sym);
+      }
+      return id;
+    };
+
+    irep_idt lv_id{""};
+    irep_idt lv2_id{""};
     if(!loop_var.empty())
     {
-      const symbolt &lv = symbol_table.lookup_ref(lv_id);
-      if(arr.type().id() == ID_struct)
+      if(is_map && !loop_var2.empty())
       {
+        lv_id = create_sym(loop_var, key_type);
+        lv2_id = create_sym(loop_var2, val_type);
+      }
+      else
+      {
+        lv_id = create_sym(loop_var, is_set ? elem_type : elem_type);
+      }
+    }
+
+    // Build while loop
+    exprt arr_len = member_exprt{arr, "size", signedbv_typet{64}};
+    if(!is_map && !is_set)
+      arr_len = member_exprt{arr, "length", signedbv_typet{64}};
+    exprt cond = binary_relation_exprt{it_var, ID_lt, arr_len};
+    code_blockt loop_body;
+
+    if(!loop_var.empty())
+    {
+      if(is_map)
+      {
+        // Map: key = keys[i], value = values[i]
+        const auto &mst = to_struct_type(arr.type());
+        exprt keys_arr =
+          member_exprt{arr, "keys", mst.get_component("keys").type()};
+        exprt vals_arr =
+          member_exprt{arr, "values", mst.get_component("values").type()};
+        loop_body.add(code_frontend_assignt{
+          symbol_table.lookup_ref(lv_id).symbol_expr(),
+          index_exprt{keys_arr, it_var}});
+        if(!loop_var2.empty())
+          loop_body.add(code_frontend_assignt{
+            symbol_table.lookup_ref(lv2_id).symbol_expr(),
+            index_exprt{vals_arr, it_var}});
+      }
+      else if(is_set)
+      {
+        // Set: item = data[i]
+        const auto &sst = to_struct_type(arr.type());
+        exprt data_arr =
+          member_exprt{arr, "data", sst.get_component("data").type()};
+        loop_body.add(code_frontend_assignt{
+          symbol_table.lookup_ref(lv_id).symbol_expr(),
+          index_exprt{data_arr, it_var}});
+      }
+      else
+      {
+        // Array: x = data[i]
         const auto &st = to_struct_type(arr.type());
         if(st.has_component("data"))
         {
           exprt data =
             member_exprt{arr, "data", st.get_component("data").type()};
-          loop_body.add(
-            code_frontend_assignt{lv.symbol_expr(), index_exprt{data, it_var}});
+          loop_body.add(code_frontend_assignt{
+            symbol_table.lookup_ref(lv_id).symbol_expr(),
+            index_exprt{data, it_var}});
         }
       }
     }
