@@ -1,5 +1,10 @@
 /// \file
 /// TypeScript language frontend for CBMC — implementation
+///
+/// Cross-references:
+/// - ES2024 sec-scripts-and-modules (module parsing)
+/// - ES2024 sec-ecmascript-language-source-code (source text)
+/// - TSH: Modules (import/export resolution via TS Compiler API)
 
 #include "typescript_language.h"
 
@@ -52,6 +57,7 @@ bool typescript_languaget::parse(
 const ts = require("/usr/local/lib/node_modules/typescript");
 const fs = require("fs");
 const inputFile = process.argv[2];
+// ES2024 sec-scripts-and-modules: parse source into AST via TypeScript Compiler API
 const outputFile = process.argv[3];
 const program = ts.createProgram([inputFile], {
   target: ts.ScriptTarget.ES2022,

@@ -1,5 +1,10 @@
 /// \file
 /// Convert CBMC expressions and types to TypeScript syntax for trace output
+///
+/// Cross-references:
+/// - ES2024 sec-tostring (number → string conversion)
+/// - ES2024 sec-tostring-applied-to-the-number-type
+/// - TSH: Everyday Types (type names: number, string, boolean, void)
 
 #include "expr2typescript.h"
 
@@ -15,6 +20,7 @@
 
 #include <cmath>
 
+// ES2024 sec-ecmascript-language-types: type name mapping
 std::string type2typescript(const typet &type, const namespacet &ns)
 {
   if(type.id() == ID_floatbv)
@@ -44,6 +50,8 @@ std::string type2typescript(const typet &type, const namespacet &ns)
   return id2string(type.id());
 }
 
+// ES2024 sec-tostring-applied-to-the-number-type (numeric literals)
+// ES2024 sec-literals-string-literals (string representation)
 std::string expr2typescript(const exprt &expr, const namespacet &ns)
 {
   if(expr.id() == ID_constant)

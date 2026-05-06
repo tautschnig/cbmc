@@ -29,6 +29,9 @@ inline typet typescript_boolean_type()
 ///  16-bit unsigned integer values."
 ///
 /// handled by CBMC's string solver (--refine-strings).
+// ES2024 sec-ecmascript-language-types-string-type:
+// Strings are sequences of UTF-16 code units (unsignedbv[16]).
+// Modeled as struct{length: signedbv[32], data: unsignedbv[16][MAX]}.
 #define TYPESCRIPT_MAX_STRING_LENGTH 64
 
 inline struct_typet typescript_string_type()

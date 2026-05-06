@@ -567,6 +567,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             list_type};
         }
       }
+      // ES2024 sec-string.prototype.charat
       // charAt with non-constant index: access data[idx], build 1-char string
       if(method == "charAt" && args.is_array() && !to_json_array(args).empty())
       {
