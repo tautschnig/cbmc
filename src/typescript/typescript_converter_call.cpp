@@ -2601,6 +2601,47 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       {
         for(const auto &arg : to_json_array(args))
         {
+          // ES2024 sec-runtime-semantics-argumentlistevaluation
+          // Handle spread: fn(...arr) expands array into individual args
+          if(is_kind(arg, "SpreadElement"))
+          {
+            exprt src = convert_expression(json_member(arg, "expression"));
+            if(src.id() == ID_symbol)
+            {
+              const symbolt *s =
+                symbol_table.lookup(to_symbol_expr(src).get_identifier());
+              if(s && !s->value.is_nil())
+                src = s->value;
+            }
+            if(src.id() == ID_struct && src.operands().size() >= 2)
+            {
+              mp_integer len{0};
+              if(src.operands()[0].is_constant())
+                to_integer(to_constant_expr(src.operands()[0]), len);
+              const exprt &data = src.operands()[1];
+              for(mp_integer i = 0; i < len; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx < data.operands().size())
+                  arguments.push_back(data.operands()[idx]);
+              }
+            }
+            else if(
+              !src.is_nil() && src.type().id() == ID_struct &&
+              to_struct_type(src.type()).get_tag() == "typescript_array")
+            {
+              // Runtime array: use index access
+              const auto &st = to_struct_type(src.type());
+              exprt data_e =
+                member_exprt{src, "data", st.get_component("data").type()};
+              const auto &fp2 = func_type.parameters();
+              for(std::size_t pi = arguments.size(); pi < fp2.size(); ++pi)
+                arguments.push_back(index_exprt{
+                  data_e,
+                  from_integer(pi - arguments.size(), signedbv_typet{64})});
+            }
+            continue;
+          }
           exprt val = convert_expression(arg);
           // If argument is a function symbol, take its address
           if(val.id() == ID_symbol && val.type().id() == ID_code)

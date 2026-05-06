@@ -140,12 +140,24 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     struct_typet st;
     std::string inner =
       ts_type.substr(2, ts_type.size() - 4); // remove "{ " and " }"
-    // Split by "; "
+    // Split by "; " respecting nested braces
     std::size_t pos = 0;
     while(pos < inner.size())
     {
-      auto semi = inner.find(';', pos);
-      if(semi == std::string::npos)
+      // Find next ';' at brace depth 0
+      int depth = 0;
+      std::size_t semi = pos;
+      while(semi < inner.size())
+      {
+        if(inner[semi] == '{')
+          depth++;
+        else if(inner[semi] == '}')
+          depth--;
+        else if(inner[semi] == ';' && depth == 0)
+          break;
+        semi++;
+      }
+      if(semi >= inner.size())
         semi = inner.size();
       std::string field = inner.substr(pos, semi - pos);
       // Trim
@@ -153,7 +165,21 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
         field.erase(0, 1);
       while(!field.empty() && field.back() == ' ')
         field.pop_back();
-      auto colon = field.find(':');
+      // Find first ':' at depth 0 (not inside nested type)
+      int cdepth = 0;
+      std::size_t colon = std::string::npos;
+      for(std::size_t ci = 0; ci < field.size(); ++ci)
+      {
+        if(field[ci] == '{')
+          cdepth++;
+        else if(field[ci] == '}')
+          cdepth--;
+        else if(field[ci] == ':' && cdepth == 0)
+        {
+          colon = ci;
+          break;
+        }
+      }
       if(colon != std::string::npos)
       {
         std::string fname = field.substr(0, colon);
