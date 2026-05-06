@@ -37,6 +37,18 @@ void typescript_convertert::convert_function_declaration_with_name(
   const jsont &node,
   const std::string &func_name)
 {
+  // Detect generic functions (type parameters present)
+  // Skip if we're currently instantiating (current_generic_concrete is set)
+  const jsont &type_params = json_member(node, "typeParameters");
+  if(
+    type_params.is_array() && !to_json_array(type_params).empty() &&
+    current_generic_concrete.empty())
+  {
+    // Store AST for monomorphization at call sites
+    generic_functions[func_name] = node;
+    return;
+  }
+
   // Get return type
   std::string ret_type_str = json_string(json_member(node, "_returnType"));
   typet ret_type =

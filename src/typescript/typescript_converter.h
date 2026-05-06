@@ -80,6 +80,11 @@ private:
   // Private fields: class_name → set of private field names
   std::map<std::string, std::set<std::string>> private_fields;
   std::vector<codet> pending_stmts;
+  // Generic functions: name → AST node (deferred for monomorphization)
+  std::map<std::string, jsont> generic_functions;
+  // Current generic instantiation context
+  std::string current_generic_type_param;
+  std::string current_generic_concrete;
   // Default parameter values: func_id → {param_index → default_expr}
   std::map<irep_idt, std::map<std::size_t, exprt>>
     default_values; // stmts to emit before current expr

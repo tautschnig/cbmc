@@ -2593,6 +2593,70 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
   {
     std::string func_name = json_string(json_member(callee, "text"));
 
+    // Generic function monomorphization
+    auto gen_it = generic_functions.find(func_name);
+    if(gen_it != generic_functions.end())
+    {
+      // Get concrete return type from call site
+      std::string call_type = json_string(json_member(node, "_type"));
+      if(call_type.empty())
+        call_type = "number";
+      // Normalize literal types to base types
+      if(call_type == "true" || call_type == "false")
+        call_type = "boolean";
+      else if(
+        !call_type.empty() &&
+        (std::isdigit(call_type[0]) || call_type[0] == '-'))
+        call_type = "number";
+      // Create specialized instance name
+      std::string spec_name = func_name + "__" + call_type;
+      irep_idt spec_id{"typescript::" + spec_name};
+      // Instantiate if not already done
+      if(symbol_table.lookup(spec_id) == nullptr)
+      {
+        // Convert the generic function with concrete types
+        // Replace type parameter with concrete type in the AST
+        const jsont &gen_node = gen_it->second;
+        // Temporarily remove from generic_functions to avoid recursion
+        jsont saved_node = gen_node;
+        generic_functions.erase(gen_it);
+        // Get type parameter names
+        std::set<std::string> type_param_names;
+        const jsont &tp = json_member(saved_node, "typeParameters");
+        if(tp.is_array())
+          for(const auto &t : to_json_array(tp))
+          {
+            std::string tp_name = json_string(json_member(t, "_type"));
+            if(!tp_name.empty())
+              type_param_names.insert(tp_name);
+          }
+        // Store the concrete type mapping for this instantiation
+        std::string saved_generic_type_param = current_generic_type_param;
+        std::string saved_generic_concrete = current_generic_concrete;
+        current_generic_type_param =
+          type_param_names.empty() ? "T" : *type_param_names.begin();
+        current_generic_concrete = call_type;
+        convert_function_declaration_with_name(saved_node, spec_name);
+        current_generic_type_param = saved_generic_type_param;
+        current_generic_concrete = saved_generic_concrete;
+        // Restore
+        generic_functions[func_name] = saved_node;
+      }
+      // Call the specialized function
+      exprt::operandst call_args;
+      if(args.is_array())
+        for(const auto &a : to_json_array(args))
+          call_args.push_back(convert_expression(a));
+      const symbolt &fn = symbol_table.lookup_ref(spec_id);
+      typet ret = to_code_type(fn.type).return_type();
+      side_effect_expr_function_callt call{
+        symbol_exprt{spec_id, fn.type},
+        std::move(call_args),
+        ret,
+        get_location(node)};
+      return std::move(call);
+    }
+
     // Verification primitives
     if(func_name == "nondet_number")
       return side_effect_expr_nondett{double_type(), get_location(node)};

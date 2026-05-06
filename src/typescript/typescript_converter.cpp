@@ -81,6 +81,12 @@ source_locationt typescript_convertert::get_location(const jsont &node) const
 
 typet typescript_convertert::convert_type(const std::string &ts_type) const
 {
+  // Resolve generic type parameters
+  if(
+    !current_generic_type_param.empty() &&
+    ts_type == current_generic_type_param)
+    return convert_type(current_generic_concrete);
+
   // Check cache first
   auto cache_it = type_cache.find(ts_type);
   if(cache_it != type_cache.end())

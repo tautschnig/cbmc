@@ -115,6 +115,7 @@ function n2j(node) {
       if(node.name) r.name = n2j(node.name);
       r.parameters = node.parameters.map(n2j);
       if(node.type) r.returnType = n2j(node.type);
+      if(node.typeParameters) r.typeParameters = node.typeParameters.map(n2j);
       if(node.body) r.body = n2j(node.body);
       try {
         const sig = checker.getSignatureFromDeclaration(node);
