@@ -815,6 +815,14 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       typeof_result = "boolean";
     else if(ts_type == "undefined")
       typeof_result = "undefined";
+    else if(ts_type == "null")
+      typeof_result = "object"; // ES2024 quirk: typeof null === "object"
+    else if(ts_type.find("=>") != std::string::npos)
+      typeof_result = "function";
+    else if(
+      !operand.is_nil() &&
+      (operand.type().id() == ID_pointer || operand.type().id() == ID_code))
+      typeof_result = "function";
     return convert_string_literal_from_text(typeof_result);
   }
   // ES2024 sec-void-operator

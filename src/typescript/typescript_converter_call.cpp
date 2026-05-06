@@ -1094,7 +1094,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                 symbol_exprt{pid, bool_typet{}},
                 side_effect_expr_function_callt{
                   symbol_exprt{ccb_id, ccb_sym->type},
-                  {cdata.operands()[ci]},
+                  {cdata.operands()[ci], from_integer(ci, double_type())},
                   bool_typet{},
                   source_locationt{}}});
               pred_results.emplace_back(pid, ci);
@@ -1235,7 +1235,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           side_effect_expr_function_callt pred_call{
             symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
-            {data.operands()[idx]},
+            {data.operands()[idx], from_integer(idx, double_type())},
             bool_typet{},
             source_locationt{}};
           pending_stmts.push_back(code_frontend_assignt{
@@ -1381,7 +1381,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             break;
           side_effect_expr_function_callt call{
             symbol_exprt{cb_id, symbol_table.lookup_ref(cb_id).type},
-            {symbol_exprt{acc_id, acc_type}, data.operands()[idx]},
+            {symbol_exprt{acc_id, acc_type},
+             data.operands()[idx],
+             from_integer(idx, double_type())},
             acc_type,
             source_locationt{}};
           pending_stmts.push_back(
@@ -2157,6 +2159,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             member_exprt{obj_expr, "data", st.get_component("data").type()};
           pending_stmts.push_back(code_frontend_assignt{len, new_len});
           return index_exprt{data, new_len};
+        }
+        // ES2024 sec-array.prototype.splice
+        if(method == "splice" && args.is_array())
+        {
+          const auto &arg_arr = to_json_array(args);
+          if(arg_arr.size() >= 2)
+          {
+            auto it = arg_arr.begin();
+            exprt start = convert_expression(*it++);
+            exprt del_count = convert_expression(*it);
+            exprt len = member_exprt{obj_expr, "length", signedbv_typet{64}};
+            if(start.type() != signedbv_typet{64})
+              start = typecast_exprt{start, signedbv_typet{64}};
+            if(del_count.type() != signedbv_typet{64})
+              del_count = typecast_exprt{del_count, signedbv_typet{64}};
+            // Update length: length -= deleteCount
+            pending_stmts.push_back(
+              code_frontend_assignt{len, minus_exprt{len, del_count}});
+          }
+          // Return empty array (simplified — real splice returns removed)
+          return obj_expr;
         }
         if(method == "length")
           return member_exprt{obj_expr, "length", signedbv_typet{64}};
