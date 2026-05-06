@@ -8169,8 +8169,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       // Build a single-char string from the character
       exprt::operandst chars;
       chars.push_back(ch);
-      array_typet at(
-        unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
+      array_typet at(unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
       array_exprt arr(std::move(chars), at);
       exprt ptr = address_of_exprt(index_exprt(
         arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
@@ -10017,11 +10016,34 @@ codet python_convertert::convert_assign(const jsont &stmt)
       {
         rhs = safe_typecast(rhs, existing->type);
       }
-      // struct → different struct: nondet
+      // struct → different struct: version the variable for class types
       else if(
         rhs.type().id() == ID_struct && existing->type.id() == ID_struct &&
         rhs.type() != existing->type)
       {
+        // For class instances (have __class_tag), create versioned variable
+        if(
+          to_struct_type(rhs.type()).has_component("__class_tag") ||
+          to_struct_type(existing->type).has_component("__class_tag"))
+        {
+          unsigned &ver = version_counters[qualified_name];
+          ver++;
+          std::string versioned_name =
+            qualified_name + "__v" + std::to_string(ver);
+          irep_idt versioned_id{versioned_name};
+          symbolt new_symbol{versioned_id, rhs.type(), "python"};
+          new_symbol.base_name = var_name + "__v" + std::to_string(ver);
+          new_symbol.location = loc;
+          new_symbol.is_lvalue = true;
+          new_symbol.is_state_var = true;
+          symbol_table.add(new_symbol);
+          variable_versions[qualified_name] = versioned_id;
+          const symbolt &new_sym = symbol_table.lookup_ref(versioned_id);
+          code_frontend_assignt assign{new_sym.symbol_expr(), rhs};
+          assign.add_source_location() = loc;
+          block.add(std::move(assign));
+          continue;
+        }
         rhs = safe_typecast(rhs, existing->type);
       }
       else if(if_else_depth > 0)
