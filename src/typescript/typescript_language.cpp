@@ -65,6 +65,7 @@ const program = ts.createProgram([inputFile], {
   strict: true,
   noEmit: true,
   skipLibCheck: true,
+  jsx: ts.JsxEmit.React,
 });
 const checker = program.getTypeChecker();
 const sourceFile = program.getSourceFile(inputFile);

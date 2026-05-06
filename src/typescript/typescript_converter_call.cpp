@@ -593,9 +593,12 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           exprt len_e = member_exprt{obj_expr, "length", signedbv_typet{32}};
           // Build: for each possible position p, check if data[p..p+n-1] == needle
           // Return the first matching position, or -1.
+          // Limit scan depth to avoid huge formulas.
           std::size_t nlen = needle.size();
+          std::size_t max_scan =
+            std::min<std::size_t>(TYPESCRIPT_MAX_STRING_LENGTH, 32);
           exprt result = from_integer(-1, signedbv_typet{64});
-          for(int p = TYPESCRIPT_MAX_STRING_LENGTH - 1 - static_cast<int>(nlen);
+          for(int p = static_cast<int>(max_scan) - 1 - static_cast<int>(nlen);
               p >= 0;
               p--)
           {

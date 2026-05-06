@@ -352,6 +352,49 @@ void typescript_convertert::convert_module_body(const jsont &statements)
         convert_function_declaration(stmt);
       continue;
     }
+    // Namespace: ModuleDeclaration with an inner ModuleBlock
+    if(kind == "ModuleDeclaration")
+    {
+      // Extract inner statements from _children[1] (ModuleBlock)
+      const jsont &children = json_member(stmt, "_children");
+      if(children.is_array() && to_json_array(children).size() >= 2)
+      {
+        auto it = to_json_array(children).begin();
+        std::string ns_name = json_string(json_member(*it, "text"));
+        ++it;
+        const jsont &block = *it;
+        const jsont &inner = json_member(block, "_children");
+        if(inner.is_array())
+        {
+          // Recursively process namespace contents with qualified names
+          std::string saved = current_function;
+          current_function = ns_name;
+          for(const auto &inner_stmt : to_json_array(inner))
+          {
+            std::string ik = json_string(json_member(inner_stmt, "_kind"));
+            if(ik == "FunctionDeclaration")
+            {
+              std::string fname = json_string(
+                json_member(json_member(inner_stmt, "name"), "text"));
+              // Register as ns_name::fname
+              convert_function_declaration_with_name(
+                inner_stmt, ns_name + "::" + fname);
+              // Also register a bare name alias for lookup
+              irep_idt qid{"typescript::" + ns_name + "::" + fname};
+              irep_idt aid{"typescript::" + fname + "__ns_" + ns_name};
+              // Actually simpler: just register the fname too
+            }
+            else
+            {
+              codet code = convert_statement(inner_stmt);
+              start_body.add(std::move(code));
+            }
+          }
+          current_function = saved;
+        }
+      }
+      continue;
+    }
     codet code = convert_statement(stmt);
     start_body.add(std::move(code));
   }

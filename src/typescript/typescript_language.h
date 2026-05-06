@@ -56,7 +56,7 @@ public:
 
   std::set<std::string> extensions() const override
   {
-    return {"ts"};
+    return {"ts", "tsx"};
   }
 
   std::unique_ptr<languaget> new_language() override

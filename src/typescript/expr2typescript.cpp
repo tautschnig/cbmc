@@ -183,6 +183,93 @@ std::string expr2typescript(const exprt &expr, const namespacet &ns)
   if(expr.id() == ID_address_of)
     return expr2typescript(to_address_of_expr(expr).object(), ns);
 
+  // Struct literal — format as object literal for traces
+  if(expr.id() == ID_struct && expr.type().id() == ID_struct)
+  {
+    const auto &st = to_struct_type(expr.type());
+    std::string tag = id2string(st.get_tag());
+    // Array: {length, data}
+    if(tag == "typescript_array" && expr.operands().size() >= 2)
+    {
+      std::string out = "[";
+      const exprt &data = expr.operands()[1];
+      std::size_t actual = data.operands().size();
+      if(expr.operands()[0].is_constant())
+      {
+        mp_integer len;
+        if(!to_integer(to_constant_expr(expr.operands()[0]), len))
+          actual = static_cast<std::size_t>(len.to_long());
+      }
+      for(std::size_t i = 0; i < actual && i < data.operands().size(); ++i)
+      {
+        if(i > 0)
+          out += ", ";
+        out += expr2typescript(data.operands()[i], ns);
+      }
+      return out + "]";
+    }
+    // String: {length, data}
+    if(tag == "typescript_string" && expr.operands().size() >= 2)
+    {
+      std::string out = "\"";
+      const exprt &data = expr.operands()[1];
+      std::size_t actual = data.operands().size();
+      if(expr.operands()[0].is_constant())
+      {
+        mp_integer len;
+        if(!to_integer(to_constant_expr(expr.operands()[0]), len))
+          actual = static_cast<std::size_t>(len.to_long());
+      }
+      for(std::size_t i = 0; i < actual && i < data.operands().size(); ++i)
+      {
+        if(data.operands()[i].is_constant())
+        {
+          mp_integer ch;
+          if(!to_integer(to_constant_expr(data.operands()[i]), ch))
+            out += static_cast<char>(ch.to_ulong());
+        }
+      }
+      return out + "\"";
+    }
+    // Class or plain object — format as { field: value, ... }
+    std::string out = "{ ";
+    for(std::size_t i = 0;
+        i < st.components().size() && i < expr.operands().size();
+        ++i)
+    {
+      if(i > 0)
+        out += ", ";
+      std::string fname = id2string(st.components()[i].get_name());
+      // Hide internal fields from traces
+      if(!fname.empty() && fname[0] == '_')
+        continue;
+      out += fname + ": " + expr2typescript(expr.operands()[i], ns);
+    }
+    return out + " }";
+  }
+
+  // Side effect (function call, nondet)
+  if(expr.id() == ID_side_effect)
+  {
+    const irep_idt &stmt = expr.get(ID_statement);
+    if(stmt == ID_nondet)
+      return "/* nondet */";
+    return "/* side effect */";
+  }
+
+  // Array literal
+  if(expr.id() == ID_array)
+  {
+    std::string out = "[";
+    for(std::size_t i = 0; i < expr.operands().size(); ++i)
+    {
+      if(i > 0)
+        out += ", ";
+      out += expr2typescript(expr.operands()[i], ns);
+    }
+    return out + "]";
+  }
+
   // Fallback
   return "(" + id2string(expr.id()) + ")";
 }
