@@ -1,6 +1,4 @@
 /*******************************************************************\
-#include "expr_iterator.h"
-
 Module: util
 
 Author: Romain Brenguier, romain.brenguier@diffblue.com
@@ -8,6 +6,7 @@ Author: Romain Brenguier, romain.brenguier@diffblue.com
 \*******************************************************************/
 
 #include "union_find_replace.h"
+
 
 /// Merge the set containing `a` and the set containing `b`.
 /// \param a: an expression
