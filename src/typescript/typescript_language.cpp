@@ -362,6 +362,16 @@ function n2j(node) {
       r.label = node.label.text;
       r.statement = n2j(node.statement);
       break;
+    case ts.SyntaxKind.TypeAliasDeclaration:
+      if(node.name) r.name = n2j(node.name);
+      if(node.type) {
+        try {
+          // Print the type node directly (not through type checker, which
+          // resolves aliases to themselves). Use the getText() method.
+          r.aliasedType = node.type.getText();
+        } catch(e) {}
+      }
+      break;
     case ts.SyntaxKind.AsExpression:
     case ts.SyntaxKind.ParenthesizedExpression:
     case ts.SyntaxKind.VoidExpression:

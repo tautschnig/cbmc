@@ -1,0 +1,8 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+Discriminated unions with object members need proper type alias expansion

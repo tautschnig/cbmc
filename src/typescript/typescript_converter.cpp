@@ -254,32 +254,48 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types (union not in spec, TS extension)
   // TSH: Narrowing > typeof type guards, Discriminated Unions
   // Union types: number | string → tagged union struct
-  if(ts_type.find(" | ") != std::string::npos)
+  // Need to check for " | " at brace depth 0 to handle { } | { }
+  auto find_pipe_at_depth_zero = [](const std::string &s, std::size_t start)
+  {
+    int depth = 0;
+    for(std::size_t i = start; i < s.size(); ++i)
+    {
+      if(s[i] == '{' || s[i] == '(' || s[i] == '<' || s[i] == '[')
+        depth++;
+      else if(s[i] == '}' || s[i] == ')' || s[i] == '>' || s[i] == ']')
+        depth--;
+      else if(
+        depth == 0 && i + 2 < s.size() && s[i] == ' ' && s[i + 1] == '|' &&
+        s[i + 2] == ' ')
+        return i;
+    }
+    return std::string::npos;
+  };
+  if(find_pipe_at_depth_zero(ts_type, 0) != std::string::npos)
   {
     // Parse union members
     std::vector<std::string> members;
-    std::string tmp = ts_type;
-    while(true)
+    std::size_t start = 0;
+    while(start < ts_type.size())
     {
-      auto pos = tmp.find(" | ");
+      auto pos = find_pipe_at_depth_zero(ts_type, start);
+      std::string m;
       if(pos == std::string::npos)
       {
-        while(!tmp.empty() && tmp[0] == ' ')
-          tmp.erase(0, 1);
-        while(!tmp.empty() && tmp.back() == ' ')
-          tmp.pop_back();
-        if(!tmp.empty())
-          members.push_back(tmp);
-        break;
+        m = ts_type.substr(start);
+        start = ts_type.size();
       }
-      std::string m = tmp.substr(0, pos);
+      else
+      {
+        m = ts_type.substr(start, pos - start);
+        start = pos + 3;
+      }
       while(!m.empty() && m[0] == ' ')
         m.erase(0, 1);
       while(!m.empty() && m.back() == ' ')
         m.pop_back();
       if(!m.empty())
         members.push_back(m);
-      tmp = tmp.substr(pos + 3);
     }
     // If one member is null/undefined and the other is a simple type,
     // strip null (model as the simple type with 0/empty as null sentinel)
@@ -291,6 +307,38 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     {
       type_cache[ts_type] = convert_type(real_members[0]);
       return type_cache[ts_type];
+    }
+    // Check if all members are object types (discriminated union)
+    bool all_objects = !real_members.empty();
+    for(const auto &m : real_members)
+    {
+      if(m.empty() || m[0] != '{')
+      {
+        all_objects = false;
+        break;
+      }
+    }
+    if(all_objects)
+    {
+      // Discriminated union: merge all fields into single struct
+      struct_typet merged;
+      merged.set_tag("typescript_discriminated_union");
+      std::set<std::string> seen;
+      for(const auto &m : real_members)
+      {
+        typet t = convert_type(m);
+        if(t.id() == ID_struct)
+        {
+          for(const auto &c : to_struct_type(t).components())
+          {
+            std::string cn = id2string(c.get_name());
+            if(seen.insert(cn).second)
+              merged.components().push_back(c);
+          }
+        }
+      }
+      type_cache[ts_type] = merged;
+      return merged;
     }
     // Multi-type union: create tagged union struct
     // { __tag: signedbv[32], __num: floatbv[64], __str: refined_string, __bool: bool }

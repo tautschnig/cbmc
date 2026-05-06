@@ -483,6 +483,21 @@ codet typescript_convertert::convert_statement(const jsont &node)
           class_types[iname] = itype;
       }
     }
+    // Register type alias: resolve RHS type and store under alias name
+    if(kind == "TypeAliasDeclaration")
+    {
+      std::string aname =
+        json_string(json_member(json_member(node, "name"), "text"));
+      std::string atype = json_string(json_member(node, "aliasedType"));
+      if(atype.empty())
+        atype = json_string(json_member(node, "_type"));
+      if(!aname.empty() && !atype.empty() && aname != atype)
+      {
+        typet resolved = convert_type(atype);
+        if(resolved.id() == ID_struct)
+          class_types[aname] = to_struct_type(resolved);
+      }
+    }
     return code_skipt{};
   }
 
