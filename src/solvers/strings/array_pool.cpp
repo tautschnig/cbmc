@@ -33,6 +33,14 @@ exprt array_poolt::get_or_create_length(const array_string_exprt &s)
       get_or_create_length(to_array_string_expr(if_expr->false_case()))};
   }
 
+  // For constant arrays, use the known size directly
+  if(s.id() == ID_array && s.type().id() == ID_array)
+  {
+    const auto &size = to_array_type(s.type()).size();
+    if(size.is_constant())
+      return size;
+  }
+
   auto emplace_result =
     length_of_array.emplace(s, symbol_exprt(s.length_type()));
   if(emplace_result.second)
