@@ -108,3 +108,26 @@ times:
 | Closures | 2 | Returning functions, function pointer in loop |
 | Performance | 1 | Nondet GCD (modulo loop too slow) |
 | Static factory | 1 | new in static method return |
+
+---
+
+## Final status (2026-05-06)
+
+**500 CORE tests, 1 KNOWNBUG, 17 unit tests / 23 assertions, 165 commits**
+
+Test categories (approximate counts):
+- Arithmetic/logic: 50
+- Array operations: 60
+- String operations: 40
+- Classes and inheritance: 50
+- Generics: 5
+- Map/Set: 10
+- Control flow: 40
+- Verification instrumentation: 10
+- Nondet verification: 30
+- Algorithms: 20
+- State machines: 10
+- Closures: 8
+- Other: 167
+
+All 500 tests complete within 30s; typical <3s each.

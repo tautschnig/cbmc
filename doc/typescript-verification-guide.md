@@ -228,3 +228,85 @@ declare function nondet_array(): number[];
 See `doc/architectural/typescript-frontend-plan.md` for the full design
 document, and `doc/architectural/typescript-multifile-plan.md` for the
 multi-file support architecture.
+
+---
+
+## Advanced Features (v500)
+
+### Integer inference mode
+
+By default, all `number` types use IEEE 754 double-precision floats. For
+programs that use integer-only arithmetic (counters, indices, modulo),
+enable optimization with `--ts-integer-mode`. This can be orders of
+magnitude faster for integer-heavy programs:
+
+```
+cbmc --ts-integer-mode --unwind 15 --no-unwinding-assertions program.ts
+```
+
+The inference uses `signedbv[64]` for variables used with integer
+operators (`%`, `&`, `|`, `^`, `<<`, `>>`). Variables used with `*` or
+`/` remain `floatbv[64]` to avoid overflow or fraction issues.
+
+### Generics
+
+Both generic functions and generic classes are supported via
+monomorphization:
+
+```typescript
+function identity<T>(x: T): T { return x; }
+const a: number = identity<number>(42);      // calls identity__number
+const b: string = identity<string>("hi");    // calls identity__string
+
+class Box<T> {
+  value: T;
+  constructor(v: T) { this.value = v; }
+}
+const b1 = new Box<number>(42);   // creates Box__number
+const b2 = new Box<string>("hi"); // creates Box__string
+```
+
+### Map and Set
+
+`Map<K, V>` and `Set<T>` are modeled with bounded storage (8 entries).
+Operations: `set`/`add`, `get`, `has`, `delete`, `size`. `for...of`
+iteration works.
+
+```typescript
+const m = new Map<string, number>();
+m.set("a", 1);
+for (const [key, value] of m) { /* ... */ }
+```
+
+### Private field access control
+
+Private fields (`private x: number` or `#x: number`) are enforced at
+verification time — accessing a private field from outside the class
+triggers an assertion failure:
+
+```typescript
+class Account {
+  private balance: number;
+  constructor(b: number) { this.balance = b; }
+}
+const a = new Account(100);
+a.balance; // CBMC reports: access to private field 'balance'
+```
+
+### Verification primitives
+
+- `__CPROVER_assume(cond)` — constrain nondet values
+- `__CPROVER_assert(cond, msg)` — custom assertion
+- `__CPROVER_loop_invariant(cond)` — loop invariant
+- `__CPROVER_requires(cond)` — function precondition
+- `__CPROVER_ensures(cond)` — function postcondition
+- `__CPROVER_cover(cond)` — coverage goal
+
+### Verification flags
+
+- `--bounds-check` — array bounds verification
+- `--float-div-by-zero-check` — division by zero
+- `--nan-check` — NaN detection
+- `--ts-integer-mode` — integer type inference
+- `--ts-max-array-size N` — array size (default 16)
+- `--refine-strings` — string solver (optional)

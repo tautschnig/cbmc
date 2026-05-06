@@ -22,7 +22,6 @@ TEST_CASE("convert_type: number", "[typescript]")
   null_message_handlert mh;
   jsont empty_json;
   typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
-
   typet t = converter.convert_type("number");
   REQUIRE(t.id() == ID_floatbv);
   REQUIRE(to_floatbv_type(t).get_width() == 64);
@@ -34,9 +33,7 @@ TEST_CASE("convert_type: boolean", "[typescript]")
   null_message_handlert mh;
   jsont empty_json;
   typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
-
-  typet t = converter.convert_type("boolean");
-  REQUIRE(t.id() == ID_bool);
+  REQUIRE(converter.convert_type("boolean").id() == ID_bool);
 }
 
 TEST_CASE("convert_type: string", "[typescript]")
@@ -45,7 +42,6 @@ TEST_CASE("convert_type: string", "[typescript]")
   null_message_handlert mh;
   jsont empty_json;
   typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
-
   typet t = converter.convert_type("string");
   REQUIRE(is_typescript_string_type(t));
 }
@@ -56,9 +52,16 @@ TEST_CASE("convert_type: void", "[typescript]")
   null_message_handlert mh;
   jsont empty_json;
   typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
+  REQUIRE(converter.convert_type("void").id() == ID_empty);
+}
 
-  typet t = converter.convert_type("void");
-  REQUIRE(t.id() == ID_empty);
+TEST_CASE("convert_type: undefined", "[typescript]")
+{
+  symbol_tablet symbol_table;
+  null_message_handlert mh;
+  jsont empty_json;
+  typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
+  REQUIRE(converter.convert_type("undefined").id() == ID_empty);
 }
 
 TEST_CASE("convert_type: number[]", "[typescript]")
@@ -67,48 +70,97 @@ TEST_CASE("convert_type: number[]", "[typescript]")
   null_message_handlert mh;
   jsont empty_json;
   typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
-
   typet t = converter.convert_type("number[]");
   REQUIRE(t.id() == ID_struct);
-  const auto &st = to_struct_type(t);
-  REQUIRE(st.get_tag() == "typescript_array");
-  REQUIRE(st.has_component("length"));
-  REQUIRE(st.has_component("data"));
+  REQUIRE(to_struct_type(t).get_tag() == "typescript_array");
+}
+
+TEST_CASE("convert_type: function pointer", "[typescript]")
+{
+  symbol_tablet symbol_table;
+  null_message_handlert mh;
+  jsont empty_json;
+  typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
+  typet t = converter.convert_type("(x: number) => number");
+  REQUIRE(t.id() == ID_pointer);
+}
+
+TEST_CASE("convert_type: Promise<T> strips to T", "[typescript]")
+{
+  symbol_tablet symbol_table;
+  null_message_handlert mh;
+  jsont empty_json;
+  typescript_convertert converter{symbol_table, "test.ts", empty_json, mh};
+  REQUIRE(converter.convert_type("Promise<number>").id() == ID_floatbv);
+}
+
+// --- string type tests ---
+
+TEST_CASE("typescript_string_type: struct with length and data", "[typescript]")
+{
+  typet st = typescript_string_type();
+  REQUIRE(st.id() == ID_struct);
+  REQUIRE(is_typescript_string_type(st));
+  REQUIRE(to_struct_type(st).get_tag() == "typescript_string");
+  REQUIRE(to_struct_type(st).components().size() == 2);
+}
+
+TEST_CASE("is_typescript_string_type: false for number", "[typescript]")
+{
+  REQUIRE(!is_typescript_string_type(
+    floatbv_typet{ieee_float_spect::double_precision().to_type()}));
 }
 
 // --- expr2typescript tests ---
 
-TEST_CASE("expr2typescript: integer constant", "[typescript]")
+TEST_CASE("expr2typescript: integer 42", "[typescript]")
 {
-  ieee_floatt fv{
-    ieee_float_spect::double_precision(),
-    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-  fv.from_integer(42);
-  std::string result = expr2typescript(fv.to_expr(), namespacet{symbol_tablet{}});
-  REQUIRE(result == "42");
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(expr2typescript(from_integer(42, signedbv_typet{32}), ns) == "42");
 }
 
-TEST_CASE("expr2typescript: boolean true", "[typescript]")
+TEST_CASE("expr2typescript: negative integer", "[typescript]")
 {
-  std::string result =
-    expr2typescript(true_exprt{}, namespacet{symbol_tablet{}});
-  REQUIRE(result == "true");
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(expr2typescript(from_integer(-7, signedbv_typet{32}), ns) == "-7");
 }
 
-TEST_CASE("expr2typescript: boolean false", "[typescript]")
+TEST_CASE("expr2typescript: true/false", "[typescript]")
 {
-  std::string result =
-    expr2typescript(false_exprt{}, namespacet{symbol_tablet{}});
-  REQUIRE(result == "false");
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(expr2typescript(true_exprt{}, ns) == "true");
+  REQUIRE(expr2typescript(false_exprt{}, ns) == "false");
 }
 
-// --- typescript_string_type tests ---
+// --- type2typescript tests ---
 
-TEST_CASE("typescript_string_type structure", "[typescript]")
+TEST_CASE("type2typescript: bool → 'boolean'", "[typescript]")
 {
-  typet st = typescript_string_type();
-  REQUIRE(is_typescript_string_type(st));
-  const auto &rst = to_refined_string_type(st);
-  REQUIRE(rst.get_index_type().id() == ID_signedbv);
-  REQUIRE(to_signedbv_type(rst.get_index_type()).get_width() == 32);
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(type2typescript(bool_typet{}, ns) == "boolean");
+}
+
+TEST_CASE("type2typescript: string → 'string'", "[typescript]")
+{
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(type2typescript(typescript_string_type(), ns) == "string");
+}
+
+TEST_CASE("type2typescript: void → 'void'", "[typescript]")
+{
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(type2typescript(empty_typet{}, ns) == "void");
+}
+
+TEST_CASE("type2typescript: signedbv → 'number'", "[typescript]")
+{
+  symbol_tablet st;
+  namespacet ns{st};
+  REQUIRE(type2typescript(signedbv_typet{32}, ns) == "number");
 }

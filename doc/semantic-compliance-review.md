@@ -204,3 +204,33 @@ Not implemented. Modules (import/export) are supported instead.
 11. for...of on Map/Set/generators (low priority)
 12. Private fields (#field) (low priority, TS-only)
 13. Promise then/catch/finally (acceptable: sync model)
+
+
+---
+
+## FINAL STATUS (2026-05-06)
+
+**500 CORE tests, 1 KNOWNBUG (async-ordering by design), 165 commits.**
+
+All 13 original semantic gaps resolved:
+1. Integer inference: opt-in via --ts-integer-mode, signedbv[64]
+2. String comparison: inline array model, works with --refine-strings
+3. typeof returns "function" for function types
+4. == implements type coercion per ES2024
+5. Array.prototype.filter passes index to callback
+6. Array.prototype.reduce passes index to callback
+7. Array mutating methods: push/pop/splice with correct length
+8. for...of iteration over Map and Set (Phase 2 complete)
+9. Nested object destructuring works
+10. Private fields: full access control enforcement
+11. Multi-closure mutable sharing via direct symbol access
+12. Promise.then/catch/finally (sequential model)
+13. Spread in function call arguments
+
+Additional achievements:
+- Generic function monomorphization (type parameters per call site)
+- Generic class monomorphization (specialized struct per instantiation)
+- Map.get/has with constant string keys via linear scan
+- String type migration to inline array (like Python frontend)
+- 135 cross-references to ES2024 and TypeScript Handbook
+- 17 unit tests with 23 assertions
