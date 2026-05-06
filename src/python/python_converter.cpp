@@ -11188,14 +11188,19 @@ codet python_convertert::convert_return(const jsont &stmt)
         ret_val = from_integer(0, python_int_type());
       }
 
-      // If declared type is int (default) but actual return is float,
-      // update function type (avoids truncation). Only for scalar types.
+      // If declared type doesn't match actual return, update function type.
+      // This handles: int→float, int→string, int→list, and
+      // list[X]→list[Y] (same tag, different element types).
       if(
-        ret_type == python_int_type() &&
-        (ret_val.type().id() == ID_floatbv ||
-         is_python_value_type(ret_val.type()) ||
-         is_python_string_type(ret_val.type()) ||
-         is_python_list_type(ret_val.type())))
+        (ret_type == python_int_type() &&
+         (ret_val.type().id() == ID_floatbv ||
+          is_python_value_type(ret_val.type()) ||
+          is_python_string_type(ret_val.type()) ||
+          is_python_list_type(ret_val.type()))) ||
+        (ret_val.type().id() == ID_struct && ret_type.id() == ID_struct &&
+         ret_val.type() != ret_type &&
+         to_struct_type(ret_val.type()).get_tag() ==
+           to_struct_type(ret_type).get_tag()))
       {
         code_typet new_type = to_code_type(func_sym->type);
         new_type.return_type() = ret_val.type();
@@ -11208,6 +11213,14 @@ codet python_convertert::convert_return(const jsont &stmt)
           ret_val.type().id() == ID_pointer && ret_type.id() == ID_struct &&
           to_pointer_type(ret_val.type()).base_type() == ret_type)
           ret_val = dereference_exprt{ret_val};
+        else if(
+          ret_val.type().id() == ID_struct && ret_type.id() == ID_struct &&
+          to_struct_type(ret_val.type()).get_tag() ==
+            to_struct_type(ret_type).get_tag())
+        {
+          // Same struct tag (e.g., both python_list) but different
+          // component types — treat as compatible (Python is dynamically typed)
+        }
         else
           ret_val = safe_typecast(ret_val, ret_type);
       }
