@@ -273,3 +273,36 @@ handler, keeping the last value for each name.
 7. **verify-closure-basic** (High, function-as-return-value)
 8. **verify-closure-counter** (Very High, mutable closure state)
 9. **verify-gcd-nondet** (Medium but architectural — integer mode)
+
+---
+
+## String Solver Integration (learned from Python frontend)
+
+### Key Finding
+
+The Python frontend on `tautschnig/py` does NOT use any special string
+solver API. It simply:
+1. Uses `refined_string_typet` (struct{length, content_ptr}) for strings
+2. Accesses characters via `index_exprt{data_member, idx}`
+3. Compares strings via `equal_exprt` on the struct
+4. Relies on `--refine-strings` to add axioms constraining content
+
+### What We Need for TypeScript
+
+Our `typescript_string_type()` already returns `refined_string_typet`.
+The remaining work:
+
+1. **charAt(non-constant)**: Access `content` member via index_exprt
+   instead of returning nondet. Build single-char string from result.
+
+2. **String equality (non-constant)**: Already uses `equal_exprt` on
+   the struct — should work with `--refine-strings`.
+
+3. **String comparison (non-constant indexOf, includes)**: Use the
+   content array with loop unrolling (like Python's linear scan).
+
+### Implementation Priority
+
+1. charAt with non-constant index (fixes verify-palindrome)
+2. String equality with --refine-strings (may already work)
+3. split("") + reverse + join("") (fixes verify-string-reverse)
