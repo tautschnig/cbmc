@@ -167,3 +167,5 @@ dist/
 # auto generated documentation
 doc/html/
 build-jbmc/
+build-jbmc/
+jbmc/regression/**/target/
