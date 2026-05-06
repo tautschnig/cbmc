@@ -210,13 +210,49 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
   // Handle super() calls — call parent constructor
   if(is_kind(callee, "SuperKeyword") && !current_class.empty())
   {
-    // Find parent by checking which class's fields are a subset
     exprt::operandst call_args;
     if(args.is_array())
     {
       for(const auto &arg : to_json_array(args))
         call_args.push_back(convert_expression(arg));
     }
+    // Use parent_class map to find the correct parent
+    std::string parent_name;
+    auto pit = parent_class.find(current_class);
+    if(pit != parent_class.end())
+      parent_name = pit->second;
+    if(!parent_name.empty())
+    {
+      irep_idt ctor_id{"typescript::" + parent_name + "::__init__"};
+      const symbolt *ctor = symbol_table.lookup(ctor_id);
+      if(ctor != nullptr && ctor->type.id() == ID_code)
+      {
+        const auto &ctor_params = to_code_type(ctor->type).parameters();
+        exprt::operandst full_args;
+        std::string this_id =
+          "typescript::" + current_class + "::__init__::this";
+        const symbolt *this_sym = symbol_table.lookup(irep_idt{this_id});
+        if(this_sym != nullptr)
+        {
+          exprt this_arg = this_sym->symbol_expr();
+          if(!ctor_params.empty() && this_arg.type() != ctor_params[0].type())
+            this_arg = typecast_exprt{this_arg, ctor_params[0].type()};
+          full_args.push_back(this_arg);
+        }
+        for(auto &a : call_args)
+          full_args.push_back(a);
+        for(std::size_t i = 0; i < full_args.size() && i < ctor_params.size();
+            i++)
+          if(full_args[i].type() != ctor_params[i].type())
+            full_args[i] = typecast_exprt{full_args[i], ctor_params[i].type()};
+        return side_effect_expr_function_callt{
+          symbol_exprt{ctor_id, ctor->type},
+          std::move(full_args),
+          to_code_type(ctor->type).return_type(),
+          get_location(node)};
+      }
+    }
+    // Fallback: search all class_types (legacy behavior)
     for(const auto &[cname, ctype] : class_types)
     {
       if(cname == current_class)
@@ -2326,6 +2362,128 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
 
 bool typescript_convertert::convert()
 {
+  // Register built-in classes
+  {
+    // Error class: { message: string }
+    struct_typet error_type;
+    error_type.components().push_back(
+      struct_typet::componentt{"message", typescript_string_type()});
+    error_type.set_tag("typescript_class_Error");
+    class_types["Error"] = error_type;
+    // Register Error constructor
+    std::string ctor_name = "Error::__init__";
+    irep_idt ctor_id{"typescript::" + ctor_name};
+    if(symbol_table.lookup(ctor_id) == nullptr)
+    {
+      code_typet::parameterst params;
+      code_typet::parametert this_p{pointer_typet{error_type, 64}};
+      this_p.set_identifier("typescript::" + ctor_name + "::this");
+      this_p.set_base_name("this");
+      params.push_back(this_p);
+      code_typet::parametert msg_p{typescript_string_type()};
+      msg_p.set_identifier("typescript::" + ctor_name + "::message");
+      msg_p.set_base_name("message");
+      params.push_back(msg_p);
+      code_typet ft{params, empty_typet{}};
+      symbolt ctor_sym{ctor_id, ft, "typescript"};
+      ctor_sym.base_name = ctor_name;
+      // Body: this.message = message
+      irep_idt this_id{"typescript::" + ctor_name + "::this"};
+      irep_idt msg_id{"typescript::" + ctor_name + "::message"};
+      symbolt this_sym{this_id, pointer_typet{error_type, 64}, "typescript"};
+      this_sym.base_name = "this";
+      this_sym.is_parameter = true;
+      this_sym.is_lvalue = true;
+      symbolt msg_sym{msg_id, typescript_string_type(), "typescript"};
+      msg_sym.base_name = "message";
+      msg_sym.is_parameter = true;
+      msg_sym.is_lvalue = true;
+      if(symbol_table.lookup(this_id) == nullptr)
+        symbol_table.add(this_sym);
+      if(symbol_table.lookup(msg_id) == nullptr)
+        symbol_table.add(msg_sym);
+      ctor_sym.value = code_frontend_assignt{
+        member_exprt{
+          dereference_exprt{
+            symbol_exprt{this_id, pointer_typet{error_type, 64}}},
+          "message",
+          typescript_string_type()},
+        symbol_exprt{msg_id, typescript_string_type()}};
+      symbol_table.add(ctor_sym);
+    }
+  }
+
+  // Map class: { __size: number }
+  {
+    struct_typet map_type;
+    map_type.components().push_back(
+      struct_typet::componentt{"size", double_type()});
+    map_type.set_tag("typescript_class_Map");
+    class_types["Map"] = map_type;
+    std::string ctor_name = "Map::__init__";
+    irep_idt ctor_id{"typescript::" + ctor_name};
+    if(symbol_table.lookup(ctor_id) == nullptr)
+    {
+      code_typet::parameterst params;
+      code_typet::parametert this_p{pointer_typet{map_type, 64}};
+      this_p.set_identifier("typescript::" + ctor_name + "::this");
+      this_p.set_base_name("this");
+      params.push_back(this_p);
+      code_typet ft{params, empty_typet{}};
+      symbolt ctor_sym{ctor_id, ft, "typescript"};
+      ctor_sym.base_name = ctor_name;
+      irep_idt this_id{"typescript::" + ctor_name + "::this"};
+      symbolt this_sym{this_id, pointer_typet{map_type, 64}, "typescript"};
+      this_sym.base_name = "this";
+      this_sym.is_parameter = true;
+      this_sym.is_lvalue = true;
+      if(symbol_table.lookup(this_id) == nullptr)
+        symbol_table.add(this_sym);
+      ctor_sym.value = code_frontend_assignt{
+        member_exprt{
+          dereference_exprt{symbol_exprt{this_id, pointer_typet{map_type, 64}}},
+          "size",
+          double_type()},
+        from_integer(0, double_type())};
+      symbol_table.add(ctor_sym);
+    }
+  }
+  // Set class (same model as Map)
+  {
+    struct_typet set_type;
+    set_type.components().push_back(
+      struct_typet::componentt{"size", double_type()});
+    set_type.set_tag("typescript_class_Set");
+    class_types["Set"] = set_type;
+    std::string ctor_name = "Set::__init__";
+    irep_idt ctor_id{"typescript::" + ctor_name};
+    if(symbol_table.lookup(ctor_id) == nullptr)
+    {
+      code_typet::parameterst params;
+      code_typet::parametert this_p{pointer_typet{set_type, 64}};
+      this_p.set_identifier("typescript::" + ctor_name + "::this");
+      this_p.set_base_name("this");
+      params.push_back(this_p);
+      code_typet ft{params, empty_typet{}};
+      symbolt ctor_sym{ctor_id, ft, "typescript"};
+      ctor_sym.base_name = ctor_name;
+      irep_idt this_id{"typescript::" + ctor_name + "::this"};
+      symbolt this_sym{this_id, pointer_typet{set_type, 64}, "typescript"};
+      this_sym.base_name = "this";
+      this_sym.is_parameter = true;
+      this_sym.is_lvalue = true;
+      if(symbol_table.lookup(this_id) == nullptr)
+        symbol_table.add(this_sym);
+      ctor_sym.value = code_frontend_assignt{
+        member_exprt{
+          dereference_exprt{symbol_exprt{this_id, pointer_typet{set_type, 64}}},
+          "size",
+          double_type()},
+        from_integer(0, double_type())};
+      symbol_table.add(ctor_sym);
+    }
+  }
+
   const jsont &statements = json_member(ast_json, "statements");
   convert_module_body(statements);
   return false; // success

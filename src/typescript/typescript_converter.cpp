@@ -172,6 +172,17 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   auto cls_it = class_types.find(ts_type);
   if(cls_it != class_types.end())
     return cls_it->second;
+  // Generic class types: Map<K,V>, Set<T>, etc. — strip type parameters
+  {
+    auto angle = ts_type.find('<');
+    if(angle != std::string::npos)
+    {
+      std::string base = ts_type.substr(0, angle);
+      auto base_it = class_types.find(base);
+      if(base_it != class_types.end())
+        return base_it->second;
+    }
+  }
   // Union types: number | string → tagged union struct
   if(ts_type.find(" | ") != std::string::npos)
   {
