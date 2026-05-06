@@ -8161,7 +8161,22 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
       }
     }
-    return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+    // Non-constant indexing: read char via pointer arithmetic
+    {
+      member_exprt data_ptr(
+        value, "data", pointer_typet(unsignedbv_typet{8}, 64));
+      dereference_exprt ch(plus_exprt(data_ptr, adjusted_idx));
+      // Build a single-char string from the character
+      exprt::operandst chars;
+      chars.push_back(ch);
+      array_typet at(
+        unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
+      array_exprt arr(std::move(chars), at);
+      exprt ptr = address_of_exprt(index_exprt(
+        arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+      exprt len = from_integer(1, signedbv_typet{64});
+      return struct_exprt({len, ptr}, python_string_type());
+    }
     struct_typet str_type = python_string_type();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
