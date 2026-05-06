@@ -41,7 +41,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // This is handled at the statement level
       return nil_exprt{};
     }
-    // Object static methods
+    // ES2024 sec-object.keys, sec-object.values
     if(obj == "Object")
     {
       exprt::operandst call_args;
@@ -94,14 +94,14 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
-    // Promise static methods: resolve/reject return the value directly
+    // ES2024 sec-promise.resolve, sec-promise.reject
     if(obj == "Promise")
     {
       if(args.is_array() && !to_json_array(args).empty())
         return convert_expression(*to_json_array(args).begin());
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
-    // Array static methods
+    // ES2024 sec-array.from
     if(obj == "Array" && method == "from")
     {
       exprt::operandst call_args;
@@ -180,7 +180,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
-    // Number static methods
+    // ES2024 sec-number.isinteger, sec-number.isnan, sec-number.isfinite
     if(obj == "Number")
     {
       exprt::operandst call_args;
@@ -214,6 +214,8 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     }
   }
 
+  // ES2024 sec-super-keyword-runtime-semantics-evaluation
+  // TSH: Classes > Inheritance
   // Handle super() calls — call parent constructor
   if(is_kind(callee, "SuperKeyword") && !current_class.empty())
   {
@@ -333,7 +335,15 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
     }
 
-    // String methods: indexOf, includes, substring, etc.
+    // ES2024 sec-string.prototype.indexof, sec-string.prototype.includes,
+    // sec-string.prototype.substring, sec-string.prototype.replace,
+    // sec-string.prototype.split, sec-string.prototype.repeat,
+    // sec-string.prototype.trim, sec-string.prototype.charat,
+    // sec-string.prototype.startswith, sec-string.prototype.endswith,
+    // sec-string.prototype.touppercase, sec-string.prototype.tolowercase,
+    // sec-string.prototype.padstart, sec-string.prototype.padend,
+    // sec-string.prototype.slice, sec-string.prototype.replaceall
+    // TSH: Template Literal Types
     exprt obj_expr = convert_expression(json_member(callee, "expression"));
     if(!obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()))
     {
@@ -561,6 +571,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // Nondet fallback for non-constant strings
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
+    // ES2024 sec-array.prototype.map
     // Array.map: create new array by applying callback to each element
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -910,6 +921,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // ES2024 sec-array.prototype.filter
     // Array.filter: create new array with elements passing predicate
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1251,6 +1263,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return symbol_exprt{res_id, list_type};
       }
     }
+    // ES2024 sec-array.prototype.reduce
     // Array.reduce: fold array with accumulator
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1377,6 +1390,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return symbol_exprt{acc_id, acc_type};
       }
     }
+    // ES2024 sec-array.prototype.slice
     // Array.slice: extract subarray
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1455,6 +1469,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // ES2024 sec-array.prototype.find
     // Array.find: return first element matching predicate
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1548,6 +1563,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return symbol_exprt{res_id, elem_type};
       }
     }
+    // ES2024 sec-array.prototype.findindex
     // Array.findIndex: find index of first matching element
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1650,6 +1666,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return symbol_exprt{res_id, double_type()};
       }
     }
+    // ES2024 sec-array.prototype.includes
     // Array.includes: check if element exists
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1687,6 +1704,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return result;
       }
     }
+    // ES2024 sec-array.prototype.join
     // Array.join: concatenate elements with separator
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1742,6 +1760,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       return side_effect_expr_nondett{
         typescript_string_type(), get_location(node)};
     }
+    // ES2024 sec-array.prototype.reverse
     // Array.reverse: return reversed copy
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1786,6 +1805,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // ES2024 sec-array.prototype.flat
     // Array.flat: for number[], returns itself (already flat)
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1802,6 +1822,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return src;
     }
+    // ES2024 sec-array.prototype.at
     // Array.at: access with index (supports negative)
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1871,6 +1892,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
+    // ES2024 sec-array.prototype.fill
     // Array.fill: fill array with value
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -1969,6 +1991,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           list_type};
       }
     }
+    // ES2024 sec-array.prototype.indexof
     // Array.indexOf: find index of element
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&

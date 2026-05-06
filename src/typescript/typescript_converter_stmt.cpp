@@ -436,6 +436,7 @@ codet typescript_convertert::convert_statement(const jsont &node)
   }
 
   // ES2024 sec-class-definitions
+  // TSH: Classes > Class Members, Inheritance, Static Members
   if(kind == "ClassDeclaration")
   {
     std::string cls_name =
@@ -698,6 +699,7 @@ codet typescript_convertert::convert_statement(const jsont &node)
   }
 
   // ES2024 sec-for-in-and-for-of-statements
+  // TSH: Iterators and Generators
   if(kind == "ForInStatement")
   {
     // for (const key in obj) - unroll for constant objects
@@ -1333,6 +1335,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // CBMC verification primitive: loop invariant assertion
       if(fn == "__CPROVER_loop_invariant")
       {
         const jsont &call_args = json_member(expr_node, "arguments");
@@ -1356,6 +1359,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // CBMC verification primitive: precondition
       if(fn == "__CPROVER_requires")
       {
         const jsont &call_args = json_member(expr_node, "arguments");
@@ -1379,6 +1383,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // CBMC verification primitive: postcondition
       if(fn == "__CPROVER_ensures")
       {
         const jsont &call_args = json_member(expr_node, "arguments");

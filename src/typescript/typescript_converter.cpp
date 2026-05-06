@@ -98,6 +98,8 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
+  // ES2024 sec-ecmascript-language-types-function-type
+  // TSH: Functions > Function Types
   // Function types: "(x: number) => number"
   if(ts_type.find("=>") != std::string::npos && ts_type[0] == '(')
   {
@@ -129,6 +131,7 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     }
     return pointer_typet{code_typet{params, ret_type}, 64};
   }
+  // TSH: Object Types > Object Literal Types
   // Object literal types: { x: number; y: number; }
   if(ts_type.size() > 2 && ts_type[0] == '{' && ts_type.back() == '}')
   {
@@ -190,6 +193,8 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
         return base_it->second;
     }
   }
+  // ES2024 sec-ecmascript-language-types (union not in spec, TS extension)
+  // TSH: Narrowing > typeof type guards, Discriminated Unions
   // Union types: number | string → tagged union struct
   if(ts_type.find(" | ") != std::string::npos)
   {
@@ -266,6 +271,8 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     if(!cleaned.empty())
       return convert_type(cleaned);
   }
+  // ES2024 sec-array-objects
+  // TSH: Everyday Types > Arrays
   // Array types: number[], string[], etc.
   if(ts_type.size() > 2 && ts_type.substr(ts_type.size() - 2) == "[]")
   {
@@ -394,6 +401,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return nil_exprt{};
   }
   // ES2024 sec-element-access: arr[i]
+  // ES2024 sec-property-accessors (bracket notation)
   if(kind == "ElementAccessExpression")
   {
     exprt obj = convert_expression(json_member(node, "expression"));
@@ -466,6 +474,8 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return if_exprt{cond, then_e, else_e};
   }
   // ES2024 sec-new-operator
+  // ES2024 sec-new-operator
+  // TSH: Classes > Constructor
   if(kind == "NewExpression")
   {
     std::string cls_name =
@@ -518,6 +528,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return nil_exprt{};
   }
   // ES2024 sec-template-literals
+  // TSH: Everyday Types > Template Literal Types
   if(kind == "TemplateExpression")
   {
     // Concatenate head + spans at conversion time
@@ -782,6 +793,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       {len_val, array_exprt{std::move(elements), arr_type}}, list_type};
   }
   // ES2024 sec-typeof-operator
+  // TSH: Narrowing > typeof type guards
   if(kind == "TypeOfExpression")
   {
     exprt operand = convert_expression(json_member(node, "expression"));
@@ -1419,7 +1431,9 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return div_exprt{left, right};
   if(op == "PercentEqualsToken")
     return mod_exprt{left, right};
-  // instanceof: in static analysis, always true for matching types
+  // ES2024 sec-instanceofoperator
+  // TSH: Narrowing > instanceof narrowing
+  // Note: in static analysis, always true for matching types
   if(op == "InstanceOfKeyword")
     return true_exprt{};
 

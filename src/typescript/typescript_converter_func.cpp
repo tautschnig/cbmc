@@ -32,6 +32,8 @@ void typescript_convertert::convert_function_declaration(const jsont &node)
   convert_function_declaration_with_name(node, func_name);
 }
 
+// ES2024 sec-function-definitions
+// TSH: Functions > Function Types
 void typescript_convertert::convert_function_declaration_with_name(
   const jsont &node,
   const std::string &func_name)
@@ -269,6 +271,8 @@ void typescript_convertert::convert_function_declaration_with_name(
 
 // --- Module body ---
 
+// ES2024 sec-module-semantics-runtime-semantics-evaluation
+// TSH: Modules > Export/Import
 void typescript_convertert::convert_module_body(const jsont &statements)
 {
   if(!statements.is_array())
