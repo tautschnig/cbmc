@@ -568,6 +568,170 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       method == "map" && args.is_array() && !to_json_array(args).empty())
     {
       const jsont &callback = *to_json_array(args).begin();
+      // Detect filter().map() chain: if obj_expr is unresolvable symbol,
+      // check if the callee's expression is a filter call on a constant array
+      const jsont &inner_expr = json_member(callee, "expression");
+      if(obj_expr.id() == ID_symbol && is_kind(inner_expr, "CallExpression"))
+      {
+        const jsont &inner_callee = json_member(inner_expr, "expression");
+        if(is_kind(inner_callee, "PropertyAccessExpression"))
+        {
+          std::string inner_method =
+            json_string(json_member(json_member(inner_callee, "name"), "text"));
+          if(inner_method == "filter")
+          {
+            // Get the source array
+            exprt src_arr =
+              convert_expression(json_member(inner_callee, "expression"));
+            if(src_arr.id() == ID_symbol)
+            {
+              const symbolt *ss =
+                symbol_table.lookup(to_symbol_expr(src_arr).get_identifier());
+              if(ss && !ss->value.is_nil())
+                src_arr = ss->value;
+            }
+            if(src_arr.id() == ID_struct && src_arr.operands().size() >= 2)
+            {
+              // Get filter predicate and map function
+              const jsont &filter_args = json_member(inner_expr, "arguments");
+              if(filter_args.is_array() && !to_json_array(filter_args).empty())
+              {
+                const jsont &filter_cb = *to_json_array(filter_args).begin();
+                // Convert both callbacks
+                static unsigned fm_ctr = 0;
+                std::string fcb_name =
+                  "__ts_fm_filter_" + std::to_string(fm_ctr);
+                std::string mcb_name =
+                  "__ts_fm_map_" + std::to_string(fm_ctr++);
+                convert_function_declaration_with_name(filter_cb, fcb_name);
+                convert_function_declaration_with_name(callback, mcb_name);
+                irep_idt fcb_id{"typescript::" + fcb_name};
+                irep_idt mcb_id{"typescript::" + mcb_name};
+                const symbolt *fcb = symbol_table.lookup(fcb_id);
+                const symbolt *mcb = symbol_table.lookup(mcb_id);
+                if(fcb && mcb)
+                {
+                  mp_integer src_len{0};
+                  if(src_arr.operands()[0].is_constant())
+                    to_integer(
+                      to_constant_expr(src_arr.operands()[0]), src_len);
+                  const exprt &data = src_arr.operands()[1];
+                  typet map_ret = to_code_type(mcb->type).return_type();
+                  // For each element: call filter, if true call map
+                  exprt::operandst result_elts;
+                  for(mp_integer i = 0; i < src_len; ++i)
+                  {
+                    auto ci = i.to_ulong();
+                    if(ci >= data.operands().size())
+                      break;
+                    exprt elem = data.operands()[ci];
+                    // Call filter predicate
+                    std::string fr_name = "__ts_fm_fr_" +
+                                          std::to_string(fm_ctr) + "_" +
+                                          std::to_string(ci);
+                    irep_idt fr_id{"typescript::" + fr_name};
+                    if(symbol_table.lookup(fr_id) == nullptr)
+                    {
+                      symbolt frs{fr_id, bool_typet{}, "typescript"};
+                      frs.base_name = fr_name;
+                      frs.is_lvalue = true;
+                      frs.is_state_var = true;
+                      symbol_table.add(frs);
+                    }
+                    pending_stmts.push_back(code_frontend_assignt{
+                      symbol_exprt{fr_id, bool_typet{}},
+                      side_effect_expr_function_callt{
+                        symbol_exprt{fcb_id, fcb->type},
+                        {elem},
+                        bool_typet{},
+                        source_locationt{}}});
+                    // Call map function (result used conditionally)
+                    std::string mr_name = "__ts_fm_mr_" +
+                                          std::to_string(fm_ctr) + "_" +
+                                          std::to_string(ci);
+                    irep_idt mr_id{"typescript::" + mr_name};
+                    if(symbol_table.lookup(mr_id) == nullptr)
+                    {
+                      symbolt mrs{mr_id, map_ret, "typescript"};
+                      mrs.base_name = mr_name;
+                      mrs.is_lvalue = true;
+                      mrs.is_state_var = true;
+                      symbol_table.add(mrs);
+                    }
+                    pending_stmts.push_back(code_frontend_assignt{
+                      symbol_exprt{mr_id, map_ret},
+                      side_effect_expr_function_callt{
+                        symbol_exprt{mcb_id, mcb->type},
+                        {elem, from_integer(ci, double_type())},
+                        map_ret,
+                        source_locationt{}}});
+                    result_elts.push_back(symbol_exprt{mr_id, map_ret});
+                  }
+                  // Build result: only include elements where filter=true
+                  // Use a write-index approach
+                  std::string res_name =
+                    "__ts_fm_res_" + std::to_string(fm_ctr);
+                  std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+                  array_typet arr_type{
+                    map_ret, from_integer(max_len, signedbv_typet{64})};
+                  struct_typet list_type = make_array_struct_type(arr_type);
+                  irep_idt res_id{"typescript::" + res_name};
+                  if(symbol_table.lookup(res_id) == nullptr)
+                  {
+                    symbolt rs{res_id, list_type, "typescript"};
+                    rs.base_name = res_name;
+                    rs.is_lvalue = true;
+                    rs.is_state_var = true;
+                    symbol_table.add(rs);
+                  }
+                  std::string wi_name = "__ts_fm_wi_" + std::to_string(fm_ctr);
+                  irep_idt wi_id{"typescript::" + wi_name};
+                  if(symbol_table.lookup(wi_id) == nullptr)
+                  {
+                    symbolt ws{wi_id, signedbv_typet{64}, "typescript"};
+                    ws.base_name = wi_name;
+                    ws.is_lvalue = true;
+                    ws.is_state_var = true;
+                    symbol_table.add(ws);
+                  }
+                  symbol_exprt wi{wi_id, signedbv_typet{64}};
+                  pending_stmts.push_back(code_frontend_assignt{
+                    wi, from_integer(0, signedbv_typet{64})});
+                  for(std::size_t ci = 0; ci < result_elts.size(); ++ci)
+                  {
+                    std::string fr_name2 = "__ts_fm_fr_" +
+                                           std::to_string(fm_ctr) + "_" +
+                                           std::to_string(ci);
+                    irep_idt fr_id2{"typescript::" + fr_name2};
+                    pending_stmts.push_back(code_ifthenelset{
+                      symbol_exprt{fr_id2, bool_typet{}},
+                      code_blockt{
+                        {code_frontend_assignt{
+                           index_exprt{
+                             member_exprt{
+                               symbol_exprt{res_id, list_type},
+                               "data",
+                               arr_type},
+                             wi},
+                           result_elts[ci]},
+                         code_frontend_assignt{
+                           wi,
+                           plus_exprt{
+                             wi, from_integer(1, signedbv_typet{64})}}}}});
+                  }
+                  pending_stmts.push_back(code_frontend_assignt{
+                    member_exprt{
+                      symbol_exprt{res_id, list_type},
+                      "length",
+                      signedbv_typet{64}},
+                    wi});
+                  return symbol_exprt{res_id, list_type};
+                }
+              }
+            }
+          }
+        }
+      }
       // For chained calls, resolve symbol chains (symbol → symbol → struct)
       if(obj_expr.id() == ID_symbol)
       {
