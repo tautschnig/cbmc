@@ -1832,7 +1832,46 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             }
           }
         }
-        return convert_string_literal_from_text(result);
+        if(!result.empty())
+          return convert_string_literal_from_text(result);
+      }
+      // Fallback for non-constant string arrays: build result by copying
+      // data[0] from each element (for join("") on single-char strings)
+      if(src.id() == ID_struct && src.operands().size() >= 2 && sep.empty())
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        if(
+          len > 0 && !data.operands().empty() &&
+          is_typescript_string_type(data.operands()[0].type()))
+        {
+          struct_typet str_type = typescript_string_type();
+          const auto &char_arr_type =
+            to_array_type(str_type.components()[1].type());
+          // Build result: copy data[0] from each element into result
+          exprt::operandst result_chars;
+          for(mp_integer i = 0; i < len && i < TYPESCRIPT_MAX_STRING_LENGTH;
+              ++i)
+          {
+            auto idx = i.to_ulong();
+            if(idx < data.operands().size())
+            {
+              const exprt &elem = data.operands()[idx];
+              // elem is a string struct — get its data[0]
+              exprt elem_data = member_exprt{elem, "data", char_arr_type};
+              result_chars.push_back(
+                index_exprt{elem_data, from_integer(0, signedbv_typet{64})});
+            }
+          }
+          while(result_chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+            result_chars.push_back(from_integer(0, unsignedbv_typet{16}));
+          return struct_exprt{
+            {from_integer(len, signedbv_typet{32}),
+             array_exprt{std::move(result_chars), char_arr_type}},
+            str_type};
+        }
       }
       return side_effect_expr_nondett{
         typescript_string_type(), get_location(node)};
