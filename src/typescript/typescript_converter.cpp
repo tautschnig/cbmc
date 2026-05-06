@@ -100,6 +100,14 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-string-type
   if(ts_type == "string")
     return typescript_string_type();
+  // TSH: Template Literal Types — treated as string at runtime
+  if(!ts_type.empty() && ts_type[0] == '`')
+    return typescript_string_type();
+  // TSH: String Literal Types — e.g., "circle" or 'square'
+  if(
+    ts_type.size() >= 2 && ((ts_type[0] == '"' && ts_type.back() == '"') ||
+                            (ts_type[0] == '\'' && ts_type.back() == '\'')))
+    return typescript_string_type();
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
@@ -1661,6 +1669,24 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // Note: in static analysis, always true for matching types
   if(op == "InstanceOfKeyword")
     return true_exprt{};
+
+  // ES2024 sec-relational-operators: 'in' operator
+  // TSH: Narrowing > in operator narrowing
+  // "prop" in obj — true if obj's type has a property named prop
+  if(op == "InKeyword")
+  {
+    std::string prop_name;
+    std::string ls = extract_string_value(left);
+    if(!ls.empty())
+      prop_name = ls.substr(2);
+    if(!prop_name.empty() && right.type().id() == ID_struct)
+    {
+      const auto &st = to_struct_type(right.type());
+      return st.has_component(prop_name) ? exprt{true_exprt{}}
+                                         : exprt{false_exprt{}};
+    }
+    return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
+  }
 
   log.warning() << "Unsupported binary operator: " << op << messaget::eom;
   return nil_exprt{};
