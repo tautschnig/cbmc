@@ -2606,8 +2606,52 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     auto gen_it = generic_functions.find(func_name);
     if(gen_it != generic_functions.end())
     {
-      // Get concrete return type from call site
-      std::string call_type = json_string(json_member(node, "_type"));
+      // Get type parameter names first
+      std::set<std::string> tp_names;
+      const jsont &tp0 = json_member(gen_it->second, "typeParameters");
+      if(tp0.is_array())
+        for(const auto &t : to_json_array(tp0))
+        {
+          std::string n = json_string(json_member(t, "_type"));
+          if(!n.empty())
+            tp_names.insert(n);
+        }
+      std::string tp_name = tp_names.empty() ? "T" : *tp_names.begin();
+      // Determine concrete type:
+      //   1. Check if return type mentions the type parameter → use return type
+      //   2. Otherwise, infer from first argument that has T as its type
+      std::string call_type;
+      std::string ret_type_str =
+        json_string(json_member(gen_it->second, "_returnType"));
+      if(ret_type_str == tp_name)
+      {
+        // Return type is the type parameter → call's _type is concrete T
+        call_type = json_string(json_member(node, "_type"));
+      }
+      else
+      {
+        // Find argument with type T and use its concrete type
+        const jsont &params = json_member(gen_it->second, "parameters");
+        if(params.is_array() && args.is_array())
+        {
+          auto param_it = to_json_array(params).begin();
+          auto arg_it = to_json_array(args).begin();
+          while(param_it != to_json_array(params).end() &&
+                arg_it != to_json_array(args).end())
+          {
+            std::string pt = json_string(json_member(*param_it, "_type"));
+            if(pt == tp_name)
+            {
+              call_type = json_string(json_member(*arg_it, "_type"));
+              break;
+            }
+            ++param_it;
+            ++arg_it;
+          }
+        }
+        if(call_type.empty())
+          call_type = json_string(json_member(node, "_type"));
+      }
       if(call_type.empty())
         call_type = "number";
       // Normalize literal types to base types
@@ -2617,33 +2661,30 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         !call_type.empty() &&
         (std::isdigit(call_type[0]) || call_type[0] == '-'))
         call_type = "number";
+      // Sanitize name — strip spaces, replace special chars
+      std::string safe_type = call_type;
+      for(char &c : safe_type)
+      {
+        if(
+          c == ' ' || c == '{' || c == '}' || c == ':' || c == ';' ||
+          c == '<' || c == '>' || c == ',' || c == '(' || c == ')' ||
+          c == '|' || c == '[' || c == ']')
+          c = '_';
+      }
       // Create specialized instance name
-      std::string spec_name = func_name + "__" + call_type;
+      std::string spec_name = func_name + "__" + safe_type;
       irep_idt spec_id{"typescript::" + spec_name};
       // Instantiate if not already done
       if(symbol_table.lookup(spec_id) == nullptr)
       {
         // Convert the generic function with concrete types
-        // Replace type parameter with concrete type in the AST
         const jsont &gen_node = gen_it->second;
-        // Temporarily remove from generic_functions to avoid recursion
         jsont saved_node = gen_node;
         generic_functions.erase(gen_it);
-        // Get type parameter names
-        std::set<std::string> type_param_names;
-        const jsont &tp = json_member(saved_node, "typeParameters");
-        if(tp.is_array())
-          for(const auto &t : to_json_array(tp))
-          {
-            std::string tp_name = json_string(json_member(t, "_type"));
-            if(!tp_name.empty())
-              type_param_names.insert(tp_name);
-          }
         // Store the concrete type mapping for this instantiation
         std::string saved_generic_type_param = current_generic_type_param;
         std::string saved_generic_concrete = current_generic_concrete;
-        current_generic_type_param =
-          type_param_names.empty() ? "T" : *type_param_names.begin();
+        current_generic_type_param = tp_name;
         current_generic_concrete = call_type;
         convert_function_declaration_with_name(saved_node, spec_name);
         current_generic_type_param = saved_generic_type_param;
