@@ -2357,7 +2357,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           auto it = to_json_array(args).begin();
           exprt key = convert_expression(*it++);
           exprt val = convert_expression(*it);
-          if(key.type() != double_type())
+          if(
+            !is_typescript_string_type(key.type()) &&
+            key.type() != double_type())
             key = typecast_exprt{key, double_type()};
           if(val.type() != double_type())
             val = typecast_exprt{val, double_type()};
@@ -2966,7 +2968,7 @@ bool typescript_convertert::convert()
   {
     std::size_t max_map = 8;
     array_typet keys_type{
-      double_type(), from_integer(max_map, signedbv_typet{64})};
+      typescript_string_type(), from_integer(max_map, signedbv_typet{64})};
     array_typet vals_type{
       double_type(), from_integer(max_map, signedbv_typet{64})};
     struct_typet map_type;
