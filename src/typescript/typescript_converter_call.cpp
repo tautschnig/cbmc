@@ -537,17 +537,26 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         {
           std::string delim = str_args[0];
           std::vector<std::string> parts;
-          std::string tmp = sv;
-          while(true)
+          if(delim.empty())
           {
-            auto pos = tmp.find(delim);
-            if(pos == std::string::npos)
+            // split("") splits into individual characters
+            for(char c : sv)
+              parts.push_back(std::string(1, c));
+          }
+          else
+          {
+            std::string tmp = sv;
+            while(true)
             {
-              parts.push_back(tmp);
-              break;
+              auto pos = tmp.find(delim);
+              if(pos == std::string::npos)
+              {
+                parts.push_back(tmp);
+                break;
+              }
+              parts.push_back(tmp.substr(0, pos));
+              tmp = tmp.substr(pos + delim.size());
             }
-            parts.push_back(tmp.substr(0, pos));
-            tmp = tmp.substr(pos + delim.size());
           }
           // Build array of strings
           exprt::operandst elts;
@@ -588,6 +597,44 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           {from_integer(1, signedbv_typet{32}),
            array_exprt{std::move(chars), data_type}},
           str_type};
+      }
+      // ES2024 sec-string.prototype.split
+      // split("") on non-constant string: build array of single-char strings
+      if(method == "split" && args.is_array() && !to_json_array(args).empty())
+      {
+        exprt sep_expr = convert_expression(*to_json_array(args).begin());
+        std::string sep_sv = extract_string_value(sep_expr);
+        if(sep_sv == "S:") // empty separator
+        {
+          struct_typet str_type = typescript_string_type();
+          const auto &str_data_type =
+            to_array_type(str_type.components()[1].type());
+          exprt src_data = member_exprt{obj_expr, "data", str_data_type};
+          exprt src_len = member_exprt{obj_expr, "length", signedbv_typet{32}};
+          // Build array of single-char strings
+          exprt::operandst elts;
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          for(std::size_t i = 0; i < max_len; ++i)
+          {
+            exprt char_val =
+              index_exprt{src_data, from_integer(i, signedbv_typet{64})};
+            exprt::operandst chars;
+            chars.push_back(char_val);
+            while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+              chars.push_back(from_integer(0, unsignedbv_typet{16}));
+            elts.push_back(struct_exprt{
+              {from_integer(1, signedbv_typet{32}),
+               array_exprt{std::move(chars), str_data_type}},
+              str_type});
+          }
+          array_typet arr_type{
+            str_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type = make_array_struct_type(arr_type);
+          return struct_exprt{
+            {typecast_exprt{src_len, signedbv_typet{64}},
+             array_exprt{std::move(elts), arr_type}},
+            list_type};
+        }
       }
       // Nondet fallback for non-constant strings
       return side_effect_expr_nondett{double_type(), get_location(node)};
@@ -1762,20 +1809,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(i > 0)
             result += sep;
           auto idx = i.to_ulong();
-          if(
-            idx < data.operands().size() &&
-            data.operands()[idx].is_constant() &&
-            data.operands()[idx].type().id() == ID_floatbv)
+          if(idx < data.operands().size())
           {
-            ieee_floatt fv{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fv.from_expr(to_constant_expr(data.operands()[idx]));
-            double d = std::stod(fv.to_ansi_c_string());
-            if(d == std::floor(d) && std::abs(d) < 1e15)
-              result += std::to_string(static_cast<long long>(d));
-            else
-              result += fv.to_ansi_c_string();
+            const exprt &elem = data.operands()[idx];
+            // Try string element first
+            std::string elem_sv = extract_string_value(elem);
+            if(!elem_sv.empty())
+            {
+              result += elem_sv.substr(2);
+            }
+            else if(elem.is_constant() && elem.type().id() == ID_floatbv)
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_expr(to_constant_expr(elem));
+              double d = std::stod(fv.to_ansi_c_string());
+              if(d == std::floor(d) && std::abs(d) < 1e15)
+                result += std::to_string(static_cast<long long>(d));
+              else
+                result += fv.to_ansi_c_string();
+            }
           }
         }
         return convert_string_literal_from_text(result);
@@ -2278,12 +2332,34 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         if(method == "get" && args.is_array() && !to_json_array(args).empty())
         {
-          // Return nondet (sound overapproximation for non-constant keys)
-          return side_effect_expr_nondett{double_type(), get_location(node)};
+          exprt key = convert_expression(*to_json_array(args).begin());
+          // Linear scan: result = values[i] where keys[i] == key
+          exprt result =
+            side_effect_expr_nondett{double_type(), get_location(node)};
+          for(int i = 7; i >= 0; i--)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, size_m};
+            exprt key_i = index_exprt{keys_m, idx};
+            exprt match = equal_exprt{key_i, key};
+            exprt cond = and_exprt{in_range, match};
+            result = if_exprt{cond, index_exprt{vals_m, idx}, result};
+          }
+          return result;
         }
         if(method == "has" && args.is_array() && !to_json_array(args).empty())
         {
-          return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+          exprt key = convert_expression(*to_json_array(args).begin());
+          exprt result = false_exprt{};
+          for(int i = 7; i >= 0; i--)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, size_m};
+            exprt key_i = index_exprt{keys_m, idx};
+            exprt match = equal_exprt{key_i, key};
+            result = or_exprt{result, and_exprt{in_range, match}};
+          }
+          return result;
         }
         if(method == "delete")
         {
