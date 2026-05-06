@@ -1310,7 +1310,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
 
     // Build result by concatenating all parts
-    struct_typet str_type = python_string_type();
+    struct_typet str_type = python_string_struct_def();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     // Collect all bytes from constant parts; use nondet for formatted values
@@ -1721,7 +1721,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         symbol_table,
         pending_checks);
     }
-    struct_typet str_type = python_string_type();
+    struct_typet str_type = python_string_struct_def();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
       from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -1868,7 +1868,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       }
     }
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
-    struct_typet str_type = python_string_type();
+    struct_typet str_type = python_string_struct_def();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
       from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -2734,7 +2734,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
       }
       return side_effect_expr_nondett{bool_typet(), source_locationt{}};
-      struct_typet str_type = python_string_type();
+      struct_typet str_type = python_string_struct_def();
       const auto &data_type = array_typet(
         unsignedbv_typet{8},
         from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -3796,7 +3796,7 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(obj_base_type.id() == ID_pointer)
       obj_base_type = to_pointer_type(obj_base_type).base_type();
 
-    if(obj_base_type.id() == ID_struct)
+    if(obj_base_type.id() == ID_struct || obj_base_type.id() == ID_struct_tag)
     {
       // PLR §3.2: Complex number methods
       if(
@@ -3848,15 +3848,15 @@ exprt python_convertert::convert_call(const jsont &expr)
               else
                 parts.push_back(s);
 
-              struct_typet str_type = python_string_type();
-              typet list_type = python_list_type(str_type);
+              struct_typet str_type = python_string_struct_def();
+              typet list_type = python_list_type(python_string_type());
               const auto &data_type =
                 to_array_type(to_struct_type(list_type).components()[1].type());
               exprt::operandst list_elems;
               for(const auto &p : parts)
                 list_elems.push_back(build_string_struct(p));
               while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
-                list_elems.push_back(safe_zero(str_type));
+                list_elems.push_back(safe_zero(python_string_type()));
               return struct_exprt{
                 {from_integer(
                    static_cast<long long>(parts.size()), python_int_type()),
@@ -3919,10 +3919,10 @@ exprt python_convertert::convert_call(const jsont &expr)
                   parts.push_back(current);
 
                   // Build list of string structs
-                  struct_typet str_type = python_string_type();
+                  struct_typet str_type = python_string_struct_def();
                   const auto &data_type =
                     array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-                  typet list_type = python_list_type(str_type);
+                  typet list_type = python_list_type(python_string_type());
                   const auto &list_data_type = to_array_type(
                     to_struct_type(list_type).components()[1].type());
 
@@ -3932,7 +3932,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                     list_elems.push_back(build_string_struct(part));
                   }
                   while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
-                    list_elems.push_back(safe_zero(str_type));
+                    list_elems.push_back(safe_zero(python_string_type()));
                   exprt len_expr = from_integer(
                     static_cast<long long>(parts.size()), python_int_type());
                   return struct_exprt{
@@ -5241,6 +5241,13 @@ exprt python_convertert::convert_call(const jsont &expr)
           return obj; // struct copy
       }
 
+      if(obj_base_type.id() != ID_struct)
+      {
+        // Non-struct type (e.g., struct_tag_typet for strings) — return nondet
+        return side_effect_expr_nondett{obj.type(), get_location(expr)};
+      }
+      if(obj_base_type.id() != ID_struct)
+        return side_effect_expr_nondett{obj.type(), get_location(expr)};
       const auto &st = to_struct_type(obj_base_type);
       std::string tag = id2string(st.get_tag());
       // tag is "python_class_ClassName"
@@ -6097,7 +6104,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         "value-error",
         "chr() arg not in range(0x110000)",
         get_location(expr));
-      struct_typet str_type = python_string_type();
+      struct_typet str_type = python_string_struct_def();
       const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       exprt::operandst chars;
 
@@ -8181,7 +8188,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       exprt len = from_integer(1, signedbv_typet{64});
       return struct_exprt({len, ptr}, python_string_type());
     }
-    struct_typet str_type = python_string_type();
+    struct_typet str_type = python_string_struct_def();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
       from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -10305,7 +10312,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     // Non-constant: assign nondet
     return code_frontend_assignt{
       lhs, side_effect_expr_nondett{python_string_type(), source_locationt{}}};
-    struct_typet str_type = python_string_type();
+    struct_typet str_type = python_string_struct_def();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
       from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -10387,7 +10394,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       is_python_string_type(rhs.type()))
     {
       // String concatenation
-      struct_typet str_type = python_string_type();
+      struct_typet str_type = python_string_struct_def();
       const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
       // Pointer-based string: return nondet for non-constant
       return code_skipt{};
@@ -10934,8 +10941,14 @@ codet python_convertert::convert_for(const jsont &stmt)
   symbol_exprt idx_var = symbol_table.lookup_ref(idx_id).symbol_expr();
 
   member_exprt length{iterable, "length", int_type};
-  const auto &st = to_struct_type(iterable.type());
-  member_exprt data{iterable, "data", st.components()[1].type()};
+  typet data_field_type;
+  if(is_python_string_type(iterable.type()))
+    data_field_type = pointer_typet(unsignedbv_typet{8}, 64);
+  else if(iterable.type().id() == ID_struct)
+    data_field_type = to_struct_type(iterable.type()).components()[1].type();
+  else
+    data_field_type = signedbv_typet{64}; // fallback
+  member_exprt data{iterable, "data", data_field_type};
 
   code_blockt result;
 
@@ -12949,6 +12962,15 @@ bool python_convertert::convert()
     {
       type_symbolt type_sym{tag_id, python_value_struct_def(), "python"};
       type_sym.base_name = "python_value";
+      symbol_table.add(type_sym);
+    }
+  }
+  {
+    irep_idt tag_id{PYTHON_STRING_TAG};
+    if(symbol_table.lookup(tag_id) == nullptr)
+    {
+      type_symbolt type_sym{tag_id, python_string_struct_def(), "python"};
+      type_sym.base_name = "__CPROVER_refined_string_type";
       symbol_table.add(type_sym);
     }
   }
