@@ -30,7 +30,7 @@ public:
   bool bounds_check = false;
   bool div_by_zero_check = false;
   bool nan_check = false;
-  bool integer_inference = true; // auto-detect integer variables
+  bool integer_inference = false; // auto-detect integer variables
   std::size_t TYPESCRIPT_MAX_ARRAY_LENGTH = TYPESCRIPT_DEFAULT_MAX_ARRAY_LENGTH;
 
   typescript_convertert(

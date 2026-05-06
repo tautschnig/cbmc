@@ -1622,7 +1622,7 @@ typet typescript_convertert::number_type_for(const std::string &var_name) const
   case num_kindt::INDEX:
     return signedbv_typet{64};
   case num_kindt::INTEGER:
-    return signedbv_typet{32};
+    return signedbv_typet{64};
   case num_kindt::FLOAT:
   default:
     return double_type();
