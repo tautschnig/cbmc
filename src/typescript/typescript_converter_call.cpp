@@ -2224,6 +2224,81 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return obj_expr; // pass through the value
     }
+    // ES2024 sec-map.prototype.set, sec-map.prototype.get, sec-map.prototype.has
+    // Map/Set methods
+    if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
+    {
+      const auto &mst = to_struct_type(obj_expr.type());
+      std::string mtag = id2string(mst.get_tag());
+      if(mtag == "typescript_class_Map" && mst.has_component("keys"))
+      {
+        exprt size_m = member_exprt{obj_expr, "size", signedbv_typet{64}};
+        exprt keys_m =
+          member_exprt{obj_expr, "keys", mst.get_component("keys").type()};
+        exprt vals_m =
+          member_exprt{obj_expr, "values", mst.get_component("values").type()};
+        if(
+          method == "set" && args.is_array() && to_json_array(args).size() >= 2)
+        {
+          auto it = to_json_array(args).begin();
+          exprt key = convert_expression(*it++);
+          exprt val = convert_expression(*it);
+          if(key.type() != double_type())
+            key = typecast_exprt{key, double_type()};
+          if(val.type() != double_type())
+            val = typecast_exprt{val, double_type()};
+          pending_stmts.push_back(
+            code_frontend_assignt{index_exprt{keys_m, size_m}, key});
+          pending_stmts.push_back(
+            code_frontend_assignt{index_exprt{vals_m, size_m}, val});
+          pending_stmts.push_back(code_frontend_assignt{
+            size_m, plus_exprt{size_m, from_integer(1, signedbv_typet{64})}});
+          return obj_expr; // set returns the Map
+        }
+        if(method == "get" && args.is_array() && !to_json_array(args).empty())
+        {
+          // Return nondet (sound overapproximation for non-constant keys)
+          return side_effect_expr_nondett{double_type(), get_location(node)};
+        }
+        if(method == "has" && args.is_array() && !to_json_array(args).empty())
+        {
+          return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+        }
+        if(method == "delete")
+        {
+          pending_stmts.push_back(code_frontend_assignt{
+            size_m, minus_exprt{size_m, from_integer(1, signedbv_typet{64})}});
+          return true_exprt{};
+        }
+      }
+      if(mtag == "typescript_class_Set" && mst.has_component("data"))
+      {
+        exprt size_s = member_exprt{obj_expr, "size", signedbv_typet{64}};
+        exprt data_s =
+          member_exprt{obj_expr, "data", mst.get_component("data").type()};
+        if(method == "add" && args.is_array() && !to_json_array(args).empty())
+        {
+          exprt val = convert_expression(*to_json_array(args).begin());
+          if(val.type() != double_type())
+            val = typecast_exprt{val, double_type()};
+          pending_stmts.push_back(
+            code_frontend_assignt{index_exprt{data_s, size_s}, val});
+          pending_stmts.push_back(code_frontend_assignt{
+            size_s, plus_exprt{size_s, from_integer(1, signedbv_typet{64})}});
+          return obj_expr;
+        }
+        if(method == "has" && args.is_array() && !to_json_array(args).empty())
+        {
+          return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+        }
+        if(method == "delete")
+        {
+          pending_stmts.push_back(code_frontend_assignt{
+            size_s, minus_exprt{size_s, from_integer(1, signedbv_typet{64})}});
+          return true_exprt{};
+        }
+      }
+    }
     // Check for class method calls
     if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
     {
@@ -2710,11 +2785,20 @@ bool typescript_convertert::convert()
     }
   }
 
-  // Map class: { __size: number }
+  // Map class: { size: signedbv[64], keys: double[8], values: double[8] }
   {
+    std::size_t max_map = 8;
+    array_typet keys_type{
+      double_type(), from_integer(max_map, signedbv_typet{64})};
+    array_typet vals_type{
+      double_type(), from_integer(max_map, signedbv_typet{64})};
     struct_typet map_type;
     map_type.components().push_back(
-      struct_typet::componentt{"size", double_type()});
+      struct_typet::componentt{"size", signedbv_typet{64}});
+    map_type.components().push_back(
+      struct_typet::componentt{"keys", keys_type});
+    map_type.components().push_back(
+      struct_typet::componentt{"values", vals_type});
     map_type.set_tag("typescript_class_Map");
     class_types["Map"] = map_type;
     std::string ctor_name = "Map::__init__";
@@ -2740,16 +2824,21 @@ bool typescript_convertert::convert()
         member_exprt{
           dereference_exprt{symbol_exprt{this_id, pointer_typet{map_type, 64}}},
           "size",
-          double_type()},
-        from_integer(0, double_type())};
+          signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})};
       symbol_table.add(ctor_sym);
     }
   }
-  // Set class (same model as Map)
+  // Set class: { size: signedbv[64], data: double[8] }
   {
+    std::size_t max_set = 8;
+    array_typet data_type{
+      double_type(), from_integer(max_set, signedbv_typet{64})};
     struct_typet set_type;
     set_type.components().push_back(
-      struct_typet::componentt{"size", double_type()});
+      struct_typet::componentt{"size", signedbv_typet{64}});
+    set_type.components().push_back(
+      struct_typet::componentt{"data", data_type});
     set_type.set_tag("typescript_class_Set");
     class_types["Set"] = set_type;
     std::string ctor_name = "Set::__init__";
@@ -2775,8 +2864,8 @@ bool typescript_convertert::convert()
         member_exprt{
           dereference_exprt{symbol_exprt{this_id, pointer_typet{set_type, 64}}},
           "size",
-          double_type()},
-        from_integer(0, double_type())};
+          signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})};
       symbol_table.add(ctor_sym);
     }
   }
