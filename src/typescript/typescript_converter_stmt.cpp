@@ -488,7 +488,11 @@ codet typescript_convertert::convert_statement(const jsont &node)
     {
       std::string aname =
         json_string(json_member(json_member(node, "name"), "text"));
-      std::string atype = json_string(json_member(node, "aliasedType"));
+      // Prefer resolvedType (Pick, Omit, etc. expanded by type checker)
+      // Fall back to aliasedType (source text, preserves unions)
+      std::string atype = json_string(json_member(node, "resolvedType"));
+      if(atype.empty() || atype == aname)
+        atype = json_string(json_member(node, "aliasedType"));
       if(atype.empty())
         atype = json_string(json_member(node, "_type"));
       if(!aname.empty() && !atype.empty() && aname != atype)

@@ -366,9 +366,17 @@ function n2j(node) {
       if(node.name) r.name = n2j(node.name);
       if(node.type) {
         try {
-          // Print the type node directly (not through type checker, which
-          // resolves aliases to themselves). Use the getText() method.
+          // Two approaches: source text (preserves discriminated unions)
+          // and resolved type (handles utility types like Pick, Omit).
+          // We emit both; converter prefers resolvedType if it's not the alias name.
           r.aliasedType = node.type.getText();
+          const rhs_type = checker.getTypeFromTypeNode(node.type);
+          const resolved = checker.typeToString(
+            rhs_type, node,
+            ts.TypeFormatFlags.NoTruncation |
+            ts.TypeFormatFlags.InTypeAlias |
+            ts.TypeFormatFlags.UseFullyQualifiedType);
+          r.resolvedType = resolved;
         } catch(e) {}
       }
       break;

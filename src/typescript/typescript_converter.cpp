@@ -178,6 +178,9 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
         field.erase(0, 1);
       while(!field.empty() && field.back() == ' ')
         field.pop_back();
+      // Strip 'readonly ' modifier if present
+      if(field.substr(0, 9) == "readonly ")
+        field.erase(0, 9);
       // Find first ':' at depth 0 (not inside nested type)
       int cdepth = 0;
       std::size_t colon = std::string::npos;
