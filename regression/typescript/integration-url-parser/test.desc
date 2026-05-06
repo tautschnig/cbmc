@@ -5,4 +5,4 @@ main.ts
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-String operations on function/constructor parameters not supported (parameter value not resolvable)
+Complex string parsing with nested indexOf+substring on non-constant strings hits solver boolbv limitations

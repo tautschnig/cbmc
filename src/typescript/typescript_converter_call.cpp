@@ -576,6 +576,94 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             list_type};
         }
       }
+      // ES2024 sec-string.prototype.indexof
+      // indexOf on non-constant strings with constant search target:
+      // scan data array for matching substring
+      if(method == "indexOf" && args.is_array() && !to_json_array(args).empty())
+      {
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        std::string search_sv = extract_string_value(arg);
+        if(!search_sv.empty())
+        {
+          std::string needle = search_sv.substr(2);
+          struct_typet str_type = typescript_string_type();
+          const auto &data_type =
+            to_array_type(str_type.components()[1].type());
+          exprt data = member_exprt{obj_expr, "data", data_type};
+          exprt len_e = member_exprt{obj_expr, "length", signedbv_typet{32}};
+          // Build: for each possible position p, check if data[p..p+n-1] == needle
+          // Return the first matching position, or -1.
+          std::size_t nlen = needle.size();
+          exprt result = from_integer(-1, signedbv_typet{64});
+          for(int p = TYPESCRIPT_MAX_STRING_LENGTH - 1 - static_cast<int>(nlen);
+              p >= 0;
+              p--)
+          {
+            if(p + static_cast<int>(nlen) > TYPESCRIPT_MAX_STRING_LENGTH)
+              continue;
+            // Check all characters match
+            exprt matches = true_exprt{};
+            for(std::size_t j = 0; j < nlen; ++j)
+            {
+              exprt idx = from_integer(p + j, signedbv_typet{64});
+              exprt char_at = index_exprt{data, idx};
+              exprt expected = from_integer(
+                static_cast<unsigned char>(needle[j]), unsignedbv_typet{16});
+              matches = and_exprt{matches, equal_exprt{char_at, expected}};
+            }
+            // Also check p + nlen <= len
+            exprt in_bounds = binary_relation_exprt{
+              from_integer(p + nlen, signedbv_typet{32}), ID_le, len_e};
+            exprt cond = and_exprt{matches, in_bounds};
+            result =
+              if_exprt{cond, from_integer(p, signedbv_typet{64}), result};
+          }
+          // Cast to double (typescript number)
+          return typecast_exprt{result, double_type()};
+        }
+      }
+      // ES2024 sec-string.prototype.substring
+      // substring on non-constant strings — copy data from start..end
+      if(
+        method == "substring" && args.is_array() &&
+        to_json_array(args).size() >= 1)
+      {
+        auto it = to_json_array(args).begin();
+        exprt start = convert_expression(*it);
+        ++it;
+        exprt end_arg;
+        if(it != to_json_array(args).end())
+          end_arg = convert_expression(*it);
+        struct_typet str_type = typescript_string_type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        exprt data = member_exprt{obj_expr, "data", data_type};
+        exprt len_e = member_exprt{obj_expr, "length", signedbv_typet{32}};
+        if(start.type() != signedbv_typet{32})
+          start = typecast_exprt{start, signedbv_typet{32}};
+        exprt end_e;
+        if(end_arg.is_nil())
+          end_e = len_e;
+        else
+        {
+          if(end_arg.type() != signedbv_typet{32})
+            end_arg = typecast_exprt{end_arg, signedbv_typet{32}};
+          end_e = end_arg;
+        }
+        // Build result: for each position i, if i < (end - start), copy data[start+i], else 0
+        exprt::operandst chars;
+        for(std::size_t i = 0; i < TYPESCRIPT_MAX_STRING_LENGTH; ++i)
+        {
+          exprt offset = plus_exprt{start, from_integer(i, signedbv_typet{32})};
+          exprt in_range = binary_relation_exprt{offset, ID_lt, end_e};
+          exprt offset_64 = typecast_exprt{offset, signedbv_typet{64}};
+          exprt char_at = index_exprt{data, offset_64};
+          exprt zero = from_integer(0, unsignedbv_typet{16});
+          chars.push_back(if_exprt{in_range, char_at, zero});
+        }
+        exprt new_len = minus_exprt{end_e, start};
+        return struct_exprt{
+          {new_len, array_exprt{std::move(chars), data_type}}, str_type};
+      }
       // ES2024 sec-string.prototype.charat
       // charAt with non-constant index: access data[idx], build 1-char string
       if(method == "charAt" && args.is_array() && !to_json_array(args).empty())
