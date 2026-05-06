@@ -2185,6 +2185,45 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return member_exprt{obj_expr, "length", signedbv_typet{64}};
       }
     }
+    // ES2024 sec-promise.prototype.then, sec-promise.prototype.catch
+    // Promise methods: then(fn) → fn(value), catch(fn) → value, finally(fn) → (fn(), value)
+    if(method == "then" && args.is_array() && !to_json_array(args).empty())
+    {
+      const jsont &cb = *to_json_array(args).begin();
+      static unsigned then_ctr = 0;
+      std::string cb_name = "__ts_then_cb_" + std::to_string(then_ctr++);
+      convert_function_declaration_with_name(cb, cb_name);
+      irep_idt cb_id{"typescript::" + cb_name};
+      const symbolt *cb_sym = symbol_table.lookup(cb_id);
+      if(cb_sym != nullptr)
+      {
+        typet ret = to_code_type(cb_sym->type).return_type();
+        return side_effect_expr_function_callt{
+          cb_sym->symbol_expr(), {obj_expr}, ret, get_location(node)};
+      }
+    }
+    if(method == "catch" || method == "finally")
+    {
+      // In synchronous model: catch is never triggered, finally runs but
+      // doesn't affect the value
+      if(method == "finally" && args.is_array() && !to_json_array(args).empty())
+      {
+        const jsont &cb = *to_json_array(args).begin();
+        static unsigned finally_ctr = 0;
+        std::string cb_name =
+          "__ts_finally_cb_" + std::to_string(finally_ctr++);
+        convert_function_declaration_with_name(cb, cb_name);
+        irep_idt cb_id{"typescript::" + cb_name};
+        const symbolt *cb_sym = symbol_table.lookup(cb_id);
+        if(cb_sym != nullptr)
+        {
+          pending_stmts.push_back(
+            code_expressiont{side_effect_expr_function_callt{
+              cb_sym->symbol_expr(), {}, empty_typet{}, get_location(node)}});
+        }
+      }
+      return obj_expr; // pass through the value
+    }
     // Check for class method calls
     if(!obj_expr.is_nil() && obj_expr.type().id() == ID_struct)
     {

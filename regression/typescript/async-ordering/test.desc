@@ -1,0 +1,8 @@
+KNOWNBUG
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+True async interleaving not modeled (sequential approximation)
