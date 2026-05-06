@@ -696,7 +696,8 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         lt};
     }
     exprt::operandst elements;
-    typet elem_type = double_type(); // default
+    typet elem_type = double_type();     // default
+    exprt actual_len_expr = nil_exprt{}; // set by spread of runtime arrays
     for(const auto &elt : to_json_array(elts))
     {
       std::string elt_kind = json_string(json_member(elt, "_kind"));
@@ -728,6 +729,24 @@ exprt typescript_convertert::convert_expression(const jsont &node)
             }
           }
         }
+        else if(
+          !src.is_nil() && src.type().id() == ID_struct &&
+          to_struct_type(src.type()).get_tag() == "typescript_array")
+        {
+          // Parameter or runtime array: copy via member access
+          const auto &st = to_struct_type(src.type());
+          exprt len_expr = member_exprt{src, "length", signedbv_typet{64}};
+          exprt data_expr =
+            member_exprt{src, "data", st.get_component("data").type()};
+          elem_type =
+            to_array_type(st.get_component("data").type()).element_type();
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          for(std::size_t i = 0; i < max_len; ++i)
+            elements.push_back(
+              index_exprt{data_expr, from_integer(i, signedbv_typet{64})});
+          // Use the source length for the result
+          actual_len_expr = len_expr;
+        }
       }
       else
       {
@@ -745,16 +764,12 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     while(elements.size() < max_len)
       elements.push_back(from_integer(0, elem_type));
     array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
-    struct_typet list_type;
-    list_type.components().push_back(
-      struct_typet::componentt{"length", signedbv_typet{64}});
-    list_type.components().push_back(
-      struct_typet::componentt{"data", arr_type});
-    list_type.set_tag("typescript_array");
+    struct_typet list_type = make_array_struct_type(arr_type);
+    exprt len_val = actual_len_expr.is_nil()
+                      ? exprt{from_integer(actual_len, signedbv_typet{64})}
+                      : actual_len_expr;
     return struct_exprt{
-      {from_integer(actual_len, signedbv_typet{64}),
-       array_exprt{std::move(elements), arr_type}},
-      list_type};
+      {len_val, array_exprt{std::move(elements), arr_type}}, list_type};
   }
   // ES2024 sec-typeof-operator
   if(kind == "TypeOfExpression")

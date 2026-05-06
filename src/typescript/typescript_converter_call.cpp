@@ -1689,6 +1689,21 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(idx >= 0 && idx < static_cast<int>(data.operands().size()))
             return data.operands()[idx];
         }
+        // Non-constant index: use index_exprt
+        if(idx_expr.type() != signedbv_typet{64})
+          idx_expr = typecast_exprt{idx_expr, signedbv_typet{64}};
+        return index_exprt{data, idx_expr};
+      }
+      // Symbol array with non-constant value: use member + index access
+      if(
+        !src.is_nil() && src.type().id() == ID_struct &&
+        to_struct_type(src.type()).get_tag() == "typescript_array")
+      {
+        const auto &st = to_struct_type(src.type());
+        exprt data = member_exprt{src, "data", st.get_component("data").type()};
+        if(idx_expr.type() != signedbv_typet{64})
+          idx_expr = typecast_exprt{idx_expr, signedbv_typet{64}};
+        return index_exprt{data, idx_expr};
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
