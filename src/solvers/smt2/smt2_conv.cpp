@@ -5933,7 +5933,18 @@ void smt2_convt::convert_type(const typet &type)
   {
     if(use_datatypes)
     {
-      out << datatype_map.at(type);
+      auto it = datatype_map.find(type);
+      if(it != datatype_map.end())
+        out << it->second;
+      else
+      {
+        // Unregistered struct (e.g., Python list/dict types) — flat bitvector
+        std::size_t width = boolbv_width(type);
+        if(width > 0)
+          out << "(_ BitVec " << width << ")";
+        else
+          out << "(_ BitVec 64)";
+      }
     }
     else
     {
@@ -6009,7 +6020,18 @@ void smt2_convt::convert_type(const typet &type)
   {
     if(use_datatypes)
     {
-      out << datatype_map.at(type);
+      auto it = datatype_map.find(type);
+      if(it != datatype_map.end())
+        out << it->second;
+      else
+      {
+        // Unregistered struct (e.g., Python list/dict types) — flat bitvector
+        std::size_t width = boolbv_width(type);
+        if(width > 0)
+          out << "(_ BitVec " << width << ")";
+        else
+          out << "(_ BitVec 64)";
+      }
     }
     else
     {
