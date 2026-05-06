@@ -58,6 +58,15 @@ codet typescript_convertert::convert_statement(const jsont &node)
       }
       std::string ts_type = json_string(json_member(decl, "_type"));
       typet var_type = convert_type(ts_type);
+      // Integer inference: use narrower type if variable is integer-safe
+      if(ts_type == "number" && integer_inference)
+      {
+        std::string scope_key =
+          (current_function.empty() ? "" : current_function + "::") + var_name;
+        typet inferred = number_type_for(scope_key);
+        if(inferred.id() != ID_floatbv)
+          var_type = inferred;
+      }
       std::string qualified =
         "typescript::" +
         (current_function.empty() ? "" : current_function + "::") + var_name;
@@ -1013,6 +1022,15 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
     }
     std::string ts_type = json_string(json_member(decl, "_type"));
     typet var_type = convert_type(ts_type);
+    // Integer inference
+    if(ts_type == "number" && integer_inference)
+    {
+      std::string scope_key =
+        (current_function.empty() ? "" : current_function + "::") + var_name;
+      typet inferred = number_type_for(scope_key);
+      if(inferred.id() != ID_floatbv)
+        var_type = inferred;
+    }
 
     std::string qualified =
       "typescript::" +

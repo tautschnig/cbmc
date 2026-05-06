@@ -30,6 +30,7 @@ public:
   bool bounds_check = false;
   bool div_by_zero_check = false;
   bool nan_check = false;
+  bool integer_inference = true; // auto-detect integer variables
   std::size_t TYPESCRIPT_MAX_ARRAY_LENGTH = TYPESCRIPT_DEFAULT_MAX_ARRAY_LENGTH;
 
   typescript_convertert(
@@ -71,6 +72,17 @@ private:
   // Default parameter values: func_id → {param_index → default_expr}
   std::map<irep_idt, std::map<std::size_t, exprt>>
     default_values; // stmts to emit before current expr
+
+  // Integer inference: variables that can safely use integer types
+  enum class num_kindt
+  {
+    FLOAT,   // default: floatbv[64]
+    INDEX,   // array index / .length / loop counter: signedbv[64]
+    INTEGER, // general integer (%, integer literals): signedbv[32]
+  };
+  std::map<std::string, num_kindt> inferred_num_kind;
+  void infer_integer_types(const jsont &statements);
+  typet number_type_for(const std::string &var_name) const;
 
   // --- Helpers ---
   static const jsont &json_member(const jsont &obj, const std::string &key);

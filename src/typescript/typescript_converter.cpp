@@ -1448,3 +1448,238 @@ exprt typescript_convertert::convert_prefix_unary_expression(const jsont &node)
 }
 
 // ES2024 sec-function-calls
+
+// --- Integer type inference ---
+
+typet typescript_convertert::number_type_for(const std::string &var_name) const
+{
+  if(!integer_inference)
+    return double_type();
+  auto it = inferred_num_kind.find(var_name);
+  if(it == inferred_num_kind.end())
+    return double_type();
+  switch(it->second)
+  {
+  case num_kindt::INDEX:
+    return signedbv_typet{64};
+  case num_kindt::INTEGER:
+    return signedbv_typet{32};
+  case num_kindt::FLOAT:
+  default:
+    return double_type();
+  }
+}
+
+void typescript_convertert::infer_integer_types(const jsont &statements)
+{
+  if(!integer_inference || !statements.is_array())
+    return;
+
+  // Collect all variables that are used in integer-only contexts.
+  // A variable is INTEGER if:
+  //   - Used with %, &, |, ^, <<, >> operators
+  //   - Compared with integer literals only
+  //   - Assigned only integer literals or other integer variables
+  //   - Never used with / that could produce fractions
+  // A variable is INDEX if:
+  //   - Initialized from .length
+  //   - Used as a loop counter (for i = 0; i < N; i++)
+  //   - Used as an array index
+
+  // Phase 1: scan for integer indicators
+  std::set<std::string> integer_vars; // definitely integer
+  std::set<std::string> float_vars;   // definitely float (uses division)
+  std::set<std::string> index_vars;   // index/counter
+
+  std::function<void(const jsont &, const std::string &)> scan =
+    [&](const jsont &node, const std::string &scope)
+  {
+    if(!node.is_object())
+      return;
+    std::string kind = json_string(json_member(node, "_kind"));
+
+    // For loops: the initializer variable is an index
+    if(kind == "ForStatement")
+    {
+      const jsont &init = json_member(node, "initializer");
+      if(init.is_object())
+      {
+        std::string ik = json_string(json_member(init, "_kind"));
+        if(ik == "VariableDeclarationList")
+        {
+          const jsont &decls = json_member(init, "declarations");
+          if(decls.is_array())
+          {
+            for(const auto &d : to_json_array(decls))
+            {
+              std::string vn =
+                json_string(json_member(json_member(d, "name"), "text"));
+              if(!vn.empty())
+                index_vars.insert(scope + vn);
+            }
+          }
+        }
+      }
+    }
+
+    // Variable declarations with .length initializer
+    if(kind == "VariableDeclaration")
+    {
+      std::string vn =
+        json_string(json_member(json_member(node, "name"), "text"));
+      const jsont &init = json_member(node, "initializer");
+      if(init.is_object())
+      {
+        std::string ik = json_string(json_member(init, "_kind"));
+        if(ik == "PropertyAccessExpression")
+        {
+          std::string prop =
+            json_string(json_member(json_member(init, "name"), "text"));
+          if(prop == "length")
+            index_vars.insert(scope + vn);
+        }
+      }
+    }
+
+    // Binary expressions with integer operators
+    if(kind == "BinaryExpression")
+    {
+      std::string op = json_string(json_member(node, "operator"));
+      if(
+        op == "PercentToken" || op == "AmpersandToken" || op == "BarToken" ||
+        op == "CaretToken" || op == "LessThanLessThanToken" ||
+        op == "GreaterThanGreaterThanToken" ||
+        op == "GreaterThanGreaterThanGreaterThanToken")
+      {
+        // Both operands are integer
+        const jsont &left = json_member(node, "left");
+        const jsont &right = json_member(node, "right");
+        std::string ln = json_string(json_member(left, "text"));
+        std::string rn = json_string(json_member(right, "text"));
+        if(!ln.empty())
+          integer_vars.insert(scope + ln);
+        if(!rn.empty())
+          integer_vars.insert(scope + rn);
+      }
+      // Division with non-integer result → float
+      if(op == "SlashToken")
+      {
+        const jsont &left = json_member(node, "left");
+        std::string ln = json_string(json_member(left, "text"));
+        if(!ln.empty())
+          float_vars.insert(scope + ln);
+      }
+      // Multiplication can overflow signedbv → mark as float
+      if(op == "AsteriskToken")
+      {
+        const jsont &left = json_member(node, "left");
+        const jsont &right = json_member(node, "right");
+        std::string ln = json_string(json_member(left, "text"));
+        std::string rn = json_string(json_member(right, "text"));
+        if(!ln.empty())
+          float_vars.insert(scope + ln);
+        if(!rn.empty())
+          float_vars.insert(scope + rn);
+      }
+    }
+
+    // Recurse
+    for(const auto &kv : to_json_object(node))
+    {
+      if(kv.second.is_object())
+        scan(kv.second, scope);
+      else if(kv.second.is_array())
+        for(const auto &elem : to_json_array(kv.second))
+          scan(elem, scope);
+    }
+  };
+
+  // Scan all statements
+  for(const auto &stmt : to_json_array(statements))
+  {
+    std::string kind = json_string(json_member(stmt, "_kind"));
+    if(kind == "FunctionDeclaration")
+    {
+      std::string fname =
+        json_string(json_member(json_member(stmt, "name"), "text"));
+      std::string fscope = fname + "::";
+      // Scan function parameters — if used with integer ops, mark them
+      scan(stmt, fscope);
+      // If any parameter is integer, mark return type as integer too
+      const jsont &params = json_member(stmt, "parameters");
+      bool any_int_param = false;
+      if(params.is_array())
+      {
+        for(const auto &p : to_json_array(params))
+        {
+          std::string pn =
+            json_string(json_member(json_member(p, "name"), "text"));
+          if(integer_vars.count(fscope + pn) || index_vars.count(fscope + pn))
+            any_int_param = true;
+        }
+      }
+      if(any_int_param)
+        integer_vars.insert(fname + "::__return");
+    }
+    else
+    {
+      scan(stmt, "");
+    }
+  }
+
+  // Conservative propagation: only mark variables that are directly
+  // assigned from other integer variables within the same function.
+  // Also mark call-site arguments to functions with % operations.
+  std::set<std::string> integer_functions;
+  for(const auto &v : integer_vars)
+  {
+    auto sep = v.find("::");
+    if(sep != std::string::npos)
+      integer_functions.insert(v.substr(0, sep));
+  }
+  // Mark arguments at call sites to integer functions
+  std::function<void(const jsont &)> mark_args = [&](const jsont &n)
+  {
+    if(!n.is_object())
+      return;
+    std::string nk = json_string(json_member(n, "_kind"));
+    if(nk == "CallExpression")
+    {
+      const jsont &ce = json_member(n, "expression");
+      std::string fn = json_string(json_member(ce, "text"));
+      if(integer_functions.count(fn))
+      {
+        const jsont &ca = json_member(n, "arguments");
+        if(ca.is_array())
+          for(const auto &a : to_json_array(ca))
+          {
+            std::string an = json_string(json_member(a, "text"));
+            if(!an.empty())
+              integer_vars.insert(an);
+          }
+      }
+    }
+    for(const auto &kv : to_json_object(n))
+    {
+      if(kv.second.is_object())
+        mark_args(kv.second);
+      else if(kv.second.is_array())
+        for(const auto &e : to_json_array(kv.second))
+          mark_args(e);
+    }
+  };
+  for(const auto &stmt : to_json_array(statements))
+    mark_args(stmt);
+
+  // Build final map: index > integer > float
+  for(const auto &v : index_vars)
+  {
+    if(!float_vars.count(v))
+      inferred_num_kind[v] = num_kindt::INDEX;
+  }
+  for(const auto &v : integer_vars)
+  {
+    if(!float_vars.count(v) && !inferred_num_kind.count(v))
+      inferred_num_kind[v] = num_kindt::INTEGER;
+  }
+}

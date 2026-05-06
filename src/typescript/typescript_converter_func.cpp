@@ -40,6 +40,15 @@ void typescript_convertert::convert_function_declaration_with_name(
   std::string ret_type_str = json_string(json_member(node, "_returnType"));
   typet ret_type =
     ret_type_str.empty() ? empty_typet{} : convert_type(ret_type_str);
+  // If all parameters are integer, return type likely is too
+  if(ret_type_str == "number" && integer_inference)
+  {
+    // Check if function name is in integer_vars context
+    std::string scope_key = func_name + "::__return";
+    auto it = inferred_num_kind.find(scope_key);
+    if(it != inferred_num_kind.end())
+      ret_type = number_type_for(scope_key);
+  }
 
   // Get parameters
   code_typet::parameterst params;
@@ -52,6 +61,15 @@ void typescript_convertert::convert_function_declaration_with_name(
         json_string(json_member(json_member(p, "name"), "text"));
       std::string ptype_str = json_string(json_member(p, "_type"));
       typet ptype = convert_type(ptype_str);
+
+      // Integer inference for parameters
+      if(ptype_str == "number" && integer_inference)
+      {
+        std::string scope_key = func_name + "::" + pname;
+        typet inferred = number_type_for(scope_key);
+        if(inferred.id() != ID_floatbv)
+          ptype = inferred;
+      }
 
       // Track rest parameters
       if(json_member(p, "isRest").is_true())
@@ -255,6 +273,9 @@ void typescript_convertert::convert_module_body(const jsont &statements)
 {
   if(!statements.is_array())
     return;
+
+  // Integer type inference: determine which variables can use integer types
+  infer_integer_types(statements);
 
   // Pre-scan: collect all function names that are called anywhere
   // in the module body (to skip converting unused functions)

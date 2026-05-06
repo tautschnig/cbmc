@@ -1,6 +1,6 @@
-KNOWNBUG
+CORE
 main.ts
---unwind 15 --no-unwinding-assertions --no-bounds-check
+--unwind 25 --no-unwinding-assertions --no-bounds-check
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
