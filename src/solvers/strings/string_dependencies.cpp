@@ -6,6 +6,7 @@ Author: Diffblue Ltd.
 
 \*******************************************************************/
 
+#include "array_pool.h"
 #include "string_dependencies.h"
 #include "string_concatenation_builtin_function.h"
 #include "string_format_builtin_function.h"
@@ -157,8 +158,7 @@ static void add_dependency_to_string_subexprs(
       [&](const exprt &e) { // NOLINT
         if(is_refined_string_type(e.type()))
         {
-          const auto string_struct = expr_checked_cast<struct_exprt>(e);
-          const auto string = of_argument(array_pool, string_struct);
+          const auto string = get_string_expr(array_pool, e);
           dependencies.add_dependency(string, builtin_function_node);
         }
       });

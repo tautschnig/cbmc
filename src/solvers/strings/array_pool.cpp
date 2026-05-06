@@ -200,8 +200,9 @@ array_string_exprt array_poolt::find(const exprt &pointer, const exprt &length)
 
 array_string_exprt of_argument(array_poolt &array_pool, const exprt &arg)
 {
-  const auto string_argument = expr_checked_cast<struct_exprt>(arg);
-  return array_pool.find(string_argument.op1(), string_argument.op0());
+  if(const auto string_argument = expr_try_dynamic_cast<struct_exprt>(arg))
+    return array_pool.find(string_argument->op1(), string_argument->op0());
+  return get_string_expr(array_pool, arg);
 }
 
 array_string_exprt get_string_expr(array_poolt &array_pool, const exprt &expr)
