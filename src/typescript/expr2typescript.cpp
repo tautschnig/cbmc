@@ -27,7 +27,7 @@ std::string type2typescript(const typet &type, const namespacet &ns)
     return "number";
   if(type.id() == ID_pointer)
     return type2typescript(to_pointer_type(type).base_type(), ns);
-  if(is_refined_string_type(type))
+  if(is_typescript_string_type(type))
     return "string";
   if(type.id() == ID_struct)
   {

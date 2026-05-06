@@ -10,7 +10,6 @@
 #include <util/irep.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
-#include <util/string_expr.h>
 #include <util/symbol.h>
 
 #include <goto-programs/goto_functions.h>

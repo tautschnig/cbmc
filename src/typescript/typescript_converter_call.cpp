@@ -10,7 +10,6 @@
 #include <util/irep.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
-#include <util/string_expr.h>
 #include <util/symbol.h>
 
 #include <goto-programs/goto_functions.h>
@@ -567,6 +566,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
              array_exprt{std::move(elts), arr_type}},
             list_type};
         }
+      }
+      // charAt with non-constant index: access data[idx], build 1-char string
+      if(method == "charAt" && args.is_array() && !to_json_array(args).empty())
+      {
+        exprt idx_expr = convert_expression(*to_json_array(args).begin());
+        if(idx_expr.type() != signedbv_typet{64})
+          idx_expr = typecast_exprt{idx_expr, signedbv_typet{64}};
+        // Access obj_expr.data[idx]
+        struct_typet str_type = typescript_string_type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        exprt data = member_exprt{obj_expr, "data", data_type};
+        exprt char_val = index_exprt{data, idx_expr};
+        // Build single-char string
+        exprt::operandst chars;
+        chars.push_back(char_val);
+        while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+          chars.push_back(from_integer(0, unsignedbv_typet{16}));
+        return struct_exprt{
+          {from_integer(1, signedbv_typet{32}),
+           array_exprt{std::move(chars), data_type}},
+          str_type};
       }
       // Nondet fallback for non-constant strings
       return side_effect_expr_nondett{double_type(), get_location(node)};

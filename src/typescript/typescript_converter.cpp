@@ -19,7 +19,6 @@
 #include <util/irep.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
-#include <util/string_expr.h>
 #include <util/symbol.h>
 
 #include <goto-programs/goto_functions.h>
@@ -382,9 +381,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       json_string(json_member(json_member(node, "name"), "text"));
     if(is_typescript_string_type(obj.type()) && prop == "length")
     {
-      // refined_string_typet has length as first component
-      const auto &rst = to_refined_string_type(obj.type());
-      return member_exprt{obj, "length", rst.get_index_type()};
+      return member_exprt{obj, "length", signedbv_typet{32}};
     }
     if(obj.type().id() == ID_struct)
     {
@@ -950,6 +947,10 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
     auto it = string_constants.find(to_symbol_expr(e).get_identifier());
     if(it != string_constants.end())
       return "S:" + it->second;
+    // Fallback: check symbol table value
+    const symbolt *s = symbol_table.lookup(to_symbol_expr(e).get_identifier());
+    if(s && !s->value.is_nil())
+      return extract_string_value(s->value);
   }
   // Handle member expressions: obj.field
   if(e.id() == ID_member)
@@ -980,7 +981,7 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
       }
     }
   }
-  // Check refined_string_exprt: {length, address_of(arr[0])}
+  // Check struct{length, data[]} format (inline array)
   if(
     e.id() == ID_struct && e.operands().size() >= 2 &&
     e.operands()[0].is_constant())
@@ -988,31 +989,21 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
     mp_integer len;
     if(!to_integer(to_constant_expr(e.operands()[0]), len))
     {
-      const exprt &ptr = e.operands()[1];
-      if(
-        ptr.id() == ID_address_of && ptr.operands()[0].id() == ID_index &&
-        ptr.operands()[0].operands()[0].id() == ID_symbol)
+      const exprt &data = e.operands()[1];
+      if(data.id() == ID_array)
       {
-        irep_idt aid =
-          to_symbol_expr(ptr.operands()[0].operands()[0]).get_identifier();
-        const symbolt *as = symbol_table.lookup(aid);
-        if(as && !as->value.is_nil())
+        std::string s;
+        for(mp_integer i = 0; i < len; ++i)
         {
-          std::string s;
-          for(mp_integer i = 0; i < len; ++i)
+          auto idx = i.to_ulong();
+          if(idx < data.operands().size() && data.operands()[idx].is_constant())
           {
-            auto idx = i.to_ulong();
-            if(
-              idx < as->value.operands().size() &&
-              as->value.operands()[idx].is_constant())
-            {
-              mp_integer ch;
-              if(!to_integer(to_constant_expr(as->value.operands()[idx]), ch))
-                s += static_cast<char>(ch.to_ulong());
-            }
+            mp_integer ch;
+            if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
+              s += static_cast<char>(ch.to_ulong());
           }
-          return "S:" + s;
         }
+        return "S:" + s;
       }
     }
   }
@@ -1022,48 +1013,22 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
 exprt typescript_convertert::convert_string_literal_from_text(
   const std::string &text)
 {
-  // Create a refined_string_exprt using CBMC's string solver infrastructure.
-  // The string is represented as {length, content_pointer}.
-  // For constant strings, we create an array symbol and point to it.
-  refined_string_typet str_type = typescript_string_type();
-
-  // Create array for string content
-  static unsigned str_arr_ctr = 0;
-  std::string arr_name = "__ts_str_" + std::to_string(str_arr_ctr++);
-  std::string arr_qname = "typescript::" + arr_name;
-  irep_idt arr_id{arr_qname};
-
-  array_typet arr_type{
-    unsignedbv_typet{16},
-    from_integer(text.size() > 0 ? text.size() : 1, signedbv_typet{32})};
+  // Build string as struct{length: signedbv[32], data: unsignedbv[16][MAX]}
+  struct_typet str_type = typescript_string_type();
+  const auto &data_type = to_array_type(str_type.components()[1].type());
 
   exprt::operandst chars;
   for(char c : text)
     chars.push_back(
       from_integer(static_cast<unsigned char>(c), unsignedbv_typet{16}));
-  if(chars.empty())
+  while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
     chars.push_back(from_integer(0, unsignedbv_typet{16}));
-
-  if(symbol_table.lookup(arr_id) == nullptr)
-  {
-    symbolt arr_sym{arr_id, arr_type, "typescript"};
-    arr_sym.base_name = arr_name;
-    arr_sym.is_lvalue = true;
-    arr_sym.is_state_var = true;
-    arr_sym.is_static_lifetime = true;
-    arr_sym.value = array_exprt{std::move(chars), arr_type};
-    symbol_table.add(arr_sym);
-  }
-
-  // Create pointer to the array
-  exprt content_ptr = address_of_exprt{index_exprt{
-    symbol_table.lookup_ref(arr_id).symbol_expr(),
-    from_integer(0, signedbv_typet{32})}};
 
   exprt length =
     from_integer(static_cast<int>(text.size()), signedbv_typet{32});
 
-  return refined_string_exprt{length, content_ptr, str_type};
+  return struct_exprt{
+    {length, array_exprt{std::move(chars), data_type}}, str_type};
 }
 
 exprt typescript_convertert::convert_string_literal(const jsont &node)
