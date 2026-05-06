@@ -31,6 +31,8 @@
 
 /// Maximum length for Python strings in verification.
 /// Can be overridden with --python-max-string-length.
+#define PYTHON_STRING_TAG "tag-__CPROVER_refined_string_type"
+
 #ifndef PYTHON_MAX_STRING_LENGTH
 #  define PYTHON_MAX_STRING_LENGTH 64
 #endif
@@ -43,11 +45,13 @@
 
 /// Return the CBMC type used to represent Python str.
 /// This is a struct { signedbv[64] length; unsignedbv[8] data[N]; }
-inline struct_typet python_string_type()
+inline struct_tag_typet python_string_type()
 {
-  // Use refined_string_type tag for string solver compatibility.
-  // Field "data" is a pointer (not array) - same layout as refined_string_typet
-  // but with "data" field name for backward compatibility with existing code.
+  return struct_tag_typet{PYTHON_STRING_TAG};
+}
+
+inline struct_typet python_string_struct_def()
+{
   struct_typet::componentst components;
   components.push_back(struct_typet::componentt{"length", signedbv_typet{64}});
   components.push_back(struct_typet::componentt{
@@ -60,6 +64,8 @@ inline struct_typet python_string_type()
 /// Check if a type is a Python string type.
 inline bool is_python_string_type(const typet &type)
 {
+  if(type.id() == ID_struct_tag)
+    return to_struct_tag_type(type).get_identifier() == PYTHON_STRING_TAG;
   return is_refined_string_type(type);
 }
 

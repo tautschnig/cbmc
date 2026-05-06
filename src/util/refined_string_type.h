@@ -53,9 +53,15 @@ public:
 
 inline bool is_refined_string_type(const typet &type)
 {
-    return
-      type.id()==ID_struct &&
-      to_struct_type(type).get_tag()==CPROVER_PREFIX"refined_string_type";
+  if(type.id() == ID_struct)
+    return to_struct_type(type).get_tag() == CPROVER_PREFIX
+           "refined_string_type";
+  if(type.id() == ID_struct_tag)
+  {
+    return id2string(to_struct_tag_type(type).get_identifier())
+             .find(CPROVER_PREFIX "refined_string_type") != std::string::npos;
+  }
+  return false;
 }
 
 extern inline const refined_string_typet &to_refined_string_type(

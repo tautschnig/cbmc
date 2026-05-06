@@ -214,13 +214,9 @@ array_string_exprt get_string_expr(array_poolt &array_pool, const exprt &expr)
     return array_pool.find(str.content(), str.length());
   }
   // For non-struct expressions (symbols, member_exprt, etc.),
-  // decompose into length and content via the struct type's components.
-  const auto &st = to_struct_type(expr.type());
-  PRECONDITION(st.components().size() == 2);
-  const auto &length_comp = st.components()[0];
-  const auto &content_comp = st.components()[1];
-  exprt length = member_exprt(expr, length_comp.get_name(), length_comp.type());
+  // decompose into length and content via known field names.
+  exprt length = member_exprt(expr, "length", signedbv_typet{64});
   exprt content =
-    member_exprt(expr, content_comp.get_name(), content_comp.type());
+    member_exprt(expr, "data", pointer_typet(unsignedbv_typet{8}, 64));
   return array_pool.find(content, length);
 }
