@@ -191,11 +191,13 @@ function n2j(node) {
     case ts.SyntaxKind.NewExpression:
       r.expression = n2j(node.expression);
       r.arguments = node.arguments ? node.arguments.map(n2j) : [];
+      if(node.typeArguments) r.typeArguments = node.typeArguments.map(n2j);
       break;
     case ts.SyntaxKind.ClassDeclaration:
       if(node.name) r.name = n2j(node.name);
       r.members = node.members.map(n2j);
       if(node.heritageClauses) r.heritage = node.heritageClauses.map(n2j);
+      if(node.typeParameters) r.typeParameters = node.typeParameters.map(n2j);
       break;
     case ts.SyntaxKind.ShorthandPropertyAssignment:
       r.name = n2j(node.name);

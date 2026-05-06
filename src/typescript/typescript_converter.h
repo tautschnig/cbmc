@@ -82,6 +82,8 @@ private:
   std::vector<codet> pending_stmts;
   // Generic functions: name → AST node (deferred for monomorphization)
   std::map<std::string, jsont> generic_functions;
+  // Generic classes: name → AST node (deferred for monomorphization)
+  std::map<std::string, jsont> generic_classes;
   // Current generic instantiation context
   std::string current_generic_type_param;
   std::string current_generic_concrete;

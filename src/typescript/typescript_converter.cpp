@@ -219,6 +219,25 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
           ts_type.substr(angle + 1, ts_type.size() - angle - 2);
         return convert_type(inner);
       }
+      // Try specialized class: Box<number> → Box__number
+      {
+        std::string inner =
+          ts_type.substr(angle + 1, ts_type.size() - angle - 2);
+        // Trim
+        while(!inner.empty() && inner[0] == ' ')
+          inner.erase(0, 1);
+        while(!inner.empty() && inner.back() == ' ')
+          inner.pop_back();
+        // Normalize literal types
+        if(inner == "true" || inner == "false")
+          inner = "boolean";
+        else if(!inner.empty() && (std::isdigit(inner[0]) || inner[0] == '-'))
+          inner = "number";
+        std::string spec_name = base + "__" + inner;
+        auto spec_it = class_types.find(spec_name);
+        if(spec_it != class_types.end())
+          return spec_it->second;
+      }
       auto base_it = class_types.find(base);
       if(base_it != class_types.end())
         return base_it->second;
@@ -545,6 +564,106 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   {
     std::string cls_name =
       json_string(json_member(json_member(node, "expression"), "text"));
+    // Generic class monomorphization
+    auto gen_it = generic_classes.find(cls_name);
+    if(gen_it != generic_classes.end())
+    {
+      // Get concrete type from typeArguments
+      std::string concrete_type = "number";
+      const jsont &type_args = json_member(node, "typeArguments");
+      if(type_args.is_array() && !to_json_array(type_args).empty())
+      {
+        const jsont &ta = *to_json_array(type_args).begin();
+        concrete_type = json_string(json_member(ta, "_type"));
+        if(concrete_type.empty())
+          concrete_type = "number";
+        // Normalize literal types
+        if(concrete_type == "true" || concrete_type == "false")
+          concrete_type = "boolean";
+        else if(
+          !concrete_type.empty() &&
+          (std::isdigit(concrete_type[0]) || concrete_type[0] == '-'))
+          concrete_type = "number";
+      }
+      std::string spec_name = cls_name + "__" + concrete_type;
+      // Instantiate if not already done
+      if(class_types.find(spec_name) == class_types.end())
+      {
+        // Extract type parameter name
+        std::string tp_name = "T";
+        const jsont &tp = json_member(gen_it->second, "typeParameters");
+        if(tp.is_array() && !to_json_array(tp).empty())
+        {
+          const jsont &first_tp = *to_json_array(tp).begin();
+          std::string n = json_string(json_member(first_tp, "_type"));
+          if(!n.empty())
+            tp_name = n;
+        }
+        // Temporarily remove from generic_classes, instantiate, restore
+        jsont saved_node = gen_it->second;
+        generic_classes.erase(gen_it);
+        std::string saved_tp = current_generic_type_param;
+        std::string saved_concrete = current_generic_concrete;
+        current_generic_type_param = tp_name;
+        current_generic_concrete = concrete_type;
+        // Temporarily rename the class AST for specialization
+        jsont modified = saved_node;
+        // Modify name in place — need non-const access
+        jsont &name_obj = const_cast<jsont &>(json_member(modified, "name"));
+        if(name_obj.is_object())
+        {
+          auto &obj = const_cast<json_objectt &>(to_json_object(name_obj));
+          obj["text"] = json_stringt{spec_name};
+        }
+        convert_statement(modified);
+        current_generic_type_param = saved_tp;
+        current_generic_concrete = saved_concrete;
+        generic_classes[cls_name] = saved_node;
+      }
+      // Now treat as a regular class call with the specialized name
+      auto spec_it = class_types.find(spec_name);
+      if(spec_it != class_types.end())
+      {
+        static unsigned gnew_ctr = 0;
+        std::string tmp_name =
+          "__new_" + spec_name + "_" + std::to_string(gnew_ctr++);
+        std::string tmp_qname =
+          "typescript::" +
+          (current_function.empty() ? "" : current_function + "::") + tmp_name;
+        irep_idt tmp_id{tmp_qname};
+        if(symbol_table.lookup(tmp_id) == nullptr)
+        {
+          symbolt ts{tmp_id, spec_it->second, "typescript"};
+          ts.base_name = tmp_name;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
+        irep_idt ctor_id{"typescript::" + spec_name + "::__init__"};
+        const symbolt *ctor = symbol_table.lookup(ctor_id);
+        if(ctor != nullptr)
+        {
+          exprt::operandst args;
+          args.push_back(address_of_exprt{tmp});
+          const jsont &call_args = json_member(node, "arguments");
+          if(call_args.is_array())
+            for(const auto &a : to_json_array(call_args))
+              args.push_back(convert_expression(a));
+          const auto &params = to_code_type(ctor->type).parameters();
+          for(std::size_t i = 0; i < args.size() && i < params.size(); i++)
+            if(args[i].type() != params[i].type())
+              args[i] = typecast_exprt(args[i], params[i].type());
+          pending_stmts.push_back(
+            code_expressiont{side_effect_expr_function_callt{
+              ctor->symbol_expr(),
+              std::move(args),
+              empty_typet{},
+              get_location(node)}});
+        }
+        return tmp;
+      }
+    }
     auto cls_it = class_types.find(cls_name);
     if(cls_it != class_types.end())
     {

@@ -56,6 +56,58 @@ codet typescript_convertert::convert_statement(const jsont &node)
         }
       }
       std::string ts_type = json_string(json_member(decl, "_type"));
+      // For generic class types (e.g., Box<number>), eagerly specialize
+      // so variable type can use the specialized struct
+      if(ts_type.find('<') != std::string::npos)
+      {
+        auto angle = ts_type.find('<');
+        std::string base = ts_type.substr(0, angle);
+        std::string inner =
+          ts_type.substr(angle + 1, ts_type.size() - angle - 2);
+        while(!inner.empty() && inner[0] == ' ')
+          inner.erase(0, 1);
+        while(!inner.empty() && inner.back() == ' ')
+          inner.pop_back();
+        if(inner == "true" || inner == "false")
+          inner = "boolean";
+        else if(!inner.empty() && (std::isdigit(inner[0]) || inner[0] == '-'))
+          inner = "number";
+        std::string spec_name = base + "__" + inner;
+        auto gen_it = generic_classes.find(base);
+        if(
+          gen_it != generic_classes.end() &&
+          class_types.find(spec_name) == class_types.end())
+        {
+          // Extract type parameter name
+          std::string tp_name = "T";
+          const jsont &tp = json_member(gen_it->second, "typeParameters");
+          if(tp.is_array() && !to_json_array(tp).empty())
+          {
+            const jsont &first_tp = *to_json_array(tp).begin();
+            std::string n = json_string(json_member(first_tp, "_type"));
+            if(!n.empty())
+              tp_name = n;
+          }
+          jsont saved_node = gen_it->second;
+          generic_classes.erase(gen_it);
+          std::string saved_tp = current_generic_type_param;
+          std::string saved_concrete = current_generic_concrete;
+          current_generic_type_param = tp_name;
+          current_generic_concrete = inner;
+          // Rename in copy
+          jsont modified = saved_node;
+          jsont &name_obj = const_cast<jsont &>(json_member(modified, "name"));
+          if(name_obj.is_object())
+          {
+            auto &obj = const_cast<json_objectt &>(to_json_object(name_obj));
+            obj["text"] = json_stringt{spec_name};
+          }
+          convert_statement(modified);
+          current_generic_type_param = saved_tp;
+          current_generic_concrete = saved_concrete;
+          generic_classes[base] = saved_node;
+        }
+      }
       typet var_type = convert_type(ts_type);
       // Integer inference: use narrower type if variable is integer-safe
       if(ts_type == "number" && integer_inference)
@@ -442,6 +494,15 @@ codet typescript_convertert::convert_statement(const jsont &node)
       json_string(json_member(json_member(node, "name"), "text"));
     if(cls_name.empty())
       return code_skipt{};
+    // Detect generic classes — defer for monomorphization
+    const jsont &type_params = json_member(node, "typeParameters");
+    if(
+      type_params.is_array() && !to_json_array(type_params).empty() &&
+      current_generic_concrete.empty())
+    {
+      generic_classes[cls_name] = node;
+      return code_skipt{};
+    }
     // Build struct type from property declarations
     struct_typet cls_type;
     cls_type.set_tag("typescript_class_" + cls_name);
@@ -1169,6 +1230,54 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       }
     }
     std::string ts_type = json_string(json_member(decl, "_type"));
+    // For generic class types, eagerly specialize
+    if(ts_type.find('<') != std::string::npos)
+    {
+      auto angle = ts_type.find('<');
+      std::string base = ts_type.substr(0, angle);
+      std::string inner = ts_type.substr(angle + 1, ts_type.size() - angle - 2);
+      while(!inner.empty() && inner[0] == ' ')
+        inner.erase(0, 1);
+      while(!inner.empty() && inner.back() == ' ')
+        inner.pop_back();
+      if(inner == "true" || inner == "false")
+        inner = "boolean";
+      else if(!inner.empty() && (std::isdigit(inner[0]) || inner[0] == '-'))
+        inner = "number";
+      std::string spec_name = base + "__" + inner;
+      auto gen_it = generic_classes.find(base);
+      if(
+        gen_it != generic_classes.end() &&
+        class_types.find(spec_name) == class_types.end())
+      {
+        std::string tp_name = "T";
+        const jsont &tp = json_member(gen_it->second, "typeParameters");
+        if(tp.is_array() && !to_json_array(tp).empty())
+        {
+          const jsont &first_tp = *to_json_array(tp).begin();
+          std::string n = json_string(json_member(first_tp, "_type"));
+          if(!n.empty())
+            tp_name = n;
+        }
+        jsont saved_node = gen_it->second;
+        generic_classes.erase(gen_it);
+        std::string saved_tp = current_generic_type_param;
+        std::string saved_concrete = current_generic_concrete;
+        current_generic_type_param = tp_name;
+        current_generic_concrete = inner;
+        jsont modified = saved_node;
+        jsont &name_obj = const_cast<jsont &>(json_member(modified, "name"));
+        if(name_obj.is_object())
+        {
+          auto &obj = const_cast<json_objectt &>(to_json_object(name_obj));
+          obj["text"] = json_stringt{spec_name};
+        }
+        convert_statement(modified);
+        current_generic_type_param = saved_tp;
+        current_generic_concrete = saved_concrete;
+        generic_classes[base] = saved_node;
+      }
+    }
     typet var_type = convert_type(ts_type);
     // Integer inference
     if(ts_type == "number" && integer_inference)
