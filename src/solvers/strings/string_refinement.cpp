@@ -679,6 +679,27 @@ string_refinementt::dec_solve(const exprt &assumption)
         // same pointer as `&constarray[0]
         simplify(it.mutate(), ns);
         string_id_symbol_resolve.replace_expr(it.mutate());
+        // Resolve symbols inside struct arguments using the main symbol_resolve.
+        // replace_expr doesn't work due to internal representation differences,
+        // but find() does. Manually traverse and replace.
+        for(auto &arg : it.mutate().operands())
+        {
+          for(auto sub_it = arg.depth_begin(); sub_it != arg.depth_end();)
+          {
+            if(sub_it->id() == ID_symbol)
+            {
+              exprt resolved = symbol_resolve.find(*sub_it);
+              if(resolved != *sub_it && resolved.type() == sub_it->type())
+              {
+                sub_it.mutate() = resolved;
+                sub_it.next_sibling_or_parent();
+                continue;
+              }
+            }
+            ++sub_it;
+          }
+        }
+        simplify(it.mutate(), ns);
         it.next_sibling_or_parent();
       }
       else
@@ -702,8 +723,27 @@ string_refinementt::dec_solve(const exprt &assumption)
   {
     // Ensures that arrays that are equal, are associated to the same nodes
     // in the graph.
-    const exprt eq_with_char_array_replaced_with_representative_elements =
+    exprt eq_with_char_array_replaced_with_representative_elements =
       replace_expr_copy(symbol_resolve, eq);
+    // Also resolve symbols inside struct arguments using find()
+    // (replace_expr may fail due to internal representation differences)
+    for(auto sub_it = eq_with_char_array_replaced_with_representative_elements
+                        .depth_begin();
+        sub_it !=
+        eq_with_char_array_replaced_with_representative_elements.depth_end();)
+    {
+      if(sub_it->id() == ID_symbol && sub_it->type().id() == ID_pointer)
+      {
+        exprt resolved = symbol_resolve.find(*sub_it);
+        if(resolved != *sub_it && resolved.type() == sub_it->type())
+        {
+          sub_it.mutate() = resolved;
+          sub_it.next_sibling_or_parent();
+          continue;
+        }
+      }
+      ++sub_it;
+    }
     const std::optional<exprt> new_equation = add_node(
       dependencies,
       eq_with_char_array_replaced_with_representative_elements,
