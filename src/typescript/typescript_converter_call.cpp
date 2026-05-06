@@ -2357,10 +2357,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           auto it = to_json_array(args).begin();
           exprt key = convert_expression(*it++);
           exprt val = convert_expression(*it);
-          if(
-            !is_typescript_string_type(key.type()) &&
-            key.type() != double_type())
-            key = typecast_exprt{key, double_type()};
+          // Cast key to match keys array element type
+          const auto &keys_arr_type =
+            to_array_type(mst.get_component("keys").type());
+          if(key.type() != keys_arr_type.element_type())
+            key = typecast_exprt{key, keys_arr_type.element_type()};
           if(val.type() != double_type())
             val = typecast_exprt{val, double_type()};
           pending_stmts.push_back(
@@ -2374,6 +2375,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(method == "get" && args.is_array() && !to_json_array(args).empty())
         {
           exprt key = convert_expression(*to_json_array(args).begin());
+          const auto &keys_arr_type2 =
+            to_array_type(mst.get_component("keys").type());
+          if(key.type() != keys_arr_type2.element_type())
+            key = typecast_exprt{key, keys_arr_type2.element_type()};
           // Linear scan: result = values[i] where keys[i] == key
           exprt result =
             side_effect_expr_nondett{double_type(), get_location(node)};
@@ -2391,6 +2396,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(method == "has" && args.is_array() && !to_json_array(args).empty())
         {
           exprt key = convert_expression(*to_json_array(args).begin());
+          const auto &keys_arr_type3 =
+            to_array_type(mst.get_component("keys").type());
+          if(key.type() != keys_arr_type3.element_type())
+            key = typecast_exprt{key, keys_arr_type3.element_type()};
           exprt result = false_exprt{};
           for(int i = 7; i >= 0; i--)
           {
