@@ -1,6 +1,7 @@
 /// Module: String solver
 /// Author: Diffblue Ltd.
 
+#include "array_pool.h"
 #include "string_builtin_function.h"
 
 #include <algorithm>
@@ -16,8 +17,11 @@ string_transformation_builtin_functiont::
   : string_builtin_functiont(return_code, array_pool)
 {
   PRECONDITION(fun_args.size() > 2);
-  const auto arg1 = expr_checked_cast<struct_exprt>(fun_args[2]);
-  input = array_pool.find(arg1.op1(), arg1.op0());
+  const auto arg1 = expr_try_dynamic_cast<struct_exprt>(fun_args[2]);
+  if(arg1 && arg1->operands().size() == 2)
+    input = array_pool.find(arg1->op1(), arg1->op0());
+  else
+    input = get_string_expr(array_pool, fun_args[2]);
   result = array_pool.find(fun_args[1], fun_args[0]);
 }
 

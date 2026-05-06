@@ -9,6 +9,7 @@ Author: Romain Brenguier, Joel Allred
 /// \file
 /// Builtin functions for string concatenations
 
+#include "array_pool.h"
 #include "string_concatenation_builtin_function.h"
 
 #include <algorithm>
@@ -20,10 +21,16 @@ string_concatenation_builtin_functiont::string_concatenation_builtin_functiont(
   : string_insertion_builtin_functiont(return_code, array_pool)
 {
   PRECONDITION(fun_args.size() >= 4 && fun_args.size() <= 6);
-  const auto arg1 = expr_checked_cast<struct_exprt>(fun_args[2]);
-  input1 = array_pool.find(arg1.op1(), arg1.op0());
-  const auto arg2 = expr_checked_cast<struct_exprt>(fun_args[3]);
-  input2 = array_pool.find(arg2.op1(), arg2.op0());
+  const auto arg1 = expr_try_dynamic_cast<struct_exprt>(fun_args[2]);
+  if(arg1 && arg1->operands().size() == 2)
+    input1 = array_pool.find(arg1->op1(), arg1->op0());
+  else
+    input1 = get_string_expr(array_pool, fun_args[2]);
+  const auto arg2 = expr_try_dynamic_cast<struct_exprt>(fun_args[3]);
+  if(arg2 && arg2->operands().size() == 2)
+    input2 = array_pool.find(arg2->op1(), arg2->op0());
+  else
+    input2 = get_string_expr(array_pool, fun_args[3]);
   result = array_pool.find(fun_args[1], fun_args[0]);
   args.insert(args.end(), fun_args.begin() + 4, fun_args.end());
 }
