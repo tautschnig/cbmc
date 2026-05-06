@@ -495,9 +495,15 @@ codet typescript_convertert::convert_statement(const jsont &node)
         {
           std::string pname =
             json_string(json_member(json_member(m, "name"), "text"));
+          // Strip # prefix from private field names
+          if(!pname.empty() && pname[0] == '#')
+            pname = pname.substr(1);
           std::string ptype = json_string(json_member(m, "_type"));
           cls_type.components().push_back(
             struct_typet::componentt{pname, convert_type(ptype)});
+          // Track private fields
+          if(json_member(m, "isPrivate").is_true())
+            private_fields[cls_name].insert(pname);
         }
       }
     }

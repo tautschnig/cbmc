@@ -76,6 +76,8 @@ private:
   };
   std::map<irep_idt, closure_bindingt> closure_bindings;
   std::map<std::string, struct_typet> class_types;
+  // Private fields: class_name → set of private field names
+  std::map<std::string, std::set<std::string>> private_fields;
   std::vector<codet> pending_stmts;
   // Default parameter values: func_id → {param_index → default_expr}
   std::map<irep_idt, std::map<std::size_t, exprt>>

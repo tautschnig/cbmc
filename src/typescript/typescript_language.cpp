@@ -198,6 +198,10 @@ function n2j(node) {
       r.name = n2j(node.name);
       if(node.type) r.typeAnnotation = n2j(node.type);
       if(node.initializer) r.initializer = n2j(node.initializer);
+      if(node.name && node.name.text && node.name.text.startsWith('#'))
+        r.isPrivate = true;
+      if(node.modifiers && node.modifiers.some(m => m.kind === ts.SyntaxKind.PrivateKeyword))
+        r.isPrivate = true;
       break;
     case ts.SyntaxKind.Constructor:
       r.parameters = node.parameters.map(n2j);

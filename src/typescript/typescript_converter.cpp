@@ -363,8 +363,44 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     if(obj.type().id() == ID_struct)
     {
       const auto &st = to_struct_type(obj.type());
-      if(st.has_component(prop))
-        return member_exprt{obj, prop, st.get_component(prop).type()};
+      // Strip # from property name for private field access
+      std::string lookup_prop = prop;
+      if(!prop.empty() && prop[0] == '#')
+        lookup_prop = prop.substr(1);
+      if(st.has_component(lookup_prop))
+      {
+        // Enforce private field access control
+        std::string cls_tag = id2string(st.get_tag());
+        std::string cls_name_check = cls_tag;
+        if(cls_tag.find("typescript_class_") == 0)
+          cls_name_check = cls_tag.substr(17);
+        auto pf_it = private_fields.find(cls_name_check);
+        if(
+          pf_it != private_fields.end() && pf_it->second.count(lookup_prop) > 0)
+        {
+          // Check if we're inside the class
+          bool inside_class =
+            current_class == cls_name_check ||
+            (!current_function.empty() &&
+             current_function.find(cls_name_check + "::") == 0);
+          if(!inside_class)
+          {
+            log.error() << "Access to private field '" << prop << "' of class '"
+                        << cls_name_check << "' from outside the class"
+                        << messaget::eom;
+            // Emit assertion failure for verification
+            code_assertt priv_assert{false_exprt{}};
+            priv_assert.add_source_location() = get_location(node);
+            priv_assert.add_source_location().set_property_class(
+              "private-access");
+            priv_assert.add_source_location().set_comment(
+              "access to private field " + prop);
+            pending_stmts.push_back(std::move(priv_assert));
+          }
+        }
+        return member_exprt{
+          obj, lookup_prop, st.get_component(lookup_prop).type()};
+      }
       // Check for getter method: ClassName::prop
       std::string cls_tag = id2string(st.get_tag());
       if(!cls_tag.empty())
