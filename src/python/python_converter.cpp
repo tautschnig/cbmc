@@ -3209,7 +3209,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
                 pending_checks);
             }
             else
-              match = equal_exprt{item, key_i};
+            {
+              if(item.type() == key_i.type())
+                match = equal_exprt{item, key_i};
+              else
+                match = false_exprt{}; // type mismatch → not equal
+            }
             in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
           }
           cmp = (op == "In") ? in_expr : not_exprt{in_expr};
