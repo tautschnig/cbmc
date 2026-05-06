@@ -3169,10 +3169,51 @@ exprt python_convertert::convert_compare(const jsont &expr)
                     : (found ? exprt{false_exprt{}} : exprt{true_exprt{}});
           }
           else
-            cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+            goto dict_in_symbolic;
         }
         else
-          cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+        {
+        dict_in_symbolic:
+          // Symbolic dict 'in': iterate keys and compare
+          const auto &dict_st = to_struct_type(container.type());
+          const auto &keys_type = to_array_type(dict_st.components()[1].type());
+          member_exprt length{container, "length", signedbv_typet{64}};
+          member_exprt keys{container, "keys", keys_type};
+          exprt in_expr = false_exprt{};
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt key_i = index_exprt{keys, idx};
+            exprt match;
+            if(
+              is_python_string_type(item.type()) &&
+              is_python_string_type(key_i.type()))
+            {
+              // Use string solver for key comparison
+              auto to_str = [](const exprt &s) -> exprt
+              {
+                if(s.id() == ID_struct && s.operands().size() == 2)
+                  return s;
+                return struct_exprt(
+                  {member_exprt(s, "length", signedbv_typet{64}),
+                   member_exprt(
+                     s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+                  s.type());
+              };
+              match = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                to_str(item),
+                to_str(key_i),
+                symbol_table,
+                pending_checks);
+            }
+            else
+              match = equal_exprt{item, key_i};
+            in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
+          }
+          cmp = (op == "In") ? in_expr : not_exprt{in_expr};
+        }
       }
       else if(is_python_tuple_type(container.type()))
       {
@@ -3922,17 +3963,17 @@ exprt python_convertert::convert_call(const jsont &expr)
           // Use string solver for non-constant upper/lower
           {
             // Decompose obj into struct for the solver
-            exprt src = (obj.id() == ID_struct && obj.operands().size() == 2)
-              ? obj
-              : exprt(struct_exprt(
-                  {member_exprt(obj, "length", signedbv_typet{64}),
-                   member_exprt(obj, "data",
-                     pointer_typet(unsignedbv_typet{8}, 64))},
-                  obj.type()));
+            exprt src =
+              (obj.id() == ID_struct && obj.operands().size() == 2)
+                ? obj
+                : exprt(struct_exprt(
+                    {member_exprt(obj, "length", signedbv_typet{64}),
+                     member_exprt(
+                       obj, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+                    obj.type()));
             return emit_string_function(
-              method_name == "upper"
-                ? ID_cprover_string_to_upper_case_func
-                : ID_cprover_string_to_lower_case_func,
+              method_name == "upper" ? ID_cprover_string_to_upper_case_func
+                                     : ID_cprover_string_to_lower_case_func,
               {src},
               symbol_table,
               pending_checks);
@@ -4592,9 +4633,8 @@ exprt python_convertert::convert_call(const jsont &expr)
             if(is_python_string_type(prefix.type()))
             {
               return emit_string_bool_function(
-                method_name == "startswith"
-                  ? ID_cprover_string_is_prefix_func
-                  : ID_cprover_string_is_suffix_func,
+                method_name == "startswith" ? ID_cprover_string_is_prefix_func
+                                            : ID_cprover_string_is_suffix_func,
                 prefix,
                 obj,
                 symbol_table,
@@ -5099,6 +5139,40 @@ exprt python_convertert::convert_call(const jsont &expr)
               pending_checks.push_back(code_frontend_assignt{
                 member_exprt{obj, "length", signedbv_typet{64}},
                 plus_exprt{length, arg_len}});
+            }
+            else if(is_python_string_type(arg.type()))
+            {
+              // extend with string: iterate characters
+              auto sv = extract_string_value(arg);
+              if(!sv.has_value() && arg.id() == ID_symbol)
+              {
+                auto it =
+                  string_constants.find(to_symbol_expr(arg).get_identifier());
+                if(it != string_constants.end())
+                  sv = it->second;
+              }
+              if(sv.has_value())
+              {
+                // Constant string: add each char as a single-char string
+                for(std::size_t i = 0; i < sv.value().size(); i++)
+                {
+                  exprt dst =
+                    plus_exprt{length, from_integer(i, signedbv_typet{64})};
+                  exprt ch_str =
+                    build_string_struct(std::string(1, sv.value()[i]));
+                  if(ch_str.type() != data_type.element_type())
+                    ch_str = safe_typecast(ch_str, data_type.element_type());
+                  pending_checks.push_back(
+                    code_frontend_assignt{index_exprt{data, dst}, ch_str});
+                }
+                pending_checks.push_back(code_frontend_assignt{
+                  member_exprt{obj, "length", signedbv_typet{64}},
+                  plus_exprt{
+                    length,
+                    from_integer(
+                      static_cast<long long>(sv.value().size()),
+                      signedbv_typet{64})}});
+              }
             }
           }
           return from_integer(0, python_int_type());
