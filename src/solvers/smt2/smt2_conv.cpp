@@ -960,6 +960,15 @@ void smt2_convt::convert_address_of_rec(
     convert_address_of_rec(if_expr.false_case(), result_type);
     out << ")";
   }
+  else if(expr.id() == ID_array)
+  {
+    // Array literal in address_of context — emit as a unique pointer constant.
+    // Each distinct array gets a unique address.
+    static unsigned array_addr_counter = 1;
+    std::size_t width = boolbv_width(result_type);
+    if(width == 0) width = 64;
+    out << "(_ bv" << (array_addr_counter++) << " " << width << ")";
+  }
   else
     INVARIANT(
       false,
