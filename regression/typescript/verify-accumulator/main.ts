@@ -1,13 +1,8 @@
-class Accumulator {
-  total: number;
-  count: number;
-  constructor() { this.total = 0; this.count = 0; }
-  add(x: number): void { this.total = this.total + x; this.count = this.count + 1; }
-  average(): number { return this.total / this.count; }
+function makeAcc(): (x: number) => number {
+  let total: number = 0;
+  return (x: number): number => { total = total + x; return total; };
 }
-const acc = new Accumulator();
-acc.add(10);
-acc.add(20);
-acc.add(30);
-console.assert(acc.count === 3);
-console.assert(acc.total === 60);
+const acc = makeAcc();
+console.assert(acc(5) === 5);
+console.assert(acc(3) === 8);
+console.assert(acc(2) === 10);
