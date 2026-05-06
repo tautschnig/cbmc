@@ -617,8 +617,23 @@ exprt typescript_convertert::convert_expression(const jsont &node)
               i < st.components().size() && i < src.operands().size();
               ++i)
           {
-            components.push_back(st.components()[i]);
-            fields.push_back(src.operands()[i]);
+            // Override existing field if name matches
+            std::string fname = id2string(st.components()[i].get_name());
+            bool overridden = false;
+            for(std::size_t ci = 0; ci < components.size(); ++ci)
+            {
+              if(id2string(components[ci].get_name()) == fname)
+              {
+                fields[ci] = src.operands()[i];
+                overridden = true;
+                break;
+              }
+            }
+            if(!overridden)
+            {
+              components.push_back(st.components()[i]);
+              fields.push_back(src.operands()[i]);
+            }
           }
         }
         continue;

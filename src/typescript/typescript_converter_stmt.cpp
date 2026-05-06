@@ -1546,7 +1546,6 @@ codet typescript_convertert::convert_return_statement(const jsont &node)
       if(!current_function.empty())
       {
         irep_idt fid{"typescript::" + current_function};
-        // Handle nested function names (Class::method)
         auto dot = current_function.find("::");
         if(dot == std::string::npos)
           fid = irep_idt{"typescript::" + current_function};
@@ -1557,6 +1556,16 @@ codet typescript_convertert::convert_return_statement(const jsont &node)
           if(ret_type.id() != ID_empty && val.type() != ret_type)
             val = typecast_exprt(val, ret_type);
         }
+      }
+      // Flush pending_stmts (e.g., constructor calls from NewExpression)
+      if(!pending_stmts.empty())
+      {
+        code_blockt block;
+        for(auto &s : pending_stmts)
+          block.add(std::move(s));
+        pending_stmts.clear();
+        block.add(code_frontend_returnt{val});
+        return std::move(block);
       }
       return code_frontend_returnt{val};
     }
