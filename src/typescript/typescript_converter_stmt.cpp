@@ -1572,7 +1572,15 @@ codet typescript_convertert::convert_block(const jsont &node)
 
   code_blockt block;
   for(const auto &stmt : to_json_array(stmts))
+  {
+    std::string sk = json_string(json_member(stmt, "_kind"));
     block.add(convert_statement(stmt));
+    // Dead code elimination: stop after unconditional control flow
+    if(
+      sk == "ReturnStatement" || sk == "BreakStatement" ||
+      sk == "ContinueStatement" || sk == "ThrowStatement")
+      break;
+  }
   return std::move(block);
 }
 

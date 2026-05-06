@@ -178,6 +178,13 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     if(angle != std::string::npos)
     {
       std::string base = ts_type.substr(0, angle);
+      // Promise<T> → T (async is treated as sync)
+      if(base == "Promise")
+      {
+        std::string inner =
+          ts_type.substr(angle + 1, ts_type.size() - angle - 2);
+        return convert_type(inner);
+      }
       auto base_it = class_types.find(base);
       if(base_it != class_types.end())
         return base_it->second;

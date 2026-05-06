@@ -94,6 +94,13 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
+    // Promise static methods: resolve/reject return the value directly
+    if(obj == "Promise")
+    {
+      if(args.is_array() && !to_json_array(args).empty())
+        return convert_expression(*to_json_array(args).begin());
+      return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
     // Array static methods
     if(obj == "Array" && method == "from")
     {
