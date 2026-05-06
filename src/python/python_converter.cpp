@@ -3062,7 +3062,16 @@ exprt python_convertert::convert_compare(const jsont &expr)
             goto done_cmp;
           }
         }
-        cmp = side_effect_expr_nondett{bool_typet(), source_locationt{}};
+        // Use string solver for non-constant string 'in' operator
+        {
+          exprt contains = emit_string_bool_function(
+            ID_cprover_string_contains_func,
+            container,
+            item,
+            symbol_table,
+            pending_checks);
+          cmp = (op == "In") ? contains : exprt(not_exprt{contains});
+        }
         goto done_cmp;
         const auto &data_type = array_typet(
           unsignedbv_typet{8},
@@ -3910,7 +3919,24 @@ exprt python_convertert::convert_call(const jsont &expr)
               c = (method_name == "upper") ? toupper(c) : tolower(c);
             return build_string_struct(result);
           }
-          return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+          // Use string solver for non-constant upper/lower
+          {
+            // Decompose obj into struct for the solver
+            exprt src = (obj.id() == ID_struct && obj.operands().size() == 2)
+              ? obj
+              : exprt(struct_exprt(
+                  {member_exprt(obj, "length", signedbv_typet{64}),
+                   member_exprt(obj, "data",
+                     pointer_typet(unsignedbv_typet{8}, 64))},
+                  obj.type()));
+            return emit_string_function(
+              method_name == "upper"
+                ? ID_cprover_string_to_upper_case_func
+                : ID_cprover_string_to_lower_case_func,
+              {src},
+              symbol_table,
+              pending_checks);
+          }
           const auto &data_type = array_typet(
             unsignedbv_typet{8},
             from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -4557,6 +4583,24 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "istitle" || method_name == "isidentifier" ||
           method_name == "isprintable")
         {
+          // Use solver for startswith/endswith on non-constant strings
+          if(
+            (method_name == "startswith" || method_name == "endswith") &&
+            args.is_array() && !as_array(args).empty())
+          {
+            exprt prefix = convert_expression(*as_array(args).begin());
+            if(is_python_string_type(prefix.type()))
+            {
+              return emit_string_bool_function(
+                method_name == "startswith"
+                  ? ID_cprover_string_is_prefix_func
+                  : ID_cprover_string_is_suffix_func,
+                prefix,
+                obj,
+                symbol_table,
+                pending_checks);
+            }
+          }
           return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
         }
         if(
