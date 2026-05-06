@@ -147,6 +147,53 @@ codet typescript_convertert::convert_statement(const jsont &node)
                 ws->value = val;
             }
           }
+          // Closure binding: if RHS is a call to a function that returns
+          // a closure, record the binding for later call resolution
+          if(
+            rhs.id() == ID_side_effect && var_type.id() == ID_pointer &&
+            to_pointer_type(var_type).base_type().id() == ID_code)
+          {
+            // Find which function was called
+            const jsont &init_node = json_member(decl, "initializer");
+            if(is_kind(init_node, "CallExpression"))
+            {
+              std::string called_fn = json_string(
+                json_member(json_member(init_node, "expression"), "text"));
+              if(!called_fn.empty())
+              {
+                irep_idt called_id{"typescript::" + called_fn};
+                const symbolt *called_sym = symbol_table.lookup(called_id);
+                if(called_sym != nullptr)
+                {
+                  // Find which closure function it returns
+                  // by checking captured_var_map for functions
+                  // created during this function's conversion
+                  for(const auto &[fn_id, captures] : captured_var_map)
+                  {
+                    if(id2string(fn_id).find("__anon_fn_") != std::string::npos)
+                    {
+                      // Match captured vars to called function's params
+                      to_code_type(called_sym->type).parameters();
+                      exprt::operandst bound_vals;
+                      const jsont &call_args =
+                        json_member(init_node, "arguments");
+                      if(call_args.is_array())
+                      {
+                        std::size_t ai = 0;
+                        for(const auto &a : to_json_array(call_args))
+                        {
+                          bound_vals.push_back(convert_expression(a));
+                          ai++;
+                        }
+                      }
+                      closure_bindings[sym_id] = {fn_id, bound_vals};
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

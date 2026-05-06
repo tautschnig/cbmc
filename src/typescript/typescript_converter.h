@@ -67,6 +67,14 @@ private:
   // Captured variables: func_id -> [(param_name, outer_symbol_id)]
   std::map<irep_idt, std::vector<std::pair<std::string, irep_idt>>>
     captured_var_map; // functions with rest params
+  // Closure bindings: variable → {function_id, bound_values}
+  // When a function returns a closure, the call site records the binding.
+  struct closure_bindingt
+  {
+    irep_idt function_id;
+    exprt::operandst bound_values;
+  };
+  std::map<irep_idt, closure_bindingt> closure_bindings;
   std::map<std::string, struct_typet> class_types;
   std::vector<codet> pending_stmts;
   // Default parameter values: func_id → {param_index → default_expr}

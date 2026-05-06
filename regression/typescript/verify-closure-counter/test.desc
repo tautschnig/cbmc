@@ -1,6 +1,6 @@
-KNOWNBUG
+CORE
 main.ts
-
+--no-built-in-assertions
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$

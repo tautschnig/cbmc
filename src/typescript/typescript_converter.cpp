@@ -328,7 +328,17 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   // ES2024 sec-arrow-function-definitions
   // Arrow functions in expression context (not variable initializer)
   if(kind == "ArrowFunction" || kind == "FunctionExpression")
-    return nil_exprt{}; // handled in convert_variable_statement
+  {
+    // Convert as a named function and return pointer to it
+    static unsigned anon_fn_ctr = 0;
+    std::string fn_name = "__anon_fn_" + std::to_string(anon_fn_ctr++);
+    convert_function_declaration_with_name(node, fn_name);
+    irep_idt fn_id{"typescript::" + fn_name};
+    const symbolt *fn_sym = symbol_table.lookup(fn_id);
+    if(fn_sym != nullptr)
+      return address_of_exprt{fn_sym->symbol_expr()};
+    return nil_exprt{};
+  }
   if(kind == "CallExpression")
     return convert_call_expression(node);
   // ES2024 sec-property-accessors

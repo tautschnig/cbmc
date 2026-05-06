@@ -2375,36 +2375,62 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     // Check for function-typed variable/parameter (higher-order function)
     if(sym == nullptr || sym->type.id() != ID_code)
     {
-      // Try as local variable: current_function::func_name
+      // Try as local variable or module-level variable
+      const symbolt *local_sym = nullptr;
       if(!current_function.empty())
       {
         irep_idt local_id{"typescript::" + current_function + "::" + func_name};
-        const symbolt *local_sym = symbol_table.lookup(local_id);
-        if(
-          local_sym != nullptr && (local_sym->type.id() == ID_pointer ||
-                                   local_sym->type.id() == ID_code))
+        local_sym = symbol_table.lookup(local_id);
+      }
+      if(local_sym == nullptr)
+      {
+        irep_idt global_id{"typescript::" + func_name};
+        local_sym = symbol_table.lookup(global_id);
+      }
+      if(
+        local_sym != nullptr &&
+        (local_sym->type.id() == ID_pointer || local_sym->type.id() == ID_code))
+      {
+        // This is a function-typed parameter — emit indirect call
+        exprt::operandst arguments;
+        if(args.is_array())
         {
-          // This is a function-typed parameter — emit indirect call
-          exprt::operandst arguments;
-          if(args.is_array())
-          {
-            for(const auto &arg : to_json_array(args))
-              arguments.push_back(convert_expression(arg));
-          }
-          // Determine return type from the pointer/code type
-          typet ret_type = double_type();
-          typet callee_type = local_sym->type;
-          if(callee_type.id() == ID_pointer)
-            callee_type = to_pointer_type(callee_type).base_type();
-          if(callee_type.id() == ID_code)
-            ret_type = to_code_type(callee_type).return_type();
-          // Dereference if pointer
-          exprt callee_expr = local_sym->symbol_expr();
-          if(local_sym->type.id() == ID_pointer)
-            callee_expr = dereference_exprt{callee_expr};
-          return side_effect_expr_function_callt{
-            callee_expr, std::move(arguments), ret_type, get_location(node)};
+          for(const auto &arg : to_json_array(args))
+            arguments.push_back(convert_expression(arg));
         }
+        // Determine return type from the pointer/code type
+        typet ret_type = double_type();
+        typet callee_type = local_sym->type;
+        if(callee_type.id() == ID_pointer)
+          callee_type = to_pointer_type(callee_type).base_type();
+        if(callee_type.id() == ID_code)
+          ret_type = to_code_type(callee_type).return_type();
+        // Check for closure binding
+        auto cb_it = closure_bindings.find(local_sym->name);
+        if(cb_it != closure_bindings.end())
+        {
+          // Call the bound function with original args + captured values
+          const auto &binding = cb_it->second;
+          const symbolt *fn = symbol_table.lookup(binding.function_id);
+          if(fn != nullptr)
+          {
+            exprt::operandst full_args = arguments;
+            for(const auto &bv : binding.bound_values)
+              full_args.push_back(bv);
+            typet fn_ret = to_code_type(fn->type).return_type();
+            return side_effect_expr_function_callt{
+              fn->symbol_expr(),
+              std::move(full_args),
+              fn_ret,
+              get_location(node)};
+          }
+        }
+        // Dereference if pointer
+        exprt callee_expr = local_sym->symbol_expr();
+        if(local_sym->type.id() == ID_pointer)
+          callee_expr = dereference_exprt{callee_expr};
+        return side_effect_expr_function_callt{
+          callee_expr, std::move(arguments), ret_type, get_location(node)};
       }
     }
     if(sym != nullptr && sym->type.id() == ID_code)
