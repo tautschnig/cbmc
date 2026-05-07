@@ -100,6 +100,28 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return convert_expression(*to_json_array(args).begin());
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
+    // ES2024 sec-array.isarray — returns true iff the argument has
+    // array type (a struct with data+length, our typescript_array).
+    if(obj == "Array" && method == "isArray")
+    {
+      if(args.is_array() && !to_json_array(args).empty())
+      {
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        if(arg.is_nil())
+          return false_exprt{};
+        // Our arrays are struct with array-typed data field.
+        if(arg.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(arg.type());
+          // Typescript strings are also struct{length, data} — exclude.
+          if(
+            st.has_component("data") && st.has_component("length") &&
+            !is_typescript_string_type(arg.type()))
+            return true_exprt{};
+        }
+      }
+      return false_exprt{};
+    }
     // ES2024 sec-array.from
     if(obj == "Array" && method == "from")
     {
@@ -2647,9 +2669,17 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         else if(method == "pow" && arg_vals.size() >= 2)
           res = std::pow(arg_vals[0], arg_vals[1]);
         else if(method == "max" && arg_vals.size() >= 2)
-          res = std::max(arg_vals[0], arg_vals[1]);
+        {
+          res = arg_vals[0];
+          for(std::size_t i = 1; i < arg_vals.size(); i++)
+            res = std::max(res, arg_vals[i]);
+        }
         else if(method == "min" && arg_vals.size() >= 2)
-          res = std::min(arg_vals[0], arg_vals[1]);
+        {
+          res = arg_vals[0];
+          for(std::size_t i = 1; i < arg_vals.size(); i++)
+            res = std::min(res, arg_vals[i]);
+        }
         else
           ok = false;
         if(ok)

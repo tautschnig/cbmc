@@ -1,4 +1,6 @@
-// ES2024 sec-optional-chains: ?.
-const obj = { x: 42 };
-const val: number = obj?.x ?? 0;
-console.assert(val === 42);
+// KNOWNBUG: o?.x doesn't short-circuit on null/undefined.
+// ES2024 sec-optional-chains (§13.3.9)
+interface Obj { x?: { y?: number; }; }
+const o: Obj = {};
+const v: number | undefined = o.x?.y;
+console.assert(v === undefined);

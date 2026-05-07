@@ -1,4 +1,5 @@
-// ES2024 sec-nullish-coalescing: ??
-const x: number = 42;
-const y: number = x ?? 0;
-console.assert(y === 42);
+// KNOWNBUG: a ?? b returns a instead of b when a is undefined.
+// ES2024 sec-logical-nullish-assignment (§13.13)
+const a: number | undefined = undefined;
+const b: number = a ?? 10;
+console.assert(b === 10);

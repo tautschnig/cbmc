@@ -5,4 +5,4 @@ main.ts
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-Optional chaining not short-circuiting on missing properties
+Set.has not tracking membership (Map.has works)
