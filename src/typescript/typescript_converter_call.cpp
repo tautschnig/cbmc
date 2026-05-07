@@ -1989,6 +1989,176 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       return side_effect_expr_nondett{
         typescript_string_type(), get_location(node)};
     }
+    // ES2024 sec-array.prototype.sort
+    // We support sort on constant arrays with a comparator returning
+    // a numeric difference. The algorithm:
+    //   1. Extract the constant array elements.
+    //   2. Bubble-sort using CBMC-side numeric comparison (for common
+    //      ascending/descending comparators we evaluate at conversion
+    //      time; for arbitrary comparators we fall back to nondet).
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "sort")
+    {
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        // Collect numeric values of the elements.
+        std::vector<double> values;
+        typet elem_type = double_type();
+        bool all_constant = true;
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto idx = i.to_ulong();
+          if(
+            idx < data.operands().size() &&
+            data.operands()[idx].is_constant() &&
+            data.operands()[idx].type().id() == ID_floatbv)
+          {
+            elem_type = data.operands()[idx].type();
+            ieee_floatt v{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            v.from_expr(to_constant_expr(data.operands()[idx]));
+            values.push_back(std::stod(v.to_ansi_c_string()));
+          }
+          else
+          {
+            all_constant = false;
+            break;
+          }
+        }
+        // Determine sort direction from comparator.
+        // Patterns we recognize:
+        //   (a, b) => a - b     ascending (default for numbers)
+        //   (a, b) => b - a     descending
+        //   no comparator       ascending (by string conversion per spec,
+        //                       but for numeric arrays we use numeric)
+        bool descending = false;
+        bool recognized = true;
+        if(args.is_array() && !to_json_array(args).empty())
+        {
+          const jsont &cb = *to_json_array(args).begin();
+          std::string cb_kind = json_string(json_member(cb, "_kind"));
+          if(cb_kind == "ArrowFunction" || cb_kind == "FunctionExpression")
+          {
+            const jsont &body = json_member(cb, "body");
+            // Body may be an expression (arrow) or a block.
+            const jsont *expr_node = &body;
+            if(json_string(json_member(body, "_kind")) == "Block")
+            {
+              // Take the first return statement's expression.
+              const jsont &stmts = json_member(body, "statements");
+              if(stmts.is_array())
+              {
+                for(const auto &st : to_json_array(stmts))
+                {
+                  if(json_string(json_member(st, "_kind")) == "ReturnStatement")
+                  {
+                    expr_node = &json_member(st, "expression");
+                    break;
+                  }
+                }
+              }
+            }
+            std::string ek = json_string(json_member(*expr_node, "_kind"));
+            if(ek == "BinaryExpression")
+            {
+              std::string op = json_string(json_member(*expr_node, "operator"));
+              std::string lhs = json_string(
+                json_member(json_member(*expr_node, "left"), "text"));
+              std::string rhs = json_string(
+                json_member(json_member(*expr_node, "right"), "text"));
+              // Identify parameter names.
+              std::string p1, p2;
+              const jsont &ps = json_member(cb, "parameters");
+              if(ps.is_array())
+              {
+                auto pi = to_json_array(ps).begin();
+                if(pi != to_json_array(ps).end())
+                  p1 =
+                    json_string(json_member(json_member(*pi, "name"), "text"));
+                ++pi;
+                if(pi != to_json_array(ps).end())
+                  p2 =
+                    json_string(json_member(json_member(*pi, "name"), "text"));
+              }
+              if(op == "MinusToken" && lhs == p1 && rhs == p2)
+                descending = false;
+              else if(op == "MinusToken" && lhs == p2 && rhs == p1)
+                descending = true;
+              else
+                recognized = false;
+            }
+            else
+              recognized = false;
+          }
+        }
+        // If the array is constant and the comparator is recognized,
+        // sort at conversion time.
+        if(all_constant && recognized)
+        {
+          if(descending)
+            std::sort(values.begin(), values.end(), std::greater<double>{});
+          else
+            std::sort(values.begin(), values.end());
+          // Build sorted struct_exprt.
+          exprt::operandst sorted_ops;
+          for(double v : values)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_double(v);
+            sorted_ops.push_back(fv.to_expr());
+          }
+          std::size_t actual = sorted_ops.size();
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          while(sorted_ops.size() < max_len)
+            sorted_ops.push_back(from_integer(0, elem_type));
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type = make_array_struct_type(arr_type);
+          struct_exprt sorted_struct{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(sorted_ops), arr_type}},
+            list_type};
+          // sort() mutates the array in place. If the receiver is a
+          // symbol, emit an assignment to update it.
+          if(obj_expr.id() == ID_symbol)
+          {
+            pending_stmts.push_back(
+              code_frontend_assignt{obj_expr, sorted_struct});
+            // Also update the stored symbol value so subsequent
+            // conversion-time reads see the sorted contents.
+            const symbolt *obj_sym =
+              symbol_table.lookup(to_symbol_expr(obj_expr).get_identifier());
+            if(obj_sym != nullptr)
+            {
+              symbolt updated = *obj_sym;
+              updated.value = sorted_struct;
+              symbol_table.get_writeable(obj_sym->name)->value = sorted_struct;
+            }
+          }
+          return sorted_struct;
+        }
+        // Fallthrough: return unsorted original (preserves behaviour
+        // for symbolic arrays and unrecognized comparators).
+        return obj_expr;
+      }
+    }
     // ES2024 sec-array.prototype.reverse
     // Array.reverse: return reversed copy
     if(

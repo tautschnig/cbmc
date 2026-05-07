@@ -425,12 +425,24 @@ codet typescript_convertert::convert_statement(const jsont &node)
       {
         std::string mname =
           json_string(json_member(json_member(m, "name"), "text"));
-        // Check for explicit initializer
+        std::string qn = "typescript::" + enum_name + "." + mname;
+        irep_idt sid{qn};
+        // Check for explicit initializer and detect string-typed init.
         const jsont &init = json_member(m, "initializer");
+        bool has_string_init = false;
+        std::string string_val;
         if(init.is_object())
         {
           exprt val = convert_expression(init);
-          if(val.is_constant())
+          // String initializer → string enum member.
+          if(is_typescript_string_type(val.type()))
+          {
+            has_string_init = true;
+            std::string raw = extract_string_value(val);
+            if(!raw.empty())
+              string_val = raw.substr(2); // strip "S:" prefix
+          }
+          else if(val.is_constant())
           {
             if(val.type().id() == ID_floatbv)
             {
@@ -449,23 +461,37 @@ codet typescript_convertert::convert_statement(const jsont &node)
           }
         }
         // Create symbol: EnumName.MemberName = value
-        std::string qn = "typescript::" + enum_name + "." + mname;
-        irep_idt sid{qn};
         if(symbol_table.lookup(sid) == nullptr)
         {
-          symbolt s{sid, double_type(), "typescript"};
-          s.base_name = enum_name + "." + mname;
-          s.is_lvalue = true;
-          s.is_state_var = true;
-          s.is_static_lifetime = true;
-          // Store as float constant
-          uint64_t bits;
-          double dval = static_cast<double>(value);
-          std::memcpy(&bits, &dval, sizeof(bits));
-          s.value = constant_exprt{
-            integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
-            double_type()};
-          symbol_table.add(s);
+          if(has_string_init)
+          {
+            // String enum member: store as typescript_string.
+            symbolt s{sid, typescript_string_type(), "typescript"};
+            s.base_name = enum_name + "." + mname;
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            s.is_static_lifetime = true;
+            s.value = convert_string_literal_from_text(string_val);
+            symbol_table.add(s);
+            // Track the value so member access can resolve it.
+            string_constants[sid] = string_val;
+          }
+          else
+          {
+            symbolt s{sid, double_type(), "typescript"};
+            s.base_name = enum_name + "." + mname;
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            s.is_static_lifetime = true;
+            // Store as float constant
+            uint64_t bits;
+            double dval = static_cast<double>(value);
+            std::memcpy(&bits, &dval, sizeof(bits));
+            s.value = constant_exprt{
+              integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
+              double_type()};
+            symbol_table.add(s);
+          }
         }
         value++;
       }
