@@ -25,7 +25,7 @@ the column shows `—`.
 | String literals | ✅ |  | `string-length`, `string-equality` |
 | Boolean literals | ✅ |  | `boolean-logic`, `boolean-not` |
 | Template literals | ✅ | With interpolation | `template-literal`, `template-literal-complex` |
-| `undefined`, `null` | ⚠️ | Union-field works; nullish operators limited | `null-safety`, `null-union-function`, `nullish-coalescing` [KNOWNBUG] |
+| `undefined`, `null` | ✅ | Both modeled as NaN sentinel; nullish operators (`??`) work; optional chaining (`?.`) limited | `null-safety`, `null-union-function`, `nullish-coalescing` |
 | Variable declarations | ✅ |  | (covered implicitly in all tests) |
 | Arithmetic operators | ✅ |  | `verify-modular-arithmetic`, `power-math` |
 | Comparison operators | ✅ | NaN handling per IEEE 754 | `number-comparison`, `nan-check-div` |
@@ -36,7 +36,7 @@ the column shows `—`.
 | instanceof operator | ✅ |  | `instanceof-check` |
 | in operator | ✅ | Including narrowing | `in-operator` |
 | Conditional operator (`? :`) | ✅ |  | `ternary`, `ternary-nested`, `ternary-number` |
-| Nullish coalescing (`??`) (ES2024 §13.13) | ❌ | Returns LHS when LHS is undefined | `nullish-coalescing` [KNOWNBUG] |
+| Nullish coalescing (`??`) (ES2024 §13.13) | ✅ | Fixed 2026-05-07 via NaN sentinel | `nullish-coalescing` |
 | Optional chaining (`?.`) (ES2024 §13.3.9) | ❌ | Doesn't short-circuit | `optional-chaining` [KNOWNBUG] |
 | String-to-number coercion (`+s`) | ❌ | `+"42"` doesn't parse | — |
 | Number-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07 | `string-concat-number-coerce` |
@@ -129,7 +129,7 @@ the column shows `—`.
 | Enum arithmetic / bitflags | ✅ |  | `enum-arithmetic`, `enum-bitflags` |
 | Enums in switch | ✅ |  | `enum-switch` |
 | Enums in condition | ✅ |  | `enum-condition` |
-| String enums | ❌ | Values not tracked | `enum-string-values` [KNOWNBUG] |
+| String enums | ✅ | Fixed 2026-05-07 | `enum-string-values` |
 
 ## Destructuring
 
@@ -150,7 +150,7 @@ the column shows `—`.
 |--------|--------|-------|---------|
 | `length` | ✅ |  | `array-length-check`, `array-length-nondet` |
 | `push` | ✅ |  | `array-empty-push`, `spread-and-push` |
-| `pop` return | ⚠️ | Mutates OK, return not tracked | `array-pop-return` [KNOWNBUG] |
+| `pop` return | ✅ | Fixed 2026-05-07 | `array-pop-return` |
 | `map`, `filter`, `reduce` | ✅ |  | `array-map-arrow`, `array-filter`, `array-reduce` |
 | `forEach` | ⚠️ | (no dedicated test) | — |
 | `find`, `findIndex` | ✅ |  | `array-find`, `array-findIndex` |
@@ -162,7 +162,7 @@ the column shows `—`.
 | `join` | ✅ |  | `array-join` |
 | `reverse`, `fill` | ✅ |  | `array-fill` |
 | `at` | ✅ |  | `array-at` |
-| `sort` (with comparator) | ❌ | Not implemented | `array-sort-comparator` [KNOWNBUG] |
+| `sort` (with comparator) | ✅ | Fixed 2026-05-07 (recognizes `(a,b)=>a-b` and `(a,b)=>b-a` patterns for constant arrays) | `array-sort-comparator` |
 | `Array.from` | ✅ |  | `array-from`, `array-from-pattern` |
 | `Array.isArray` | ✅ | Fixed 2026-05-07 | `array-is-array` |
 | Spread `[...arr]` | ✅ |  | `array-copy-spread`, `spread-and-push` |
@@ -172,15 +172,25 @@ the column shows `—`.
 | Feature | Status | Notes | Test(s) |
 |--------|--------|-------|---------|
 | `length` | ✅ |  | `string-length`, `string-length-check` |
-| Concatenation | ✅ |  | `string-concat`, `string-concat-multi` |
+| Concatenation (`+`) | ✅ |  | `string-concat`, `string-concat-multi` |
+| Concatenation (`concat` method) | ✅ | Fixed 2026-05-07 | `string-concat-method` |
 | Split | ✅ |  | `string-split` |
 | Replace / replaceAll | ✅ |  | `string-replace`, `string-replaceAll`, `string-replaceAll-multi` |
 | Slice | ✅ |  | `string-slice`, `string-slice-negative` |
-| Repeat | ✅ |  | `string-repeat` |
+| Substring (with spec-compliant swap) | ✅ | Fixed 2026-05-07 | `string-substring-swap` |
+| Repeat | ✅ | Safety-capped at 10000 | `string-repeat` |
 | String-number conversion | ⚠️ |  | `string-number-convert` |
 | Multi-method chains | ✅ |  | `string-methods-chain`, `string-methods-combined` |
 | Comparison | ✅ |  | `string-comparison-ops`, `string-equality` |
+| `indexOf` (with fromIndex) | ✅ | fromIndex fixed 2026-05-07 | `string-indexof-fromindex` |
+| `lastIndexOf` | ✅ | Added 2026-05-07 | `string-last-index-of` |
+| `startsWith` / `endsWith` (with position) | ✅ | Position arg fixed 2026-05-07 | `string-starts-ends-position` |
+| `padStart` / `padEnd` (short-circuit) | ✅ | Fixed 2026-05-07 | `string-pad-short-circuit` |
+| `padStart` / `padEnd` (multi-char pad) | ✅ | Fixed 2026-05-07 | `string-pad-multichar` |
+| `trim` | ✅ |  | (covered in `string-methods`) |
+| `trimStart` / `trimEnd` | ✅ | Added 2026-05-07 | `string-trim-start-end` |
 | `charCodeAt`, `String.fromCharCode` | ❌ | Not implemented | — |
+| Empty-string receiver | ⚠️ | Most methods bypass empty-string receivers | — |
 
 ### Map (ES2024 §24.1)
 
@@ -196,7 +206,7 @@ the column shows `—`.
 | Method | Status | Notes | Test(s) |
 |--------|--------|-------|---------|
 | `add`, `delete`, `size` | ✅ |  | `map-set-basic` (Set constructor path) |
-| `has` | ❌ | Not tracking membership | `set-has` [KNOWNBUG] |
+| `has` | ✅ | Fixed 2026-05-07 (numeric Sets; string Sets limited by data-type hardcoding) | `set-has` |
 | Iteration | ⚠️ |  | `set-iteration` |
 
 ### Math (ES2024 §21.3)
@@ -265,24 +275,19 @@ the column shows `—`.
 | `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
 | `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## KNOWNBUG tests (9)
+## KNOWNBUG tests (4)
 
 | Test | Symptom | ES2024 / TSH ref |
 |------|---------|------------------|
 | `async-race-undetected` | Sequential async misses unobserved-race bugs (opt-in fix via `--ts-async-threading`) | §27.2 |
 | `integration-url-parser` | Nested symbolic string ops exceed solver capacity | §22.1 |
 | `generic-heterogeneous-tuple` | `[A, B]` return with mixed types fails type unification | TSH Generics |
-| `array-pop-return` | pop() return value not tracked | §23.1 |
-| `array-sort-comparator` | Array.prototype.sort with comparator not implemented | §23.1 |
-| `enum-string-values` | String enum values not tracked | TSH Enums |
-| `set-has` | Set.has not tracking membership | §24.2 |
-| `nullish-coalescing` | `??` not returning RHS when LHS undefined | §13.13 |
-| `optional-chaining` | `?.` not short-circuiting | §13.3.9 |
+| `optional-chaining` | `?.` doesn't short-circuit on missing struct-typed optional fields (parser emits `optional` flag but struct model lacks per-field undefined tracking) | §13.3.9 |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 
-The five bugs below were found during the 2026-05-07 spec cross-referencing
-session. They do NOT have `[KNOWNBUG]` tests because each was fixed in
+The bugs below were found during spec cross-referencing and the soundness
+review. They do NOT have `[KNOWNBUG]` tests because each was fixed in
 the same commit that discovered it. The CORE tests below serve as the
 regression guards — if the fix regresses, the CORE test fails and CI
 catches it.
@@ -294,6 +299,19 @@ catches it.
 | `object-destructuring-rename` | `const { a: renamed } = obj` didn't resolve `propertyName` | 83dd85424d |
 | `array-is-array` | `Array.isArray([1,2])` returned nondet | 508444ebb9 |
 | `math-max-min-variadic` | `Math.max(1, 2, 3)` only used first two args | 508444ebb9 |
+| `array-pop-return` | pop() return value overwritten by length update | 227e96573e |
+| `set-has` | Set.has returned nondet (no membership tracking) | 227e96573e |
+| `enum-string-values` | String enum members stored as numeric indexes | f15b3fd719 |
+| `array-sort-comparator` | sort with comparator was a no-op | f15b3fd719 |
+| `nullish-coalescing` | `??` always returned LHS (undefined model wrong) | 38a8e3af91 |
+| `string-pad-short-circuit` | padStart/padEnd truncated when length ≥ target | e0b7c2e7e2 |
+| `string-trim-start-end` | trimStart / trimEnd not implemented | e0b7c2e7e2 |
+| `string-substring-swap` | substring didn't swap start/end per spec | 85943286fc |
+| `string-indexof-fromindex` | indexOf ignored fromIndex arg | 85943286fc |
+| `string-starts-ends-position` | startsWith/endsWith ignored position arg | 85943286fc |
+| `string-concat-method` | String.prototype.concat not implemented | fa68297ded |
+| `string-last-index-of` | String.prototype.lastIndexOf not implemented | fa68297ded |
+| `string-pad-multichar` | Multi-char pad pattern not truncated per spec | fa68297ded |
 
 ## Overall assessment
 
