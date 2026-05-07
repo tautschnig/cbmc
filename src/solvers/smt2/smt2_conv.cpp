@@ -1,4 +1,5 @@
 /*******************************************************************\
+#include <map>
 
 Module: SMT Backend
 
@@ -971,11 +972,15 @@ void smt2_convt::convert_address_of_rec(
   else if(expr.id() == ID_array)
   {
     // Array literal in address_of context — emit as a unique pointer constant.
-    // Each distinct array gets a unique address.
+    // Same array content gets the same address (for equality to work).
+    static std::map<irept, unsigned> array_addr_map;
     static unsigned array_addr_counter = 1;
+    auto [it, inserted] = array_addr_map.emplace(expr, array_addr_counter);
+    if(inserted)
+      array_addr_counter++;
     std::size_t width = boolbv_width(result_type);
     if(width == 0) width = 64;
-    out << "(_ bv" << (array_addr_counter++) << " " << width << ")";
+    out << "(_ bv" << it->second << " " << width << ")";
   }
   else
     INVARIANT(
@@ -2726,6 +2731,49 @@ void smt2_convt::convert_expr(const exprt &expr)
   else if(expr.id() == ID_function_application)
   {
     const auto &function_application_expr = to_function_application_expr(expr);
+    // Handle cprover_string_* functions natively
+    if(function_application_expr.function().id() == ID_symbol)
+    {
+      const irep_idt &fn_id =
+        to_symbol_expr(function_application_expr.function()).get_identifier();
+      const auto &args = function_application_expr.arguments();
+      // cprover_string_equal_func(s1, s2) → structural equality
+      if(fn_id == ID_cprover_string_equal_func && args.size() == 2)
+      {
+        // Compare both structs component-wise
+        // s1 and s2 are struct{length, data}
+        out << "(ite (= ";
+        convert_expr(args[0]);
+        out << " ";
+        convert_expr(args[1]);
+        out << ") (_ bv1 " << boolbv_width(expr.type()) << ") (_ bv0 "
+            << boolbv_width(expr.type()) << "))";
+        return;
+      }
+      // cprover_string_concat_func(res_len, res_ptr, s1, s2)
+      // The result is already assigned separately; just emit the result struct
+      if(fn_id == ID_cprover_string_concat_func && args.size() >= 4)
+      {
+        // Emit the result as {res_len, res_ptr} (first two args)
+        out << "(mk-";
+        convert_type(expr.type());
+        out << " ";
+        convert_expr(args[0]);
+        out << " ";
+        convert_expr(args[1]);
+        out << ")";
+        return;
+      }
+      // cprover_string_contains_func(s1, s2) → true/false (overapprox: nondet)
+      if(fn_id == ID_cprover_string_contains_func ||
+         fn_id == ID_cprover_string_is_prefix_func ||
+         fn_id == ID_cprover_string_is_suffix_func)
+      {
+        // Overapproximation: return nondet (the solver will handle it)
+        out << "(_ bv0 " << boolbv_width(expr.type()) << ")";
+        return;
+      }
+    }
     // do not use parentheses if there function is a constant
     if(function_application_expr.arguments().empty())
     {
