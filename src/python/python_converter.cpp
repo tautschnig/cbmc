@@ -1348,6 +1348,28 @@ exprt python_convertert::convert_expression(const jsont &expr)
   {
     result = convert_expression(json_member(expr, "value"));
   }
+  // PLR §6.3.3: slicings (x[a:b], x[a:b:c]). A full precise model is
+  // out of scope for Step 1 of the module support plan, but emitting
+  // a warning on every occurrence (281+ across the stdlib corpus)
+  // drowns out actually actionable diagnostics. Treat a Slice node
+  // as a nondet integer here; the enclosing Subscript handler falls
+  // back to a nondet result when it can't fold the slice, so the
+  // observable behaviour is unchanged — we just stop screaming.
+  else if(node_type == "Slice")
+  {
+    result = side_effect_expr_nondett{python_int_type(), source_locationt{}};
+  }
+  // Quieten yield-expression warnings. Proper generator support is
+  // tracked by Step 2 / later work; for Step 1 we just want to parse
+  // the surrounding function body without the warning flood.
+  else if(node_type == "Yield" || node_type == "YieldFrom")
+  {
+    const jsont &v = json_member(expr, "value");
+    if(!v.is_null())
+      result = convert_expression(v);
+    else
+      result = side_effect_expr_nondett{python_int_type(), source_locationt{}};
+  }
   else
   {
     log.warning() << "Unsupported Python expression type: " << node_type
