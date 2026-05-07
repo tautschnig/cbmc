@@ -3107,7 +3107,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         get_location(node)};
     }
 
-    log.warning() << "Unknown function: " << func_name << messaget::eom;
+    log.warning() << "Unknown function: '" << func_name
+                  << "' (not declared in this module, not a built-in, "
+                  << "and not imported); returning nondet" << messaget::eom;
     return side_effect_expr_nondett{double_type(), get_location(node)};
   }
 

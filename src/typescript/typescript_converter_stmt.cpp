@@ -1067,7 +1067,9 @@ codet typescript_convertert::convert_statement(const jsont &node)
     kind == "ImportDeclaration" || kind == "ExportDeclaration" ||
     kind == "ExportAssignment")
     return code_skipt{};
-  log.warning() << "Unsupported statement kind: " << kind << messaget::eom;
+  log.warning() << "Unsupported statement kind: " << kind
+                << " (not yet implemented in TypeScript frontend); "
+                << "skipping" << messaget::eom;
   return code_skipt{};
 }
 

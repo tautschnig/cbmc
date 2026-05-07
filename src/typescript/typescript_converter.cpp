@@ -1094,7 +1094,9 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   // ES2024 sec-spread-element
   if(kind == "SpreadElement")
     return convert_expression(json_member(node, "expression"));
-  log.warning() << "Unsupported expression: " << kind << messaget::eom;
+  log.warning() << "Unsupported expression: " << kind
+                << " (not yet implemented in TypeScript frontend); "
+                << "returning nondet" << messaget::eom;
   // Return nondet instead of nil for graceful degradation
   std::string ts_type = json_string(json_member(node, "_type"));
   if(!ts_type.empty())
@@ -1305,7 +1307,9 @@ exprt typescript_convertert::convert_identifier(const jsont &node)
   if(sym != nullptr)
     return sym->symbol_expr();
 
-  log.warning() << "Unknown identifier: " << name << messaget::eom;
+  log.warning() << "Unknown identifier: '" << name
+                << "' (likely a missing import or module-scoped symbol); "
+                << "returning nondet" << messaget::eom;
   return side_effect_expr_nondett{double_type(), get_location(node)};
 }
 
@@ -1739,7 +1743,9 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
   }
 
-  log.warning() << "Unsupported binary operator: " << op << messaget::eom;
+  log.warning() << "Unsupported binary operator: " << op
+                << " (please file an issue with a minimal reproduction); "
+                << "returning nondet" << messaget::eom;
   return nil_exprt{};
 }
 
