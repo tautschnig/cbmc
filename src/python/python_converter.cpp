@@ -2552,8 +2552,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   }
   else
   {
-    log.error() << "Unsupported binary operator: " << op << messaget::eom;
-    return nil_exprt{};
+    log.debug() << "Unsupported binary operator: " << op << messaget::eom;
+    return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
 }
 
@@ -2588,10 +2588,18 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
     return operand;
   else if(op == "Not")
     return not_exprt{safe_typecast(operand, bool_typet{})};
+  else if(op == "Invert")
+  {
+    // PLR §6.7: bitwise ~x. Promote bool to int, then bitnot.
+    exprt cast_operand = operand.type().id() == ID_bool
+                           ? safe_typecast(operand, python_int_type())
+                           : operand;
+    return bitnot_exprt{cast_operand};
+  }
   else
   {
-    log.error() << "Unsupported unary operator: " << op << messaget::eom;
-    return nil_exprt{};
+    log.debug() << "Unsupported unary operator: " << op << messaget::eom;
+    return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
 }
 
@@ -2639,8 +2647,8 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
     }
     else
     {
-      log.error() << "Unsupported bool operator: " << op << messaget::eom;
-      return nil_exprt{};
+      log.debug() << "Unsupported bool operator: " << op << messaget::eom;
+      return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
     }
   }
 
@@ -3414,8 +3422,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else
     {
-      log.error() << "Unsupported comparison operator: " << op << messaget::eom;
-      return nil_exprt{};
+      log.debug() << "Unsupported comparison operator: " << op << messaget::eom;
+      return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
     }
 
   done_cmp:
@@ -10735,7 +10743,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   }
   else
   {
-    log.error() << "Unsupported augmented assignment operator: " << op
+    log.debug() << "Unsupported augmented assignment operator: " << op
                 << messaget::eom;
     return code_skipt{};
   }
