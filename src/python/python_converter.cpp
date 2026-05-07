@@ -8541,6 +8541,19 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       return member_exprt{value, attr, st.get_component(attr).type()};
   }
 
+  // Quieter path for module attribute accesses: when the base is a
+  // symbol we registered for an imported module (python_value type),
+  // or any tagged python_value, don't warn — the value is already a
+  // nondet over-approximation. Proper modelling belongs to Step 2.
+  const bool base_is_module_value =
+    (value.type().id() == ID_struct_tag &&
+     id2string(to_struct_tag_type(value.type()).get_identifier()) ==
+       std::string{PYTHON_VALUE_TAG});
+  if(base_is_module_value)
+  {
+    return side_effect_expr_nondett{python_int_type(), source_locationt{}};
+  }
+
   log.warning() << "Cannot access attribute '" << attr << "', using nondet"
                 << messaget::eom;
   return side_effect_expr_nondett{python_int_type(), source_locationt{}};
@@ -9017,7 +9030,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
           if(asname.empty())
             asname = name;
           imported_modules.insert(asname);
-          // Module resolved on-demand when functions are called
+          // Module symbol was registered in Pass 0.1 so function
+          // bodies processed earlier can already see it.
         }
       }
     }
@@ -13215,7 +13229,20 @@ bool python_convertert::convert()
             if(asname.empty())
               asname = name;
             imported_modules.insert(asname);
-            // Module resolved on-demand when types/functions are needed
+            // Bind the imported module's name as a module symbol so
+            // that attribute accesses and calls on it don't resolve
+            // as 'Unknown variable'. Under-approximated as a nondet
+            // value; proper modelling belongs to Step 2.
+            irep_idt mod_sym_id{"python::" + asname};
+            if(symbol_table.lookup(mod_sym_id) == nullptr)
+            {
+              symbolt mod_sym{mod_sym_id, python_value_type(), "python"};
+              mod_sym.base_name = asname;
+              mod_sym.is_lvalue = true;
+              mod_sym.is_state_var = true;
+              mod_sym.is_static_lifetime = true;
+              symbol_table.add(mod_sym);
+            }
           }
         }
       }
