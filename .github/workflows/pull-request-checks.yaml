@@ -263,8 +263,6 @@ jobs:
           ls *.deb
       - name: Run tests
         run: cd build; ctest . -V -L CORE -j${{env.linux-vcpus}}
-      - name: Run TypeScript npm integration tests
-        run: integration/typescript-npm/run_tests.sh
       - name: Check cleanup
         run: |
           rm -r build

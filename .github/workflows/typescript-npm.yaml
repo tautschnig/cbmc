@@ -1,0 +1,43 @@
+name: TypeScript npm integration tests
+
+on:
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  typescript-npm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install Packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -yq cmake ninja-build gcc g++ flex bison ccache curl jq
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-ts-npm-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-24.04-ts-npm-${{ github.ref }}
+            ${{ runner.os }}-24.04-ts-npm
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+      - name: Zero ccache stats and limit in size
+        run: ccache -z --max-size=500M
+      - name: Configure using CMake
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build cbmc
+        run: cmake --build build --target cbmc -j4
+      - name: Print ccache stats
+        run: ccache -s
+      - name: Run TypeScript npm integration tests
+        run: integration/typescript-npm/run_tests.sh

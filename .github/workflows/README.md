@@ -20,6 +20,9 @@ The files in this folder correspond to:
 * `release-packages.yaml` -> Configuration file for performing building of build
   artifacts that are attached to release when it's being made. Invoked when a
   regular release is performed.
+* `typescript-npm.yaml` -> Builds CBMC and runs integration tests against real
+  npm packages (see `integration/typescript-npm/`). Verifies the TypeScript
+  frontend against upstream packages whose versions are tracked by Dependabot.
 
 ## CI Platforms
 
