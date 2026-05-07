@@ -419,7 +419,29 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       {
         if(method == "indexOf" && !str_args.empty())
         {
-          auto pos = sv.find(str_args[0]);
+          // ES2024 §22.1.3.9: String.prototype.indexOf(searchString, fromIndex)
+          // fromIndex defaults to 0 and is clamped to [0, length].
+          // Find the first string arg (skipping empty placeholders for
+          // numeric args).
+          std::string needle;
+          for(const auto &s : str_args)
+            if(!s.empty() || needle.empty())
+              needle = s;
+          // Actually: the first arg is the string; if we have num_args[0]
+          // it's the fromIndex. Use a simpler heuristic — str_args[0] is
+          // the needle (it's the first arg; if numeric, no indexOf).
+          needle = str_args[0];
+          size_t from = 0;
+          if(!num_args.empty())
+          {
+            int fi = num_args[0];
+            if(fi < 0)
+              fi = 0;
+            if(fi > static_cast<int>(sv.size()))
+              fi = sv.size();
+            from = static_cast<size_t>(fi);
+          }
+          auto pos = sv.find(needle, from);
           int result = (pos == std::string::npos) ? -1 : static_cast<int>(pos);
           uint64_t bits;
           double dv = static_cast<double>(result);
@@ -434,16 +456,33 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                    : exprt{false_exprt{}};
         if(method == "substring" && num_args.size() >= 2)
         {
+          // ES2024 §22.1.3.21: clamp both indices to [0, length], then
+          // swap if start > end.
           int start = num_args[0], end = num_args[1];
+          int len = static_cast<int>(sv.size());
           if(start < 0)
             start = 0;
-          if(end > static_cast<int>(sv.size()))
-            end = sv.size();
+          if(end < 0)
+            end = 0;
+          if(start > len)
+            start = len;
+          if(end > len)
+            end = len;
+          if(start > end)
+            std::swap(start, end);
           return convert_string_literal_from_text(
             sv.substr(start, end - start));
         }
         if(method == "substring" && num_args.size() >= 1)
-          return convert_string_literal_from_text(sv.substr(num_args[0]));
+        {
+          int start = num_args[0];
+          int len = static_cast<int>(sv.size());
+          if(start < 0)
+            start = 0;
+          if(start > len)
+            start = len;
+          return convert_string_literal_from_text(sv.substr(start));
+        }
         if(method == "toUpperCase")
         {
           std::string upper = sv;
@@ -490,14 +529,44 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return convert_string_literal_from_text("");
         }
         if(method == "startsWith" && !str_args.empty())
-          return sv.substr(0, str_args[0].size()) == str_args[0]
-                   ? exprt{true_exprt{}}
-                   : exprt{false_exprt{}};
+        {
+          // ES2024 §22.1.3.23: startsWith(searchString, position)
+          std::string needle = str_args[0];
+          size_t pos = 0;
+          if(!num_args.empty())
+          {
+            int p = num_args[0];
+            if(p < 0)
+              p = 0;
+            if(p > static_cast<int>(sv.size()))
+              p = sv.size();
+            pos = static_cast<size_t>(p);
+          }
+          if(pos + needle.size() > sv.size())
+            return false_exprt{};
+          return sv.substr(pos, needle.size()) == needle ? exprt{true_exprt{}}
+                                                         : exprt{false_exprt{}};
+        }
         if(method == "endsWith" && !str_args.empty())
-          return sv.size() >= str_args[0].size() &&
-                     sv.substr(sv.size() - str_args[0].size()) == str_args[0]
+        {
+          // ES2024 §22.1.3.7: endsWith(searchString, endPosition)
+          std::string needle = str_args[0];
+          size_t end_pos = sv.size();
+          if(!num_args.empty())
+          {
+            int p = num_args[0];
+            if(p < 0)
+              p = 0;
+            if(p > static_cast<int>(sv.size()))
+              p = sv.size();
+            end_pos = static_cast<size_t>(p);
+          }
+          if(needle.size() > end_pos)
+            return false_exprt{};
+          return sv.substr(end_pos - needle.size(), needle.size()) == needle
                    ? exprt{true_exprt{}}
                    : exprt{false_exprt{}};
+        }
         if(method == "replace" && str_args.size() >= 2)
         {
           auto pos = sv.find(str_args[0]);
