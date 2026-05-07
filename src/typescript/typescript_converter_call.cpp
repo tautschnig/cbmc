@@ -2380,12 +2380,37 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         if(method == "pop")
         {
+          // ES2024 sec-array.prototype.pop: remove last element and
+          // return it. We must evaluate data[length-1] BEFORE updating
+          // length, otherwise the lazy expression tree re-reads the
+          // updated length when the return value is assigned.
           exprt len = member_exprt{obj_expr, "length", signedbv_typet{64}};
-          exprt new_len = minus_exprt{len, from_integer(1, signedbv_typet{64})};
           exprt data =
             member_exprt{obj_expr, "data", st.get_component("data").type()};
-          pending_stmts.push_back(code_frontend_assignt{len, new_len});
-          return index_exprt{data, new_len};
+          // Create a temporary for the pre-decrement index.
+          static unsigned pop_ctr = 0;
+          std::string tmp_name =
+            "typescript::pop_idx_" + std::to_string(pop_ctr++);
+          irep_idt tmp_id{tmp_name};
+          if(symbol_table.lookup(tmp_id) == nullptr)
+          {
+            symbolt tmp_sym{tmp_id, signedbv_typet{64}, "typescript"};
+            tmp_sym.base_name = tmp_name;
+            tmp_sym.is_lvalue = true;
+            tmp_sym.is_state_var = true;
+            tmp_sym.is_static_lifetime = true;
+            symbol_table.add(tmp_sym);
+          }
+          symbol_exprt idx_expr{tmp_id, signedbv_typet{64}};
+          // Capture (length - 1) into temp BEFORE updating length.
+          pending_stmts.push_back(code_frontend_assignt{
+            idx_expr, minus_exprt{len, from_integer(1, signedbv_typet{64})}});
+          // Update length := length - 1.
+          pending_stmts.push_back(code_frontend_assignt{
+            len, minus_exprt{len, from_integer(1, signedbv_typet{64})}});
+          // Return data[temp]. The index was captured before the update,
+          // so this reads the correct last element.
+          return index_exprt{data, idx_expr};
         }
         // ES2024 sec-array.prototype.splice
         if(method == "splice" && args.is_array())
@@ -2549,7 +2574,23 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         if(method == "has" && args.is_array() && !to_json_array(args).empty())
         {
-          return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+          // ES2024 sec-set.prototype.has: linear scan of data[0..size)
+          // mirrors the Map.has implementation above.
+          exprt val = convert_expression(*to_json_array(args).begin());
+          const auto &data_arr_type =
+            to_array_type(mst.get_component("data").type());
+          if(val.type() != data_arr_type.element_type())
+            val = typecast_exprt{val, data_arr_type.element_type()};
+          exprt result = false_exprt{};
+          for(int i = 7; i >= 0; i--)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, size_s};
+            exprt data_i = index_exprt{data_s, idx};
+            exprt match = equal_exprt{data_i, val};
+            result = or_exprt{result, and_exprt{in_range, match}};
+          }
+          return result;
         }
         if(method == "delete")
         {
