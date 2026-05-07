@@ -51,3 +51,57 @@ pathlib.py
 os.py
 shutil.py
 tempfile.py
+
+# Runtime introspection.
+inspect.py
+warnings.py
+traceback.py
+ast.py
+tokenize.py
+pickle.py
+weakref.py
+
+# Testing and logging.
+unittest/__init__.py
+unittest/case.py
+logging/__init__.py
+logging/handlers.py
+
+# Command-line interfaces.
+argparse.py
+configparser.py
+
+# Concurrency.
+threading.py
+subprocess.py
+queue.py
+
+# Networking.
+socket.py
+ssl.py
+http/__init__.py
+http/client.py
+
+# Email.
+email/__init__.py
+email/message.py
+email/parser.py
+
+# Archives and compression.
+zipfile/__init__.py
+tarfile.py
+gzip.py
+
+# Crypto / hashing helpers.
+base64.py
+hashlib.py
+hmac.py
+secrets.py
+uuid.py
+
+# Misc.
+xml/etree/ElementTree.py
+decimal.py
+random.py
+heapq.py
+bisect.py
