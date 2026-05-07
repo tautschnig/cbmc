@@ -13190,22 +13190,44 @@ void python_convertert::process_imported_module(
         // Parse parameters
         code_typet::parameterst params;
         const jsont &args_node = json_member(stmt, "args");
-        const jsont &param_list = json_member(args_node, "args");
-        if(param_list.is_array())
+        auto collect_params = [&](const jsont &list)
         {
-          for(const auto &p : as_array(param_list))
+          if(list.is_array())
           {
-            std::string pname = json_string(json_member(p, "arg"));
-            if(pname == "self")
-              continue; // skip self for methods
-            const jsont &ann = json_member(p, "annotation");
-            typet ptype =
-              ann.is_null() ? python_int_type() : convert_type_annotation(ann);
-            code_typet::parametert param{ptype};
-            param.set_identifier("python::" + fname + "::" + pname);
-            param.set_base_name(pname);
-            params.push_back(param);
+            for(const auto &p : as_array(list))
+            {
+              std::string pname = json_string(json_member(p, "arg"));
+              const jsont &ann = json_member(p, "annotation");
+              typet ptype = ann.is_null() ? python_value_type()
+                                          : convert_type_annotation(ann);
+              code_typet::parametert param{ptype};
+              param.set_identifier("python::" + fname + "::" + pname);
+              param.set_base_name(pname);
+              params.push_back(param);
+            }
           }
+        };
+        collect_params(json_member(args_node, "posonlyargs"));
+        collect_params(json_member(args_node, "args"));
+        collect_params(json_member(args_node, "kwonlyargs"));
+        const jsont &vararg = json_member(args_node, "vararg");
+        if(!vararg.is_null())
+        {
+          std::string va_name = json_string(json_member(vararg, "arg"));
+          code_typet::parametert param{python_list_type(python_value_type())};
+          param.set_identifier("python::" + fname + "::" + va_name);
+          param.set_base_name(va_name);
+          params.push_back(param);
+        }
+        const jsont &kwarg = json_member(args_node, "kwarg");
+        if(!kwarg.is_null())
+        {
+          std::string kw_name = json_string(json_member(kwarg, "arg"));
+          code_typet::parametert param{
+            python_dict_type(python_string_type(), python_value_type())};
+          param.set_identifier("python::" + fname + "::" + kw_name);
+          param.set_base_name(kw_name);
+          params.push_back(param);
         }
 
         code_typet func_type{params, ret_type};
