@@ -596,16 +596,33 @@ static std::set<std::string> collect_param_names(const jsont &func_def)
 {
   std::set<std::string> params;
   const jsont &args_node = func_def["args"];
-  const jsont &param_list = args_node["args"];
-  if(param_list.is_array())
+  auto collect_from = [&](const jsont &list)
   {
-    for(const auto &p : to_json_array(param_list))
+    if(list.is_array())
     {
-      const jsont &arg_node = p["arg"];
+      for(const auto &p : to_json_array(list))
+      {
+        const jsont &arg_node = p["arg"];
+        if(arg_node.is_string())
+          params.insert(arg_node.value);
+      }
+    }
+  };
+  collect_from(args_node["posonlyargs"]);
+  collect_from(args_node["args"]);
+  collect_from(args_node["kwonlyargs"]);
+  // vararg / kwarg are single 'arg' nodes, not arrays.
+  auto collect_single = [&](const jsont &arg)
+  {
+    if(!arg.is_null())
+    {
+      const jsont &arg_node = arg["arg"];
       if(arg_node.is_string())
         params.insert(arg_node.value);
     }
-  }
+  };
+  collect_single(args_node["vararg"]);
+  collect_single(args_node["kwarg"]);
   return params;
 }
 
@@ -11342,39 +11359,49 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   const jsont &params = json_member(args_node, "args");
 
   code_typet::parameterst parameters;
+
+  // PLR §8.7: positional-only parameters (before the '/' marker).
+  // These are ordinary parameters from a call-site perspective; we
+  // must still bind them so the function body can reference them.
+  const jsont &posonlyargs = json_member(args_node, "posonlyargs");
+  auto add_positional = [&](const jsont &param)
+  {
+    std::string param_name = json_string(json_member(param, "arg"));
+    const jsont &annotation = json_member(param, "annotation");
+    if(annotation.is_null())
+    {
+      log.warning() << "parameter '" << param_name << "' of function '"
+                    << func_name << "' has no type annotation" << messaget::eom;
+    }
+    typet param_type = annotation.is_null()
+                         ? python_value_type()
+                         : convert_type_annotation(annotation);
+
+    // PLR §4.2.1: Class instances are passed by reference.
+    if(
+      param_type.id() == ID_struct &&
+      id2string(to_struct_type(param_type).get_tag()).find("python_class_") !=
+        std::string::npos &&
+      param_name != "self")
+    {
+      param_type = pointer_type(param_type);
+    }
+
+    code_typet::parametert p{param_type};
+    p.set_identifier("python::" + func_name + "::" + param_name);
+    p.set_base_name(param_name);
+    parameters.push_back(p);
+  };
+
+  if(posonlyargs.is_array())
+  {
+    for(const auto &param : as_array(posonlyargs))
+      add_positional(param);
+  }
   if(params.is_array())
   {
     for(const auto &param : as_array(params))
-    {
-      std::string param_name = json_string(json_member(param, "arg"));
-      const jsont &annotation = json_member(param, "annotation");
-      if(annotation.is_null())
-      {
-        log.warning() << "parameter '" << param_name << "' of function '"
-                      << func_name << "' has no type annotation"
-                      << messaget::eom;
-      }
-      // Use tagged union for unannotated params
-      typet param_type = annotation.is_null()
-                           ? python_value_type()
-                           : convert_type_annotation(annotation);
-
-      // PLR §4.2.1: Class instances are passed by reference.
-      // If param type is a class struct, use pointer type.
-      if(
-        param_type.id() == ID_struct &&
-        id2string(to_struct_type(param_type).get_tag()).find("python_class_") !=
-          std::string::npos &&
-        param_name != "self") // self is already handled
-      {
-        param_type = pointer_type(param_type);
-      }
-
-      code_typet::parametert p{param_type};
-      p.set_identifier("python::" + func_name + "::" + param_name);
-      p.set_base_name(param_name);
-      parameters.push_back(p);
-    }
+      add_positional(param);
   }
 
   // PLR §8.7: keyword-only arguments (after * in parameter list)
@@ -12180,34 +12207,47 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         const jsont &params = json_member(args_node, "args");
 
         code_typet::parameterst parameters;
+
+        // Helper: add a (pos-only or regular) parameter to this method.
+        auto add_method_param = [&](const jsont &param)
+        {
+          std::string param_name = json_string(json_member(param, "arg"));
+          // For @staticmethod, the first parameter is an ordinary
+          // parameter, not 'self' — we still bind it.
+          // For @classmethod, bind 'cls' so the body can reference it.
+          // (Previously we skipped it, which caused 'Unknown variable:
+          // cls' whenever the body actually used it.)
+          typet param_type;
+          if(param_name == "self" && !is_staticmethod)
+            param_type = pointer_typet{class_type, config.ansi_c.pointer_width};
+          else if(param_name == "cls" && is_classmethod)
+            param_type = pointer_typet{class_type, config.ansi_c.pointer_width};
+          else
+          {
+            const jsont &annotation = json_member(param, "annotation");
+            param_type = annotation.is_null()
+                           ? python_value_type()
+                           : convert_type_annotation(annotation);
+          }
+
+          code_typet::parametert p{param_type};
+          p.set_identifier(
+            "python::" + class_name + "::" + method_name + "::" + param_name);
+          p.set_base_name(param_name);
+          parameters.push_back(p);
+        };
+
+        // PLR §8.7: positional-only parameters.
+        const jsont &posonlyargs_m = json_member(args_node, "posonlyargs");
+        if(posonlyargs_m.is_array())
+        {
+          for(const auto &param : as_array(posonlyargs_m))
+            add_method_param(param);
+        }
         if(params.is_array())
         {
           for(const auto &param : as_array(params))
-          {
-            std::string param_name = json_string(json_member(param, "arg"));
-            // Skip cls/self parameter for @classmethod/@staticmethod
-            if(
-              (is_classmethod || is_staticmethod) &&
-              (param_name == "cls" || param_name == "self"))
-              continue;
-            typet param_type;
-            if(param_name == "self")
-              param_type =
-                pointer_typet{class_type, config.ansi_c.pointer_width};
-            else
-            {
-              const jsont &annotation = json_member(param, "annotation");
-              param_type = annotation.is_null()
-                             ? python_value_type()
-                             : convert_type_annotation(annotation);
-            }
-
-            code_typet::parametert p{param_type};
-            p.set_identifier(
-              "python::" + class_name + "::" + method_name + "::" + param_name);
-            p.set_base_name(param_name);
-            parameters.push_back(p);
-          }
+            add_method_param(param);
         }
 
         // *args for class methods
