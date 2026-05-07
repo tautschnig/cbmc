@@ -1049,12 +1049,34 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     {
       return member_exprt{operand, "__tag", signedbv_typet{32}};
     }
+    // ES2024 sec-typeof-operator — map the operand to a runtime type.
+    // TypeScript often reports literal types (e.g. "42", "\"hello\"",
+    // "true") for constant expressions. We normalize these to the
+    // runtime type tags required by the spec.
     std::string typeof_result = "object";
-    if(ts_type == "number")
+    auto is_numeric_literal = [](const std::string &t)
+    {
+      if(t.empty())
+        return false;
+      for(size_t i = 0; i < t.size(); i++)
+      {
+        char c = t[i];
+        if(!(std::isdigit(static_cast<unsigned char>(c)) || c == '-' ||
+             c == '+' || c == '.' || c == 'e' || c == 'E'))
+          return false;
+      }
+      return true;
+    };
+    auto is_string_literal = [](const std::string &t)
+    {
+      // TypeScript reports string literal types as `"foo"` with quotes.
+      return t.size() >= 2 && t.front() == '"' && t.back() == '"';
+    };
+    if(ts_type == "number" || is_numeric_literal(ts_type))
       typeof_result = "number";
-    else if(ts_type == "string")
+    else if(ts_type == "string" || is_string_literal(ts_type))
       typeof_result = "string";
-    else if(ts_type == "boolean")
+    else if(ts_type == "boolean" || ts_type == "true" || ts_type == "false")
       typeof_result = "boolean";
     else if(ts_type == "undefined")
       typeof_result = "undefined";
@@ -1066,6 +1088,12 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       !operand.is_nil() &&
       (operand.type().id() == ID_pointer || operand.type().id() == ID_code))
       typeof_result = "function";
+    else if(!operand.is_nil() && operand.type().id() == ID_floatbv)
+      typeof_result = "number"; // fallback for numeric operands
+    else if(!operand.is_nil() && is_typescript_string_type(operand.type()))
+      typeof_result = "string"; // fallback for string operands
+    else if(!operand.is_nil() && operand.type().id() == ID_bool)
+      typeof_result = "boolean"; // fallback for bool operands
     return convert_string_literal_from_text(typeof_result);
   }
   // ES2024 sec-void-operator
@@ -1325,9 +1353,14 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
 
   // Type promotion: ensure both sides have the same type
   // (skip for === and !== which handle type mismatches themselves)
+  // (skip for PlusToken when one side is a string — the string concat
+  //  branch coerces numbers/booleans to strings, not the other way around)
+  bool plus_with_string =
+    op == "PlusToken" && (is_typescript_string_type(left.type()) ||
+                          is_typescript_string_type(right.type()));
   if(
     left.type() != right.type() && op != "EqualsEqualsEqualsToken" &&
-    op != "ExclamationEqualsEqualsToken")
+    op != "ExclamationEqualsEqualsToken" && !plus_with_string)
   {
     if(left.type().id() == ID_floatbv)
       right = typecast_exprt{right, left.type()};
@@ -1350,10 +1383,51 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       return std::move(result);
     }
     // ES2024 sec-addition-operator-plus: String concatenation
+    // (includes number/boolean-to-string coercion when one side is a string)
     if(
       is_typescript_string_type(left.type()) ||
       is_typescript_string_type(right.type()))
     {
+      // Helper: coerce a non-string operand to its string representation
+      // for constant values (matches JS Number.prototype.toString /
+      // Boolean.prototype.toString).
+      auto coerce_to_string = [this](exprt &operand)
+      {
+        if(is_typescript_string_type(operand.type()))
+          return;
+        if(operand.type().id() == ID_floatbv && operand.is_constant())
+        {
+          ieee_floatt v{to_constant_expr(operand), ieee_floatt::ROUND_TO_EVEN};
+          std::string s;
+          if(v.is_NaN())
+            s = "NaN";
+          else if(v.is_infinity())
+            s = v.get_sign() ? "-Infinity" : "Infinity";
+          else
+          {
+            // If the value is an integer, format without decimal point.
+            ieee_floatt rounded = v;
+            rounded.round_to_integral();
+            if(rounded == v)
+            {
+              mp_integer i = v.to_integer();
+              s = integer2string(i);
+            }
+            else
+            {
+              s = v.to_ansi_c_string();
+            }
+          }
+          operand = convert_string_literal_from_text(s);
+        }
+        else if(operand.type().id() == ID_bool && operand.is_constant())
+        {
+          operand = convert_string_literal_from_text(
+            operand.is_true() ? "true" : "false");
+        }
+      };
+      coerce_to_string(left);
+      coerce_to_string(right);
       std::string ls_raw = extract_string_value(left);
       std::string rs_raw = extract_string_value(right);
       std::string ls = ls_raw.empty() ? "" : ls_raw.substr(2);
