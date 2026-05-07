@@ -6,3 +6,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/integration/typescript-npm"
+    schedule:
+      interval: "weekly"
+    # When Dependabot updates package.json, the maintainer must also update
+    # integration/typescript-npm/packages.sh with new SHA256 hashes. See
+    # integration/typescript-npm/README.md for instructions.
+    commit-message:
+      prefix: "npm-integration"
