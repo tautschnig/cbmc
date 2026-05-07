@@ -5482,7 +5482,41 @@ exprt python_convertert::convert_call(const jsont &expr)
       method_name != "group" && method_name != "groups" &&
       method_name != "span" && method_name != "findall" &&
       method_name != "sub" && method_name != "split" &&
-      method_name != "compile" && method_name != "pattern")
+      method_name != "compile" && method_name != "pattern" &&
+      // Common container/string methods whose effect is opaque at
+      // the Python-front-end level — they already fall through to a
+      // nondet result. Silencing them reduces log noise for stdlib
+      // ingestion (Step 1 of module support plan).
+      method_name != "__class__" && method_name != "__new__" &&
+      method_name != "__init__" && method_name != "__del__" &&
+      method_name != "__cast" && method_name != "items" &&
+      method_name != "keys" && method_name != "values" &&
+      method_name != "get" && method_name != "pop" && method_name != "update" &&
+      method_name != "clear" && method_name != "add" &&
+      method_name != "discard" && method_name != "remove" &&
+      method_name != "insert" && method_name != "append" &&
+      method_name != "extend" && method_name != "copy" &&
+      method_name != "read" && method_name != "write" &&
+      method_name != "close" && method_name != "flush" &&
+      method_name != "seek" && method_name != "tell" && method_name != "join" &&
+      method_name != "encode" && method_name != "decode" &&
+      method_name != "startswith" && method_name != "endswith" &&
+      method_name != "strip" && method_name != "rstrip" &&
+      method_name != "lstrip" && method_name != "replace" &&
+      method_name != "format" && method_name != "split" &&
+      method_name != "rsplit" && method_name != "rpartition" &&
+      method_name != "partition" && method_name != "find" &&
+      method_name != "rfind" && method_name != "index" &&
+      method_name != "rindex" && method_name != "count" &&
+      method_name != "lower" && method_name != "upper" &&
+      method_name != "title" && method_name != "capitalize" &&
+      method_name != "swapcase" && method_name != "isdigit" &&
+      method_name != "isalpha" && method_name != "isalnum" &&
+      method_name != "isspace" && method_name != "islower" &&
+      method_name != "isupper" && method_name != "translate" &&
+      method_name != "maketrans" && method_name != "zfill" &&
+      method_name != "center" && method_name != "ljust" &&
+      method_name != "rjust" && method_name != "expandtabs")
       log.warning() << "Unknown method: " << method_name << messaget::eom;
     // For regex methods, constrain result to be non-None (>= 0)
     // so stub assertions like `assert compile(r).search(v) is not None` pass
