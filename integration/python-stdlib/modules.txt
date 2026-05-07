@@ -1,0 +1,53 @@
+# Curated list of Python stdlib modules exercised by the parse test.
+# Lines beginning with '#' and blank lines are ignored. Paths are
+# relative to STDLIB (default /usr/lib/python3.12).
+#
+# Modules are grouped by expected ease of handling; as the front-end
+# improves, new modules should be added and the baseline updated.
+
+# Commonly used, mostly pure-Python modules.
+string.py
+functools.py
+operator.py
+numbers.py
+fractions.py
+abc.py
+enum.py
+copy.py
+contextlib.py
+io.py
+textwrap.py
+statistics.py
+
+# Collections and data structures.
+collections/__init__.py
+collections/abc.py
+
+# JSON parsing and encoding.
+json/__init__.py
+json/decoder.py
+json/encoder.py
+json/tool.py
+
+# URL parsing and related.
+urllib/parse.py
+urllib/error.py
+
+# Regular expressions.
+re/__init__.py
+re/_parser.py
+re/_compiler.py
+
+# Datetime.
+datetime.py
+_pydatetime.py
+
+# Data classes and typing.
+dataclasses.py
+typing.py
+
+# Paths and file utilities.
+pathlib.py
+os.py
+shutil.py
+tempfile.py
