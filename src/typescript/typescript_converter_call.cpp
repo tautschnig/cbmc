@@ -465,6 +465,23 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           s.erase(s.find_last_not_of(" \t\n\r") + 1);
           return convert_string_literal_from_text(s);
         }
+        // ES2024 §22.1.3.30 / §22.1.3.31: trimStart, trimEnd.
+        if(method == "trimStart")
+        {
+          auto s = sv;
+          s.erase(0, s.find_first_not_of(" \t\n\r"));
+          return convert_string_literal_from_text(s);
+        }
+        if(method == "trimEnd")
+        {
+          auto s = sv;
+          auto pos = s.find_last_not_of(" \t\n\r");
+          if(pos != std::string::npos)
+            s.erase(pos + 1);
+          else
+            s.clear();
+          return convert_string_literal_from_text(s);
+        }
         if(method == "charAt" && !num_args.empty())
         {
           int idx = num_args[0];
@@ -514,25 +531,43 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(method == "padStart" && !num_args.empty())
         {
           int target_len = num_args[0];
+          // ES2024 §22.1.3.17: if current length >= target, return
+          // the string unchanged.
+          if(static_cast<int>(sv.size()) >= target_len)
+            return convert_string_literal_from_text(sv);
+          // Find the pad character: it's the last string arg (since
+          // numeric args pad str_args with empty strings, the real
+          // pad char is the non-empty entry, typically at index 1).
           std::string pad = " ";
-          if(!str_args.empty())
-            pad = str_args[0];
+          for(const auto &s : str_args)
+            if(!s.empty())
+              pad = s;
           std::string result = sv;
-          while(static_cast<int>(result.size()) < target_len)
+          int max_iters = 10000;
+          while(static_cast<int>(result.size()) < target_len && max_iters-- > 0)
             result = pad + result;
-          return convert_string_literal_from_text(
-            result.substr(result.size() - target_len));
+          if(static_cast<int>(result.size()) >= target_len)
+            return convert_string_literal_from_text(
+              result.substr(result.size() - target_len));
+          return convert_string_literal_from_text(result);
         }
         if(method == "padEnd" && !num_args.empty())
         {
           int target_len = num_args[0];
+          if(static_cast<int>(sv.size()) >= target_len)
+            return convert_string_literal_from_text(sv);
           std::string pad = " ";
-          if(!str_args.empty())
-            pad = str_args[0];
+          for(const auto &s : str_args)
+            if(!s.empty())
+              pad = s;
           std::string result = sv;
-          while(static_cast<int>(result.size()) < target_len)
+          int max_iters = 10000;
+          while(static_cast<int>(result.size()) < target_len && max_iters-- > 0)
             result += pad;
-          return convert_string_literal_from_text(result.substr(0, target_len));
+          if(static_cast<int>(result.size()) >= target_len)
+            return convert_string_literal_from_text(
+              result.substr(0, target_len));
+          return convert_string_literal_from_text(result);
         }
         if(method == "repeat" && !num_args.empty())
         {
