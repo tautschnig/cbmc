@@ -1651,7 +1651,35 @@ exprt python_convertert::convert_name(const jsont &expr)
       {"str", 4},
       {"list", 5},
       {"tuple", 6},
-      {"dict", 7}};
+      {"dict", 7},
+      {"set", 8},
+      {"frozenset", 9},
+      {"bytes", 10},
+      {"bytearray", 11},
+      {"object", 12},
+      {"type", 13},
+      {"Exception", 14},
+      {"BaseException", 15},
+      {"ValueError", 16},
+      {"TypeError", 17},
+      {"KeyError", 18},
+      {"IndexError", 19},
+      {"StopIteration", 20},
+      {"AttributeError", 21},
+      {"ArithmeticError", 22},
+      {"ZeroDivisionError", 23},
+      {"NotImplementedError", 24},
+      {"RuntimeError", 25},
+      {"OSError", 26},
+      {"FileNotFoundError", 27},
+      {"GeneratorExit", 28},
+      {"LookupError", 29},
+      {"ImportError", 30},
+      {"NameError", 31},
+      {"UnicodeError", 32},
+      {"MemoryError", 33},
+      {"IOError", 34},
+      {"EOFError", 35}};
     auto tt = type_tags.find(id);
     if(tt != type_tags.end())
       return from_integer(tt->second, python_int_type());
@@ -13112,6 +13140,35 @@ void python_convertert::process_imported_module(
 
   for(const auto &stmt : as_array(body))
   {
+    // Register top-level 'import MODULE' names so that downstream
+    // references to e.g. 'sys' inside this imported module resolve
+    // via the same module-value mechanism as main-file imports.
+    if(is_node_type(stmt, "Import"))
+    {
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+      {
+        for(const auto &alias : as_array(names))
+        {
+          std::string nm = json_string(json_member(alias, "name"));
+          std::string asnm = json_string(json_member(alias, "asname"));
+          if(asnm.empty())
+            asnm = nm;
+          imported_modules.insert(asnm);
+          irep_idt mod_sym_id{"python::" + asnm};
+          if(symbol_table.lookup(mod_sym_id) == nullptr)
+          {
+            symbolt mod_sym{mod_sym_id, python_value_type(), "python"};
+            mod_sym.base_name = asnm;
+            mod_sym.is_lvalue = true;
+            mod_sym.is_state_var = true;
+            mod_sym.is_static_lifetime = true;
+            symbol_table.add(mod_sym);
+          }
+        }
+      }
+      continue;
+    }
     if(
       is_node_type(stmt, "FunctionDef") ||
       is_node_type(stmt, "AsyncFunctionDef"))
