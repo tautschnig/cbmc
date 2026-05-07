@@ -41,3 +41,5 @@ jobs:
         run: ccache -s
       - name: Run TypeScript npm integration tests
         run: integration/typescript-npm/run_tests.sh
+      - name: Run TypeScript npm mutation tests
+        run: integration/typescript-npm/run_mutation_tests.sh

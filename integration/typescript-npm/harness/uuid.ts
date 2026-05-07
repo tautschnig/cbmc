@@ -50,6 +50,21 @@ __CPROVER_assume(v < 5); // leave room to increment
 const u3: UUID = new UUID(h, l, v + 1);
 console.assert(!u1.equals(u3));
 
+// Property 3b: difference in high field also breaks equality.
+// (Without this, equals could return true based only on low/version.)
+const h2: number = nondet_number();
+__CPROVER_assume(!Number.isNaN(h2));
+__CPROVER_assume(h2 !== h);
+const u4: UUID = new UUID(h2, l, v);
+console.assert(!u1.equals(u4));
+
+// Property 3c: difference in low field also breaks equality.
+const l2: number = nondet_number();
+__CPROVER_assume(!Number.isNaN(l2));
+__CPROVER_assume(l2 !== l);
+const u5: UUID = new UUID(h, l2, v);
+console.assert(!u1.equals(u5));
+
 // Property 4: nil detection is correct.
 const nilU: UUID = new UUID(0, 0, 0);
 console.assert(nilU.isNil());

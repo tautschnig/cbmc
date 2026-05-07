@@ -22,14 +22,32 @@ integration/typescript-npm/run_tests.sh
 1. **Package list**: `packages.sh` defines pinned versions and SHA256 hashes.
 2. **Download**: The script downloads npm tarballs and verifies hashes.
 3. **Harness**: For each package, `harness/<name>.ts` reimplements the
-   package's core logic and asserts invariants.
+   package's core logic and asserts invariants over **symbolic inputs**
+   (`nondet_number()` + `__CPROVER_assume()`). This exercises CBMC's
+   branch exploration rather than just checking concrete constants.
 4. **Verification**: CBMC verifies the harness passes all assertions.
+5. **Mutation testing** (`run_mutation_tests.sh`): introduces known bugs
+   into each harness and requires each bug to be detected. Guards against
+   harnesses silently degrading into tautologies over time.
 
 We **don't** run the raw JavaScript from npm — those packages are .js files
 that CBMC's TypeScript frontend can't directly verify. Instead, harnesses
 document the expected semantics in TypeScript and verify structural
 invariants. Dependabot tracks the package versions so we know when upstream
 releases new versions (and can update harnesses to reflect any semantic changes).
+
+## Mutation testing
+
+`run_mutation_tests.sh` runs a set of sed-based mutations against each
+harness (e.g., swapping `>=` for `>`, dropping a field comparison) and
+requires each mutation to be caught by the harness's assertions. If any
+mutation is NOT caught, the harness is tautological for that property
+and the script exits non-zero.
+
+This runs in CI alongside the main integration tests. Whenever a harness
+is added or edited, consider adding a representative mutation that
+exercises the new property — otherwise the harness could silently become
+a tautology.
 
 ## Package tracking
 
@@ -60,7 +78,10 @@ When updating:
 1. Add entry to `package.json` devDependencies
 2. Compute SHA256 and add to `packages.sh`
 3. Write harness at `harness/<name>.ts` that verifies package invariants
-4. Run `./run_tests.sh` to confirm
+   using symbolic inputs (`nondet_number()` + `__CPROVER_assume()`)
+4. Add at least one entry to `MUTATIONS` in `run_mutation_tests.sh` that
+   represents a plausible bug in the new harness
+5. Run `./run_tests.sh` and `./run_mutation_tests.sh` to confirm
 
 ## CI integration
 
