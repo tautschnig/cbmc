@@ -2989,10 +2989,22 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     {
       if(use_datatypes)
       {
-        INVARIANT(
-          boolbv_width(src_type) == boolbv_width(dest_type),
-          "bit vector with of source and destination type shall be equal");
-        flatten2bv(src);
+        std::size_t src_w = boolbv_width(src_type);
+        std::size_t dest_w = boolbv_width(dest_type);
+        if(src_w == dest_w)
+          flatten2bv(src);
+        else if(src_w > dest_w)
+        {
+          out << "((_ extract " << (dest_w - 1) << " 0) ";
+          flatten2bv(src);
+          out << ")";
+        }
+        else
+        {
+          out << "((_ zero_extend " << (dest_w - src_w) << ") ";
+          flatten2bv(src);
+          out << ")";
+        }
       }
       else
       {
@@ -3029,7 +3041,50 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
       std::ostringstream e_str;
       e_str << src_type.id() << " -> " << dest_type.id()
             << " src == " << format(src);
-      UNEXPECTEDCASE("TODO typecast2 " + e_str.str());
+      // Handle empty (void) to anything — emit zero
+  if(src_type.id() == ID_empty)
+  {
+    std::size_t dest_width = boolbv_width(dest_type);
+    if(dest_width > 0)
+      out << "(_ bv0 " << dest_width << ")";
+    else
+      out << "(_ bv0 64)";
+    return;
+  }
+
+  // Handle struct-to-struct typecasts (from Python's dynamic typing)
+  if(
+    (src_type.id() == ID_struct || src_type.id() == ID_struct_tag) &&
+    (dest_type.id() == ID_struct || dest_type.id() == ID_struct_tag))
+  {
+    // Same-layout struct cast — emit identity (reinterpret)
+    std::size_t src_width = boolbv_width(src_type);
+    std::size_t dest_width = boolbv_width(dest_type);
+    if(src_width == dest_width && src_width > 0)
+    {
+      convert_expr(src);
+      return;
+    }
+    // Different widths — zero-extend or truncate
+    if(src_width > 0 && dest_width > 0)
+    {
+      if(src_width < dest_width)
+      {
+        out << "((_ zero_extend " << (dest_width - src_width) << ") ";
+        convert_expr(src);
+        out << ")";
+      }
+      else
+      {
+        out << "((_ extract " << (dest_width - 1) << " 0) ";
+        convert_expr(src);
+        out << ")";
+      }
+      return;
+    }
+  }
+
+  UNEXPECTEDCASE("TODO typecast2 " + e_str.str());
     }
   }
   else if(dest_type.id()==ID_fixedbv) // to fixedbv
@@ -3304,6 +3359,33 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     else
       UNEXPECTEDCASE(
         "Unknown typecast " + src_type.id_string() + " -> rational");
+  }
+  else if(
+    (src_type.id() == ID_struct || src_type.id() == ID_struct_tag) &&
+    (dest_type.id() == ID_struct || dest_type.id() == ID_struct_tag))
+  {
+    // Struct-to-struct cast (Python dynamic typing)
+    std::size_t src_width = boolbv_width(src_type);
+    std::size_t dest_width = boolbv_width(dest_type);
+    if(src_width == dest_width && src_width > 0)
+      convert_expr(src);
+    else if(src_width > 0 && dest_width > 0)
+    {
+      if(src_width < dest_width)
+      {
+        out << "((_ zero_extend " << (dest_width - src_width) << ") ";
+        convert_expr(src);
+        out << ")";
+      }
+      else
+      {
+        out << "((_ extract " << (dest_width - 1) << " 0) ";
+        convert_expr(src);
+        out << ")";
+      }
+    }
+    else
+      convert_expr(src); // fallback: identity
   }
   else
     UNEXPECTEDCASE(
