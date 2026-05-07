@@ -46,6 +46,10 @@ MUTATIONS=(
     'lodash.chunk:s@if (len === 1 || len === 4 || len === 7) return 1;@if (len === 2 || len === 4 || len === 7) return 1;@:wrong-last-len'
     'is-number:s|return num - num === 0;|return true;|:classifies-nan-as-number'
     'is-number:s|const nan: number = 0.0 / 0.0;|const nan: number = 1.0;|:wrong-nan-value'
+    'once:s|this.callCount = 1;|this.callCount = 2;|:wrong-call-count'
+    'once:s|inputValue \* 2|inputValue|:wrong-cached-value'
+    'array-unique:s|if (b !== a) {|if (b === a) {|:inverted-dup-check'
+    'is-plain-object:s|return o.kind === "plain";|return true;|:classifies-all-as-plain'
 )
 
 failures=0

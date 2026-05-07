@@ -75,6 +75,9 @@ When updating:
 | semver | 7.7.2 | Comparison total-order axioms (reflexivity, antisymmetry, transitivity) |
 | lodash.chunk | 4.2.0 | Ceiling-division properties for chunk count |
 | is-number | 7.0.0 | Finiteness classification (finite/NaN/Infinity) |
+| once | 1.4.0 | Idempotence, state tracking, independence of wrappers |
+| array-unique | 0.3.2 | Length bound, order preservation, no-duplicates output, idempotence |
+| is-plain-object | 5.0.0 | Totality of kind classification, purity |
 
 ## Adding a new package
 
