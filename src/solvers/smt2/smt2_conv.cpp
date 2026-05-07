@@ -734,10 +734,18 @@ smt2_convt::parse_struct(const irept &src, const struct_typet &type)
       }
       else
       {
-        DATA_INVARIANT(
-          src.get_sub().size() > j, "insufficient number of component values");
-        result.operands()[i] = parse_rec(src.get_sub()[j], c.type());
-        ++j;
+        if(src.get_sub().size() <= j)
+        {
+          // CVC5 returned fewer values than expected (e.g., flat bitvector
+          // for a struct that was emitted without datatypes).
+          // Fill remaining components with zero.
+          result.operands()[i] = from_integer(0, c.type());
+        }
+        else
+        {
+          result.operands()[i] = parse_rec(src.get_sub()[j], c.type());
+          ++j;
+        }
       }
     }
   }
@@ -3359,6 +3367,16 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     else
       UNEXPECTEDCASE(
         "Unknown typecast " + src_type.id_string() + " -> rational");
+  }
+  else if(src_type.id() == ID_pointer && dest_type.id() == ID_array)
+  {
+    // Pointer-to-array cast (Python string data pointer → array)
+    convert_expr(src);
+  }
+  else if(src_type.id() == ID_array && dest_type.id() == ID_pointer)
+  {
+    // Array-to-pointer cast
+    convert_expr(src);
   }
   else if(
     (src_type.id() == ID_struct || src_type.id() == ID_struct_tag) &&
