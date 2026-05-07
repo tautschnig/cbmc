@@ -178,7 +178,32 @@ codet typescript_convertert::convert_statement(const jsont &node)
           for(auto &s : pending_stmts)
             block.add(std::move(s));
           pending_stmts.clear();
-          block.add(code_frontend_assignt{sym.symbol_expr(), rhs});
+          // Async threading: if this is an async CallExpression (Promise type)
+          // and the flag is set, wrap the assignment in __CPROVER_ASYNC_N
+          // label so CBMC's goto-conversion spawns a thread.
+          bool wrap_async = false;
+          if(async_threading && init.is_object())
+          {
+            std::string init_kind = json_string(json_member(init, "_kind"));
+            std::string init_type = json_string(json_member(init, "_type"));
+            if(
+              init_kind == "CallExpression" &&
+              init_type.find("Promise") != std::string::npos)
+              wrap_async = true;
+          }
+          if(wrap_async)
+          {
+            static unsigned async_ctr = 0;
+            std::string label_name =
+              "__CPROVER_ASYNC_" + std::to_string(async_ctr++);
+            code_blockt thread_body;
+            thread_body.add(code_frontend_assignt{sym.symbol_expr(), rhs});
+            block.add(code_labelt{label_name, std::move(thread_body)});
+          }
+          else
+          {
+            block.add(code_frontend_assignt{sym.symbol_expr(), rhs});
+          }
           // Track string constants
           {
             std::string sv = extract_string_value(rhs);
@@ -1413,9 +1438,33 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         for(auto &s : pending_stmts)
           block.add(std::move(s));
         pending_stmts.clear();
+        // Async threading: wrap Promise-returning CallExpression in
+        // __CPROVER_ASYNC_N label so CBMC spawns a thread for it.
+        bool wrap_async = false;
+        if(async_threading && init.is_object())
+        {
+          std::string init_kind = json_string(json_member(init, "_kind"));
+          std::string init_type = json_string(json_member(init, "_type"));
+          if(
+            init_kind == "CallExpression" &&
+            init_type.find("Promise") != std::string::npos)
+            wrap_async = true;
+        }
         code_frontend_assignt assign{sym.symbol_expr(), rhs};
         assign.add_source_location() = get_location(decl);
-        block.add(std::move(assign));
+        if(wrap_async)
+        {
+          static unsigned async_ctr = 0;
+          std::string label_name =
+            "__CPROVER_ASYNC_" + std::to_string(async_ctr++);
+          code_blockt thread_body;
+          thread_body.add(std::move(assign));
+          block.add(code_labelt{label_name, std::move(thread_body)});
+        }
+        else
+        {
+          block.add(std::move(assign));
+        }
         // Track string constants (works with refined_string_exprt)
         if(
           is_typescript_string_type(rhs.type()) && rhs.id() == ID_struct &&

@@ -478,6 +478,7 @@ bool typescript_languaget::typecheck(
       options->get_bool_option("float-div-by-zero-check");
     converter.nan_check = options->get_bool_option("nan-check");
     converter.integer_inference = options->get_bool_option("ts-integer-mode");
+    converter.async_threading = options->get_bool_option("ts-async-threading");
     if(options->is_set("ts-max-array-size"))
       converter.TYPESCRIPT_MAX_ARRAY_LENGTH =
         options->get_unsigned_int_option("ts-max-array-size");

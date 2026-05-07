@@ -5,4 +5,3 @@ main.ts
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-True async interleaving not modeled (sequential approximation)

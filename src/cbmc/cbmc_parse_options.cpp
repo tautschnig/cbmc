@@ -174,6 +174,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(cmdline.isset("ts-integer-mode"))
     options.set_option("ts-integer-mode", true);
+  if(cmdline.isset("ts-async-threading"))
+    options.set_option("ts-async-threading", true);
   if(cmdline.isset("ts-max-array-size"))
     options.set_option(
       "ts-max-array-size", cmdline.get_value("ts-max-array-size"));
