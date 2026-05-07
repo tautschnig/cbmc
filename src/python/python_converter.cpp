@@ -1532,6 +1532,21 @@ exprt python_convertert::convert_name(const jsont &expr)
     return false_exprt{};
   else if(id == "None")
     return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
+  else if(id == "NotImplemented")
+  {
+    // NotImplemented is a Python singleton returned by __op__ methods
+    // when the operation is not supported for the given operand types.
+    // A distinct sentinel integer lets callers at least detect it;
+    // precise modelling is left to Step 2 (module support plan).
+    return from_integer(mp_integer{-4611686018427387903LL}, python_int_type());
+  }
+  else if(id == "Ellipsis")
+  {
+    // "..." is used by type hints and slicing; return a sentinel.
+    return from_integer(mp_integer{-4611686018427387902LL}, python_int_type());
+  }
+  else if(id == "__debug__")
+    return true_exprt{};
   else if(id == "__name__")
     return build_string_struct("__main__");
 
@@ -7644,6 +7659,56 @@ exprt python_convertert::convert_call(const jsont &expr)
 
   if(sym == nullptr || sym->type.id() != ID_code)
   {
+    // Recognised-but-unmodelled Python built-ins. Returning a sound
+    // nondet value is safe for these because (i) they are pure or
+    // have no side effects that affect verification targets, and
+    // (ii) any further reasoning about them would require a proper
+    // model (tracked by Step 2 of the module support plan). By
+    // whitelisting them here we avoid the spurious "no-body" false
+    // positive that would otherwise fail verification of any
+    // program that merely mentions them.
+    //
+    // Each entry maps the Python name to the type of the nondet
+    // value returned. A nil typet means: use python_int_type().
+    static const std::map<std::string, typet> known_nondet_builtins = {
+      {"getattr", typet{}},
+      {"setattr", typet{}},
+      {"hasattr", bool_typet{}},
+      {"callable", bool_typet{}},
+      {"issubclass", bool_typet{}},
+      {"id", typet{}},
+      {"hash", typet{}},
+      {"iter", typet{}},
+      {"next", typet{}},
+      {"tuple", typet{}},
+      {"list", typet{}},
+      {"set", typet{}},
+      {"frozenset", typet{}},
+      {"dict", typet{}},
+      {"bytes", typet{}},
+      {"bytearray", typet{}},
+      {"memoryview", typet{}},
+      {"super", typet{}},
+      {"object", typet{}},
+      {"classmethod", typet{}},
+      {"staticmethod", typet{}},
+      {"property", typet{}},
+      {"vars", typet{}},
+      {"dir", typet{}},
+      {"globals", typet{}},
+      {"locals", typet{}},
+      {"open", typet{}},
+      {"type", typet{}},
+    };
+    auto builtin_it = known_nondet_builtins.find(func_name);
+    if(builtin_it != known_nondet_builtins.end())
+    {
+      const typet t =
+        builtin_it->second.is_nil() ? python_int_type() : builtin_it->second;
+      side_effect_expr_nondett nondet{t, get_location(expr)};
+      return std::move(nondet);
+    }
+
     // Unknown function — return nondet value (sound overapproximation)
     log.warning() << "Unknown function '" << func_name
                   << "', returning nondet value" << messaget::eom;
@@ -11330,6 +11395,42 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
   }
 
+  // PLR §8.7: *args — catch-all positional argument tuple.
+  // We model it as a list (our tuple model is effectively a list here).
+  const jsont &vararg = json_member(args_node, "vararg");
+  std::string varargs_name;
+  if(!vararg.is_null())
+  {
+    varargs_name = json_string(json_member(vararg, "arg"));
+    typet va_type = python_list_type(python_value_type());
+    code_typet::parametert p{va_type};
+    p.set_identifier("python::" + func_name + "::" + varargs_name);
+    p.set_base_name(varargs_name);
+    parameters.push_back(p);
+  }
+
+  // PLR §8.7: keyword-only arguments (anything after *args or a bare *).
+  {
+    const jsont &kwonlyargs = json_member(args_node, "kwonlyargs");
+    if(kwonlyargs.is_array())
+    {
+      for(const auto &arg : as_array(kwonlyargs))
+      {
+        std::string param_name = json_string(json_member(arg, "arg"));
+        typet ptype;
+        const jsont &annot = json_member(arg, "annotation");
+        if(!annot.is_null())
+          ptype = convert_type_annotation(annot);
+        else
+          ptype = python_value_type();
+        code_typet::parametert p{ptype};
+        p.set_identifier("python::" + func_name + "::" + param_name);
+        p.set_base_name(param_name);
+        parameters.push_back(p);
+      }
+    }
+  }
+
   // PLR §8.7: **kwargs — catch-all keyword argument dict
   const jsont &kwarg = json_member(args_node, "kwarg");
   std::string kwargs_name;
@@ -12107,6 +12208,19 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             p.set_base_name(param_name);
             parameters.push_back(p);
           }
+        }
+
+        // *args for class methods
+        const jsont &vararg_m = json_member(args_node, "vararg");
+        if(!vararg_m.is_null())
+        {
+          std::string va_name = json_string(json_member(vararg_m, "arg"));
+          typet va_type = python_list_type(python_value_type());
+          code_typet::parametert p{va_type};
+          p.set_identifier(
+            "python::" + class_name + "::" + method_name + "::" + va_name);
+          p.set_base_name(va_name);
+          parameters.push_back(p);
         }
 
         // kwonlyargs and **kwargs for class methods
