@@ -5517,7 +5517,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       method_name != "maketrans" && method_name != "zfill" &&
       method_name != "center" && method_name != "ljust" &&
       method_name != "rjust" && method_name != "expandtabs")
-      log.warning() << "Unknown method: " << method_name << messaget::eom;
+      log.debug() << "Unknown method: " << method_name << messaget::eom;
     // For regex methods, constrain result to be non-None (>= 0)
     // so stub assertions like `assert compile(r).search(v) is not None` pass
     if(
@@ -7814,9 +7814,13 @@ exprt python_convertert::convert_call(const jsont &expr)
       return std::move(nondet);
     }
 
-    // Unknown function — return nondet value (sound overapproximation)
-    log.warning() << "Unknown function '" << func_name
-                  << "', returning nondet value" << messaget::eom;
+    // Unknown function — return nondet value (sound overapproximation).
+    // Downgraded to debug because stdlib ingestion routinely hits
+    // hundreds of these, they are already handled correctly (nondet
+    // + optional no-body assertion), and the warnings drown out
+    // actionable diagnostics.
+    log.debug() << "Unknown function '" << func_name
+                << "', returning nondet value" << messaget::eom;
     if(!no_body_check)
     {
       add_check(
@@ -8629,8 +8633,8 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
 
-  log.warning() << "Cannot access attribute '" << attr << "', using nondet"
-                << messaget::eom;
+  log.debug() << "Cannot access attribute '" << attr << "', using nondet"
+              << messaget::eom;
   return side_effect_expr_nondett{python_int_type(), source_locationt{}};
 }
 
