@@ -23,6 +23,9 @@ The files in this folder correspond to:
 * `typescript-npm.yaml` -> Builds CBMC and runs integration tests against real
   npm packages (see `integration/typescript-npm/`). Verifies the TypeScript
   frontend against upstream packages whose versions are tracked by Dependabot.
+* `typescript-fuzz.yaml` -> Runs `scripts/fuzz_typescript.py` — a grammar-based
+  fuzzer for the TypeScript frontend. Uses `tsc` as a type-check oracle and
+  cbmc as the target. Stable seed 42, 100 iterations per PR.
 
 ## CI Platforms
 
