@@ -3324,8 +3324,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       else
       {
-        log.warning() << "'in' operator only supported for lists"
-                      << messaget::eom;
+        log.debug() << "'in' operator only supported for lists"
+                    << messaget::eom;
         cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
       }
     }
@@ -8456,7 +8456,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
   }
 
-  log.error() << "Subscript not yet supported for this type" << messaget::eom;
+  log.debug() << "Subscript not yet supported for this type" << messaget::eom;
   return nil_exprt{};
 }
 
@@ -11089,8 +11089,8 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   if(!is_list && !is_string)
   {
-    log.warning() << "for-in iteration requires a list, string, or dict"
-                  << messaget::eom;
+    log.debug() << "for-in iteration requires a list, string, or dict"
+                << messaget::eom;
     return code_skipt{};
   }
 
