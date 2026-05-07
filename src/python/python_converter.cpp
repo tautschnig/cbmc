@@ -1582,6 +1582,19 @@ exprt python_convertert::convert_name(const jsont &expr)
     irep_idt scoped_id{"python::" + current_function + "::" + id};
     sym = symbol_table.lookup(scoped_id);
   }
+  // Fall back to enclosing (parent) function scopes — this makes
+  // closure variables resolvable, e.g. 'self' used inside a nested
+  // 'def' within a method body.
+  if(sym == nullptr && !enclosing_functions.empty())
+  {
+    for(auto it = enclosing_functions.rbegin();
+        sym == nullptr && it != enclosing_functions.rend();
+        ++it)
+    {
+      irep_idt scoped_id{"python::" + *it + "::" + id};
+      sym = symbol_table.lookup(scoped_id);
+    }
+  }
   if(sym == nullptr)
   {
     irep_idt global_id{"python::" + id};
@@ -8879,6 +8892,8 @@ exprt python_convertert::convert_lambda(const jsont &expr)
   }
 
   std::string saved_func = current_function;
+  if(!current_function.empty())
+    enclosing_functions.push_back(current_function);
   current_function = lambda_name;
 
   // Detect free variables in lambda body (closure capture)
@@ -8923,6 +8938,8 @@ exprt python_convertert::convert_lambda(const jsont &expr)
 
   exprt body_val = convert_expression(body_expr);
   current_function = saved_func;
+  if(!enclosing_functions.empty() && enclosing_functions.back() == saved_func)
+    enclosing_functions.pop_back();
 
   if(body_val.is_nil())
     return nil_exprt{};
@@ -11633,6 +11650,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // Convert function body
   std::string saved_function = current_function;
   auto saved_globals = global_names;
+  if(!current_function.empty())
+    enclosing_functions.push_back(current_function);
   current_function = func_name;
   global_names.clear();
 
@@ -11783,6 +11802,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   current_function = saved_function;
   global_names = saved_globals;
+  if(
+    !enclosing_functions.empty() &&
+    enclosing_functions.back() == saved_function)
+    enclosing_functions.pop_back();
 
   // PLR §7.6: if function doesn't end with return, append return
   // For generators: return __gen_result list
@@ -12338,6 +12361,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         // Convert method body
         {
           std::string saved_func = current_function;
+          if(!current_function.empty())
+            enclosing_functions.push_back(current_function);
           current_function = class_name + "::" + method_name;
 
           code_blockt method_body;
@@ -12349,6 +12374,10 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           }
 
           current_function = saved_func;
+          if(
+            !enclosing_functions.empty() &&
+            enclosing_functions.back() == saved_func)
+            enclosing_functions.pop_back();
 
           symbolt *sym_ptr = symbol_table.get_writeable(func_id);
           if(sym_ptr != nullptr)
@@ -13051,6 +13080,8 @@ void python_convertert::process_imported_module(
 
         // Convert the function body
         std::string saved_func = current_function;
+        if(!current_function.empty())
+          enclosing_functions.push_back(current_function);
         current_function = fname;
         code_blockt body_block;
         const jsont &func_body = json_member(stmt, "body");
@@ -13063,6 +13094,10 @@ void python_convertert::process_imported_module(
         if(ret_type.id() != ID_empty)
           body_block.add(code_frontend_returnt{safe_zero(ret_type)});
         current_function = saved_func;
+        if(
+          !enclosing_functions.empty() &&
+          enclosing_functions.back() == saved_func)
+          enclosing_functions.pop_back();
 
         symbol_table.get_writeable_ref(sym_id).value = body_block;
       }

@@ -56,6 +56,13 @@ private:
   /// Current function name (empty for top-level code)
   std::string current_function;
 
+  /// Stack of enclosing function names (outermost first). A nested
+  /// 'def' pushes the new function onto the stack. When a name is
+  /// not found in the current function's scope, we fall back to
+  /// looking it up in the enclosing scopes — this makes closure
+  /// variables resolvable.
+  std::vector<std::string> enclosing_functions;
+
   /// Current class name (empty when not inside a class method)
   std::string current_class;
 
