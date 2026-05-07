@@ -1127,19 +1127,28 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         const auto &st = to_struct_type(rhs.type());
         for(const auto &elem : to_json_array(elements))
         {
-          std::string prop =
+          // TSH: Destructuring > Property Renaming
+          // The TypeScript AST emits `name` as the binding target
+          // (local variable) and optionally `propertyName` as the
+          // source property when the user writes `{ a: renamed }`.
+          // If `propertyName` is absent, source and target share the
+          // same name (e.g. `{ a }`).
+          std::string target =
             json_string(json_member(json_member(elem, "name"), "text"));
-          if(prop.empty() || !st.has_component(prop))
+          const jsont &pn = json_member(elem, "propertyName");
+          std::string source =
+            pn.is_object() ? json_string(json_member(pn, "text")) : target;
+          if(target.empty() || !st.has_component(source))
             continue;
-          typet pt = st.get_component(prop).type();
+          typet pt = st.get_component(source).type();
           std::string qn =
             "typescript::" +
-            (current_function.empty() ? "" : current_function + "::") + prop;
+            (current_function.empty() ? "" : current_function + "::") + target;
           irep_idt pid{qn};
           if(symbol_table.lookup(pid) == nullptr)
           {
             symbolt ps{pid, pt, "typescript"};
-            ps.base_name = prop;
+            ps.base_name = target;
             ps.is_lvalue = true;
             ps.is_state_var = true;
             ps.is_static_lifetime = current_function.empty();
@@ -1147,7 +1156,7 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
           }
           block.add(code_frontend_assignt{
             symbol_table.lookup_ref(pid).symbol_expr(),
-            member_exprt{rhs, prop, pt}});
+            member_exprt{rhs, source, pt}});
         }
       }
       continue;
