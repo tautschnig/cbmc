@@ -1302,6 +1302,25 @@ exprt python_convertert::convert_expression(const jsont &expr)
   }
   else if(node_type == "ListComp")
     result = convert_list_comp(expr);
+  // PLR §6.2.4 / 6.2.5: GeneratorExp / SetComp share ListComp's AST
+  // (elt + generators). A precise model of each container type is
+  // not on the Step 1 path, but routing them through
+  // convert_list_comp at least exercises the comprehension's body
+  // and generators, so closure/name resolution inside them still
+  // works. The resulting list is consumed as an opaque iterable by
+  // callers.
+  else if(node_type == "GeneratorExp" || node_type == "SetComp")
+  {
+    result = convert_list_comp(expr);
+  }
+  // DictComp is intentionally left unhandled: routing it through
+  // convert_list_comp produces a list, which breaks down-stream
+  // subscript-by-key lookups (see limit-dict-comprehension CORE
+  // test). Proper support is tracked for later.
+  // PLR §6.12: named expressions (walrus operator, 'name := expr').
+  // A precise in-expression side effect is tricky; leaving this to
+  // the default unsupported-expression path for now preserves the
+  // existing KNOWNBUG regression behaviour.
   else if(node_type == "JoinedStr")
   {
     // PLR §2.4.3: f-strings — concatenate literal parts with formatted values
