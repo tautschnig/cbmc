@@ -9505,8 +9505,20 @@ codet python_convertert::convert_assign(const jsont &stmt)
         const symbolt &var_sym = symbol_table.lookup_ref(symbol_id);
         code_blockt result;
 
+        // Identify whether the destination symbol's type can actually
+        // hold class-instance state. Python allows rebinding a name
+        // to a different type, so a previous scalar use of the same
+        // name may leave the symbol with a non-struct type. In that
+        // case we skip the class-tag / default-value initialisation —
+        // the subsequent __init__ call will still run, and we log a
+        // warning so the user knows the state will not be tracked
+        // precisely.
+        const typet &resolved_var_type = var_sym.type;
+        const bool var_holds_struct = resolved_var_type.id() == ID_struct ||
+                                      resolved_var_type.id() == ID_struct_tag;
+
         // Set __class_tag to the actual class being constructed
-        if(class_tag_ids.count(call_name))
+        if(var_holds_struct && class_tag_ids.count(call_name))
         {
           result.add(code_frontend_assignt{
             member_exprt{
@@ -9517,10 +9529,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
         // Copy class-level default values from the class object
         irep_idt class_obj_id{"python::" + call_name};
         const symbolt *class_obj = symbol_table.lookup(class_obj_id);
-        if(class_obj != nullptr && !class_obj->value.is_nil())
+        if(
+          var_holds_struct && class_obj != nullptr &&
+          !class_obj->value.is_nil())
         {
           result.add(code_frontend_assignt{
             var_sym.symbol_expr(), class_obj->symbol_expr()});
+        }
+
+        if(!var_holds_struct && class_tag_ids.count(call_name))
+        {
+          log.warning() << "Variable '" << var_sym.base_name
+                        << "' is being rebound to class instance of '"
+                        << call_name << "' but already has non-struct type '"
+                        << resolved_var_type.id_string()
+                        << "'; class state will not be tracked precisely."
+                        << messaget::eom;
         }
 
         // Call __init__(&var, args...)
