@@ -604,21 +604,23 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           // the string unchanged.
           if(static_cast<int>(sv.size()) >= target_len)
             return convert_string_literal_from_text(sv);
-          // Find the pad character: it's the last string arg (since
-          // numeric args pad str_args with empty strings, the real
-          // pad char is the non-empty entry, typically at index 1).
           std::string pad = " ";
           for(const auto &s : str_args)
             if(!s.empty())
               pad = s;
-          std::string result = sv;
+          // ES2024 StringPad: build a filler string by repeating `pad`
+          // enough times to cover (target_len - sv.size()) chars, then
+          // TRUNCATE to that size and prepend to sv. This matches the
+          // spec's "slice to required length" step and correctly
+          // handles multi-char pad strings.
+          int need = target_len - static_cast<int>(sv.size());
+          std::string filler;
+          filler.reserve(need);
           int max_iters = 10000;
-          while(static_cast<int>(result.size()) < target_len && max_iters-- > 0)
-            result = pad + result;
-          if(static_cast<int>(result.size()) >= target_len)
-            return convert_string_literal_from_text(
-              result.substr(result.size() - target_len));
-          return convert_string_literal_from_text(result);
+          while(static_cast<int>(filler.size()) < need && max_iters-- > 0)
+            filler += pad;
+          filler = filler.substr(0, need);
+          return convert_string_literal_from_text(filler + sv);
         }
         if(method == "padEnd" && !num_args.empty())
         {
@@ -629,22 +631,52 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           for(const auto &s : str_args)
             if(!s.empty())
               pad = s;
-          std::string result = sv;
+          int need = target_len - static_cast<int>(sv.size());
+          std::string filler;
+          filler.reserve(need);
           int max_iters = 10000;
-          while(static_cast<int>(result.size()) < target_len && max_iters-- > 0)
-            result += pad;
-          if(static_cast<int>(result.size()) >= target_len)
-            return convert_string_literal_from_text(
-              result.substr(0, target_len));
-          return convert_string_literal_from_text(result);
+          while(static_cast<int>(filler.size()) < need && max_iters-- > 0)
+            filler += pad;
+          filler = filler.substr(0, need);
+          return convert_string_literal_from_text(sv + filler);
         }
         if(method == "repeat" && !num_args.empty())
         {
           int count = num_args[0];
+          // Safety: cap count to avoid runaway allocations.
+          if(count < 0)
+            count = 0;
+          if(count > 10000)
+            count = 10000;
           std::string result;
           for(int i = 0; i < count; ++i)
             result += sv;
           return convert_string_literal_from_text(result);
+        }
+        // ES2024 §22.1.3.5: String.prototype.concat
+        if(method == "concat" && !str_args.empty())
+        {
+          std::string result = sv;
+          for(const auto &s : str_args)
+            result += s;
+          return convert_string_literal_from_text(result);
+        }
+        // ES2024 §22.1.3.11: String.prototype.lastIndexOf
+        if(method == "lastIndexOf" && !str_args.empty())
+        {
+          std::string needle;
+          for(const auto &s : str_args)
+            if(!s.empty() || needle.empty())
+              needle = s;
+          needle = str_args[0];
+          auto pos = sv.rfind(needle);
+          int result = (pos == std::string::npos) ? -1 : static_cast<int>(pos);
+          uint64_t bits;
+          double dv = static_cast<double>(result);
+          std::memcpy(&bits, &dv, sizeof(bits));
+          return constant_exprt{
+            integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
+            double_type()};
         }
         if(method == "replaceAll" && str_args.size() >= 2)
         {
