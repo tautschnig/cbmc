@@ -416,14 +416,18 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return false_exprt{};
   if(kind == "NullKeyword")
   {
-    // Check context type from _type annotation
-    std::string ts_type = json_string(json_member(node, "_type"));
-    if(ts_type == "null")
-    {
-      // Use a sentinel value that works with any comparison
-      return from_integer(0, signedbv_typet{64});
-    }
-    return from_integer(0, signedbv_typet{64});
+    // ES2024 sec-null-value: use NaN as the sentinel for null.
+    // This matches undefined (see convert_identifier) so that
+    // `null == undefined` and `null ?? x` work correctly. Our model
+    // treats null and undefined as interchangeable sentinels
+    // (sound for programs that don't distinguish them, which is
+    // the common case in TypeScript where the union type
+    // T | null | undefined is common).
+    ieee_floatt nan_val{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    nan_val.make_NaN();
+    return nan_val.to_expr();
   }
   if(kind == "Identifier")
     return convert_identifier(node);
@@ -1262,8 +1266,21 @@ exprt typescript_convertert::convert_identifier(const jsont &node)
   std::string name = json_string(json_member(node, "text"));
 
   // Special identifiers
+  // ES2024 sec-undefined: the `undefined` literal.
+  // We model `undefined` as IEEE-754 NaN for numeric contexts. This
+  // gives the nullish-coalescing operator (??) and optional chaining
+  // (?.) a runtime check they can use. Soundness trade-off: in JS,
+  // `NaN ?? x` returns NaN, but our model returns x. Real code
+  // rarely uses NaN as a legitimate value while also wanting to
+  // preserve it through ??, so this is an acceptable approximation.
   if(name == "undefined")
-    return from_integer(0, signedbv_typet{64});
+  {
+    ieee_floatt nan_val{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    nan_val.make_NaN();
+    return nan_val.to_expr();
+  }
   if(name == "NaN")
   {
     ieee_floatt nan{
@@ -1612,10 +1629,20 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // number == string coerces string to number
   if(op == "EqualsEqualsToken")
   {
-    // null == undefined → true (and vice versa)
-    bool left_null = left.is_zero() && left.type().id() == ID_signedbv;
-    bool right_null = right.is_zero() && right.type().id() == ID_signedbv;
-    if(left_null && right_null)
+    // ES2024: null == undefined → true (and vice versa).
+    // Both are modeled as NaN; NaN == NaN is false under IEEE 754,
+    // so we special-case: two NaNs compare == for loose equality.
+    auto is_nan_const = [](const exprt &e)
+    {
+      if(!e.is_constant() || e.type().id() != ID_floatbv)
+        return false;
+      ieee_floatt v{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      v.from_expr(to_constant_expr(e));
+      return v.is_NaN();
+    };
+    if(is_nan_const(left) && is_nan_const(right))
       return true_exprt{};
     // Type coercion: if types differ, cast to common type
     if(left.type() != right.type())
@@ -1681,10 +1708,33 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         }
       }
     }
-    // Handle type mismatch (null comparison)
+    // Handle type mismatch (null comparison or other cross-type ===).
+    // Per ES2024 sec-isstrictlyequal: if Type(x) !== Type(y) → false.
     if(left.type() != right.type())
     {
-      // x === null where x is not nullable → false
+      // Both sides being NaN (null/undefined sentinels) → equal.
+      auto is_nan_const = [](const exprt &e)
+      {
+        if(!e.is_constant() || e.type().id() != ID_floatbv)
+          return false;
+        ieee_floatt v{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        v.from_expr(to_constant_expr(e));
+        return v.is_NaN();
+      };
+      if(is_nan_const(left) && is_nan_const(right))
+        return true_exprt{};
+      // x === null where x is a non-nullable concrete type: false.
+      if(is_typescript_string_type(left.type()) && is_nan_const(right))
+        return false_exprt{};
+      if(is_typescript_string_type(right.type()) && is_nan_const(left))
+        return false_exprt{};
+      if(left.type().id() == ID_bool && is_nan_const(right))
+        return false_exprt{};
+      if(right.type().id() == ID_bool && is_nan_const(left))
+        return false_exprt{};
+      // x === null (old model: right is signedbv 0) → false for typed x.
       if(
         (right.is_constant() && right.type().id() == ID_signedbv) ||
         (left.is_constant() && left.type().id() == ID_signedbv))
@@ -1700,6 +1750,25 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       std::string rs = extract_string_value(right);
       if(!ls.empty() && !rs.empty())
         return ls == rs ? exprt{true_exprt{}} : exprt{false_exprt{}};
+    }
+    // ES2024 sec-isstrictlyequal: when types differ, === is always false
+    // (with one exception: our NaN sentinel for null/undefined should
+    // compare equal when both sides are null/undefined).
+    if(left.type() != right.type())
+    {
+      // Check: is one side a string struct and the other NaN (null/
+      // undefined)? Then false — the spec says "Type(x) !== Type(y)
+      // → return false".
+      if(
+        is_typescript_string_type(left.type()) &&
+        right.type().id() == ID_floatbv)
+        return false_exprt{};
+      if(
+        is_typescript_string_type(right.type()) &&
+        left.type().id() == ID_floatbv)
+        return false_exprt{};
+      // For other type mismatches, fall through to equal_exprt
+      // (which may produce bottom but matches prior behaviour).
     }
     return equal_exprt{left, right};
   }
@@ -1790,8 +1859,18 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ES2024 sec-nullish-coalescing: ??
   if(op == "QuestionQuestionToken")
   {
-    // x ?? y → x !== null && x !== undefined ? x : y
-    // For numbers: x is never null, so just return x
+    // x ?? y → (x is null or undefined) ? y : x
+    // We model `undefined` as IEEE-754 NaN (see convert_identifier).
+    // So the predicate is `isNaN(x)`. For non-numeric LHS, return x.
+    if(left.type().id() == ID_floatbv)
+    {
+      exprt is_nan = ieee_float_notequal_exprt{left, left};
+      // Ensure right has compatible type.
+      exprt right_conv = right;
+      if(right.type() != left.type())
+        right_conv = typecast_exprt{right, left.type()};
+      return if_exprt{is_nan, right_conv, left};
+    }
     return left;
   }
   // ES2024 sec-assignment-operators: logical assignment
