@@ -103,19 +103,30 @@ class Generator:
         # Optionally emit a function declaration at the top.
         if self.rng.random() < 0.3:
             stmts.append(self.gen_function_decl())
+        # Optionally emit a generic function.
+        if self.rng.random() < 0.2:
+            stmts.append(self.gen_generic_function_decl())
         # Optionally emit a class declaration.
         if self.rng.random() < 0.2:
             stmts.append(self.gen_class_decl())
         for _ in range(n_stmts):
             r = self.rng.random()
-            if r < 0.25:
+            if r < 0.18:
                 stmts.append(self.gen_declaration())
-            elif r < 0.45:
+            elif r < 0.30:
                 stmts.append(self.gen_array_stmt())
+            elif r < 0.40:
+                stmts.append(self.gen_array_method_stmt())
+            elif r < 0.48:
+                stmts.append(self.gen_map_set_stmt())
             elif r < 0.60:
                 stmts.append(self.gen_if_stmt())
-            elif r < 0.75:
+            elif r < 0.70:
                 stmts.append(self.gen_for_stmt())
+            elif r < 0.78:
+                stmts.append(self.gen_try_catch_stmt())
+            elif r < 0.86:
+                stmts.append(self.gen_async_stmt())
             else:
                 stmts.append(self.gen_assertion())
         return "\n".join(stmts) + "\n"
@@ -131,6 +142,17 @@ class Generator:
             body_expr = self.gen_bool_expr(self.max_depth - 1)
         return f"function {name}(): {t} {{ return {body_expr}; }}"
 
+    def gen_generic_function_decl(self) -> str:
+        name = self.new_var()
+        # Generic identity function
+        return (
+            f"function {name}<T>(x: T): T {{ return x; }}\n"
+            f"console.assert({name}<number>("
+            f"{self.gen_num_expr(self.max_depth - 1)}) === "
+            f"{name}<number>("
+            f"{self.gen_num_expr(self.max_depth - 1)}) || true);"
+        )
+
     def gen_class_decl(self) -> str:
         name = "C" + str(self.var_counter)
         self.var_counter += 1
@@ -144,6 +166,68 @@ class Generator:
         name = self.new_var()
         elts = [self.gen_num_expr(self.max_depth - 1) for _ in range(self.rng.randint(2, 5))]
         return f"const {name}: number[] = [{', '.join(elts)}];"
+
+    def gen_array_method_stmt(self) -> str:
+        """Generate a statement exercising common Array methods."""
+        name = self.new_var()
+        elts = [self.gen_num_expr(self.max_depth - 1) for _ in range(self.rng.randint(2, 5))]
+        arr_lit = f"[{', '.join(elts)}]"
+        method = self.rng.choice(
+            [
+                "map((x: number) => x + 1)",
+                "filter((x: number) => x > 0)",
+                "reduce((a: number, b: number) => a + b, 0)",
+                "slice(0, 2)",
+                "concat([99])",
+                "reverse()",
+                "includes(1)",
+                "indexOf(1)",
+                "at(0)",
+            ]
+        )
+        return f"const {name} = {arr_lit}.{method};"
+
+    def gen_map_set_stmt(self) -> str:
+        """Generate a Map or Set declaration with a few ops."""
+        name = self.new_var()
+        if self.rng.random() < 0.5:
+            # Map<string, number>
+            k = self.rng.choice(['"a"', '"b"', '"x"'])
+            v = self.gen_num_expr(self.max_depth - 1)
+            return (
+                f"const {name}: Map<string, number> = new Map();\n"
+                f"{name}.set({k}, {v});\n"
+                f"console.assert({name}.has({k}));"
+            )
+        else:
+            # Set<number>
+            v1 = self.gen_num_expr(self.max_depth - 1)
+            v2 = self.gen_num_expr(self.max_depth - 1)
+            return (
+                f"const {name}: Set<number> = new Set();\n"
+                f"{name}.add({v1});\n"
+                f"{name}.add({v2});\n"
+                f"console.assert({name}.size <= 2);"
+            )
+
+    def gen_try_catch_stmt(self) -> str:
+        """Generate a try/catch block."""
+        inner = self.gen_assertion()
+        maybe_throw = ""
+        if self.rng.random() < 0.5:
+            maybe_throw = "if (false) throw new Error('never');"
+        return (
+            f"try {{ {maybe_throw} {inner} }} catch (e) {{ }}"
+        )
+
+    def gen_async_stmt(self) -> str:
+        """Generate a simple async/await pattern."""
+        name = self.new_var()
+        val = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"async function {name}(): Promise<number> {{ return {val}; }}\n"
+            f"const _r{self.var_counter} = await {name}();"
+        )
 
     def gen_if_stmt(self) -> str:
         cond = self.gen_bool_expr(self.max_depth - 1)
