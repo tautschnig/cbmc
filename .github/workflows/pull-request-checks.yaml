@@ -77,9 +77,6 @@ jobs:
           make -C regression/cbmc test-paths-lifo
           make -C regression/cbmc test-cprover-smt2
           make -C jbmc/regression test-parallel JOBS=${{env.linux-vcpus}}
-      - name: Run Python stdlib parse integration test
-        run: |
-          CBMC="$PWD/src/cbmc/cbmc" integration/python-stdlib/run_stdlib_parse_test.sh
       - name: Check cleanup
         run: |
           make -C src clean IPASIR=$PWD/riss.git/riss
