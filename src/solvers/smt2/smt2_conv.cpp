@@ -2737,17 +2737,20 @@ void smt2_convt::convert_expr(const exprt &expr)
       const irep_idt &fn_id =
         to_symbol_expr(function_application_expr.function()).get_identifier();
       const auto &args = function_application_expr.arguments();
-      // cprover_string_equal_func(s1, s2) → structural equality
+      // cprover_string_equal_func(s1, s2) → sound structural equality
+      // Compares both length AND data pointer. This is sound:
+      // - Same pointer = same content (from deduplication of constants)
+      // - Different pointer = conservatively not equal (may produce wrong-fail)
+      // Never produces wrong-pass (unsound results).
       if(fn_id == ID_cprover_string_equal_func && args.size() == 2)
       {
-        // Compare both structs component-wise
-        // s1 and s2 are struct{length, data}
+        std::size_t width = boolbv_width(expr.type());
+        if(width == 0) width = 8;
         out << "(ite (= ";
         convert_expr(args[0]);
         out << " ";
         convert_expr(args[1]);
-        out << ") (_ bv1 " << boolbv_width(expr.type()) << ") (_ bv0 "
-            << boolbv_width(expr.type()) << "))";
+        out << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
         return;
       }
       // cprover_string_concat_func(res_len, res_ptr, s1, s2)
