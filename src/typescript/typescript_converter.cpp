@@ -467,6 +467,11 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     exprt obj = convert_expression(json_member(node, "expression"));
     std::string prop =
       json_string(json_member(json_member(node, "name"), "text"));
+    // Note: the parser emits 'optional' for o?.p (ES2024 §13.3.9
+    // optional-chain), but the full short-circuit semantics require
+    // runtime undefined-tracking per struct field, which our current
+    // struct model doesn't support. Tracked as KNOWNBUG
+    // 'optional-chaining'.
     if(is_typescript_string_type(obj.type()) && prop == "length")
     {
       return member_exprt{obj, "length", signedbv_typet{32}};

@@ -162,10 +162,12 @@ function n2j(node) {
     case ts.SyntaxKind.PropertyAccessExpression:
       r.expression = n2j(node.expression);
       r.name = n2j(node.name);
+      if(node.questionDotToken) r.optional = true;
       break;
     case ts.SyntaxKind.ElementAccessExpression:
       r.expression = n2j(node.expression);
       r.argumentExpression = n2j(node.argumentExpression);
+      if(node.questionDotToken) r.optional = true;
       break;
     case ts.SyntaxKind.IfStatement:
       r.expression = n2j(node.expression);
