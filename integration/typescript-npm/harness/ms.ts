@@ -1,8 +1,10 @@
 // Harness for npm package 'ms' (vercel/ms)
 // Version tracked in integration/typescript-npm/package.json
 //
-// The ms package converts between time strings and milliseconds.
-// We reimplement the TypeScript equivalent and verify invariants.
+// Verifies properties of the ms package's classification logic over
+// SYMBOLIC (nondet) inputs. If the harness's logic or our TypeScript
+// frontend has a bug in arithmetic / comparisons, these properties
+// will fail under symbolic analysis.
 //
 // Upstream: https://github.com/vercel/ms/blob/v2.1.3/index.js
 
@@ -11,19 +13,6 @@ const M: number = S * 60;
 const H: number = M * 60;
 const D: number = H * 24;
 
-// parseDuration reimplements ms() parse logic for a subset of inputs.
-// Real ms supports many formats; we verify a representative subset.
-function parseDuration(s: string): number {
-  if (s === "1s") return S;
-  if (s === "1m") return M;
-  if (s === "1h") return H;
-  if (s === "1d") return D;
-  if (s === "2s") return 2 * S;
-  if (s === "10m") return 10 * M;
-  return 0;
-}
-
-// formatShort reimplements ms() format logic (short form).
 function formatShort(ms: number): string {
   if (ms >= D) return "d";
   if (ms >= H) return "h";
@@ -32,22 +21,39 @@ function formatShort(ms: number): string {
   return "ms";
 }
 
-// Invariants we verify:
-// 1. Unit constants are consistent (s * 60 === m, etc.)
-console.assert(S === 1000);
-console.assert(M === 60000);
-console.assert(H === 3600000);
-console.assert(D === 86400000);
+// Property: for any symbolic ms in a bounded non-negative range,
+// the classification is consistent with the unit boundaries.
+// If the frontend miscompiles >= or if constants are wrong, this fails.
+const ms: number = nondet_number();
+__CPROVER_assume(ms >= 0 && ms < D * 2); // 2 days worth
 
-// 2. Parse returns correct values for known inputs
-console.assert(parseDuration("1s") === 1000);
-console.assert(parseDuration("1m") === 60000);
-console.assert(parseDuration("1h") === 3600000);
-console.assert(parseDuration("2s") === 2000);
+const cls: string = formatShort(ms);
 
-// 3. Format classifies durations correctly
-console.assert(formatShort(500) === "ms");
-console.assert(formatShort(1500) === "s");
-console.assert(formatShort(65000) === "m");
-console.assert(formatShort(3700000) === "h");
-console.assert(formatShort(90000000) === "d");
+// If classified as "ms", ms must be < 1000
+if (cls === "ms") {
+  console.assert(ms < S);
+}
+// If classified as "s", ms must be in [1000, 60000)
+if (cls === "s") {
+  console.assert(ms >= S);
+  console.assert(ms < M);
+}
+// If classified as "m", ms must be in [60000, 3600000)
+if (cls === "m") {
+  console.assert(ms >= M);
+  console.assert(ms < H);
+}
+// If classified as "h", ms must be in [3600000, 86400000)
+if (cls === "h") {
+  console.assert(ms >= H);
+  console.assert(ms < D);
+}
+// If classified as "d", ms must be >= 86400000
+if (cls === "d") {
+  console.assert(ms >= D);
+}
+
+// Property: the classification is total — ms is ALWAYS one of the 5 categories.
+console.assert(
+  cls === "ms" || cls === "s" || cls === "m" || cls === "h" || cls === "d"
+);

@@ -1358,10 +1358,34 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       std::string rs_raw = extract_string_value(right);
       std::string ls = ls_raw.empty() ? "" : ls_raw.substr(2);
       std::string rs = rs_raw.empty() ? "" : rs_raw.substr(2);
-      if(!ls.empty() || !rs.empty())
+      // Fully concrete: synthesize the literal.
+      bool left_concrete =
+        !is_typescript_string_type(left.type()) || !ls_raw.empty();
+      bool right_concrete =
+        !is_typescript_string_type(right.type()) || !rs_raw.empty();
+      if(left_concrete && right_concrete)
         return convert_string_literal_from_text(ls + rs);
-      return side_effect_expr_nondett{
-        typescript_string_type(), source_locationt{}};
+      // Symbolic concatenation: we don't know some of the concrete
+      // characters, but we DO know the resulting length:
+      //   length = left.length + right.length.
+      // Return a struct with that length and a nondet data array. This
+      // lets length-based properties verify correctly even across
+      // function-parameter string concatenations.
+      struct_typet str_type = typescript_string_type();
+      const auto &data_type = to_array_type(str_type.components()[1].type());
+      exprt::operandst nondet_chars;
+      while(nondet_chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+        nondet_chars.push_back(
+          side_effect_expr_nondett{unsignedbv_typet{16}, source_locationt{}});
+      exprt llen = is_typescript_string_type(left.type())
+                     ? exprt{member_exprt{left, "length", signedbv_typet{32}}}
+                     : from_integer(0, signedbv_typet{32});
+      exprt rlen = is_typescript_string_type(right.type())
+                     ? exprt{member_exprt{right, "length", signedbv_typet{32}}}
+                     : from_integer(0, signedbv_typet{32});
+      exprt total_len = plus_exprt{llen, rlen};
+      return struct_exprt{
+        {total_len, array_exprt{std::move(nondet_chars), data_type}}, str_type};
     }
     return plus_exprt{left, right};
   }

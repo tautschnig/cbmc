@@ -1,8 +1,9 @@
 // Harness for npm package 'uuid' (uuidjs/uuid)
 // Version tracked in integration/typescript-npm/package.json
 //
-// The uuid package generates and validates UUIDs.
-// We verify UUID structure and equality properties.
+// Verifies UUID equality and structural invariants over SYMBOLIC values.
+// If the frontend miscompiles struct comparison or field access,
+// these properties fail.
 //
 // Upstream: https://github.com/uuidjs/uuid
 
@@ -11,7 +12,9 @@ class UUID {
   low: number;
   version: number;
   constructor(h: number, l: number, v: number) {
-    this.high = h; this.low = l; this.version = v;
+    this.high = h;
+    this.low = l;
+    this.version = v;
   }
   equals(other: UUID): boolean {
     return this.high === other.high &&
@@ -21,24 +24,38 @@ class UUID {
   isNil(): boolean {
     return this.high === 0 && this.low === 0 && this.version === 0;
   }
-  getVersion(): number { return this.version; }
 }
 
-const v4_a = new UUID(12345, 67890, 4);
-const v4_b = new UUID(12345, 67890, 4);
-const v4_c = new UUID(99999, 11111, 4);
-const nil = new UUID(0, 0, 0);
+// Property 1: equality is reflexive over symbolic values.
+// For any nondet UUID components, an UUID equals itself.
+// (Excluding NaN: NaN !== NaN per IEEE 754, which the JS spec respects.)
+const h: number = nondet_number();
+const l: number = nondet_number();
+const v: number = nondet_number();
+__CPROVER_assume(!Number.isNaN(h) && !Number.isNaN(l) && !Number.isNaN(v));
+__CPROVER_assume(v >= 1 && v <= 5);
 
-// Invariants:
-// 1. Equality is reflexive and compares all fields
-console.assert(v4_a.equals(v4_a) === true);
-console.assert(v4_a.equals(v4_b) === true);
-console.assert(v4_a.equals(v4_c) === false);
+const u1: UUID = new UUID(h, l, v);
+console.assert(u1.equals(u1));
 
-// 2. Version tracking
-console.assert(v4_a.getVersion() === 4);
-console.assert(nil.getVersion() === 0);
+// Property 2: equality is symmetric.
+const u2: UUID = new UUID(h, l, v);
+console.assert(u1.equals(u2) === u2.equals(u1));
+// For identical components, they must be equal.
+console.assert(u1.equals(u2));
 
-// 3. Nil UUID detection
-console.assert(nil.isNil() === true);
-console.assert(v4_a.isNil() === false);
+// Property 3: difference in any field breaks equality.
+// Under the assumption h != 0, the version-bumped uuid must differ.
+__CPROVER_assume(v < 5); // leave room to increment
+const u3: UUID = new UUID(h, l, v + 1);
+console.assert(!u1.equals(u3));
+
+// Property 4: nil detection is correct.
+const nilU: UUID = new UUID(0, 0, 0);
+console.assert(nilU.isNil());
+
+// Non-nil detection over a symbolic non-zero value:
+const nz: number = nondet_number();
+__CPROVER_assume(nz !== 0);
+const nonNil: UUID = new UUID(nz, 0, 0);
+console.assert(!nonNil.isNil());

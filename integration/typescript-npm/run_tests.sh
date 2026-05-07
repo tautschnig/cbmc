@@ -90,12 +90,16 @@ run_harness() {
     fi
 
     echo "Verifying ${name} harness..."
-    if "$CBMC" "$harness" > /dev/null 2>&1; then
+    # Run under ulimit to bound memory and CPU: 4 GB virtual, 120 s CPU.
+    # Symbolic-input harnesses can consume significant resources if there
+    # is a pathological case (e.g., regression in frontend causes many
+    # branches to be explored).
+    if ( ulimit -v 4000000 -t 120 && "$CBMC" "$harness" > /dev/null 2>&1 ); then
         echo "  OK"
         return 0
     else
         echo "  FAILED"
-        "$CBMC" "$harness" 2>&1 | tail -10
+        ( ulimit -v 4000000 -t 120 && "$CBMC" "$harness" 2>&1 ) | tail -15
         return 1
     fi
 }
