@@ -48,6 +48,22 @@ For details on compiling, testing, contributing, and documentation related to
 development see:
 - [CProver Developer Documentation](https://diffblue.github.io/cbmc/)
 
+### Supported Languages
+
+Besides C and C++, CBMC supports additional languages via dedicated
+frontends:
+
+- **Python 3** — verification of Python programs via the `.py` extension.
+  See [Python Verification Guide](doc/python-verification-guide.md).
+- **TypeScript** — verification of TypeScript programs via the `.ts`
+  and `.tsx` extensions. Includes support for generics, Map/Set,
+  async/await (synchronous model), decorators, namespaces, and
+  discriminated unions. See
+  [TypeScript Verification Guide](doc/typescript-verification-guide.md).
+
+Running `cbmc foo.py` or `cbmc bar.ts` automatically selects the
+appropriate frontend based on file extension.
+
 
 ## goto-analyzer
 
