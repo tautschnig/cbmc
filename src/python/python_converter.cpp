@@ -156,29 +156,43 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
     fv.from_expr(to_constant_expr(*ce));
     return std::stod(fv.to_ansi_c_string());
   }
-  // Binary operations
+  // Binary and comparison operations (all 2-operand cases). We only
+  // evaluate the operands once per invocation, regardless of which
+  // category matches, otherwise three separate size==2 blocks
+  // (binary ops, modulo, comparisons) each call try_eval_double on
+  // the same two operands, which turns into exponential work for
+  // deeply-nested expressions whose root id matches none of the
+  // categories below (e.g. large string-concat chains at the top of
+  // a function body whose id is ID_side_effect etc.).
   if(ce->operands().size() == 2)
   {
     auto l = try_eval_double(ce->operands()[0]);
     auto r = try_eval_double(ce->operands()[1]);
     if(l.has_value() && r.has_value())
     {
-      if(ce->id() == ID_plus)
+      const irep_idt id = ce->id();
+      if(id == ID_plus || id == ID_floatbv_plus)
         return l.value() + r.value();
-      if(ce->id() == ID_minus)
+      if(id == ID_minus || id == ID_floatbv_minus)
         return l.value() - r.value();
-      if(ce->id() == ID_mult)
+      if(id == ID_mult || id == ID_floatbv_mult)
         return l.value() * r.value();
-      if(ce->id() == ID_div && r.value() != 0)
+      if((id == ID_div || id == ID_floatbv_div) && r.value() != 0)
         return l.value() / r.value();
-      if(ce->id() == ID_floatbv_plus)
-        return l.value() + r.value();
-      if(ce->id() == ID_floatbv_minus)
-        return l.value() - r.value();
-      if(ce->id() == ID_floatbv_mult)
-        return l.value() * r.value();
-      if(ce->id() == ID_floatbv_div && r.value() != 0)
-        return l.value() / r.value();
+      if((id == ID_mod || id == ID_floatbv_mod) && r.value() != 0)
+        return std::fmod(l.value(), r.value());
+      if(id == ID_lt)
+        return l.value() < r.value() ? 1.0 : 0.0;
+      if(id == ID_le)
+        return l.value() <= r.value() ? 1.0 : 0.0;
+      if(id == ID_gt)
+        return l.value() > r.value() ? 1.0 : 0.0;
+      if(id == ID_ge)
+        return l.value() >= r.value() ? 1.0 : 0.0;
+      if(id == ID_equal)
+        return l.value() == r.value() ? 1.0 : 0.0;
+      if(id == ID_notequal)
+        return l.value() != r.value() ? 1.0 : 0.0;
     }
   }
   // Unary minus
@@ -198,37 +212,6 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
                                  : try_eval_double(ce->operands()[2]);
     // If condition unknown, can't evaluate
     return std::nullopt;
-  }
-  // Modulo
-  if(
-    (ce->id() == ID_mod || ce->id() == ID_floatbv_mod) &&
-    ce->operands().size() == 2)
-  {
-    auto l = try_eval_double(ce->operands()[0]);
-    auto r = try_eval_double(ce->operands()[1]);
-    if(l.has_value() && r.has_value() && r.value() != 0)
-      return std::fmod(l.value(), r.value());
-  }
-  // Comparisons — return 1.0 for true, 0.0 for false
-  if(ce->operands().size() == 2)
-  {
-    auto l = try_eval_double(ce->operands()[0]);
-    auto r = try_eval_double(ce->operands()[1]);
-    if(l.has_value() && r.has_value())
-    {
-      if(ce->id() == ID_lt)
-        return l.value() < r.value() ? 1.0 : 0.0;
-      if(ce->id() == ID_le)
-        return l.value() <= r.value() ? 1.0 : 0.0;
-      if(ce->id() == ID_gt)
-        return l.value() > r.value() ? 1.0 : 0.0;
-      if(ce->id() == ID_ge)
-        return l.value() >= r.value() ? 1.0 : 0.0;
-      if(ce->id() == ID_equal)
-        return l.value() == r.value() ? 1.0 : 0.0;
-      if(ce->id() == ID_notequal)
-        return l.value() != r.value() ? 1.0 : 0.0;
-    }
   }
   return std::nullopt;
 }

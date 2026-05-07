@@ -1,0 +1,9 @@
+CORE
+main.py
+--show-symbol-table
+
+^EXIT=0$
+^SIGNAL=0$
+--
+^CONVERSION ERROR
+^--- begin invariant violation report ---
