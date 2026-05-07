@@ -9,9 +9,9 @@ monitored by CI and cannot silently regress.
 
 ## What the test does
 
-`run_stdlib_parse_test.sh` runs `cbmc` against each of a curated set of
-stdlib modules (see `modules.txt`) with a short per-module wall-clock
-budget, and records for each module:
+`run_stdlib_parse_test.sh` runs `cbmc --show-symbol-table` against each
+of a curated set of stdlib modules (see `modules.txt`) with a short
+per-module wall-clock budget, and records for each module:
 
 * process exit code,
 * whether the run crashed (invariant violation / abort),
@@ -26,11 +26,16 @@ always welcome.
 
 ## What the test does NOT do
 
-It does **not** attempt to verify the modules. Many stdlib modules
-contain unverifiable code (use of unmodelled built-ins, unannotated
-function parameters, dynamic features that we cannot yet represent).
-For the purposes of this test, "passes" means "ingested without the
-front-end itself crashing or hanging".
+It does **not** attempt to verify the modules. The test runs with
+`--show-symbol-table` so only parsing, import resolution, and
+type-checking are exercised; the GOTO generation and solver stages
+are never entered. Many stdlib modules contain unverifiable code
+(use of unmodelled built-ins, unannotated function parameters,
+dynamic features that we cannot yet represent); that is a concern for
+later steps of the plan.
+
+For the purposes of this test, "passes" means "the front-end ingested
+the file without itself crashing or hanging".
 
 ## Running locally
 

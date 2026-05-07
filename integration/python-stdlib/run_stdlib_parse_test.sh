@@ -106,7 +106,7 @@ while IFS= read -r line; do
   fi
 
   ( ulimit -v "$MEM_KB" 2>/dev/null
-    timeout "$TIMEOUT" "$CBMC" "$path" ) > "$results_file.log" 2>&1
+    timeout "$TIMEOUT" "$CBMC" --show-symbol-table "$path" >/dev/null ) > "$results_file.log" 2>&1
   rc=$?
   status=$(classify "$rc" "$results_file.log")
   loc=$(first_error_location "$results_file.log")
