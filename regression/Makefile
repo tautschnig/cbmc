@@ -61,6 +61,7 @@ DIRS = cbmc-shadow-memory \
        goto-interpreter \
        cbmc-sequentialization \
        cpp-linter \
+       typescript \
        catch-framework \
        libcprover-cpp \
        book-examples \
