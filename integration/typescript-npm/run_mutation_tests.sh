@@ -39,6 +39,13 @@ MUTATIONS=(
     'uuid:s|this.high === other.high|true|:dropped-high-comparison'
     'left-pad:s|if (strLen >= len) return false; // no padding needed|if (strLen > len) return false;|:boundary-off-by-one'
     'left-pad:s|return len;|return strLen;|:wrong-return-value'
+    'semver:s|if (aMajor < bMajor) return -1;|if (aMajor > bMajor) return -1;|:inverted-major-comparison'
+    'semver:s|if (aMinor < bMinor) return -1;|if (aMinor <= bMinor) return -1;|:wrong-minor-comparison'
+    'semver:s|if (aPatch > bPatch) return 1;|if (aPatch >= bPatch) return 1;|:wrong-patch-comparison'
+    'lodash.chunk:s|if (len <= 3) return 1;|if (len <= 2) return 1;|:wrong-boundary-in-chunk'
+    'lodash.chunk:s@if (len === 1 || len === 4 || len === 7) return 1;@if (len === 2 || len === 4 || len === 7) return 1;@:wrong-last-len'
+    'is-number:s|return num - num === 0;|return true;|:classifies-nan-as-number'
+    'is-number:s|const nan: number = 0.0 / 0.0;|const nan: number = 1.0;|:wrong-nan-value'
 )
 
 failures=0

@@ -68,10 +68,13 @@ When updating:
 
 | Package | Version | Harness focus |
 |---------|---------|---------------|
-| ms | 2.1.3 | Time unit constants and classification |
-| classnames | 2.5.1 | String concatenation invariants |
-| uuid | 9.0.1 | UUID structural equality |
-| left-pad | 1.3.0 | Length-based padding properties |
+| ms | 2.1.3 | Time unit classification over symbolic ms (boundaries, totality) |
+| classnames | 2.5.1 | String-length composition over symbolic branching |
+| uuid | 9.0.1 | Struct equality (reflexive/symmetric, per-field discrimination) |
+| left-pad | 1.3.0 | Length monotonicity, boundary, idempotence |
+| semver | 7.7.2 | Comparison total-order axioms (reflexivity, antisymmetry, transitivity) |
+| lodash.chunk | 4.2.0 | Ceiling-division properties for chunk count |
+| is-number | 7.0.0 | Finiteness classification (finite/NaN/Infinity) |
 
 ## Adding a new package
 
