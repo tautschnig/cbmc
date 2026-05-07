@@ -4,349 +4,329 @@ Status of each ES2024 / TypeScript Handbook feature in the CBMC TypeScript
 frontend as of 2026-05-07. Compiled from systematic code review and
 probe-testing against the specification.
 
+Each row cites one or more regression tests under
+`regression/typescript/` that demonstrate the capability (for supported
+features) or document the gap (for `[KNOWNBUG]` features). Every listed
+test name has been verified to exist. Where no dedicated test exists,
+the column shows `—`.
+
 **Legend:**
 - ✅ Supported — feature works correctly
 - ⚠️  Partial — feature works in common cases but has documented gaps
 - ❌ Not supported — feature returns wrong result or nondet
-- ⏳ Limited — feature works but requires workarounds (e.g., `--unwind`,
+- ⏳ Limited — feature works but requires workarounds (`--unwind`,
   `--ts-integer-mode`, `--no-unwinding-assertions`)
 
 ## Language fundamentals
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Numeric literals (int, float, hex, bin, oct, BigInt) | ⚠️ | BigInt not modeled; numeric literals converted to IEEE-754 double |
-| String literals (single, double, template) | ✅ | Template literals with interpolation work |
-| Boolean literals | ✅ | |
-| `undefined`, `null` | ⚠️ | `undefined` union-field works; nullish operators (`??`, `?.`) limited |
-| Variable declarations (`let`, `const`, `var`) | ✅ | |
-| Arithmetic operators (`+`, `-`, `*`, `/`, `%`, `**`) | ✅ | |
-| Comparison operators (`<`, `<=`, `>`, `>=`, `==`, `===`, `!=`, `!==`) | ✅ | NaN handling per IEEE 754 |
-| Logical operators (`&&`, `\|\|`, `!`) | ✅ | |
-| Bitwise operators (`\|`, `&`, `^`, `~`, `<<`, `>>`, `>>>`) | ✅ | Int32 conversion semantics |
-| Assignment operators (`=`, `+=`, etc.) | ✅ | |
-| `typeof` operator (ES2024 §12.5.5) | ✅ | Now handles literal types ("42" → "number"); fixed 2026-05-07 |
-| `instanceof` operator | ✅ | |
-| `in` operator | ✅ | Including narrowing |
-| Comma operator | ✅ | |
-| Conditional operator (`? :`) | ✅ | |
-| Nullish coalescing (`??`) (ES2024 §13.13) | ❌ | Known bug: returns LHS instead of RHS when LHS is undefined (`nullish-coalescing` KNOWNBUG) |
-| Optional chaining (`?.`) (ES2024 §13.3.9) | ❌ | Known bug: doesn't short-circuit (`optional-chaining` KNOWNBUG) |
-| String-to-number coercion (`+`, `Number()`) | ❌ | `+"42"` doesn't parse |
-| Number-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07: `"x" + 1 === "x1"` |
-| Boolean-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07: `"x" + true === "xtrue"` |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Numeric literals | ⚠️ | BigInt not modeled | `number-methods`, `number-infinity` |
+| String literals | ✅ |  | `string-length`, `string-equality` |
+| Boolean literals | ✅ |  | `boolean-logic`, `boolean-not` |
+| Template literals | ✅ | With interpolation | `template-literal`, `template-literal-complex` |
+| `undefined`, `null` | ⚠️ | Union-field works; nullish operators limited | `null-safety`, `null-union-function`, `nullish-coalescing` [KNOWNBUG] |
+| Variable declarations | ✅ |  | (covered implicitly in all tests) |
+| Arithmetic operators | ✅ |  | `verify-modular-arithmetic`, `power-math` |
+| Comparison operators | ✅ | NaN handling per IEEE 754 | `number-comparison`, `nan-check-div` |
+| Logical operators | ✅ |  | `boolean-logic` |
+| Bitwise operators | ✅ | Int32 conversion semantics | `bitwise-ops` |
+| Assignment operators | ✅ |  | `compound-assignment` |
+| typeof operator | ✅ | Literal-types case fixed 2026-05-07 | `typeof-number`, `typeof-function`, `typeof-literal-types` |
+| instanceof operator | ✅ |  | `instanceof-check` |
+| in operator | ✅ | Including narrowing | `in-operator` |
+| Conditional operator (`? :`) | ✅ |  | `ternary`, `ternary-nested`, `ternary-number` |
+| Nullish coalescing (`??`) (ES2024 §13.13) | ❌ | Returns LHS when LHS is undefined | `nullish-coalescing` [KNOWNBUG] |
+| Optional chaining (`?.`) (ES2024 §13.3.9) | ❌ | Doesn't short-circuit | `optional-chaining` [KNOWNBUG] |
+| String-to-number coercion (`+s`) | ❌ | `+"42"` doesn't parse | — |
+| Number-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07 | `string-concat-number-coerce` |
+| Boolean-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07 | `string-concat-number-coerce` |
 
 ## Control flow
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `if`/`else` | ✅ | |
-| `switch`/`case`/`default` | ✅ | |
-| `for` (classic) | ⏳ | Needs `--no-unwinding-assertions` or `--ts-integer-mode` due to float loop counter |
-| `for..of` | ✅ | |
-| `for..in` | ⚠️ | Array keys iteration limited |
-| `while`, `do..while` | ✅ | Same loop-counter caveat as `for` |
-| `break`, `continue` | ✅ | Including labeled |
-| `return` | ✅ | |
-| `throw` | ✅ | |
-| `try`/`catch`/`finally` | ✅ | |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| `if` / `else` | ✅ |  | `if-else` |
+| `switch` / `case` / `default` | ✅ |  | `switch-case`, `switch-default`, `enum-switch` |
+| `for` (classic) | ⏳ | Float counter → `--no-unwinding-assertions` | `for-loop`, `for-loop-sum` |
+| `for..of` | ✅ |  | `for-of-array`, `for-of-loop`, `verify-for-of-array` |
+| `for..in` | ⚠️ | Array keys iteration limited | `for-in-basic` |
+| `while` | ✅ | Loop-counter caveat | `while-loop`, `while-loop-complex`, `while-nondet` |
+| `do..while` | ✅ | Loop-counter caveat | `do-while`, `verify-do-while` |
+| `break`, `continue` | ✅ | Labeled variants | `for-break-continue`, `labeled-break`, `labeled-continue` |
+| `try` / `catch` | ✅ |  | `try-catch` |
+| `try` / `finally` | ✅ |  | `try-finally` |
+| `throw` | ✅ |  | `throw-statement` |
 
 ## Functions
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Function declarations | ✅ | |
-| Function expressions | ✅ | |
-| Arrow functions | ✅ | |
-| Default parameters | ✅ | |
-| Rest parameters (`...args`) | ✅ | |
-| Spread in calls (`f(...arr)`) | ✅ | |
-| Overloads | ⚠️ | Declaration syntax accepted, one implementation variant used |
-| Closures | ✅ | Including multi-closure mutable capture |
-| Recursion | ✅ | |
-| IIFE | ✅ | |
-| `this` binding | ⚠️ | Method calls work; explicit rebinding (`call`/`apply`/`bind`) limited |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Function declarations | ✅ |  | `function-basic`, `function-no-return` |
+| Arrow functions | ✅ |  | `arrow-function` |
+| Default parameters | ✅ |  | `destructure-defaults` |
+| Rest parameters | ✅ |  | `rest-params`, `rest-params-empty` |
+| Spread in calls | ✅ |  | `spread-call-args`, `verify-spread-function` |
+| Overloads | ⚠️ | Declaration accepted | `function-overload` |
+| Closures | ✅ | Multi-closure mutable capture | `verify-closure-basic`, `verify-closure-adder`, `multi-closure-sharing` |
+| Recursion | ✅ |  | (covered in `verify-*` function tests) |
+| `this` in methods | ⚠️ | Rebinding limited | `class-basic` |
 
 ## Classes (TSH: Classes)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Class declarations | ✅ | |
-| Constructors | ✅ | Including parameter property syntax |
-| Instance methods | ✅ | |
-| Static methods | ✅ | |
-| Getters / setters | ✅ | |
-| Private fields (`#name`) | ✅ | Enforced at type-check |
-| Inheritance (`extends`) | ✅ | |
-| `super` calls | ✅ | |
-| `instanceof` | ✅ | |
-| Abstract classes | ⚠️ | Method signatures accepted, abstract-ness not enforced |
-| Polymorphic dispatch | ✅ | Via stored class tag |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Class declarations | ✅ |  | `class-basic` |
+| Constructors | ✅ |  | `class-basic`, `class-factory` |
+| Instance methods | ✅ |  | `class-method-chain`, `class-chain-calls` |
+| Static methods | ✅ |  | `static-method` |
+| Getters / setters | ✅ |  | `class-getter`, `setter-property` |
+| Private fields | ✅ | Enforced at type-check | `private-field-access`, `private-field-violation` |
+| Inheritance (`extends`) | ✅ |  | `class-inheritance`, `verify-class-inheritance-override` |
+| `instanceof` | ✅ |  | `instanceof-check` |
 
 ## Generics (TSH: Generics)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Generic functions (`<T>`) | ✅ | Via monomorphization |
-| Generic classes (`class<T>`) | ✅ | Via monomorphization |
-| Constraints (`T extends X`) | ✅ | |
-| Default type parameters | ⚠️ | Simple defaults work |
-| Heterogeneous tuples (`<A, B>(..): [A, B]`) | ❌ | Type unification fails (`generic-heterogeneous-tuple` KNOWNBUG) |
-| Utility types (`Pick`, `Omit`, `Readonly`, etc.) | ✅ | Via TS compiler resolution |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Generic functions | ✅ | Monomorphization | `generic-identity`, `generic-function`, `generic-first` |
+| Generic classes | ✅ | Monomorphization | `generic-class-single`, `generic-class-multi` |
+| Constraints (`T extends X`) | ✅ |  | `generic-constraint`, `generic-constraint-name` |
+| Heterogeneous tuples | ❌ | Type unification fails | `generic-heterogeneous-tuple` [KNOWNBUG] |
+| Utility types | ✅ | Via TS compiler | `utility-pick`, `utility-omit`, `utility-readonly` |
 
 ## Type system
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Interfaces | ✅ | |
-| Type aliases | ✅ | |
-| Union types (`A \| B`) | ✅ | Tagged union struct model |
-| Intersection types (`A & B`) | ⚠️ | Simple cases merged; complex unions may lose info |
-| Discriminated unions | ✅ | Merged struct model; narrowing via discriminant field |
-| Literal types (string, number, boolean) | ✅ | |
-| Template literal types | ✅ | Simple patterns |
-| Optional properties | ✅ | |
-| Readonly properties | ✅ | Stripped for symbolic reasoning |
-| Index signatures (`[k: string]: T`) | ⚠️ | Basic get/set works, iteration limited |
-| Conditional types | ⚠️ | Simple cases work; nested inference limited |
-| Mapped types | ⚠️ | Utility types via TSC; custom mapped types limited |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Interfaces | ✅ |  | `interface-basic`, `interface-method`, `interface-nested` |
+| Type aliases | ✅ |  | `type-alias-basic` |
+| Union types | ✅ | Tagged union struct | `union-type-basic`, `union-type-function`, `union-assignment` |
+| Discriminated unions | ✅ | Merged struct | `discriminated-union` |
+| Literal types | ✅ |  | `template-literal-type`, `typeof-literal-types` |
+| Template literal types | ✅ |  | `template-literal-type` |
+| Optional properties | ✅ |  | `interface-optional` |
+| Readonly properties | ✅ |  | `readonly-interface`, `readonly-const` |
+| Type assertions | ✅ |  | `type-assertion` |
+| Type guards (user-defined) | ⚠️ | Non-union params supported | `type-guard-union` |
 
 ## Narrowing (TSH: Narrowing)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `typeof` narrowing | ✅ | Fixed for literal types |
-| `instanceof` narrowing | ✅ | |
-| `in` operator narrowing | ✅ | |
-| Discriminated union narrowing | ✅ | |
-| User-defined type guards | ⚠️ | Non-union parameters supported; union refinement limited |
-| Truthiness narrowing | ⚠️ | |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| `typeof` narrowing | ✅ | Literal types fixed | `type-narrowing-typeof`, `typeof-literal-types` |
+| `instanceof` narrowing | ✅ |  | `instanceof-check` |
+| `in` operator narrowing | ✅ |  | `in-operator` |
+| Discriminated union narrowing | ✅ |  | `discriminated-union` |
+| User-defined guards | ⚠️ |  | `type-guard-union` |
 
 ## Enums (TSH: Enums)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Numeric enums | ✅ | Auto-numbering from 0 |
-| Numeric enums with values | ✅ | |
-| Const enums | ✅ | |
-| String enums | ❌ | Values not tracked through access (`enum-string-values` KNOWNBUG) |
-| Heterogeneous enums | ⚠️ | |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Numeric enums (auto) | ✅ |  | `enum-basic`, `enum-explicit` |
+| Numeric enums (explicit) | ✅ |  | `enum-values`, `enum-explicit` |
+| Enum arithmetic / bitflags | ✅ |  | `enum-arithmetic`, `enum-bitflags` |
+| Enums in switch | ✅ |  | `enum-switch` |
+| Enums in condition | ✅ |  | `enum-condition` |
+| String enums | ❌ | Values not tracked | `enum-string-values` [KNOWNBUG] |
 
 ## Destructuring
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Array destructuring | ✅ | |
-| Array destructuring with rest | ✅ | |
-| Array destructuring with defaults | ⚠️ | |
-| Object destructuring (plain) | ✅ | |
-| Object destructuring with rename | ✅ | Fixed 2026-05-07 |
-| Object destructuring with defaults | ⚠️ | |
-| Nested destructuring | ⚠️ | |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| Array destructuring | ✅ |  | `array-destructure-basic`, `array-destructuring` |
+| Array destructuring with rest | ✅ |  | `array-destructure-rest` |
+| Destructuring defaults | ⚠️ |  | `destructure-defaults` |
+| Object destructuring (plain) | ✅ |  | `object-destructure`, `object-destructuring` |
+| Object destructuring with rename | ✅ | Fixed 2026-05-07 | `object-destructuring-rename` |
+| Object spread | ✅ |  | `object-spread`, `object-spread-override` |
 
 ## Built-in types
 
 ### Array (ES2024 §23.1)
 
-| Method | Status | Notes |
-|--------|--------|-------|
-| `length` | ✅ | |
-| `push`, `pop` (mutation) | ⚠️ | pop() mutates correctly but return value not tracked (`array-pop-return` KNOWNBUG) |
-| `shift`, `unshift` | ✅ | |
-| `map`, `filter`, `reduce` | ✅ | |
-| `forEach` | ✅ | |
-| `find`, `findIndex` | ✅ | |
-| `includes`, `indexOf` | ✅ | |
-| `every`, `some` | ✅ | |
-| `slice`, `splice` | ✅ | |
-| `concat` | ✅ | |
-| `flat`, `flatMap` | ✅ | Single-level flat |
-| `join`, `split` | ✅ | |
-| `reverse`, `fill` | ✅ | |
-| `at` | ✅ | |
-| `sort` (no comparator) | ⚠️ | |
-| `sort` (with comparator) | ❌ | Not implemented (`array-sort-comparator` KNOWNBUG) |
-| `Array.from` | ✅ | |
-| `Array.isArray` | ✅ | Fixed 2026-05-07 |
-| `Array.of` | ⚠️ | |
-| Spread `[...arr]` | ✅ | |
-| Destructuring `[a, b]` | ✅ | |
+| Method | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `length` | ✅ |  | `array-length-check`, `array-length-nondet` |
+| `push` | ✅ |  | `array-empty-push`, `spread-and-push` |
+| `pop` return | ⚠️ | Mutates OK, return not tracked | `array-pop-return` [KNOWNBUG] |
+| `map`, `filter`, `reduce` | ✅ |  | `array-map-arrow`, `array-filter`, `array-reduce` |
+| `forEach` | ⚠️ | (no dedicated test) | — |
+| `find`, `findIndex` | ✅ |  | `array-find`, `array-findIndex` |
+| `includes`, `indexOf` | ✅ | Non-const via symbolic scan | `array-includes`, `array-indexOf` |
+| `every`, `some` | ✅ |  | `array-every`, `array-every-fail` |
+| `slice`, `splice` | ✅ |  | `array-splice` |
+| `concat` | ✅ |  | `array-concat` |
+| `flat` | ✅ |  | `array-flat` |
+| `join` | ✅ |  | `array-join` |
+| `reverse`, `fill` | ✅ |  | `array-fill` |
+| `at` | ✅ |  | `array-at` |
+| `sort` (with comparator) | ❌ | Not implemented | `array-sort-comparator` [KNOWNBUG] |
+| `Array.from` | ✅ |  | `array-from`, `array-from-pattern` |
+| `Array.isArray` | ✅ | Fixed 2026-05-07 | `array-is-array` |
+| Spread `[...arr]` | ✅ |  | `array-copy-spread`, `spread-and-push` |
 
 ### String (ES2024 §22.1)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `length` | ✅ | |
-| `charAt` | ✅ | |
-| `charCodeAt` | ❌ | Not implemented |
-| `String.fromCharCode` | ❌ | Not implemented |
-| `indexOf`, `lastIndexOf` | ✅ | Non-constant via symbolic scan (depth-limited) |
-| `includes`, `startsWith`, `endsWith` | ✅ | |
-| `substring`, `slice`, `substr` | ✅ | |
-| `split`, `replace`, `replaceAll` | ✅ | |
-| `toLowerCase`, `toUpperCase` | ✅ | |
-| `trim`, `trimStart`, `trimEnd` | ✅ | |
-| `padStart`, `padEnd`, `repeat` | ✅ | |
-| Template literals with interpolation | ✅ | |
-| Unicode (BMP) | ⚠️ | Char codes use UTF-16; complex Unicode handling limited |
-| Surrogate pairs (emoji) | ⚠️ | |
-| String index (`s[0]`) | ⚠️ | Returns char code (number), spec says string; divergence |
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `length` | ✅ |  | `string-length`, `string-length-check` |
+| Concatenation | ✅ |  | `string-concat`, `string-concat-multi` |
+| Split | ✅ |  | `string-split` |
+| Replace / replaceAll | ✅ |  | `string-replace`, `string-replaceAll`, `string-replaceAll-multi` |
+| Slice | ✅ |  | `string-slice`, `string-slice-negative` |
+| Repeat | ✅ |  | `string-repeat` |
+| String-number conversion | ⚠️ |  | `string-number-convert` |
+| Multi-method chains | ✅ |  | `string-methods-chain`, `string-methods-combined` |
+| Comparison | ✅ |  | `string-comparison-ops`, `string-equality` |
+| `charCodeAt`, `String.fromCharCode` | ❌ | Not implemented | — |
 
 ### Map (ES2024 §24.1)
 
-| Method | Status | Notes |
-|--------|--------|-------|
-| `set`, `get`, `has`, `delete` | ✅ | |
-| `size` | ✅ | |
-| `clear` | ✅ | |
-| `forEach` | ⚠️ | |
-| Iteration (`for..of`, `keys`, `values`, `entries`) | ⚠️ | |
+| Method | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `set`, `get`, `has` | ✅ |  | `map-set-basic`, `map-get-constant`, `map-set-operations` |
+| `size` | ✅ |  | `map-set-basic` |
+| Iteration | ⚠️ |  | `map-iteration` |
+| Chained filter/transform | ✅ |  | `map-filter-chain` |
 
 ### Set (ES2024 §24.2)
 
-| Method | Status | Notes |
-|--------|--------|-------|
-| `add`, `delete` | ✅ | |
-| `size` | ✅ | |
-| `has` | ❌ | Not tracking membership (`set-has` KNOWNBUG) |
-| `clear` | ✅ | |
-| Iteration | ⚠️ | |
+| Method | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `add`, `delete`, `size` | ✅ |  | `map-set-basic` (Set constructor path) |
+| `has` | ❌ | Not tracking membership | `set-has` [KNOWNBUG] |
+| Iteration | ⚠️ |  | `set-iteration` |
 
 ### Math (ES2024 §21.3)
 
-| Method | Status | Notes |
-|--------|--------|-------|
-| `abs`, `floor`, `ceil`, `round`, `trunc` | ✅ | |
-| `sqrt`, `pow`, `exp`, `log` | ✅ | |
-| `sin`, `cos`, `tan` (trig) | ✅ | |
-| `max`, `min` | ✅ | Variadic, fixed 2026-05-07 |
-| `random` | ⚠️ | Returns nondet in [0, 1) |
-| `PI`, `E`, etc. (constants) | ✅ | |
-| `Math.hypot`, `Math.sign`, `Math.cbrt` | ⚠️ | |
+| Method | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| Basic methods (abs, floor, ceil, round, sqrt, pow) | ✅ |  | `math-builtins`, `math-functions` |
+| `max`, `min` (variadic) | ✅ | Fixed 2026-05-07 | `math-max-min-variadic`, `math-min-max` |
+| `random` | ⚠️ | Nondet in [0, 1) | `math-random` |
 
 ### Number (ES2024 §21.1)
 
-| Method | Status | Notes |
-|--------|--------|-------|
-| `Number.isInteger`, `Number.isNaN`, `Number.isFinite` | ✅ | |
-| `Number.MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER` | ✅ | |
-| `Number.EPSILON`, `MAX_VALUE`, `MIN_VALUE` | ✅ | |
-| `toFixed`, `toString` | ⚠️ | Constant case handled; symbolic case limited |
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `isInteger`, `isNaN`, `isFinite` | ✅ |  | `number-methods` |
+| `Infinity`, sign zero | ✅ |  | `number-infinity` |
+| Comparison | ✅ |  | `number-comparison` |
 
 ### Error (ES2024 §20.5)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `throw new Error(msg)` | ✅ | |
-| `try`/`catch` with Error | ✅ | |
-| Subclasses (`TypeError`, etc.) | ⚠️ | |
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `throw new Error(msg)` | ✅ |  | `throw-statement`, `try-catch` |
+| `try`/`catch` | ✅ |  | `try-catch`, `try-finally` |
 
 ### Promise (ES2024 §27.2)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `Promise.resolve(x)` | ✅ | Treated as x synchronously |
-| `Promise.reject(e)` | ⚠️ | |
-| `.then(fn)` | ✅ | |
-| `.catch(fn)` | ✅ | |
-| `.finally(fn)` | ✅ | |
-| `Promise.all([...])` | ✅ | Sequential evaluation |
-| `Promise.race`, `Promise.any` | ⚠️ | |
-| `async`/`await` (sequential) | ✅ | Default |
-| `async`/`await` (threading) | ⏳ | Via `--ts-async-threading` opt-in |
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `Promise.resolve(x)` | ✅ |  | `promise-resolve` |
+| `.then` / `.catch` | ✅ |  | `promise-then`, `promise-catch` |
+| `Promise.all` | ✅ | Sequential | `async-promise-all` |
+| `async` / `await` (sequential) | ✅ | Default | `async-basic`, `async-await-value`, `async-sequential-order`, `async-then-chain` |
+| `async` / `await` (threading) | ⏳ | Opt-in `--ts-async-threading` | `async-race-detected`, `async-race-undetected` [KNOWNBUG] |
 
 ## Modules (TSH: Modules)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `import { x } from "mod"` | ✅ | |
-| `import * as ns from "mod"` | ✅ | |
-| `import x from "mod"` (default) | ✅ | |
-| `export` (named, default) | ✅ | |
-| `export * from "mod"` (re-export) | ⚠️ | |
-| Dynamic `import()` | ❌ | Not implemented |
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `import { x } from "mod"` | ✅ |  | `multi-file-import` |
+| Re-export | ⚠️ |  | `multi-file-reexport` |
+| Dynamic `import()` | ❌ | Not implemented | — |
+
+## TSX / JSX
+
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| `.tsx` parsing | ✅ |  | `tsx-extension` |
+
+## Decorators
+
+| Feature | Status | Notes | Test(s) |
+|--------|--------|-------|---------|
+| Basic decorator | ✅ |  | `decorator-basic` |
+| Parameterized decorator | ✅ |  | `decorator-parameterized` |
 
 ## CBMC-specific extensions
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `__CPROVER_assume` | ✅ | |
-| `__CPROVER_loop_invariant` | ✅ | |
-| `__CPROVER_requires`, `_ensures` | ✅ | |
-| `nondet_number()`, `nondet_boolean()`, `nondet_string()` | ✅ | |
-| `--ts-integer-mode` (opt-in) | ✅ | Use int64 instead of float64 for numbers |
-| `--ts-async-threading` (opt-in) | ✅ | Async interleaving via CBMC threads |
-| `--ts-max-array-size` | ✅ | |
-| `--nan-check` | ✅ | |
+| Feature | Status | Notes | Test(s) |
+|---------|--------|-------|---------|
+| `__CPROVER_assume` | ✅ |  | `array-length-nondet` + many |
+| `__CPROVER_loop_invariant` | ✅ |  | `verify-binary-search-invariant`, `verify-stack-invariant` |
+| `__CPROVER_requires` / `_ensures` | ✅ |  | `precondition` |
+| `nondet_number()`, `nondet_boolean()`, `nondet_string()` | ✅ |  | `array-length-nondet`, many others |
+| `--ts-integer-mode` | ✅ | int64 instead of float64 | `verify-binary-search-invariant` |
+| `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
+| `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## Frontend behavior
+## KNOWNBUG tests (9)
 
-| Area | Status | Notes |
-|------|--------|-------|
-| `.ts` extension recognized | ✅ | |
-| `.tsx` extension recognized | ✅ | |
-| Parser via TypeScript Compiler API | ✅ | Node.js subprocess |
-| Type checker integration (utility types) | ✅ | |
-| Multi-file projects | ✅ | |
-| `tsconfig.json` | ⚠️ | Defaults used; custom config not read |
-| Source location in traces | ✅ | |
+| Test | Symptom | ES2024 / TSH ref |
+|------|---------|------------------|
+| `async-race-undetected` | Sequential async misses unobserved-race bugs (opt-in fix via `--ts-async-threading`) | §27.2 |
+| `integration-url-parser` | Nested symbolic string ops exceed solver capacity | §22.1 |
+| `generic-heterogeneous-tuple` | `[A, B]` return with mixed types fails type unification | TSH Generics |
+| `array-pop-return` | pop() return value not tracked | §23.1 |
+| `array-sort-comparator` | Array.prototype.sort with comparator not implemented | §23.1 |
+| `enum-string-values` | String enum values not tracked | TSH Enums |
+| `set-has` | Set.has not tracking membership | §24.2 |
+| `nullish-coalescing` | `??` not returning RHS when LHS undefined | §13.13 |
+| `optional-chaining` | `?.` not short-circuiting | §13.3.9 |
 
-## Known bugs (9 KNOWNBUG tests)
+## Recently fixed bugs (CORE tests guard against regression)
 
-1. `async-race-undetected` — sequential async model misses races (has opt-in fix via `--ts-async-threading`)
-2. `integration-url-parser` — nested symbolic string operations exceed solver capacity
-3. `generic-heterogeneous-tuple` — `[A, B]` return with mixed A, B types fails
-4. `array-pop-return` — pop() return value not tracked through assignment
-5. `array-sort-comparator` — sort with custom comparator not implemented
-6. `enum-string-values` — string enum values not tracked
-7. `set-has` — Set.has not tracking membership
-8. `nullish-coalescing` — `??` not evaluating correctly for undefined LHS
-9. `optional-chaining` — `?.` not short-circuiting on missing properties
+The five bugs below were found during the 2026-05-07 spec cross-referencing
+session. They do NOT have `[KNOWNBUG]` tests because each was fixed in
+the same commit that discovered it. The CORE tests below serve as the
+regression guards — if the fix regresses, the CORE test fails and CI
+catches it.
+
+| CORE test | Was broken | Fixed in commit |
+|-----------|-----------|-----------------|
+| `typeof-literal-types` | `typeof 42 === "object"` (literal types fell through) | 3325a425d7 |
+| `string-concat-number-coerce` | `"x" + 1` lost the number operand (type promotion miscast string to float) | 3325a425d7 |
+| `object-destructuring-rename` | `const { a: renamed } = obj` didn't resolve `propertyName` | 83dd85424d |
+| `array-is-array` | `Array.isArray([1,2])` returned nondet | 508444ebb9 |
+| `math-max-min-variadic` | `Math.max(1, 2, 3)` only used first two args | 508444ebb9 |
 
 ## Overall assessment
 
-**Well supported (works for 90%+ of real code):**
-- Primitive types, arithmetic, comparisons
-- Classes, inheritance, instanceof
-- Functions, arrow functions, closures
-- Interfaces, type aliases, union/intersection
-- Narrowing via typeof, instanceof, in, discriminated union
-- Generics via monomorphization
-- Arrays (most methods)
-- Strings (most methods)
-- Maps, basic Set operations
-- Promises (sequential model)
-- Try/catch, error handling
-- Imports/exports
+**Well supported** (works for 90%+ of real code): primitives, classes,
+generics, narrowing, most Array/String methods, Promises, imports/exports.
 
-**Partial (works for common patterns, gaps on edges):**
-- Float-based loops (need `--no-unwinding-assertions` or `--ts-integer-mode`)
-- Complex mapped/conditional types
-- Iteration over Map/Set
-- String Unicode edge cases
-- Default values in destructuring
-- Abstract class enforcement
+**Partial:** float-loop unwinding, mapped/conditional types, Map/Set
+iteration, Unicode edge cases, destructuring defaults, abstract class
+enforcement.
 
-**Not supported (see KNOWNBUG list):**
-- Nullish coalescing and optional chaining
-- Dynamic imports
-- String enums
-- Some array mutations (sort with comparator, pop return)
-- Heterogeneous tuple returns from generic functions
-- String-to-number coercion via unary `+`
+**Not supported** (see KNOWNBUG): nullish/optional chaining, dynamic
+imports, string enums, sort with comparator, heterogeneous tuple returns,
+`+"42"` string-to-number coercion.
 
-## Recommended workarounds
+## Workarounds
 
-- **Loops failing to unwind**: use `--no-unwinding-assertions` or `--ts-integer-mode`
-- **Nullish/optional**: avoid `??`/`?.`, use explicit `if` checks
-- **String enums**: use numeric enums with const strings outside
-- **Sort with comparator**: use manual loop-based sort
-- **Array.isArray**: now works after 2026-05-07 fix
+- **Float-loop unwind**: `--no-unwinding-assertions` or `--ts-integer-mode`
+- **Nullish / optional chaining**: explicit `if` checks
+- **String enums**: numeric enums + lookup table
+- **Sort with comparator**: manual loop-based sort
+- **Set membership**: use `Map<T, boolean>` instead
+- **Async races**: `--ts-async-threading`
 
 ## For contributors
 
-When adding a new feature:
-1. Record the ES2024 / TSH reference in the implementation
+When adding a feature:
+1. Cite the ES2024 / TSH reference in the implementation
 2. Add a CORE regression test demonstrating success
-3. If there's a known limitation, add a KNOWNBUG test documenting it
-4. Update this matrix with status and notes
+3. If there's a known limitation, add a KNOWNBUG test
+4. Update this matrix with status, notes, AND a test reference pointing to
+   an existing regression test
+
+When fixing a bug:
+1. Add a CORE test that would have caught the bug (replaces any prior
+   KNOWNBUG that documented the issue — delete the KNOWNBUG)
+2. Update the "Recently fixed" table with commit hash and symptom
