@@ -632,6 +632,24 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   {
     exprt obj = convert_expression(json_member(node, "expression"));
     exprt idx = convert_expression(json_member(node, "argumentExpression"));
+    // Tuple access: p[0] on a struct tagged typescript_tuple.
+    if(
+      !obj.is_nil() && obj.type().id() == ID_struct &&
+      to_struct_type(obj.type()).get_tag() == "typescript_tuple" &&
+      idx.is_constant() && idx.type().id() == ID_floatbv)
+    {
+      ieee_floatt fv{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      fv.from_expr(to_constant_expr(idx));
+      int i = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+      const auto &st = to_struct_type(obj.type());
+      if(i >= 0 && static_cast<std::size_t>(i) < st.components().size())
+      {
+        std::string fname = "_" + std::to_string(i);
+        return member_exprt{obj, fname, st.components()[i].type()};
+      }
+    }
     // Computed property access: obj["key"] on struct types
     if(
       !obj.is_nil() && obj.type().id() == ID_struct &&
@@ -1164,6 +1182,37 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       }
     }
     std::size_t actual_len = elements.size();
+    // Heterogeneous tuple detection: if _type looks like "[T, U, ...]"
+    // (a tuple type) AND the element types differ, we cannot fit them
+    // into a single array type. Build a struct of fields _0, _1, ...
+    // and return that. The ElementAccessExpression handler below
+    // recognises this shape for p[0], p[1] access.
+    {
+      std::string arr_type_str = json_string(json_member(node, "_type"));
+      bool looks_like_tuple = !arr_type_str.empty() &&
+                              arr_type_str.front() == '[' &&
+                              arr_type_str.back() == ']';
+      bool heterogeneous = false;
+      if(!elements.empty())
+      {
+        typet first = elements[0].type();
+        for(std::size_t i = 1; i < elements.size(); i++)
+          if(elements[i].type() != first)
+          {
+            heterogeneous = true;
+            break;
+          }
+      }
+      if(looks_like_tuple && heterogeneous)
+      {
+        struct_typet tuple_st;
+        for(std::size_t i = 0; i < elements.size(); i++)
+          tuple_st.components().push_back(struct_typet::componentt{
+            "_" + std::to_string(i), elements[i].type()});
+        tuple_st.set_tag("typescript_tuple");
+        return struct_exprt{std::move(elements), tuple_st};
+      }
+    }
     // Build list struct { length, data[] }
     std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
     while(elements.size() < max_len)

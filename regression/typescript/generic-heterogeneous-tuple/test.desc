@@ -1,8 +1,0 @@
-KNOWNBUG
-main.ts
-
-^EXIT=0$
-^SIGNAL=0$
-^VERIFICATION SUCCESSFUL$
---
-Heterogeneous tuple return from generic function fails type unification
