@@ -13,6 +13,12 @@ For the conceptual architecture, see `cbmc-frontend-architecture.md`.
 3. [Choosing Your Approach](#choosing-your-approach)
 4. [Step-by-Step Implementation](#step-by-step-implementation)
 5. [Testing Strategy](#testing-strategy)
+   - Start small
+   - Add feature by feature
+   - Use KNOWNBUG status
+   - Test verification is actually happening
+   - Integration test with real code
+   - **Per-spec soundness review** (highly recommended)
 6. [Common Pitfalls](#common-pitfalls)
 7. [Performance and Soundness](#performance-and-soundness)
 8. [Maintenance Considerations](#maintenance-considerations)
@@ -409,6 +415,143 @@ Once your frontend works on synthetic tests, try a real program
 from your language's ecosystem. This surfaces gaps you didn't
 anticipate.
 
+### Per-spec soundness review (highly recommended)
+
+Hand-written tests tend to exercise what the implementer was
+thinking about. They do not reliably find the bugs that come from
+misreading a spec section. After the frontend is working on common
+cases, do a **systematic per-spec review** of each major built-in
+subsystem. This methodology has been the most productive quality
+technique in building the TypeScript frontend.
+
+#### The methodology
+
+For each major spec section (e.g. ES2024 §22.1 String,
+§23.1 Array, §21.3 Math, §24.1 Map, §24.2 Set, §21.1 Number):
+
+1. **Enumerate the methods and properties in spec order.** Read
+   each `§X.X.Y` heading and list what it says.
+2. **Write probe tests that exercise BOUNDARY and EDGE behaviours**
+   — not just the happy path. For each method:
+   - Default arguments (what happens when arg omitted?)
+   - Negative indices (count from end? clamp? error?)
+   - Indices past length (clamp or out-of-bounds?)
+   - Empty receivers (`""`, `[]`, `new Map()`, 0)
+   - Short-circuit paths (already-satisfied postcondition)
+   - Spec-mandated quirks (tie-breaking direction, arg swap)
+3. **Run and collect failures.** Many tests will pass; expect 2–10
+   failures per subsystem if your frontend is in "works for common
+   cases" state.
+4. **Fix each failure in a small focused commit.** The small scope
+   means each commit is easy to review and revert.
+5. **Promote probe tests to CORE regression tests.** They become
+   the regression guards.
+6. **Document findings** in a per-subsystem review file so future
+   maintainers can see what was checked and what remains.
+
+#### Example yield (TypeScript frontend)
+
+Per-spec reviews on a "works for common cases" frontend:
+
+| Subsystem | Real bugs | Missing methods | New CORE tests | Time |
+|-----------|-----------|-----------------|----------------|------|
+| String (§22.1) | 6 | 4 | 11 | ~90 min |
+| Array (§23.1) | 4 | 3 | 7 | ~60 min |
+| Math (§21.3) | 2 | 10 | 4 | ~45 min |
+| Number (§21.1) | 3 | 6 | 4 | ~45 min |
+| Map/Set (§24) | 4 | 3 | 2 | ~30 min |
+
+Pattern: the review consistently finds several bugs per subsystem
+that hand-written tests had missed — typically around boundary
+semantics, default arguments, and language-specific quirks.
+
+#### Classic bug patterns that per-spec review catches
+
+Based on findings across multiple reviews:
+
+1. **Tie-breaking direction wrong.** Example: `Math.round(-0.5)` —
+   `std::round` rounds ties away from zero (so `-0.5 → -1`), but
+   ES2024 §21.3.2.29 rounds ties toward +infinity (so `-0.5 → 0`).
+   Subtle; only exposed by testing `-0.5`, `-2.5` specifically.
+
+2. **Ignored secondary arguments.** Many spec methods have an
+   optional second argument (`fromIndex`, `position`, `endPosition`,
+   `padChar`, `separator`). Implementations often handle the first
+   arg and ignore the rest. Test each with and without it.
+
+3. **Argument-order swap per spec.** `substring(start, end)` per
+   ES2024 §22.1.3.21 swaps args when `start > end`. Almost nobody
+   implements this without the spec saying so explicitly.
+
+4. **Short-circuit paths reversed.** Example: `"hello".padStart(2)` —
+   the string is already longer than the target, so the spec says
+   "return unchanged". An implementation that unconditionally
+   slices instead will return `"lo"` (last 2 chars).
+
+5. **Missing set-membership semantics.** `Set.add` is often
+   implemented as append-to-array, which allows duplicates.
+   Spec §24.2.3.1 says adding an existing element is a no-op.
+   Easy to test with `add(1); add(1); console.assert(size === 1)`.
+
+6. **Non-numeric arguments to numeric predicates.** ES2024
+   §21.1.2.4: `Number.isNaN` does NOT coerce — non-numbers must
+   return false. Implementations using underlying `isnan` primitives
+   will return true for any non-float input.
+
+7. **Incorrect mutation semantics.** `Array.fill`, `Array.splice`,
+   `Array.sort` must mutate in place. Implementations that return
+   a new array without updating the receiver pass incorrect tests
+   like `arr.fill(0); console.assert(arr[0] === 0)`.
+
+8. **Empty-receiver bypass.** String method dispatchers often guard
+   on `!sv.empty()`, which silently skips every method when the
+   receiver is `""`. Test with empty receivers separately.
+
+9. **Pattern truncation in iterative building.** Example: `padStart`
+   with multi-char pad. The spec requires truncating the built pad
+   string to exactly `(target - source)` chars, not truncating the
+   final result. Off-by-one errors are common.
+
+10. **Missing spec-level edge cases.** `Array.isArray("x")` must
+    return false. Type guards that check "has length property"
+    incorrectly return true for strings.
+
+#### What to ship alongside the review
+
+Each subsystem review should produce:
+
+- **Per-subsystem review document** (e.g. `doc/string-soundness-review.md`)
+  listing methods reviewed, bugs found, methods added, and remaining
+  gaps.
+- **CORE tests** for each fixed bug (one per symptom, so regressions
+  are clearly attributed).
+- **Capability matrix entries** cross-referenced to the tests.
+- **Commit per fix** with spec citation in the message
+  (e.g. `ES2024 §22.1.3.21` in the commit message and source comment).
+
+#### When to do per-spec reviews
+
+- **After initial feature completeness**: once the common cases
+  work, review finds the edges.
+- **Before integration testing**: catches bugs that real code would
+  trip over.
+- **Periodically after language spec updates**: re-review the
+  sections whose spec changed.
+
+#### Order the subsystems
+
+Prioritize by user impact:
+
+1. **Primitives first** (number, string, boolean)
+2. **Most-used collections** (array, then map/set)
+3. **Math / type guards** (Math, Number.is*)
+4. **Async and error handling** (Promise, Error, try/catch)
+5. **Modules and classes** (import/export, classes, inheritance)
+6. **Less-used built-ins** (JSON, Object, Date, RegExp)
+
+Reviewing in this order ensures high-frequency code paths get the
+most attention first.
+
 ---
 
 ## Common Pitfalls
@@ -483,6 +626,19 @@ obviously-correct code and let CBMC optimize it.
 
 Multi-file programs need: module resolution, cross-file symbol
 references, proper scoping. Plan this upfront — retrofitting is painful.
+
+### 11. Trusting hand-written tests to cover the spec
+
+Hand-written tests exercise what the implementer was thinking about.
+They systematically miss the edge cases that come from misreading a
+spec section (tie-breaking direction, negative index semantics,
+default argument values, short-circuit paths). A frontend that passes
+200 hand-written tests can still have dozens of spec-mandated bugs
+waiting.
+
+**Mitigation:** do a per-spec review (see Testing Strategy §) before
+calling any subsystem "done". In practice, per-spec reviews consistently
+find 2–10 bugs per subsystem even after the hand-written tests all pass.
 
 ---
 
@@ -584,6 +740,10 @@ Production-ready frontend:
 - [ ] Performance profiled and documented
 - [ ] Integration tested on real-world code
 - [ ] Known limitations documented
+- [ ] **Per-spec soundness review completed for each major built-in
+      subsystem** (expect 2–10 real bugs per review on a
+      "works-for-common-cases" frontend; see Testing Strategy §)
+- [ ] Per-subsystem review docs published (e.g. `string-soundness-review.md`)
 
 The TypeScript frontend took ~500 tests and ~177 commits to reach
 production-ready state; the Python frontend took a similar amount of
