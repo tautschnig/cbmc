@@ -1,0 +1,11 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Resolving import: collections \xe2\x86\x92 .*src/python/library/collections/__init__\.py$
+^Resolving import: datetime \xe2\x86\x92 .*src/python/library/datetime\.py$
+^Resolving import: json \xe2\x86\x92 .*src/python/library/json/__init__\.py$
+--
+^warning: ignoring
