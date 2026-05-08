@@ -1752,6 +1752,18 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             fv.from_expr(to_constant_expr(sv));
             start_idx = static_cast<int>(std::stod(fv.to_ansi_c_string()));
           }
+          // Handle unary-minus constant (e.g. -2)
+          else if(
+            sv.id() == ID_unary_minus && !sv.operands().empty() &&
+            sv.operands()[0].is_constant() &&
+            sv.operands()[0].type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(sv.operands()[0]));
+            start_idx = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
           ++ait;
         }
         if(ait != arg_arr.end())
@@ -1765,11 +1777,31 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             fv.from_expr(to_constant_expr(ev));
             end_idx = static_cast<int>(std::stod(fv.to_ansi_c_string()));
           }
+          else if(
+            ev.id() == ID_unary_minus && !ev.operands().empty() &&
+            ev.operands()[0].is_constant() &&
+            ev.operands()[0].type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(ev.operands()[0]));
+            end_idx = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
         }
+        // ES2024 §23.1.3.27 step 4: negative = from end
+        int src_long = static_cast<int>(src_len.to_long());
         if(start_idx < 0)
-          start_idx = 0;
-        if(end_idx > src_len.to_long())
-          end_idx = src_len.to_long();
+          start_idx = std::max(0, src_long + start_idx);
+        if(end_idx < 0)
+          end_idx = std::max(0, src_long + end_idx);
+        if(start_idx > src_long)
+          start_idx = src_long;
+        if(end_idx > src_long)
+          end_idx = src_long;
+        // start > end → empty
+        if(start_idx > end_idx)
+          end_idx = start_idx;
 
         typet elem_type = double_type();
         if(!data.operands().empty())
@@ -2440,7 +2472,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
       method == "fill" && args.is_array() && !to_json_array(args).empty())
     {
-      exprt fill_val = convert_expression(*to_json_array(args).begin());
+      // ES2024 §23.1.3.7: fill(value, start=0, end=length). Mutates.
+      const auto &arg_arr = to_json_array(args);
+      auto it = arg_arr.begin();
+      exprt fill_val = convert_expression(*it++);
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
       {
@@ -2454,19 +2489,85 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         mp_integer len{0};
         if(src.operands()[0].is_constant())
           to_integer(to_constant_expr(src.operands()[0]), len);
+        int src_long = static_cast<int>(len.to_long());
+        const exprt &data = src.operands()[1];
+
+        auto read_int_arg = [this](const jsont &a, int def) -> int
+        {
+          exprt v = convert_expression(a);
+          if(v.is_constant() && v.type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(v));
+            return static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
+          if(
+            v.id() == ID_unary_minus && !v.operands().empty() &&
+            v.operands()[0].is_constant() &&
+            v.operands()[0].type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(v.operands()[0]));
+            return -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
+          return def;
+        };
+
+        int start = 0, end = src_long;
+        if(it != arg_arr.end())
+          start = read_int_arg(*it++, 0);
+        if(it != arg_arr.end())
+          end = read_int_arg(*it, src_long);
+        // Negative indices count from end.
+        if(start < 0)
+          start = std::max(0, src_long + start);
+        if(end < 0)
+          end = std::max(0, src_long + end);
+        if(start > src_long)
+          start = src_long;
+        if(end > src_long)
+          end = src_long;
+
+        typet elem_type = fill_val.type();
+        if(!data.operands().empty())
+          elem_type = data.operands()[0].type();
+        if(fill_val.type() != elem_type)
+          fill_val = typecast_exprt{fill_val, elem_type};
+
         exprt::operandst filled;
-        for(mp_integer i = 0; i < len; ++i)
-          filled.push_back(fill_val);
+        for(int i = 0; i < src_long; ++i)
+        {
+          if(i >= start && i < end)
+            filled.push_back(fill_val);
+          else if(static_cast<std::size_t>(i) < data.operands().size())
+            filled.push_back(data.operands()[i]);
+          else
+            filled.push_back(from_integer(0, elem_type));
+        }
         std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         while(filled.size() < max_len)
-          filled.push_back(from_integer(0, fill_val.type()));
+          filled.push_back(from_integer(0, elem_type));
         array_typet arr_type{
-          fill_val.type(), from_integer(max_len, signedbv_typet{64})};
+          elem_type, from_integer(max_len, signedbv_typet{64})};
         struct_typet list_type = make_array_struct_type(arr_type);
-        return struct_exprt{
-          {from_integer(len.to_long(), signedbv_typet{64}),
+        struct_exprt new_arr{
+          {from_integer(src_long, signedbv_typet{64}),
            array_exprt{std::move(filled), arr_type}},
           list_type};
+        // ES2024: fill mutates in place. Assign back to receiver symbol.
+        if(obj_expr.id() == ID_symbol)
+        {
+          pending_stmts.push_back(code_frontend_assignt{obj_expr, new_arr});
+          const symbolt *obj_sym =
+            symbol_table.lookup(to_symbol_expr(obj_expr).get_identifier());
+          if(obj_sym != nullptr)
+            symbol_table.get_writeable(obj_sym->name)->value = new_arr;
+        }
+        return new_arr;
       }
     }
     // Array.concat: concatenate two arrays
@@ -2727,7 +2828,116 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         // ES2024 sec-array.prototype.splice
         if(method == "splice" && args.is_array())
         {
+          // ES2024 §23.1.3.30: splice(start, deleteCount, ...items)
+          // mutates: removes deleteCount elements at `start`, inserts
+          // `items` in their place. For constant arrays, we compute
+          // the full result at conversion time.
           const auto &arg_arr = to_json_array(args);
+          if(arg_arr.empty())
+            return obj_expr;
+          // Resolve source to its constant value if possible.
+          exprt src = obj_expr;
+          if(src.id() == ID_symbol)
+          {
+            const symbolt *s =
+              symbol_table.lookup(to_symbol_expr(src).get_identifier());
+            if(s && !s->value.is_nil())
+              src = s->value;
+          }
+          if(src.id() == ID_struct && src.operands().size() >= 2)
+          {
+            mp_integer src_len{0};
+            if(src.operands()[0].is_constant())
+              to_integer(to_constant_expr(src.operands()[0]), src_len);
+            const exprt &data = src.operands()[1];
+            typet elem_type = double_type();
+            if(!data.operands().empty())
+              elem_type = data.operands()[0].type();
+
+            auto read_int_arg = [this](const jsont &a, int def) -> int
+            {
+              exprt v = convert_expression(a);
+              if(v.is_constant() && v.type().id() == ID_floatbv)
+              {
+                ieee_floatt fv{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                fv.from_expr(to_constant_expr(v));
+                return static_cast<int>(std::stod(fv.to_ansi_c_string()));
+              }
+              if(
+                v.id() == ID_unary_minus && !v.operands().empty() &&
+                v.operands()[0].is_constant() &&
+                v.operands()[0].type().id() == ID_floatbv)
+              {
+                ieee_floatt fv{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                fv.from_expr(to_constant_expr(v.operands()[0]));
+                return -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+              }
+              return def;
+            };
+
+            auto it = arg_arr.begin();
+            int src_long = static_cast<int>(src_len.to_long());
+            int start = read_int_arg(*it++, 0);
+            // Negative start counts from end.
+            if(start < 0)
+              start = std::max(0, src_long + start);
+            if(start > src_long)
+              start = src_long;
+            int del_count = src_long - start;
+            if(it != arg_arr.end())
+            {
+              del_count = read_int_arg(*it++, 0);
+              if(del_count < 0)
+                del_count = 0;
+              if(del_count > src_long - start)
+                del_count = src_long - start;
+            }
+            // Collect inserted items.
+            exprt::operandst inserted;
+            while(it != arg_arr.end())
+            {
+              exprt v = convert_expression(*it++);
+              if(v.type() != elem_type)
+                v = typecast_exprt{v, elem_type};
+              inserted.push_back(v);
+            }
+            // Build result array: before + inserted + after.
+            exprt::operandst result_elts;
+            for(int i = 0; i < start; i++)
+              if(static_cast<std::size_t>(i) < data.operands().size())
+                result_elts.push_back(data.operands()[i]);
+            for(auto &v : inserted)
+              result_elts.push_back(v);
+            for(int i = start + del_count; i < src_long; i++)
+              if(static_cast<std::size_t>(i) < data.operands().size())
+                result_elts.push_back(data.operands()[i]);
+            int actual = static_cast<int>(result_elts.size());
+            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+            while(result_elts.size() < max_len)
+              result_elts.push_back(from_integer(0, elem_type));
+            array_typet arr_type{
+              elem_type, from_integer(max_len, signedbv_typet{64})};
+            struct_typet list_type = make_array_struct_type(arr_type);
+            struct_exprt new_arr{
+              {from_integer(actual, signedbv_typet{64}),
+               array_exprt{std::move(result_elts), arr_type}},
+              list_type};
+            // Mutate in place: assign back to receiver.
+            if(obj_expr.id() == ID_symbol)
+            {
+              pending_stmts.push_back(code_frontend_assignt{obj_expr, new_arr});
+              const symbolt *obj_sym =
+                symbol_table.lookup(to_symbol_expr(obj_expr).get_identifier());
+              if(obj_sym != nullptr)
+                symbol_table.get_writeable(obj_sym->name)->value = new_arr;
+            }
+            return new_arr;
+          }
+          // Fallback: old length-only update for non-constant arrays.
           if(arg_arr.size() >= 2)
           {
             auto it = arg_arr.begin();
@@ -2738,11 +2948,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
               start = typecast_exprt{start, signedbv_typet{64}};
             if(del_count.type() != signedbv_typet{64})
               del_count = typecast_exprt{del_count, signedbv_typet{64}};
-            // Update length: length -= deleteCount
             pending_stmts.push_back(
               code_frontend_assignt{len, minus_exprt{len, del_count}});
           }
-          // Return empty array (simplified — real splice returns removed)
           return obj_expr;
         }
         if(method == "length")
