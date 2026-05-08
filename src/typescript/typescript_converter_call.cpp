@@ -122,6 +122,30 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       return false_exprt{};
     }
+    // ES2024 sec-array.of: Array.of(...items) creates an array of items.
+    if(obj == "Array" && method == "of" && args.is_array())
+    {
+      exprt::operandst elts;
+      typet elem_type = double_type();
+      for(const auto &a : to_json_array(args))
+      {
+        exprt v = convert_expression(a);
+        if(elts.empty())
+          elem_type = v.type();
+        elts.push_back(v);
+      }
+      std::size_t actual = elts.size();
+      std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+      while(elts.size() < max_len)
+        elts.push_back(from_integer(0, elem_type));
+      array_typet arr_type{
+        elem_type, from_integer(max_len, signedbv_typet{64})};
+      struct_typet list_type = make_array_struct_type(arr_type);
+      return struct_exprt{
+        {from_integer(actual, signedbv_typet{64}),
+         array_exprt{std::move(elts), arr_type}},
+        list_type};
+    }
     // ES2024 sec-array.from
     if(obj == "Array" && method == "from")
     {
@@ -1831,8 +1855,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
-      method == "find" && args.is_array() && !to_json_array(args).empty())
+      (method == "find" || method == "findLast") && args.is_array() &&
+      !to_json_array(args).empty())
     {
+      bool is_last = (method == "findLast");
       const jsont &callback = *to_json_array(args).begin();
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
@@ -1883,7 +1909,16 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         // Initialize result to 0 (returned if nothing found)
         pending_stmts.push_back(code_frontend_assignt{
           symbol_exprt{res_id, elem_type}, from_integer(0, elem_type)});
-        for(mp_integer i = 0; i < len; ++i)
+        // For findLast, iterate in reverse so the FIRST match
+        // encountered is the LAST in source order.
+        std::vector<mp_integer> order;
+        if(is_last)
+          for(mp_integer i = len - 1; i >= 0; --i)
+            order.push_back(i);
+        else
+          for(mp_integer i = 0; i < len; ++i)
+            order.push_back(i);
+        for(const mp_integer &i : order)
         {
           auto idx = i.to_ulong();
           if(idx >= data.operands().size())
@@ -1921,12 +1956,14 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
     }
     // ES2024 sec-array.prototype.findindex
-    // Array.findIndex: find index of first matching element
+    // Array.findIndex / findLastIndex: find index of first/last matching element
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
-      method == "findIndex" && args.is_array() && !to_json_array(args).empty())
+      (method == "findIndex" || method == "findLastIndex") && args.is_array() &&
+      !to_json_array(args).empty())
     {
+      bool is_last_idx = (method == "findLastIndex");
       const jsont &callback = *to_json_array(args).begin();
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
@@ -1983,11 +2020,19 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           pending_stmts.push_back(code_frontend_assignt{
             symbol_exprt{res_id, double_type()}, neg1.to_expr()});
         }
-        for(mp_integer i = 0; i < len; ++i)
+        // For findLastIndex, iterate in reverse.
+        std::vector<mp_integer> order_fi;
+        if(is_last_idx)
+          for(mp_integer i = len - 1; i >= 0; --i)
+            order_fi.push_back(i);
+        else
+          for(mp_integer i = 0; i < len; ++i)
+            order_fi.push_back(i);
+        for(const mp_integer &i : order_fi)
         {
           auto idx = i.to_ulong();
           if(idx >= data.operands().size())
-            break;
+            continue;
           std::string p_n =
             "__ts_fi_p_" + std::to_string(fc) + "_" + std::to_string(idx);
           irep_idt p_id{"typescript::" + p_n};
@@ -2638,9 +2683,39 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
-      method == "indexOf" && args.is_array() && !to_json_array(args).empty())
+      (method == "indexOf" || method == "lastIndexOf") && args.is_array() &&
+      !to_json_array(args).empty())
     {
-      exprt target = convert_expression(*to_json_array(args).begin());
+      const auto &arg_arr = to_json_array(args);
+      auto it = arg_arr.begin();
+      exprt target = convert_expression(*it++);
+      // Optional fromIndex.
+      int from_idx_val = 0;
+      bool from_idx_specified = false;
+      if(it != arg_arr.end())
+      {
+        exprt v = convert_expression(*it);
+        from_idx_specified = true;
+        if(v.is_constant() && v.type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(v));
+          from_idx_val = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+        }
+        else if(
+          v.id() == ID_unary_minus && !v.operands().empty() &&
+          v.operands()[0].is_constant() &&
+          v.operands()[0].type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(v.operands()[0]));
+          from_idx_val = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+        }
+      }
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
       {
@@ -2654,28 +2729,51 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         mp_integer len{0};
         if(src.operands()[0].is_constant())
           to_integer(to_constant_expr(src.operands()[0]), len);
+        int src_long = static_cast<int>(len.to_long());
         const exprt &data = src.operands()[1];
-        // For constant arrays, find the index at conversion time
-        if(target.is_constant())
+        // Clamp fromIndex; negative counts from end.
+        int start = from_idx_specified
+                      ? from_idx_val
+                      : (method == "lastIndexOf" ? src_long - 1 : 0);
+        if(start < 0)
+          start = std::max(0, src_long + start);
+        if(start > src_long)
+          start = src_long;
+        if(method == "lastIndexOf" && start > src_long - 1)
+          start = src_long - 1;
+
+        auto make_result = [](int result)
         {
-          for(mp_integer i = 0; i < len; ++i)
-          {
-            auto idx = i.to_ulong();
-            if(idx < data.operands().size() && data.operands()[idx] == target)
-            {
-              double dv = static_cast<double>(i.to_long());
-              uint64_t bits;
-              std::memcpy(&bits, &dv, sizeof(bits));
-              return constant_exprt{
-                integer2bvrep(mp_integer{bits}, 64), double_type()};
-            }
-          }
-          // Not found: return -1
-          double neg1 = -1.0;
+          double dv = static_cast<double>(result);
           uint64_t bits;
-          std::memcpy(&bits, &neg1, sizeof(bits));
+          std::memcpy(&bits, &dv, sizeof(bits));
           return constant_exprt{
             integer2bvrep(mp_integer{bits}, 64), double_type()};
+        };
+
+        if(target.is_constant())
+        {
+          if(method == "lastIndexOf")
+          {
+            for(int i = start; i >= 0; --i)
+            {
+              if(
+                static_cast<std::size_t>(i) < data.operands().size() &&
+                data.operands()[i] == target)
+                return make_result(i);
+            }
+          }
+          else
+          {
+            for(int i = start; i < src_long; ++i)
+            {
+              if(
+                static_cast<std::size_t>(i) < data.operands().size() &&
+                data.operands()[i] == target)
+                return make_result(i);
+            }
+          }
+          return make_result(-1);
         }
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
