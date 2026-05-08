@@ -2793,20 +2793,67 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return def;
         };
 
+        // Check whether start/end args are constant; if not, we'll
+        // emit symbolic predicates per slot.
+        auto arg_is_constant = [this](const jsont &a) -> bool
+        {
+          exprt v = convert_expression(a);
+          if(v.is_constant() && v.type().id() == ID_floatbv)
+            return true;
+          if(
+            v.id() == ID_unary_minus && !v.operands().empty() &&
+            v.operands()[0].is_constant() &&
+            v.operands()[0].type().id() == ID_floatbv)
+            return true;
+          return false;
+        };
+
+        bool start_constant = true, end_constant = true;
+        exprt start_sym, end_sym;
         int start = 0, end = src_long;
+        auto save_it = it;
         if(it != arg_arr.end())
-          start = read_int_arg(*it++, 0);
+        {
+          if(arg_is_constant(*it))
+            start = read_int_arg(*it, 0);
+          else
+          {
+            start_constant = false;
+            start_sym = convert_expression(*it);
+            // Convert to signed int for comparison.
+            if(start_sym.type().id() == ID_floatbv)
+              start_sym = typecast_exprt{start_sym, signedbv_typet{64}};
+          }
+          ++it;
+        }
         if(it != arg_arr.end())
-          end = read_int_arg(*it, src_long);
-        // Negative indices count from end.
-        if(start < 0)
-          start = std::max(0, src_long + start);
-        if(end < 0)
-          end = std::max(0, src_long + end);
-        if(start > src_long)
-          start = src_long;
-        if(end > src_long)
-          end = src_long;
+        {
+          if(arg_is_constant(*it))
+            end = read_int_arg(*it, src_long);
+          else
+          {
+            end_constant = false;
+            end_sym = convert_expression(*it);
+            if(end_sym.type().id() == ID_floatbv)
+              end_sym = typecast_exprt{end_sym, signedbv_typet{64}};
+          }
+        }
+        (void)save_it;
+        // Negative indices count from end (constant case only).
+        if(start_constant)
+        {
+          if(start < 0)
+            start = std::max(0, src_long + start);
+          if(start > src_long)
+            start = src_long;
+        }
+        if(end_constant)
+        {
+          if(end < 0)
+            end = std::max(0, src_long + end);
+          if(end > src_long)
+            end = src_long;
+        }
 
         typet elem_type = fill_val.type();
         if(!data.operands().empty())
@@ -2817,12 +2864,32 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         exprt::operandst filled;
         for(int i = 0; i < src_long; ++i)
         {
-          if(i >= start && i < end)
-            filled.push_back(fill_val);
-          else if(static_cast<std::size_t>(i) < data.operands().size())
-            filled.push_back(data.operands()[i]);
+          exprt orig = (static_cast<std::size_t>(i) < data.operands().size())
+                         ? data.operands()[i]
+                         : from_integer(0, elem_type);
+          // Build the "in range" predicate — fully constant if both
+          // bounds are, otherwise a symbolic conjunction.
+          if(start_constant && end_constant)
+          {
+            if(i >= start && i < end)
+              filled.push_back(fill_val);
+            else
+              filled.push_back(orig);
+          }
           else
-            filled.push_back(from_integer(0, elem_type));
+          {
+            exprt i_expr = from_integer(i, signedbv_typet{64});
+            exprt cond_start =
+              start_constant
+                ? (i >= start ? exprt{true_exprt{}} : exprt{false_exprt{}})
+                : exprt{binary_relation_exprt{i_expr, ID_ge, start_sym}};
+            exprt cond_end =
+              end_constant
+                ? (i < end ? exprt{true_exprt{}} : exprt{false_exprt{}})
+                : exprt{binary_relation_exprt{i_expr, ID_lt, end_sym}};
+            exprt in_range = and_exprt{cond_start, cond_end};
+            filled.push_back(if_exprt{in_range, fill_val, orig});
+          }
         }
         std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
         while(filled.size() < max_len)
@@ -2982,6 +3049,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             integer2bvrep(mp_integer{bits}, 64), double_type()};
         };
 
+        // For constant target, we can resolve at conversion time.
         if(target.is_constant())
         {
           if(method == "lastIndexOf")
@@ -3006,6 +3074,44 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           return make_result(-1);
         }
+
+        // Symbolic target: build nested if_exprt chain that returns
+        // the first matching index (or -1). This matches how Map.has
+        // / Set.has handle symbolic keys/values.
+        auto elem_equal = [](const exprt &a, const exprt &b) -> exprt
+        {
+          if(a.type().id() == ID_floatbv && b.type().id() == ID_floatbv)
+            return ieee_float_equal_exprt{a, b};
+          if(a.type() != b.type())
+            return false_exprt{};
+          return equal_exprt{a, b};
+        };
+        exprt result = make_result(-1);
+        if(method == "lastIndexOf")
+        {
+          // Iterate forward so later matches overwrite earlier.
+          for(int i = 0; i <= start; ++i)
+          {
+            if(static_cast<std::size_t>(i) >= data.operands().size())
+              break;
+            exprt cond = elem_equal(data.operands()[i], target);
+            result = if_exprt{cond, make_result(i), result};
+          }
+        }
+        else
+        {
+          // Iterate from high index to low, so the LAST if_exprt
+          // wraps all smaller indices as the "else" — picks the
+          // smallest matching index.
+          for(int i = src_long - 1; i >= start; --i)
+          {
+            if(static_cast<std::size_t>(i) >= data.operands().size())
+              continue;
+            exprt cond = elem_equal(data.operands()[i], target);
+            result = if_exprt{cond, make_result(i), result};
+          }
+        }
+        return result;
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
