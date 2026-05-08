@@ -232,29 +232,122 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       if(args.is_array())
         for(const auto &a : to_json_array(args))
           call_args.push_back(convert_expression(a));
-      if(method == "isInteger" && !call_args.empty())
+
+      // Helper: extract double value from constant or unary-minus of
+      // constant. Returns {ok, value}.
+      auto extract_double = [](const exprt &e) -> std::pair<bool, double>
       {
-        // x === Math.floor(x)
-        if(call_args[0].is_constant() && call_args[0].type().id() == ID_floatbv)
+        if(e.is_constant() && e.type().id() == ID_floatbv)
         {
           ieee_floatt fv{
             ieee_float_spect::double_precision(),
             ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          fv.from_expr(to_constant_expr(call_args[0]));
-          double d = std::stod(fv.to_ansi_c_string());
+          fv.from_expr(to_constant_expr(e));
+          return {true, std::stod(fv.to_ansi_c_string())};
+        }
+        if(
+          e.id() == ID_unary_minus && !e.operands().empty() &&
+          e.operands()[0].is_constant() &&
+          e.operands()[0].type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(e.operands()[0]));
+          return {true, -std::stod(fv.to_ansi_c_string())};
+        }
+        return {false, 0.0};
+      };
+
+      if(method == "isInteger" && !call_args.empty())
+      {
+        // ES2024 §21.1.2.3: Number.isInteger(x) returns true iff x is
+        // a finite integer-valued number. Non-numeric args → false.
+        if(call_args[0].type().id() != ID_floatbv)
+          return false_exprt{};
+        auto [ok, d] = extract_double(call_args[0]);
+        if(ok)
+        {
+          if(std::isnan(d) || std::isinf(d))
+            return false_exprt{};
           return d == std::floor(d) ? exprt{true_exprt{}}
                                     : exprt{false_exprt{}};
         }
         return side_effect_expr_nondett{bool_typet{}, get_location(node)};
       }
+      if(method == "isSafeInteger" && !call_args.empty())
+      {
+        // ES2024 §21.1.2.5: Number.isSafeInteger(x) = isInteger(x) &&
+        // |x| <= 2^53 - 1.
+        if(call_args[0].type().id() != ID_floatbv)
+          return false_exprt{};
+        auto [ok, d] = extract_double(call_args[0]);
+        if(ok)
+        {
+          if(std::isnan(d) || std::isinf(d))
+            return false_exprt{};
+          if(d != std::floor(d))
+            return false_exprt{};
+          const double max_safe = 9007199254740991.0;
+          return (std::fabs(d) <= max_safe) ? exprt{true_exprt{}}
+                                            : exprt{false_exprt{}};
+        }
+        return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+      }
       if(method == "isNaN" && !call_args.empty())
       {
-        // isnan check
+        // ES2024 §21.1.2.4: Number.isNaN differs from global isNaN —
+        // it returns false for NON-NUMBER values (no coercion).
+        if(call_args[0].type().id() != ID_floatbv)
+          return false_exprt{};
         return isnan_exprt{call_args[0]};
       }
       if(method == "isFinite" && !call_args.empty())
+      {
+        // ES2024 §21.1.2.2: Number.isFinite also returns false for
+        // non-numbers.
+        if(call_args[0].type().id() != ID_floatbv)
+          return false_exprt{};
         return not_exprt{
           or_exprt{isnan_exprt{call_args[0]}, isinf_exprt{call_args[0]}}};
+      }
+      // ES2024 §21.1.2.13: Number.parseInt (string → integer).
+      // §21.1.2.12: Number.parseFloat (string → number).
+      if((method == "parseInt" || method == "parseFloat") && !call_args.empty())
+      {
+        std::string sv_raw = extract_string_value(call_args[0]);
+        if(!sv_raw.empty())
+        {
+          std::string sv = sv_raw.substr(2);
+          int radix = 10;
+          if(method == "parseInt" && call_args.size() >= 2)
+          {
+            auto [ok, r] = extract_double(call_args[1]);
+            if(ok)
+              radix = static_cast<int>(r);
+          }
+          try
+          {
+            double d = method == "parseInt"
+                         ? static_cast<double>(std::stoll(sv, nullptr, radix))
+                         : std::stod(sv);
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_double(d);
+            return fv.to_expr();
+          }
+          catch(...)
+          {
+            ieee_floatt nan_val{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            nan_val.make_NaN();
+            return nan_val.to_expr();
+          }
+        }
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      }
       return side_effect_expr_nondett{bool_typet{}, get_location(node)};
     }
   }
@@ -390,6 +483,110 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     // sec-string.prototype.slice, sec-string.prototype.replaceall
     // TSH: Template Literal Types
     exprt obj_expr = convert_expression(json_member(callee, "expression"));
+    // ES2024 §21.1.3: Number instance methods (toFixed, toString, etc.)
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_floatbv &&
+      !is_typescript_string_type(obj_expr.type()))
+    {
+      // Extract constant value (including unary-minus and symbol lookup).
+      auto extract_num = [this](exprt e) -> std::pair<bool, double>
+      {
+        if(e.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(e).get_identifier());
+          if(s && !s->value.is_nil())
+            e = s->value;
+        }
+        if(e.is_constant() && e.type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(e));
+          return {true, std::stod(fv.to_ansi_c_string())};
+        }
+        if(
+          e.id() == ID_unary_minus && !e.operands().empty() &&
+          e.operands()[0].is_constant() &&
+          e.operands()[0].type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(e.operands()[0]));
+          return {true, -std::stod(fv.to_ansi_c_string())};
+        }
+        return {false, 0.0};
+      };
+      auto [ok, d] = extract_num(obj_expr);
+      if(ok)
+      {
+        if(method == "toFixed")
+        {
+          // ES2024 §21.1.3.3: toFixed(fractionDigits).
+          int digits = 0;
+          if(args.is_array() && !to_json_array(args).empty())
+          {
+            auto [ok2, d2] =
+              extract_num(convert_expression(*to_json_array(args).begin()));
+            if(ok2)
+              digits = static_cast<int>(d2);
+          }
+          char buf[64];
+          std::snprintf(buf, sizeof(buf), "%.*f", digits, d);
+          return convert_string_literal_from_text(std::string(buf));
+        }
+        if(method == "toString")
+        {
+          // ES2024 §21.1.3.6: toString(radix).
+          int radix = 10;
+          if(args.is_array() && !to_json_array(args).empty())
+          {
+            auto [ok2, d2] =
+              extract_num(convert_expression(*to_json_array(args).begin()));
+            if(ok2)
+              radix = static_cast<int>(d2);
+          }
+          if(radix == 10)
+          {
+            // Use JS-like rendering: integer values without decimal.
+            std::string s;
+            if(d == std::floor(d) && !std::isinf(d) && !std::isnan(d))
+              s = integer2string(mp_integer{static_cast<long long>(d)});
+            else
+            {
+              char buf[64];
+              std::snprintf(buf, sizeof(buf), "%g", d);
+              s = buf;
+            }
+            return convert_string_literal_from_text(s);
+          }
+          // Non-base-10: integer-only via snprintf.
+          if(d == std::floor(d) && !std::isinf(d) && !std::isnan(d))
+          {
+            long long n = static_cast<long long>(d);
+            std::string s;
+            bool negative = n < 0;
+            if(negative)
+              n = -n;
+            if(n == 0)
+              s = "0";
+            while(n > 0)
+            {
+              int digit = n % radix;
+              s =
+                static_cast<char>(digit < 10 ? '0' + digit : 'a' + digit - 10) +
+                s;
+              n /= radix;
+            }
+            if(negative)
+              s = "-" + s;
+            return convert_string_literal_from_text(s);
+          }
+        }
+      }
+    }
     if(!obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()))
     {
       // Try to get constant string value. Track whether we HAVE one
