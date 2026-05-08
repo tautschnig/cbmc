@@ -3898,8 +3898,40 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     if(func_name == "nondet_boolean")
       return side_effect_expr_nondett{bool_typet{}, get_location(node)};
     if(func_name == "nondet_string")
-      return side_effect_expr_nondett{
-        typescript_string_type(), get_location(node)};
+    {
+      // Return a nondet string BOUNDED to a valid length [0, MAX].
+      // Create a fresh symbol, initialize with nondet, assume the
+      // length field is in range. This is the sound behaviour for
+      // symbolic reasoning about strings.
+      static unsigned ns_ctr = 0;
+      std::string ns_name = "__ts_nondet_str_" + std::to_string(ns_ctr++);
+      irep_idt ns_id{"typescript::" + ns_name};
+      if(symbol_table.lookup(ns_id) == nullptr)
+      {
+        symbolt ss{ns_id, typescript_string_type(), "typescript"};
+        ss.base_name = ns_name;
+        ss.is_lvalue = true;
+        ss.is_state_var = true;
+        ss.is_static_lifetime = true;
+        symbol_table.add(ss);
+      }
+      symbol_exprt ns_sym{ns_id, typescript_string_type()};
+      // Initialize with nondet.
+      pending_stmts.push_back(code_frontend_assignt{
+        ns_sym,
+        side_effect_expr_nondett{
+          typescript_string_type(), get_location(node)}});
+      // Assume length is in valid range: 0 <= length <= MAX.
+      exprt len_member = member_exprt{ns_sym, "length", signedbv_typet{32}};
+      pending_stmts.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{
+          len_member, ID_ge, from_integer(0, signedbv_typet{32})},
+        binary_relation_exprt{
+          len_member,
+          ID_le,
+          from_integer(TYPESCRIPT_MAX_STRING_LENGTH, signedbv_typet{32})}}});
+      return ns_sym;
+    }
     if(func_name == "nondet_array")
     {
       // Create array with nondet elements
