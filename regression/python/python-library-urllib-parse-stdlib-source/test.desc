@@ -1,0 +1,9 @@
+CORE
+main.py
+--python-use-stdlib-source --python-no-body-check
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^Resolving import: urllib.parse \xe2\x86\x92 .*src/python/library/urllib/parse\.py$
