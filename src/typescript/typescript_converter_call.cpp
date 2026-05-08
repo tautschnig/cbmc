@@ -368,12 +368,18 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     exprt obj_expr = convert_expression(json_member(callee, "expression"));
     if(!obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()))
     {
-      // Try to get constant string value
+      // Try to get constant string value. Track whether we HAVE one
+      // separately from whether it's empty, so that e.g. "".concat("x")
+      // still dispatches to the concat handler.
       std::string sv;
+      bool sv_known = false;
       {
         std::string raw = extract_string_value(obj_expr);
         if(!raw.empty())
+        {
           sv = raw.substr(2);
+          sv_known = true;
+        }
       }
       // Get method arguments as constant strings/numbers
       std::vector<std::string> str_args;
@@ -415,7 +421,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           str_args.push_back("");
         }
       }
-      if(!sv.empty())
+      if(sv_known)
       {
         if(method == "indexOf" && !str_args.empty())
         {
