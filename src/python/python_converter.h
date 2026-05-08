@@ -74,13 +74,39 @@ private:
   bool processing_import = false;
   bool no_body_check = false; // suppress no-body-for-callee properties
 
+  /// When true, promote front-end quiet-by-default diagnostics
+  /// (Slice / Yield / YieldFrom, unresolved method / function /
+  /// attribute access, subscript/for-in/'in' fallbacks) back to
+  /// warning level. Intended for debugging spurious verification
+  /// results where a silent over-approximation may be at fault.
+  bool python_strict_warnings = false;
+
 public:
   void set_no_body_check(bool v)
   {
     no_body_check = v;
   }
 
+  void set_python_strict_warnings(bool v)
+  {
+    python_strict_warnings = v;
+  }
+
 private:
+  /// Emit a message about a front-end over-approximation. In the
+  /// default mode the message goes to log.debug() so it is only
+  /// visible at high verbosity; when --python-strict-warnings is
+  /// set the same message is also emitted at log.warning() level.
+  /// Used for cases where the front-end must fall back to a sound
+  /// nondet over-approximation (unresolved method/function/name,
+  /// attribute access on an opaque base, slice/yield expressions,
+  /// subscript/for-in/'in' fallbacks).
+  void log_overapprox(const std::string &msg)
+  {
+    log.debug() << msg << messaget::eom;
+    if(python_strict_warnings)
+      log.warning() << msg << messaget::eom;
+  }
   // Deferred method bodies for on-demand conversion
   std::map<irep_idt, const jsont *>
     deferred_method_bodies; // true when inside process_imported_module

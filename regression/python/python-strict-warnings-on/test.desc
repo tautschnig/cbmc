@@ -1,0 +1,10 @@
+CORE
+main.py
+--python-strict-warnings
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Slice expression: using nondet over-approximation$
+^attribute 'something': using nondet over-approximation$
+--
+^warning: ignoring

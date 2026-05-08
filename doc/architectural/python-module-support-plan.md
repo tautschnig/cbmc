@@ -114,6 +114,41 @@ Sub-tasks should be tracked as TODO comments referencing this document
 (`see doc/architectural/python-module-support-plan.md`) so that
 progress across sessions remains visible.
 
+## Front-end diagnostic verbosity
+
+Ingesting real stdlib code exercises many front-end corner cases that
+have a sound but imprecise fallback (e.g. returning a nondet value
+when a call target is unknown). To keep default output actionable,
+several of these paths are quiet by default and emit their diagnostic
+at `log.debug()` instead of `log.warning()`. A single CLI flag,
+`--python-strict-warnings`, promotes every one of them back to
+warning level without touching any other verbosity knob.
+
+Quiet-by-default diagnostics:
+
+| Trigger                                              | Fallback              |
+|------------------------------------------------------|-----------------------|
+| Unresolved function call (`Unknown function …`)      | nondet return         |
+| Unresolved method call (`Unknown method …`)          | nondet return         |
+| Attribute access on opaque base (`attribute '…' …`)  | nondet return         |
+| `Slice` expression used outside list/string subscript| nondet                |
+| `Yield` / `YieldFrom` expression                     | nondet / inner value  |
+| Subscript on an unsupported type                     | nil                   |
+| `for … in <non-iterable>`                            | skip loop body        |
+| `<item> in <non-list>`                               | `False` / `True`      |
+
+All of these still exist as `log.debug()` output, so they can be
+inspected with `--verbosity 9`, and all of them are re-emitted at
+`log.warning()` when `--python-strict-warnings` is set. Anything that
+is a genuine internal error (invariant violation, missing AST field,
+an unknown variable name, an unsupported Python statement or
+expression type not listed above) continues to log at warning /
+error level regardless of the flag.
+
+Users who are diagnosing a spurious verification result should run
+with `--python-strict-warnings` to see exactly which parts of the
+program were over-approximated.
+
 ## Baseline (2026-05-07, 120s timeout)
 
 | Metric    | Default (refine-strings) | --cvc5 (structural) |

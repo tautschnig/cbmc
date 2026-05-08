@@ -80,6 +80,7 @@ protected:
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
   bool no_body_check = false;
+  bool python_strict_warnings = false;
   std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;
   std::size_t max_list_length = PYTHON_MAX_LIST_LENGTH;
 
