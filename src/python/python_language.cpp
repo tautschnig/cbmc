@@ -23,6 +23,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <unistd.h>
 
 std::set<std::string> python_languaget::extensions() const
 {
@@ -41,8 +42,9 @@ void python_languaget::set_language_options(
   function_entry_point = options.get_option("function");
   unbounded_ints = options.get_bool_option("python-unbounded-ints");
   no_body_check = options.get_bool_option("python-no-body-check");
-  python_strict_warnings =
-    options.get_bool_option("python-strict-warnings");
+  python_strict_warnings = options.get_bool_option("python-strict-warnings");
+  python_use_stdlib_source =
+    options.get_bool_option("python-use-stdlib-source");
   std::string max_str = options.get_option("python-max-string-length");
   if(!max_str.empty())
     max_string_length = std::stoul(max_str);
@@ -291,6 +293,58 @@ void python_languaget::show_parse(std::ostream &out, message_handlert &)
 }
 
 python_languaget::python_languaget() = default;
+
+/// Set library_paths based on the environment or the cbmc binary
+/// location. Called lazily the first time resolve_module runs.
+void python_languaget::init_library_paths_if_needed()
+{
+  if(!library_paths.empty())
+    return; // already initialised
+
+  auto is_library_dir = [](const std::string &d)
+  { return !d.empty() && std::ifstream{d + "/README.md"}.good(); };
+
+  // 1. Explicit override via environment variable. Accepts a single
+  //    directory (not a colon-separated list).
+  if(const char *env = getenv("CBMC_PYTHON_LIBRARY"))
+  {
+    std::string e{env};
+    if(!e.empty())
+    {
+      library_paths.push_back(e);
+      return;
+    }
+  }
+
+  // 2. Locate the running cbmc binary and derive candidate library
+  //    directories relative to it. We try (in order):
+  //      <bin>/../share/cbmc/python/library    (installed layout)
+  //      <bin>/../../src/python/library        (in-tree build)
+  //      <bin>/../../../src/python/library     (CMake subproject build)
+  char exe_path[4096];
+  ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+  if(n > 0)
+  {
+    exe_path[n] = '\0';
+    std::string bin{exe_path};
+    auto bin_dir = bin.substr(0, bin.rfind('/'));
+    const std::vector<std::string> candidates{
+      bin_dir + "/../share/cbmc/python/library",
+      bin_dir + "/../../src/python/library",
+      bin_dir + "/../../../src/python/library"};
+    for(const auto &c : candidates)
+    {
+      if(is_library_dir(c))
+      {
+        library_paths.push_back(c);
+        return;
+      }
+    }
+  }
+  // No library found — leave library_paths empty; resolve_module
+  // will just skip the library step.
+}
+
 const jsont *python_languaget::resolve_module(
   const std::string &module_name,
   message_handlert &handler)
@@ -310,9 +364,24 @@ const jsont *python_languaget::resolve_module(
       c = '/';
   }
 
-  // Search for module/__init__.py or module.py
+  // Search for module/__init__.py or module.py. The search order is:
+  //   1. library_paths — CBMC's own model library (unless
+  //      --python-use-stdlib-source is set);
+  //   2. python_paths — user PYTHONPATH + the source file's dir,
+  //      which by default includes the system CPython stdlib via
+  //      PYTHONPATH or the OS default.
   std::string found_path;
-  for(const auto &dir : python_paths)
+  std::vector<std::string> search_dirs;
+  if(!python_use_stdlib_source)
+  {
+    init_library_paths_if_needed();
+    search_dirs.insert(
+      search_dirs.end(), library_paths.begin(), library_paths.end());
+  }
+  search_dirs.insert(
+    search_dirs.end(), python_paths.begin(), python_paths.end());
+
+  for(const auto &dir : search_dirs)
   {
     std::string pkg_init = dir + "/" + rel_path + "/__init__.py";
     std::string mod_file = dir + "/" + rel_path + ".py";

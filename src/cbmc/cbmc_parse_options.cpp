@@ -173,6 +173,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-no-body-check", true);
   if(cmdline.isset("python-strict-warnings"))
     options.set_option("python-strict-warnings", true);
+  if(cmdline.isset("python-use-stdlib-source"))
+    options.set_option("python-use-stdlib-source", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.

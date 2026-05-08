@@ -51,24 +51,54 @@ modules within a bounded time budget, with no crashes.
 
 ### Step 2 — Model library with fallback to CPython source
 
-**Goal:** Users can verify programs that import stdlib modules, using
-verification-optimized models by default and falling back to the real
-CPython source on demand.
+**Status (2026-05-08): delivered.** The minimum viable slice is in
+place and gated by CI.
 
-**Tasks:**
-- Create `src/python/library/` containing simplified models of stdlib
-  modules (e.g., `urllib/parse.py` returning nondet named tuples with
-  the right structure, rather than the full 1258-line CPython
-  implementation).
-- Extend the frontend's import resolution to check the model library
-  first, then fall back to the system CPython stdlib location
-  (`sysconfig.get_paths()['stdlib']`).
-- Add a command-line option (tentatively `--python-use-stdlib-source`)
-  and/or honor `PYTHONPATH` to let users force the real CPython source.
-- Extend the Step 1 integration test to run in both modes.
+* `src/python/library/` holds the verification-optimized Python
+  models. A model at `library/foo/bar.py` is used for
+  `import foo.bar` and related forms.
+* The front-end locates the library via (in order):
+  1. `CBMC_PYTHON_LIBRARY` environment variable.
+  2. `<cbmc_bin>/../share/cbmc/python/library` (installed layout).
+  3. `<cbmc_bin>/../../src/python/library` or one level deeper (dev
+     build layouts).
+* Inside `python_languaget::resolve_module`, the library's search
+  paths are consulted first; only if a module is not modelled does
+  the resolver fall back to `PYTHONPATH` and the system CPython
+  stdlib.
+* Users can bypass the library entirely with
+  `--python-use-stdlib-source`, forcing resolution through
+  `PYTHONPATH` and the system Python installation. This is intended
+  for debugging spurious differences between our model and CPython.
 
-**Exit criterion:** The 1 real FP case (`websocket_url_validator`,
-which uses `urllib.parse.urlparse`) is eliminated by the model library.
+Modelled modules so far:
+* `urllib.parse` — returns a `ParseResult`-shaped class with each
+  attribute typed, and each urlparse/urlsplit/urlunparse/etc.
+  routine returns a nondet value of the correct shape.
+
+The `integration/python-stdlib/` test runs in both modes
+(`--mode=library` and `--mode=stdlib-source`) with separate
+baselines, and both are exercised on every PR.
+
+#### Interaction with the C library route
+
+A separate, pre-existing mechanism handles a small set of modules
+whose semantics reduce cleanly to CBMC's C-library models:
+
+* `math.sin`, `math.cos`, `math.sqrt`, `math.exp`, `math.log`, …
+  are lowered at convert-call time to the corresponding C built-ins
+  with `ieee_float_spect::double_precision()`, and
+  `math.pi` / `math.e` / `math.tau` / `math.inf` / `math.nan` are
+  handled as constant `double` values at the attribute-access site.
+* `typing` and `random` are also short-circuited — the front-end
+  recognises certain members directly and never loads a model.
+
+These modules are intentionally **not** under `src/python/library/`.
+Adding a duplicate Python model for them would at best reproduce
+the existing behaviour and at worst shadow the C-library route with
+a less precise Python implementation. The rule: if a module is
+already handled via the C-library or other intrinsic route, do not
+add a Python model for it.
 
 ### Step 3 — Python stub infrastructure
 

@@ -41,6 +41,9 @@ jobs:
           make -C src CXX='ccache /usr/bin/clang++' cbmc.dir -j4
       - name: Print ccache stats
         run: ccache -s
-      - name: Run Python stdlib parse integration test
+      - name: Run Python stdlib parse integration test (library mode)
         run: |
           CBMC="$PWD/src/cbmc/cbmc" integration/python-stdlib/run_stdlib_parse_test.sh
+      - name: Run Python stdlib parse integration test (stdlib-source mode)
+        run: |
+          CBMC="$PWD/src/cbmc/cbmc" integration/python-stdlib/run_stdlib_parse_test.sh --mode=stdlib-source
