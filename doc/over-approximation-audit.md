@@ -81,35 +81,82 @@ For each over-approximation:
   requires copying char-by-char with symbolic length, which our
   fixed-size model handles partially.
 
-## ❌ Genuine limitations (documented)
+## ❌ Genuine limitations (documented, each with a KNOWNBUG test)
+
+Each remaining over-approximation has a KNOWNBUG regression test
+that FAILS verification due to the nondet result. When we resolve
+the limitation, the test will pass and be promoted to CORE.
 
 ### String.repeat with symbolic count
+- **Test**: `regression/typescript/string-repeat-symbolic`
 - **Why**: result length is `src.length * count`, symbolic
   multiplication of result-size is expressible but we'd need
   per-slot `if_exprt` chain over all possible `count` values.
-  Doable but expensive symbolically. Not yet implemented.
+  Doable but expensive symbolically. Refined string solver would
+  resolve this.
 
 ### String.padStart / padEnd with symbolic target length
+- **Test**: `regression/typescript/string-padstart-symbolic`
 - **Why**: similar to repeat — variable-length padding insert.
-  Doable but complex. Not yet implemented.
+  Doable but complex. Refined string solver would resolve.
 
 ### String.indexOf with symbolic needle (not just fromIndex)
+- **Test**: `regression/typescript/string-indexof-symbolic-needle`
 - **Why**: searching for a symbolic needle in a symbolic string
   is genuinely hard — full string matching over symbolic chars.
-  CBMC's refined string solver (`src/solvers/strings/`) has better
-  encoding but not wired up to our frontend.
+  CBMC's refined string solver has `cprover_string_index_of`.
 
 ### `+"42"` (string-to-number coercion)
+- **Test**: `regression/typescript/string-to-number-coerce`
 - **Why**: symbolic string parsing requires a full atoi encoding.
-  CBMC's refined string solver handles this but we haven't integrated.
+  CBMC's refined string solver handles this.
 
 ### Array.splice with symbolic args
+- **Test**: `regression/typescript/array-splice-symbolic`
 - **Why**: symbolic insert at symbolic index changes both length and
-  content. Doable similar to slice but more complex.
+  content. Doable similar to slice but more complex. Similar
+  per-slot `if_exprt` pattern would work.
 
-### Array.sort with unrecognized comparator
-- **Why**: arbitrary symbolic comparator would require SAT-based
+### Array.sort with symbolic elements
+- **Test**: `regression/typescript/array-sort-symbolic`
+- **Why**: arbitrary symbolic permutation would require SAT-based
   permutation search, expensive and our BMC model doesn't support.
+  Could encode a sorting network for bounded sizes.
+
+## Refined string solver: not currently integrated
+
+CBMC has a refined string solver at `src/solvers/strings/` that
+handles symbolic string operations precisely — concatenation,
+indexOf with symbolic needle, repeat with symbolic count, parsing,
+etc. It operates on a dedicated `refined_string_exprt` type
+(`{content: pointer, length: int}`) and special builtin function
+calls like `cprover_string_concat`, `cprover_string_index_of`.
+
+JBMC uses this for Java strings: see
+`jbmc/src/java_bytecode/java_string_library_preprocess.cpp` where
+`java.lang.String` is preprocessed to `refined_string_exprt`.
+
+**Our TypeScript frontend does NOT currently use it.** We represent
+strings as `struct{length: signedbv[32], data: unsignedbv[16][64]}`
+— a fixed-size struct with no pointer. This works well for constant-
+length operations but can't express variable-length symbolic
+operations.
+
+**Integrating the refined string solver** would resolve all 4
+string KNOWNBUGs in the list above (repeat-symbolic, padstart-
+symbolic, indexof-symbolic-needle, to-number-coerce). The steps
+would be roughly:
+
+1. Change `typescript_string_type()` to `refined_string_typet`.
+2. Rewrite string-method conversion to emit
+   `side_effect_expr_function_callt` to `cprover_string_*` builtins
+   (e.g. `cprover_string_concat`, `cprover_string_substring`).
+3. Pass `--refine-strings` automatically from the TypeScript driver.
+4. Rewrite string-constant creation to build `refined_string_exprt`.
+
+This is a substantial refactor (estimated ~500 LOC + many test
+adjustments) but would dramatically expand the symbolic expressivity.
+Left as future work; tracked via the 4 string KNOWNBUGs.
 
 ## Summary of resolution rate
 
