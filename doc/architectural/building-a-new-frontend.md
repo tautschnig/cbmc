@@ -740,6 +740,42 @@ waiting.
 calling any subsystem "done". In practice, per-spec reviews consistently
 find 2–10 bugs per subsystem even after the hand-written tests all pass.
 
+### 12. Tests that silently skip the assertion
+
+Some tests pass not because their assertions hold but because the
+assertions are NEVER CHECKED. Causes include:
+
+- CBMC flags that disable assertions broadly (e.g.
+  `--no-built-in-assertions` disables BOTH CBMC-generated checks and
+  user `assert()` calls in some frontends).
+- Early exits: a `throw` or `return` before the assertion makes it
+  unreachable.
+- Silently-dropped expressions: if `convert_expression(cond)` returns
+  `nil_exprt` because `cond` uses an unsupported feature, the test
+  runner may omit the assertion entirely.
+
+**Mitigation: mutation-test the regression suite.** Apply generic
+mutations (swap `===` for `!==`, flip `true`/`false`, negate
+assertions) to each test and require the mutated test to FAIL. If a
+mutation doesn't change the verification outcome, the assertion
+likely isn't being checked.
+
+A simple mutation-testing script is a worthwhile automation:
+
+```python
+# For each test.desc CORE file:
+for mutation in MUTATIONS:
+  mutated_src = apply_mutation(original_src, mutation)
+  run_cbmc(mutated_src)
+  assert "VERIFICATION FAILED"  # mutation caught
+```
+
+Running such a script on the TypeScript frontend's ~600 CORE tests
+surfaced real issues: heterogeneous-tuple tests passed vacuously
+(tuple type annotation wasn't parsed, assertions ran on nondet
+values), and `--no-built-in-assertions` was accidentally silencing
+user assertions.
+
 ---
 
 ## Performance and Soundness
@@ -846,8 +882,10 @@ Production-ready frontend:
 - [ ] **Symbolic-input second pass completed** for each reviewed
       subsystem (catches methods that are sound for constants but
       fall through to nondet for symbolic inputs)
-- [ ] **`nondet_X()` primitives bounded** (length/range assumptions
+- [ ] **nondet_X()` primitives bounded** (length/range assumptions
       emitted so property-based tests are sound)
+- [ ] **Regression suite mutation-tested** (verifies tests actually
+      catch bugs they claim to; see Common Pitfalls §12)
 - [ ] Per-subsystem review docs published (e.g. `string-soundness-review.md`)
 
 The TypeScript frontend took ~500 tests and ~177 commits to reach
