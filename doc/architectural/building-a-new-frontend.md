@@ -638,6 +638,57 @@ The explicit "documented limitation" comment prevents future
 maintainers from thinking the symbolic case is covered when it
 isn't.
 
+#### Check CBMC primitives before documenting as a limitation
+
+When you encounter an operation that "seems hard" to do symbolically,
+**check the C frontend** and CBMC's expression types before declaring
+it a fundamental limitation. CBMC has purpose-built expression types
+for most numeric and float operations.
+
+Useful CBMC primitives to check (all in `src/util/`):
+
+| Primitive | Use for |
+|-----------|---------|
+| `floatbv_round_to_integral_exprt{x, mode}` | floor / ceil / trunc / round (modes: FE_DOWNWARD=1, FE_UPWARD=2, FE_TOWARDZERO=3, FE_TONEAREST=0) |
+| `floatbv_typecast_exprt{x, rm, t}` | float → float precision conversion |
+| `ieee_float_equal_exprt`, `ieee_float_notequal_exprt` | IEEE equality (handles NaN) |
+| `isnan_exprt`, `isinf_exprt` | special-value checks |
+| `if_exprt{cond, then, else}` | conditional expression |
+| `binary_relation_exprt{a, ID_lt/le/gt/ge, b}` | comparisons |
+
+The C frontend's `src/ansi-c/library/math.c` shows how all the
+standard math functions are encoded. Copy the pattern.
+
+**Example**: we initially documented `Math.floor` on symbolic input
+as an unavoidable limitation, citing "float-to-int typecast issues".
+On checking the C frontend, `floor(x)` is just
+`__CPROVER_round_to_integrald(x, 1)`, which becomes
+`floatbv_round_to_integral_exprt` — a CBMC primitive that handles
+the symbolic case natively. The "limitation" was actually premature.
+
+For bounded collections (arrays, maps, sets) with symbolic inputs,
+the **per-slot if_exprt pattern** works well:
+
+```cpp
+// For arr.indexOf(target) with symbolic target:
+exprt result = make_int(-1);
+for (int i = src_len - 1; i >= 0; i--) {
+  result = if_exprt{
+    equal_exprt{arr.data[i], target},
+    make_int(i),
+    result
+  };
+}
+return result;
+```
+
+**For variable-length string operations** (repeat with symbolic
+count, padStart with symbolic target length, indexOf with symbolic
+needle, parseFloat with symbolic string), CBMC has a **refined
+string solver** at `src/solvers/strings/` with better handling.
+Integrating it into a frontend is a larger project; for now,
+document the limitation.
+
 #### Order the subsystems
 
 Prioritize by user impact:
