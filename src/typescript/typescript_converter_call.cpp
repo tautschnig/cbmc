@@ -101,6 +101,44 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
     // ES2024 sec-array.isarray — returns true iff the argument has
+    // ES2024 §22.1.2.1: String.fromCharCode(...codes) builds a string
+    // from 16-bit UTF-16 code units.
+    if(obj == "String" && method == "fromCharCode" && args.is_array())
+    {
+      exprt::operandst chars;
+      for(const auto &a : to_json_array(args))
+      {
+        exprt v = convert_expression(a);
+        if(v.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(v).get_identifier());
+          if(s && !s->value.is_nil())
+            v = s->value;
+        }
+        if(v.is_constant() && v.type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(v));
+          int code = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          chars.push_back(from_integer(code, unsignedbv_typet{16}));
+        }
+        else
+          chars.push_back(
+            side_effect_expr_nondett{unsignedbv_typet{16}, source_locationt{}});
+      }
+      std::size_t actual = chars.size();
+      while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+        chars.push_back(from_integer(0, unsignedbv_typet{16}));
+      struct_typet str_type = typescript_string_type();
+      const auto &data_type = to_array_type(str_type.components()[1].type());
+      return struct_exprt{
+        {from_integer(actual, signedbv_typet{32}),
+         array_exprt{std::move(chars), data_type}},
+        str_type};
+    }
     // array type (a struct with data+length, our typescript_array).
     if(obj == "Array" && method == "isArray")
     {
@@ -798,6 +836,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(idx >= 0 && idx < static_cast<int>(sv.size()))
             return convert_string_literal_from_text(std::string(1, sv[idx]));
           return convert_string_literal_from_text("");
+        }
+        // ES2024 §22.1.3.2: String.prototype.charCodeAt returns the
+        // UTF-16 code unit at the given index, or NaN if out of range.
+        if(method == "charCodeAt" && !num_args.empty())
+        {
+          int idx = num_args[0];
+          if(idx >= 0 && idx < static_cast<int>(sv.size()))
+          {
+            double v = static_cast<double>(static_cast<unsigned char>(sv[idx]));
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_double(v);
+            return fv.to_expr();
+          }
+          // Out of range: NaN
+          ieee_floatt nan_val{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          nan_val.make_NaN();
+          return nan_val.to_expr();
         }
         if(method == "startsWith" && !str_args.empty())
         {
