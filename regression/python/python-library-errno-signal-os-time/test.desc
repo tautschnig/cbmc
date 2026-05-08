@@ -1,0 +1,15 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Resolving import: errno \xe2\x86\x92 .*src/python/library/errno\.py$
+^Resolving import: signal \xe2\x86\x92 .*src/python/library/signal\.py$
+^Resolving import: os \xe2\x86\x92 .*src/python/library/os/__init__\.py$
+^Resolving import: os\.path \xe2\x86\x92 .*src/python/library/os/path\.py$
+^Resolving import: time \xe2\x86\x92 .*src/python/library/time\.py$
+^Resolving import: cmath \xe2\x86\x92 .*src/python/library/cmath\.py$
+--
+^warning: ignoring
+^no body for callee
