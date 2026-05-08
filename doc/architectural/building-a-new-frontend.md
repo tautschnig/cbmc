@@ -19,6 +19,8 @@ For the conceptual architecture, see `cbmc-frontend-architecture.md`.
    - Test verification is actually happening
    - Integration test with real code
    - **Per-spec soundness review** (highly recommended)
+     - First pass: constant-input probes
+     - Second pass: symbolic-input probes
 6. [Common Pitfalls](#common-pitfalls)
 7. [Performance and Soundness](#performance-and-soundness)
 8. [Maintenance Considerations](#maintenance-considerations)
@@ -446,7 +448,16 @@ For each major spec section (e.g. ES2024 §22.1 String,
    means each commit is easy to review and revert.
 5. **Promote probe tests to CORE regression tests.** They become
    the regression guards.
-6. **Document findings** in a per-subsystem review file so future
+6. **Second pass: symbolic inputs.** After the constant-input tests
+   pass, re-probe each subsystem with `nondet_number()` /
+   `nondet_string()` / `__CPROVER_assume` inputs. This catches
+   implementations that are sound for constants but fall through
+   to nondet (or produce wrong results) for symbolic arguments.
+   Many method implementations start by extracting the constant
+   value of an argument — when that extraction fails, they return
+   nondet, silently degrading soundness for property-based tests.
+   See "Symbolic-input pass" below for details.
+7. **Document findings** in a per-subsystem review file so future
    maintainers can see what was checked and what remains.
 
 #### Example yield (TypeScript frontend)
@@ -537,6 +548,95 @@ Each subsystem review should produce:
   trip over.
 - **Periodically after language spec updates**: re-review the
   sections whose spec changed.
+
+#### Symbolic-input pass (second pass)
+
+The first pass (above) catches spec-misreading bugs using constant
+inputs. The second pass catches a different class of bug: **methods
+that are correct for constants but degrade to nondet for symbolic
+inputs**.
+
+Why this matters: a common implementation pattern is to extract the
+constant value of an argument at conversion time, use it to compute
+the result at conversion time, and return a constant. When the
+argument is symbolic, the extraction fails and the handler falls
+through to `side_effect_expr_nondett{...}` — technically sound
+(returns "any value") but silently breaks any property-based test
+that uses `nondet_number()` inputs.
+
+**The symbolic-input pass methodology:**
+
+1. For each method reviewed in the first pass, write a probe test
+   that passes `nondet_number()` / `nondet_string()` / etc. to
+   the method's arguments (or receiver).
+2. Add `__CPROVER_assume` constraints to bound the search space.
+3. Assert the invariants the method should satisfy
+   (e.g. `Math.abs(x) >= 0`, `a.slice(0, k).length === k`).
+4. For failing tests, examine the implementation: does it take a
+   conversion-time-constant path that falls through to nondet? If
+   so, add a symbolic fallback using CBMC's primitives:
+   - Comparisons: `binary_relation_exprt{a, ID_lt, b}`
+   - Conditional: `if_exprt{cond, true_val, false_val}`
+   - NaN check: `isnan_exprt{x}` or `ieee_float_notequal_exprt{x, x}`
+   - Finite check: `not_exprt{or_exprt{isnan_exprt{x}, isinf_exprt{x}}}`
+5. For methods where a symbolic encoding is genuinely hard (e.g.
+   variable-length result arrays, float-to-int typecast semantics,
+   regex matching), leave them as nondet and **document the
+   limitation** in a test file with a `KNOWNBUG` or an explicit
+   code comment. Don't pretend they work symbolically.
+
+**Findings from the TypeScript frontend symbolic-input pass:**
+
+| Subsystem | Symbolic-safe methods | Documented limitations |
+|-----------|----------------------|------------------------|
+| Math | abs, sign, max, min | floor/ceil/trunc (float→int typecast issues) |
+| Number | isNaN, isFinite | isInteger/isSafeInteger (same typecast issue) |
+| String | length, includes, startsWith, endsWith on symbolic substring | repeat/padStart with symbolic count (variable-length result) |
+| Array | `a[i]` access, `a.includes(y)` | slice/splice/fill with symbolic args |
+| Map/Set | set/get/has/delete/add on symbolic values | (none — linear scan works symbolically) |
+
+**Key soundness finding:** `nondet_X()` primitives should emit
+bounded values, not fully unconstrained. For example, our initial
+`nondet_string()` returned a string with a nondet `length` field
+(which could be negative), making length-based assertions unsound.
+Fix: emit a `__CPROVER_assume` bounding the length to `[0, MAX]`.
+
+Every `nondet_X()` primitive should be audited for similar issues.
+
+**Pattern to recognise in implementation code:**
+
+```cpp
+// Pattern that silently degrades for symbolic input:
+if (constant_value_extraction_succeeds) {
+  return compute_constant_result();
+}
+return side_effect_expr_nondett{...};  // silently nondet
+```
+
+Change to:
+
+```cpp
+if (constant_value_extraction_succeeds) {
+  return compute_constant_result();
+}
+// Symbolic fallback: emit the operation as CBMC primitives
+return build_symbolic_expression(...);
+```
+
+Or, if no sound symbolic encoding exists:
+
+```cpp
+if (constant_value_extraction_succeeds) {
+  return compute_constant_result();
+}
+// Symbolic path: documented limitation (see subsystem-soundness-review.md).
+// Users needing this symbolically should ... (workaround).
+return side_effect_expr_nondett{...};
+```
+
+The explicit "documented limitation" comment prevents future
+maintainers from thinking the symbolic case is covered when it
+isn't.
 
 #### Order the subsystems
 
@@ -743,6 +843,11 @@ Production-ready frontend:
 - [ ] **Per-spec soundness review completed for each major built-in
       subsystem** (expect 2–10 real bugs per review on a
       "works-for-common-cases" frontend; see Testing Strategy §)
+- [ ] **Symbolic-input second pass completed** for each reviewed
+      subsystem (catches methods that are sound for constants but
+      fall through to nondet for symbolic inputs)
+- [ ] **`nondet_X()` primitives bounded** (length/range assumptions
+      emitted so property-based tests are sound)
 - [ ] Per-subsystem review docs published (e.g. `string-soundness-review.md`)
 
 The TypeScript frontend took ~500 tests and ~177 commits to reach
