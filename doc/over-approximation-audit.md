@@ -74,3 +74,16 @@ For each remaining item, I will:
 - Identify the CBMC primitive (if any) that encodes the semantics
 - Check the C frontend's encoding
 - Implement a precise version or document the true limitation
+## Resolved (additional)
+
+### ✅ Array.indexOf / lastIndexOf with symbolic target
+- **Was**: nondet fallback
+- **Now**: nested `if_exprt` chain scanning array data (same pattern as Map.has)
+
+### ✅ Array.fill with symbolic start/end
+- **Was**: fell back to default bounds, ignoring symbolic args
+- **Now**: per-slot `if_exprt{in_range, fill_val, orig}` where `in_range` uses symbolic comparisons
+
+### ✅ Array.slice with symbolic start/end
+- **Was**: nondet / returned original unchanged
+- **Now**: emits symbolic `result_len = max(0, clamp(end) - clamp(start))` and per-slot `if_exprt` chain over all possible `start` values matching the source slot

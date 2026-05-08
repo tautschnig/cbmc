@@ -37,3 +37,10 @@ b.fill(0, 0, k);
 if (k >= 1) console.assert(b[0] === 0);
 if (k >= 5) console.assert(b[4] === 0);
 if (k <= 0) console.assert(b[0] === 1);
+
+// slice with symbolic end — now works via symbolic result_len
+const c: number[] = [10, 20, 30, 40, 50];
+const sl: number[] = c.slice(0, k);
+console.assert(sl.length === k);
+if (k >= 1) console.assert(sl[0] === 10);
+if (k >= 2) console.assert(sl[1] === 20);

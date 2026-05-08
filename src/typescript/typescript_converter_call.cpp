@@ -1992,8 +1992,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           to_integer(to_constant_expr(src.operands()[0]), src_len);
         const exprt &data = src.operands()[1];
 
-        // Get start and end indices
+        // Detect whether start/end args are constant.
         int start_idx = 0, end_idx = src_len.to_long();
+        bool start_constant = true, end_constant = true;
+        exprt start_sym, end_sym;
         const auto &arg_arr = to_json_array(args);
         auto ait = arg_arr.begin();
         if(ait != arg_arr.end())
@@ -2007,7 +2009,6 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             fv.from_expr(to_constant_expr(sv));
             start_idx = static_cast<int>(std::stod(fv.to_ansi_c_string()));
           }
-          // Handle unary-minus constant (e.g. -2)
           else if(
             sv.id() == ID_unary_minus && !sv.operands().empty() &&
             sv.operands()[0].is_constant() &&
@@ -2018,6 +2019,13 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
               ieee_floatt::rounding_modet::ROUND_TO_EVEN};
             fv.from_expr(to_constant_expr(sv.operands()[0]));
             start_idx = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+          }
+          else
+          {
+            start_constant = false;
+            start_sym = sv;
+            if(start_sym.type().id() == ID_floatbv)
+              start_sym = typecast_exprt{start_sym, signedbv_typet{64}};
           }
           ++ait;
         }
@@ -2043,42 +2051,124 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             fv.from_expr(to_constant_expr(ev.operands()[0]));
             end_idx = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
           }
+          else
+          {
+            end_constant = false;
+            end_sym = ev;
+            if(end_sym.type().id() == ID_floatbv)
+              end_sym = typecast_exprt{end_sym, signedbv_typet{64}};
+          }
         }
-        // ES2024 §23.1.3.27 step 4: negative = from end
         int src_long = static_cast<int>(src_len.to_long());
-        if(start_idx < 0)
-          start_idx = std::max(0, src_long + start_idx);
-        if(end_idx < 0)
-          end_idx = std::max(0, src_long + end_idx);
-        if(start_idx > src_long)
-          start_idx = src_long;
-        if(end_idx > src_long)
-          end_idx = src_long;
-        // start > end → empty
-        if(start_idx > end_idx)
+        if(start_constant)
+        {
+          // ES2024 §23.1.3.27 step 4: negative = from end
+          if(start_idx < 0)
+            start_idx = std::max(0, src_long + start_idx);
+          if(start_idx > src_long)
+            start_idx = src_long;
+        }
+        if(end_constant)
+        {
+          if(end_idx < 0)
+            end_idx = std::max(0, src_long + end_idx);
+          if(end_idx > src_long)
+            end_idx = src_long;
+        }
+        if(start_constant && end_constant && start_idx > end_idx)
           end_idx = start_idx;
 
         typet elem_type = double_type();
         if(!data.operands().empty())
           elem_type = data.operands()[0].type();
 
-        exprt::operandst result_elts;
-        for(int i = start_idx; i < end_idx; ++i)
-        {
-          if(static_cast<std::size_t>(i) < data.operands().size())
-            result_elts.push_back(data.operands()[i]);
-        }
-        std::size_t actual = result_elts.size();
         std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
-        while(result_elts.size() < max_len)
-          result_elts.push_back(from_integer(0, elem_type));
         array_typet arr_type{
           elem_type, from_integer(max_len, signedbv_typet{64})};
         struct_typet list_type = make_array_struct_type(arr_type);
+
+        // Constant case: resolve at conversion time.
+        if(start_constant && end_constant)
+        {
+          exprt::operandst result_elts;
+          for(int i = start_idx; i < end_idx; ++i)
+          {
+            if(static_cast<std::size_t>(i) < data.operands().size())
+              result_elts.push_back(data.operands()[i]);
+          }
+          std::size_t actual = result_elts.size();
+          while(result_elts.size() < max_len)
+            result_elts.push_back(from_integer(0, elem_type));
+          return struct_exprt{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(result_elts), arr_type}},
+            list_type};
+        }
+
+        // Symbolic case: emit a result whose length is a symbolic
+        // expression and whose data[i] is (i < result_len) ?
+        // src.data[start + i] : 0.
+        exprt start_expr =
+          start_constant ? exprt{from_integer(start_idx, signedbv_typet{64})}
+                         : start_sym;
+        exprt end_expr = end_constant
+                           ? exprt{from_integer(end_idx, signedbv_typet{64})}
+                           : end_sym;
+        // Clamp negative: max(0, src_long + x) for negative; clamp
+        // to src_long for overflow. For symbolic, we use if_exprts.
+        auto clamp = [&](const exprt &x, bool is_constant_arg) -> exprt
+        {
+          if(is_constant_arg)
+            return x;
+          // if(x < 0) max(0, src_long + x) else min(x, src_long)
+          exprt src_long_e = from_integer(src_long, signedbv_typet{64});
+          exprt zero_e = from_integer(0, signedbv_typet{64});
+          exprt neg_clamped = if_exprt{
+            binary_relation_exprt{plus_exprt{src_long_e, x}, ID_lt, zero_e},
+            zero_e,
+            plus_exprt{src_long_e, x}};
+          exprt pos_clamped = if_exprt{
+            binary_relation_exprt{x, ID_gt, src_long_e}, src_long_e, x};
+          return if_exprt{
+            binary_relation_exprt{x, ID_lt, zero_e}, neg_clamped, pos_clamped};
+        };
+        start_expr = clamp(start_expr, start_constant);
+        end_expr = clamp(end_expr, end_constant);
+        // result_len = max(0, end - start)
+        exprt zero_e = from_integer(0, signedbv_typet{64});
+        exprt diff = minus_exprt{end_expr, start_expr};
+        exprt result_len =
+          if_exprt{binary_relation_exprt{diff, ID_lt, zero_e}, zero_e, diff};
+        // Build data: for each slot i, data[i] = (i < result_len) ?
+        // src.data[start + i] : 0. We can only index src.data with
+        // constant slots (it's an array_exprt), so we build an
+        // if-chain over all source slot choices.
+        exprt::operandst filled;
+        for(std::size_t i = 0; i < max_len; ++i)
+        {
+          exprt i_expr = from_integer(i, signedbv_typet{64});
+          // For slot i of result: data[start + i] (which could be
+          // any src slot). Build an if_exprt chain: if start == 0,
+          // src.data[i]; if start == 1, src.data[i+1]; etc.
+          exprt src_val = from_integer(0, elem_type);
+          for(int src_i = src_long - 1; src_i >= 0; --src_i)
+          {
+            // src_i = start + i → start = src_i - i
+            int want_start = src_i - static_cast<int>(i);
+            if(want_start < 0 || want_start >= src_long)
+              continue;
+            exprt start_matches = equal_exprt{
+              start_expr, from_integer(want_start, signedbv_typet{64})};
+            if(static_cast<std::size_t>(src_i) < data.operands().size())
+              src_val =
+                if_exprt{start_matches, data.operands()[src_i], src_val};
+          }
+          exprt in_range = binary_relation_exprt{i_expr, ID_lt, result_len};
+          filled.push_back(
+            if_exprt{in_range, src_val, from_integer(0, elem_type)});
+        }
         return struct_exprt{
-          {from_integer(actual, signedbv_typet{64}),
-           array_exprt{std::move(result_elts), arr_type}},
-          list_type};
+          {result_len, array_exprt{std::move(filled), arr_type}}, list_type};
       }
     }
     // ES2024 sec-array.prototype.find
