@@ -1372,17 +1372,18 @@ exprt python_convertert::convert_expression(const jsont &expr)
   // a warning on every occurrence (281+ across the stdlib corpus)
   // drowns out actually actionable diagnostics. Treat a Slice node
   // as a nondet integer here; the enclosing Subscript handler falls
-  // back to a nondet result when it can't fold the slice, so the
-  // observable behaviour is unchanged — we just stop screaming.
+  // back to a nondet result when it can't fold the slice. Kept at
+  // log.debug() so the occurrence is still visible with --verbosity
+  // 9 or when --python-strict-warnings is set.
   else if(node_type == "Slice")
   {
+    log_overapprox("Slice expression: using nondet over-approximation");
     result = side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
-  // Quieten yield-expression warnings. Proper generator support is
-  // tracked by Step 2 / later work; for Step 1 we just want to parse
-  // the surrounding function body without the warning flood.
   else if(node_type == "Yield" || node_type == "YieldFrom")
   {
+    log_overapprox(
+      std::string{node_type} + " expression: using nondet over-approximation");
     const jsont &v = json_member(expr, "value");
     if(!v.is_null())
       result = convert_expression(v);
@@ -2550,9 +2551,21 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
     return ashr_exprt{left, right};
   }
+  else if(op == "MatMult")
+  {
+    // PLR §6.7: matrix multiplication '@'. The Python semantics are
+    // defined only in terms of the operands' __matmul__ methods; for
+    // primitive types 'x @ y' is not defined. We do not model matrix
+    // objects, so we route MatMult through Mult (scalar product),
+    // which gives the correct result for scalar operands and a sound
+    // over-approximation for anything else.
+    if(left.type() == right.type() && left.type().id() != ID_struct)
+      return mult_exprt{left, right};
+    return side_effect_expr_nondett{left.type(), source_locationt{}};
+  }
   else
   {
-    log.debug() << "Unsupported binary operator: " << op << messaget::eom;
+    log.warning() << "Unsupported binary operator: " << op << messaget::eom;
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
 }
@@ -2598,7 +2611,7 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
   }
   else
   {
-    log.debug() << "Unsupported unary operator: " << op << messaget::eom;
+    log.warning() << "Unsupported unary operator: " << op << messaget::eom;
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
 }
@@ -2647,7 +2660,7 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
     }
     else
     {
-      log.debug() << "Unsupported bool operator: " << op << messaget::eom;
+      log.warning() << "Unsupported bool operator: " << op << messaget::eom;
       return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
     }
   }
@@ -3360,8 +3373,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       else
       {
-        log.debug() << "'in' operator only supported for lists"
-                    << messaget::eom;
+        log_overapprox(
+          "'in' operator on unsupported container: returning constant");
         cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
       }
     }
@@ -3422,7 +3435,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else
     {
-      log.debug() << "Unsupported comparison operator: " << op << messaget::eom;
+      log.warning() << "Unsupported comparison operator: " << op
+                    << messaget::eom;
       return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
     }
 
@@ -5553,7 +5567,9 @@ exprt python_convertert::convert_call(const jsont &expr)
       method_name != "maketrans" && method_name != "zfill" &&
       method_name != "center" && method_name != "ljust" &&
       method_name != "rjust" && method_name != "expandtabs")
-      log.debug() << "Unknown method: " << method_name << messaget::eom;
+      log_overapprox(
+        "method '" + method_name +
+        "': no resolution, returning nondet over-approximation");
     // For regex methods, constrain result to be non-None (>= 0)
     // so stub assertions like `assert compile(r).search(v) is not None` pass
     if(
@@ -7851,12 +7867,13 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
 
     // Unknown function — return nondet value (sound overapproximation).
-    // Downgraded to debug because stdlib ingestion routinely hits
-    // hundreds of these, they are already handled correctly (nondet
-    // + optional no-body assertion), and the warnings drown out
-    // actionable diagnostics.
-    log.debug() << "Unknown function '" << func_name
-                << "', returning nondet value" << messaget::eom;
+    // Quiet by default because stdlib ingestion routinely hits
+    // hundreds of these and the fallback is already correct (nondet
+    // + optional no-body assertion). Visible with --verbosity 9 or
+    // --python-strict-warnings.
+    log_overapprox(
+      "function '" + func_name +
+      "': no body known, returning nondet over-approximation");
     if(!no_body_check)
     {
       add_check(
@@ -8492,7 +8509,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
   }
 
-  log.debug() << "Subscript not yet supported for this type" << messaget::eom;
+  log_overapprox("Subscript: unsupported operand type, using nondet");
   return nil_exprt{};
 }
 
@@ -8656,21 +8673,23 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       return member_exprt{value, attr, st.get_component(attr).type()};
   }
 
-  // Quieter path for module attribute accesses: when the base is a
-  // symbol we registered for an imported module (python_value type),
-  // or any tagged python_value, don't warn — the value is already a
-  // nondet over-approximation. Proper modelling belongs to Step 2.
+  // Attribute accesses on an already-opaque tagged python_value
+  // base are the common case for imported module symbols and
+  // unannotated parameters. The only information we can return is
+  // a fresh nondet, so log at debug level (or warning level if
+  // --python-strict-warnings is set) rather than falling through
+  // to the louder 'attribute ...' path.
   const bool base_is_module_value =
     (value.type().id() == ID_struct_tag &&
      id2string(to_struct_tag_type(value.type()).get_identifier()) ==
        std::string{PYTHON_VALUE_TAG});
   if(base_is_module_value)
   {
+    log_overapprox("attribute '" + attr + "': using nondet over-approximation");
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
 
-  log.debug() << "Cannot access attribute '" << attr << "', using nondet"
-              << messaget::eom;
+  log_overapprox("attribute '" + attr + "': using nondet over-approximation");
   return side_effect_expr_nondett{python_int_type(), source_locationt{}};
 }
 
@@ -10709,6 +10728,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     new_rhs = shl_exprt{arith_lhs, rhs};
   else if(op == "RShift")
     new_rhs = ashr_exprt{arith_lhs, rhs};
+  else if(op == "MatMult")
+  {
+    // See BinOp/MatMult note: model '@=' as scalar '*='; sound
+    // over-approximation for non-scalar operands.
+    if(arith_lhs.type() == rhs.type() && arith_lhs.type().id() != ID_struct)
+      new_rhs = mult_exprt{arith_lhs, rhs};
+    else
+      new_rhs = side_effect_expr_nondett{arith_lhs.type(), loc};
+  }
   else if(op == "Pow")
   {
     // x **= y — use constant evaluation if possible
@@ -10743,8 +10771,8 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   }
   else
   {
-    log.debug() << "Unsupported augmented assignment operator: " << op
-                << messaget::eom;
+    log.warning() << "Unsupported augmented assignment operator: " << op
+                  << messaget::eom;
     return code_skipt{};
   }
 
@@ -11125,8 +11153,8 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   if(!is_list && !is_string)
   {
-    log.debug() << "for-in iteration requires a list, string, or dict"
-                << messaget::eom;
+    log_overapprox(
+      "for-in iteration: unsupported iterable type, skipping body");
     return code_skipt{};
   }
 

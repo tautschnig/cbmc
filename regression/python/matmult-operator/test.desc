@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^Unsupported binary operator
+^Unsupported augmented assignment operator
