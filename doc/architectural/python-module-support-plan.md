@@ -105,16 +105,50 @@ add a Python model for it.
 **Goal:** Establish the conventions and helpers needed for writing
 high-quality stubs.
 
-**Tasks:**
+**Status (2026-05-08): first primitive delivered.**
+
+The annotation-driven C-routing primitive is in place. A library
+stub author imports a decorator from the helper module
+`src/python/library/__cbmc__.py` and marks a Python function:
+
+```python
+from __cbmc__ import c_intrinsic
+
+@c_intrinsic('sqrt')
+def sqrt(x: float) -> float: ...
+```
+
+When such a decorated function is called, the Python front-end
+emits a call to the named C function (`sqrt` in this case) instead
+of executing the Python body. The C function must exist in CBMC's
+ansi-c library; at link-to-library time the corresponding model
+(e.g. `src/ansi-c/library/math.c`) is brought in automatically.
+The Python type annotations (`float`, `int`, `bool`) are used as
+the C function's parameter and return types; there is no need for
+a second declaration.
+
+The mechanism applies uniformly whether the library stub is the
+top-level source file or an imported module: both
+`convert_function_def` (main-file) and `process_imported_module`
+(imported module) populate a shared `c_intrinsic_map`, and
+`convert_call` rewrites the call target at emission time.
+
+Regression test: `regression/python/c-intrinsic-decorator/`.
+
+**Remaining Step 3 tasks:**
 - Document the stub authoring conventions (type annotations, nondet
   helpers, `__CPROVER_assume` usage, structural constraints).
 - Provide helper primitives that stubs can use (e.g., a canonical
   `nondet_string(min_len, max_len)` helper).
-- Ensure the frontend recognizes these helpers and lowers them
-  efficiently.
+- Migrate the existing ad-hoc `math.*` handling in
+  `python_converter.cpp` to a declarative `library/math.py` that
+  uses `@c_intrinsic`.
+- Model more C-backed modules via `@c_intrinsic`: `cmath`,
+  `errno`/`signal` (as constants), `os.getenv`, `time.time`, etc.
 
-**Exit criterion:** Writing a new stub is a predictable, low-friction
-task governed by the documented conventions.
+**Exit criterion:** Writing a new stub — including one that routes
+to a C function — is a predictable, low-friction task governed by
+the documented conventions and the stub-author helper module.
 
 ### Step 4 — Broader module support
 

@@ -8131,6 +8131,44 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // @c_intrinsic: redirect the call to the named C function. The
+  // Python function's declared signature is used as-is for the C
+  // intrinsic; the C function body (sin/cos/sqrt/...) is provided by
+  // CBMC's ansi-c library at link-to-library time.
+  auto intrinsic_it = c_intrinsic_map.find(sym->name);
+  if(intrinsic_it != c_intrinsic_map.end())
+  {
+    const std::string &c_name = intrinsic_it->second;
+    irep_idt c_id{c_name};
+    if(symbol_table.lookup(c_id) == nullptr)
+    {
+      // Register the C function as an external declaration with the
+      // same signature as the annotated Python stub. The linker
+      // pass will bind it to the real definition from the C library.
+      symbolt c_sym{c_id, func_type, ID_C};
+      c_sym.base_name = c_name;
+      c_sym.location = get_location(expr);
+      c_sym.is_lvalue = true;
+      c_sym.is_extern = true;
+      // The linker needs the parameter identifiers to be unique
+      // across the final goto model. The Python-qualified
+      // identifiers on the func_type would clash if the same C
+      // function were also declared elsewhere, so strip them.
+      code_typet c_func_type = to_code_type(func_type);
+      for(auto &p : c_func_type.parameters())
+        p.set_identifier(irep_idt{});
+      c_sym.type = c_func_type;
+      symbol_table.add(c_sym);
+    }
+    symbol_exprt callee_expr = symbol_table.lookup_ref(c_id).symbol_expr();
+    callee_expr.add_source_location() = get_location(expr);
+    return side_effect_expr_function_callt{
+      std::move(callee_expr),
+      std::move(arguments),
+      to_code_type(symbol_table.lookup_ref(c_id).type).return_type(),
+      get_location(expr)};
+  }
+
   side_effect_expr_function_callt call{
     sym->symbol_expr(),
     std::move(arguments),
@@ -11795,6 +11833,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 {
   // PLR §8.7: skip @overload decorated functions (type hints only)
   const jsont &decorators = json_member(stmt, "decorator_list");
+  bool is_c_intrinsic = false;
+  std::string c_intrinsic_name;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -11803,6 +11843,28 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         is_node_type(dec, "Name") &&
         json_string(json_member(dec, "id")) == "overload")
         return code_skipt{};
+      // @c_intrinsic('NAME') — route calls to the named C function
+      // instead of executing the Python body. The Python body is
+      // usually just '...' or 'pass' and is never run.
+      if(is_node_type(dec, "Call"))
+      {
+        const jsont &dec_func = json_member(dec, "func");
+        if(
+          is_node_type(dec_func, "Name") &&
+          json_string(json_member(dec_func, "id")) == "c_intrinsic")
+        {
+          const jsont &dec_args = json_member(dec, "args");
+          if(dec_args.is_array() && !as_array(dec_args).empty())
+          {
+            const jsont &first = *as_array(dec_args).begin();
+            if(is_node_type(first, "Constant"))
+            {
+              c_intrinsic_name = json_string(json_member(first, "value"));
+              is_c_intrinsic = !c_intrinsic_name.empty();
+            }
+          }
+        }
+      }
     }
   }
 
@@ -12071,6 +12133,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // Update pre-registered placeholder with real signature
     symbol_table.get_writeable_ref(symbol_id).type = func_type;
   }
+
+  // Record @c_intrinsic mapping so convert_call can redirect to
+  // the named C function instead of executing the Python body.
+  if(is_c_intrinsic)
+    c_intrinsic_map[symbol_id] = c_intrinsic_name;
 
   // Create parameter symbols
   for(const auto &p : parameters)
@@ -13491,6 +13558,34 @@ void python_convertert::process_imported_module(
       is_node_type(stmt, "AsyncFunctionDef"))
     {
       std::string fname = json_string(json_member(stmt, "name"));
+      // Detect @c_intrinsic('NAME') decorators so imported library
+      // stubs can route calls to C library functions (parallel to
+      // the same detection in convert_function_def).
+      {
+        const jsont &decos = json_member(stmt, "decorator_list");
+        if(decos.is_array())
+        {
+          for(const auto &dec : as_array(decos))
+          {
+            if(!is_node_type(dec, "Call"))
+              continue;
+            const jsont &dec_func = json_member(dec, "func");
+            if(
+              !is_node_type(dec_func, "Name") ||
+              json_string(json_member(dec_func, "id")) != "c_intrinsic")
+              continue;
+            const jsont &dec_args = json_member(dec, "args");
+            if(!dec_args.is_array() || as_array(dec_args).empty())
+              continue;
+            const jsont &first = *as_array(dec_args).begin();
+            if(!is_node_type(first, "Constant"))
+              continue;
+            std::string c_name = json_string(json_member(first, "value"));
+            if(!c_name.empty())
+              c_intrinsic_map[irep_idt{"python::" + fname}] = c_name;
+          }
+        }
+      }
       // Register as a module-level function
       // The function will be callable as module.func()
       irep_idt sym_id{"python::" + fname};
