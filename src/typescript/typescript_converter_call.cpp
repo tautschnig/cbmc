@@ -263,6 +263,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       {
         // ES2024 §21.1.2.3: Number.isInteger(x) returns true iff x is
         // a finite integer-valued number. Non-numeric args → false.
+        // In --ts-integer-mode, numbers are signedbv — always integer.
+        if(call_args[0].type().id() == ID_signedbv)
+          return true_exprt{};
         if(call_args[0].type().id() != ID_floatbv)
           return false_exprt{};
         auto [ok, d] = extract_double(call_args[0]);
@@ -273,12 +276,20 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return d == std::floor(d) ? exprt{true_exprt{}}
                                     : exprt{false_exprt{}};
         }
+        // Symbolic fallback: we cannot reliably detect integer-ness
+        // of a symbolic float without a working float-to-int typecast
+        // semantics, which CBMC's encoding doesn't support cleanly.
+        // Return nondet; users who need Number.isInteger on symbolic
+        // inputs should use --ts-integer-mode (which makes numbers
+        // signedbv and the above type check returns true).
         return side_effect_expr_nondett{bool_typet{}, get_location(node)};
       }
       if(method == "isSafeInteger" && !call_args.empty())
       {
-        // ES2024 §21.1.2.5: Number.isSafeInteger(x) = isInteger(x) &&
-        // |x| <= 2^53 - 1.
+        // ES2024 §21.1.2.5: isInteger(x) && |x| <= 2^53 - 1.
+        // In --ts-integer-mode, numbers are already int64 — all within range.
+        if(call_args[0].type().id() == ID_signedbv)
+          return true_exprt{};
         if(call_args[0].type().id() != ID_floatbv)
           return false_exprt{};
         auto [ok, d] = extract_double(call_args[0]);
@@ -292,6 +303,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return (std::fabs(d) <= max_safe) ? exprt{true_exprt{}}
                                             : exprt{false_exprt{}};
         }
+        // Symbolic fallback: same limitation as isInteger.
         return side_effect_expr_nondett{bool_typet{}, get_location(node)};
       }
       if(method == "isNaN" && !call_args.empty())
