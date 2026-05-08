@@ -1318,9 +1318,47 @@ exprt python_convertert::convert_expression(const jsont &expr)
   // subscript-by-key lookups (see limit-dict-comprehension CORE
   // test). Proper support is tracked for later.
   // PLR §6.12: named expressions (walrus operator, 'name := expr').
-  // A precise in-expression side effect is tricky; leaving this to
-  // the default unsupported-expression path for now preserves the
-  // existing KNOWNBUG regression behaviour.
+  //
+  // 'x := value' evaluates 'value', assigns it to 'x', and yields
+  // the value as the expression's result. Since side effects in
+  // expressions are not part of CBMC's expression model, we use
+  // the existing pending_checks queue: the assignment is emitted
+  // as a separate code_frontend_assignt that runs at the enclosing
+  // statement, and the expression itself evaluates to the value.
+  //
+  // Target must be a bare Name (that is what the grammar allows).
+  else if(node_type == "NamedExpr")
+  {
+    const jsont &target = json_member(expr, "target");
+    const jsont &value = json_member(expr, "value");
+    exprt rhs = convert_expression(value);
+    if(!rhs.is_nil() && target.is_object() && is_node_type(target, "Name"))
+    {
+      std::string name = json_string(json_member(target, "id"));
+      irep_idt sym_id{qualify_name(name)};
+      if(symbol_table.lookup(sym_id) == nullptr)
+      {
+        symbolt new_sym{sym_id, rhs.type(), "python"};
+        new_sym.base_name = name;
+        new_sym.is_lvalue = true;
+        new_sym.is_state_var = true;
+        new_sym.is_static_lifetime = current_function.empty();
+        symbol_table.add(new_sym);
+      }
+      const symbolt &target_sym = symbol_table.lookup_ref(sym_id);
+      exprt target_expr = target_sym.symbol_expr();
+      // Harmonise types: if the target symbol exists with a different
+      // type we typecast the rhs rather than overwriting the symbol.
+      if(rhs.type() != target_expr.type())
+        rhs = safe_typecast(rhs, target_expr.type());
+      pending_checks.push_back(code_frontend_assignt{target_expr, rhs});
+      result = target_expr;
+    }
+    else
+    {
+      result = rhs;
+    }
+  }
   else if(node_type == "JoinedStr")
   {
     // PLR §2.4.3: f-strings — concatenate literal parts with formatted values
