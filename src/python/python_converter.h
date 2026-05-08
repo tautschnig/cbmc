@@ -215,6 +215,7 @@ private:
   exprt convert_attribute(const jsont &expr);
   exprt convert_dict(const jsont &expr);
   exprt convert_list_comp(const jsont &expr);
+  exprt convert_dict_comp(const jsont &expr);
   exprt convert_lambda(const jsont &expr);
 
   /// Counter for generating unique lambda names.
