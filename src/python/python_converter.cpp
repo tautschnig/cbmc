@@ -2481,32 +2481,42 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       safe_zero(float_type),
       div_exprt{fl, fr}};
   }
-  else if(op == "BitOr")
+  else if(op == "BitOr" || op == "BitAnd" || op == "BitXor")
   {
+    // PLR §6.9: bitwise ops require integer-like operands. For
+    // set/list-of-string operands (and mixed-type operands that the
+    // set-handling block above did not pick up), a bitvector bit-op
+    // is ill-typed and would trip solver invariants; return a typed
+    // nondet instead. Visible with --python-strict-warnings.
+    const bool left_int =
+      left.type().id() == ID_signedbv || left.type().id() == ID_unsignedbv ||
+      left.type().id() == ID_integer || left.type().id() == ID_bool;
+    const bool right_int =
+      right.type().id() == ID_signedbv || right.type().id() == ID_unsignedbv ||
+      right.type().id() == ID_integer || right.type().id() == ID_bool;
+    if(!left_int || !right_int)
+    {
+      log_overapprox(
+        std::string{"bitwise "} + op +
+        " on non-integer operand: using nondet over-approximation");
+      // Pick a result type: prefer left's type if it's a struct,
+      // else python_int_type().
+      const typet &rt =
+        (left.type().id() == ID_struct || left.type().id() == ID_struct_tag)
+          ? left.type()
+          : python_int_type();
+      return side_effect_expr_nondett{rt, source_locationt{}};
+    }
     // Bitwise ops require bitvectors — cast if using unbounded ints
     if(left.type().id() == ID_integer)
     {
       left = typecast_exprt{left, signedbv_typet{64}};
       right = typecast_exprt{right, signedbv_typet{64}};
     }
-    return bitor_exprt{left, right};
-  }
-  else if(op == "BitAnd")
-  {
-    if(left.type().id() == ID_integer)
-    {
-      left = typecast_exprt{left, signedbv_typet{64}};
-      right = typecast_exprt{right, signedbv_typet{64}};
-    }
-    return bitand_exprt{left, right};
-  }
-  else if(op == "BitXor")
-  {
-    if(left.type().id() == ID_integer)
-    {
-      left = typecast_exprt{left, signedbv_typet{64}};
-      right = typecast_exprt{right, signedbv_typet{64}};
-    }
+    if(op == "BitOr")
+      return bitor_exprt{left, right};
+    if(op == "BitAnd")
+      return bitand_exprt{left, right};
     return bitxor_exprt{left, right};
   }
   else if(op == "LShift")
@@ -7860,8 +7870,12 @@ exprt python_convertert::convert_call(const jsont &expr)
     auto builtin_it = known_nondet_builtins.find(func_name);
     if(builtin_it != known_nondet_builtins.end())
     {
-      const typet t =
-        builtin_it->second.is_nil() ? python_int_type() : builtin_it->second;
+      // A default-constructed typet in the table means "use the
+      // generic python_int_type()"; otherwise use the explicit type.
+      // typet{}.is_nil() is false (the default id is empty, not
+      // ID_nil), so check for an empty id instead.
+      const typet t = builtin_it->second.id().empty() ? python_int_type()
+                                                      : builtin_it->second;
       side_effect_expr_nondett nondet{t, get_location(expr)};
       return std::move(nondet);
     }
@@ -8582,9 +8596,26 @@ exprt python_convertert::convert_list(const jsont &expr)
       break;
     }
   }
+  // The backing array has a fixed maximum size (PYTHON_MAX_LIST_LENGTH);
+  // however, list literals in stdlib code can exceed it (e.g.
+  // typing.py's 100+-entry '__all__'). Grow the array size to the
+  // number of elements whenever that exceeds the default so the
+  // resulting IR is self-consistent (operands count == array size).
+  const std::size_t list_array_size =
+    std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, elements.size());
   struct_typet list_type = python_list_type(elem_type);
+  // Rebuild the struct's array-typed 'data' component to match the
+  // actual literal size. python_list_type always returns the struct
+  // with the default max length, so override the data component's
+  // array type here.
+  {
+    auto &comps = list_type.components();
+    if(comps.size() == 2)
+      comps[1].type() = array_typet{
+        elem_type, from_integer(list_array_size, python_int_type())};
+  }
   array_typet data_type{
-    elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
+    elem_type, from_integer(list_array_size, python_int_type())};
 
   // Build data array: elements followed by zeros
   exprt::operandst data_elems;
@@ -8596,7 +8627,7 @@ exprt python_convertert::convert_list(const jsont &expr)
       e = typecast_exprt{e, elem_type};
     data_elems.push_back(e);
   }
-  while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
+  while(data_elems.size() < list_array_size)
     data_elems.push_back(safe_zero(elem_type));
 
   array_exprt data{std::move(data_elems), data_type};
