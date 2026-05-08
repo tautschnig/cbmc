@@ -3366,9 +3366,62 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         if(method == "delete")
         {
-          pending_stmts.push_back(code_frontend_assignt{
-            size_m, minus_exprt{size_m, from_integer(1, signedbv_typet{64})}});
-          return true_exprt{};
+          // ES2024 §24.1.3.3: delete the entry with matching key.
+          // Swap-and-pop: find the key, overwrite with last element,
+          // decrement size. has() then correctly returns false.
+          exprt key = convert_expression(*to_json_array(args).begin());
+          const auto &keys_arr_type_d =
+            to_array_type(mst.get_component("keys").type());
+          if(key.type() != keys_arr_type_d.element_type())
+            key = typecast_exprt{key, keys_arr_type_d.element_type()};
+          static unsigned del_ctr = 0;
+          unsigned dc = del_ctr++;
+          std::string flag_n = "__ts_mdel_found_" + std::to_string(dc);
+          irep_idt flag_id{"typescript::" + flag_n};
+          if(symbol_table.lookup(flag_id) == nullptr)
+          {
+            symbolt fs{flag_id, bool_typet{}, "typescript"};
+            fs.base_name = flag_n;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            fs.is_static_lifetime = true;
+            symbol_table.add(fs);
+          }
+          symbol_exprt flag{flag_id, bool_typet{}};
+          pending_stmts.push_back(code_frontend_assignt{flag, false_exprt{}});
+          for(int i = 0; i < 8; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, size_m};
+            exprt key_i = index_exprt{keys_m, idx};
+            exprt match = equal_exprt{key_i, key};
+            exprt cond = and_exprt{in_range, and_exprt{match, not_exprt{flag}}};
+            // last_idx = size - 1 (captured from current size).
+            exprt last_idx =
+              minus_exprt{size_m, from_integer(1, signedbv_typet{64})};
+            pending_stmts.push_back(code_ifthenelset{
+              cond,
+              code_blockt{
+                {code_frontend_assignt{
+                   index_exprt{keys_m, idx}, index_exprt{keys_m, last_idx}},
+                 code_frontend_assignt{
+                   index_exprt{vals_m, idx}, index_exprt{vals_m, last_idx}},
+                 code_frontend_assignt{flag, true_exprt{}}}}});
+          }
+          pending_stmts.push_back(code_ifthenelset{
+            flag,
+            code_blockt{{code_frontend_assignt{
+              size_m,
+              minus_exprt{size_m, from_integer(1, signedbv_typet{64})}}}}});
+          return flag;
+        }
+        if(method == "clear")
+        {
+          // ES2024 §24.1.3.1: just zero the size; has/get linear scans
+          // check i < size, so no further cleanup needed for correctness.
+          pending_stmts.push_back(
+            code_frontend_assignt{size_m, from_integer(0, signedbv_typet{64})});
+          return obj_expr;
         }
       }
       if(mtag == "typescript_class_Set" && mst.has_component("data"))
@@ -3378,19 +3431,34 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           member_exprt{obj_expr, "data", mst.get_component("data").type()};
         if(method == "add" && args.is_array() && !to_json_array(args).empty())
         {
+          // ES2024 §24.2.3.1: add returns the Set. Per spec, Set
+          // enforces uniqueness — re-adding an existing element does
+          // not add a new entry.
           exprt val = convert_expression(*to_json_array(args).begin());
           if(val.type() != double_type())
             val = typecast_exprt{val, double_type()};
-          pending_stmts.push_back(
-            code_frontend_assignt{index_exprt{data_s, size_s}, val});
-          pending_stmts.push_back(code_frontend_assignt{
-            size_s, plus_exprt{size_s, from_integer(1, signedbv_typet{64})}});
+          // exists = ∃ i. i < size && data[i] == val
+          exprt exists = false_exprt{};
+          for(int i = 7; i >= 0; i--)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, size_s};
+            exprt match = equal_exprt{index_exprt{data_s, idx}, val};
+            exists = or_exprt{exists, and_exprt{in_range, match}};
+          }
+          // If not exists: data[size] = val; size = size + 1
+          pending_stmts.push_back(code_ifthenelset{
+            not_exprt{exists},
+            code_blockt{
+              {code_frontend_assignt{index_exprt{data_s, size_s}, val},
+               code_frontend_assignt{
+                 size_s,
+                 plus_exprt{size_s, from_integer(1, signedbv_typet{64})}}}}});
           return obj_expr;
         }
         if(method == "has" && args.is_array() && !to_json_array(args).empty())
         {
           // ES2024 sec-set.prototype.has: linear scan of data[0..size)
-          // mirrors the Map.has implementation above.
           exprt val = convert_expression(*to_json_array(args).begin());
           const auto &data_arr_type =
             to_array_type(mst.get_component("data").type());
@@ -3407,11 +3475,57 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           return result;
         }
-        if(method == "delete")
+        if(
+          method == "delete" && args.is_array() && !to_json_array(args).empty())
         {
-          pending_stmts.push_back(code_frontend_assignt{
-            size_s, minus_exprt{size_s, from_integer(1, signedbv_typet{64})}});
-          return true_exprt{};
+          // ES2024 §24.2.3.4: swap-and-pop delete.
+          exprt val = convert_expression(*to_json_array(args).begin());
+          const auto &data_arr_type =
+            to_array_type(mst.get_component("data").type());
+          if(val.type() != data_arr_type.element_type())
+            val = typecast_exprt{val, data_arr_type.element_type()};
+          static unsigned sdel_ctr = 0;
+          unsigned dc = sdel_ctr++;
+          std::string flag_n = "__ts_sdel_found_" + std::to_string(dc);
+          irep_idt flag_id{"typescript::" + flag_n};
+          if(symbol_table.lookup(flag_id) == nullptr)
+          {
+            symbolt fs{flag_id, bool_typet{}, "typescript"};
+            fs.base_name = flag_n;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            fs.is_static_lifetime = true;
+            symbol_table.add(fs);
+          }
+          symbol_exprt flag{flag_id, bool_typet{}};
+          pending_stmts.push_back(code_frontend_assignt{flag, false_exprt{}});
+          for(int i = 0; i < 8; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, size_s};
+            exprt match = equal_exprt{index_exprt{data_s, idx}, val};
+            exprt cond = and_exprt{in_range, and_exprt{match, not_exprt{flag}}};
+            exprt last_idx =
+              minus_exprt{size_s, from_integer(1, signedbv_typet{64})};
+            pending_stmts.push_back(code_ifthenelset{
+              cond,
+              code_blockt{
+                {code_frontend_assignt{
+                   index_exprt{data_s, idx}, index_exprt{data_s, last_idx}},
+                 code_frontend_assignt{flag, true_exprt{}}}}});
+          }
+          pending_stmts.push_back(code_ifthenelset{
+            flag,
+            code_blockt{{code_frontend_assignt{
+              size_s,
+              minus_exprt{size_s, from_integer(1, signedbv_typet{64})}}}}});
+          return flag;
+        }
+        if(method == "clear")
+        {
+          pending_stmts.push_back(
+            code_frontend_assignt{size_s, from_integer(0, signedbv_typet{64})});
+          return obj_expr;
         }
       }
     }
