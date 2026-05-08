@@ -3706,26 +3706,63 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             integer2bvrep(mp_integer{bs.c_str()}, 64), double_type()};
         }
       }
-      // Symbolic Math operations for non-constant args
+      // Symbolic Math operations for non-constant args. We only
+      // implement methods whose symbolic encoding is simple and
+      // correct: abs, sign, max, min. Methods like floor/ceil/trunc
+      // require float-to-int typecast semantics that are subtle; we
+      // leave those to the nondet fallback for symbolic input (users
+      // needing them should constrain the input to a constant).
       if(!to_json_array(args).empty())
       {
-        exprt arg0 = convert_expression(*to_json_array(args).begin());
+        auto it = to_json_array(args).begin();
+        exprt arg0 = convert_expression(*it);
         if(!arg0.is_nil())
         {
           if(arg0.type() != double_type())
             arg0 = typecast_exprt{arg0, double_type()};
+          auto make_double = [](double v)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_double(v);
+            return fv.to_expr();
+          };
+          exprt fzero = make_double(0.0);
+          exprt fneg1 = make_double(-1.0);
+          exprt fpos1 = make_double(1.0);
           if(method == "abs")
           {
-            uint64_t zbits;
-            double zero = 0.0;
-            std::memcpy(&zbits, &zero, sizeof(zbits));
-            exprt fzero = constant_exprt{
-              integer2bvrep(mp_integer{std::to_string(zbits).c_str()}, 64),
-              double_type()};
             return if_exprt{
               binary_relation_exprt{arg0, ID_ge, fzero},
               arg0,
               unary_minus_exprt{arg0}};
+          }
+          if(method == "sign")
+          {
+            return if_exprt{
+              binary_relation_exprt{arg0, ID_gt, fzero},
+              fpos1,
+              if_exprt{binary_relation_exprt{arg0, ID_lt, fzero}, fneg1, arg0}};
+          }
+          if(method == "max" || method == "min")
+          {
+            exprt result = arg0;
+            ++it;
+            while(it != to_json_array(args).end())
+            {
+              exprt next = convert_expression(*it);
+              if(!next.is_nil())
+              {
+                if(next.type() != double_type())
+                  next = typecast_exprt{next, double_type()};
+                exprt cond = binary_relation_exprt{
+                  result, method == "max" ? ID_ge : ID_le, next};
+                result = if_exprt{cond, result, next};
+              }
+              ++it;
+            }
+            return result;
           }
         }
       }
