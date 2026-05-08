@@ -81,11 +81,24 @@ protected:
   bool unbounded_ints = false;
   bool no_body_check = false;
   bool python_strict_warnings = false;
+  /// When true, skip the CBMC Python model library and resolve
+  /// imports only via the user's PYTHONPATH / system CPython source.
+  /// Controlled by the --python-use-stdlib-source command line flag.
+  bool python_use_stdlib_source = false;
   std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;
   std::size_t max_list_length = PYTHON_MAX_LIST_LENGTH;
 
-  /// Search paths for module resolution (from PYTHONPATH + source dir)
+  /// Search paths for module resolution (from PYTHONPATH + source dir).
   std::vector<std::string> python_paths;
+
+  /// Search paths for the CBMC-shipped Python model library. These
+  /// are consulted *before* python_paths unless
+  /// python_use_stdlib_source is true.
+  std::vector<std::string> library_paths;
+
+  /// Set library_paths based on the environment or the cbmc binary
+  /// location. Invoked lazily from resolve_module.
+  void init_library_paths_if_needed();
 
   /// Already-parsed module ASTs (to avoid re-parsing)
   std::map<std::string, jsont> parsed_modules;

@@ -21,18 +21,33 @@ MEM_KB="${MEM_KB:-2000000}"
 
 update_baseline=0
 verbose=0
+mode="library"
 for arg in "$@"; do
   case "$arg" in
-    --update-baseline) update_baseline=1 ;;
-    -v|--verbose)      verbose=1 ;;
+    --update-baseline)   update_baseline=1 ;;
+    -v|--verbose)        verbose=1 ;;
+    --mode=library)      mode="library" ;;
+    --mode=stdlib-source) mode="stdlib-source" ;;
     -h|--help)
-      sed -n '2,10p' "$0"
+      sed -n '2,15p' "$0"
       exit 0 ;;
     *)
       echo "Unknown argument: $arg" >&2
       exit 2 ;;
   esac
 done
+
+# Pick the baseline file and extra cbmc flags based on the mode.
+case "$mode" in
+  library)
+    baseline_file="$here/baseline.csv"
+    extra_cbmc_args=()
+    ;;
+  stdlib-source)
+    baseline_file="$here/baseline-stdlib-source.csv"
+    extra_cbmc_args=(--python-use-stdlib-source)
+    ;;
+esac
 
 if [ ! -x "$CBMC" ]; then
   echo "Error: cbmc binary not found or not executable: $CBMC" >&2
@@ -47,7 +62,6 @@ if [ ! -d "$STDLIB" ]; then
 fi
 
 modules_file="$here/modules.txt"
-baseline_file="$here/baseline.csv"
 results_file="$(mktemp)"
 trap 'rm -f "$results_file" "$results_file.log"' EXIT
 
@@ -106,7 +120,7 @@ while IFS= read -r line; do
   fi
 
   ( ulimit -v "$MEM_KB" 2>/dev/null
-    timeout "$TIMEOUT" "$CBMC" --show-symbol-table "$path" >/dev/null ) > "$results_file.log" 2>&1
+    timeout "$TIMEOUT" "$CBMC" --show-symbol-table "${extra_cbmc_args[@]}" "$path" >/dev/null ) > "$results_file.log" 2>&1
   rc=$?
   status=$(classify "$rc" "$results_file.log")
   loc=$(first_error_location "$results_file.log")
@@ -115,7 +129,7 @@ while IFS= read -r line; do
 done < "$modules_file"
 
 echo
-echo "Tested $total modules."
+echo "Tested $total modules in mode='$mode'."
 
 if [ "$update_baseline" -eq 1 ]; then
   cp "$results_file" "$baseline_file"
