@@ -108,6 +108,60 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     ts_type.size() >= 2 && ((ts_type[0] == '"' && ts_type.back() == '"') ||
                             (ts_type[0] == '\'' && ts_type.back() == '\'')))
     return typescript_string_type();
+  // Tuple types: [T, U, V, ...]
+  // Homogeneous ([T, T, T]) is treated as number[] equivalent.
+  // Heterogeneous ([T, U]) becomes a typescript_tuple struct.
+  if(ts_type.size() >= 2 && ts_type.front() == '[' && ts_type.back() == ']')
+  {
+    std::string inner = ts_type.substr(1, ts_type.size() - 2);
+    // Split by ',' at brace depth 0
+    std::vector<std::string> elem_types;
+    std::size_t pos = 0;
+    while(pos < inner.size())
+    {
+      int depth = 0;
+      std::size_t comma = pos;
+      while(comma < inner.size())
+      {
+        char c = inner[comma];
+        if(c == '{' || c == '[' || c == '(' || c == '<')
+          depth++;
+        else if(c == '}' || c == ']' || c == ')' || c == '>')
+          depth--;
+        else if(c == ',' && depth == 0)
+          break;
+        comma++;
+      }
+      std::string etype = inner.substr(pos, comma - pos);
+      while(!etype.empty() && etype[0] == ' ')
+        etype.erase(0, 1);
+      while(!etype.empty() && etype.back() == ' ')
+        etype.pop_back();
+      if(!etype.empty())
+        elem_types.push_back(etype);
+      pos = comma + 1;
+    }
+    // Check homogeneity
+    bool homogeneous = true;
+    for(std::size_t i = 1; i < elem_types.size(); i++)
+      if(elem_types[i] != elem_types[0])
+      {
+        homogeneous = false;
+        break;
+      }
+    if(homogeneous && !elem_types.empty())
+    {
+      // Treat as array of the element type.
+      return convert_type(elem_types[0] + "[]");
+    }
+    // Heterogeneous: build tuple struct.
+    struct_typet tuple_st;
+    for(std::size_t i = 0; i < elem_types.size(); i++)
+      tuple_st.components().push_back(struct_typet::componentt{
+        "_" + std::to_string(i), convert_type(elem_types[i])});
+    tuple_st.set_tag("typescript_tuple");
+    return tuple_st;
+  }
   // ES2024 sec-ecmascript-language-types-undefined-type
   if(ts_type == "void" || ts_type == "undefined")
     return empty_typet{};
@@ -1182,11 +1236,11 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       }
     }
     std::size_t actual_len = elements.size();
-    // Heterogeneous tuple detection: if _type looks like "[T, U, ...]"
-    // (a tuple type) AND the element types differ, we cannot fit them
-    // into a single array type. Build a struct of fields _0, _1, ...
-    // and return that. The ElementAccessExpression handler below
-    // recognises this shape for p[0], p[1] access.
+    // Heterogeneous-tuple detection: if _type is a tuple AND the
+    // element types differ, build a typescript_tuple struct. For
+    // homogeneous tuples (all same type), fall through to the
+    // regular array-struct to preserve compatibility with existing
+    // destructure and iteration code.
     {
       std::string arr_type_str = json_string(json_member(node, "_type"));
       bool looks_like_tuple = !arr_type_str.empty() &&
