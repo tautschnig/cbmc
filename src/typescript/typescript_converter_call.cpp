@@ -644,6 +644,16 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         for(const auto &a : to_json_array(args))
         {
           exprt av = convert_expression(a);
+          // Resolve symbol to its stored constant value if possible.
+          // This lets e.g. `const k = 3; s.substring(0, k)` take the
+          // constant path, matching the behaviour for `s.substring(0, 3)`.
+          if(av.id() == ID_symbol)
+          {
+            const symbolt *s =
+              symbol_table.lookup(to_symbol_expr(av).get_identifier());
+            if(s && !s->value.is_nil())
+              av = s->value;
+          }
           // Try to extract string constant
           std::string sv = extract_string_value(av);
           if(!sv.empty())
