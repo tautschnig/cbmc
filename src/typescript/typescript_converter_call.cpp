@@ -276,13 +276,16 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return d == std::floor(d) ? exprt{true_exprt{}}
                                     : exprt{false_exprt{}};
         }
-        // Symbolic fallback: we cannot reliably detect integer-ness
-        // of a symbolic float without a working float-to-int typecast
-        // semantics, which CBMC's encoding doesn't support cleanly.
-        // Return nondet; users who need Number.isInteger on symbolic
-        // inputs should use --ts-integer-mode (which makes numbers
-        // signedbv and the above type check returns true).
-        return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+        // Symbolic fallback using CBMC's floatbv_round_to_integral_exprt
+        // (same primitive the C frontend uses for floor/ceil/trunc):
+        //   !isnan(x) && !isinf(x) && round_to_integral(x, TOWARDZERO) == x
+        exprt x = call_args[0];
+        exprt round_trip = floatbv_round_to_integral_exprt{
+          x, from_integer(3, signedbv_typet{32})}; // FE_TOWARDZERO
+        return and_exprt{
+          not_exprt{isnan_exprt{x}},
+          and_exprt{
+            not_exprt{isinf_exprt{x}}, ieee_float_equal_exprt{x, round_trip}}};
       }
       if(method == "isSafeInteger" && !call_args.empty())
       {
@@ -303,8 +306,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           return (std::fabs(d) <= max_safe) ? exprt{true_exprt{}}
                                             : exprt{false_exprt{}};
         }
-        // Symbolic fallback: same limitation as isInteger.
-        return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+        // Symbolic fallback: isInteger(x) && |x| <= 2^53 - 1.
+        exprt x = call_args[0];
+        exprt round_trip = floatbv_round_to_integral_exprt{
+          x, from_integer(3, signedbv_typet{32})}; // FE_TOWARDZERO
+        ieee_floatt max_safe{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        max_safe.from_double(9007199254740991.0);
+        ieee_floatt min_safe{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        min_safe.from_double(-9007199254740991.0);
+        return and_exprt{
+          not_exprt{isnan_exprt{x}},
+          and_exprt{
+            not_exprt{isinf_exprt{x}},
+            and_exprt{
+              ieee_float_equal_exprt{x, round_trip},
+              and_exprt{
+                binary_relation_exprt{x, ID_ge, min_safe.to_expr()},
+                binary_relation_exprt{x, ID_le, max_safe.to_expr()}}}}};
       }
       if(method == "isNaN" && !call_args.empty())
       {
@@ -3756,6 +3778,30 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
               binary_relation_exprt{arg0, ID_gt, fzero},
               fpos1,
               if_exprt{binary_relation_exprt{arg0, ID_lt, fzero}, fneg1, arg0}};
+          }
+          // ES2024 §21.3.2: floor/ceil/trunc/round via the CBMC primitive
+          // floatbv_round_to_integral_exprt. Matches how the C frontend
+          // encodes floor(), ceil(), trunc() (in src/ansi-c/library/math.c).
+          // Rounding modes: FE_TONEAREST=0, FE_DOWNWARD=1, FE_UPWARD=2,
+          // FE_TOWARDZERO=3. ES2024 Math.round uses ties-to-+infinity,
+          // which differs from FE_TONEAREST (ties-to-even) — we keep the
+          // constant-evaluated special case above for exact semantics,
+          // and here use the nearest symbolic approximation.
+          if(
+            method == "floor" || method == "ceil" || method == "trunc" ||
+            method == "round")
+          {
+            int mode = 0;
+            if(method == "floor")
+              mode = 1; // FE_DOWNWARD
+            else if(method == "ceil")
+              mode = 2; // FE_UPWARD
+            else if(method == "trunc")
+              mode = 3; // FE_TOWARDZERO
+            else
+              mode = 0; // FE_TONEAREST — closest to ES spec for round
+            return floatbv_round_to_integral_exprt{
+              arg0, from_integer(mode, signedbv_typet{32})};
           }
           if(method == "max" || method == "min")
           {
