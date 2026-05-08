@@ -144,8 +144,35 @@ codet typescript_convertert::convert_statement(const jsont &node)
             {
               const auto &src_st = to_struct_type(rhs.type());
               const auto &tgt_st = to_struct_type(sym.type);
+              // NaN default for numbers (our undefined sentinel), and
+              // recursively-NaN-filled struct for nested structs.
+              std::function<exprt(const typet &)> default_value;
+              default_value = [&](const typet &t) -> exprt
+              {
+                if(t.id() == ID_struct)
+                {
+                  const auto &ss = to_struct_type(t);
+                  exprt::operandst fs;
+                  for(const auto &c : ss.components())
+                    fs.push_back(default_value(c.type()));
+                  return struct_exprt{std::move(fs), ss};
+                }
+                if(t.id() == ID_floatbv)
+                {
+                  ieee_floatt nan_val{
+                    ieee_float_spect::double_precision(),
+                    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                  nan_val.make_NaN();
+                  return nan_val.to_expr();
+                }
+                if(t.id() == ID_bool)
+                  return false_exprt{};
+                if(t.id() == ID_signedbv || t.id() == ID_unsignedbv)
+                  return from_integer(0, t);
+                return side_effect_expr_nondett{t, source_locationt{}};
+              };
               exprt::operandst reordered;
-              bool can_reorder = true;
+              bool all_present_or_fillable = true;
               for(const auto &tc : tgt_st.components())
               {
                 bool found = false;
@@ -162,11 +189,13 @@ codet typescript_convertert::convert_statement(const jsont &node)
                 }
                 if(!found)
                 {
-                  can_reorder = false;
-                  break;
+                  // Missing field: fill with NaN default (treated as
+                  // undefined for optional fields; see §13.3.9).
+                  reordered.push_back(default_value(tc.type()));
                 }
               }
-              if(can_reorder && reordered.size() == tgt_st.components().size())
+              (void)all_present_or_fillable;
+              if(reordered.size() == tgt_st.components().size())
                 rhs = struct_exprt{std::move(reordered), sym.type};
               else
                 rhs = typecast_exprt(rhs, sym.type);
@@ -1438,8 +1467,33 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
             {
               const auto &src_st = to_struct_type(rhs.type());
               const auto &tgt_st = to_struct_type(sym.type);
+              std::function<exprt(const typet &)> default_value;
+              default_value = [&](const typet &t) -> exprt
+              {
+                if(t.id() == ID_struct)
+                {
+                  const auto &ss = to_struct_type(t);
+                  exprt::operandst fs;
+                  for(const auto &c : ss.components())
+                    fs.push_back(default_value(c.type()));
+                  return struct_exprt{std::move(fs), ss};
+                }
+                if(t.id() == ID_floatbv)
+                {
+                  ieee_floatt nan_val{
+                    ieee_float_spect::double_precision(),
+                    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                  nan_val.make_NaN();
+                  return nan_val.to_expr();
+                }
+                if(t.id() == ID_bool)
+                  return false_exprt{};
+                if(t.id() == ID_signedbv || t.id() == ID_unsignedbv)
+                  return from_integer(0, t);
+                // Unknown / unsupported: use a nondet value.
+                return side_effect_expr_nondett{t, source_locationt{}};
+              };
               exprt::operandst reordered;
-              bool can_reorder = true;
               for(const auto &tc : tgt_st.components())
               {
                 bool found = false;
@@ -1455,12 +1509,9 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
                   }
                 }
                 if(!found)
-                {
-                  can_reorder = false;
-                  break;
-                }
+                  reordered.push_back(default_value(tc.type()));
               }
-              if(can_reorder && reordered.size() == tgt_st.components().size())
+              if(reordered.size() == tgt_st.components().size())
                 rhs = struct_exprt{std::move(reordered), sym.type};
               else
                 rhs = typecast_exprt{rhs, sym.type};

@@ -1007,6 +1007,64 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         fields.push_back(val);
       }
     }
+    // ES2024 optional-chaining support: when the source AST type is a
+    // named interface type with MORE fields than we produced, fill the
+    // missing fields with a NaN sentinel (for numbers) or with a
+    // recursively-NaN-filled struct (for object-typed fields). This
+    // lets later `o.x?.y` accesses see NaN as "undefined".
+    if(!ts_type.empty())
+    {
+      auto make_nan = [](const typet &t) -> exprt
+      {
+        if(t.id() == ID_floatbv)
+        {
+          ieee_floatt nan_val{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          nan_val.make_NaN();
+          return nan_val.to_expr();
+        }
+        if(t.id() == ID_bool)
+          return false_exprt{};
+        if(t.id() == ID_signedbv || t.id() == ID_unsignedbv)
+          return from_integer(0, t);
+        return side_effect_expr_nondett{t, source_locationt{}};
+      };
+      std::function<exprt(const typet &)> default_value;
+      default_value = [&](const typet &t) -> exprt
+      {
+        if(t.id() == ID_struct)
+        {
+          const auto &sub_st = to_struct_type(t);
+          exprt::operandst sub_fields;
+          for(const auto &c : sub_st.components())
+            sub_fields.push_back(default_value(c.type()));
+          return struct_exprt{std::move(sub_fields), sub_st};
+        }
+        return make_nan(t);
+      };
+      auto target_it = class_types.find(ts_type);
+      if(target_it != class_types.end())
+      {
+        const auto &target_st = target_it->second;
+        for(const auto &c : target_st.components())
+        {
+          std::string cname = id2string(c.get_name());
+          bool already = false;
+          for(const auto &ec : components)
+            if(id2string(ec.get_name()) == cname)
+            {
+              already = true;
+              break;
+            }
+          if(!already)
+          {
+            components.push_back(c);
+            fields.push_back(default_value(c.type()));
+          }
+        }
+      }
+    }
     struct_typet st{components};
     return struct_exprt{std::move(fields), st};
   }
@@ -1736,7 +1794,15 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         right = typecast_exprt{right, left.type()};
     }
     if(left.type().id() == ID_floatbv)
+    {
+      // Symbolic NaN check: `x == undefined` / `x == null` where the
+      // constant side is NaN — return isNaN(other).
+      if(is_nan_const(right))
+        return ieee_float_notequal_exprt{left, left};
+      if(is_nan_const(left))
+        return ieee_float_notequal_exprt{right, right};
       return ieee_float_equal_exprt{left, right};
+    }
     return equal_exprt{left, right};
   }
   // ES2024 sec-abstract-equality-comparison: != (negation of ==)
@@ -1821,7 +1887,25 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       right = typecast_exprt(right, left.type());
     }
     if(left.type().id() == ID_floatbv)
+    {
+      // ES2024: `x === undefined` where undefined is our NaN sentinel.
+      // Per IEEE-754, NaN === NaN is false, but we want `isNaN(x)` here.
+      auto is_nan_const = [](const exprt &e)
+      {
+        if(!e.is_constant() || e.type().id() != ID_floatbv)
+          return false;
+        ieee_floatt v{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        v.from_expr(to_constant_expr(e));
+        return v.is_NaN();
+      };
+      if(is_nan_const(right))
+        return ieee_float_notequal_exprt{left, left}; // isNaN(left)
+      if(is_nan_const(left))
+        return ieee_float_notequal_exprt{right, right}; // isNaN(right)
       return ieee_float_equal_exprt{left, right};
+    }
     // Constant string equality
     if(is_typescript_string_type(left.type()))
     {
