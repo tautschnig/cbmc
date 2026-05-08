@@ -1313,10 +1313,11 @@ exprt python_convertert::convert_expression(const jsont &expr)
   {
     result = convert_list_comp(expr);
   }
-  // DictComp is intentionally left unhandled: routing it through
-  // convert_list_comp produces a list, which breaks down-stream
-  // subscript-by-key lookups (see limit-dict-comprehension CORE
-  // test). Proper support is tracked for later.
+  // PLR §6.2.7: dict comprehension. Built on top of the same
+  // generator/unrolling logic as list comprehensions but emits a
+  // python_dict struct at the end.
+  else if(node_type == "DictComp")
+    result = convert_dict_comp(expr);
   // PLR §6.12: named expressions (walrus operator, 'name := expr').
   //
   // 'x := value' evaluates 'value', assigns it to 'x', and yields
@@ -9081,6 +9082,243 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     from_integer(static_cast<long long>(elements.size()), python_int_type());
 
   return struct_exprt{{length, data}, list_type};
+}
+
+// PLR §6.2.7: dict comprehension '{k: v for x in xs}'. Shares the
+// generator-unrolling logic with convert_list_comp; builds a
+// python_dict struct (length, keys array, values array) at the end.
+exprt python_convertert::convert_dict_comp(const jsont &expr)
+{
+  const jsont &key_expr_json = json_member(expr, "key");
+  const jsont &val_expr_json = json_member(expr, "value");
+  const jsont &generators = json_member(expr, "generators");
+
+  if(!generators.is_array() || as_array(generators).empty())
+    return nil_exprt{};
+
+  // Collect generators: supported iterables are literal lists and
+  // range() calls with constant-integer arguments. Anything else
+  // falls back to a nondet dict over-approximation.
+  struct gen_info
+  {
+    std::string var_name;
+    // Either a list of jsont pointers from a literal [ ... ] or a
+    // list of pre-computed integer values from a range().
+    std::vector<const jsont *> json_values;
+    std::vector<mp_integer> int_values;
+    bool is_range = false;
+  };
+  std::vector<gen_info> gens;
+
+  // Helper: try to evaluate range(a[, b[, c]]) with constant ints.
+  auto try_range = [&](const jsont &call, std::vector<mp_integer> &out) -> bool
+  {
+    if(!is_node_type(call, "Call"))
+      return false;
+    const jsont &func = json_member(call, "func");
+    if(!is_node_type(func, "Name"))
+      return false;
+    if(json_string(json_member(func, "id")) != "range")
+      return false;
+    const jsont &args_n = json_member(call, "args");
+    if(!args_n.is_array() || as_array(args_n).empty())
+      return false;
+    std::vector<mp_integer> ints;
+    for(const auto &a : as_array(args_n))
+    {
+      exprt av = convert_expression(a);
+      if(!av.is_constant() || av.type().id() != ID_signedbv)
+        return false;
+      mp_integer v;
+      if(to_integer(to_constant_expr(av), v))
+        return false;
+      ints.push_back(v);
+    }
+    mp_integer start{0}, stop, step{1};
+    if(ints.size() == 1)
+      stop = ints[0];
+    else if(ints.size() == 2)
+    {
+      start = ints[0];
+      stop = ints[1];
+    }
+    else if(ints.size() == 3)
+    {
+      start = ints[0];
+      stop = ints[1];
+      step = ints[2];
+    }
+    else
+      return false;
+    if(step == 0)
+      return false;
+    out.clear();
+    if(step > 0)
+    {
+      for(mp_integer i = start; i < stop; i += step)
+        out.push_back(i);
+    }
+    else
+    {
+      for(mp_integer i = start; i > stop; i += step)
+        out.push_back(i);
+    }
+    return true;
+  };
+
+  for(const auto &gen : as_array(generators))
+  {
+    const jsont &gen_iter = json_member(gen, "iter");
+    gen_info gi;
+    gi.var_name = json_string(json_member(json_member(gen, "target"), "id"));
+    std::vector<mp_integer> r_values;
+    if(is_node_type(gen_iter, "List"))
+    {
+      const jsont &elts = json_member(gen_iter, "elts");
+      if(elts.is_array())
+      {
+        for(const auto &e : as_array(elts))
+          gi.json_values.push_back(&e);
+      }
+    }
+    else if(try_range(gen_iter, r_values))
+    {
+      gi.is_range = true;
+      gi.int_values = std::move(r_values);
+    }
+    else
+    {
+      log_overapprox(
+        "dict comprehension with non-literal iterable: using nondet dict");
+      return side_effect_expr_nondett{
+        python_dict_type(python_value_type(), python_value_type()),
+        source_locationt{}};
+    }
+    gens.push_back(std::move(gi));
+  }
+
+  // Register iteration-variable symbols.
+  for(auto &gi : gens)
+  {
+    std::string qname = qualify_name(gi.var_name);
+    irep_idt sym_id{qname};
+    if(symbol_table.lookup(sym_id) == nullptr)
+    {
+      symbolt sym{sym_id, python_int_type(), "python"};
+      sym.base_name = gi.var_name;
+      sym.is_lvalue = true;
+      sym.is_state_var = true;
+      symbol_table.add(sym);
+    }
+  }
+
+  // Cartesian-product unroll.
+  std::vector<std::vector<std::size_t>> combos{{}};
+  for(const auto &gi : gens)
+  {
+    const std::size_t n =
+      gi.is_range ? gi.int_values.size() : gi.json_values.size();
+    std::vector<std::vector<std::size_t>> next;
+    for(const auto &combo : combos)
+      for(std::size_t i = 0; i < n; i++)
+      {
+        auto c = combo;
+        c.push_back(i);
+        next.push_back(std::move(c));
+      }
+    combos = std::move(next);
+  }
+
+  // Evaluate (key, value) pairs for each combination, applying ifs.
+  std::vector<std::pair<exprt, exprt>> pairs;
+  for(const auto &combo : combos)
+  {
+    std::vector<std::pair<irep_idt, exprt>> bindings;
+    for(std::size_t g = 0; g < gens.size(); g++)
+    {
+      exprt v;
+      if(gens[g].is_range)
+        v = from_integer(gens[g].int_values[combo[g]], python_int_type());
+      else
+        v = convert_expression(*gens[g].json_values[combo[g]]);
+      bindings.push_back({irep_idt{qualify_name(gens[g].var_name)}, v});
+    }
+
+    std::function<void(exprt &)> subst = [&](exprt &e)
+    {
+      for(const auto &[sym_id, val] : bindings)
+        if(e.id() == ID_symbol && to_symbol_expr(e).get_identifier() == sym_id)
+        {
+          e = val;
+          return;
+        }
+      for(auto &op : e.operands())
+        subst(op);
+    };
+
+    // Check filter 'if' clauses.
+    bool passes = true;
+    for(std::size_t g = 0; g < gens.size() && passes; g++)
+    {
+      const jsont &gen = *std::next(as_array(generators).begin(), g);
+      const jsont &ifs = json_member(gen, "ifs");
+      if(ifs.is_array())
+      {
+        for(const auto &cond_json : as_array(ifs))
+        {
+          exprt cond = convert_expression(cond_json);
+          subst(cond);
+          // Constant-fold obvious cases.
+          if(cond.is_false())
+          {
+            passes = false;
+            break;
+          }
+        }
+      }
+    }
+    if(!passes)
+      continue;
+
+    exprt k = convert_expression(key_expr_json);
+    exprt v = convert_expression(val_expr_json);
+    subst(k);
+    subst(v);
+    pairs.emplace_back(std::move(k), std::move(v));
+  }
+
+  // Choose key/value types from the first pair (fall back to generic).
+  typet key_type =
+    pairs.empty() ? python_string_type() : pairs.front().first.type();
+  typet val_type =
+    pairs.empty() ? python_int_type() : pairs.front().second.type();
+  struct_typet dict_type = python_dict_type(key_type, val_type);
+  const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
+  const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
+
+  exprt::operandst key_elems, val_elems;
+  for(auto &p : pairs)
+  {
+    if(p.first.type() != key_type)
+      p.first = safe_typecast(p.first, key_type);
+    if(p.second.type() != val_type)
+      p.second = safe_typecast(p.second, val_type);
+    key_elems.push_back(p.first);
+    val_elems.push_back(p.second);
+  }
+  while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+    key_elems.push_back(safe_zero(key_type));
+  while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
+    val_elems.push_back(safe_zero(val_type));
+
+  exprt length =
+    from_integer(static_cast<long long>(pairs.size()), signedbv_typet{64});
+
+  return struct_exprt{
+    {length,
+     array_exprt{std::move(key_elems), keys_arr_type},
+     array_exprt{std::move(val_elems), vals_arr_type}},
+    dict_type};
 }
 
 // PLR §6.14: Lambdas
