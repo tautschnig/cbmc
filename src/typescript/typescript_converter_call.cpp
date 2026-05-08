@@ -3316,7 +3316,52 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         else if(method == "ceil")
           res = std::ceil(arg_vals[0]);
         else if(method == "round")
-          res = std::round(arg_vals[0]);
+        {
+          // ES2024 §21.3.2.29: round rounds ties toward +infinity.
+          // std::round rounds ties away from zero (so -0.5 → -1).
+          // We need -0.5 → 0. Implementation: floor(x + 0.5).
+          res = std::floor(arg_vals[0] + 0.5);
+        }
+        else if(method == "trunc")
+          res = std::trunc(arg_vals[0]);
+        else if(method == "sign")
+        {
+          if(arg_vals[0] > 0.0)
+            res = 1.0;
+          else if(arg_vals[0] < 0.0)
+            res = -1.0;
+          else
+            res = arg_vals[0]; // +0 or -0 preserved
+        }
+        else if(method == "cbrt")
+          res = std::cbrt(arg_vals[0]);
+        else if(method == "hypot" && arg_vals.size() >= 1)
+        {
+          double sq = 0.0;
+          for(double v : arg_vals)
+            sq += v * v;
+          res = std::sqrt(sq);
+        }
+        else if(method == "tan")
+          res = std::tan(arg_vals[0]);
+        else if(method == "asin")
+          res = std::asin(arg_vals[0]);
+        else if(method == "acos")
+          res = std::acos(arg_vals[0]);
+        else if(method == "atan")
+          res = std::atan(arg_vals[0]);
+        else if(method == "atan2" && arg_vals.size() >= 2)
+          res = std::atan2(arg_vals[0], arg_vals[1]);
+        else if(method == "log2")
+          res = std::log2(arg_vals[0]);
+        else if(method == "log10")
+          res = std::log10(arg_vals[0]);
+        else if(method == "sinh")
+          res = std::sinh(arg_vals[0]);
+        else if(method == "cosh")
+          res = std::cosh(arg_vals[0]);
+        else if(method == "tanh")
+          res = std::tanh(arg_vals[0]);
         else if(method == "sin")
           res = std::sin(arg_vals[0]);
         else if(method == "cos")

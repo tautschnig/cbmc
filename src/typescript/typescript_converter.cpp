@@ -549,6 +549,80 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         if(esym != nullptr)
           return esym->symbol_expr();
       }
+      // ES2024 §21.3.1: Math.PI, Math.E, Math.LN2, etc.
+      if(obj_name == "Math")
+      {
+        auto make_double = [](double v)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_double(v);
+          return fv.to_expr();
+        };
+        if(prop == "PI")
+          return make_double(3.141592653589793);
+        if(prop == "E")
+          return make_double(2.718281828459045);
+        if(prop == "LN2")
+          return make_double(0.6931471805599453);
+        if(prop == "LN10")
+          return make_double(2.302585092994046);
+        if(prop == "LOG2E")
+          return make_double(1.4426950408889634);
+        if(prop == "LOG10E")
+          return make_double(0.4342944819032518);
+        if(prop == "SQRT2")
+          return make_double(1.4142135623730951);
+        if(prop == "SQRT1_2")
+          return make_double(0.7071067811865476);
+      }
+      // ES2024 §21.1.2: Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER, etc.
+      if(obj_name == "Number")
+      {
+        auto make_double = [](double v)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_double(v);
+          return fv.to_expr();
+        };
+        if(prop == "MAX_SAFE_INTEGER")
+          return make_double(9007199254740991.0);
+        if(prop == "MIN_SAFE_INTEGER")
+          return make_double(-9007199254740991.0);
+        if(prop == "EPSILON")
+          return make_double(2.220446049250313e-16);
+        if(prop == "MAX_VALUE")
+          return make_double(1.7976931348623157e308);
+        if(prop == "MIN_VALUE")
+          return make_double(5e-324);
+        if(prop == "POSITIVE_INFINITY")
+        {
+          ieee_floatt inf{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          inf.make_plus_infinity();
+          return inf.to_expr();
+        }
+        if(prop == "NEGATIVE_INFINITY")
+        {
+          ieee_floatt inf{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          inf.make_minus_infinity();
+          return inf.to_expr();
+        }
+        if(prop == "NaN")
+        {
+          ieee_floatt nan_val{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          nan_val.make_NaN();
+          return nan_val.to_expr();
+        }
+      }
     }
     return nil_exprt{};
   }
