@@ -5619,32 +5619,6 @@ exprt python_convertert::convert_call(const jsont &expr)
       log_overapprox(
         "method '" + method_name +
         "': no resolution, returning nondet over-approximation");
-    // For regex methods, constrain result to be non-None (>= 0)
-    // so stub assertions like `assert compile(r).search(v) is not None` pass
-    if(
-      method_name == "search" || method_name == "match" ||
-      method_name == "compile" || method_name == "findall" ||
-      method_name == "sub" || method_name == "split")
-    {
-      side_effect_expr_nondett nd{python_int_type(), get_location(expr)};
-      static unsigned re_ctr = 0;
-      std::string tn = "__re_result_" + std::to_string(re_ctr++);
-      std::string tq = qualify_name(tn);
-      irep_idt ti{tq};
-      if(symbol_table.lookup(ti) == nullptr)
-      {
-        symbolt ts{ti, python_int_type(), "python"};
-        ts.base_name = tn;
-        ts.is_lvalue = true;
-        ts.is_state_var = true;
-        symbol_table.add(ts);
-      }
-      const symbolt &ts = symbol_table.lookup_ref(ti);
-      pending_checks.push_back(code_frontend_assignt{ts.symbol_expr(), nd});
-      pending_checks.push_back(code_assumet{binary_relation_exprt{
-        ts.symbol_expr(), ID_ge, from_integer(0, python_int_type())}});
-      return ts.symbol_expr();
-    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
 

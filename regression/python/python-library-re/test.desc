@@ -1,0 +1,10 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Resolving import: re \xe2\x86\x92 .*src/python/library/re/__init__\.py$
+--
+^warning: ignoring
+^no body for callee (match|search|compile|findall|split|sub|fullmatch|escape)
