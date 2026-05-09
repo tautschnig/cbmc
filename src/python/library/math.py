@@ -1,0 +1,267 @@
+"""
+Verification model of the `math` module.
+
+This file declares the math module's public surface using
+``@c_intrinsic`` annotations so stub authors and readers have a
+single place to look up 'what do we support?'. The *implementation*
+of each call, however, currently lives in the frontend's
+handwritten path in ``python_converter.cpp`` — that path is the
+fast-path because it performs parse-time constant folding
+(``math.sin(0.5)`` → 0.479...), which the plain ``@c_intrinsic``
+route cannot do today.
+
+A future iteration will teach the ``@c_intrinsic`` dispatch to
+constant-fold for a known set of math functions and at that point
+this file becomes the sole source of truth; the handwritten path
+will be deleted.
+
+For now, the file is primarily a readable specification plus a
+place to record:
+  - which functions are supported at all (see the decorator list)
+  - where the domain predicate lives (see
+    python_convertert::math_function_domain)
+  - the module-level constants (which are already used directly
+    via the frontend's attribute-level handling; re-stating them
+    here makes ``from math import pi`` work after the full
+    migration).
+"""
+
+from __cbmc__ import c_intrinsic
+
+
+# ---------------------------------------------------------------
+# Constants (IEEE-754 doubles). These mirror CPython exactly.
+# ---------------------------------------------------------------
+pi: float = 3.141592653589793
+e: float = 2.718281828459045
+tau: float = 6.283185307179586
+inf: float = float("inf")
+nan: float = float("nan")
+
+
+# ---------------------------------------------------------------
+# Power and logarithmic. Domain-restricted entries are also handled
+# by python_convertert::math_function_domain (Option 4).
+# ---------------------------------------------------------------
+@c_intrinsic("sqrt")
+def sqrt(x: float) -> float: ...
+
+
+@c_intrinsic("cbrt")
+def cbrt(x: float) -> float: ...
+
+
+@c_intrinsic("exp")
+def exp(x: float) -> float: ...
+
+
+@c_intrinsic("exp2")
+def exp2(x: float) -> float: ...
+
+
+@c_intrinsic("expm1")
+def expm1(x: float) -> float: ...
+
+
+@c_intrinsic("log")
+def log(x: float) -> float: ...
+
+
+@c_intrinsic("log2")
+def log2(x: float) -> float: ...
+
+
+@c_intrinsic("log10")
+def log10(x: float) -> float: ...
+
+
+@c_intrinsic("log1p")
+def log1p(x: float) -> float: ...
+
+
+@c_intrinsic("pow")
+def pow(x: float, y: float) -> float: ...
+
+
+# ---------------------------------------------------------------
+# Trigonometric and hyperbolic.
+# ---------------------------------------------------------------
+@c_intrinsic("sin")
+def sin(x: float) -> float: ...
+
+
+@c_intrinsic("cos")
+def cos(x: float) -> float: ...
+
+
+@c_intrinsic("tan")
+def tan(x: float) -> float: ...
+
+
+@c_intrinsic("asin")
+def asin(x: float) -> float: ...
+
+
+@c_intrinsic("acos")
+def acos(x: float) -> float: ...
+
+
+@c_intrinsic("atan")
+def atan(x: float) -> float: ...
+
+
+@c_intrinsic("atan2")
+def atan2(y: float, x: float) -> float: ...
+
+
+@c_intrinsic("sinh")
+def sinh(x: float) -> float: ...
+
+
+@c_intrinsic("cosh")
+def cosh(x: float) -> float: ...
+
+
+@c_intrinsic("tanh")
+def tanh(x: float) -> float: ...
+
+
+@c_intrinsic("asinh")
+def asinh(x: float) -> float: ...
+
+
+@c_intrinsic("acosh")
+def acosh(x: float) -> float: ...
+
+
+@c_intrinsic("atanh")
+def atanh(x: float) -> float: ...
+
+
+@c_intrinsic("hypot")
+def hypot(x: float, y: float) -> float: ...
+
+
+# ---------------------------------------------------------------
+# Rounding and sign. The frontend's inline path has exact models
+# for ceil/floor/trunc/fabs/copysign; the @c_intrinsic declarations
+# here describe the externally-visible contract.
+# ---------------------------------------------------------------
+@c_intrinsic("ceil")
+def ceil(x: float) -> int: ...
+
+
+@c_intrinsic("floor")
+def floor(x: float) -> int: ...
+
+
+@c_intrinsic("trunc")
+def trunc(x: float) -> int: ...
+
+
+@c_intrinsic("fabs")
+def fabs(x: float) -> float: ...
+
+
+@c_intrinsic("copysign")
+def copysign(x: float, y: float) -> float: ...
+
+
+@c_intrinsic("fmod")
+def fmod(x: float, y: float) -> float: ...
+
+
+@c_intrinsic("remainder")
+def remainder(x: float, y: float) -> float: ...
+
+
+@c_intrinsic("fdim")
+def fdim(x: float, y: float) -> float: ...
+
+
+@c_intrinsic("fmax")
+def fmax(x: float, y: float) -> float: ...
+
+
+@c_intrinsic("fmin")
+def fmin(x: float, y: float) -> float: ...
+
+
+# ---------------------------------------------------------------
+# Special functions.
+# ---------------------------------------------------------------
+@c_intrinsic("erf")
+def erf(x: float) -> float: ...
+
+
+@c_intrinsic("erfc")
+def erfc(x: float) -> float: ...
+
+
+@c_intrinsic("lgamma")
+def lgamma(x: float) -> float: ...
+
+
+@c_intrinsic("tgamma")
+def tgamma(x: float) -> float: ...
+
+
+# ---------------------------------------------------------------
+# Degree / radian conversion. These have simple closed forms and
+# are folded by the inline path when the argument is constant.
+# ---------------------------------------------------------------
+def degrees(x: float) -> float:
+    return x * 180.0 / pi
+
+
+def radians(x: float) -> float:
+    return x * pi / 180.0
+
+
+# ---------------------------------------------------------------
+# Float classification. Exact models live in the frontend's inline
+# path.
+# ---------------------------------------------------------------
+def isnan(x: float) -> bool:
+    return False
+
+
+def isinf(x: float) -> bool:
+    return False
+
+
+def isfinite(x: float) -> bool:
+    return True
+
+
+def isclose(
+    a: float,
+    b: float,
+    rel_tol: float = 1e-9,
+    abs_tol: float = 0.0,
+) -> bool:
+    return True
+
+
+# ---------------------------------------------------------------
+# Integer-valued. The frontend's inline path handles factorial/comb
+# with non-negative nondet returns.
+# ---------------------------------------------------------------
+def factorial(n: int) -> int:
+    return 0
+
+
+def comb(n: int, k: int) -> int:
+    return 0
+
+
+def gcd(*integers) -> int:
+    return 0
+
+
+def lcm(*integers) -> int:
+    return 0
+
+
+def isqrt(n: int) -> int:
+    return 0
