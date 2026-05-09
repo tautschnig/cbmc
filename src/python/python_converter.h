@@ -85,6 +85,16 @@ private:
   /// behave exactly like a plain ``@c_intrinsic`` and route to C.
   std::map<irep_idt, std::string> c_intrinsic_fold_map;
 
+  /// Optional domain-predicate name from
+  /// ``@c_intrinsic('name', fold='op', domain='kind')``. When the
+  /// call-site's argument is a constant that fails the domain
+  /// predicate, the front-end raises Python ValueError (mimicking
+  /// CPython's domain-check semantics for math functions). The
+  /// 'kind' string corresponds to one of the predicates in
+  /// ``math_function_domain``: 'nonneg', 'positive', 'gt_neg_one',
+  /// 'abs_le_1', 'ge_1'. When absent, no domain check is emitted.
+  std::map<irep_idt, std::string> c_intrinsic_domain_map;
+
   /// Return the mathematical domain predicate for a single-argument
   /// math-module function. Returns nullopt when the function has no
   /// domain restriction. Used by the Option-4 domain-check logic
