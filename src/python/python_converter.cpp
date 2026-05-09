@@ -8427,6 +8427,89 @@ exprt python_convertert::convert_call(const jsont &expr)
   if(intrinsic_it != c_intrinsic_map.end())
   {
     const std::string &c_name = intrinsic_it->second;
+
+    // Parse-time constant folding. If a ``fold=`` keyword was
+    // set on the decorator *and* every argument at this call
+    // site is a float (or int-that-converts-to-float) constant,
+    // evaluate the named host-side op (from <cmath>) and return
+    // the result as a constant expression. Falls through to the
+    // C-call path for non-constant arguments or unrecognised
+    // fold names.
+    auto fold_it = c_intrinsic_fold_map.find(sym->name);
+    if(fold_it != c_intrinsic_fold_map.end() && arguments.size() == 1)
+    {
+      auto cv = try_eval_double(arguments[0]);
+      if(cv.has_value())
+      {
+        const std::string &op = fold_it->second;
+        double x = cv.value();
+        double r = 0;
+        bool computed = true;
+        if(op == "sqrt")
+          r = std::sqrt(x);
+        else if(op == "cbrt")
+          r = std::cbrt(x);
+        else if(op == "exp")
+          r = std::exp(x);
+        else if(op == "exp2")
+          r = std::exp2(x);
+        else if(op == "expm1")
+          r = std::expm1(x);
+        else if(op == "log")
+          r = std::log(x);
+        else if(op == "log2")
+          r = std::log2(x);
+        else if(op == "log10")
+          r = std::log10(x);
+        else if(op == "log1p")
+          r = std::log1p(x);
+        else if(op == "sin")
+          r = std::sin(x);
+        else if(op == "cos")
+          r = std::cos(x);
+        else if(op == "tan")
+          r = std::tan(x);
+        else if(op == "asin")
+          r = std::asin(x);
+        else if(op == "acos")
+          r = std::acos(x);
+        else if(op == "atan")
+          r = std::atan(x);
+        else if(op == "sinh")
+          r = std::sinh(x);
+        else if(op == "cosh")
+          r = std::cosh(x);
+        else if(op == "tanh")
+          r = std::tanh(x);
+        else if(op == "asinh")
+          r = std::asinh(x);
+        else if(op == "acosh")
+          r = std::acosh(x);
+        else if(op == "atanh")
+          r = std::atanh(x);
+        else if(op == "ceil")
+          r = std::ceil(x);
+        else if(op == "floor")
+          r = std::floor(x);
+        else if(op == "trunc")
+          r = std::trunc(x);
+        else if(op == "fabs")
+          r = std::fabs(x);
+        else if(op == "erf")
+          r = std::erf(x);
+        else if(op == "erfc")
+          r = std::erfc(x);
+        else if(op == "gamma" || op == "tgamma")
+          r = std::tgamma(x);
+        else if(op == "lgamma")
+          r = std::lgamma(x);
+        else
+          computed = false;
+        if(computed && std::isfinite(r))
+          return double_to_floatbv(r);
+      }
+    }
+
     const pointer_typet c_char_ptr{char_type(), config.ansi_c.pointer_width};
 
     // Helper: is this type a Python refined string type?
@@ -12282,6 +12365,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   const jsont &decorators = json_member(stmt, "decorator_list");
   bool is_c_intrinsic = false;
   std::string c_intrinsic_name;
+  std::string c_intrinsic_fold;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -12290,9 +12374,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         is_node_type(dec, "Name") &&
         json_string(json_member(dec, "id")) == "overload")
         return code_skipt{};
-      // @c_intrinsic('NAME') — route calls to the named C function
-      // instead of executing the Python body. The Python body is
-      // usually just '...' or 'pass' and is never run.
+      // @c_intrinsic('NAME', fold='OP') — route calls to the named
+      // C function instead of executing the Python body. The Python
+      // body is usually just '...' or 'pass' and is never run. The
+      // optional fold keyword names a known host-side operation
+      // used to constant-fold all-constant call sites at parse
+      // time.
       if(is_node_type(dec, "Call"))
       {
         const jsont &dec_func = json_member(dec, "func");
@@ -12308,6 +12395,20 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             {
               c_intrinsic_name = json_string(json_member(first, "value"));
               is_c_intrinsic = !c_intrinsic_name.empty();
+            }
+          }
+          // Look for the fold keyword argument.
+          const jsont &dec_kwargs = json_member(dec, "keywords");
+          if(dec_kwargs.is_array())
+          {
+            for(const auto &kw : as_array(dec_kwargs))
+            {
+              if(json_string(json_member(kw, "arg")) == "fold")
+              {
+                const jsont &val = json_member(kw, "value");
+                if(is_node_type(val, "Constant"))
+                  c_intrinsic_fold = json_string(json_member(val, "value"));
+              }
             }
           }
         }
@@ -12584,7 +12685,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // Record @c_intrinsic mapping so convert_call can redirect to
   // the named C function instead of executing the Python body.
   if(is_c_intrinsic)
+  {
     c_intrinsic_map[symbol_id] = c_intrinsic_name;
+    if(!c_intrinsic_fold.empty())
+      c_intrinsic_fold_map[symbol_id] = c_intrinsic_fold;
+  }
 
   // Create parameter symbols
   for(const auto &p : parameters)
@@ -14030,6 +14135,23 @@ void python_convertert::process_imported_module(
             std::string c_name = json_string(json_member(first, "value"));
             if(!c_name.empty())
               c_intrinsic_map[irep_idt{"python::" + fname}] = c_name;
+            // Pick up the optional fold= keyword on the decorator.
+            const jsont &dec_kwargs = json_member(dec, "keywords");
+            if(!c_name.empty() && dec_kwargs.is_array())
+            {
+              for(const auto &kw : as_array(dec_kwargs))
+              {
+                if(json_string(json_member(kw, "arg")) != "fold")
+                  continue;
+                const jsont &val = json_member(kw, "value");
+                if(!is_node_type(val, "Constant"))
+                  continue;
+                std::string fold_name = json_string(json_member(val, "value"));
+                if(!fold_name.empty())
+                  c_intrinsic_fold_map[irep_idt{"python::" + fname}] =
+                    fold_name;
+              }
+            }
           }
         }
       }
