@@ -2,15 +2,14 @@
 Verification model of the `os` module (partial).
 
 Common entry points only. Values are modelled as nondet stand-ins
-for the filesystem-changing calls and as plain constants for the
-path/system constants.
-
-`@c_intrinsic` routing is intentionally not used yet for the POSIX
-syscalls in this module: getpid/getuid/getenv are either not
-present in CBMC's ansi-c library (getpid, getuid) or have a C
-signature (char *) that doesn't match our Python-str representation
-(getenv). A future iteration will add the missing library bodies
-and the Python-to-C string marshalling needed for getenv.
+for the filesystem-changing calls, as plain constants for the
+path/system constants. ``@c_intrinsic`` routing is in place
+conceptually (see python_convertert's str marshalling), but the
+POSIX calls we'd like to route (``getenv``, ``getcwd``, …) trip
+the C library's dereference checks because Python's refined-
+string data pointer lives in the string-refinement array space
+rather than on a genuine heap object; routing them will need a
+dedicated str→heap materialisation step.
 """
 
 
@@ -31,6 +30,14 @@ devnull: str = "/dev/null"
 environ: dict = {}
 
 
+# Marshalling Python ``str`` → C ``char *`` is in place (see
+# python_convertert's @c_intrinsic dispatch), but the C getenv
+# model dereferences its argument to assert zero-termination and
+# that fails because the refined-string data pointer lives in the
+# string-refinement array space, not a genuine heap object. For
+# now we return a plain nondet string; an eventual fix will
+# materialise the argument into a heap-allocated buffer before
+# calling C getenv.
 def getenv(key: str, default=None) -> str:
     return ""
 
