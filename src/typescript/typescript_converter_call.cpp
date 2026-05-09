@@ -40,6 +40,315 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // This is handled at the statement level
       return nil_exprt{};
     }
+    // ES2024 §25.5 JSON
+    if(obj == "JSON")
+    {
+      // Helper: stringify a constant expression at conversion time.
+      std::function<std::optional<std::string>(const exprt &)> stringify;
+      stringify = [&](const exprt &e) -> std::optional<std::string>
+      {
+        // Resolve symbols to their stored values.
+        exprt cur = e;
+        if(cur.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(cur).get_identifier());
+          if(s && !s->value.is_nil())
+            cur = s->value;
+        }
+        // Handle unary_minus of numeric constant.
+        if(
+          cur.id() == ID_unary_minus && cur.operands().size() == 1 &&
+          cur.operands()[0].is_constant() &&
+          cur.operands()[0].type().id() == ID_floatbv)
+        {
+          ieee_floatt v{
+            to_constant_expr(cur.operands()[0]), ieee_floatt::ROUND_TO_EVEN};
+          if(v.is_NaN() || v.is_infinity())
+            return std::string("null");
+          // Negate and stringify
+          v.negate();
+          ieee_floatt rounded = v;
+          rounded.round_to_integral();
+          if(rounded == v)
+          {
+            mp_integer i = v.to_integer();
+            return integer2string(i);
+          }
+          return v.to_ansi_c_string();
+        }
+        // Boolean constants
+        if(cur.is_constant() && cur.type().id() == ID_bool)
+          return cur.is_true() ? std::string("true") : std::string("false");
+        // Numeric constants
+        if(cur.is_constant() && cur.type().id() == ID_floatbv)
+        {
+          ieee_floatt v{to_constant_expr(cur), ieee_floatt::ROUND_TO_EVEN};
+          // JSON: NaN and Infinity stringify to "null"
+          if(v.is_NaN() || v.is_infinity())
+            return std::string("null");
+          ieee_floatt rounded = v;
+          rounded.round_to_integral();
+          if(rounded == v)
+          {
+            mp_integer i = v.to_integer();
+            return integer2string(i);
+          }
+          return v.to_ansi_c_string();
+        }
+        // String constants
+        if(is_typescript_string_type(cur.type()))
+        {
+          std::string raw = extract_string_value(cur);
+          if(!raw.empty())
+          {
+            std::string s = raw.substr(2);
+            std::string escaped = "\"";
+            for(char c : s)
+            {
+              if(c == '"')
+                escaped += "\\\"";
+              else if(c == '\\')
+                escaped += "\\\\";
+              else if(c == '\n')
+                escaped += "\\n";
+              else if(c == '\t')
+                escaped += "\\t";
+              else
+                escaped += c;
+            }
+            escaped += "\"";
+            return escaped;
+          }
+          return std::nullopt;
+        }
+        // Array constants (typescript_array struct)
+        if(
+          cur.id() == ID_struct && cur.type().id() == ID_struct &&
+          to_struct_type(cur.type()).get_tag() == "typescript_array")
+        {
+          if(cur.operands().size() < 2)
+            return std::nullopt;
+          if(!cur.operands()[0].is_constant())
+            return std::nullopt;
+          mp_integer len;
+          if(to_integer(to_constant_expr(cur.operands()[0]), len))
+            return std::nullopt;
+          const exprt &data = cur.operands()[1];
+          std::string result = "[";
+          for(mp_integer i = 0; i < len; ++i)
+          {
+            if(i > 0)
+              result += ",";
+            auto idx = i.to_ulong();
+            if(idx >= data.operands().size())
+              return std::nullopt;
+            auto elem = stringify(data.operands()[idx]);
+            if(!elem.has_value())
+              return std::nullopt;
+            result += elem.value();
+          }
+          result += "]";
+          return result;
+        }
+        // Object-literal constants (arbitrary struct that's not array)
+        if(cur.id() == ID_struct && cur.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(cur.type());
+          std::string tag = id2string(st.get_tag());
+          // Skip our internal tags
+          if(
+            tag == "typescript_union" || tag == "typescript_tuple" ||
+            tag == "typescript_array" || is_typescript_string_type(cur.type()))
+            return std::nullopt;
+          std::string result = "{";
+          bool first = true;
+          for(std::size_t i = 0;
+              i < st.components().size() && i < cur.operands().size();
+              ++i)
+          {
+            std::string fname = id2string(st.components()[i].get_name());
+            // Skip internal fields
+            if(fname.substr(0, 2) == "__")
+              continue;
+            if(!first)
+              result += ",";
+            first = false;
+            result += "\"" + fname + "\":";
+            auto val = stringify(cur.operands()[i]);
+            if(!val.has_value())
+              return std::nullopt;
+            result += val.value();
+          }
+          result += "}";
+          return result;
+        }
+        return std::nullopt;
+      };
+
+      if(
+        method == "stringify" && args.is_array() &&
+        !to_json_array(args).empty())
+      {
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        if(arg.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(arg).get_identifier());
+          if(s && !s->value.is_nil())
+            arg = s->value;
+        }
+        // Null → "null" (null is our NaN sentinel)
+        if(arg.is_constant() && arg.type().id() == ID_floatbv)
+        {
+          ieee_floatt v{to_constant_expr(arg), ieee_floatt::ROUND_TO_EVEN};
+          if(v.is_NaN())
+            return convert_string_literal_from_text("null");
+        }
+        auto s = stringify(arg);
+        if(s.has_value())
+          return convert_string_literal_from_text(s.value());
+        // Nondet fallback for non-constant
+        return side_effect_expr_nondett{
+          typescript_string_type(), get_location(node)};
+      }
+      if(method == "parse" && args.is_array() && !to_json_array(args).empty())
+      {
+        // For constant JSON string literals, parse at conversion time.
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        std::string raw = extract_string_value(arg);
+        if(!raw.empty())
+        {
+          std::string json_str = raw.substr(2);
+          // Quick-and-dirty parser for JSON primitives (not full JSON).
+          // For complex parsing, users should use a real parser.
+          // Numbers:
+          if(
+            !json_str.empty() &&
+            (std::isdigit(static_cast<unsigned char>(json_str[0])) ||
+             json_str[0] == '-'))
+          {
+            try
+            {
+              double d = std::stod(json_str);
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_double(d);
+              return fv.to_expr();
+            }
+            catch(...)
+            {
+            }
+          }
+          // Booleans:
+          if(json_str == "true")
+            return true_exprt{};
+          if(json_str == "false")
+            return false_exprt{};
+          // null → NaN
+          if(json_str == "null")
+          {
+            ieee_floatt nan_val{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            nan_val.make_NaN();
+            return nan_val.to_expr();
+          }
+          // String:
+          if(
+            json_str.size() >= 2 && json_str.front() == '"' &&
+            json_str.back() == '"')
+          {
+            std::string inner = json_str.substr(1, json_str.size() - 2);
+            // Unescape basic cases
+            std::string result;
+            for(std::size_t i = 0; i < inner.size(); ++i)
+            {
+              if(inner[i] == '\\' && i + 1 < inner.size())
+              {
+                char c = inner[i + 1];
+                if(c == 'n')
+                  result += '\n';
+                else if(c == 't')
+                  result += '\t';
+                else if(c == '"')
+                  result += '"';
+                else if(c == '\\')
+                  result += '\\';
+                else
+                  result += c;
+                ++i;
+              }
+              else
+                result += inner[i];
+            }
+            return convert_string_literal_from_text(result);
+          }
+          // Array: [1,2,3]
+          if(
+            json_str.size() >= 2 && json_str.front() == '[' &&
+            json_str.back() == ']')
+          {
+            std::string inner = json_str.substr(1, json_str.size() - 2);
+            // Simple parser for comma-separated primitives.
+            exprt::operandst elements;
+            typet elem_type = double_type();
+            std::size_t pos = 0;
+            while(pos < inner.size())
+            {
+              std::size_t next = pos;
+              int depth = 0;
+              while(next < inner.size())
+              {
+                char c = inner[next];
+                if(c == '[' || c == '{')
+                  depth++;
+                else if(c == ']' || c == '}')
+                  depth--;
+                else if(c == ',' && depth == 0)
+                  break;
+                next++;
+              }
+              std::string part = inner.substr(pos, next - pos);
+              while(!part.empty() && part[0] == ' ')
+                part.erase(0, 1);
+              while(!part.empty() && part.back() == ' ')
+                part.pop_back();
+              if(!part.empty())
+              {
+                try
+                {
+                  double d = std::stod(part);
+                  ieee_floatt fv{
+                    ieee_float_spect::double_precision(),
+                    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                  fv.from_double(d);
+                  elements.push_back(fv.to_expr());
+                }
+                catch(...)
+                {
+                }
+              }
+              pos = next + 1;
+            }
+            std::size_t actual = elements.size();
+            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+            while(elements.size() < max_len)
+              elements.push_back(from_integer(0, elem_type));
+            array_typet arr_type{
+              elem_type, from_integer(max_len, signedbv_typet{64})};
+            struct_typet list_type = make_array_struct_type(arr_type);
+            return struct_exprt{
+              {from_integer(actual, signedbv_typet{64}),
+               array_exprt{std::move(elements), arr_type}},
+              list_type};
+          }
+        }
+        // Non-constant or unparseable: nondet
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      }
+    }
     // ES2024 sec-object.keys, sec-object.values
     if(obj == "Object")
     {
