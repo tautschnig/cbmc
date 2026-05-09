@@ -8298,40 +8298,128 @@ exprt python_convertert::convert_call(const jsont &expr)
 
   // @c_intrinsic: redirect the call to the named C function. The
   // Python function's declared signature is used as-is for the C
-  // intrinsic; the C function body (sin/cos/sqrt/...) is provided by
-  // CBMC's ansi-c library at link-to-library time.
+  // intrinsic, with one exception — Python str parameters (and
+  // str returns) are marshalled to/from C ``char *`` so the C
+  // library's view of string arguments is consistent with its
+  // usual conventions. See the 'str marshalling' comments below.
   auto intrinsic_it = c_intrinsic_map.find(sym->name);
   if(intrinsic_it != c_intrinsic_map.end())
   {
     const std::string &c_name = intrinsic_it->second;
+    const pointer_typet c_char_ptr{char_type(), config.ansi_c.pointer_width};
+
+    // Helper: is this type a Python refined string type?
+    auto is_py_str = [](const typet &t) { return is_python_string_type(t); };
+
+    // Build the C function signature by projecting each Python
+    // parameter onto a C equivalent.
+    code_typet c_func_type = to_code_type(func_type);
+    for(auto &p : c_func_type.parameters())
+    {
+      if(is_py_str(p.type()))
+        p.type() = c_char_ptr;
+      p.set_identifier(irep_idt{});
+    }
+    typet c_return_type = c_func_type.return_type();
+    const bool return_is_py_str = is_py_str(c_return_type);
+    if(return_is_py_str)
+      c_func_type.return_type() = c_char_ptr;
+
     irep_idt c_id{c_name};
     if(symbol_table.lookup(c_id) == nullptr)
     {
-      // Register the C function as an external declaration with the
-      // same signature as the annotated Python stub. The linker
-      // pass will bind it to the real definition from the C library.
-      symbolt c_sym{c_id, func_type, ID_C};
+      symbolt c_sym{c_id, c_func_type, ID_C};
       c_sym.base_name = c_name;
       c_sym.location = get_location(expr);
       c_sym.is_lvalue = true;
       c_sym.is_extern = true;
-      // The linker needs the parameter identifiers to be unique
-      // across the final goto model. The Python-qualified
-      // identifiers on the func_type would clash if the same C
-      // function were also declared elsewhere, so strip them.
-      code_typet c_func_type = to_code_type(func_type);
-      for(auto &p : c_func_type.parameters())
-        p.set_identifier(irep_idt{});
-      c_sym.type = c_func_type;
       symbol_table.add(c_sym);
     }
+
+    // Marshal arguments: for each parameter typed as Python str,
+    // extract the struct's 'data' pointer and hand that to C.
+    const auto &c_params = c_func_type.parameters();
+    for(std::size_t i = 0; i < arguments.size() && i < c_params.size(); i++)
+    {
+      const typet &py_param_type =
+        to_code_type(func_type).parameters()[i].type();
+      if(is_py_str(py_param_type))
+      {
+        // Extract .data (typed as pointer to unsignedbv_typet{8})
+        // and typecast to the C ``char *`` the callee expects.
+        exprt data = member_exprt{
+          arguments[i],
+          "data",
+          pointer_typet{unsignedbv_typet{8}, config.ansi_c.pointer_width}};
+        arguments[i] = typecast_exprt{std::move(data), c_char_ptr};
+      }
+    }
+
     symbol_exprt callee_expr = symbol_table.lookup_ref(c_id).symbol_expr();
     callee_expr.add_source_location() = get_location(expr);
-    return side_effect_expr_function_callt{
+    exprt call = side_effect_expr_function_callt{
       std::move(callee_expr),
       std::move(arguments),
-      to_code_type(symbol_table.lookup_ref(c_id).type).return_type(),
+      c_func_type.return_type(),
       get_location(expr)};
+
+    if(!return_is_py_str)
+      return call;
+
+    // Marshal the return: wrap the returned char* into a Python
+    // refined-string struct. The length is nondet (we can't
+    // compute strlen precisely without a separate intrinsic), but
+    // for a sound verification over-approximation we constrain it
+    // to be in [0, PYTHON_MAX_STRING_LENGTH].
+    // We store the call's result in a fresh temp first because
+    // we want to read it multiple times (for the data and the
+    // fake length) without duplicating side effects.
+    static unsigned cstr_ret_ctr = 0;
+    std::string rn = "__cstr_ret_" + std::to_string(cstr_ret_ctr++);
+    std::string rq = qualify_name(rn);
+    irep_idt rid{rq};
+    if(symbol_table.lookup(rid) == nullptr)
+    {
+      symbolt rs{rid, c_char_ptr, "python"};
+      rs.base_name = rn;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      symbol_table.add(rs);
+    }
+    symbol_exprt ret_ptr = symbol_table.lookup_ref(rid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{ret_ptr, call});
+
+    // Nondet length, constrained to [0, PYTHON_MAX_STRING_LENGTH].
+    std::string ln = "__cstr_len_" + std::to_string(cstr_ret_ctr - 1);
+    std::string lq = qualify_name(ln);
+    irep_idt lid{lq};
+    if(symbol_table.lookup(lid) == nullptr)
+    {
+      symbolt ls{lid, signedbv_typet{64}, "python"};
+      ls.base_name = ln;
+      ls.is_lvalue = true;
+      ls.is_state_var = true;
+      symbol_table.add(ls);
+    }
+    symbol_exprt ret_len = symbol_table.lookup_ref(lid).symbol_expr();
+    pending_checks.push_back(code_frontend_assignt{
+      ret_len,
+      side_effect_expr_nondett{signedbv_typet{64}, source_locationt{}}});
+    pending_checks.push_back(code_assumet{binary_relation_exprt{
+      ret_len, ID_ge, from_integer(0, signedbv_typet{64})}});
+    pending_checks.push_back(code_assumet{binary_relation_exprt{
+      ret_len,
+      ID_le,
+      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}});
+
+    // Build the Python refined-string struct {length, data} where
+    // data is the C pointer we just saved.
+    return struct_exprt{
+      {ret_len,
+       typecast_exprt{
+         ret_ptr,
+         pointer_typet{unsignedbv_typet{8}, config.ansi_c.pointer_width}}},
+      python_string_type()};
   }
 
   side_effect_expr_function_callt call{
