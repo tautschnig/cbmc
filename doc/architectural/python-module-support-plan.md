@@ -146,6 +146,31 @@ Regression test: `regression/python/c-intrinsic-decorator/`.
 - Model more C-backed modules via `@c_intrinsic`: `cmath`,
   `errno`/`signal` (as constants), `os.getenv`, `time.time`, etc.
 
+**Math domain-error handling (PLR conformance):**
+
+CPython's `math` module raises `ValueError` for domain-violating
+inputs (`sqrt(-1)`, `log(0)`, `asin(2)`, `acosh(0.5)`, …). The
+front-end honours this contract at three levels:
+
+  1. **Constant, in-domain**: the call is folded to the exact
+     result at parse time via `std::<math-fn>(val)`.
+  2. **Constant, out-of-domain**: the front-end raises a Python
+     `ValueError` definitely (by setting `__exception_active` and
+     `__exception_type` in `pending_checks`) and returns a nondet
+     double. The raised exception is caught by the user's
+     `try/except ValueError:` handler the same way a real runtime
+     raise would be.
+  3. **Non-constant**: the front-end emits a *guarded* raise —
+     `if !in_domain(x): __exception_active = true` — and falls
+     through to the existing nondet-with-constraints path. The
+     user's `try/except` sees the exception when the input violates
+     the domain and the normal result otherwise.
+
+Helpers: `python_convertert::math_function_domain(fn, arg)` returns
+the domain predicate; `python_convertert::emit_value_error(pred)`
+emits the (conditional or definite) raise. Regression test:
+`regression/python/math-domain-errors`.
+
 **Exit criterion:** Writing a new stub — including one that routes
 to a C function — is a predictable, low-friction task governed by
 the documented conventions and the stub-author helper module.

@@ -952,6 +952,83 @@ long python_convertert::exception_type_hash(const std::string &type_name) const
   return hash;
 }
 
+std::optional<exprt> python_convertert::math_function_domain(
+  const std::string &fn,
+  const exprt &x) const
+{
+  ieee_floatt zf{
+    ieee_float_spect::double_precision(),
+    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+  zf.from_double(0.0);
+  ieee_floatt onef = zf;
+  onef.from_double(1.0);
+  ieee_floatt neg_onef = zf;
+  neg_onef.from_double(-1.0);
+
+  // PLR / library reference:
+  //   math.sqrt(x)         x >= 0
+  //   math.log(x)          x > 0
+  //   math.log2(x)         x > 0
+  //   math.log10(x)        x > 0
+  //   math.log1p(x)        x > -1
+  //   math.asin(x)         -1 <= x <= 1
+  //   math.acos(x)         -1 <= x <= 1
+  //   math.atanh(x)        -1 <  x <  1
+  //   math.acosh(x)        x >= 1
+  if(fn == "sqrt")
+    return binary_relation_exprt{x, ID_ge, zf.to_expr()};
+  if(fn == "log" || fn == "log2" || fn == "log10")
+    return binary_relation_exprt{x, ID_gt, zf.to_expr()};
+  if(fn == "log1p")
+    return binary_relation_exprt{x, ID_gt, neg_onef.to_expr()};
+  if(fn == "asin" || fn == "acos")
+    return and_exprt{
+      binary_relation_exprt{x, ID_ge, neg_onef.to_expr()},
+      binary_relation_exprt{x, ID_le, onef.to_expr()}};
+  if(fn == "atanh")
+    return and_exprt{
+      binary_relation_exprt{x, ID_gt, neg_onef.to_expr()},
+      binary_relation_exprt{x, ID_lt, onef.to_expr()}};
+  if(fn == "acosh")
+    return binary_relation_exprt{x, ID_ge, onef.to_expr()};
+  // sin, cos, tan, exp, exp2, expm1, atan, sinh, cosh, tanh, asinh,
+  // ceil, floor, fabs, trunc, copysign, etc. — no domain restriction.
+  return std::nullopt;
+}
+
+void python_convertert::emit_value_error(const exprt &in_domain)
+{
+  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+  const symbolt *exc_type_sym = symbol_table.lookup("python::__exception_type");
+  if(exc_sym == nullptr)
+    return;
+  if(in_domain.is_true())
+    return; // no domain violation possible
+  const long type_hash = exception_type_hash("ValueError");
+  if(in_domain.is_false() || in_domain.is_nil())
+  {
+    // Definitely out of domain — raise unconditionally.
+    pending_checks.push_back(
+      code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+    if(exc_type_sym != nullptr)
+      pending_checks.push_back(code_frontend_assignt{
+        exc_type_sym->symbol_expr(),
+        from_integer(type_hash, python_int_type())});
+    return;
+  }
+  // Conditional raise: if !in_domain, set exception flags.
+  exprt out_of_domain = not_exprt{in_domain};
+  pending_checks.push_back(code_ifthenelset{
+    out_of_domain,
+    code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+  if(exc_type_sym != nullptr)
+    pending_checks.push_back(code_ifthenelset{
+      out_of_domain,
+      code_frontend_assignt{
+        exc_type_sym->symbol_expr(),
+        from_integer(type_hash, python_int_type())}});
+}
+
 exprt python_convertert::safe_zero(const typet &type) const
 {
   // Resolve struct_tag_typet to actual struct for zero construction
@@ -3748,6 +3825,53 @@ exprt python_convertert::convert_call(const jsont &expr)
               minus_exprt{math_arg, arg2}};
             return binary_relation_exprt{diff, ID_le, tol.to_expr()};
           }
+          // Option-4 domain check: raise ValueError for known-bad
+          // constant arguments, and emit a guarded ValueError for
+          // non-constant arguments. See math_function_domain() /
+          // emit_value_error() and doc/architectural/
+          // python-module-support-plan.md.
+          {
+            auto domain_opt = math_function_domain(func_name, math_arg);
+            auto pre_eval = try_eval_double(math_arg);
+            if(pre_eval.has_value())
+            {
+              double val = pre_eval.value();
+              bool in_domain = true;
+              if(domain_opt.has_value())
+              {
+                if(func_name == "sqrt")
+                  in_domain = val >= 0;
+                else if(
+                  func_name == "log" || func_name == "log2" ||
+                  func_name == "log10")
+                  in_domain = val > 0;
+                else if(func_name == "log1p")
+                  in_domain = val > -1;
+                else if(func_name == "asin" || func_name == "acos")
+                  in_domain = val >= -1 && val <= 1;
+                else if(func_name == "atanh")
+                  in_domain = val > -1 && val < 1;
+                else if(func_name == "acosh")
+                  in_domain = val >= 1;
+              }
+              if(!in_domain)
+              {
+                emit_value_error(false_exprt{});
+                return side_effect_expr_nondett{
+                  double_type(), get_location(expr)};
+              }
+              // In-domain constant — fall through to the constant
+              // folding block below.
+            }
+            else if(domain_opt.has_value())
+            {
+              // Non-constant argument: emit a guarded ValueError
+              // and fall through to the nondet-with-constraints
+              // path below.
+              emit_value_error(domain_opt.value());
+            }
+          }
+
           // Constant evaluation (handle typecast from int→float)
           {
             auto eval_result = try_eval_double(math_arg);
@@ -7719,44 +7843,85 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
       }
 
-      // Float functions
+      // Float functions — Option-4 constant-folding with domain
+      // check: fold when in-domain and constant, raise ValueError
+      // when out-of-domain (constant) or conditionally (non-
+      // constant), fall through to nondet+constraints otherwise.
       if(arg.type().id() == ID_floatbv)
       {
-        ieee_floatt fv{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        fv.from_expr(to_constant_expr(arg));
-        double val = std::stod(fv.to_ansi_c_string());
-        double res = 0;
-        bool computed = true;
-        if(func_name == "sqrt" && val >= 0)
-          res = std::sqrt(val);
-        else if(func_name == "sin")
-          res = std::sin(val);
-        else if(func_name == "cos")
-          res = std::cos(val);
-        else if(func_name == "tan")
-          res = std::tan(val);
-        else if(func_name == "asin" && val >= -1 && val <= 1)
-          res = std::asin(val);
-        else if(func_name == "acos" && val >= -1 && val <= 1)
-          res = std::acos(val);
-        else if(func_name == "atan")
-          res = std::atan(val);
-        else if(func_name == "log" && val > 0)
-          res = std::log(val);
-        else if(func_name == "log2" && val > 0)
-          res = std::log2(val);
-        else if(func_name == "log10" && val > 0)
-          res = std::log10(val);
-        else if(func_name == "exp")
-          res = std::exp(val);
-        else if(func_name == "exp2")
-          res = std::exp2(val);
+        auto domain_opt = math_function_domain(func_name, arg);
+        auto cval = try_eval_double(arg);
+        if(cval.has_value())
+        {
+          double val = cval.value();
+
+          // Determine in-domain at parse time.
+          bool in_domain = true;
+          if(domain_opt.has_value())
+          {
+            if(func_name == "sqrt")
+              in_domain = val >= 0;
+            else if(
+              func_name == "log" || func_name == "log2" || func_name == "log10")
+              in_domain = val > 0;
+            else if(func_name == "log1p")
+              in_domain = val > -1;
+            else if(func_name == "asin" || func_name == "acos")
+              in_domain = val >= -1 && val <= 1;
+            else if(func_name == "atanh")
+              in_domain = val > -1 && val < 1;
+            else if(func_name == "acosh")
+              in_domain = val >= 1;
+          }
+
+          if(!in_domain)
+          {
+            // Case 2: constant out of domain — raise ValueError.
+            emit_value_error(false_exprt{});
+            // Return a nondet double; the exception check will
+            // intercept before the caller sees the value.
+            return side_effect_expr_nondett{double_type(), get_location(expr)};
+          }
+
+          // Case 1: constant in domain — fold exactly.
+          double res = 0;
+          bool computed = true;
+          if(func_name == "sqrt")
+            res = std::sqrt(val);
+          else if(func_name == "sin")
+            res = std::sin(val);
+          else if(func_name == "cos")
+            res = std::cos(val);
+          else if(func_name == "tan")
+            res = std::tan(val);
+          else if(func_name == "asin")
+            res = std::asin(val);
+          else if(func_name == "acos")
+            res = std::acos(val);
+          else if(func_name == "atan")
+            res = std::atan(val);
+          else if(func_name == "log")
+            res = std::log(val);
+          else if(func_name == "log2")
+            res = std::log2(val);
+          else if(func_name == "log10")
+            res = std::log10(val);
+          else if(func_name == "exp")
+            res = std::exp(val);
+          else if(func_name == "exp2")
+            res = std::exp2(val);
+          else
+            computed = false;
+          if(computed)
+            return double_to_floatbv(res);
+        }
         else
-          computed = false;
-        if(computed)
-          return double_to_floatbv(res);
+        {
+          // Case 3: non-constant argument — emit guarded ValueError
+          // and fall through to the nondet-with-constraints path.
+          if(domain_opt.has_value())
+            emit_value_error(domain_opt.value());
+        }
       } // end if(arg.type().id() == ID_floatbv)
     }
 
