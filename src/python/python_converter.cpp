@@ -33,11 +33,12 @@
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/json.h>
+#include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
 #include <util/pointer_expr.h>
 #include <util/std_code.h>
-#include <util/mathematical_expr.h>
 #include <util/std_expr.h>
+#include <util/string_constant.h>
 #include <util/string_expr.h>
 #include <util/symbol.h>
 
@@ -280,18 +281,91 @@ static exprt build_string_struct(const std::string &s)
 {
   // Create a refined_string_exprt for the literal.
   // The content is a pointer to a constant character array.
+  //
+  // NOTE: no trailing NUL — the refinement-string solver compares
+  // strings byte-for-byte over the array backing the pointer, and
+  // adding a NUL would change its answer for single-character
+  // and other small literals (see the regression test
+  // limit-string-iter-type for a concrete case). For C-interop
+  // purposes (where a NUL-terminated buffer is needed),
+  // @c_intrinsic marshalling synthesises a separate
+  // string_constantt-backed pointer.
   exprt::operandst chars;
   for(char c : s)
     chars.push_back(
       from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
   if(chars.empty())
     chars.push_back(from_integer(0, unsignedbv_typet{8}));
-  array_typet at(unsignedbv_typet{8}, from_integer(chars.size(), signedbv_typet{64}));
+  array_typet at(
+    unsignedbv_typet{8}, from_integer(chars.size(), signedbv_typet{64}));
   array_exprt arr(std::move(chars), at);
   exprt content = address_of_exprt(
     index_exprt(arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
-  exprt length = from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
+  exprt length =
+    from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
   return struct_exprt({length, content}, python_string_type());
+}
+
+/// Persistent-storage variant of build_string_struct: installs
+/// the backing array as a static-lifetime symbol and returns a
+/// struct_exprt whose .data points into that symbol. Kept as a
+/// hook for future callers; the current @c_intrinsic path uses a
+/// string_constantt directly, which gives the same guarantees
+/// and plugs straight into CBMC's existing string-literal
+/// machinery (__CPROVER_initialize, dead-object exemption, etc.).
+exprt python_convertert::build_string_literal(const std::string &s)
+{
+  // Intern by content: reuse the same symbol for identical
+  // literals so the symbol table doesn't grow unbounded for
+  // programs with many string constants.
+  static std::unordered_map<std::string, irep_idt> literal_to_symbol;
+  auto it = literal_to_symbol.find(s);
+  irep_idt sym_id;
+  if(it != literal_to_symbol.end())
+  {
+    sym_id = it->second;
+  }
+  else
+  {
+    exprt::operandst chars;
+    for(char c : s)
+      chars.push_back(
+        from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
+    chars.push_back(from_integer(0, unsignedbv_typet{8})); // trailing NUL
+    array_typet at{
+      unsignedbv_typet{8}, from_integer(chars.size(), signedbv_typet{64})};
+    array_exprt arr(std::move(chars), at);
+
+    static unsigned lit_ctr = 0;
+    std::string base = "__str_lit_" + std::to_string(lit_ctr++);
+    sym_id = irep_idt{"python::" + base};
+    if(symbol_table.lookup(sym_id) == nullptr)
+    {
+      // Store the symbol in C mode. The Python front-end's
+      // startup doesn't copy 'value' into mode="python" static
+      // symbols at __CPROVER_initialize time, so mode="python"
+      // static arrays would look "dead" to CBMC's safety checks.
+      // Registering the literal in C mode makes it a proper
+      // string-literal-style static, matching the behaviour of
+      // a C source with `const char s[] = "…";`.
+      symbolt ls{sym_id, at, ID_C};
+      ls.base_name = base;
+      ls.is_lvalue = true;
+      ls.is_state_var = true;
+      ls.is_static_lifetime = true;
+      ls.value = arr;
+      symbol_table.add(ls);
+    }
+    literal_to_symbol[s] = sym_id;
+  }
+
+  const symbolt &sym = symbol_table.lookup_ref(sym_id);
+  symbol_exprt sym_expr = sym.symbol_expr();
+  exprt content = address_of_exprt{
+    index_exprt{sym_expr, from_integer(0, signedbv_typet{64})}};
+  exprt length =
+    from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
+  return struct_exprt{{length, content}, python_string_type()};
 }
 
 /// Create a nondet refined string expression (length + content pointer).
@@ -8385,6 +8459,15 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     // Marshal arguments: for each parameter typed as Python str,
     // extract the struct's 'data' pointer and hand that to C.
+    // For string-literal arguments (produced by
+    // build_string_struct), the backing array is a *temporary*
+    // and taking its address produces a pointer CBMC treats as a
+    // "dead object" when dereferenced later. build_string_literal
+    // wraps the same bytes into a static-lifetime symbol and
+    // returns a new struct with the safe pointer; we detect the
+    // inline literal shape and substitute, then extract the raw
+    // pointer without going through a struct temporary (that
+    // temporary loses track of the persistent storage).
     const auto &c_params = c_func_type.parameters();
     for(std::size_t i = 0; i < arguments.size() && i < c_params.size(); i++)
     {
@@ -8392,8 +8475,62 @@ exprt python_convertert::convert_call(const jsont &expr)
         to_code_type(func_type).parameters()[i].type();
       if(is_py_str(py_param_type))
       {
-        // Extract .data (typed as pointer to unsignedbv_typet{8})
-        // and typecast to the C ``char *`` the callee expects.
+        // Try to recognise the build_string_struct shape:
+        //   { length-constant, address_of(array-literal[0]) }
+        // If matched, hand C the address_of directly — that's a
+        // genuine pointer into persistent storage, not a
+        // member-access into a temporary struct.
+        if(
+          arguments[i].id() == ID_struct && arguments[i].operands().size() == 2)
+        {
+          const exprt &len_op = arguments[i].operands()[0];
+          const exprt &data_op = arguments[i].operands()[1];
+          if(
+            len_op.is_constant() && data_op.id() == ID_address_of &&
+            to_address_of_expr(data_op).object().id() == ID_index)
+          {
+            const exprt &arr =
+              to_index_expr(to_address_of_expr(data_op).object()).array();
+            if(arr.id() == ID_array)
+            {
+              std::string bytes;
+              bytes.reserve(arr.operands().size());
+              bool all_bytes = true;
+              for(const auto &op : arr.operands())
+              {
+                if(!op.is_constant())
+                {
+                  all_bytes = false;
+                  break;
+                }
+                mp_integer v;
+                if(to_integer(to_constant_expr(op), v))
+                {
+                  all_bytes = false;
+                  break;
+                }
+                bytes.push_back(static_cast<char>(v.to_long()));
+              }
+              // (build_string_struct doesn't append a trailing
+              // NUL — string_constantt below handles that.)
+              if(all_bytes)
+              {
+                // Emit a C string_constantt — CBMC recognises
+                // these as persistent and exempt from dead-object
+                // checks, exactly like C code's "literal"
+                // constructs. Pass address_of(str[0]) as the
+                // C callee's char*.
+                string_constantt sc{irep_idt{bytes}};
+                arguments[i] = typecast_exprt{
+                  address_of_exprt{index_exprt{
+                    sc, from_integer(0, signedbv_typet{64}), char_type()}},
+                  c_char_ptr};
+                continue;
+              }
+            }
+          }
+        }
+
         exprt data = member_exprt{
           arguments[i],
           "data",

@@ -280,6 +280,21 @@ bool python_languaget::generate_support_functions(
         rounding_sym->symbol_expr(), from_integer(0, rounding_sym->type)});
   }
 
+  // Call __CPROVER_initialize first so that C-mode static-lifetime
+  // symbols (used e.g. to back Python string literals handed to
+  // @c_intrinsic C functions) are initialized before any user code
+  // runs. Without this, CBMC treats the statically-allocated
+  // memory as deallocated / dead on first access.
+  irep_idt init_id{std::string{CPROVER_PREFIX} + "initialize"};
+  const symbolt *init_sym = symbol_table.lookup(init_id);
+  if(init_sym != nullptr)
+  {
+    side_effect_expr_function_callt init_call{
+      init_sym->symbol_expr(), {}, empty_typet{}, source_locationt{}};
+    start_body.statements().insert(
+      start_body.statements().begin(), code_expressiont{std::move(init_call)});
+  }
+
   start_symbol.value = start_body;
 
   symbol_table.add(start_symbol);

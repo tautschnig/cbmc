@@ -239,8 +239,7 @@ string_constraint_generatort::add_axioms_for_function_application(
   else if(id == ID_cprover_string_contains_func)
     return add_axioms_for_contains(expr);
   else if(
-    id == ID_cprover_string_match_func ||
-    id == ID_cprover_string_search_func ||
+    id == ID_cprover_string_match_func || id == ID_cprover_string_search_func ||
     id == ID_cprover_string_fullmatch_func)
   {
     // Python-re Wave 2 intrinsics. The native (refine-strings)
