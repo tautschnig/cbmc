@@ -102,18 +102,18 @@ class Pattern:
         self.groups = 0
 
     def match(self, string, pos: int = 0, endpos: int = 0):
-        # Nondet choice between 'pattern matched' and 'no match'.
-        if nondet_bool():
+        # Route through the Wave-2 intrinsic when possible.
+        if __cbmc_re_match(self.pattern, string):
             return Match()
         return None
 
     def fullmatch(self, string, pos: int = 0, endpos: int = 0):
-        if nondet_bool():
+        if __cbmc_re_fullmatch(self.pattern, string):
             return Match()
         return None
 
     def search(self, string, pos: int = 0, endpos: int = 0):
-        if nondet_bool():
+        if __cbmc_re_search(self.pattern, string):
             return Match()
         return None
 
@@ -142,19 +142,25 @@ def compile(pattern, flags: int = 0) -> Pattern:
 
 
 def match(pattern, string, flags: int = 0):
-    if nondet_bool():
+    # Wave 2: when both pattern and string are Python strs, route
+    # through __cbmc_re_match — the front-end lowers this to
+    # cprover_string_match_func and the SMT backend ( --cvc5 )
+    # emits str.in_re with the translated regex. Non-string
+    # arguments or patterns the translator rejects fall back to
+    # a nondet Match / None choice, matching Wave 1 semantics.
+    if __cbmc_re_match(pattern, string):
         return Match()
     return None
 
 
 def fullmatch(pattern, string, flags: int = 0):
-    if nondet_bool():
+    if __cbmc_re_fullmatch(pattern, string):
         return Match()
     return None
 
 
 def search(pattern, string, flags: int = 0):
-    if nondet_bool():
+    if __cbmc_re_search(pattern, string):
         return Match()
     return None
 

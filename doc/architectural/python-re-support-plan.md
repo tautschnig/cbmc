@@ -149,10 +149,62 @@ Do it in three waves:
    that when the pattern argument is a literal, it emits the
    intrinsic; otherwise it falls back to Wave 1's nondet path.
 
-   Exit criterion: at least one program in
+   **Status (2026-05-09): infrastructure landed, subject-to-SMT
+   integration pending.**
+
+   What's in place:
+   * Three new irep IDs: `ID_cprover_string_match_func`,
+     `ID_cprover_string_search_func`, `ID_cprover_string_fullmatch_func`.
+   * Python→SMT-LIB regex translator in
+     `src/solvers/strings/python_regex_to_smt.{h,cpp}`. Supports
+     character classes (`\d \D \s \S \w \W`, `[...]`, ranges,
+     negation, `.`), quantifiers (`* + ? {m} {m,} {m,n}`, greedy
+     and non-greedy), alternation (`|`), grouping (`(...)`,
+     `(?:...)`), basic escapes, and start/end anchors. Rejects
+     back-references, lookaround, named captures, word
+     boundaries, and flag syntax.
+   * Frontend hooks in `convert_call`: the names
+     `__cbmc_re_match`, `__cbmc_re_search`, `__cbmc_re_fullmatch`
+     are recognised and lowered to the corresponding intrinsic via
+     the existing `emit_string_bool_function` helper.
+   * Library stub in `src/python/library/re/__init__.py`: module-
+     level `match`/`search`/`fullmatch` and the same methods on
+     `Pattern` now call the `__cbmc_re_*` hook; the return is
+     wrapped as `Match() or None` so callers see Python-level
+     semantics.
+   * SMT interception in `smt2_conv.cpp`: extracts the pattern
+     literal from the argument struct, calls
+     `python_regex_to_smt_{match,search,fullmatch}` to validate.
+
+   What's missing for the precision win:
+   * The subject string is still a Python refined-string struct,
+     not an SMT `String`. The interception therefore cannot emit
+     `(str.in_re subject <regex>)` yet — it falls back to a
+     conservative `bv0` (=no match) return. Combined with the
+     library's `if match: Match() else: None` wrapper this makes
+     every call look like 'no match' today; the result is sound
+     but not more precise than Wave 1.
+   * The missing piece is a subject → SMT-String translation.
+     Options:
+     - Teach `smt2_conv` to treat `python_string_type` values as
+       SMT `String` (requires a parallel type-mapping path
+       alongside the existing refined-string handling).
+     - Materialise the subject into an SMT-String at the site of
+       the `__cbmc_re_match` call in the frontend, so the
+       interception sees an actual `String`-typed argument.
+   * Once the subject reaches the solver as a String, the
+     interception body already has the regex term ready to feed
+     into `(str.in_re subject <regex>)`.
+
+   Regression coverage: `regression/python/re-wave2-intrinsic`
+   exercises the wired-in path and confirms nothing crashes nor
+   reports a `no body for callee` for the intrinsic.
+
+   Exit criterion (unchanged): at least one program in
    `regression/python/` demonstrates verifying a property that
    depends on a constant-pattern regex with `--cvc5`, and the same
-   program is provably nondet with the default back-end.
+   program is provably nondet with the default back-end. Deferred
+   to the follow-up that implements subject → SMT-String.
 
 3. **Wave 3 — Option C (native regex axioms), as-and-when:** treat
    this as an open research item rather than a roadmap commitment.

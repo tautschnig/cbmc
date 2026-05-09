@@ -5752,6 +5752,53 @@ exprt python_convertert::convert_call(const jsont &expr)
     side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
     return std::move(nondet);
   }
+  // Frontend hooks for the Python library's re stub.
+  // ``__cbmc_re_{match,search,fullmatch}(pattern, subject)`` are the
+  // three entry points the library calls when both arguments are
+  // Python strings. The front-end lowers each to the corresponding
+  // ``cprover_string_{match,search,fullmatch}_func`` intrinsic; the
+  // SMT backend (in particular ``--cvc5``) intercepts the intrinsic
+  // and compiles the pattern to an SMT-LIB 2.6 regex term. When
+  // the pattern cannot be translated (back-refs, lookaround, ...)
+  // the intrinsic degrades to a sound nondet result.
+  if(
+    func_name == "__cbmc_re_match" || func_name == "__cbmc_re_search" ||
+    func_name == "__cbmc_re_fullmatch")
+  {
+    if(args.is_array() && as_array(args).size() == 2)
+    {
+      auto it = as_array(args).begin();
+      exprt pattern = convert_expression(*it++);
+      exprt subject = convert_expression(*it);
+      if(
+        is_python_string_type(pattern.type()) &&
+        is_python_string_type(subject.type()))
+      {
+        auto to_str = [](const exprt &s) -> exprt
+        {
+          if(s.id() == ID_struct && s.operands().size() == 2)
+            return s;
+          return struct_exprt{
+            {member_exprt{s, "length", signedbv_typet{64}},
+             member_exprt{s, "data", pointer_typet{unsignedbv_typet{8}, 64}}},
+            s.type()};
+        };
+        irep_idt intrinsic_id = ID_cprover_string_match_func;
+        if(func_name == "__cbmc_re_search")
+          intrinsic_id = ID_cprover_string_search_func;
+        else if(func_name == "__cbmc_re_fullmatch")
+          intrinsic_id = ID_cprover_string_fullmatch_func;
+        return emit_string_bool_function(
+          intrinsic_id,
+          to_str(pattern),
+          to_str(subject),
+          symbol_table,
+          pending_checks);
+      }
+    }
+    // Fallback: nondet bool.
+    return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+  }
   else if(func_name == "nondet_float" || func_name == "__VERIFIER_nondet_float")
   {
     side_effect_expr_nondett nondet{double_type(), get_location(expr)};
