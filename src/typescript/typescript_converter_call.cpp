@@ -587,6 +587,32 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         return side_effect_expr_nondett{double_type(), get_location(node)};
       }
+      // ES2024 §20.1.2.8: Object.hasOwn(o, "key") — true iff key is
+      // a direct (not inherited) property of o.
+      if(method == "hasOwn" && call_args.size() >= 2)
+      {
+        exprt src = call_args[0];
+        if(src.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(src).get_identifier());
+          if(s && !s->value.is_nil())
+            src = s->value;
+        }
+        std::string key = extract_string_value(call_args[1]);
+        if(!key.empty() && src.type().id() == ID_struct)
+        {
+          std::string key_name = key.substr(2);
+          const auto &st = to_struct_type(src.type());
+          for(const auto &c : st.components())
+          {
+            if(id2string(c.get_name()) == key_name)
+              return true_exprt{};
+          }
+          return false_exprt{};
+        }
+        return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+      }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
     // ES2024 sec-promise.resolve, sec-promise.reject
@@ -4321,6 +4347,35 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           pending_stmts.push_back(
             code_frontend_assignt{size_s, from_integer(0, signedbv_typet{64})});
           return obj_expr;
+        }
+      }
+    }
+    // ES2024 §20.1.3.2: Object.prototype.hasOwnProperty("key")
+    // Works on any struct (plain object, interface, etc.).
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      method == "hasOwnProperty" && args.is_array() &&
+      !to_json_array(args).empty())
+    {
+      // Skip internal struct types — only plain objects / interfaces.
+      const auto &st = to_struct_type(obj_expr.type());
+      std::string tag = id2string(st.get_tag());
+      if(
+        tag != "typescript_array" && tag != "typescript_string" &&
+        tag != "typescript_union" && tag != "typescript_tuple" &&
+        tag.substr(0, 17) != "typescript_class_")
+      {
+        exprt key_arg = convert_expression(*to_json_array(args).begin());
+        std::string key = extract_string_value(key_arg);
+        if(!key.empty())
+        {
+          std::string key_name = key.substr(2);
+          for(const auto &c : st.components())
+          {
+            if(id2string(c.get_name()) == key_name)
+              return true_exprt{};
+          }
+          return false_exprt{};
         }
       }
     }
