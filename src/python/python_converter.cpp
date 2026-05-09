@@ -9959,7 +9959,17 @@ codet python_convertert::convert_statement(const jsont &stmt)
     code_blockt block;
     for(auto &check : pending_checks)
       block.add(std::move(check));
-    block.add(std::move(result));
+    // Pending checks may set __exception_active (e.g. the Option-4
+    // math-domain check raises ValueError for a known out-of-domain
+    // input). If an exception was raised, skip the main body of the
+    // statement — otherwise a 'return math.sqrt(-1.0)' inside a
+    // try/except would return before the handler could run.
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    if(exc_sym != nullptr)
+      block.add(
+        code_ifthenelset{not_exprt{exc_sym->symbol_expr()}, std::move(result)});
+    else
+      block.add(std::move(result));
     pending_checks.clear();
     return std::move(block);
   }
