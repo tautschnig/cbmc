@@ -43,7 +43,7 @@ nan: float = float("nan")
 # Power and logarithmic. Domain-restricted entries are also handled
 # by python_convertert::math_function_domain (Option 4).
 # ---------------------------------------------------------------
-@c_intrinsic("sqrt", fold="sqrt")
+@c_intrinsic("sqrt", fold="sqrt", domain="nonneg")
 def sqrt(x: float) -> float: ...
 
 
@@ -63,19 +63,19 @@ def exp2(x: float) -> float: ...
 def expm1(x: float) -> float: ...
 
 
-@c_intrinsic("log", fold="log")
+@c_intrinsic("log", fold="log", domain="positive")
 def log(x: float) -> float: ...
 
 
-@c_intrinsic("log2", fold="log2")
+@c_intrinsic("log2", fold="log2", domain="positive")
 def log2(x: float) -> float: ...
 
 
-@c_intrinsic("log10", fold="log10")
+@c_intrinsic("log10", fold="log10", domain="positive")
 def log10(x: float) -> float: ...
 
 
-@c_intrinsic("log1p", fold="log1p")
+@c_intrinsic("log1p", fold="log1p", domain="gt_neg_one")
 def log1p(x: float) -> float: ...
 
 
@@ -98,11 +98,11 @@ def cos(x: float) -> float: ...
 def tan(x: float) -> float: ...
 
 
-@c_intrinsic("asin", fold="asin")
+@c_intrinsic("asin", fold="asin", domain="abs_le_1")
 def asin(x: float) -> float: ...
 
 
-@c_intrinsic("acos", fold="acos")
+@c_intrinsic("acos", fold="acos", domain="abs_le_1")
 def acos(x: float) -> float: ...
 
 
@@ -130,11 +130,11 @@ def tanh(x: float) -> float: ...
 def asinh(x: float) -> float: ...
 
 
-@c_intrinsic("acosh", fold="acosh")
+@c_intrinsic("acosh", fold="acosh", domain="ge_1")
 def acosh(x: float) -> float: ...
 
 
-@c_intrinsic("atanh", fold="atanh")
+@c_intrinsic("atanh", fold="atanh", domain="abs_lt_1")
 def atanh(x: float) -> float: ...
 
 

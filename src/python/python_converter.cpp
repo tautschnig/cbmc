@@ -8520,14 +8520,52 @@ exprt python_convertert::convert_call(const jsont &expr)
     // the result as a constant expression. Falls through to the
     // C-call path for non-constant arguments or unrecognised
     // fold names.
+    //
+    // If ``domain=`` is also set, a constant argument that fails
+    // the named domain predicate raises Python ValueError
+    // (matching CPython's math-domain semantics). A nondet
+    // argument leaves the ad-hoc math path (in
+    // imported_math_funcs) to emit the guarded ValueError and
+    // the nondet+constraints return. This duplication will be
+    // retired in a follow-up once the decorator supports the
+    // nondet+constraints case too.
     auto fold_it = c_intrinsic_fold_map.find(sym->name);
+    auto domain_it = c_intrinsic_domain_map.find(sym->name);
     if(fold_it != c_intrinsic_fold_map.end() && arguments.size() == 1)
     {
       auto cv = try_eval_double(arguments[0]);
       if(cv.has_value())
       {
-        const std::string &op = fold_it->second;
         double x = cv.value();
+
+        // Domain check for constant args. If out of domain, raise
+        // ValueError (matching CPython) and return a nondet
+        // sentinel; the exception handler intercepts before the
+        // caller observes the value.
+        if(domain_it != c_intrinsic_domain_map.end())
+        {
+          const std::string &dom = domain_it->second;
+          bool in_domain = true;
+          if(dom == "nonneg")
+            in_domain = x >= 0;
+          else if(dom == "positive")
+            in_domain = x > 0;
+          else if(dom == "gt_neg_one")
+            in_domain = x > -1;
+          else if(dom == "abs_le_1")
+            in_domain = x >= -1 && x <= 1;
+          else if(dom == "abs_lt_1")
+            in_domain = x > -1 && x < 1;
+          else if(dom == "ge_1")
+            in_domain = x >= 1;
+          if(!in_domain)
+          {
+            emit_value_error(false_exprt{});
+            return side_effect_expr_nondett{double_type(), get_location(expr)};
+          }
+        }
+
+        const std::string &op = fold_it->second;
         double r = 0;
         bool computed = true;
         if(op == "sqrt")
@@ -12479,6 +12517,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   bool is_c_intrinsic = false;
   std::string c_intrinsic_name;
   std::string c_intrinsic_fold;
+  std::string c_intrinsic_domain;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -12487,12 +12526,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         is_node_type(dec, "Name") &&
         json_string(json_member(dec, "id")) == "overload")
         return code_skipt{};
-      // @c_intrinsic('NAME', fold='OP') — route calls to the named
-      // C function instead of executing the Python body. The Python
-      // body is usually just '...' or 'pass' and is never run. The
-      // optional fold keyword names a known host-side operation
-      // used to constant-fold all-constant call sites at parse
-      // time.
+      // @c_intrinsic('NAME', fold='OP', domain='KIND') — route
+      // calls to the named C function. Optional ``fold`` enables
+      // parse-time constant folding; optional ``domain`` raises
+      // Python ValueError for constant arguments that fail the
+      // named domain predicate.
       if(is_node_type(dec, "Call"))
       {
         const jsont &dec_func = json_member(dec, "func");
@@ -12510,18 +12548,19 @@ codet python_convertert::convert_function_def(const jsont &stmt)
               is_c_intrinsic = !c_intrinsic_name.empty();
             }
           }
-          // Look for the fold keyword argument.
           const jsont &dec_kwargs = json_member(dec, "keywords");
           if(dec_kwargs.is_array())
           {
             for(const auto &kw : as_array(dec_kwargs))
             {
-              if(json_string(json_member(kw, "arg")) == "fold")
-              {
-                const jsont &val = json_member(kw, "value");
-                if(is_node_type(val, "Constant"))
-                  c_intrinsic_fold = json_string(json_member(val, "value"));
-              }
+              const jsont &val = json_member(kw, "value");
+              if(!is_node_type(val, "Constant"))
+                continue;
+              std::string arg_name = json_string(json_member(kw, "arg"));
+              if(arg_name == "fold")
+                c_intrinsic_fold = json_string(json_member(val, "value"));
+              else if(arg_name == "domain")
+                c_intrinsic_domain = json_string(json_member(val, "value"));
             }
           }
         }
@@ -12802,6 +12841,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     c_intrinsic_map[symbol_id] = c_intrinsic_name;
     if(!c_intrinsic_fold.empty())
       c_intrinsic_fold_map[symbol_id] = c_intrinsic_fold;
+    if(!c_intrinsic_domain.empty())
+      c_intrinsic_domain_map[symbol_id] = c_intrinsic_domain;
   }
 
   // Create parameter symbols
@@ -14248,21 +14289,25 @@ void python_convertert::process_imported_module(
             std::string c_name = json_string(json_member(first, "value"));
             if(!c_name.empty())
               c_intrinsic_map[irep_idt{"python::" + fname}] = c_name;
-            // Pick up the optional fold= keyword on the decorator.
+            // Pick up optional fold= and domain= keywords on the
+            // decorator.
             const jsont &dec_kwargs = json_member(dec, "keywords");
             if(!c_name.empty() && dec_kwargs.is_array())
             {
               for(const auto &kw : as_array(dec_kwargs))
               {
-                if(json_string(json_member(kw, "arg")) != "fold")
-                  continue;
                 const jsont &val = json_member(kw, "value");
                 if(!is_node_type(val, "Constant"))
                   continue;
-                std::string fold_name = json_string(json_member(val, "value"));
-                if(!fold_name.empty())
-                  c_intrinsic_fold_map[irep_idt{"python::" + fname}] =
-                    fold_name;
+                std::string arg_name = json_string(json_member(kw, "arg"));
+                std::string arg_val = json_string(json_member(val, "value"));
+                if(arg_val.empty())
+                  continue;
+                if(arg_name == "fold")
+                  c_intrinsic_fold_map[irep_idt{"python::" + fname}] = arg_val;
+                else if(arg_name == "domain")
+                  c_intrinsic_domain_map[irep_idt{"python::" + fname}] =
+                    arg_val;
               }
             }
           }
