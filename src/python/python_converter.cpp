@@ -48,6 +48,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 
@@ -10316,11 +10317,39 @@ codet python_convertert::convert_statement(const jsont &stmt)
       block.add(std::move(check));
     // Pending checks may set __exception_active (e.g. the Option-4
     // math-domain check raises ValueError for a known out-of-domain
-    // input). If an exception was raised, skip the main body of the
-    // statement — otherwise a 'return math.sqrt(-1.0)' inside a
-    // try/except would return before the handler could run.
+    // input). If such a check is present, guard the main body so
+    // a subsequent 'return math.sqrt(-1.0)' inside a try/except
+    // doesn't return before the handler can run. We only install
+    // the guard when at least one pending check actually assigns
+    // to __exception_active — a blanket guard on every statement
+    // with any pending_checks would (a) pessimise the symex graph
+    // with a boolean test on every single statement and (b)
+    // create spurious control-flow dependency on the exception
+    // state that CBMC's solver then has to reason about, which
+    // has been observed to slow the boto3-heavy benchmarks and
+    // to introduce spurious verification failures where the
+    // dependency combines poorly with refined-string reasoning.
+    auto pending_sets_exception = [](const code_blockt &b) {
+      std::function<bool(const exprt &)> has_exc_assign =
+        [&](const exprt &e) -> bool {
+        if(
+          e.id() == ID_code && e.get(ID_statement) == ID_assign &&
+          e.operands().size() >= 1 && e.operands()[0].id() == ID_symbol &&
+          to_symbol_expr(e.operands()[0]).get_identifier() ==
+            "python::__exception_active")
+          return true;
+        for(const auto &op : e.operands())
+          if(has_exc_assign(op))
+            return true;
+        return false;
+      };
+      for(const auto &stmt : b.statements())
+        if(has_exc_assign(stmt))
+          return true;
+      return false;
+    };
     const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
-    if(exc_sym != nullptr)
+    if(exc_sym != nullptr && pending_sets_exception(block))
       block.add(
         code_ifthenelset{not_exprt{exc_sym->symbol_expr()}, std::move(result)});
     else
