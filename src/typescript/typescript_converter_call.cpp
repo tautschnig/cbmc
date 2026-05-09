@@ -1307,35 +1307,54 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(method == "indexOf" && !str_args.empty())
         {
           // ES2024 §22.1.3.9: String.prototype.indexOf(searchString, fromIndex)
-          // fromIndex defaults to 0 and is clamped to [0, length].
-          // Find the first string arg (skipping empty placeholders for
-          // numeric args).
-          std::string needle;
-          for(const auto &s : str_args)
-            if(!s.empty() || needle.empty())
-              needle = s;
-          // Actually: the first arg is the string; if we have num_args[0]
-          // it's the fromIndex. Use a simpler heuristic — str_args[0] is
-          // the needle (it's the first arg; if numeric, no indexOf).
-          needle = str_args[0];
-          size_t from = 0;
-          if(!num_args.empty())
+          // Fall through to the symbolic-needle handler if the first
+          // string arg is empty AND came from a symbolic expression
+          // (not an empty literal). We detect this by re-converting
+          // arg[0] and checking extract_string_value.
+          bool needle_is_symbolic = false;
+          if(args.is_array() && !to_json_array(args).empty())
           {
-            int fi = num_args[0];
-            if(fi < 0)
-              fi = 0;
-            if(fi > static_cast<int>(sv.size()))
-              fi = sv.size();
-            from = static_cast<size_t>(fi);
+            exprt first_arg = convert_expression(*to_json_array(args).begin());
+            if(is_typescript_string_type(first_arg.type()))
+            {
+              std::string raw = extract_string_value(first_arg);
+              if(raw.empty())
+                needle_is_symbolic = true;
+            }
           }
-          auto pos = sv.find(needle, from);
-          int result = (pos == std::string::npos) ? -1 : static_cast<int>(pos);
-          uint64_t bits;
-          double dv = static_cast<double>(result);
-          std::memcpy(&bits, &dv, sizeof(bits));
-          return constant_exprt{
-            integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
-            double_type()};
+          if(!needle_is_symbolic)
+          {
+            // fromIndex defaults to 0 and is clamped to [0, length].
+            // Find the first string arg (skipping empty placeholders for
+            // numeric args).
+            std::string needle;
+            for(const auto &s : str_args)
+              if(!s.empty() || needle.empty())
+                needle = s;
+            // Actually: the first arg is the string; if we have num_args[0]
+            // it's the fromIndex. Use a simpler heuristic — str_args[0] is
+            // the needle (it's the first arg; if numeric, no indexOf).
+            needle = str_args[0];
+            size_t from = 0;
+            if(!num_args.empty())
+            {
+              int fi = num_args[0];
+              if(fi < 0)
+                fi = 0;
+              if(fi > static_cast<int>(sv.size()))
+                fi = sv.size();
+              from = static_cast<size_t>(fi);
+            }
+            auto pos = sv.find(needle, from);
+            int result =
+              (pos == std::string::npos) ? -1 : static_cast<int>(pos);
+            uint64_t bits;
+            double dv = static_cast<double>(result);
+            std::memcpy(&bits, &dv, sizeof(bits));
+            return constant_exprt{
+              integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
+              double_type()};
+          }
         }
         if(method == "includes" && !str_args.empty())
           return sv.find(str_args[0]) != std::string::npos
@@ -1530,6 +1549,35 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           filler = filler.substr(0, need);
           return convert_string_literal_from_text(filler + sv);
         }
+        // ES2024 §22.1.3.17/18: padStart/padEnd with symbolic target
+        // length. Emit length = max(src.length, n) directly; content
+        // is nondet.
+        if(
+          (method == "padStart" || method == "padEnd") && num_args.empty() &&
+          args.is_array() && !to_json_array(args).empty())
+        {
+          exprt target_arg = convert_expression(*to_json_array(args).begin());
+          typet len_type =
+            to_struct_type(typescript_string_type()).components()[0].type();
+          exprt src_len_f;
+          {
+            ieee_floatt lf{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            lf.from_double(static_cast<double>(sv.size()));
+            src_len_f = lf.to_expr();
+          }
+          // length = n if n > src_len else src_len (IEEE compare).
+          exprt cond = binary_relation_exprt{target_arg, ID_gt, src_len_f};
+          exprt result_len_f = if_exprt{cond, target_arg, src_len_f};
+          exprt result_len = typecast_exprt{std::move(result_len_f), len_type};
+          typet data_type =
+            to_struct_type(typescript_string_type()).components()[1].type();
+          exprt data_nondet =
+            side_effect_expr_nondett{data_type, source_locationt{}};
+          return struct_exprt{
+            {result_len, data_nondet}, typescript_string_type()};
+        }
         if(method == "padEnd" && !num_args.empty())
         {
           int target_len = num_args[0];
@@ -1560,6 +1608,45 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           for(int i = 0; i < count; ++i)
             result += sv;
           return convert_string_literal_from_text(result);
+        }
+        // ES2024 §22.1.3.14: repeat with symbolic count n.
+        // For a constant source string of length L and symbolic n in
+        // [0, K], emit a result whose `length` field is L * n.
+        // The data content is left nondet — callers that only
+        // inspect .length get a precise answer; callers that index
+        // into .data get nondet. This matches what a symbolic model
+        // can express without the refined string solver.
+        if(
+          method == "repeat" && num_args.empty() && args.is_array() &&
+          !to_json_array(args).empty())
+        {
+          exprt count_arg = convert_expression(*to_json_array(args).begin());
+          // Width of our string length field:
+          typet len_type =
+            to_struct_type(typescript_string_type()).components()[0].type();
+          // Perform the multiplication in IEEE float (matching how
+          // TS numbers work), then cast to len_type.
+          exprt src_len_f =
+            ieee_floatt::zero(ieee_float_spect::double_precision()).to_expr();
+          {
+            ieee_floatt lf{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            lf.from_double(static_cast<double>(sv.size()));
+            src_len_f = lf.to_expr();
+          }
+          exprt rm =
+            symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+          ieee_float_op_exprt result_len_f{
+            src_len_f, ID_floatbv_mult, count_arg, rm};
+          result_len_f.type() = double_type();
+          exprt result_len = typecast_exprt{std::move(result_len_f), len_type};
+          typet data_type =
+            to_struct_type(typescript_string_type()).components()[1].type();
+          exprt data_nondet =
+            side_effect_expr_nondett{data_type, source_locationt{}};
+          return struct_exprt{
+            {result_len, data_nondet}, typescript_string_type()};
         }
         // ES2024 §22.1.3.5: String.prototype.concat
         if(method == "concat" && !str_args.empty())
@@ -1688,6 +1775,54 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
               if_exprt{cond, from_integer(p, signedbv_typet{64}), result};
           }
           // Cast to double (typescript number)
+          return typecast_exprt{result, double_type()};
+        }
+        // Symbolic needle: build a per-position match using the needle
+        // struct's fields directly. For each candidate position p in
+        // [0, max_scan), build a match predicate:
+        //   p + needle.length <= s.length  AND
+        //   forall i in [0, max_needle): i >= needle.length OR
+        //     s.data[p+i] == needle.data[i]
+        if(
+          is_typescript_string_type(arg.type()) &&
+          is_typescript_string_type(obj_expr.type()))
+        {
+          struct_typet str_type = typescript_string_type();
+          const auto &data_type =
+            to_array_type(str_type.components()[1].type());
+          exprt s_data = member_exprt{obj_expr, "data", data_type};
+          exprt s_len = member_exprt{obj_expr, "length", signedbv_typet{32}};
+          exprt n_data = member_exprt{arg, "data", data_type};
+          exprt n_len = member_exprt{arg, "length", signedbv_typet{32}};
+          std::size_t max_scan =
+            std::min<std::size_t>(TYPESCRIPT_MAX_STRING_LENGTH, 16);
+          std::size_t max_needle =
+            std::min<std::size_t>(TYPESCRIPT_MAX_STRING_LENGTH, 8);
+          exprt result = from_integer(-1, signedbv_typet{64});
+          for(int p = static_cast<int>(max_scan) - 1; p >= 0; p--)
+          {
+            exprt matches = true_exprt{};
+            for(std::size_t j = 0; j < max_needle; ++j)
+            {
+              exprt j_expr = from_integer(j, signedbv_typet{32});
+              exprt i_lt_nlen = binary_relation_exprt{j_expr, ID_lt, n_len};
+              exprt s_idx = from_integer(p + j, signedbv_typet{64});
+              exprt s_char = index_exprt{s_data, s_idx};
+              exprt n_char =
+                index_exprt{n_data, from_integer(j, signedbv_typet{64})};
+              // If i < nlen, chars must match; otherwise skip.
+              exprt char_match =
+                or_exprt{not_exprt{i_lt_nlen}, equal_exprt{s_char, n_char}};
+              matches = and_exprt{matches, char_match};
+            }
+            // Bounds: p + nlen <= s.length
+            exprt p_plus_nlen =
+              plus_exprt{from_integer(p, signedbv_typet{32}), n_len};
+            exprt in_bounds = binary_relation_exprt{p_plus_nlen, ID_le, s_len};
+            exprt cond = and_exprt{matches, in_bounds};
+            result =
+              if_exprt{cond, from_integer(p, signedbv_typet{64}), result};
+          }
           return typecast_exprt{result, double_type()};
         }
       }

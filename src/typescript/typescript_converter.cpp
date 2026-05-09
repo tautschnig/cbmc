@@ -2248,7 +2248,59 @@ exprt typescript_convertert::convert_prefix_unary_expression(const jsont &node)
   if(op == "MinusToken")
     return unary_minus_exprt{operand};
   if(op == "PlusToken")
+  {
+    // ES2024 §13.5.4 UnaryPlus → ToNumber.
+    // If the operand is a constant string, parse its digits at
+    // conversion time. Empty string → 0. Whitespace-only string → 0.
+    // Non-numeric string → NaN.
+    if(is_typescript_string_type(operand.type()))
+    {
+      std::string s = extract_string_value(operand);
+      if(!s.empty() && s.substr(0, 2) == "S:")
+      {
+        std::string raw = s.substr(2);
+        // Trim ASCII whitespace per ES2024 §7.1.4.1.2 StringToNumber
+        std::size_t start = 0;
+        while(start < raw.size() && (raw[start] == ' ' || raw[start] == '\t' ||
+                                     raw[start] == '\n' || raw[start] == '\r'))
+          start++;
+        std::size_t end = raw.size();
+        while(end > start && (raw[end - 1] == ' ' || raw[end - 1] == '\t' ||
+                              raw[end - 1] == '\n' || raw[end - 1] == '\r'))
+          end--;
+        std::string trimmed = raw.substr(start, end - start);
+        if(trimmed.empty())
+          return ieee_floatt::zero(ieee_float_spect::double_precision())
+            .to_expr();
+        try
+        {
+          std::size_t pos = 0;
+          double d = std::stod(trimmed, &pos);
+          if(pos == trimmed.size())
+          {
+            ieee_floatt v{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            v.from_double(d);
+            return v.to_expr();
+          }
+        }
+        catch(...)
+        {
+        }
+        // Non-numeric: return NaN
+        ieee_floatt v{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        v.make_NaN();
+        return v.to_expr();
+      }
+      // Symbolic string: return nondet number (not yet supported
+      // symbolically without the refined string solver).
+      return side_effect_expr_nondett{double_type(), source_locationt{}};
+    }
     return operand; // unary + is identity for numbers
+  }
   // ES2024 sec-logical-not-operator
   if(op == "ExclamationToken")
   {
