@@ -400,6 +400,193 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             list_type};
         }
       }
+      // ES2024 §20.1.2.5: Object.entries(o) returns [[k1,v1], ...]
+      if(method == "entries" && !call_args.empty())
+      {
+        exprt src = call_args[0];
+        if(src.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(src).get_identifier());
+          if(s && !s->value.is_nil())
+            src = s->value;
+        }
+        if(src.type().id() == ID_struct)
+        {
+          const auto &st = to_struct_type(src.type());
+          // Build an array where each element is a tuple-struct [key,value].
+          // For simplicity, we use a flat array: Object.entries works in
+          // JS but deep asserts on nested tuples are impractical without
+          // more machinery.
+          exprt::operandst elts;
+          for(std::size_t i = 0;
+              i < st.components().size() && i < src.operands().size();
+              ++i)
+          {
+            // Each entry is a 2-tuple: [key, value]
+            struct_typet tuple_st;
+            tuple_st.components().push_back(
+              struct_typet::componentt{"_0", typescript_string_type()});
+            tuple_st.components().push_back(
+              struct_typet::componentt{"_1", src.operands()[i].type()});
+            tuple_st.set_tag("typescript_tuple");
+            elts.push_back(struct_exprt{
+              {convert_string_literal_from_text(
+                 id2string(st.components()[i].get_name())),
+               src.operands()[i]},
+              tuple_st});
+          }
+          std::size_t actual = elts.size();
+          // Use nondet type for mixed elements; result is array-of-tuples.
+          typet elem_type = actual > 0 ? elts[0].type() : double_type();
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          while(elts.size() < max_len)
+            elts.push_back(
+              side_effect_expr_nondett{elem_type, source_locationt{}});
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type = make_array_struct_type(arr_type);
+          return struct_exprt{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(elts), arr_type}},
+            list_type};
+        }
+      }
+      // ES2024 §20.1.2.11: Object.is — SameValue comparison.
+      //   - NaN is same as NaN
+      //   - +0 is NOT same as -0
+      //   - Otherwise: same as ===
+      if(method == "is" && call_args.size() >= 2)
+      {
+        exprt left = call_args[0];
+        exprt right = call_args[1];
+        // If both are NaN constants: return true (explicit override)
+        auto is_nan_const = [](const exprt &e)
+        {
+          if(!e.is_constant() || e.type().id() != ID_floatbv)
+            return false;
+          ieee_floatt v{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          v.from_expr(to_constant_expr(e));
+          return v.is_NaN();
+        };
+        if(is_nan_const(left) && is_nan_const(right))
+          return true_exprt{};
+        // Otherwise: strict equality behavior. Types must match and
+        // values must be equal. For floats, NaN != NaN by IEEE-754;
+        // here we've already handled both-NaN above.
+        if(left.type() != right.type())
+          return false_exprt{};
+        if(left.type().id() == ID_floatbv)
+        {
+          // NaN on only one side → false
+          if(is_nan_const(left) || is_nan_const(right))
+            return false_exprt{};
+          // Both non-NaN symbolic: use ieee_float_equal
+          return ieee_float_equal_exprt{left, right};
+        }
+        if(is_typescript_string_type(left.type()))
+        {
+          std::string ls = extract_string_value(left);
+          std::string rs = extract_string_value(right);
+          if(!ls.empty() && !rs.empty())
+            return ls == rs ? exprt{true_exprt{}} : exprt{false_exprt{}};
+        }
+        return equal_exprt{left, right};
+      }
+      // ES2024 §20.1.2.1: Object.assign(target, ...sources) — merge.
+      // Returns target with sources' own enumerable properties assigned.
+      if(method == "assign" && call_args.size() >= 1)
+      {
+        // Build a merged struct from all sources, with later overriding earlier.
+        // All args must be struct-typed.
+        struct_typet::componentst merged_components;
+        exprt::operandst merged_values;
+        for(const auto &src : call_args)
+        {
+          exprt resolved = src;
+          if(resolved.id() == ID_symbol)
+          {
+            const symbolt *s =
+              symbol_table.lookup(to_symbol_expr(resolved).get_identifier());
+            if(s && !s->value.is_nil())
+              resolved = s->value;
+          }
+          if(resolved.type().id() != ID_struct || resolved.id() != ID_struct)
+            continue;
+          const auto &st = to_struct_type(resolved.type());
+          for(std::size_t i = 0;
+              i < st.components().size() && i < resolved.operands().size();
+              ++i)
+          {
+            std::string name = id2string(st.components()[i].get_name());
+            // Override existing
+            bool overridden = false;
+            for(std::size_t j = 0; j < merged_components.size(); ++j)
+            {
+              if(id2string(merged_components[j].get_name()) == name)
+              {
+                merged_values[j] = resolved.operands()[i];
+                overridden = true;
+                break;
+              }
+            }
+            if(!overridden)
+            {
+              merged_components.push_back(st.components()[i]);
+              merged_values.push_back(resolved.operands()[i]);
+            }
+          }
+        }
+        return struct_exprt{merged_values, struct_typet{merged_components}};
+      }
+      // ES2024 §20.1.2.6: Object.fromEntries — iterable of [key, value]
+      // pairs → object.
+      if(method == "fromEntries" && !call_args.empty())
+      {
+        exprt arg = call_args[0];
+        if(arg.id() == ID_symbol)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_symbol_expr(arg).get_identifier());
+          if(s && !s->value.is_nil())
+            arg = s->value;
+        }
+        if(
+          arg.id() == ID_struct && arg.type().id() == ID_struct &&
+          to_struct_type(arg.type()).get_tag() == "typescript_array")
+        {
+          mp_integer len;
+          if(
+            arg.operands()[0].is_constant() &&
+            !to_integer(to_constant_expr(arg.operands()[0]), len))
+          {
+            const exprt &data = arg.operands()[1];
+            struct_typet::componentst components;
+            exprt::operandst fields;
+            for(mp_integer i = 0; i < len; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx >= data.operands().size())
+                continue;
+              const exprt &pair = data.operands()[idx];
+              // Pair should be a 2-tuple struct [key, value]
+              if(pair.id() != ID_struct || pair.operands().size() < 2)
+                continue;
+              std::string key_raw = extract_string_value(pair.operands()[0]);
+              if(key_raw.empty())
+                continue;
+              std::string key = key_raw.substr(2);
+              components.push_back(
+                struct_typet::componentt{key, pair.operands()[1].type()});
+              fields.push_back(pair.operands()[1]);
+            }
+            return struct_exprt{fields, struct_typet{components}};
+          }
+        }
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      }
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
     // ES2024 sec-promise.resolve, sec-promise.reject
