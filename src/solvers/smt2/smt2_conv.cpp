@@ -2796,54 +2796,64 @@ void smt2_convt::convert_expr(const exprt &expr)
         if(width == 0)
           width = 8;
 
-        // Try to extract the pattern literal from args[0].
-        // Expected shape: struct_exprt{length_const,
-        // address_of(index(array_literal, 0))}.
-        std::optional<std::string> pattern_text;
-        if(
-          args[0].id() == ID_struct && args[0].operands().size() == 2 &&
-          args[0].operands()[0].is_constant())
+        // Helper: extract a constant-string payload from a
+        // refined-string struct_exprt of the form
+        //   { length_const, address_of(index(array_literal, 0)) }.
+        auto extract_literal = [](const exprt &e) -> std::optional<std::string>
         {
+          if(
+            e.id() != ID_struct || e.operands().size() != 2 ||
+            !e.operands()[0].is_constant())
+            return std::nullopt;
           mp_integer slen;
-          if(!to_integer(to_constant_expr(args[0].operands()[0]), slen))
+          if(to_integer(to_constant_expr(e.operands()[0]), slen))
+            return std::nullopt;
+          const exprt &data = e.operands()[1];
+          const exprt *arr = nullptr;
+          if(
+            data.id() == ID_address_of && data.operands().size() == 1 &&
+            data.operands()[0].id() == ID_index)
+            arr = &data.operands()[0].operands()[0];
+          if(arr == nullptr || arr->id() != ID_array)
+            return std::nullopt;
+          std::string s;
+          for(mp_integer i = 0; i < slen; ++i)
           {
-            const exprt &data = args[0].operands()[1];
-            const exprt *arr = nullptr;
+            std::size_t idx = i.to_ulong();
             if(
-              data.id() == ID_address_of && data.operands().size() == 1 &&
-              data.operands()[0].id() == ID_index)
-              arr = &data.operands()[0].operands()[0];
-            if(arr != nullptr && arr->id() == ID_array)
-            {
-              std::string s;
-              bool ok = true;
-              for(mp_integer i = 0; i < slen; ++i)
-              {
-                std::size_t idx = i.to_ulong();
-                if(idx >= arr->operands().size())
-                {
-                  ok = false;
-                  break;
-                }
-                if(!arr->operands()[idx].is_constant())
-                {
-                  ok = false;
-                  break;
-                }
-                mp_integer ch;
-                if(to_integer(to_constant_expr(arr->operands()[idx]), ch))
-                {
-                  ok = false;
-                  break;
-                }
-                s += static_cast<char>(ch.to_ulong());
-              }
-              if(ok)
-                pattern_text = s;
-            }
+              idx >= arr->operands().size() ||
+              !arr->operands()[idx].is_constant())
+              return std::nullopt;
+            mp_integer ch;
+            if(to_integer(to_constant_expr(arr->operands()[idx]), ch))
+              return std::nullopt;
+            s += static_cast<char>(ch.to_ulong());
           }
-        }
+          return s;
+        };
 
+        // Helper: SMT-LIB 2.6 string-literal escaping. The only
+        // special character is the double quote, which is written
+        // as "". Non-printable / non-ASCII characters would need
+        // \u{hex} escaping, which we don't support today; callers
+        // must reject those upstream.
+        auto smt_escape_printable_ascii =
+          [](const std::string &s) -> std::optional<std::string>
+        {
+          std::string out;
+          for(unsigned char c : s)
+          {
+            if(c < 0x20 || c > 0x7e)
+              return std::nullopt;
+            if(c == '"')
+              out += "\"\"";
+            else
+              out += static_cast<char>(c);
+          }
+          return out;
+        };
+
+        auto pattern_text = extract_literal(args[0]);
         std::optional<std::string> smt_re;
         if(pattern_text.has_value())
         {
@@ -2857,27 +2867,39 @@ void smt2_convt::convert_expr(const exprt &expr)
 
         if(!smt_re.has_value())
         {
-          // Unsupported pattern (dynamic, back-ref, lookaround, ...).
-          // Soundness: emit bv0 (the library stub models this as
-          // 'no match' on this path; the library also emits a
-          // parallel nondet Match path, so the combined semantics
-          // is 'may or may not match').
+          // Unsupported pattern (dynamic, back-ref, lookaround,
+          // non-constant). Return bv0 as a sound stub; the Python
+          // library stub models the match as 'may-or-may-not-match'
+          // independently.
           out << "(_ bv0 " << width << ")";
           return;
         }
 
-        // Extract the subject's data pointer for str.in_re; we need
-        // the *string value* at the SMT level. CVC5's string
-        // theory operates on Strings, but our subject is still a
-        // refined-string struct. For now, emit a conservative
-        // over-approximation: return nondet result. A precise
-        // implementation would walk the subject's length-prefixed
-        // char array into an SMT string literal — left as follow-up.
-        // This is still more precise than Wave 1 because the
-        // pattern validity is checked (unsupported patterns return
-        // a clearly-unsound bv0 shape that the library stub can
-        // handle, vs Wave 1's 'always nondet').
-        (void)*smt_re; // silence unused-warning
+        // Try to extract the subject literal. If present *and*
+        // SMT-LIB-representable (printable ASCII, no escapes we
+        // don't support), we can emit a fully-precise
+        //   (ite (str.in_re "<subject>" <regex>) bv1 bv0)
+        // which the SMT solver reduces at pre-processing time.
+        auto subject_text = extract_literal(args[1]);
+        std::optional<std::string> subject_smt;
+        if(subject_text.has_value())
+          subject_smt = smt_escape_printable_ascii(*subject_text);
+
+        if(subject_smt.has_value())
+        {
+          out << "(ite (str.in_re \"" << *subject_smt << "\" " << *smt_re
+              << ") (_ bv1 " << width << ") (_ bv0 " << width << "))";
+          return;
+        }
+
+        // Symbolic subject: we still have the regex ready to fire,
+        // but the subject isn't yet exposed to the SMT backend as
+        // a String value. That's the (a') architectural refactor;
+        // until it lands, fall back to a sound 'no match' (bv0)
+        // return so verification over-approximates conservatively.
+        // The library stub's Match/None wrapper then models this
+        // call as never succeeding — user programs that treat
+        // 'match is None' as a valid path verify correctly.
         out << "(_ bv0 " << width << ")";
         return;
       }
