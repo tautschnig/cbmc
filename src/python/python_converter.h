@@ -74,6 +74,17 @@ private:
   /// match the C function's argument and return types.
   std::map<irep_idt, std::string> c_intrinsic_map;
 
+  /// Optional constant-folder name, as specified by the
+  /// ``@c_intrinsic('name', fold='op')`` decorator's ``fold``
+  /// keyword. Populated alongside ``c_intrinsic_map``. When a
+  /// call-site has all-constant arguments and a matching entry
+  /// here, the front-end evaluates the known host-side op (one
+  /// of std::sqrt, std::sin, …) and replaces the call with the
+  /// resulting constant expression. Entries absent from this map
+  /// (or absent from the recognised-op set in the implementation)
+  /// behave exactly like a plain ``@c_intrinsic`` and route to C.
+  std::map<irep_idt, std::string> c_intrinsic_fold_map;
+
   /// Return the mathematical domain predicate for a single-argument
   /// math-module function. Returns nullopt when the function has no
   /// domain restriction. Used by the Option-4 domain-check logic

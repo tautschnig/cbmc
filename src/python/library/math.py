@@ -43,39 +43,39 @@ nan: float = float("nan")
 # Power and logarithmic. Domain-restricted entries are also handled
 # by python_convertert::math_function_domain (Option 4).
 # ---------------------------------------------------------------
-@c_intrinsic("sqrt")
+@c_intrinsic("sqrt", fold="sqrt")
 def sqrt(x: float) -> float: ...
 
 
-@c_intrinsic("cbrt")
+@c_intrinsic("cbrt", fold="cbrt")
 def cbrt(x: float) -> float: ...
 
 
-@c_intrinsic("exp")
+@c_intrinsic("exp", fold="exp")
 def exp(x: float) -> float: ...
 
 
-@c_intrinsic("exp2")
+@c_intrinsic("exp2", fold="exp2")
 def exp2(x: float) -> float: ...
 
 
-@c_intrinsic("expm1")
+@c_intrinsic("expm1", fold="expm1")
 def expm1(x: float) -> float: ...
 
 
-@c_intrinsic("log")
+@c_intrinsic("log", fold="log")
 def log(x: float) -> float: ...
 
 
-@c_intrinsic("log2")
+@c_intrinsic("log2", fold="log2")
 def log2(x: float) -> float: ...
 
 
-@c_intrinsic("log10")
+@c_intrinsic("log10", fold="log10")
 def log10(x: float) -> float: ...
 
 
-@c_intrinsic("log1p")
+@c_intrinsic("log1p", fold="log1p")
 def log1p(x: float) -> float: ...
 
 
@@ -86,27 +86,27 @@ def pow(x: float, y: float) -> float: ...
 # ---------------------------------------------------------------
 # Trigonometric and hyperbolic.
 # ---------------------------------------------------------------
-@c_intrinsic("sin")
+@c_intrinsic("sin", fold="sin")
 def sin(x: float) -> float: ...
 
 
-@c_intrinsic("cos")
+@c_intrinsic("cos", fold="cos")
 def cos(x: float) -> float: ...
 
 
-@c_intrinsic("tan")
+@c_intrinsic("tan", fold="tan")
 def tan(x: float) -> float: ...
 
 
-@c_intrinsic("asin")
+@c_intrinsic("asin", fold="asin")
 def asin(x: float) -> float: ...
 
 
-@c_intrinsic("acos")
+@c_intrinsic("acos", fold="acos")
 def acos(x: float) -> float: ...
 
 
-@c_intrinsic("atan")
+@c_intrinsic("atan", fold="atan")
 def atan(x: float) -> float: ...
 
 
@@ -114,27 +114,27 @@ def atan(x: float) -> float: ...
 def atan2(y: float, x: float) -> float: ...
 
 
-@c_intrinsic("sinh")
+@c_intrinsic("sinh", fold="sinh")
 def sinh(x: float) -> float: ...
 
 
-@c_intrinsic("cosh")
+@c_intrinsic("cosh", fold="cosh")
 def cosh(x: float) -> float: ...
 
 
-@c_intrinsic("tanh")
+@c_intrinsic("tanh", fold="tanh")
 def tanh(x: float) -> float: ...
 
 
-@c_intrinsic("asinh")
+@c_intrinsic("asinh", fold="asinh")
 def asinh(x: float) -> float: ...
 
 
-@c_intrinsic("acosh")
+@c_intrinsic("acosh", fold="acosh")
 def acosh(x: float) -> float: ...
 
 
-@c_intrinsic("atanh")
+@c_intrinsic("atanh", fold="atanh")
 def atanh(x: float) -> float: ...
 
 
@@ -147,19 +147,19 @@ def hypot(x: float, y: float) -> float: ...
 # for ceil/floor/trunc/fabs/copysign; the @c_intrinsic declarations
 # here describe the externally-visible contract.
 # ---------------------------------------------------------------
-@c_intrinsic("ceil")
+@c_intrinsic("ceil", fold="ceil")
 def ceil(x: float) -> int: ...
 
 
-@c_intrinsic("floor")
+@c_intrinsic("floor", fold="floor")
 def floor(x: float) -> int: ...
 
 
-@c_intrinsic("trunc")
+@c_intrinsic("trunc", fold="trunc")
 def trunc(x: float) -> int: ...
 
 
-@c_intrinsic("fabs")
+@c_intrinsic("fabs", fold="fabs")
 def fabs(x: float) -> float: ...
 
 
@@ -190,15 +190,15 @@ def fmin(x: float, y: float) -> float: ...
 # ---------------------------------------------------------------
 # Special functions.
 # ---------------------------------------------------------------
-@c_intrinsic("erf")
+@c_intrinsic("erf", fold="erf")
 def erf(x: float) -> float: ...
 
 
-@c_intrinsic("erfc")
+@c_intrinsic("erfc", fold="erfc")
 def erfc(x: float) -> float: ...
 
 
-@c_intrinsic("lgamma")
+@c_intrinsic("lgamma", fold="lgamma")
 def lgamma(x: float) -> float: ...
 
 
