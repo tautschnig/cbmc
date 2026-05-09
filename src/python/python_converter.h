@@ -278,6 +278,18 @@ private:
   /// function scope and 'global' declarations.
   std::string qualify_name(const std::string &name) const;
 
+  /// Materialise a Python string literal as a refined-string
+  /// struct whose content pointer refers to a persistent,
+  /// static-lifetime array symbol. The backing array is one
+  /// byte longer than the logical string and carries a trailing
+  /// NUL, so the same pointer can be handed to C as a
+  /// null-terminated ``char *`` — unlike an inline
+  /// address_of(array_literal[0]), whose temporary storage is
+  /// "dead" at call time from CBMC's safety-check perspective.
+  /// Literals are interned by content to avoid emitting a new
+  /// symbol for every identical literal.
+  exprt build_string_literal(const std::string &s);
+
   /// Return the CBMC type used for Python int.
   typet python_int_type() const
   {
