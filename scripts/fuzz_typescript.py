@@ -392,6 +392,14 @@ def main():
     print()
 
     for i in range(args.iterations):
+        if i > 0 and i % 50 == 0:
+            print(
+                f"[progress] {i}/{args.iterations}  "
+                f"ok={stats['ok']}  assertion_failed={stats['assertion_failed']}  "
+                f"timeouts={stats['timeout']}  crashes={stats['segfault'] + stats['abort']}  "
+                f"skipped={stats['not_type_checking']}",
+                flush=True,
+            )
         seed = base_seed + i
         stats["total"] += 1
         gen = Generator(seed, args.depth)
