@@ -74,6 +74,21 @@ private:
   /// match the C function's argument and return types.
   std::map<irep_idt, std::string> c_intrinsic_map;
 
+  /// Return the mathematical domain predicate for a single-argument
+  /// math-module function. Returns nullopt when the function has no
+  /// domain restriction. Used by the Option-4 domain-check logic
+  /// that handles:
+  ///   * constant in-domain argument  → fold to the exact value
+  ///   * constant out-of-domain       → raise ValueError definitely
+  ///   * non-constant argument        → guarded ValueError + nondet
+  std::optional<exprt>
+  math_function_domain(const std::string &func_name, const exprt &arg) const;
+
+  /// Emit a Python-level ValueError. If ``in_domain`` is true at
+  /// compile time, does nothing. If false/nil, raises definitely.
+  /// Otherwise raises guardedly (if !in_domain: raise ValueError).
+  void emit_value_error(const exprt &in_domain);
+
   /// Current class name (empty when not inside a class method)
   std::string current_class;
 
