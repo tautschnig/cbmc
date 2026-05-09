@@ -238,6 +238,19 @@ string_constraint_generatort::add_axioms_for_function_application(
     return add_axioms_for_is_suffix(expr, true);
   else if(id == ID_cprover_string_contains_func)
     return add_axioms_for_contains(expr);
+  else if(
+    id == ID_cprover_string_match_func ||
+    id == ID_cprover_string_search_func ||
+    id == ID_cprover_string_fullmatch_func)
+  {
+    // Python-re Wave 2 intrinsics. The native (refine-strings)
+    // backend doesn't have regex axioms, so we return a nondet
+    // result with no axioms — a sound over-approximation. The
+    // SMT2 backend (in particular --cvc5) intercepts these
+    // intrinsics in smt2_conv.cpp and emits str.in_re with the
+    // translated regex.
+    return {expr, {}};
+  }
   else if(id == ID_cprover_string_index_of_func)
     return add_axioms_for_index_of(expr);
   else if(id == ID_cprover_string_last_index_of_func)

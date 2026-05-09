@@ -101,18 +101,18 @@ class Pattern:
         self.flags = flags
         self.groups = 0
 
-    def match(self, string, pos: int = 0, endpos: int = 0):
+    def match(self, string: str, pos: int = 0, endpos: int = 0):
         # Route through the Wave-2 intrinsic when possible.
         if __cbmc_re_match(self.pattern, string):
             return Match()
         return None
 
-    def fullmatch(self, string, pos: int = 0, endpos: int = 0):
+    def fullmatch(self, string: str, pos: int = 0, endpos: int = 0):
         if __cbmc_re_fullmatch(self.pattern, string):
             return Match()
         return None
 
-    def search(self, string, pos: int = 0, endpos: int = 0):
+    def search(self, string: str, pos: int = 0, endpos: int = 0):
         if __cbmc_re_search(self.pattern, string):
             return Match()
         return None
@@ -141,7 +141,7 @@ def compile(pattern, flags: int = 0) -> Pattern:
     return Pattern(pattern, flags)
 
 
-def match(pattern, string, flags: int = 0):
+def match(pattern: str, string: str, flags: int = 0):
     # Wave 2: when both pattern and string are Python strs, route
     # through __cbmc_re_match — the front-end lowers this to
     # cprover_string_match_func and the SMT backend ( --cvc5 )
@@ -153,13 +153,13 @@ def match(pattern, string, flags: int = 0):
     return None
 
 
-def fullmatch(pattern, string, flags: int = 0):
+def fullmatch(pattern: str, string: str, flags: int = 0):
     if __cbmc_re_fullmatch(pattern, string):
         return Match()
     return None
 
 
-def search(pattern, string, flags: int = 0):
+def search(pattern: str, string: str, flags: int = 0):
     if __cbmc_re_search(pattern, string):
         return Match()
     return None
