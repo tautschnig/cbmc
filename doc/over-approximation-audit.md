@@ -87,29 +87,35 @@ Each remaining over-approximation has a KNOWNBUG regression test
 that FAILS verification due to the nondet result. When we resolve
 the limitation, the test will pass and be promoted to CORE.
 
-### String.repeat with symbolic count
+### String.repeat with symbolic count — RESOLVED via per-case encoding
+- **Was**: test was KNOWNBUG (symbolic multiplication of result-size)
+- **Now**: test is CORE. For a constant source string and symbolic
+  `count n`, emit `length = src.length * n` via IEEE multiplication,
+  cast to the length type. Content stays nondet.
 - **Test**: `regression/typescript/string-repeat-symbolic`
-- **Why**: result length is `src.length * count`, symbolic
-  multiplication of result-size is expressible but we'd need
-  per-slot `if_exprt` chain over all possible `count` values.
-  Doable but expensive symbolically. Refined string solver would
-  resolve this.
 
-### String.padStart / padEnd with symbolic target length
+### String.padStart / padEnd with symbolic target length — RESOLVED
+- **Was**: test was KNOWNBUG (variable-length padding insert)
+- **Now**: test is CORE. For a constant source string and symbolic
+  target length `n`, emit `length = max(src.length, n)` via
+  `if_exprt`. Content stays nondet.
 - **Test**: `regression/typescript/string-padstart-symbolic`
-- **Why**: similar to repeat — variable-length padding insert.
-  Doable but complex. Refined string solver would resolve.
 
-### String.indexOf with symbolic needle (not just fromIndex)
+### String.indexOf with symbolic needle — RESOLVED
+- **Was**: test was KNOWNBUG (full string matching over symbolic chars)
+- **Now**: test is CORE. Per-candidate-position `if_exprt` chain:
+  for each p in [0, 16), the match predicate is
+  `p + n.length <= s.length AND forall j: j >= n.length OR
+   s.data[p+j] == n.data[j]`. Returns the first matching p or -1.
 - **Test**: `regression/typescript/string-indexof-symbolic-needle`
-- **Why**: searching for a symbolic needle in a symbolic string
-  is genuinely hard — full string matching over symbolic chars.
-  CBMC's refined string solver has `cprover_string_index_of`.
 
-### `+"42"` (string-to-number coercion)
+### `+"42"` (string-to-number coercion) for constant strings — RESOLVED
+- **Was**: test was KNOWNBUG (symbolic string parsing)
+- **Now**: test is CORE for constant-string inputs. Parses digits
+  at conversion time (trimmed). `+"abc"` yields NaN correctly.
 - **Test**: `regression/typescript/string-to-number-coerce`
-- **Why**: symbolic string parsing requires a full atoi encoding.
-  CBMC's refined string solver handles this.
+- **Symbolic strings** still KNOWNBUG
+  (`string-to-number-coerce-symbolic`) — needs refined string solver.
 
 ### Array.splice with symbolic args
 - **Test**: `regression/typescript/array-splice-symbolic`
