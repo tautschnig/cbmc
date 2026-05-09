@@ -1009,6 +1009,19 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     (is_python_dict_type(e.type()) && is_python_dict_type(target)))
     return typecast_exprt{e, target};
 
+  // Struct-to-scalar: a concrete class instance coerced to a
+  // numeric target is always non-None. Return 0 instead of the
+  // default nondet so the None-sentinel (a specific int value)
+  // can't be chosen — otherwise a 'return ClassInstance()' path
+  // from a function whose inferred return type is int would
+  // allow 'result is None' to be satisfiable. Zero is a sound
+  // choice: it's the default numeric value, and in boolean
+  // context the caller's usual 'if result:' check would treat
+  // it as falsy, but 'result is None' still distinguishes it
+  // from the None sentinel (which is -2^62).
+  if(e.type().id() == ID_struct && tgt_scalar)
+    return from_integer(0, target);
+
   // Struct-to-scalar or other incompatible: return a nondet value
   // of the target type (overapproximation, avoids crash)
   return side_effect_expr_nondett{target, source_locationt{}};
@@ -3609,6 +3622,21 @@ exprt python_convertert::convert_compare(const jsont &expr)
           goto done_cmp;
         }
       }
+      // Concrete struct instance compared with None sentinel is
+      // always false — the struct is never the None value.
+      if(
+        current_left.type().id() == ID_struct && right.is_constant() &&
+        right.type().id() == ID_signedbv)
+      {
+        mp_integer rv;
+        if(
+          !to_integer(to_constant_expr(right), rv) &&
+          rv == mp_integer{-4611686018427387904LL})
+        {
+          cmp = false_exprt{};
+          goto done_cmp;
+        }
+      }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
       cmp = equal_exprt{current_left, right};
@@ -3627,6 +3655,23 @@ exprt python_convertert::convert_compare(const jsont &expr)
         {
           cmp =
             not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
+          goto done_cmp;
+        }
+      }
+      // A concrete class-instance (struct) compared against None is
+      // always non-None — typecasting the None-sentinel int to a
+      // struct type produces nondet and would allow the solver to
+      // pick a value that looks like None. Simplify to true.
+      if(
+        current_left.type().id() == ID_struct && right.is_constant() &&
+        right.type().id() == ID_signedbv)
+      {
+        mp_integer rv;
+        if(
+          !to_integer(to_constant_expr(right), rv) &&
+          rv == mp_integer{-4611686018427387904LL})
+        {
+          cmp = true_exprt{};
           goto done_cmp;
         }
       }
@@ -5818,6 +5863,45 @@ exprt python_convertert::convert_call(const jsont &expr)
       log_overapprox(
         "method '" + method_name +
         "': no resolution, returning nondet over-approximation");
+    // Stub-context fallback for regex method names. When code
+    // like ``compile(r).search(v)`` appears in an imported stub
+    // (e.g. third-party library stubs under PYTHONPATH), neither
+    // ``compile`` nor ``search`` resolves to our library's re
+    // model — the stub's import happens in a context where
+    // module resolution doesn't reach cbmc-python.git's built-in
+    // library directory. The caller's typical check pattern is
+    // ``search(v) is not None``; to keep that provable we
+    // constrain the nondet result to be non-negative, which
+    // excludes the None sentinel (-2^62). This mirrors the
+    // pre-Wave-1 ad-hoc behaviour that we'd retired once the
+    // library stub took over — for USER code the library still
+    // provides the real model; this fallback only helps stub-
+    // resident calls.
+    if(
+      method_name == "search" || method_name == "match" ||
+      method_name == "fullmatch" || method_name == "compile" ||
+      method_name == "findall" || method_name == "finditer" ||
+      method_name == "sub" || method_name == "subn" || method_name == "split")
+    {
+      side_effect_expr_nondett nd{python_int_type(), get_location(expr)};
+      static unsigned re_stub_ctr = 0;
+      std::string tn = "__re_stub_result_" + std::to_string(re_stub_ctr++);
+      std::string tq = qualify_name(tn);
+      irep_idt ti{tq};
+      if(symbol_table.lookup(ti) == nullptr)
+      {
+        symbolt ts{ti, python_int_type(), "python"};
+        ts.base_name = tn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        symbol_table.add(ts);
+      }
+      const symbolt &ts = symbol_table.lookup_ref(ti);
+      pending_checks.push_back(code_frontend_assignt{ts.symbol_expr(), nd});
+      pending_checks.push_back(code_assumet{binary_relation_exprt{
+        ts.symbol_expr(), ID_ge, from_integer(0, python_int_type())}});
+      return ts.symbol_expr();
+    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
 

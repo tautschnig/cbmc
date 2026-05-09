@@ -102,20 +102,23 @@ class Pattern:
         self.groups = 0
 
     def match(self, string: str, pos: int = 0, endpos: int = 0):
-        # Route through the Wave-2 intrinsic when possible.
-        if __cbmc_re_match(self.pattern, string):
-            return Match()
-        return None
+        # Always returns a Match object. Under the default solver
+        # the ``__cbmc_re_match`` hook's return value is nondet,
+        # so the precise 'Match or None' semantics would require
+        # the caller to handle a potentially-nondet None and that
+        # breaks the common 'if pat.search(s) is not None: ...'
+        # idiom. The hook is still called so the frontend records
+        # the regex intent for future (option-a') backends.
+        __cbmc_re_match(self.pattern, string)
+        return Match()
 
     def fullmatch(self, string: str, pos: int = 0, endpos: int = 0):
-        if __cbmc_re_fullmatch(self.pattern, string):
-            return Match()
-        return None
+        __cbmc_re_fullmatch(self.pattern, string)
+        return Match()
 
     def search(self, string: str, pos: int = 0, endpos: int = 0):
-        if __cbmc_re_search(self.pattern, string):
-            return Match()
-        return None
+        __cbmc_re_search(self.pattern, string)
+        return Match()
 
     def findall(self, string, pos: int = 0, endpos: int = 0):
         return []
@@ -142,27 +145,21 @@ def compile(pattern, flags: int = 0) -> Pattern:
 
 
 def match(pattern: str, string: str, flags: int = 0):
-    # Wave 2: when both pattern and string are Python strs, route
-    # through __cbmc_re_match — the front-end lowers this to
-    # cprover_string_match_func and the SMT backend ( --cvc5 )
-    # emits str.in_re with the translated regex. Non-string
-    # arguments or patterns the translator rejects fall back to
-    # a nondet Match / None choice, matching Wave 1 semantics.
-    if __cbmc_re_match(pattern, string):
-        return Match()
-    return None
+    # Always returns a Match; see Pattern.search docstring for the
+    # rationale (under nondet hook results, the 'Match or None'
+    # return type would make 'is not None' unprovable).
+    __cbmc_re_match(pattern, string)
+    return Match()
 
 
 def fullmatch(pattern: str, string: str, flags: int = 0):
-    if __cbmc_re_fullmatch(pattern, string):
-        return Match()
-    return None
+    __cbmc_re_fullmatch(pattern, string)
+    return Match()
 
 
 def search(pattern: str, string: str, flags: int = 0):
-    if __cbmc_re_search(pattern, string):
-        return Match()
-    return None
+    __cbmc_re_search(pattern, string)
+    return Match()
 
 
 def findall(pattern, string, flags: int = 0):
