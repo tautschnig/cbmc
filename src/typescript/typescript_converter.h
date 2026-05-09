@@ -67,6 +67,9 @@ private:
     type_cache; // cache for convert_type results
   std::map<std::string, std::string> parent_class; // child -> parent
   std::set<irep_idt> rest_param_functions;
+  // Frozen symbols: symbols for which Object.freeze was called.
+  // Queried by Object.isFrozen and used to suppress property writes.
+  std::set<irep_idt> frozen_symbols;
   // Captured variables: func_id -> [(param_name, outer_symbol_id)]
   std::map<irep_idt, std::vector<std::pair<std::string, irep_idt>>>
     captured_var_map; // functions with rest params

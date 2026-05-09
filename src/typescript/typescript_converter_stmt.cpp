@@ -1853,6 +1853,22 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
     {
       // Check if LHS is a setter property access
       const jsont &lhs_node = json_member(expr_node, "left");
+      // ES2024 §20.1.2.7: If LHS is a property of a frozen object,
+      // the assignment is silently ignored (non-strict mode). We
+      // convert it to a no-op.
+      if(is_kind(lhs_node, "PropertyAccessExpression"))
+      {
+        exprt base_expr =
+          convert_expression(json_member(lhs_node, "expression"));
+        if(
+          base_expr.id() == ID_symbol &&
+          frozen_symbols.count(to_symbol_expr(base_expr).get_identifier()) > 0)
+        {
+          // Still evaluate RHS for side effects, but drop the write.
+          (void)convert_expression(json_member(expr_node, "right"));
+          return code_skipt{};
+        }
+      }
       if(is_kind(lhs_node, "PropertyAccessExpression"))
       {
         exprt obj_expr =

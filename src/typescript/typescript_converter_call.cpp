@@ -483,7 +483,40 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           // NaN on only one side → false
           if(is_nan_const(left) || is_nan_const(right))
             return false_exprt{};
-          // Both non-NaN symbolic: use ieee_float_equal
+          // Signed-zero distinction: +0 and -0 are NOT the same value
+          // per ES2024 §7.2.11 SameValue. IEEE float_equal considers
+          // them equal, so we detect the case explicitly when both
+          // sides are constant-zero and differ in sign.
+          auto is_zero_const = [](const exprt &e) -> std::optional<bool>
+          {
+            if(!e.is_constant() || e.type().id() != ID_floatbv)
+              return std::nullopt;
+            ieee_floatt v{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            v.from_expr(to_constant_expr(e));
+            if(!v.is_zero())
+              return std::nullopt;
+            return v.get_sign(); // true = negative zero
+          };
+          auto sign_minus = [](const exprt &e) -> bool
+          { return e.id() == ID_unary_minus; };
+          // Handle constant -0 that's stored as unary_minus{0}.
+          auto ls = is_zero_const(left);
+          if(!ls.has_value() && sign_minus(left))
+            ls = is_zero_const(left.operands()[0]).has_value() &&
+                     !is_zero_const(left.operands()[0]).value()
+                   ? std::optional<bool>(true)
+                   : std::nullopt;
+          auto rs = is_zero_const(right);
+          if(!rs.has_value() && sign_minus(right))
+            rs = is_zero_const(right.operands()[0]).has_value() &&
+                     !is_zero_const(right.operands()[0]).value()
+                   ? std::optional<bool>(true)
+                   : std::nullopt;
+          if(ls.has_value() && rs.has_value() && ls.value() != rs.value())
+            return false_exprt{};
+          // Both non-NaN non-opposite-sign-zero symbolic: IEEE equal.
           return ieee_float_equal_exprt{left, right};
         }
         if(is_typescript_string_type(left.type()))
@@ -540,6 +573,29 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
         }
         return struct_exprt{merged_values, struct_typet{merged_components}};
+      }
+      // ES2024 §20.1.2.7: Object.freeze(o) — prevents property writes.
+      // Returns the argument. We record the symbol name so isFrozen and
+      // assignment conversion can check frozenness.
+      if(method == "freeze" && !call_args.empty())
+      {
+        exprt src = call_args[0];
+        if(src.id() == ID_symbol)
+          frozen_symbols.insert(to_symbol_expr(src).get_identifier());
+        return src;
+      }
+      // ES2024 §20.1.2.15: Object.isFrozen(o)
+      if(method == "isFrozen" && !call_args.empty())
+      {
+        exprt src = call_args[0];
+        if(src.id() == ID_symbol)
+        {
+          bool is_frozen =
+            frozen_symbols.count(to_symbol_expr(src).get_identifier()) > 0;
+          return is_frozen ? exprt{true_exprt{}} : exprt{false_exprt{}};
+        }
+        // Non-symbol argument: conservatively return false (unfrozen).
+        return false_exprt{};
       }
       // ES2024 §20.1.2.6: Object.fromEntries — iterable of [key, value]
       // pairs → object.

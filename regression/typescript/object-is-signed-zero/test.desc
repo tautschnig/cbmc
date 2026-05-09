@@ -1,8 +1,7 @@
-KNOWNBUG
+CORE
 main.ts
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-Object.is does not distinguish +0 from -0
