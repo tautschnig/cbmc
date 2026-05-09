@@ -1,0 +1,12 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Resolving import: functools \xe2\x86\x92 .*src/python/library/functools\.py$
+^Resolving import: pathlib \xe2\x86\x92 .*src/python/library/pathlib\.py$
+^Resolving import: enum \xe2\x86\x92 .*src/python/library/enum\.py$
+--
+^warning: ignoring
+^no body for callee
