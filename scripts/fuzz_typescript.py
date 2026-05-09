@@ -109,24 +109,43 @@ class Generator:
         # Optionally emit a class declaration.
         if self.rng.random() < 0.2:
             stmts.append(self.gen_class_decl())
+        # Optionally emit inheritance.
+        if self.rng.random() < 0.15:
+            stmts.append(self.gen_inheritance_stmt())
         for _ in range(n_stmts):
             r = self.rng.random()
-            if r < 0.18:
+            if r < 0.10:
                 stmts.append(self.gen_declaration())
-            elif r < 0.30:
+            elif r < 0.18:
                 stmts.append(self.gen_array_stmt())
-            elif r < 0.40:
+            elif r < 0.26:
                 stmts.append(self.gen_array_method_stmt())
-            elif r < 0.48:
+            elif r < 0.32:
                 stmts.append(self.gen_map_set_stmt())
-            elif r < 0.60:
+            elif r < 0.40:
                 stmts.append(self.gen_if_stmt())
-            elif r < 0.70:
+            elif r < 0.46:
                 stmts.append(self.gen_for_stmt())
-            elif r < 0.78:
+            elif r < 0.52:
                 stmts.append(self.gen_try_catch_stmt())
-            elif r < 0.86:
+            elif r < 0.58:
                 stmts.append(self.gen_async_stmt())
+            elif r < 0.64:
+                stmts.append(self.gen_destructuring_stmt())
+            elif r < 0.70:
+                stmts.append(self.gen_optional_chain_stmt())
+            elif r < 0.76:
+                stmts.append(self.gen_promise_chain_stmt())
+            elif r < 0.81:
+                stmts.append(self.gen_generic_call_stmt())
+            elif r < 0.86:
+                stmts.append(self.gen_throw_catch_stmt())
+            elif r < 0.90:
+                stmts.append(self.gen_switch_stmt())
+            elif r < 0.94:
+                stmts.append(self.gen_template_literal_stmt())
+            elif r < 0.97:
+                stmts.append(self.gen_arrow_fn_stmt())
             else:
                 stmts.append(self.gen_assertion())
         return "\n".join(stmts) + "\n"
@@ -227,6 +246,124 @@ class Generator:
         return (
             f"async function {name}(): Promise<number> {{ return {val}; }}\n"
             f"const _r{self.var_counter} = await {name}();"
+        )
+
+    def gen_destructuring_stmt(self) -> str:
+        """Destructuring assignment (object or array)."""
+        if self.rng.random() < 0.5:
+            # Object destructuring
+            v1, v2 = self.new_var(), self.new_var()
+            e1 = self.gen_num_expr(self.max_depth - 1)
+            e2 = self.gen_num_expr(self.max_depth - 1)
+            return (
+                f"const _obj{self.var_counter} = {{ {v1}: {e1}, {v2}: {e2} }};\n"
+                f"const {{ {v1}: a{self.var_counter}, {v2}: b{self.var_counter} }}"
+                f" = _obj{self.var_counter};"
+            )
+        # Array destructuring
+        elts = [self.gen_num_expr(self.max_depth - 1) for _ in range(3)]
+        n = self.var_counter
+        self.var_counter += 1
+        return (
+            f"const _arr{n}: number[] = [{', '.join(elts)}];\n"
+            f"const [a{n}, b{n}, c{n}] = _arr{n};"
+        )
+
+    def gen_optional_chain_stmt(self) -> str:
+        """Optional chaining and nullish coalescing."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        # Object literal with optional property access
+        return (
+            f"const _oc{n}: {{ x?: number }} = {{ x: {v} }};\n"
+            f"const val{n}: number = _oc{n}?.x ?? 0;\n"
+            f"console.assert(val{n} === val{n});"
+        )
+
+    def gen_promise_chain_stmt(self) -> str:
+        """Promise chain with .then / .catch."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"const _p{n} = Promise.resolve({v}).then("
+            f"(x: number) => x + 1).catch((e) => 0);"
+        )
+
+    def gen_generic_call_stmt(self) -> str:
+        """Generic function call with explicit type arguments."""
+        n = self.new_var()
+        v = self.gen_num_expr(self.max_depth - 1)
+        s = self.rng.choice(STRING_LITERALS)
+        return (
+            f"function {n}<T>(x: T): T {{ return x; }}\n"
+            f"const _g1_{self.var_counter} = {n}<number>({v});\n"
+            f"const _g2_{self.var_counter} = {n}<string>({s});"
+        )
+
+    def gen_throw_catch_stmt(self) -> str:
+        """try/catch with actual throw."""
+        inner = self.gen_assertion()
+        n = self.var_counter
+        self.var_counter += 1
+        return (
+            f"try {{\n"
+            f"  if ({self.rng.choice(['false', 'true'])}) "
+            f"throw new Error('e{n}');\n"
+            f"  {inner}\n"
+            f"}} catch (e) {{\n"
+            f"  console.assert(true);\n"
+            f"}}"
+        )
+
+    def gen_switch_stmt(self) -> str:
+        """Switch statement on a number."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"const _s{n}: number = {v};\n"
+            f"switch (_s{n}) {{\n"
+            f"  case 0: break;\n"
+            f"  case 1: break;\n"
+            f"  default: break;\n"
+            f"}}"
+        )
+
+    def gen_template_literal_stmt(self) -> str:
+        """Template literal."""
+        n = self.var_counter
+        self.var_counter += 1
+        s = self.gen_string_expr(self.max_depth - 1)
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"const _tl{n}: string = `prefix ${{{s}}} middle ${{{v}}} suffix`;\n"
+            f"console.assert(_tl{n}.length >= 0);"
+        )
+
+    def gen_arrow_fn_stmt(self) -> str:
+        """Arrow function definition and application."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"const _af{n} = (x: number): number => x * 2;\n"
+            f"const _av{n} = _af{n}({v});"
+        )
+
+    def gen_inheritance_stmt(self) -> str:
+        """Class inheritance."""
+        base = f"B{self.var_counter}"
+        sub = f"S{self.var_counter}"
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"class {base} {{ x: number; constructor(v: number) "
+            f"{{ this.x = v; }} get(): number {{ return this.x; }} }}\n"
+            f"class {sub} extends {base} {{ y: number; "
+            f"constructor(v: number) {{ super(v); this.y = v; }} }}\n"
+            f"const _inst{self.var_counter} = new {sub}({v});"
         )
 
     def gen_if_stmt(self) -> str:

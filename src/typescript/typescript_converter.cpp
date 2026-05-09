@@ -256,6 +256,12 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
         std::string ftype = field.substr(colon + 1);
         while(!fname.empty() && fname.back() == ' ')
           fname.pop_back();
+        // Optional field marker '?' is part of the type shape but not
+        // the identifier — strip it so access by property name matches.
+        // ES2024 §13.3.9: optional property access is handled via the
+        // optional-chaining operator, not the name.
+        if(!fname.empty() && fname.back() == '?')
+          fname.pop_back();
         while(!ftype.empty() && ftype[0] == ' ')
           ftype.erase(0, 1);
         st.components().push_back(
@@ -935,6 +941,62 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     std::string head_text =
       json_string(json_member(json_member(node, "head"), "text"));
     result += head_text;
+    // Recursive numeric-constant folder for template literal interpolation.
+    // Handles constants, unary_minus, and binary arithmetic when all
+    // leaves are constants.
+    std::function<std::optional<double>(const exprt &)> fold_num =
+      [&](const exprt &e) -> std::optional<double>
+    {
+      if(e.is_constant() && e.type().id() == ID_floatbv)
+      {
+        ieee_floatt fv{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fv.from_expr(to_constant_expr(e));
+        if(fv.is_NaN() || fv.is_infinity())
+          return std::nullopt;
+        return std::stod(fv.to_ansi_c_string());
+      }
+      if(e.id() == ID_symbol)
+      {
+        const symbolt *ns =
+          symbol_table.lookup(to_symbol_expr(e).get_identifier());
+        if(ns && !ns->value.is_nil())
+          return fold_num(ns->value);
+        return std::nullopt;
+      }
+      if(e.id() == ID_unary_minus && e.operands().size() == 1)
+      {
+        auto v = fold_num(e.operands()[0]);
+        if(v.has_value())
+          return -v.value();
+        return std::nullopt;
+      }
+      if(e.operands().size() >= 2)
+      {
+        auto l = fold_num(e.operands()[0]);
+        auto r = fold_num(e.operands()[1]);
+        if(!l.has_value() || !r.has_value())
+          return std::nullopt;
+        if(e.id() == ID_plus || e.id() == ID_floatbv_plus)
+          return l.value() + r.value();
+        if(e.id() == ID_minus || e.id() == ID_floatbv_minus)
+          return l.value() - r.value();
+        if(e.id() == ID_mult || e.id() == ID_floatbv_mult)
+          return l.value() * r.value();
+        if((e.id() == ID_div || e.id() == ID_floatbv_div) && r.value() != 0.0)
+          return l.value() / r.value();
+      }
+      return std::nullopt;
+    };
+    auto num_to_text = [](double d) -> std::string
+    {
+      if(d == std::floor(d) && std::abs(d) < 1e15)
+        return std::to_string(static_cast<long long>(d));
+      std::ostringstream oss;
+      oss << d;
+      return oss.str();
+    };
     const jsont &spans = json_member(node, "templateSpans");
     if(spans.is_array())
     {
@@ -945,38 +1007,20 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         std::string sv = extract_string_value(expr);
         if(!sv.empty())
           result += sv.substr(2);
-        else if(expr.id() == ID_symbol && expr.type().id() == ID_floatbv)
+        else if(expr.type().id() == ID_floatbv)
         {
-          // Try to resolve symbol to constant value
-          const symbolt *ns =
-            symbol_table.lookup(to_symbol_expr(expr).get_identifier());
-          if(ns && !ns->value.is_nil() && ns->value.is_constant())
-          {
-            ieee_floatt fv{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fv.from_expr(to_constant_expr(ns->value));
-            double dval = std::stod(fv.to_ansi_c_string());
-            if(dval == std::floor(dval) && std::abs(dval) < 1e15)
-              result += std::to_string(static_cast<long long>(dval));
-            else
-              result += fv.to_ansi_c_string();
-          }
+          auto v = fold_num(expr);
+          if(v.has_value())
+            result += num_to_text(v.value());
           else
             all_const = false;
         }
-        else if(expr.is_constant() && expr.type().id() == ID_floatbv)
+        else if(expr.type().id() == ID_bool)
         {
-          // Convert constant number to string
-          ieee_floatt fv{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          fv.from_expr(to_constant_expr(expr));
-          double dval = std::stod(fv.to_ansi_c_string());
-          if(dval == std::floor(dval) && std::abs(dval) < 1e15)
-            result += std::to_string(static_cast<long long>(dval));
+          if(expr.is_constant())
+            result += (expr.is_true() ? "true" : "false");
           else
-            result += fv.to_ansi_c_string();
+            all_const = false;
         }
         else
           all_const = false;
