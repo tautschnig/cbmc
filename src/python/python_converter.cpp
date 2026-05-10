@@ -2482,13 +2482,32 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return std::move(tmp);
   }
 
-  // Type promotion: if either operand is float, promote both
+  // Type promotion: Python promotes bool → int → float. For
+  // BinOp we widen to whichever side is more numerically
+  // general.
   if(left.type() != right.type())
   {
     if(left.type().id() == ID_floatbv)
-      right = typecast_exprt{right, left.type()};
+      right = safe_typecast(right, left.type());
     else if(right.type().id() == ID_floatbv)
-      left = typecast_exprt{left, right.type()};
+      left = safe_typecast(left, right.type());
+    else if(left.type().id() == ID_bool && right.type().id() == ID_signedbv)
+      left = safe_typecast(left, right.type());
+    else if(right.type().id() == ID_bool && left.type().id() == ID_signedbv)
+      right = safe_typecast(right, left.type());
+    else if(
+      left.type().id() == ID_signedbv && right.type().id() == ID_signedbv &&
+      to_signedbv_type(left.type()).get_width() !=
+        to_signedbv_type(right.type()).get_width())
+    {
+      // Mixed-width int: widen to the larger.
+      if(
+        to_signedbv_type(left.type()).get_width() >
+        to_signedbv_type(right.type()).get_width())
+        right = safe_typecast(right, left.type());
+      else
+        left = safe_typecast(left, right.type());
+    }
   }
 
   if(op == "Add")
