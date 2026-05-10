@@ -5593,6 +5593,49 @@ exprt python_convertert::convert_call(const jsont &expr)
               default_val = safe_typecast(
                 convert_expression(*arg_it), vals_type.element_type());
 
+            // Constant-key fast path: same logic as subscript read.
+            // When the dict value is a literal struct or a tracked
+            // dict_literal symbol, and the key is a string constant,
+            // resolve at conversion time.
+            auto key_str = extract_string_value(key_expr);
+            if(key_str.has_value())
+            {
+              const exprt *dict_val = nullptr;
+              if(obj.id() == ID_struct)
+                dict_val = &obj;
+              else if(obj.id() == ID_symbol)
+              {
+                auto it =
+                  dict_literals.find(to_symbol_expr(obj).get_identifier());
+                if(it != dict_literals.end())
+                  dict_val = &it->second;
+              }
+              if(
+                dict_val != nullptr && dict_val->operands().size() >= 3 &&
+                dict_val->operands()[0].is_constant())
+              {
+                mp_integer len_val;
+                if(!to_integer(
+                     to_constant_expr(dict_val->operands()[0]), len_val))
+                {
+                  const exprt &keys_arr = dict_val->operands()[1];
+                  const exprt &vals_arr = dict_val->operands()[2];
+                  for(mp_integer i = 0; i < len_val; ++i)
+                  {
+                    auto idx = i.to_ulong();
+                    if(idx < keys_arr.operands().size())
+                    {
+                      auto kv = extract_string_value(keys_arr.operands()[idx]);
+                      if(kv.has_value() && kv.value() == key_str.value())
+                        return vals_arr.operands()[idx];
+                    }
+                  }
+                  // Key not present in the literal: default path.
+                  return default_val;
+                }
+              }
+            }
+
             exprt result = default_val;
             for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
             {
