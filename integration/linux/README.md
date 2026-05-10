@@ -69,8 +69,15 @@ Completed through commit — see `git log -- integration/linux/`:
   [`scan/run.sh`](scan/run.sh).  Also updates LIM-002 to RESOLVED
   via `--dfcc`, LIM-001 to RESOLVED via cleaning
   `regression/cbmc-library/`.
+- M4b: kernel adapter under
+  [`scan/adapters/`](scan/adapters/); `scan.py` routes real kernel
+  source through the adapter, the goto-level contract substitution
+  is verified on Linux 5.10 `crypto/algif_aead.c`.  Resolves
+  LIM-004 (the original "gcc inlines the setters" diagnosis was
+  wrong; goto-cc preserves the calls and `--replace-call-with-contract`
+  works as intended).  Remaining cbmc outcome on that file is
+  `timeout` (LIM-006).
 
-In progress / next: M4b (real-kernel link-up via a source-level
-adapter that intercepts `static inline` kernel setters before GCC
-inlines them; see
-[`scan/README.md`](scan/README.md)).
+In progress / next: M4c (aggressive stubbing so the real-kernel
+scan concludes `failed`/`successful` rather than `timeout`; SARIF
+output, picking up CBMC upstream PR #8835).

@@ -179,6 +179,23 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
 }
 
 
+# Per-module kernel adapter: path to the adapter source file plus the
+# extra goto-cc inputs needed alongside it (typically the shared
+# page_provenance ghost state).
+KERNEL_ADAPTERS: dict[str, dict] = {
+    "aead": {
+        "adapter": SCRIPT_DIR / "adapters" / "aead_kernel_adapter.c",
+        "deps": [PROPERTIES_DIR / "page_provenance" / "page_provenance.c"],
+    },
+}
+
+
+# Budget for cbmc runs against real kernel binaries, in seconds.
+KERNEL_CBMC_TIMEOUT = 180
+# Budget for cbmc runs on property-module-native harnesses.
+NATIVE_CBMC_TIMEOUT = 60
+
+
 def run_cbmc_native(
     module: str,
     target: Path,
@@ -239,20 +256,143 @@ def run_cbmc_native(
     return mr
 
 
+def run_cbmc_kernel(
+    module: str,
+    target: Path,
+    tmp: Path,
+) -> ModuleReport:
+    """Run the CBMC stage on real kernel source using the module's
+    kernel adapter.  Compiles the target file with scan/compile_file.sh
+    if a LINUX_TREE environment variable identifies its root, links
+    with the adapter + page_provenance, applies the contract, and runs
+    cbmc with `_aead_recvmsg`-style entry-point selection.
+
+    Outcomes are reported honestly:
+      - `failed` if cbmc reports VERIFICATION FAILED;
+      - `successful` if cbmc reports VERIFICATION SUCCESSFUL;
+      - `timeout` if cbmc exceeds its budget (this is the common case
+        today; see LIM-006 in CBMC_LIMITATIONS.md);
+      - `error` for anything else.
+    """
+    spec = KERNEL_ADAPTERS.get(module)
+    if spec is None:
+        return ModuleReport(
+            module=module, cbmc_status="adapter-needed",
+            cbmc_notes=f"no kernel adapter declared for module '{module}'",
+        )
+
+    goto_cc = tool("GOTOCC", "goto-cc")
+    goto_instrument = tool("GI", "goto-instrument")
+    cbmc = tool("CBMC", "cbmc")
+
+    # Compile the kernel source to a goto binary.  Use the scan
+    # helper to pick up the right flags.
+    ktree = os.environ.get("LINUX_TREE")
+    if not ktree:
+        return ModuleReport(
+            module=module, cbmc_status="error",
+            cbmc_notes=(
+                "LINUX_TREE is not set; scan.py cannot compile "
+                f"{target} with scan/compile_file.sh.  Set LINUX_TREE "
+                "to the kernel source root."
+            ),
+        )
+    try:
+        rel = target.resolve().relative_to(Path(ktree).resolve())
+    except ValueError:
+        return ModuleReport(
+            module=module, cbmc_status="error",
+            cbmc_notes=(
+                f"{target} is not inside $LINUX_TREE={ktree}; cannot "
+                "determine the kernel-relative path needed by "
+                "scan/compile_file.sh."
+            ),
+        )
+
+    kernel_gb = tmp / f"{target.stem}.kernel.gb"
+    subprocess.run(
+        [str(SCRIPT_DIR / "compile_file.sh"), ktree, str(rel), str(kernel_gb)],
+        check=True, capture_output=True, text=True,
+    )
+
+    # Link kernel binary + adapter + deps.
+    linked_gb = tmp / f"{target.stem}.linked.gb"
+    link_inputs = [str(kernel_gb), str(spec["adapter"])] \
+        + [str(p) for p in spec["deps"]]
+    subprocess.run(
+        [str(goto_cc), *link_inputs, "-o", str(linked_gb)],
+        check=True, capture_output=True, text=True,
+    )
+
+    # Replace the contract function's calls with the adapter-attached
+    # contract.
+    contract_args: list[str] = []
+    for fn in CONTRACT_FUNCTIONS.get(module, []):
+        contract_args += ["--replace-call-with-contract", fn]
+    trans_gb = tmp / f"{target.stem}.trans.gb"
+    subprocess.run(
+        [str(goto_instrument), *contract_args, str(linked_gb), str(trans_gb)],
+        check=True, capture_output=True, text=True,
+    )
+
+    # Pick a per-module kernel entry point.  For aead this is
+    # _aead_recvmsg in algif_aead.c.  If the file does not have this
+    # symbol, fall back to the file's main if any.
+    entry_candidates = {"aead": "_aead_recvmsg"}
+    entry = entry_candidates.get(module, "main")
+
+    mr = ModuleReport(module=module)
+    try:
+        result = subprocess.run(
+            [str(cbmc), str(trans_gb),
+             "--function", entry,
+             "--unwind", "2", "--no-unwinding-assertions",
+             "--no-standard-checks"],
+            capture_output=True, text=True, timeout=KERNEL_CBMC_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        mr.cbmc_status = "timeout"
+        mr.cbmc_notes = (
+            f"cbmc exceeded {KERNEL_CBMC_TIMEOUT}s on entry '{entry}'. "
+            "This is the LIM-006 state-explosion case; mitigation "
+            "requires aggressive stubbing of kernel helpers (see "
+            "CBMC_LIMITATIONS.md)."
+        )
+        return mr
+
+    combined = result.stdout + result.stderr
+    if "VERIFICATION SUCCESSFUL" in combined:
+        mr.cbmc_status = "successful"
+    elif "VERIFICATION FAILED" in combined:
+        mr.cbmc_status = "failed"
+        for line in combined.splitlines():
+            m = re.match(r"^\[([^\]]+)\]\s+(.*?)\s*:\s*FAILURE$", line)
+            if m:
+                mr.cbmc_failures.append(CbmcFailure(
+                    assertion=m.group(1),
+                    location=m.group(2),
+                ))
+    else:
+        mr.cbmc_status = "error"
+        mr.cbmc_notes = f"cbmc exit {result.returncode} on entry '{entry}'"
+    return mr
+
+
 def run_cbmc_adapter_pending(
     module: str,
 ) -> ModuleReport:
-    """For real kernel source: the kernel adapter is M4b work, not yet
-    in tree.  Report the status honestly."""
+    """Fallback when no kernel adapter is available for this module
+    yet.  New modules should supply an entry in KERNEL_ADAPTERS."""
     return ModuleReport(
         module=module,
         cbmc_status="adapter-needed",
         cbmc_notes=(
-            "Real kernel source has the module's setters inlined by GCC "
-            "before goto-cc sees them; the CBMC stage requires a "
-            "source-level adapter (-include) to intercept the setters "
-            "via preprocessor macros.  This is milestone M4b; see "
-            "integration/linux/scan/README.md."
+            f"No kernel adapter registered for module '{module}'.  "
+            "See scan/adapters/ for the aead adapter used as a model; "
+            "each new module annotated with contracts on static-inline "
+            "kernel API needs its own adapter that (a) re-implements "
+            "any predicate walkers against the kernel's struct layout "
+            "and (b) declares the annotated function with the contract."
         ),
     )
 
@@ -278,7 +418,20 @@ def scan_file(target: Path, tmp: Path) -> FileReport:
                     mr.cbmc_notes = f"{e.cmd[0]}: {e.returncode}"
                 mr.cocci_hits = hits
             else:
-                mr = run_cbmc_adapter_pending(module)
+                # Real kernel source path — use the kernel adapter if
+                # this module has one registered; fall back to an
+                # honest "adapter-needed" report otherwise.
+                if module in KERNEL_ADAPTERS:
+                    try:
+                        mr = run_cbmc_kernel(module, target, tmp)
+                    except subprocess.CalledProcessError as e:
+                        mr.cbmc_status = "error"
+                        mr.cbmc_notes = (
+                            f"{os.path.basename(str(e.cmd[0]))} exit "
+                            f"{e.returncode}: {e.stderr[:200] if e.stderr else ''}"
+                        )
+                else:
+                    mr = run_cbmc_adapter_pending(module)
                 mr.cocci_hits = hits
         report.modules.append(mr)
     return report

@@ -48,54 +48,54 @@ For each input file, and for each property module in
    against the file.  Collect line-level hits.
 2. **Triage.**  If the file includes one of the property module
    headers (`page_provenance.h`, `scatterlist.h`, `aead.h`) the
-   driver has enough information to run CBMC directly.  Otherwise —
-   real kernel source — the driver reports
-   `cbmc_status: "adapter-needed"`.  This is the current M4a /
-   M4b boundary; see below.
-3. **CBMC run** (for scannable cases).  Compile the input together
-   with all property module sources via `goto-cc`, apply
-   `goto-instrument --replace-call-with-contract` for each of the
-   module's annotated functions, invoke `cbmc`, parse the output for
-   `VERIFICATION {SUCCESSFUL,FAILED}` plus any named `[…]: FAILURE`
-   assertions, and record the result in the report.
+   driver runs CBMC directly against a property-module link.
+   Otherwise — real kernel source — the driver picks up the
+   module's kernel adapter from [`adapters/`](adapters/) and links
+   the adapter alongside the kernel goto binary and
+   `page_provenance/page_provenance.c`.
+3. **CBMC run.**  Compile + `goto-instrument
+   --replace-call-with-contract <annotated_fn>` + `cbmc`.  The
+   output is parsed for `VERIFICATION {SUCCESSFUL,FAILED}` plus any
+   named `[…]: FAILURE` lines, and a per-module status is recorded:
+   `successful`, `failed`, `timeout` (LIM-006 on real kernel today),
+   or `error`.
 
-The summary printed on stdout is a two-level list (file → module);
-the JSON is a strict serialisation of the internal report objects.
+The JSON report field `cbmc_status` carries one of those values
+verbatim.
 
-## M4a vs. M4b scope
+## Status on real kernel source
 
-M4a (this directory today) covers:
+As of M4b: the end-to-end pipeline produces the correct goto-level
+transformation on `crypto/algif_aead.c` — the contract ASSERT lands
+at the expected `aead_request_set_crypt` call site inside
+`_aead_recvmsg`.  The subsequent `cbmc` run on unstubbed
+`_aead_recvmsg` hits the state-explosion case documented in
+[LIM-006](../CBMC_LIMITATIONS.md); `scan.py` reports
+`cbmc_status: "timeout"`.
 
-- Automation of the prefilter + CBMC chain for property-module-native
-  input (e.g. CVE regression harnesses that `#include` the module
-  headers).  Demonstrated by `run.sh` on
-  `../properties/aead/test_copyfail.c`.
-- Accurate reporting on real kernel input: the prefilter runs, the
-  hit line is recorded, and the report is honest about why a full
-  proof/refutation cannot yet be produced.
-- Structured JSON output suitable for downstream tooling (CI, SARIF
-  conversion, dashboards).
+Making real-kernel `cbmc_status` flip to `failed` or `successful`
+needs aggressive stubbing of the kernel helpers
+`_aead_recvmsg` calls transitively — `af_alg_wait_for_data`,
+`af_alg_alloc_areq`, `af_alg_get_rsgl`, `af_alg_count_tsgl`,
+`sock_kmalloc`, `crypto_aead_copy_sgl`, `af_alg_pull_tsgl`.  That's
+the next milestone (M4c).
 
-M4b (next session) will add:
+## M4a vs. M4b vs. M4c scope
 
-- **Source-level kernel adapter.** Use `-include` ordering plus
-  macros to intercept each module's annotated `static inline`
-  kernel function at preprocessing time, forwarding to a
-  contract-carrying wrapper that lives alongside the property
-  module.  This gets around GCC inlining happening before goto-cc
-  can see the call sites (see LIM-004 in
-  [`../CBMC_LIMITATIONS.md`](../CBMC_LIMITATIONS.md), updated in
-  M3-stretch).
-- **Aggressive stubbing** of kernel helpers not directly relevant
-  to the property being checked, to keep `cbmc` runs tractable on
-  real kernel functions.  See LIM-006.
-- **Multi-function entry-point discovery** and per-function CBMC
-  budgets, so that scan.py can report per-function results within
-  a file.
-
-When M4b lands, the only change to M4a's API will be that files
-previously reported as `adapter-needed` will instead return
-`successful` or `failed` with a full trace.
+- **M4a (landed earlier).**  Prefilter automation, CBMC run on
+  property-module-native tests, JSON report.
+- **M4b (this directory today).**  Kernel adapter under
+  [`adapters/`](adapters/), `scan.py` routes real kernel source
+  through the adapter, the goto-level contract substitution is
+  verified on `crypto/algif_aead.c`.  Remaining outcome on that file
+  is `timeout` (LIM-006).
+- **M4c (next).**  Aggressive stubbing of kernel helpers so the cbmc
+  run on real `_aead_recvmsg` either concludes `failed` (with a
+  reproducible trace of the Copy Fail precondition violation) or
+  `successful`.  Also: SARIF report emission (CBMC upstream proposal
+  at <https://github.com/diffblue/cbmc/pull/8835>); convert our
+  `cbmc-linux-scan.v1` JSON to SARIF or delegate to CBMC's native
+  output once merged.
 
 ## Coccinelle rule style
 

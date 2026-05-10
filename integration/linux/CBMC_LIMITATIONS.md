@@ -116,15 +116,49 @@ even after switching to DFCC.
 for a small CBMC contribution to convert the invariant-violation
 into a diagnostic exit.
 
-## LIM-004 — Inlined `static inline` kernel functions are not directly replaceable by a contract
+## LIM-004 — (corrected in M4b) goto-cc preserves kernel inline calls; contract replacement works
 
 **First hit:** M3 stretch, `crypto/algif_aead.c` from Linux 5.10.
+**Status:** **RESOLVED.**  My original diagnosis was wrong.
 
-Unchanged from the original entry.  Two-step workaround
-(`--remove-function-body` on the kernel binary, then relink with the
-property module) remains the plan for M4.  DFCC does not affect
-this limitation — it concerns symbol linkage, not contract
-enforcement.
+Earlier I had claimed that the kernel's `static inline` setters
+(`aead_request_set_crypt`, `sg_chain`, ...) were inlined by GCC
+before `goto-cc` saw them, leaving no call sites for
+`goto-instrument --replace-call-with-contract` to abstract.  That is
+false.  Inspecting the actual goto binary with
+`goto-instrument --show-goto-functions` shows real `CALL
+aead_request_set_crypt(...)` instructions inside `_aead_recvmsg`,
+and `goto-instrument --replace-call-with-contract
+aead_request_set_crypt` substitutes the contract's ASSERT at those
+call sites cleanly.  See `scan/adapters/aead_kernel_adapter.c` for
+the working adapter.
+
+The kernel's `static` functions do undergo name-mangling in
+goto-cc's goto binary (e.g. symbol names like
+`__CPROVER_file_local_<hash>_<file>_<name>$object`), which would be
+a concern if our adapter needed to call any of them by name; in
+that situation we would use `goto-cc --export-file-local-symbols`
+(coarse) or the `crangler` tool (preferred) to expose the symbol.
+For the aead adapter we only needed the kernel's non-static
+`aead_request_set_crypt` (which is `static inline` but declared
+non-static from goto-cc's perspective) plus our own re-implementation
+of the scatterlist walkers, so neither tool was needed.
+
+## LIM-004a — `sg_next` not materialised in `crypto/algif_aead.c`'s goto binary
+
+**First hit:** M4b adapter design, `crypto/algif_aead.c` from Linux 5.10.
+
+Although `sg_page` is present in the goto binary (used elsewhere in
+the file), `sg_next` — also `static inline` — is not, because the
+file does not call it directly.  An adapter that wants to walk a
+kernel scatterlist therefore cannot rely on `sg_next` being linkable
+from the binary.
+
+**Workaround.** The aead adapter re-implements the scatterlist walk
+against the kernel's bit-packed `page_link` layout directly
+(matching `include/linux/scatterlist.h`).  The implementation is
+small (~20 lines) and does not introduce a linkage dependency on any
+static inline kernel helper.
 
 ## LIM-005 — Preprocessing depends on the host glibc laying out a header that recent glibc removed
 
@@ -138,8 +172,38 @@ Unchanged.  Environmental; not a CBMC issue.
 **First hit:** M3 stretch, running `cbmc --function _aead_recvmsg` on
 the compiled `crypto/algif_aead.c`.
 
-Unchanged.  Resolved by the M4 pipeline design (aggressive
-abstraction via `--replace-call-with-contract` for every annotated
-primitive, `--drop-unused-functions`, `--remove-function-body` for
-kernel helpers whose behaviour is irrelevant to the property being
-checked).
+Reconfirmed in M4b: with the aead kernel adapter linked in and
+`--replace-call-with-contract aead_request_set_crypt` applied, the
+goto binary's `_aead_recvmsg` carries the precondition ASSERT at the
+correct call site, but `cbmc --function _aead_recvmsg --unwind 2` on
+that binary does not complete within a 180-second budget
+(`scan.py` reports `cbmc_status: "timeout"` for this case).
+
+**Workaround direction** (next milestone): aggressive abstraction of
+the kernel helpers that `_aead_recvmsg` calls transitively —
+`af_alg_wait_for_data`, `af_alg_alloc_areq`, `af_alg_get_rsgl`,
+`af_alg_count_tsgl`, `sock_kmalloc`, `crypto_aead_copy_sgl`,
+`af_alg_pull_tsgl`, etc.  `goto-instrument --generate-function-body
+'.*' --generate-function-body-options 'assume-false'` on its own is
+insufficient; what is needed is per-helper havocing that preserves
+the shape of the scatterlists and request object so the reachable
+path to `aead_request_set_crypt` is exercisable.  Tracked as
+follow-up M4c work.
+
+## LIM-007 — No SARIF output from CBMC (upstream PR #8835)
+
+**First hit:** M4a report-format planning.
+
+The scan driver (`scan/scan.py`) currently emits a custom JSON
+schema (`cbmc-linux-scan.v1`).  SARIF is the standard static-analysis
+interchange format; most CI dashboards consume it directly.  CBMC
+itself has no SARIF producer yet, but there is an upstream proposal
+at <https://github.com/diffblue/cbmc/pull/8835> (branch
+`origin/sarif-ui`).
+
+**Intended workaround**: cherry-pick from that branch once the scan
+pipeline is otherwise stable, then have `scan.py` either delegate to
+CBMC's native SARIF emission or translate its own JSON schema into
+SARIF.  Not a blocker for M4b; tracked as M4c or later.
+
+**Status.** Future work, explicitly deferred.

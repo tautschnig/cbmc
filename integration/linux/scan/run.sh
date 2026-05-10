@@ -53,15 +53,20 @@ if [[ ! -f $KERNEL_C ]]; then
   echo "  [skip] no kernel tree at $LINUX_TREE (set LINUX_TREE to override)"
 else
   set +e
-  "$SCAN" "$KERNEL_C" --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
   rc=$?
   set -e
+  # After M4b's kernel adapter landed, the expected state on an
+  # unstubbed _aead_recvmsg is `timeout` (LIM-006).  When
+  # aggressive-stubbing is added, this may flip to `failed` or
+  # `successful`; update here at that point.
   if [[ $rc -eq 0 ]] && \
-     grep -q '"cbmc_status": "adapter-needed"' "$tmp/case2.json" && \
-     grep -q '"line": 280' "$tmp/case2.json"; then
-    echo "  [ok] exit 0, adapter-needed, line 280 hit"
+     grep -q '"line": 280' "$tmp/case2.json" && \
+     grep -qE '"cbmc_status": "(timeout|failed|successful)"' "$tmp/case2.json"; then
+    status=$(grep -oE '"cbmc_status": "[^"]*"' "$tmp/case2.json" | head -1)
+    echo "  [ok] exit 0, line 280 hit, $status"
   else
-    echo "  [FAIL] expected exit 0 + adapter-needed + line 280" >&2
+    echo "  [FAIL] expected exit 0 + line-280 hit + a cbmc verdict" >&2
     echo "         actual rc=$rc; last 20 lines of output:" >&2
     tail -20 "$tmp/case2.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
