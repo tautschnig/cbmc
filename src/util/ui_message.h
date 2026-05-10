@@ -17,11 +17,17 @@ Author: Daniel Kroening, kroening@kroening.com
 
 class console_message_handlert;
 class json_stream_arrayt;
+class jsont;
 
 class ui_message_handlert : public message_handlert
 {
 public:
-  enum class uit { PLAIN, XML_UI, JSON_UI };
+  enum class uit
+  {
+    PLAIN,
+    XML_UI,
+    JSON_UI
+  };
 
   ui_message_handlert(const class cmdlinet &, const std::string &program);
 
@@ -42,6 +48,7 @@ public:
     PRECONDITION(json_stream!=nullptr);
     return *json_stream;
   }
+
   void print(unsigned level, const structured_datat &data) override;
 
 protected:

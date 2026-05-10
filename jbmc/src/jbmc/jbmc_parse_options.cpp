@@ -1048,6 +1048,7 @@ void jbmc_parse_optionst::help()
     " {y--version} \t show version and exit\n"
     HELP_XML_INTERFACE
     HELP_JSON_INTERFACE
+    HELP_SARIF_RESULT
     HELP_VALIDATE
     HELP_GOTO_TRACE
     HELP_FLUSH

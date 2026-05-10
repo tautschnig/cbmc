@@ -37,12 +37,18 @@ class message_handlert;
 /// \endcode
 void json_interface(cmdlinet &, message_handlert &);
 
-#define OPT_JSON_INTERFACE \
-  "(json-ui)" \
+#define OPT_JSON_INTERFACE                                                     \
+  "(json-ui)"                                                                  \
   "(json-interface)"
 
 #define HELP_JSON_INTERFACE                                                    \
   " {y--json-ui} \t use JSON-formatted output\n"                               \
   " {y--json-interface} \t bi-directional JSON interface\n"
+
+#define OPT_SARIF_RESULT "(sarif-result):"
+
+#define HELP_SARIF_RESULT                                                      \
+  " {y--sarif-result} {ufile} \t write SARIF-formatted results to file"        \
+  " (use - for stdout)\n"
 
 #endif // CPROVER_JSON_JSON_INTERFACE_H

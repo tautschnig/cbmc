@@ -44,6 +44,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-checker/multi_path_symex_checker.h>
 #include <goto-checker/multi_path_symex_only_checker.h>
 #include <goto-checker/properties.h>
+#include <goto-checker/sarif_report.h>
 #include <goto-checker/single_loop_incremental_symex_checker.h>
 #include <goto-checker/single_path_symex_checker.h>
 #include <goto-checker/single_path_symex_only_checker.h>
@@ -776,6 +777,26 @@ int cbmc_parse_optionst::doit()
   const resultt result = (*verifier)();
   verifier->report();
 
+  if(cmdline.isset("sarif-result"))
+  {
+    const auto &filename = cmdline.get_value("sarif-result");
+    if(filename == "-")
+    {
+      sarif_report(verifier->get_properties(), "cbmc", std::cout);
+    }
+    else
+    {
+      std::ofstream out(filename);
+      if(!out)
+      {
+        log.error() << "failed to open SARIF output file: " << filename
+                    << messaget::eom;
+        return CPROVER_EXIT_INTERNAL_ERROR;
+      }
+      sarif_report(verifier->get_properties(), "cbmc", out);
+    }
+  }
+
   return result_to_exit_code(result);
 }
 
@@ -1079,6 +1100,7 @@ void cbmc_parse_optionst::help()
     "User-interface options:\n"
     HELP_XML_INTERFACE
     HELP_JSON_INTERFACE
+    HELP_SARIF_RESULT
     HELP_GOTO_TRACE
     HELP_FLUSH
     " {y--verbosity} {u#} \t verbosity level (default 6)\n"

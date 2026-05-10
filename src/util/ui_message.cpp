@@ -68,18 +68,17 @@ ui_message_handlert::ui_message_handlert(
   const std::string &program)
   : ui_message_handlert(
       nullptr,
-      cmdline.isset("xml-ui") || cmdline.isset("xml-interface")
-        ? uit::XML_UI
-        : cmdline.isset("json-ui") || cmdline.isset("json-interface")
-            ? uit::JSON_UI
-            : uit::PLAIN,
+      cmdline.isset("xml-ui") || cmdline.isset("xml-interface") ? uit::XML_UI
+      : cmdline.isset("json-ui") || cmdline.isset("json-interface")
+        ? uit::JSON_UI
+        : uit::PLAIN,
       program,
       cmdline.isset("flush"),
       cmdline.isset("timestamp") ? cmdline.get_value("timestamp") == "monotonic"
                                      ? timestampert::clockt::MONOTONIC
-                                     : cmdline.get_value("timestamp") == "wall"
-                                         ? timestampert::clockt::WALL_CLOCK
-                                         : timestampert::clockt::NONE
+                                   : cmdline.get_value("timestamp") == "wall"
+                                     ? timestampert::clockt::WALL_CLOCK
+                                     : timestampert::clockt::NONE
                                  : timestampert::clockt::NONE)
 {
   if(get_ui() == uit::PLAIN)
