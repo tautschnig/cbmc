@@ -179,31 +179,81 @@ correct call site, but `cbmc --function _aead_recvmsg --unwind 2` on
 that binary does not complete within a 180-second budget
 (`scan.py` reports `cbmc_status: "timeout"` for this case).
 
-**Workaround direction** (next milestone): aggressive abstraction of
-the kernel helpers that `_aead_recvmsg` calls transitively —
+**M4c progress (partial).** Stubbing experiments on `_aead_recvmsg`:
+
+- `goto-instrument --drop-unused-functions` prunes the call graph
+  from ~2.65 MB to ~2.55 MB but does not shift the cbmc verdict from
+  `timeout`.
+- `goto-instrument --generate-function-body '.*' --generate-function-body-options havoc`
+  fails (regex bail-out in goto-instrument's pattern parsing).  A
+  narrower regex (`af_alg_.*|sock_.*|crypto_aead_.*|…`) also fails
+  to produce an output file; goto-instrument silently exits without
+  writing.  Possibly a latent goto-instrument bug; would merit a
+  reduced reproducer and an upstream report as a follow-up.
+- `cbmc --partial-loops` does not shift `_aead_recvmsg` from
+  `timeout` either; the full-function exploration still blows state.
+
+**Partial mitigation landed as a kernel-layout regression**
+([`cve-2026-31431/harness_kernel.c`](../cve-2026-31431/harness_kernel.c)):
+a deterministic harness that uses the kernel's bit-packed
+`struct scatterlist` layout and the `aead` kernel adapter.  cbmc
+verifies the vulnerable shape as `FAILED` and the fixed shape as
+`SUCCESSFUL` within the regression's default budget, so the
+pipeline's correctness on the real kernel struct layout is now
+regression-tested end to end.  The full `_aead_recvmsg` verdict
+remains `timeout` in `scan.py` output.
+
+**Workaround direction** (future M4c follow-up): write per-helper
+havocing bodies as proper C stubs rather than relying on goto-instrument's
+regex-driven body generation.  Minimum viable stub set is
 `af_alg_wait_for_data`, `af_alg_alloc_areq`, `af_alg_get_rsgl`,
 `af_alg_count_tsgl`, `sock_kmalloc`, `crypto_aead_copy_sgl`,
-`af_alg_pull_tsgl`, etc.  `goto-instrument --generate-function-body
-'.*' --generate-function-body-options 'assume-false'` on its own is
-insufficient; what is needed is per-helper havocing that preserves
-the shape of the scatterlists and request object so the reachable
-path to `aead_request_set_crypt` is exercisable.  Tracked as
-follow-up M4c work.
+`af_alg_pull_tsgl`.  Each needs to (a) return a nondet value of the
+correct type and (b) set up scatterlist provenance such that the
+reachable path to `aead_request_set_crypt` is exercisable.  The
+`af_alg_get_rsgl` stub specifically needs to tag the rsgl pages
+`PAGE_USER_WRITABLE` via `set_page_prov`, and the `af_alg_pull_tsgl`
+stub needs to chain nondet-provenance pages into the destination so
+both the vulnerable and safe paths are reachable.
 
-## LIM-007 — No SARIF output from CBMC (upstream PR #8835)
+## LIM-007 — SARIF output from CBMC — **RESOLVED**
 
 **First hit:** M4a report-format planning.
+**Status:** landed via cherry-pick of upstream
+<https://github.com/diffblue/cbmc/pull/8835> into this tree.  `cbmc
+--sarif-result <file>` now emits a SARIF 2.1.0 log; `scan.py --sarif
+<file>` merges per-run logs into a single multi-run document.
 
-The scan driver (`scan/scan.py`) currently emits a custom JSON
-schema (`cbmc-linux-scan.v1`).  SARIF is the standard static-analysis
-interchange format; most CI dashboards consume it directly.  CBMC
-itself has no SARIF producer yet, but there is an upstream proposal
-at <https://github.com/diffblue/cbmc/pull/8835> (branch
-`origin/sarif-ui`).
+## LIM-008 — `goto-instrument --generate-function-body` fails silently on broad regexes
 
-**Intended workaround**: cherry-pick from that branch once the scan
-pipeline is otherwise stable, then have `scan.py` either delegate to
-CBMC's native SARIF emission or translate its own JSON schema into
-SARIF.  Not a blocker for M4b; tracked as M4c or later.
+**First hit:** M4c stubbing experiments on `/tmp/real.trans.gb`.
 
-**Status.** Future work, explicitly deferred.
+Two failure modes:
+
+1. The wildcard regex `.*` triggers `Mismatched '(' and ')' in regular
+   expression` and aborts.  goto-instrument's regex parser appears to
+   have at least one ambiguity around capturing groups that `.*` as a
+   whole input exposes; narrower regexes do not reliably hit it.
+
+2. A narrower regex such as
+   `af_alg_.*|sock_.*|crypto_aead_.*|kmalloc.*|kzalloc|kfree|lock_sock.*|release_sock|wait_.*|sk_.*|atomic_.*|refcount_.*|memset|get_order|array_size|arch_atomic_.*|instrument_.*|kasan_.*|kcsan_.*|skcipher_.*|__compiletime_.*|aead_sufficient_data|msg_data_left|reinit_completion|__init_.*|crypto_.*`
+   parses but produces no output file and silently exits without
+   an error message.  Log shows only
+   `Reading GOTO program from '…'` and nothing further.
+
+`goto-instrument` should either produce an output file or an error
+exit code; silent no-op is a workflow hazard when using it from
+automation.  Combined with LIM-003 (abort-on-unsupported case),
+this is a consistent theme: goto-instrument's error handling in
+the contracts / body-generation paths is not suitable for
+non-interactive use without defensive wrapping.
+
+**Workaround.** `scan.py` wraps every subprocess call in a timeout
+and `check=True`, so a silent exit surfaces as the output file
+missing at the next step.  That's enough for correctness but not
+great for debuggability.
+
+**Resolution direction.** Write per-helper havocing bodies as proper
+C stubs (essentially a `scan/adapters/kernel_stubs.c` per subsystem)
+rather than relying on goto-instrument's regex-driven body
+generation.  Same plan under LIM-006.

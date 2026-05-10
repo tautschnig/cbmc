@@ -77,7 +77,16 @@ Completed through commit — see `git log -- integration/linux/`:
   wrong; goto-cc preserves the calls and `--replace-call-with-contract`
   works as intended).  Remaining cbmc outcome on that file is
   `timeout` (LIM-006).
+- M4c (partial): SARIF 2.1.0 output via cherry-pick of upstream
+  PR #8835 (LIM-007 resolved); resource-limits (timeout + ulimit)
+  applied uniformly to every external tool invocation in
+  `scan.py` and all `run.sh` scripts; a second CVE-2026-31431
+  regression [`cve-2026-31431/harness_kernel.c`](cve-2026-31431/harness_kernel.c)
+  that exercises the **kernel's** bit-packed scatterlist layout
+  end-to-end through the aead adapter, providing fast-running
+  coverage of the real-kernel pipeline.
 
-In progress / next: M4c (aggressive stubbing so the real-kernel
-scan concludes `failed`/`successful` rather than `timeout`; SARIF
-output, picking up CBMC upstream PR #8835).
+In progress / next: finishing M4c — per-helper kernel stubs so the
+full `_aead_recvmsg` scan moves off the `timeout` status (LIM-006);
+writing stubs as proper C rather than via `goto-instrument
+--generate-function-body` (LIM-008 documents why).
