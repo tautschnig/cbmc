@@ -3725,8 +3725,78 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           return sorted_struct;
         }
-        // Fallthrough: return unsorted original (preserves behaviour
-        // for symbolic arrays and unrecognized comparators).
+        // Symbolic-element sort: emit a bubble-sort compare-and-swap
+        // network at conversion time. For each pair (j, j+1) in a
+        // decreasing series, build:
+        //   new[j]   = cond(old[j], old[j+1]) ? old[j+1] : old[j]
+        //   new[j+1] = cond(old[j], old[j+1]) ? old[j]   : old[j+1]
+        // where cond is `old[j] > old[j+1]` for ascending, `<` for
+        // descending. ES2024 §23.1.3.29 + §23.1.3.29.4 SortCompare.
+        // Only proceed when the comparator was recognised.
+        if(recognized)
+        {
+          int n = static_cast<int>(len.to_long());
+          if(n < 2)
+            return obj_expr; // nothing to sort
+          // Initial element exprs.
+          std::vector<exprt> cur;
+          // Detect the element type from the first element (fall
+          // back to double_type if indeterminate).
+          elem_type = double_type();
+          for(mp_integer i = 0; i < len; ++i)
+          {
+            auto idx = i.to_ulong();
+            if(idx < data.operands().size())
+            {
+              cur.push_back(data.operands()[idx]);
+              if(data.operands()[idx].type().id() == ID_floatbv)
+                elem_type = data.operands()[idx].type();
+            }
+            else
+              cur.push_back(from_integer(0, elem_type));
+          }
+          auto compare_greater = [&](const exprt &a, const exprt &b) -> exprt
+          {
+            if(a.type().id() == ID_floatbv)
+              return binary_relation_exprt{a, ID_gt, b};
+            return binary_relation_exprt{a, ID_gt, b};
+          };
+          // Bubble sort network: n-1 passes, each walking from 0 to
+          // n-1-pass comparing adjacent pairs.
+          for(int pass = 0; pass < n - 1; ++pass)
+          {
+            for(int j = 0; j < n - 1 - pass; ++j)
+            {
+              exprt lhs = cur[j];
+              exprt rhs = cur[j + 1];
+              exprt cond = descending
+                             ? compare_greater(rhs, lhs)  // rhs > lhs → swap
+                             : compare_greater(lhs, rhs); // lhs > rhs → swap
+              cur[j] = if_exprt{cond, rhs, lhs};
+              cur[j + 1] = if_exprt{cond, lhs, rhs};
+            }
+          }
+          // Build the sorted struct.
+          exprt::operandst sorted_ops = std::move(cur);
+          std::size_t actual = sorted_ops.size();
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          while(sorted_ops.size() < max_len)
+            sorted_ops.push_back(from_integer(0, elem_type));
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type = make_array_struct_type(arr_type);
+          struct_exprt sorted_struct{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(sorted_ops), arr_type}},
+            list_type};
+          if(obj_expr.id() == ID_symbol)
+          {
+            pending_stmts.push_back(
+              code_frontend_assignt{obj_expr, sorted_struct});
+          }
+          return sorted_struct;
+        }
+        // Fallthrough: return unsorted original (unrecognised comparator).
         return obj_expr;
       }
     }
