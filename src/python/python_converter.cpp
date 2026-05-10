@@ -381,6 +381,94 @@ exprt python_convertert::python_string_literal(const std::string &s)
   return build_string_struct(s);
 }
 
+/// Shared math-intrinsic nondet-with-constraints emitter.
+/// Used by both the decorator-driven @c_intrinsic path and
+/// the attribute-style math.X(...) path so both share a
+/// single source of truth for domain checks and range
+/// constraints.
+exprt python_convertert::emit_math_intrinsic_nondet(
+  const std::string &domain_kind,
+  const std::string &range_kind,
+  const exprt &arg,
+  const source_locationt &loc)
+{
+  ieee_floatt zf{
+    ieee_float_spect::double_precision(),
+    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+  zf.from_double(0.0);
+  ieee_floatt onef = zf;
+  onef.from_double(1.0);
+  ieee_floatt neg_onef = zf;
+  neg_onef.from_double(-1.0);
+
+  // Domain check: emit guarded ValueError so any caller's
+  // try/except ValueError correctly intercepts.
+  if(!domain_kind.empty())
+  {
+    exprt farg = arg;
+    if(farg.type().id() != ID_floatbv)
+      farg = safe_typecast(farg, double_type());
+    exprt in_domain;
+    if(domain_kind == "nonneg")
+      in_domain = binary_relation_exprt{farg, ID_ge, zf.to_expr()};
+    else if(domain_kind == "positive")
+      in_domain = binary_relation_exprt{farg, ID_gt, zf.to_expr()};
+    else if(domain_kind == "gt_neg_one")
+      in_domain = binary_relation_exprt{farg, ID_gt, neg_onef.to_expr()};
+    else if(domain_kind == "abs_le_1")
+      in_domain = and_exprt{
+        binary_relation_exprt{farg, ID_ge, neg_onef.to_expr()},
+        binary_relation_exprt{farg, ID_le, onef.to_expr()}};
+    else if(domain_kind == "abs_lt_1")
+      in_domain = and_exprt{
+        binary_relation_exprt{farg, ID_gt, neg_onef.to_expr()},
+        binary_relation_exprt{farg, ID_lt, onef.to_expr()}};
+    else if(domain_kind == "ge_1")
+      in_domain = binary_relation_exprt{farg, ID_ge, onef.to_expr()};
+    else
+      in_domain = true_exprt{};
+    emit_value_error(in_domain);
+  }
+
+  // Fresh nondet return.
+  side_effect_expr_nondett nondet_ret{double_type(), loc};
+  static unsigned math_nondet_ctr = 0;
+  std::string tmp_name = "__math_nondet_" + std::to_string(math_nondet_ctr++);
+  std::string tmp_qname = qualify_name(tmp_name);
+  irep_idt tmp_id{tmp_qname};
+  if(symbol_table.lookup(tmp_id) == nullptr)
+  {
+    symbolt tmp_sym{tmp_id, double_type(), "python"};
+    tmp_sym.base_name = tmp_name;
+    tmp_sym.is_lvalue = true;
+    tmp_sym.is_state_var = true;
+    symbol_table.add(tmp_sym);
+  }
+  symbol_exprt tmp_var = symbol_table.lookup_ref(tmp_id).symbol_expr();
+  pending_checks.push_back(code_frontend_assignt{tmp_var, nondet_ret});
+
+  // Range constraint.
+  if(range_kind == "bound_pm_1")
+  {
+    pending_checks.push_back(
+      code_assumet{binary_relation_exprt{tmp_var, ID_ge, neg_onef.to_expr()}});
+    pending_checks.push_back(
+      code_assumet{binary_relation_exprt{tmp_var, ID_le, onef.to_expr()}});
+  }
+  else if(range_kind == "nonneg")
+  {
+    pending_checks.push_back(
+      code_assumet{binary_relation_exprt{tmp_var, ID_ge, zf.to_expr()}});
+  }
+  else if(range_kind == "positive")
+  {
+    pending_checks.push_back(
+      code_assumet{binary_relation_exprt{tmp_var, ID_gt, zf.to_expr()}});
+  }
+
+  return std::move(tmp_var);
+}
+
 /// Create a nondet refined string expression (length + content pointer).
 /// Used as the result of string operations that the solver will constrain.
 [[maybe_unused]] static exprt
@@ -3806,11 +3894,16 @@ exprt python_convertert::convert_call(const jsont &expr)
       std::string obj_name = json_string(json_member(obj_node, "id"));
       if(imported_modules.count(obj_name))
       {
-        // Resolve module.func to the function symbol
-        // Try python::func_name first (registered by ImportFrom)
+        // Resolve module.func to the function symbol. If the
+        // resolved function is decorated with @c_intrinsic,
+        // fall through to the main convert_call path so the
+        // decorator's fold/domain/range semantics apply. A
+        // direct function-call emission would bypass those.
         irep_idt func_id{"python::" + method_name};
         const symbolt *sym = symbol_table.lookup(func_id);
-        if(sym != nullptr && sym->type.id() == ID_code)
+        if(
+          sym != nullptr && sym->type.id() == ID_code &&
+          c_intrinsic_map.count(func_id) == 0)
         {
           const code_typet &ft = to_code_type(sym->type);
           exprt::operandst arguments;
@@ -4126,48 +4219,31 @@ exprt python_convertert::convert_call(const jsont &expr)
                 return double_to_floatbv(res);
             }
           }
-          // Nondet with constraints
+          // Nondet with constraints. Look up domain= / range=
+          // from the decorator map (populated by the library's
+          // @c_intrinsic annotations in math.py) so the
+          // attribute-style form shares semantics with the
+          // bare-name form. Previously this had its own inline
+          // constraint logic duplicating the decorator path.
           {
-            side_effect_expr_nondett nondet_ret{
-              double_type(), get_location(expr)};
-            static unsigned math_attr_ctr = 0;
-            std::string tn = "__math_attr_" + std::to_string(math_attr_ctr++);
-            std::string tq = qualify_name(tn);
-            irep_idt ti{tq};
-            if(symbol_table.lookup(ti) == nullptr)
+            irep_idt math_id{"python::" + func_name};
+            auto di = c_intrinsic_domain_map.find(math_id);
+            auto ri = c_intrinsic_range_map.find(math_id);
+            std::string dom =
+              di != c_intrinsic_domain_map.end() ? di->second : std::string{};
+            std::string rng =
+              ri != c_intrinsic_range_map.end() ? ri->second : std::string{};
+            // The sqrt-specific extra axiom (result*result == arg)
+            // was a past improvement that the decorator path
+            // doesn't emit; preserve it here for now.
+            exprt tv = emit_math_intrinsic_nondet(
+              dom, rng, math_arg, get_location(expr));
+            if(func_name == "sqrt")
             {
-              symbolt ts{ti, double_type(), "python"};
-              ts.base_name = tn;
-              ts.is_lvalue = true;
-              ts.is_state_var = true;
-              symbol_table.add(ts);
-            }
-            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
-            pending_checks.push_back(code_frontend_assignt{tv, nondet_ret});
-            ieee_floatt fone{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fone.from_double(1.0);
-            ieee_floatt fneg{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fneg.from_double(-1.0);
-            ieee_floatt fz{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            fz.from_double(0.0);
-            if(func_name == "sin" || func_name == "cos")
-            {
-              pending_checks.push_back(
-                code_assumet{binary_relation_exprt{tv, ID_ge, fneg.to_expr()}});
-              pending_checks.push_back(
-                code_assumet{binary_relation_exprt{tv, ID_le, fone.to_expr()}});
-            }
-            else if(func_name == "sqrt")
-            {
-              pending_checks.push_back(
-                code_assumet{binary_relation_exprt{tv, ID_ge, fz.to_expr()}});
-              // Constrain: result * result == arg (for non-negative args)
+              ieee_floatt fz{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fz.from_double(0.0);
               exprt float_arg = math_arg;
               if(math_arg.type().id() != ID_floatbv)
                 float_arg = typecast_exprt(math_arg, double_type());
@@ -4177,10 +4253,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 arg_nonneg,
                 ieee_float_equal_exprt{mult_exprt{tv, tv}, float_arg}}});
             }
-            else if(func_name == "exp" || func_name == "exp2")
-              pending_checks.push_back(
-                code_assumet{binary_relation_exprt{tv, ID_gt, fz.to_expr()}});
-            return std::move(tv);
+            return tv;
           }
         }
         // PLR stdlib: re module — return nondet for all methods
@@ -8412,95 +8485,14 @@ exprt python_convertert::convert_call(const jsont &expr)
       to_code_type(func_type).return_type().id() == ID_floatbv;
     if(is_math_float_fn)
     {
-      // Domain check for symbolic args: emit guarded ValueError.
-      if(domain_it != c_intrinsic_domain_map.end())
-      {
-        const std::string &dom = domain_it->second;
-        ieee_floatt zf{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        zf.from_double(0.0);
-        ieee_floatt onef = zf;
-        onef.from_double(1.0);
-        ieee_floatt neg_onef = zf;
-        neg_onef.from_double(-1.0);
-        exprt in_domain;
-        // Ensure arg is in floatbv for the comparisons.
-        exprt farg = arguments[0];
-        if(farg.type().id() != ID_floatbv)
-          farg = safe_typecast(farg, double_type());
-        if(dom == "nonneg")
-          in_domain = binary_relation_exprt{farg, ID_ge, zf.to_expr()};
-        else if(dom == "positive")
-          in_domain = binary_relation_exprt{farg, ID_gt, zf.to_expr()};
-        else if(dom == "gt_neg_one")
-          in_domain = binary_relation_exprt{farg, ID_gt, neg_onef.to_expr()};
-        else if(dom == "abs_le_1")
-          in_domain = and_exprt{
-            binary_relation_exprt{farg, ID_ge, neg_onef.to_expr()},
-            binary_relation_exprt{farg, ID_le, onef.to_expr()}};
-        else if(dom == "abs_lt_1")
-          in_domain = and_exprt{
-            binary_relation_exprt{farg, ID_gt, neg_onef.to_expr()},
-            binary_relation_exprt{farg, ID_lt, onef.to_expr()}};
-        else if(dom == "ge_1")
-          in_domain = binary_relation_exprt{farg, ID_ge, onef.to_expr()};
-        else
-          in_domain = true_exprt{};
-        // emit_value_error raises ValueError when condition is
-        // NOT satisfied; we pass the in-domain predicate.
-        emit_value_error(in_domain);
-      }
-
-      // Fresh nondet return + range constraint.
-      side_effect_expr_nondett nondet_ret{double_type(), get_location(expr)};
-      static unsigned ci_math_ctr = 0;
-      std::string tmp_name = "__ci_math_ret_" + std::to_string(ci_math_ctr++);
-      std::string tmp_qname = qualify_name(tmp_name);
-      irep_idt tmp_id{tmp_qname};
-      if(symbol_table.lookup(tmp_id) == nullptr)
-      {
-        symbolt tmp_sym{tmp_id, double_type(), "python"};
-        tmp_sym.base_name = tmp_name;
-        tmp_sym.is_lvalue = true;
-        tmp_sym.is_state_var = true;
-        symbol_table.add(tmp_sym);
-      }
-      symbol_exprt tmp_var = symbol_table.lookup_ref(tmp_id).symbol_expr();
-      pending_checks.push_back(code_frontend_assignt{tmp_var, nondet_ret});
-
-      if(range_it != c_intrinsic_range_map.end())
-      {
-        const std::string &rng = range_it->second;
-        ieee_floatt zf{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        zf.from_double(0.0);
-        ieee_floatt onef = zf;
-        onef.from_double(1.0);
-        ieee_floatt neg_onef = zf;
-        neg_onef.from_double(-1.0);
-        if(rng == "bound_pm_1")
-        {
-          pending_checks.push_back(code_assumet{
-            binary_relation_exprt{tmp_var, ID_ge, neg_onef.to_expr()}});
-          pending_checks.push_back(code_assumet{
-            binary_relation_exprt{tmp_var, ID_le, onef.to_expr()}});
-        }
-        else if(rng == "nonneg")
-        {
-          pending_checks.push_back(
-            code_assumet{binary_relation_exprt{tmp_var, ID_ge, zf.to_expr()}});
-        }
-        else if(rng == "positive")
-        {
-          pending_checks.push_back(
-            code_assumet{binary_relation_exprt{tmp_var, ID_gt, zf.to_expr()}});
-        }
-        // other named ranges or unrecognised: leave unconstrained
-      }
-
-      return std::move(tmp_var);
+      std::string dom = domain_it != c_intrinsic_domain_map.end()
+                          ? domain_it->second
+                          : std::string{};
+      std::string rng = range_it != c_intrinsic_range_map.end()
+                          ? range_it->second
+                          : std::string{};
+      return emit_math_intrinsic_nondet(
+        dom, rng, arguments[0], get_location(expr));
     }
 
     const pointer_typet c_char_ptr{char_type(), config.ansi_c.pointer_width};
@@ -14565,6 +14557,19 @@ bool python_convertert::convert()
               mod_sym.is_state_var = true;
               mod_sym.is_static_lifetime = true;
               symbol_table.add(mod_sym);
+            }
+            // Also process the library file so its decorators
+            // populate c_intrinsic_{fold,domain,range,int_width}_map.
+            // Previously only ImportFrom triggered library
+            // loading, which meant 'import math; math.sqrt(x)'
+            // didn't reach the decorator semantics. The
+            // attribute-style handler uses these maps, so both
+            // import forms now share the same source of truth.
+            if(module_resolver && name != "typing" && name != "random")
+            {
+              const jsont *mod_ast = module_resolver(name);
+              if(mod_ast != nullptr && !mod_ast->is_null())
+                process_imported_module(name, *mod_ast);
             }
           }
         }
