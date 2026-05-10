@@ -116,6 +116,26 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     ts_type.size() >= 2 && ((ts_type[0] == '"' && ts_type.back() == '"') ||
                             (ts_type[0] == '\'' && ts_type.back() == '\'')))
     return typescript_string_type();
+  // TSH: Everyday Types > Arrays
+  // Array types like "number[]" and also "[T,U][]" — check this
+  // suffix FIRST so a type like "[string, number][]" is parsed as
+  // an array of tuples rather than as a tuple whose inner gets
+  // corrupted by the outer brackets.
+  if(ts_type.size() > 2 && ts_type.substr(ts_type.size() - 2) == "[]")
+  {
+    std::string elem = ts_type.substr(0, ts_type.size() - 2);
+    typet elem_type = convert_type(elem);
+    std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+    array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
+    struct_typet list_type;
+    list_type.components().push_back(
+      struct_typet::componentt{"length", signedbv_typet{64}});
+    list_type.components().push_back(
+      struct_typet::componentt{"data", arr_type});
+    list_type.set_tag("typescript_array");
+    type_cache[ts_type] = list_type;
+    return list_type;
+  }
   // Tuple types: [T, U, V, ...]
   // Homogeneous ([T, T, T]) is treated as number[] equivalent.
   // Heterogeneous ([T, U]) becomes a typescript_tuple struct.
