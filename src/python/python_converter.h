@@ -335,6 +335,20 @@ private:
   /// symbol for every identical literal.
   exprt build_string_literal(const std::string &s);
 
+  /// Build a Python string value for the active back-end.
+  /// Dispatches on ``python_string_kind``:
+  ///   * refined: returns a refined-string struct (today's
+  ///     shape — same as the deprecated build_string_struct).
+  ///   * smt_string: emits an smt_string_constant_exprt
+  ///     whose convert_expr lowering produces the SMT-LIB
+  ///     literal "...". Currently a placeholder; the full
+  ///     lowering lands in a follow-up PR.
+  ///
+  /// This is the single producer-side entry point for string
+  /// literals in the front-end. See
+  /// doc/architectural/python-string-phase2-backend-abstraction.md.
+  exprt python_string_literal(const std::string &s);
+
   /// Return the CBMC type used for Python int.
   typet python_int_type() const
   {
