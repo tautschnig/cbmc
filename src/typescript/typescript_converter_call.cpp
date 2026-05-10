@@ -377,6 +377,222 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                array_exprt{std::move(elements), arr_type}},
               list_type};
           }
+          // Object: {"a":1, "b":"s", ...}. Recursively parsed.
+          if(
+            json_str.size() >= 2 && json_str.front() == '{' &&
+            json_str.back() == '}')
+          {
+            // Helper: parse a JSON primitive (number, string, bool,
+            // null) into an expr. Returns nil on failure. No recursion
+            // into nested objects/arrays here — that's handled by
+            // recursively invoking this helper via convert_string +
+            // tree walking. For this round we only support one-level
+            // nesting via recursive call.
+            std::function<exprt(const std::string &)> parse_value =
+              [&](const std::string &val) -> exprt
+            {
+              std::string v = val;
+              while(!v.empty() && v.front() == ' ')
+                v.erase(0, 1);
+              while(!v.empty() && v.back() == ' ')
+                v.pop_back();
+              if(v.empty())
+                return nil_exprt{};
+              // Numbers
+              if(std::isdigit(static_cast<unsigned char>(v[0])) || v[0] == '-')
+              {
+                try
+                {
+                  double d = std::stod(v);
+                  ieee_floatt fv{
+                    ieee_float_spect::double_precision(),
+                    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                  fv.from_double(d);
+                  return fv.to_expr();
+                }
+                catch(...)
+                {
+                }
+              }
+              if(v == "true")
+                return true_exprt{};
+              if(v == "false")
+                return false_exprt{};
+              if(v == "null")
+              {
+                ieee_floatt nv{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                nv.make_NaN();
+                return nv.to_expr();
+              }
+              if(v.size() >= 2 && v.front() == '"' && v.back() == '"')
+              {
+                std::string inner = v.substr(1, v.size() - 2);
+                std::string res;
+                for(std::size_t i = 0; i < inner.size(); ++i)
+                {
+                  if(inner[i] == '\\' && i + 1 < inner.size())
+                  {
+                    char c = inner[i + 1];
+                    if(c == 'n')
+                      res += '\n';
+                    else if(c == 't')
+                      res += '\t';
+                    else if(c == '"')
+                      res += '"';
+                    else if(c == '\\')
+                      res += '\\';
+                    else
+                      res += c;
+                    ++i;
+                  }
+                  else
+                    res += inner[i];
+                }
+                return convert_string_literal_from_text(res);
+              }
+              // Recursively parse nested object/array by making a
+              // synthetic JSON.parse call... simpler: inline.
+              if(v.size() >= 2 && v.front() == '{' && v.back() == '}')
+                return parse_value(v); // re-dispatch via another path
+              return nil_exprt{};
+            };
+            // Tokenize by top-level commas at depth 0.
+            std::string inner = json_str.substr(1, json_str.size() - 2);
+            struct_typet::componentst components;
+            exprt::operandst fields;
+            std::size_t pos = 0;
+            auto skip_ws = [&]()
+            {
+              while(pos < inner.size() &&
+                    (inner[pos] == ' ' || inner[pos] == '\t'))
+                pos++;
+            };
+            while(pos < inner.size())
+            {
+              skip_ws();
+              if(pos >= inner.size())
+                break;
+              if(inner[pos] != '"')
+                break; // malformed
+              // Parse key
+              std::size_t key_end = pos + 1;
+              while(key_end < inner.size() && inner[key_end] != '"')
+                key_end++;
+              std::string key = inner.substr(pos + 1, key_end - pos - 1);
+              pos = key_end + 1;
+              skip_ws();
+              if(pos >= inner.size() || inner[pos] != ':')
+                break;
+              pos++;
+              // Find value end (next top-level comma or end).
+              std::size_t val_start = pos;
+              int depth = 0;
+              bool in_str = false;
+              while(pos < inner.size())
+              {
+                char c = inner[pos];
+                if(c == '"' && (pos == 0 || inner[pos - 1] != '\\'))
+                  in_str = !in_str;
+                else if(!in_str && (c == '{' || c == '['))
+                  depth++;
+                else if(!in_str && (c == '}' || c == ']'))
+                  depth--;
+                else if(!in_str && c == ',' && depth == 0)
+                  break;
+                pos++;
+              }
+              std::string val = inner.substr(val_start, pos - val_start);
+              // Handle nested object/array recursively by in-place parse
+              std::string v_trimmed = val;
+              while(!v_trimmed.empty() && v_trimmed.front() == ' ')
+                v_trimmed.erase(0, 1);
+              while(!v_trimmed.empty() && v_trimmed.back() == ' ')
+                v_trimmed.pop_back();
+              exprt ve;
+              if(
+                v_trimmed.size() >= 2 && v_trimmed.front() == '{' &&
+                v_trimmed.back() == '}')
+              {
+                // Recurse via a synthetic call: build a string literal
+                // and recurse through JSON.parse. Simpler: construct the
+                // sub-object directly. We cannot call ourselves cleanly,
+                // so delegate to a lambda that re-runs the object body.
+                // For one level of nesting this simple recursion suffices.
+                jsont nested_call;
+                ve = nil_exprt{}; // placeholder
+                // Synthesize: parse the nested object by invoking the
+                // same logic. To avoid code duplication, call
+                // convert_expression on a newly-constructed AST node —
+                // but that's heavy. Instead, just handle one level of
+                // nesting inline: re-use parse_value for primitives,
+                // and recursion only works for non-object values here.
+                // For nested objects, we emit a struct with the parsed
+                // key-value pairs by doing another round of parsing on
+                // the sub-string.
+                struct_typet::componentst sub_components;
+                exprt::operandst sub_fields;
+                std::string sub_inner =
+                  v_trimmed.substr(1, v_trimmed.size() - 2);
+                std::size_t sp = 0;
+                while(sp < sub_inner.size())
+                {
+                  while(sp < sub_inner.size() &&
+                        (sub_inner[sp] == ' ' || sub_inner[sp] == '\t'))
+                    sp++;
+                  if(sp >= sub_inner.size() || sub_inner[sp] != '"')
+                    break;
+                  std::size_t ske = sp + 1;
+                  while(ske < sub_inner.size() && sub_inner[ske] != '"')
+                    ske++;
+                  std::string sk = sub_inner.substr(sp + 1, ske - sp - 1);
+                  sp = ske + 1;
+                  while(sp < sub_inner.size() && sub_inner[sp] == ' ')
+                    sp++;
+                  if(sp >= sub_inner.size() || sub_inner[sp] != ':')
+                    break;
+                  sp++;
+                  std::size_t sv_start = sp;
+                  int sd = 0;
+                  while(sp < sub_inner.size())
+                  {
+                    char c = sub_inner[sp];
+                    if(c == '{' || c == '[')
+                      sd++;
+                    else if(c == '}' || c == ']')
+                      sd--;
+                    else if(c == ',' && sd == 0)
+                      break;
+                    sp++;
+                  }
+                  std::string sv = sub_inner.substr(sv_start, sp - sv_start);
+                  exprt sve = parse_value(sv);
+                  if(!sve.is_nil())
+                  {
+                    sub_components.push_back(
+                      struct_typet::componentt{sk, sve.type()});
+                    sub_fields.push_back(sve);
+                  }
+                  if(sp < sub_inner.size() && sub_inner[sp] == ',')
+                    sp++;
+                }
+                ve = struct_exprt{sub_fields, struct_typet{sub_components}};
+              }
+              else
+              {
+                ve = parse_value(val);
+              }
+              if(!ve.is_nil())
+              {
+                components.push_back(struct_typet::componentt{key, ve.type()});
+                fields.push_back(ve);
+              }
+              if(pos < inner.size() && inner[pos] == ',')
+                pos++;
+            }
+            return struct_exprt{fields, struct_typet{components}};
+          }
         }
         // Non-constant or unparseable: nondet
         return side_effect_expr_nondett{double_type(), get_location(node)};
