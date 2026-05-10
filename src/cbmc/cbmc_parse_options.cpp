@@ -248,8 +248,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("no-array-field-sensitivity", true);
   }
 
-  if(cmdline.isset("reachability-slice") &&
-     cmdline.isset("reachability-slice-fb"))
+  if(
+    cmdline.isset("reachability-slice") &&
+    cmdline.isset("reachability-slice-fb"))
   {
     log.error()
       << "--reachability-slice and --reachability-slice-fb must not be "
@@ -332,9 +333,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("no-simplify"))
     options.set_option("simplify", false);
 
-  if(cmdline.isset("stop-on-fail") ||
-     cmdline.isset("dimacs") ||
-     cmdline.isset("outfile"))
+  if(
+    cmdline.isset("stop-on-fail") || cmdline.isset("dimacs") ||
+    cmdline.isset("outfile"))
     options.set_option("stop-on-fail", true);
 
   if(
@@ -441,6 +442,30 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("refine-strings", true);
     options.set_option("string-printable", cmdline.isset("string-printable"));
   }
+  else
+  {
+    // Auto-enable --refine-strings when verifying TypeScript source,
+    // unless a conflicting SMT backend was selected.
+    bool has_ts_source = false;
+    for(const auto &arg : cmdline.args)
+    {
+      if(arg.size() >= 3 && arg.substr(arg.size() - 3) == ".ts")
+      {
+        has_ts_source = true;
+        break;
+      }
+      if(arg.size() >= 4 && arg.substr(arg.size() - 4) == ".tsx")
+      {
+        has_ts_source = true;
+        break;
+      }
+    }
+    if(has_ts_source && !cmdline.isset("z3") && !cmdline.isset("smt2"))
+    {
+      options.set_option("refine-strings", true);
+      options.set_option("string-printable", false);
+    }
+  }
 
   options.set_option(
     "symex-cache-dereferences", cmdline.isset("symex-cache-dereferences"));
@@ -479,8 +504,7 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("symex-coverage-report"))
   {
     options.set_option(
-      "symex-coverage-report",
-      cmdline.get_value("symex-coverage-report"));
+      "symex-coverage-report", cmdline.get_value("symex-coverage-report"));
     options.set_option("paths-symex-explore-all", true);
   }
 
@@ -540,8 +564,7 @@ int cbmc_parse_optionst::doit()
   // Unwinding of transition systems is done by hw-cbmc.
   //
 
-  if(cmdline.isset("module") ||
-     cmdline.isset("gen-interface"))
+  if(cmdline.isset("module") || cmdline.isset("gen-interface"))
   {
     log.error() << "This version of CBMC has no support for "
                    " hardware modules. Please use hw-cbmc."
@@ -602,7 +625,7 @@ int cbmc_parse_optionst::doit()
       return CPROVER_EXIT_INCORRECT_TASK;
     }
 
-    std::string filename=cmdline.args[0];
+    std::string filename = cmdline.args[0];
 
     std::ifstream infile(widen_if_needed(filename));
 
@@ -613,10 +636,9 @@ int cbmc_parse_optionst::doit()
       return CPROVER_EXIT_INCORRECT_TASK;
     }
 
-    std::unique_ptr<languaget> language=
-      get_language_from_filename(filename);
+    std::unique_ptr<languaget> language = get_language_from_filename(filename);
 
-    if(language==nullptr)
+    if(language == nullptr)
     {
       log.error() << "failed to figure out type of file '" << filename << "'"
                   << messaget::eom;
@@ -640,11 +662,12 @@ int cbmc_parse_optionst::doit()
   int get_goto_program_ret =
     get_goto_program(goto_model, options, cmdline, ui_message_handler);
 
-  if(get_goto_program_ret!=-1)
+  if(get_goto_program_ret != -1)
     return get_goto_program_ret;
 
-  if(cmdline.isset("show-claims") || // will go away
-     cmdline.isset("show-properties")) // use this one
+  if(
+    cmdline.isset("show-claims") ||   // will go away
+    cmdline.isset("show-properties")) // use this one
   {
     show_properties(goto_model, ui_message_handler);
     return CPROVER_EXIT_SUCCESS;

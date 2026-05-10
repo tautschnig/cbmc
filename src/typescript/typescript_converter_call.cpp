@@ -4913,7 +4913,8 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       const auto &st = to_struct_type(obj_expr.type());
       std::string tag = id2string(st.get_tag());
       if(
-        tag != "typescript_array" && tag != "typescript_string" &&
+        tag != "typescript_array" &&
+        tag != CPROVER_PREFIX "refined_string_type" &&
         tag != "typescript_union" && tag != "typescript_tuple" &&
         tag.substr(0, 17) != "typescript_class_")
       {
