@@ -5164,6 +5164,53 @@ exprt python_convertert::convert_call(const jsont &expr)
               {
                 return python_string_literal(result);
               }
+              // Symbolic int fast path: template is just "{}"
+              // or "{0}" with no format spec, single int arg.
+              // Emit cprover_string_of_int_func.
+              if(
+                (fmt == "{}" || fmt == "{0}") && arg_exprs.size() == 1 &&
+                (arg_exprs[0].type().id() == ID_signedbv ||
+                 arg_exprs[0].type().id() == ID_integer))
+              {
+                exprt as_i64 =
+                  arg_exprs[0].type() == signedbv_typet{64}
+                    ? arg_exprs[0]
+                    : safe_typecast(arg_exprs[0], signedbv_typet{64});
+                exprt r = emit_string_function(
+                  ID_cprover_string_of_int_func,
+                  {as_i64},
+                  symbol_table,
+                  pending_checks);
+                auto ensure_fn = [&](const irep_idt &fid)
+                {
+                  if(symbol_table.lookup(fid) == nullptr)
+                  {
+                    array_typet inf_array_type{
+                      unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
+                    std::vector<typet> at;
+                    if(fid == ID_cprover_associate_array_to_pointer_func)
+                    {
+                      at.push_back(inf_array_type);
+                      at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
+                    }
+                    else
+                    {
+                      at.push_back(inf_array_type);
+                      at.push_back(signedbv_typet{64});
+                    }
+                    symbolt fs{
+                      fid,
+                      mathematical_function_typet(
+                        std::move(at), signedbv_typet{32}),
+                      "python"};
+                    fs.base_name = id2string(fid);
+                    symbol_table.add(fs);
+                  }
+                };
+                ensure_fn(ID_cprover_associate_array_to_pointer_func);
+                ensure_fn(ID_cprover_associate_length_to_array_func);
+                return r;
+              }
             }
           }
           return side_effect_expr_nondett{
@@ -7859,6 +7906,48 @@ exprt python_convertert::convert_call(const jsont &expr)
             s.pop_back();
         }
         return python_string_literal(s);
+      }
+      // Symbolic int: emit cprover_string_of_int_func so the
+      // solver knows the result's content and length
+      // precisely.
+      if(arg.type().id() == ID_signedbv || arg.type().id() == ID_integer)
+      {
+        exprt as_i64 = arg.type() == signedbv_typet{64}
+                         ? arg
+                         : safe_typecast(arg, signedbv_typet{64});
+        exprt result = emit_string_function(
+          ID_cprover_string_of_int_func,
+          {as_i64},
+          symbol_table,
+          pending_checks);
+        auto ensure_fn = [&](const irep_idt &fid)
+        {
+          if(symbol_table.lookup(fid) == nullptr)
+          {
+            array_typet inf_array_type{
+              unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
+            std::vector<typet> at;
+            if(fid == ID_cprover_associate_array_to_pointer_func)
+            {
+              at.push_back(inf_array_type);
+              at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
+            }
+            else
+            {
+              at.push_back(inf_array_type);
+              at.push_back(signedbv_typet{64});
+            }
+            symbolt fs{
+              fid,
+              mathematical_function_typet(std::move(at), signedbv_typet{32}),
+              "python"};
+            fs.base_name = id2string(fid);
+            symbol_table.add(fs);
+          }
+        };
+        ensure_fn(ID_cprover_associate_array_to_pointer_func);
+        ensure_fn(ID_cprover_associate_length_to_array_func);
+        return result;
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
