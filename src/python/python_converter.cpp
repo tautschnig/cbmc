@@ -5699,15 +5699,42 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "keys")
         {
-          // d.keys() → list of d.keys[0..d.length-1]
+          // Constant fast path: when obj is a literal struct
+          // or a tracked dict_literal symbol, build the keys
+          // list directly from the stored operands — no
+          // member_exprt indirection.
+          const exprt *dict_val = nullptr;
+          if(obj.id() == ID_struct)
+            dict_val = &obj;
+          else if(obj.id() == ID_symbol)
+          {
+            auto it = dict_literals.find(to_symbol_expr(obj).get_identifier());
+            if(it != dict_literals.end())
+              dict_val = &it->second;
+          }
           const auto &dict_st = to_struct_type(obj_base_type);
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
           typet key_type = keys_type.element_type();
-          member_exprt length{obj, "length", signedbv_typet{64}};
-          member_exprt keys{obj, "keys", keys_type};
           struct_typet list_type = python_list_type(key_type);
           const auto &list_data_type =
             to_array_type(list_type.components()[1].type());
+          if(
+            dict_val != nullptr && dict_val->operands().size() >= 3 &&
+            dict_val->operands()[0].is_constant())
+          {
+            exprt::operandst elems;
+            for(const auto &k : dict_val->operands()[1].operands())
+              elems.push_back(k);
+            while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+              elems.push_back(safe_zero(key_type));
+            return struct_exprt{
+              {dict_val->operands()[0],
+               array_exprt{std::move(elems), list_data_type}},
+              list_type};
+          }
+          // d.keys() → list of d.keys[0..d.length-1]
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt keys{obj, "keys", keys_type};
           exprt::operandst elems;
           for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
             elems.push_back(
@@ -5719,14 +5746,37 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "values")
         {
+          const exprt *dict_val = nullptr;
+          if(obj.id() == ID_struct)
+            dict_val = &obj;
+          else if(obj.id() == ID_symbol)
+          {
+            auto it = dict_literals.find(to_symbol_expr(obj).get_identifier());
+            if(it != dict_literals.end())
+              dict_val = &it->second;
+          }
           const auto &dict_st = to_struct_type(obj_base_type);
           const auto &vals_type = to_array_type(dict_st.components()[2].type());
           typet val_type = vals_type.element_type();
-          member_exprt length{obj, "length", signedbv_typet{64}};
-          member_exprt vals{obj, "values", vals_type};
           struct_typet list_type = python_list_type(val_type);
           const auto &list_data_type =
             to_array_type(list_type.components()[1].type());
+          if(
+            dict_val != nullptr && dict_val->operands().size() >= 3 &&
+            dict_val->operands()[0].is_constant())
+          {
+            exprt::operandst elems;
+            for(const auto &v : dict_val->operands()[2].operands())
+              elems.push_back(v);
+            while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+              elems.push_back(safe_zero(val_type));
+            return struct_exprt{
+              {dict_val->operands()[0],
+               array_exprt{std::move(elems), list_data_type}},
+              list_type};
+          }
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt vals{obj, "values", vals_type};
           exprt::operandst elems;
           for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
             elems.push_back(
