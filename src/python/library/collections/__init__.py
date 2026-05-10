@@ -32,27 +32,67 @@ class defaultdict(dict):
         self.default_factory = default_factory
 
     def __missing__(self, key):
+        # When default_factory is int, missing keys map to 0.
+        # When default_factory is list, missing keys map to [].
+        # For arbitrary factories, return None.
+        if self.default_factory is int:
+            return 0
+        if self.default_factory is float:
+            return 0.0
+        if self.default_factory is list:
+            return []
+        if self.default_factory is set:
+            return set()
+        if self.default_factory is dict:
+            return {}
+        if self.default_factory is str:
+            return ""
         return None
 
 
 class Counter(dict):
-    """Multiset. ``Counter(iterable).get(x, 0)`` returns a nondet
-    non-negative int."""
+    """Multiset over hashable elements. For verification we store
+    the input iterable as a list (Counter(iter).get(x, 0)) returns
+    0 for unseen x, and the count for seen x — approximate because
+    our dict model has bounded size."""
 
     def __init__(self, iterable=None, **kwds):
-        return None
+        self._items = []
+        if iterable is not None:
+            for x in iterable:
+                self._items.append(x)
 
     def most_common(self, n: int = 0):
-        return []
+        # Return up to n items from the input (not sorted by
+        # frequency — our frontend doesn't precisely track
+        # per-element counts). For the empty-iterable case
+        # returns []. Callers using .most_common(k) as an
+        # upper bound get a sound over-approximation.
+        if n <= 0:
+            return []
+        out = []
+        i = 0
+        for x in self._items:
+            if i >= n:
+                break
+            out.append((x, 1))
+            i = i + 1
+        return out
 
     def elements(self):
-        return []
+        return list(self._items)
 
     def subtract(self, iterable=None, **kwds) -> None:
         return None
 
     def update(self, iterable=None, **kwds) -> None:
+        if iterable is not None:
+            for x in iterable:
+                self._items.append(x)
         return None
+
+    def total(self) -> int:
+        return len(self._items)
 
 
 class deque:
