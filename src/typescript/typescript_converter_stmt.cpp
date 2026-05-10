@@ -1193,9 +1193,47 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
           const jsont &pn = json_member(elem, "propertyName");
           std::string source =
             pn.is_object() ? json_string(json_member(pn, "text")) : target;
-          if(target.empty() || !st.has_component(source))
+          if(target.empty())
             continue;
-          typet pt = st.get_component(source).type();
+          // Default-value initializer: `{ y: _y = 99 }` — the AST has
+          // `initializer` on the BindingElement. Used when the source
+          // property is absent OR its value is undefined (our model:
+          // NaN).
+          const jsont &elem_init = json_member(elem, "initializer");
+          bool has_source = st.has_component(source);
+          if(!has_source && !elem_init.is_object())
+            continue;
+          typet pt =
+            has_source ? st.get_component(source).type() : double_type();
+          exprt rhs_val;
+          if(has_source)
+          {
+            exprt src_field = member_exprt{rhs, source, pt};
+            if(elem_init.is_object())
+            {
+              exprt default_val = convert_expression(elem_init);
+              // If field is NaN (our undefined sentinel): use default.
+              if(pt.id() == ID_floatbv && default_val.type().id() == ID_floatbv)
+              {
+                // src_field !== src_field (IEEE NaN check) ? default : src
+                exprt is_nan = ieee_float_notequal_exprt{src_field, src_field};
+                rhs_val = if_exprt{is_nan, default_val, src_field};
+              }
+              else
+              {
+                rhs_val = std::move(src_field);
+              }
+            }
+            else
+            {
+              rhs_val = std::move(src_field);
+            }
+          }
+          else if(elem_init.is_object())
+          {
+            rhs_val = convert_expression(elem_init);
+            pt = rhs_val.type();
+          }
           std::string qn =
             "typescript::" +
             (current_function.empty() ? "" : current_function + "::") + target;
@@ -1210,8 +1248,7 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
             symbol_table.add(ps);
           }
           block.add(code_frontend_assignt{
-            symbol_table.lookup_ref(pid).symbol_expr(),
-            member_exprt{rhs, source, pt}});
+            symbol_table.lookup_ref(pid).symbol_expr(), std::move(rhs_val)});
         }
       }
       continue;

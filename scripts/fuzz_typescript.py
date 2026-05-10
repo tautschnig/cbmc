@@ -114,38 +114,55 @@ class Generator:
             stmts.append(self.gen_inheritance_stmt())
         for _ in range(n_stmts):
             r = self.rng.random()
-            if r < 0.10:
+            if r < 0.08:
                 stmts.append(self.gen_declaration())
-            elif r < 0.18:
+            elif r < 0.14:
                 stmts.append(self.gen_array_stmt())
-            elif r < 0.26:
+            elif r < 0.20:
                 stmts.append(self.gen_array_method_stmt())
-            elif r < 0.32:
+            elif r < 0.26:
                 stmts.append(self.gen_map_set_stmt())
-            elif r < 0.40:
+            elif r < 0.32:
                 stmts.append(self.gen_if_stmt())
-            elif r < 0.46:
+            elif r < 0.38:
                 stmts.append(self.gen_for_stmt())
-            elif r < 0.52:
+            elif r < 0.44:
                 stmts.append(self.gen_try_catch_stmt())
-            elif r < 0.58:
+            elif r < 0.50:
                 stmts.append(self.gen_async_stmt())
-            elif r < 0.64:
+            elif r < 0.54:
                 stmts.append(self.gen_destructuring_stmt())
-            elif r < 0.70:
+            elif r < 0.58:
                 stmts.append(self.gen_optional_chain_stmt())
-            elif r < 0.76:
+            elif r < 0.62:
                 stmts.append(self.gen_promise_chain_stmt())
-            elif r < 0.81:
+            elif r < 0.66:
                 stmts.append(self.gen_generic_call_stmt())
-            elif r < 0.86:
+            elif r < 0.70:
                 stmts.append(self.gen_throw_catch_stmt())
-            elif r < 0.90:
+            elif r < 0.73:
                 stmts.append(self.gen_switch_stmt())
-            elif r < 0.94:
+            elif r < 0.76:
                 stmts.append(self.gen_template_literal_stmt())
-            elif r < 0.97:
+            elif r < 0.79:
                 stmts.append(self.gen_arrow_fn_stmt())
+            # Round-3 additions: more string coverage + new TS features
+            elif r < 0.84:
+                stmts.append(self.gen_string_method_stmt())
+            elif r < 0.88:
+                stmts.append(self.gen_string_concat_stmt())
+            elif r < 0.90:
+                stmts.append(self.gen_type_alias_stmt())
+            elif r < 0.92:
+                stmts.append(self.gen_index_signature_stmt())
+            elif r < 0.94:
+                stmts.append(self.gen_param_property_stmt())
+            elif r < 0.96:
+                stmts.append(self.gen_generic_constraint_stmt())
+            elif r < 0.97:
+                stmts.append(self.gen_destructuring_default_stmt())
+            elif r < 0.98:
+                stmts.append(self.gen_spread_stmt())
             else:
                 stmts.append(self.gen_assertion())
         return "\n".join(stmts) + "\n"
@@ -364,6 +381,120 @@ class Generator:
             f"class {sub} extends {base} {{ y: number; "
             f"constructor(v: number) {{ super(v); this.y = v; }} }}\n"
             f"const _inst{self.var_counter} = new {sub}({v});"
+        )
+
+    def gen_string_method_stmt(self) -> str:
+        """String-heavy production to stress refined-string solver."""
+        n = self.var_counter
+        self.var_counter += 1
+        s = self.rng.choice(['"hello"', '"world"', '"foo bar"', '"a b c"'])
+        method = self.rng.choice(
+            [
+                "length",
+                f"indexOf({self.rng.choice(['\"l\"', '\"o\"', '\"z\"'])})",
+                f"startsWith({self.rng.choice(['\"h\"', '\"w\"', '\"\"'])})",
+                f"endsWith({self.rng.choice(['\"o\"', '\"d\"', '\"\"'])})",
+                f"includes({self.rng.choice(['\"l\"', '\"xyz\"'])})",
+                f"slice(0, {self.rng.randint(1, 3)})",
+                f"substring(0, {self.rng.randint(1, 3)})",
+                "toUpperCase()",
+                "toLowerCase()",
+                "trim()",
+                f"repeat({self.rng.randint(0, 3)})",
+                f"padStart({self.rng.randint(5, 8)}, \"_\")",
+                f"split(\" \")",
+            ]
+        )
+        is_call = "(" in method or method == "length"
+        access = f".{method}" if is_call and method != "length" else f".{method}"
+        return (
+            f"const _sm{n} = {s}{access};\n"
+            f"console.assert({s}{access} === {s}{access});"
+        )
+
+    def gen_string_concat_stmt(self) -> str:
+        """String concatenation chain."""
+        n = self.var_counter
+        self.var_counter += 1
+        parts = [self.rng.choice(STRING_LITERALS)
+                 for _ in range(self.rng.randint(2, 4))]
+        expr = " + ".join(parts)
+        return (
+            f"const _sc{n}: string = {expr};\n"
+            f"console.assert(_sc{n} === {expr});"
+        )
+
+    def gen_type_alias_stmt(self) -> str:
+        """Type alias declaration."""
+        n = self.var_counter
+        self.var_counter += 1
+        base = self.rng.choice(["number", "string", "boolean"])
+        return (
+            f"type T{n} = {base};\n"
+            f"const _ta{n}: T{n} = "
+            f"{self.gen_num_expr(0) if base == 'number' else (self.rng.choice(STRING_LITERALS) if base == 'string' else self.rng.choice(BOOL_LITERALS))};"
+        )
+
+    def gen_index_signature_stmt(self) -> str:
+        """Index signature object type."""
+        n = self.var_counter
+        self.var_counter += 1
+        v1 = self.gen_num_expr(0)
+        v2 = self.gen_num_expr(0)
+        return (
+            f"const _is{n}: {{ [key: string]: number }} = "
+            f"{{ a: {v1}, b: {v2} }};\n"
+            f"console.assert(_is{n}.a === {v1});"
+        )
+
+    def gen_param_property_stmt(self) -> str:
+        """Class with parameter properties (TS shorthand)."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"class P{n} {{\n"
+            f"  constructor(public x: number, public y: number) {{}}\n"
+            f"  sum(): number {{ return this.x + this.y; }}\n"
+            f"}}\n"
+            f"const _pp{n} = new P{n}({v}, {v});\n"
+            f"console.assert(_pp{n}.sum() === _pp{n}.x + _pp{n}.y);"
+        )
+
+    def gen_generic_constraint_stmt(self) -> str:
+        """Generic with extends constraint."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(self.max_depth - 1)
+        return (
+            f"function len{n}<T extends {{ length: number }}>(x: T): number "
+            f"{{ return x.length; }}\n"
+            f"const _gc{n} = len{n}<number[]>([{v}, {v}]);\n"
+            f"console.assert(_gc{n} === 2);"
+        )
+
+    def gen_destructuring_default_stmt(self) -> str:
+        """Destructuring with default values."""
+        n = self.var_counter
+        self.var_counter += 1
+        v = self.gen_num_expr(0)
+        return (
+            f"const _dd{n}: {{ x: number; y?: number }} = {{ x: {v} }};\n"
+            f"const {{ x: _x{n}, y: _y{n} = 99 }} = _dd{n};\n"
+            f"console.assert(_y{n} === 99);"
+        )
+
+    def gen_spread_stmt(self) -> str:
+        """Array spread."""
+        n = self.var_counter
+        self.var_counter += 1
+        e1 = self.gen_num_expr(0)
+        e2 = self.gen_num_expr(0)
+        e3 = self.gen_num_expr(0)
+        return (
+            f"const _sa{n}: number[] = [{e1}, {e2}];\n"
+            f"const _sb{n}: number[] = [..._sa{n}, {e3}];\n"
+            f"console.assert(_sb{n}.length === 3);"
         )
 
     def gen_if_stmt(self) -> str:
