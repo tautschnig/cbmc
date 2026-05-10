@@ -4437,75 +4437,187 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
 
             auto it = arg_arr.begin();
             int src_long = static_cast<int>(src_len.to_long());
-            int start = read_int_arg(*it++, 0);
-            // Negative start counts from end.
-            if(start < 0)
-              start = std::max(0, src_long + start);
-            if(start > src_long)
-              start = src_long;
-            int del_count = src_long - start;
-            if(it != arg_arr.end())
+            // Check whether start and deleteCount are constants.
+            // If deleteCount is symbolic, skip the constant path so
+            // the symbolic-fallback handler below can build a
+            // per-slot if_exprt chain.
+            bool args_all_const = true;
             {
-              del_count = read_int_arg(*it++, 0);
-              if(del_count < 0)
-                del_count = 0;
-              if(del_count > src_long - start)
-                del_count = src_long - start;
+              auto ck_it = arg_arr.begin();
+              exprt se = convert_expression(*ck_it);
+              if(
+                !(se.is_constant() && se.type().id() == ID_floatbv) &&
+                !(se.id() == ID_unary_minus && !se.operands().empty() &&
+                  se.operands()[0].is_constant() &&
+                  se.operands()[0].type().id() == ID_floatbv))
+                args_all_const = false;
+              ++ck_it;
+              if(ck_it != arg_arr.end())
+              {
+                exprt de = convert_expression(*ck_it);
+                if(
+                  !(de.is_constant() && de.type().id() == ID_floatbv) &&
+                  !(de.id() == ID_unary_minus && !de.operands().empty() &&
+                    de.operands()[0].is_constant() &&
+                    de.operands()[0].type().id() == ID_floatbv))
+                  args_all_const = false;
+              }
             }
-            // Collect inserted items.
-            exprt::operandst inserted;
-            while(it != arg_arr.end())
+            if(args_all_const)
             {
-              exprt v = convert_expression(*it++);
-              if(v.type() != elem_type)
-                v = typecast_exprt{v, elem_type};
-              inserted.push_back(v);
-            }
-            // Build result array: before + inserted + after.
-            exprt::operandst result_elts;
-            for(int i = 0; i < start; i++)
-              if(static_cast<std::size_t>(i) < data.operands().size())
-                result_elts.push_back(data.operands()[i]);
-            for(auto &v : inserted)
-              result_elts.push_back(v);
-            for(int i = start + del_count; i < src_long; i++)
-              if(static_cast<std::size_t>(i) < data.operands().size())
-                result_elts.push_back(data.operands()[i]);
-            int actual = static_cast<int>(result_elts.size());
-            std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
-            while(result_elts.size() < max_len)
-              result_elts.push_back(from_integer(0, elem_type));
-            array_typet arr_type{
-              elem_type, from_integer(max_len, signedbv_typet{64})};
-            struct_typet list_type = make_array_struct_type(arr_type);
-            struct_exprt new_arr{
-              {from_integer(actual, signedbv_typet{64}),
-               array_exprt{std::move(result_elts), arr_type}},
-              list_type};
-            // Mutate in place: assign back to receiver.
-            if(obj_expr.id() == ID_symbol)
-            {
-              pending_stmts.push_back(code_frontend_assignt{obj_expr, new_arr});
-              const symbolt *obj_sym =
-                symbol_table.lookup(to_symbol_expr(obj_expr).get_identifier());
-              if(obj_sym != nullptr)
-                symbol_table.get_writeable(obj_sym->name)->value = new_arr;
-            }
-            return new_arr;
+              (void)src_long;
+              int start = read_int_arg(*it++, 0);
+              // Negative start counts from end.
+              if(start < 0)
+                start = std::max(0, src_long + start);
+              if(start > src_long)
+                start = src_long;
+              int del_count = src_long - start;
+              if(it != arg_arr.end())
+              {
+                del_count = read_int_arg(*it++, 0);
+                if(del_count < 0)
+                  del_count = 0;
+                if(del_count > src_long - start)
+                  del_count = src_long - start;
+              }
+              // Collect inserted items.
+              exprt::operandst inserted;
+              while(it != arg_arr.end())
+              {
+                exprt v = convert_expression(*it++);
+                if(v.type() != elem_type)
+                  v = typecast_exprt{v, elem_type};
+                inserted.push_back(v);
+              }
+              // Build result array: before + inserted + after.
+              exprt::operandst result_elts;
+              for(int i = 0; i < start; i++)
+                if(static_cast<std::size_t>(i) < data.operands().size())
+                  result_elts.push_back(data.operands()[i]);
+              for(auto &v : inserted)
+                result_elts.push_back(v);
+              for(int i = start + del_count; i < src_long; i++)
+                if(static_cast<std::size_t>(i) < data.operands().size())
+                  result_elts.push_back(data.operands()[i]);
+              int actual = static_cast<int>(result_elts.size());
+              std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+              while(result_elts.size() < max_len)
+                result_elts.push_back(from_integer(0, elem_type));
+              array_typet arr_type{
+                elem_type, from_integer(max_len, signedbv_typet{64})};
+              struct_typet list_type = make_array_struct_type(arr_type);
+              struct_exprt new_arr{
+                {from_integer(actual, signedbv_typet{64}),
+                 array_exprt{std::move(result_elts), arr_type}},
+                list_type};
+              // Mutate in place: assign back to receiver.
+              if(obj_expr.id() == ID_symbol)
+              {
+                pending_stmts.push_back(
+                  code_frontend_assignt{obj_expr, new_arr});
+                const symbolt *obj_sym = symbol_table.lookup(
+                  to_symbol_expr(obj_expr).get_identifier());
+                if(obj_sym != nullptr)
+                  symbol_table.get_writeable(obj_sym->name)->value = new_arr;
+              }
+              return new_arr;
+            } // end if(args_all_const)
           }
-          // Fallback: old length-only update for non-constant arrays.
+          // Fallback: for a constant source array with a constant start
+          // and symbolic deleteCount, shift elements via a per-slot
+          // if_exprt chain. result[i] = (i + start + del_count < src_len)
+          //                             ? src[i + start + del_count]
+          //                             : 0
+          // length = src_len - del_count.
           if(arg_arr.size() >= 2)
           {
+            // Resolve source to constant
+            exprt src2 = obj_expr;
+            if(src2.id() == ID_symbol)
+            {
+              const symbolt *s =
+                symbol_table.lookup(to_symbol_expr(src2).get_identifier());
+              if(s && !s->value.is_nil())
+                src2 = s->value;
+            }
             auto it = arg_arr.begin();
-            exprt start = convert_expression(*it++);
-            exprt del_count = convert_expression(*it);
+            exprt start_expr = convert_expression(*it++);
+            exprt del_count_expr = convert_expression(*it);
+            // Try to detect constant start. (Symbolic start is harder.)
+            mp_integer start_mp{0};
+            bool start_const = false;
+            if(start_expr.is_constant() && start_expr.type().id() == ID_floatbv)
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_expr(to_constant_expr(start_expr));
+              start_mp = mp_integer{
+                static_cast<long long>(std::stod(fv.to_ansi_c_string()))};
+              start_const = true;
+            }
+            if(
+              start_const && src2.id() == ID_struct &&
+              src2.operands().size() >= 2 && src2.operands()[0].is_constant() &&
+              src2.operands()[1].id() == ID_array)
+            {
+              mp_integer src_len{0};
+              to_integer(to_constant_expr(src2.operands()[0]), src_len);
+              const exprt &data = src2.operands()[1];
+              typet elem_type = data.operands().empty()
+                                  ? double_type()
+                                  : data.operands()[0].type();
+              typet idx_type = signedbv_typet{64};
+              // Per ES2024 ToIntegerOrInfinity: truncate towards zero
+              // via typecast, matching spec behaviour for non-integer
+              // arguments.
+              exprt dc_int = typecast_exprt{del_count_expr, idx_type};
+              int start_i = static_cast<int>(start_mp.to_long());
+              int src_len_i = static_cast<int>(src_len.to_long());
+              exprt::operandst new_elts;
+              for(int i = 0; i < static_cast<int>(data.operands().size()); ++i)
+              {
+                if(i < start_i)
+                {
+                  new_elts.push_back(data.operands()[i]);
+                  continue;
+                }
+                // offset = start_i + (i - start_i) + dc = i + dc.
+                exprt offset = plus_exprt{from_integer(i, idx_type), dc_int};
+                // Guard: offset < src_len_i.
+                exprt guard = binary_relation_exprt{
+                  offset, ID_lt, from_integer(src_len_i, idx_type)};
+                // src[offset]. Use symbolic indexing on the original
+                // data array (inside src2).
+                exprt elt = index_exprt{data, offset};
+                new_elts.push_back(
+                  if_exprt{guard, elt, from_integer(0, elem_type)});
+              }
+              array_typet arr_type = to_array_type(data.type());
+              exprt new_len =
+                minus_exprt{from_integer(src_len_i, idx_type), dc_int};
+              struct_typet list_type = to_struct_type(obj_expr.type());
+              struct_exprt new_arr{
+                {new_len, array_exprt{std::move(new_elts), arr_type}},
+                list_type};
+              if(obj_expr.id() == ID_symbol)
+              {
+                pending_stmts.push_back(
+                  code_frontend_assignt{obj_expr, new_arr});
+              }
+              return new_arr;
+            }
+            // Pure fallback: length-only update for arrays where we
+            // can't reason about contents.
             exprt len = member_exprt{obj_expr, "length", signedbv_typet{64}};
-            if(start.type() != signedbv_typet{64})
-              start = typecast_exprt{start, signedbv_typet{64}};
-            if(del_count.type() != signedbv_typet{64})
-              del_count = typecast_exprt{del_count, signedbv_typet{64}};
+            if(start_expr.type() != signedbv_typet{64})
+              start_expr = typecast_exprt{start_expr, signedbv_typet{64}};
+            if(del_count_expr.type() != signedbv_typet{64})
+              del_count_expr =
+                typecast_exprt{del_count_expr, signedbv_typet{64}};
             pending_stmts.push_back(
-              code_frontend_assignt{len, minus_exprt{len, del_count}});
+              code_frontend_assignt{len, minus_exprt{len, del_count_expr}});
           }
           return obj_expr;
         }
