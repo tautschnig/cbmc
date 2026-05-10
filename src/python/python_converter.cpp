@@ -12747,9 +12747,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 if(return_type.id() == ID_empty)
                   return_type = this_type;
                 else if(return_type != this_type)
-                  // Multiple different class return types — use int
-                  // (will be typecast via safe_typecast on each path)
-                  return_type = python_int_type();
+                  // Multiple distinct class return types —
+                  // Union[T1, T2] → widen to python_value_type.
+                  // A concrete ClassInstance wraps to tag INT
+                  // (non-None) in wrap_value, so the caller's
+                  // 'is not None' check works; per-class
+                  // dispatch inside the tagged union is still
+                  // deferred (flagged as CLASS tag follow-up).
+                  return_type = python_value_type();
               }
             }
           }
