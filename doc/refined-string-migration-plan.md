@@ -1,6 +1,7 @@
 # Refined String Solver Migration Plan for TypeScript Frontend
 
-Status: plan (not yet executed)  
+Status: Phase 1 + Phase 10 done; Phases 2–8 deferred. See
+"Execution status" section.
 Model: the Python frontend's migration on branch `tautschnig/py`  
 Estimated effort: ~500 LOC in our frontend + ~20 LOC in CBMC solver/ + ~50 test adjustments
 
@@ -10,7 +11,49 @@ TypeScript frontend. The plan is derived from studying the Python
 frontend's migration on the `tautschnig/py` branch (commits from
 `5555d73df0` through `7228ef8db5`).
 
-## Background
+## Execution status (as of 2026-05-10)
+
+- **Phase 1 (type retag)**: DONE. Struct keeps inline-array shape,
+  only the tag changed to `CPROVER_PREFIX "refined_string_type"`.
+  The plan called for switching data to a pointer; we chose a
+  safer minimal change that keeps all 626 CORE tests passing.
+- **Phase 10 (auto-enable)**: DONE. `.ts`/`.tsx` source triggers
+  `--refine-strings` automatically unless `--z3`/`--smt2` is set.
+- **Phases 2–8 (handler migration)**: NOT DONE. Deferred because:
+  - All 4 originally-targeted string KNOWNBUGs were already
+    closed in the previous session via per-case symbolic
+    encodings (see `doc/over-approximation-audit.md`).
+  - Full migration requires switching our inline-array struct to
+    a pointer-based `refined_string_exprt`, which is invasive
+    (~500 LOC) and risks destabilising the 626 existing CORE
+    tests.
+  - The refined-string solver now *recognises* our strings (via
+    the retagged type), but doesn't yet *constrain* any of our
+    string operations because our handlers emit struct literals
+    rather than `cprover_string_*_func` applications.
+- **Phase 9 (solver patches)**: NOT NEEDED yet; the solver
+  accepts our shape with the retagged type without the patches
+  described in the plan.
+
+## Future work
+
+To exercise the refined string solver fully, Phases 2–8 would
+migrate individual string method handlers to emit
+`cprover_string_*_func` calls. This would need:
+
+- A boundary translation between our inline-array struct and
+  the pointer-based `refined_string_exprt` the solver expects
+  (via `address_of_exprt(index_exprt(data, 0))`), OR
+- A full switch of `typescript_string_type()` to the
+  pointer-based shape, with corresponding updates to every
+  place that currently treats `data` as an inline array.
+
+Option 2 is what the plan originally called for. Option 1 is
+less invasive and worth trying first.
+
+---
+
+
 
 The Python frontend successfully migrated. Key insights:
 
