@@ -716,6 +716,52 @@ make_nondet_string(symbol_table_baset &symbol_table)
     symbol_table.lookup_ref(rc_id).symbol_expr(), bool_typet());
 }
 
+/// Emit a one-string-argument int-returning intrinsic call (e.g.,
+/// cprover_string_length_func). Registers the function in the
+/// symbol table, creates a fresh result symbol, assigns the
+/// function-application into it via pending_checks, and returns
+/// the result symbol. Follows the same pattern as
+/// emit_string_bool_function for consistency with the rest of
+/// the string-intrinsic path.
+[[maybe_unused]] static exprt emit_string_int_function(
+  const irep_idt &func_id,
+  const exprt &str,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  const typet int_type = signedbv_typet{64};
+  irep_idt sym_id{func_id};
+  if(symbol_table.lookup(sym_id) == nullptr)
+  {
+    std::vector<typet> arg_types{str.type()};
+    symbolt fs{
+      sym_id,
+      mathematical_function_typet(std::move(arg_types), int_type),
+      "python"};
+    fs.base_name = id2string(func_id);
+    symbol_table.add(fs);
+  }
+
+  function_application_exprt app(
+    symbol_table.lookup_ref(sym_id).symbol_expr(), {str});
+  app.type() = int_type;
+
+  static unsigned int_ctr = 0;
+  std::string rc_name = "__str_int_" + std::to_string(int_ctr++);
+  irep_idt rc_id{"python::" + rc_name};
+  if(symbol_table.lookup(rc_id) == nullptr)
+  {
+    symbolt rs{rc_id, int_type, "python"};
+    rs.base_name = rc_name;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  pending_checks.push_back(
+    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  return symbol_table.lookup_ref(rc_id).symbol_expr();
+}
+
 /// Build a string literal and register it with the string solver.
 /// Uses ID_cprover_string_literal_func so the solver knows the content.
 [[maybe_unused]] static exprt build_solver_string_literal(
