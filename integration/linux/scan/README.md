@@ -1,24 +1,49 @@
 # `scan/` — pipeline driver and real-kernel compilation helpers
 
 Seed directory for the PR-scan driver described in
-[`../DESIGN.md §9`](../DESIGN.md).  Currently contains only the
-minimal real-kernel compilation helper; the full pipeline lands in
-milestone M4.
+[`../DESIGN.md §9`](../DESIGN.md).  Currently contains the helpers
+for turning real kernel source into goto-cc goto binaries.  The full
+pipeline driver (Coccinelle prefilter + harness generator + cbmc
+runner + report aggregator) lands in milestone M4.
 
 ## What's here today
 
-- `compile_file.sh` — build a single kernel `.c` file into a goto-cc
-  goto binary without driving the kernel's `make` system.  Takes a
-  pre-configured kernel tree plus a source path and produces a goto
-  binary ready for `goto-instrument` and `cbmc`.  Validated against
-  `crypto/algif_aead.c` from Linux 5.10.
+- `configure.sh` — configure a kernel tree for scanning from
+  `allnoconfig` + one or more config fragments.  Merges the
+  fragments via the kernel's own
+  `scripts/kconfig/merge_config.sh`, runs `make olddefconfig`, and
+  tries `make prepare scripts`, falling back gracefully on hosts
+  that hit [LIM-005](../CBMC_LIMITATIONS.md).
+- `fragments/` — the config fragments library.  See its
+  [`README.md`](fragments/README.md) for the available fragments
+  and how to add more.  The `baseline.config` + `crypto-aead.config`
+  pair is enough to compile `crypto/algif_aead.c`.
+- `compile_file.sh` — build a single kernel `.c` file into a
+  goto-cc goto binary without driving the kernel's full `make`
+  system.  Takes a pre-configured kernel tree plus a source path
+  and produces a goto binary ready for `goto-instrument` and
+  `cbmc`.  Validated against `crypto/algif_aead.c` from Linux 5.10.
+
+## End-to-end today
+
+```sh
+# One-time: configure the kernel tree for the subsystems you want to scan.
+scan/configure.sh /path/to/linux \
+    scan/fragments/baseline.config \
+    scan/fragments/crypto-aead.config
+
+# Per-file: produce a goto binary.
+scan/compile_file.sh /path/to/linux crypto/algif_aead.c /tmp/algif.gb
+
+# Inspect.
+build/bin/goto-instrument --show-goto-functions /tmp/algif.gb | less
+```
 
 ## What's planned (M4)
 
-The M3 stretch experiment showed we can compile real kernel source
-with `goto-cc` (see `compile_file.sh`), but we have not yet
-automated the end-to-end link-up with the property modules.  The
-open items, in the order they need to be addressed:
+The compile pipeline above is in place, but the end-to-end link-up
+with the property modules is still to be automated.  The open items,
+in the order they need to be addressed:
 
 1. **Strip the kernel's inlined `static inline` copies of annotated
    primitives** (e.g. `aead_request_set_crypt`,
@@ -52,31 +77,13 @@ open items, in the order they need to be addressed:
    contract failures per file / function / module.  SARIF is the
    likely interchange format.
 
-## Running `compile_file.sh` manually
-
-```sh
-# Prepare kernel source once (generated headers, scripts):
-cd /path/to/linux
-make olddefconfig
-make prepare scripts     # may need workarounds per LIM-005
-
-# Produce a goto binary of a single file:
-/path/to/cbmc-github.git/integration/linux/scan/compile_file.sh \
-    /path/to/linux crypto/algif_aead.c /tmp/algif.gb
-
-# Inspect:
-/path/to/cbmc-github.git/build/bin/goto-instrument \
-    --show-goto-functions /tmp/algif.gb | less
-```
-
 ## Limitations and caveats
 
-- The flag set in `compile_file.sh` is tuned for `x86_64` plus
-  `allnoconfig + CONFIG_KVM + CONFIG_CRYPTO_USER_API_AEAD`.  Files
-  in other subsystems may need additional kernel flags or different
-  `-include` ordering; check the kernel's own `.o.cmd` cache after
-  a normal `gcc` build for ground truth.
-- No support for assembly sources, no cross-compilation, no
-  per-subsystem Kconfig detection.  All punted to M4.
+- `compile_file.sh`'s flag set is tuned for `x86_64` plus a broadly
+  sensible kernel config.  Files that require per-subdir `Kbuild`
+  flags may need ad-hoc extensions; check the kernel's own `.o.cmd`
+  cache after a normal `gcc` build for ground truth.
+- No support for assembly sources, no cross-compilation.  Punted to
+  M4.
 - The build does not run the kernel's own objtool or modpost stages;
-  those are irrelevant for property-module verification anyway.
+  those are irrelevant for property-module verification.
