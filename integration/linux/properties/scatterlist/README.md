@@ -86,15 +86,12 @@ Both tests are exercised by `run.sh`.
 
 ## Known gaps
 
-- The contract on `sg_init_table` is not enforceable via
-  `goto-instrument --enforce-contract` because its body contains a
-  loop (see [../../CBMC_LIMITATIONS.md](../../CBMC_LIMITATIONS.md)
-  entry LIM-002).  The other mutators (`sg_set_page`,
-  `sg_chain`, `sg_unmark_end`) are loop-free and their contracts
-  could be enforced as a follow-up.
-- `sgl_all_user_writable` is also loop-bodied; the same limitation
-  applies to enforcing its (trivial) contract.  The predicate remains
-  useful inside requires clauses where CBMC evaluates it symbolically.
+- `sgl_all_user_writable` is loop-bodied and is therefore not
+  currently `--enforce-contract`'d on its reference implementation
+  (its contract is trivial — `__CPROVER_assigns()` — so the point
+  of enforcing is limited in any case).  The other four API
+  functions (`sg_init_table`, `sg_set_page`, `sg_chain`,
+  `sg_unmark_end`) are enforce-verified via DFCC in `run.sh`.
 
 ## Versions
 

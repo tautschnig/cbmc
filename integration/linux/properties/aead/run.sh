@@ -2,18 +2,23 @@
 #
 # Regression driver for the aead property module.
 #
-# The single test is test_copyfail.c, compiled twice: once as the
-# vulnerable shape of _aead_recvmsg (sg_chain(rx, _, tx); set_crypt
-# with src == dst == rx), once as the fixed shape (distinct src/dst,
-# no sg_chain).  Both are transformed with
-# --replace-call-with-contract aead_request_set_crypt so that the
-# contract's __CPROVER_requires(sgl_all_user_writable(dst)) is
-# checked at the call site.
+# Two test flavours:
 #
-#   vuln  -> expect VERIFICATION FAILED (precondition fails)
-#   fixed -> expect VERIFICATION SUCCESSFUL
+#   copyfail: test_copyfail.c, compiled twice: vulnerable shape (sg_chain
+#             of src into dst; set_crypt with src == dst == rx) and fixed
+#             shape (distinct src/dst, no sg_chain).  Both transformed
+#             with --replace-call-with-contract aead_request_set_crypt.
+#             vulnerable  -> expect VERIFICATION FAILED  (precondition)
+#             fixed       -> expect VERIFICATION SUCCESSFUL.
 #
-# Exit code 0 iff both outcomes match expectation.
+#   enforce:  --dfcc + --enforce-contract proves the reference
+#             implementations of aead_request_set_tfm,
+#             aead_request_set_ad, and aead_request_set_crypt each
+#             match their frame condition.  One top-level call per
+#             function (a DFCC constraint), driven by test_enforce.c
+#             compiled with the appropriate -DENFORCE_<name>.
+#
+# Exit code 0 iff all outcomes match expectation.
 
 set -u
 
@@ -73,9 +78,29 @@ else
   fail=$((fail + 1))
 fi
 
+echo
+echo "=== enforce: --dfcc + --enforce-contract (one per function) ==="
+for fn in aead_request_set_tfm aead_request_set_ad aead_request_set_crypt; do
+  up=$(echo "$fn" | tr '[:lower:]' '[:upper:]')
+  "$GCC" -DENFORCE_$up -DPAGE_PROV_TABLE_SIZE=2 \
+         "$PP/page_provenance.c" "$SGL/scatterlist.c" aead.c test_enforce.c \
+         -o "$tmp/enforce_$fn.gb"
+  "$GI" --dfcc main --enforce-contract "$fn" \
+        "$tmp/enforce_$fn.gb" "$tmp/enforce_$fn.trans.gb" &>/dev/null
+  out=$(timeout 180 "$CBMC" "$tmp/enforce_$fn.trans.gb" --unwind 8 \
+                                                         --unwinding-assertions 2>&1)
+  if echo "$out" | grep -q "^VERIFICATION SUCCESSFUL\$"; then
+    echo "  [ok] enforce $fn: VERIFICATION SUCCESSFUL"
+  else
+    echo "  [FAIL] enforce $fn: did not see VERIFICATION SUCCESSFUL" >&2
+    echo "$out" | grep -E "FAILURE|VERIFICATION" | head -5 | sed 's/^/    /' >&2
+    fail=$((fail + 1))
+  fi
+done
+
 if [[ $fail -eq 0 ]]; then
   echo
-  echo "aead copyfail test behaved as expected on both variants."
+  echo "All aead tests behaved as expected."
   exit 0
 fi
 

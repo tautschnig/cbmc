@@ -13,7 +13,14 @@
 #          must let a good caller through and fail a caller that
 #          chains a page-cache page into the destination.
 #
-# Exit code 0 iff both outcomes match expectation.
+# enforce: --dfcc + --enforce-contract proves the reference
+#          implementations of sg_init_table, sg_set_page, sg_chain,
+#          and sg_unmark_end match their frame conditions.  One
+#          top-level call per function (a DFCC constraint), driven
+#          by test_enforce.c compiled with the appropriate
+#          -DENFORCE_<name>.
+#
+# Exit code 0 iff all outcomes match expectation.
 
 set -u
 
@@ -70,9 +77,29 @@ else
   fail=$((fail + 1))
 fi
 
+echo
+echo "=== enforce: --dfcc + --enforce-contract (one per function) ==="
+for fn in sg_init_table sg_set_page sg_chain sg_unmark_end; do
+  up=$(echo "$fn" | tr '[:lower:]' '[:upper:]')
+  "$GCC" -DENFORCE_$up -DPAGE_PROV_TABLE_SIZE=2 \
+         "$PP/page_provenance.c" scatterlist.c test_enforce.c \
+         -o "$tmp/enforce_$fn.gb"
+  "$GI" --dfcc main --enforce-contract "$fn" \
+        "$tmp/enforce_$fn.gb" "$tmp/enforce_$fn.trans.gb" &>/dev/null
+  out=$(timeout 180 "$CBMC" "$tmp/enforce_$fn.trans.gb" --unwind 8 \
+                                                         --unwinding-assertions 2>&1)
+  if echo "$out" | grep -q "^VERIFICATION SUCCESSFUL\$"; then
+    echo "  [ok] enforce $fn: VERIFICATION SUCCESSFUL"
+  else
+    echo "  [FAIL] enforce $fn: did not see VERIFICATION SUCCESSFUL" >&2
+    echo "$out" | grep -E "FAILURE|VERIFICATION" | head -5 | sed 's/^/    /' >&2
+    fail=$((fail + 1))
+  fi
+done
+
 if [[ $fail -eq 0 ]]; then
   echo
-  echo "Both scatterlist tests behaved as expected."
+  echo "All scatterlist tests behaved as expected."
   exit 0
 fi
 

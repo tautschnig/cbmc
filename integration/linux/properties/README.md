@@ -60,8 +60,12 @@ goto-cc -I properties/page_provenance              \
 #        <hook> by its contract; callers then discharge the requires
 #        clause at the call site;
 #
-#    (b) --enforce-contract <hook>                to prove that the body
-#        of <hook> satisfies its contract.
+#    (b) --dfcc <harness> --enforce-contract <hook>  to prove that the
+#        body of <hook> satisfies its contract.  `--dfcc` activates
+#        the dynamic frame-condition checking path, which handles
+#        functions with loops (see
+#        [`../CBMC_LIMITATIONS.md`](../CBMC_LIMITATIONS.md) entry
+#        LIM-002 for why the non-DFCC path is not used).
 goto-instrument --replace-call-with-contract write_to_page \
                 harness.gb harness.abstracted.gb
 

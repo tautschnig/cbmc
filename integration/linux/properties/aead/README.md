@@ -63,14 +63,6 @@ source.
 
 ## Known gaps
 
-- `aead_request_set_crypt`'s contract is not enforced against the
-  reference implementation via `goto-instrument --enforce-contract`
-  because `sgl_all_user_writable` (the predicate invoked by the
-  requires clause) contains a loop.  See
-  [`../../CBMC_LIMITATIONS.md`](../../CBMC_LIMITATIONS.md) entry
-  LIM-002.  The reference implementation is still covered by a
-  plain-cbmc unit-test path (in `test_copyfail.c`'s fixed build,
-  which exercises the success path end-to-end).
 - No contract captures the kernel's own invariant that AEAD
   algorithms with `crypto_aead_authsize > 0` need `cryptlen >=
   authsize` to make sense.  A more complete contract would add

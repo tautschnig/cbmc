@@ -2,10 +2,10 @@
 #
 # Regression driver for the page_provenance property module.
 #
-# Two independent tests:
+# Three independent tests:
 #
-#   unit: the store/read-back invariant holds in the reference
-#         implementation.
+#   unit:    the store/read-back invariant holds in the reference
+#            implementation.
 #
 #       goto-cc page_provenance.c test_unit.c
 #       cbmc ...    -> expect SUCCESSFUL
@@ -19,7 +19,16 @@
 #       goto-instrument --replace-call-with-contract write_to_page ...
 #       cbmc ...    -> expect FAILED on the bad caller's precondition
 #
-# Exit code 0 iff both outcomes match expectation.
+#   enforce: --dfcc + --enforce-contract set_page_prov proves that the
+#            reference implementation's body obeys its frame condition.
+#            Requires a small PAGE_PROV_TABLE_SIZE for tractability;
+#            we compile with size 3 for this run.
+#
+#       goto-cc -DPAGE_PROV_TABLE_SIZE=3 page_provenance.c test_unit.c
+#       goto-instrument --dfcc main --enforce-contract set_page_prov ...
+#       cbmc ...    -> expect SUCCESSFUL
+#
+# Exit code 0 iff all three outcomes match expectation.
 
 set -u
 
@@ -72,9 +81,25 @@ else
   fail=$((fail + 1))
 fi
 
+echo
+echo "=== enforce: --dfcc + --enforce-contract set_page_prov ==="
+"$GCC" -DPAGE_PROV_TABLE_SIZE=3 page_provenance.c test_unit.c \
+       -o "$tmp/enforce.gb"
+"$GI" --dfcc main --enforce-contract set_page_prov \
+      "$tmp/enforce.gb" "$tmp/enforce.trans.gb" &>/dev/null
+out=$(timeout 120 "$CBMC" "$tmp/enforce.trans.gb" --unwind 5 \
+                                                   --unwinding-assertions 2>&1)
+if echo "$out" | grep -q "^VERIFICATION SUCCESSFUL\$"; then
+  echo "  [ok] enforce: VERIFICATION SUCCESSFUL"
+else
+  echo "  [FAIL] enforce: did not see VERIFICATION SUCCESSFUL" >&2
+  echo "$out" | tail -25 | sed 's/^/    /' >&2
+  fail=$((fail + 1))
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
-  echo "Both page_provenance tests behaved as expected."
+  echo "All three page_provenance tests behaved as expected."
   exit 0
 fi
 

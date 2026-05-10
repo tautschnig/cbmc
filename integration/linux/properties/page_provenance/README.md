@@ -56,22 +56,15 @@ Both tests are exercised by `run.sh`.
 
 ## Known gap
 
-The contract on `set_page_prov` is not currently verified via
-`goto-instrument --enforce-contract set_page_prov`: the linear
-search in the body contains a loop, and CBMC's loop-contract
-machinery is brittle for loops that read from shared memory (see the
-`KNOWNBUG` label on `regression/contracts/quicksort_contracts_01` in
-the CBMC tree).  The contract is retained as documentation and as
-input to `--replace-call-with-contract` at call sites (though no call
-site yet replaces `set_page_prov`).  Closing this gap is a follow-up;
-options are loop contracts (`__CPROVER_loop_invariant` +
-`__CPROVER_loop_assigns` + `goto-instrument --apply-loop-contracts`),
-preprocessor unrolling for small `PAGE_PROV_TABLE_SIZE`, or a
-different backing-store design.
+None currently: `set_page_prov`'s contract is enforced via
+`goto-instrument --dfcc main --enforce-contract set_page_prov`; see
+the `enforce` case in `run.sh`.  DFCC's only constraint is that the
+enforce-mode harness makes a single top-level call to the function
+under check, which `test_unit.c` already satisfies.
 
 ## Versions
 
-Validated against CBMC 6.7.1 (`build/bin/cbmc`).  No kernel headers
+Validated against CBMC 6.9.0 (`build/bin/cbmc`).  No kernel headers
 are required to build or run the module on its own.
 
 ## Downstream users
