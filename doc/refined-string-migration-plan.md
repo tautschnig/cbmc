@@ -37,19 +37,77 @@ frontend's migration on the `tautschnig/py` branch (commits from
 
 ## Future work
 
-To exercise the refined string solver fully, Phases 2–8 would
-migrate individual string method handlers to emit
-`cprover_string_*_func` calls. This would need:
+### Phase 1 pilot (attempted 2026-05-10, rolled back)
 
-- A boundary translation between our inline-array struct and
-  the pointer-based `refined_string_exprt` the solver expects
-  (via `address_of_exprt(index_exprt(data, 0))`), OR
-- A full switch of `typescript_string_type()` to the
-  pointer-based shape, with corresponding updates to every
-  place that currently treats `data` as an inline array.
+An attempt was made to complete Phase 1 per the original plan:
+switch `typescript_string_type()` to the pointer-based shape
+(`{length: signedbv[32], content: pointer<unsignedbv[16]>}`),
+update `convert_string_literal_from_text` to store characters in
+a fresh static symbol and produce `address_of(index(sym, 0))` as
+the content pointer, and update `extract_string_value` to read
+both legacy inline-array and new pointer-based formats.
 
-Option 2 is what the plan originally called for. Option 1 is
-less invasive and worth trying first.
+Compilation succeeded but regression revealed **~25 test
+failures** covering:
+
+- `map-set-operations`, `map-delete-clear`, `map-get-constant`,
+  `map-set-symbolic` — map key lookup compares stored string
+  keys to the query key
+- `generic-*`, `heterogeneous-tuple`, `discriminated-union` —
+  tests that use string members as union discriminators or tuple
+  fields
+- `integration-config-parser`, `integration-ms-parser` — real
+  TS program integrations
+- `typeof-literal-types` — typeof-guard string-literal types
+- `object-entries-deep-access` — Object.entries result iteration
+- Plus several more
+
+**Root cause**: under the pointer-based shape, struct equality
+(used implicitly by `===` and other operators that compare whole
+strings) degenerates to pointer comparison. Each string literal
+gets its own fresh symbol, so `"a" === "a"` compares distinct
+pointers and returns false even when the characters match. To
+fix this properly, every string operation that implicitly
+compares strings must be rewritten to emit
+`cprover_string_equal_func(a, b)` (or a per-character loop).
+
+That means Phase 1 can't ship without simultaneous completion of
+Phase 4 (predicates) — and since predicates depend on Phase 2
+(helpers) and Phase 3 (concat), the phases aren't really
+independent. In practice they form a single ~500 LOC migration.
+
+The pilot was rolled back. We remain on Phase 1 minimum (retag
+only) + Phase 10 (auto-enable).
+
+### If we resume the migration
+
+Two approaches:
+
+- **Boundary translation** (as before): keep inline-array struct,
+  wrap into `refined_string_exprt` at call sites to
+  `cprover_string_*_func`. Simpler but the inverse (solver
+  result → our struct shape) is awkward because it needs a
+  per-character loop.
+- **Full pointer-based switch** (what the pilot tried): change
+  the struct shape, emit `cprover_string_equal_func` for `===`,
+  `cprover_string_concat_func` for `+`, etc. Most rigorous but
+  requires migrating ~20 method handlers at once.
+
+Either way, the work is best done as a dedicated multi-session
+effort with per-method test triage, not a single-session
+attempt.
+
+### Why this is lower priority now
+
+All 4 originally-targeted string KNOWNBUGs
+(`string-repeat-symbolic`, `string-padstart-symbolic`,
+`string-indexof-symbolic-needle`, `string-to-number-coerce`)
+were closed in an earlier session via per-case symbolic
+encodings using our existing fixed-size model (see
+`doc/over-approximation-audit.md`). The only remaining string
+KNOWNBUG that would be resolved by full migration is
+`string-to-number-coerce-symbolic` (symbolic string parse),
+which is an edge case rarely encountered in real TS code.
 
 ---
 
