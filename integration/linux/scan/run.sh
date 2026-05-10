@@ -9,17 +9,15 @@
 #
 #   2.  Run scan.py against a real kernel source file
 #       (crypto/algif_aead.c under $LINUX_TREE, if present).
-#       Expected: one prefilter hit, cbmc_status == "adapter-needed";
-#       scan.py should exit 0 (no contract failure; M4b will turn
-#       this into a real run).
+#       After M4b's kernel adapter landed, the expected state on an
+#       unstubbed _aead_recvmsg is `timeout` (LIM-006).  When
+#       aggressive-stubbing is added (M4c), this may flip to `failed`
+#       or `successful`.
 #
-# Exit code 0 iff both cases behave as expected.  The second case is
-# skipped (not failed) if $LINUX_TREE is unset or the file is missing.
-
-set -u
+# Exit code 0 iff both cases behave as expected.
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-REPO_ROOT=$(cd -- "$SCRIPT_DIR/../../.." &>/dev/null && pwd)
+source "$SCRIPT_DIR/_lib.sh"
 cd -- "$SCRIPT_DIR"
 
 SCAN="$SCRIPT_DIR/scan.py"
@@ -56,10 +54,6 @@ else
   LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
   rc=$?
   set -e
-  # After M4b's kernel adapter landed, the expected state on an
-  # unstubbed _aead_recvmsg is `timeout` (LIM-006).  When
-  # aggressive-stubbing is added, this may flip to `failed` or
-  # `successful`; update here at that point.
   if [[ $rc -eq 0 ]] && \
      grep -q '"line": 280' "$tmp/case2.json" && \
      grep -qE '"cbmc_status": "(timeout|failed|successful)"' "$tmp/case2.json"; then

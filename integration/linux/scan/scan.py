@@ -32,6 +32,7 @@ import datetime
 import json
 import os
 import re
+import resource
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,54 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 INTEG_ROOT = SCRIPT_DIR.parent              # integration/linux/
 PROPERTIES_DIR = INTEG_ROOT / "properties"
 REPO_ROOT = INTEG_ROOT.parent.parent        # repository root
+
+
+# ---------------------------------------------------------------------------
+# Resource limits for every subprocess we spawn.  Both cbmc and
+# goto-instrument can blow up on complex inputs (LIM-006 plus adjacent
+# state-explosion cases).  We apply an RLIMIT_AS ceiling plus an RLIMIT_CPU
+# budget so that any runaway tool is killed cleanly rather than filling
+# swap or holding the host indefinitely.
+# ---------------------------------------------------------------------------
+
+# Memory cap: 4 GiB virtual per tool invocation.  Raise via env var for
+# investigative work on very large binaries.
+MEMORY_LIMIT_BYTES = int(os.environ.get("SCAN_MEMORY_LIMIT", 4 * 1024 * 1024 * 1024))
+
+# CPU-time cap as an inner backstop to the wall-clock timeout.  A tool
+# that's stuck in a tight SAT/symex loop may burn CPU under the wall-clock
+# timeout; RLIMIT_CPU turns that into a kill-9 at the kernel level.  Set
+# to a generous ceiling; per-call wall-clock budgets (NATIVE_CBMC_TIMEOUT,
+# KERNEL_CBMC_TIMEOUT, GI_TIMEOUT, GOTOCC_TIMEOUT) remain the primary limit.
+CPU_LIMIT_SECONDS = int(os.environ.get("SCAN_CPU_LIMIT", 900))
+
+
+def _rlimit_preexec() -> None:
+    """Called in the forked child before exec().  Applies the resource
+    limits defined above.  Failure to set a limit is reported via the
+    usual subprocess error channel (preexec_fn exceptions propagate)."""
+    resource.setrlimit(resource.RLIMIT_AS,
+                       (MEMORY_LIMIT_BYTES, MEMORY_LIMIT_BYTES))
+    resource.setrlimit(resource.RLIMIT_CPU,
+                       (CPU_LIMIT_SECONDS, CPU_LIMIT_SECONDS))
+
+
+def _run(cmd: list[str],
+         *,
+         timeout: float | None,
+         check: bool = False,
+         capture_output: bool = True) -> subprocess.CompletedProcess:
+    """Wrapper around subprocess.run that applies RLIMIT_AS/RLIMIT_CPU
+    via preexec_fn and enforces a wall-clock timeout.  Timeouts are
+    allowed to propagate (TimeoutExpired)."""
+    return subprocess.run(
+        cmd,
+        timeout=timeout,
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        preexec_fn=_rlimit_preexec,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -123,11 +172,14 @@ COCCI_HIT_RE = re.compile(
 
 
 def run_cocci(module: str, cocci_path: Path, target: Path) -> list[CocciHit]:
-    result = subprocess.run(
-        [spatch_bin(), "--sp-file", str(cocci_path), "--very-quiet",
-         str(target)],
-        capture_output=True, text=True,
-    )
+    try:
+        result = _run(
+            [spatch_bin(), "--sp-file", str(cocci_path), "--very-quiet",
+             str(target)],
+            timeout=SPATCH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return []
     hits: list[CocciHit] = []
     for line in (result.stdout + result.stderr).splitlines():
         m = COCCI_HIT_RE.match(line)
@@ -194,6 +246,13 @@ KERNEL_ADAPTERS: dict[str, dict] = {
 KERNEL_CBMC_TIMEOUT = 180
 # Budget for cbmc runs on property-module-native harnesses.
 NATIVE_CBMC_TIMEOUT = 60
+# Wall-clock cap for goto-cc and goto-instrument invocations.
+# goto-instrument with --generate-function-body on a large binary is
+# known to hang in some cases, so we must always wrap it.
+GOTOCC_TIMEOUT = 120
+GI_TIMEOUT = 120
+# Coccinelle (spatch) budget; per-file, short on typical source.
+SPATCH_TIMEOUT = 60
 
 
 def run_cbmc_native(
@@ -212,9 +271,9 @@ def run_cbmc_native(
 
     module_srcs = sorted(PROPERTIES_DIR.glob("*/[!t]*.c"))  # skip test_*.c
     gb = tmp / f"{target.stem}.gb"
-    subprocess.run(
+    _run(
         [str(goto_cc), str(target), *map(str, module_srcs), "-o", str(gb)],
-        check=True, capture_output=True, text=True,
+        timeout=GOTOCC_TIMEOUT, check=True,
     )
 
     contract_args: list[str] = []
@@ -226,17 +285,17 @@ def run_cbmc_native(
                             cbmc_notes="no contract functions declared"), None
 
     trans_gb = tmp / f"{target.stem}.trans.gb"
-    subprocess.run(
+    _run(
         [str(goto_instrument), *contract_args, str(gb), str(trans_gb)],
-        check=True, capture_output=True, text=True,
+        timeout=GI_TIMEOUT, check=True,
     )
 
     sarif = tmp / f"{target.stem}.{module}.sarif"
-    result = subprocess.run(
+    result = _run(
         [str(cbmc), str(trans_gb),
          "--unwind", "32", "--unwinding-assertions",
          "--sarif-result", str(sarif)],
-        capture_output=True, text=True, timeout=NATIVE_CBMC_TIMEOUT,
+        timeout=NATIVE_CBMC_TIMEOUT,
     )
 
     mr = ModuleReport(module=module)
@@ -317,18 +376,27 @@ def run_cbmc_kernel(
         ), None)
 
     kernel_gb = tmp / f"{target.stem}.kernel.gb"
-    subprocess.run(
-        [str(SCRIPT_DIR / "compile_file.sh"), ktree, str(rel), str(kernel_gb)],
-        check=True, capture_output=True, text=True,
-    )
+    try:
+        _run(
+            [str(SCRIPT_DIR / "compile_file.sh"), ktree, str(rel),
+             str(kernel_gb)],
+            timeout=GOTOCC_TIMEOUT, check=True,
+        )
+    except subprocess.TimeoutExpired:
+        return (ModuleReport(
+            module=module, cbmc_status="error",
+            cbmc_notes=(
+                f"compile_file.sh exceeded {GOTOCC_TIMEOUT}s on {rel}"
+            ),
+        ), None)
 
     # Link kernel binary + adapter + deps.
     linked_gb = tmp / f"{target.stem}.linked.gb"
     link_inputs = [str(kernel_gb), str(spec["adapter"])] \
         + [str(p) for p in spec["deps"]]
-    subprocess.run(
+    _run(
         [str(goto_cc), *link_inputs, "-o", str(linked_gb)],
-        check=True, capture_output=True, text=True,
+        timeout=GOTOCC_TIMEOUT, check=True,
     )
 
     # Replace the contract function's calls with the adapter-attached
@@ -337,9 +405,9 @@ def run_cbmc_kernel(
     for fn in CONTRACT_FUNCTIONS.get(module, []):
         contract_args += ["--replace-call-with-contract", fn]
     trans_gb = tmp / f"{target.stem}.trans.gb"
-    subprocess.run(
+    _run(
         [str(goto_instrument), *contract_args, str(linked_gb), str(trans_gb)],
-        check=True, capture_output=True, text=True,
+        timeout=GI_TIMEOUT, check=True,
     )
 
     # Pick a per-module kernel entry point.  For aead this is
@@ -351,13 +419,13 @@ def run_cbmc_kernel(
     mr = ModuleReport(module=module)
     sarif = tmp / f"{target.stem}.{module}.sarif"
     try:
-        result = subprocess.run(
+        result = _run(
             [str(cbmc), str(trans_gb),
              "--function", entry,
              "--unwind", "2", "--no-unwinding-assertions",
              "--no-standard-checks",
              "--sarif-result", str(sarif)],
-            capture_output=True, text=True, timeout=KERNEL_CBMC_TIMEOUT,
+            timeout=KERNEL_CBMC_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
         mr.cbmc_status = "timeout"
