@@ -283,20 +283,23 @@ static exprt build_string_struct(const std::string &s)
   // Create a refined_string_exprt for the literal.
   // The content is a pointer to a constant character array.
   //
-  // NOTE: no trailing NUL — the refinement-string solver compares
-  // strings byte-for-byte over the array backing the pointer, and
-  // adding a NUL would change its answer for single-character
-  // and other small literals (see the regression test
-  // limit-string-iter-type for a concrete case). For C-interop
-  // purposes (where a NUL-terminated buffer is needed),
-  // @c_intrinsic marshalling synthesises a separate
-  // string_constantt-backed pointer.
+  // IMPORTANT: the backing array's SIZE must match the string's
+  // logical length. The refinement solver's
+  // make_char_array_for_char_pointer short-circuits when the
+  // pointer is an address-of of an inline array literal and
+  // returns that array directly — ignoring the length field of
+  // the struct. So if we append a trailing NUL (or pad) here,
+  // functions like cprover_string_length_func see the padded
+  // size, not the declared .length, and len("") returns 1.
+  //
+  // For C-interop (where a NUL-terminated buffer is required),
+  // @c_intrinsic marshalling detects the struct shape and
+  // emits a separate string_constantt-backed pointer — see the
+  // str→char* handshake in convert_call.
   exprt::operandst chars;
   for(char c : s)
     chars.push_back(
       from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
-  if(chars.empty())
-    chars.push_back(from_integer(0, unsignedbv_typet{8}));
   array_typet at(
     unsignedbv_typet{8}, from_integer(chars.size(), signedbv_typet{64}));
   array_exprt arr(std::move(chars), at);
