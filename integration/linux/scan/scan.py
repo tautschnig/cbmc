@@ -200,10 +200,12 @@ def run_cbmc_native(
     module: str,
     target: Path,
     tmp: Path,
-) -> ModuleReport:
+) -> tuple[ModuleReport, Path | None]:
     """Run the CBMC stage on a file that uses property-module types
     directly (e.g. a CVE regression harness).  Links in all property
-    modules, applies --replace-call-with-contract, runs cbmc."""
+    modules, applies --replace-call-with-contract, runs cbmc.
+    Returns the module report plus a path to an emitted SARIF file
+    (or None)."""
     goto_cc = tool("GOTOCC", "goto-cc")
     goto_instrument = tool("GI", "goto-instrument")
     cbmc = tool("CBMC", "cbmc")
@@ -221,7 +223,7 @@ def run_cbmc_native(
 
     if not contract_args:
         return ModuleReport(module=module, cbmc_status="not-run",
-                            cbmc_notes="no contract functions declared")
+                            cbmc_notes="no contract functions declared"), None
 
     trans_gb = tmp / f"{target.stem}.trans.gb"
     subprocess.run(
@@ -229,10 +231,12 @@ def run_cbmc_native(
         check=True, capture_output=True, text=True,
     )
 
+    sarif = tmp / f"{target.stem}.{module}.sarif"
     result = subprocess.run(
         [str(cbmc), str(trans_gb),
-         "--unwind", "32", "--unwinding-assertions"],
-        capture_output=True, text=True, timeout=180,
+         "--unwind", "32", "--unwinding-assertions",
+         "--sarif-result", str(sarif)],
+        capture_output=True, text=True, timeout=NATIVE_CBMC_TIMEOUT,
     )
 
     mr = ModuleReport(module=module)
@@ -253,14 +257,14 @@ def run_cbmc_native(
         mr.cbmc_status = "error"
         mr.cbmc_notes = f"cbmc exit {result.returncode}; see stderr"
 
-    return mr
+    return mr, sarif if sarif.is_file() else None
 
 
 def run_cbmc_kernel(
     module: str,
     target: Path,
     tmp: Path,
-) -> ModuleReport:
+) -> tuple[ModuleReport, Path | None]:
     """Run the CBMC stage on real kernel source using the module's
     kernel adapter.  Compiles the target file with scan/compile_file.sh
     if a LINUX_TREE environment variable identifies its root, links
@@ -273,13 +277,16 @@ def run_cbmc_kernel(
       - `timeout` if cbmc exceeds its budget (this is the common case
         today; see LIM-006 in CBMC_LIMITATIONS.md);
       - `error` for anything else.
+
+    Returns the module report plus a path to an emitted SARIF file
+    (or None if cbmc did not run long enough to produce one).
     """
     spec = KERNEL_ADAPTERS.get(module)
     if spec is None:
-        return ModuleReport(
+        return (ModuleReport(
             module=module, cbmc_status="adapter-needed",
             cbmc_notes=f"no kernel adapter declared for module '{module}'",
-        )
+        ), None)
 
     goto_cc = tool("GOTOCC", "goto-cc")
     goto_instrument = tool("GI", "goto-instrument")
@@ -289,25 +296,25 @@ def run_cbmc_kernel(
     # helper to pick up the right flags.
     ktree = os.environ.get("LINUX_TREE")
     if not ktree:
-        return ModuleReport(
+        return (ModuleReport(
             module=module, cbmc_status="error",
             cbmc_notes=(
                 "LINUX_TREE is not set; scan.py cannot compile "
                 f"{target} with scan/compile_file.sh.  Set LINUX_TREE "
                 "to the kernel source root."
             ),
-        )
+        ), None)
     try:
         rel = target.resolve().relative_to(Path(ktree).resolve())
     except ValueError:
-        return ModuleReport(
+        return (ModuleReport(
             module=module, cbmc_status="error",
             cbmc_notes=(
                 f"{target} is not inside $LINUX_TREE={ktree}; cannot "
                 "determine the kernel-relative path needed by "
                 "scan/compile_file.sh."
             ),
-        )
+        ), None)
 
     kernel_gb = tmp / f"{target.stem}.kernel.gb"
     subprocess.run(
@@ -342,12 +349,14 @@ def run_cbmc_kernel(
     entry = entry_candidates.get(module, "main")
 
     mr = ModuleReport(module=module)
+    sarif = tmp / f"{target.stem}.{module}.sarif"
     try:
         result = subprocess.run(
             [str(cbmc), str(trans_gb),
              "--function", entry,
              "--unwind", "2", "--no-unwinding-assertions",
-             "--no-standard-checks"],
+             "--no-standard-checks",
+             "--sarif-result", str(sarif)],
             capture_output=True, text=True, timeout=KERNEL_CBMC_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -358,7 +367,7 @@ def run_cbmc_kernel(
             "requires aggressive stubbing of kernel helpers (see "
             "CBMC_LIMITATIONS.md)."
         )
-        return mr
+        return mr, None
 
     combined = result.stdout + result.stderr
     if "VERIFICATION SUCCESSFUL" in combined:
@@ -375,7 +384,7 @@ def run_cbmc_kernel(
     else:
         mr.cbmc_status = "error"
         mr.cbmc_notes = f"cbmc exit {result.returncode} on entry '{entry}'"
-    return mr
+    return mr, sarif if sarif.is_file() else None
 
 
 def run_cbmc_adapter_pending(
@@ -401,8 +410,11 @@ def run_cbmc_adapter_pending(
 # Driver.
 # ---------------------------------------------------------------------------
 
-def scan_file(target: Path, tmp: Path) -> FileReport:
+def scan_file(target: Path, tmp: Path) -> tuple[FileReport, list[Path]]:
+    """Run every registered property module against one file.  Returns
+    a FileReport plus any SARIF files cbmc produced for that file."""
     report = FileReport(file=str(target))
+    sarifs: list[Path] = []
     modules = discover_modules()
     for module, cocci in modules:
         hits = run_cocci(module, cocci, target)
@@ -410,20 +422,26 @@ def scan_file(target: Path, tmp: Path) -> FileReport:
         if hits:
             if file_uses_property_modules(target):
                 try:
-                    mr = run_cbmc_native(module, target, tmp)
+                    mr, sarif = run_cbmc_native(module, target, tmp)
                 except subprocess.TimeoutExpired:
                     mr.cbmc_status = "timeout"
+                    sarif = None
                 except subprocess.CalledProcessError as e:
                     mr.cbmc_status = "error"
                     mr.cbmc_notes = f"{e.cmd[0]}: {e.returncode}"
+                    sarif = None
                 mr.cocci_hits = hits
+                if sarif is not None:
+                    sarifs.append(sarif)
             else:
                 # Real kernel source path — use the kernel adapter if
                 # this module has one registered; fall back to an
                 # honest "adapter-needed" report otherwise.
                 if module in KERNEL_ADAPTERS:
                     try:
-                        mr = run_cbmc_kernel(module, target, tmp)
+                        mr, sarif = run_cbmc_kernel(module, target, tmp)
+                        if sarif is not None:
+                            sarifs.append(sarif)
                     except subprocess.CalledProcessError as e:
                         mr.cbmc_status = "error"
                         mr.cbmc_notes = (
@@ -434,7 +452,7 @@ def scan_file(target: Path, tmp: Path) -> FileReport:
                     mr = run_cbmc_adapter_pending(module)
                 mr.cocci_hits = hits
         report.modules.append(mr)
-    return report
+    return report, sarifs
 
 
 def print_summary(report: FileReport) -> None:
@@ -470,6 +488,26 @@ def report_json(reports: list[FileReport]) -> dict:
     }
 
 
+def merge_sarif(inputs: list[Path], output: Path) -> None:
+    """Merge per-file cbmc SARIF reports into a single SARIF 2.1.0 log
+    file (multiple `runs`).  If `inputs` is empty, emit a minimal
+    well-formed log with an empty `runs` array so downstream tools
+    still get a valid SARIF file."""
+    merged: dict = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [],
+    }
+    for p in inputs:
+        try:
+            doc = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for run in doc.get("runs", []):
+            merged["runs"].append(run)
+    output.write_text(json.dumps(merged, indent=2))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="PR-scan driver for the CBMC Linux-kernel property modules"
@@ -478,22 +516,31 @@ def main() -> int:
                     help="kernel source paths (.c / .h) to scan")
     ap.add_argument("--json", type=Path,
                     help="write structured JSON report to this file")
+    ap.add_argument("--sarif", type=Path,
+                    help="write merged SARIF 2.1.0 report to this file "
+                         "(uses cbmc's --sarif-result under the hood)")
     args = ap.parse_args()
 
     reports: list[FileReport] = []
+    sarif_files: list[Path] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         for f in args.files:
             if not f.is_file():
                 print(f"skip (not a file): {f}", file=sys.stderr)
                 continue
-            r = scan_file(f, tmp)
+            r, sarifs = scan_file(f, tmp)
             reports.append(r)
+            sarif_files.extend(sarifs)
             print_summary(r)
+
+        if args.sarif:
+            merge_sarif(sarif_files, args.sarif)
+            print(f"\nmerged SARIF report written to {args.sarif}")
 
     if args.json:
         args.json.write_text(json.dumps(report_json(reports), indent=2))
-        print(f"\nstructured report written to {args.json}")
+        print(f"\nstructured JSON report written to {args.json}")
 
     return 1 if any_cbmc_failure(reports) else 0
 
