@@ -1019,6 +1019,27 @@ exprt python_convertert::wrap_value(const exprt &e)
     }
     const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
     pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
+    // Ensure the materialised copy carries a valid __class_tag.
+    // The 'return ClassName(args)' path doesn't explicitly set
+    // __class_tag on the return-tmp before the wrap, so we
+    // re-emit it here based on the struct's declared class tag.
+    // The struct's type-tag 'python_class_<Name>' gives us the
+    // class name.
+    const auto &st = to_struct_type(e.type());
+    std::string stag = id2string(st.get_tag());
+    const std::string prefix = "python_class_";
+    if(stag.compare(0, prefix.size(), prefix) == 0)
+    {
+      std::string cls_name = stag.substr(prefix.size());
+      auto ti = class_tag_ids.find(cls_name);
+      if(ti != class_tag_ids.end())
+      {
+        pending_checks.push_back(code_frontend_assignt{
+          member_exprt{
+            tmp_sym.symbol_expr(), "__class_tag", signedbv_typet{32}},
+          from_integer(ti->second, signedbv_typet{32})});
+      }
+    }
     return make_python_value(
       python_type_tagt::CLASS, address_of_exprt{tmp_sym.symbol_expr()});
   }
@@ -7804,7 +7825,51 @@ exprt python_convertert::convert_call(const jsont &expr)
               else if(tname == "list")
                 m = python_value_is(obj, python_type_tagt::LIST);
               else if(class_types.count(tname) > 0)
-                m = python_value_is(obj, python_type_tagt::CLASS);
+              {
+                // Precise per-class dispatch on __class_tag.
+                // Same logic as the single-name path below.
+                std::set<std::string> matching;
+                matching.insert(tname);
+                bool grew = true;
+                while(grew)
+                {
+                  grew = false;
+                  for(const auto &[cand, cand_bases] : class_bases)
+                  {
+                    if(matching.count(cand) > 0)
+                      continue;
+                    for(const auto &b : cand_bases)
+                    {
+                      if(matching.count(b) > 0)
+                      {
+                        matching.insert(cand);
+                        grew = true;
+                        break;
+                      }
+                    }
+                  }
+                }
+                exprt class_ptr = python_value_class_ptr(obj);
+                pointer_typet i32_ptr{signedbv_typet{32}, 64};
+                dereference_exprt class_tag{
+                  typecast_exprt{class_ptr, i32_ptr}, signedbv_typet{32}};
+                exprt tag_check = false_exprt{};
+                for(const auto &mm : matching)
+                {
+                  auto ti = class_tag_ids.find(mm);
+                  if(ti == class_tag_ids.end())
+                    continue;
+                  exprt eq = equal_exprt{
+                    class_tag, from_integer(ti->second, signedbv_typet{32})};
+                  if(tag_check.id() == ID_false)
+                    tag_check = std::move(eq);
+                  else
+                    tag_check = or_exprt{std::move(tag_check), std::move(eq)};
+                }
+                m = and_exprt{
+                  python_value_is(obj, python_type_tagt::CLASS),
+                  std::move(tag_check)};
+              }
               else
                 continue;
               any_match = or_exprt{any_match, m};
@@ -7887,13 +7952,65 @@ exprt python_convertert::convert_call(const jsont &expr)
             return python_value_is(obj, python_type_tagt::STR);
           if(cls_name == "list")
             return python_value_is(obj, python_type_tagt::LIST);
-          // User-defined class: dispatch on the CLASS tag. This
-          // is coarse — any CLASS-tagged value matches any
-          // user-class name — but sound for provability when
-          // the caller's 'isinstance(x, Foo)' only needs to
-          // distinguish Foo from primitive types or None.
+          // User-defined class: dispatch precisely on the
+          // __class_tag read through __class_ptr.
+          //
+          // The pointer is typed as opaque (void*); we cast
+          // it to pointer-to-int32 to read __class_tag, which
+          // sits at offset 0 in every class struct. Then we
+          // OR-compare against the tag of cls_name plus the
+          // tags of all classes that inherit from cls_name
+          // (forward BFS through class_bases to find
+          // subclasses).
           if(class_types.count(cls_name) > 0)
-            return python_value_is(obj, python_type_tagt::CLASS);
+          {
+            // Collect cls_name + all known subclasses of cls_name
+            // (any class whose ancestor chain includes cls_name).
+            std::set<std::string> matching;
+            matching.insert(cls_name);
+            bool grew = true;
+            while(grew)
+            {
+              grew = false;
+              for(const auto &[cand, cand_bases] : class_bases)
+              {
+                if(matching.count(cand) > 0)
+                  continue;
+                for(const auto &b : cand_bases)
+                {
+                  if(matching.count(b) > 0)
+                  {
+                    matching.insert(cand);
+                    grew = true;
+                    break;
+                  }
+                }
+              }
+            }
+            // Build OR of class_tag equality checks.
+            exprt class_ptr = python_value_class_ptr(obj);
+            pointer_typet i32_ptr{signedbv_typet{32}, 64};
+            dereference_exprt class_tag{
+              typecast_exprt{class_ptr, i32_ptr}, signedbv_typet{32}};
+            exprt tag_check = false_exprt{};
+            for(const auto &m : matching)
+            {
+              auto ti = class_tag_ids.find(m);
+              if(ti == class_tag_ids.end())
+                continue;
+              exprt eq = equal_exprt{
+                class_tag, from_integer(ti->second, signedbv_typet{32})};
+              if(tag_check.id() == ID_false)
+                tag_check = std::move(eq);
+              else
+                tag_check = or_exprt{std::move(tag_check), std::move(eq)};
+            }
+            // Guard with the outer CLASS tag check — the precise
+            // dispatch only applies when tag == CLASS.
+            return and_exprt{
+              python_value_is(obj, python_type_tagt::CLASS),
+              std::move(tag_check)};
+          }
           return false_exprt{}; // not a known type
         }
 

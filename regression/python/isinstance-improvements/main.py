@@ -1,13 +1,9 @@
-# isinstance improvements:
+# isinstance improvements — per-class CLASS dispatch:
 #
-#   1. tuple-of-types form: isinstance(x, (A, B)) where x is a
-#      tagged-union value now ORs the per-tag checks instead of
-#      failing through to the generic else-branch.
-#   2. user-class on tagged-union: isinstance(x, MyClass) where x
-#      is a python_value_type returns whether the tag is CLASS
-#      (coarse but sound).
-
-from typing import Union
+#   - Tuple-of-types, single-name, and inheritance all use
+#     __class_tag comparison through __class_ptr, so
+#     isinstance(x, Foo) returns True only when x really is
+#     a Foo (or a Foo subclass).
 
 
 class Foo:
@@ -20,6 +16,12 @@ class Bar:
         self.tag = 2
 
 
+class FooChild(Foo):
+    def __init__(self) -> None:
+        super().__init__()
+        self.extra = 10
+
+
 def choose(flag: bool):
     if flag:
         return Foo()
@@ -30,7 +32,7 @@ def choose(flag: bool):
 x = choose(True)
 assert isinstance(x, (Foo, Bar))
 
-# Single-name isinstance over a tagged-union (CLASS tag).
+# Single-name isinstance over a tagged-union (union tag).
 y = choose(False)
 assert isinstance(y, Foo) or isinstance(y, Bar)
 
@@ -46,3 +48,14 @@ def pick(i: int):
 
 p = pick(0)
 assert isinstance(p, (int, float, str))
+
+
+# Precise dispatch: FooChild satisfies isinstance Foo (subclass).
+def pick_class(i: int):
+    if i == 0:
+        return Foo()
+    return FooChild()
+
+
+q = pick_class(1)
+assert isinstance(q, Foo)  # true for both Foo and FooChild
