@@ -6122,6 +6122,57 @@ exprt python_convertert::convert_call(const jsont &expr)
 
       if(obj_base_type.id() != ID_struct)
       {
+        // Tagged-union (python_value_type) values: route the
+        // method call through __class_ptr. Pick the first
+        // class_type whose method table has 'method_name' and
+        // dispatch to that class's method with (CastToClass*)
+        // __class_ptr as self.
+        //
+        // Matches the attribute read/write path — coarse when
+        // multiple classes share the method name, precise when
+        // the caller narrowed via isinstance first.
+        if(
+          obj_base_type.id() == ID_struct_tag &&
+          id2string(to_struct_tag_type(obj_base_type).get_identifier()) ==
+            std::string{PYTHON_VALUE_TAG})
+        {
+          for(const auto &[cls_name, cls_type] : class_types)
+          {
+            irep_idt mid{"python::" + cls_name + "::" + method_name};
+            const symbolt *msym = symbol_table.lookup(mid);
+            if(msym == nullptr || msym->type.id() != ID_code)
+              continue;
+            const code_typet &mty = to_code_type(msym->type);
+            exprt::operandst mcall_args;
+            // self pointer: (ClassType*) __class_ptr
+            exprt class_ptr = python_value_class_ptr(obj);
+            pointer_typet cls_ptr_type{cls_type, 64};
+            exprt self_ptr = typecast_exprt{class_ptr, cls_ptr_type};
+            bool has_self = !mty.parameters().empty() &&
+                            mty.parameters()[0].type().id() == ID_pointer;
+            if(has_self)
+              mcall_args.push_back(self_ptr);
+            if(args.is_array())
+            {
+              for(const auto &a : as_array(args))
+              {
+                exprt av = convert_expression(a);
+                std::size_t idx = mcall_args.size();
+                if(
+                  idx < mty.parameters().size() &&
+                  av.type() != mty.parameters()[idx].type())
+                  av = safe_typecast(av, mty.parameters()[idx].type());
+                mcall_args.push_back(std::move(av));
+              }
+            }
+            side_effect_expr_function_callt call{
+              msym->symbol_expr(),
+              std::move(mcall_args),
+              mty.return_type(),
+              get_location(expr)};
+            return std::move(call);
+          }
+        }
         // Non-struct type (e.g., struct_tag_typet for strings) — return nondet
         return side_effect_expr_nondett{obj.type(), get_location(expr)};
       }
