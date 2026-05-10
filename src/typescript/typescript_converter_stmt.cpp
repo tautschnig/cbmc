@@ -1588,6 +1588,21 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         {
           block.add(std::move(assign));
         }
+        // Propagate frozen status through aliases: if the RHS is a
+        // symbol that's in frozen_symbols (e.g.
+        //   const alias = Object.freeze(o)
+        // because Object.freeze returns its argument), mark the new
+        // binding as frozen too. ES2024 §20.1.2.7.
+        {
+          const exprt &val =
+            rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
+          if(
+            val.id() == ID_symbol &&
+            frozen_symbols.count(to_symbol_expr(val).get_identifier()) > 0)
+          {
+            frozen_symbols.insert(sym_id);
+          }
+        }
         // Track string constants (works with refined_string_exprt)
         if(
           is_typescript_string_type(rhs.type()) && rhs.id() == ID_struct &&
