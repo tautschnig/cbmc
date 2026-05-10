@@ -8523,6 +8523,39 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
     }
 
+    // Two-arg fold: math.pow(x, y), atan2(y, x), hypot(x, y),
+    // fmod(x, y), copysign(x, y), remainder(x, y). All args
+    // must be float/int constants; when both are, evaluate
+    // via std::<op>.
+    if(fold_it != c_intrinsic_fold_map.end() && arguments.size() == 2)
+    {
+      auto cv1 = try_eval_double(arguments[0]);
+      auto cv2 = try_eval_double(arguments[1]);
+      if(cv1.has_value() && cv2.has_value())
+      {
+        const std::string &op = fold_it->second;
+        double a = cv1.value(), b = cv2.value();
+        double r = 0;
+        bool computed = true;
+        if(op == "pow")
+          r = std::pow(a, b);
+        else if(op == "atan2")
+          r = std::atan2(a, b);
+        else if(op == "hypot")
+          r = std::hypot(a, b);
+        else if(op == "fmod")
+          r = std::fmod(a, b);
+        else if(op == "copysign")
+          r = std::copysign(a, b);
+        else if(op == "remainder")
+          r = std::remainder(a, b);
+        else
+          computed = false;
+        if(computed && std::isfinite(r))
+          return double_to_floatbv(r);
+      }
+    }
+
     // Symbolic-argument handling for decorator-driven math.
     //
     // When fold= is set but the argument is symbolic (not a
