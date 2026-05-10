@@ -37,6 +37,12 @@ enum class python_type_tagt
   BOOL = 3,
   STR = 4,
   LIST = 5,
+  /// Class instance — the struct pointed to by __class_ptr.
+  /// The user-defined class type is not tracked here; callers
+  /// that need per-class dispatch should look up
+  /// ``__class_tag`` on the pointed-to struct (maintained by
+  /// the Python frontend's class-hierarchy machinery).
+  CLASS = 6,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -68,6 +74,11 @@ inline struct_typet python_value_struct_def()
   // list[python_value_type] — self-referential via struct_tag_typet
   components.push_back(struct_typet::componentt{
     "__list_ptr", pointer_typet{python_list_type(python_value_type()), 64}});
+  // Opaque class-instance pointer. Used when CLASS tag is set;
+  // the concrete struct type is not carried here — callers must
+  // cast back to the specific class type at use site.
+  components.push_back(struct_typet::componentt{
+    "__class_ptr", pointer_typet{empty_typet{}, 64}});
 
   struct_typet result{components};
   result.set_tag("python_value");
@@ -101,6 +112,8 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     pointer_typet{python_string_type(), 64}};
   exprt list_ptr = null_pointer_exprt{
     pointer_typet{python_list_type(python_value_type()), 64}};
+  exprt class_ptr = null_pointer_exprt{
+    pointer_typet{empty_typet{}, 64}};
 
   switch(tag)
   {
@@ -127,12 +140,20 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                  ? value
                  : address_of_exprt{value};
     break;
+  case python_type_tagt::CLASS:
+    class_ptr = value.type().id() == ID_pointer
+                  ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+                  : typecast_exprt{
+                      address_of_exprt{value},
+                      pointer_typet{empty_typet{}, 64}};
+    break;
   case python_type_tagt::NONE:
     break;
   }
 
   struct_exprt result{
-    {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr}, vtype};
+    {tag_expr, int_val, float_val, bool_val, str_ptr, list_ptr, class_ptr},
+    vtype};
   // Set the expression type to the canonical tag type
   result.type() = python_value_type();
   return result;
@@ -176,6 +197,15 @@ inline dereference_exprt python_value_list(const exprt &value)
     value,
     "__list_ptr",
     pointer_typet{python_list_type(python_value_type()), 64}}};
+}
+
+/// Extract the class-instance pointer from a tagged-union value.
+/// Returns an untyped (empty_typet) pointer; callers cast to the
+/// specific class struct type.
+inline member_exprt python_value_class_ptr(const exprt &value)
+{
+  return member_exprt{
+    value, "__class_ptr", pointer_typet{empty_typet{}, 64}};
 }
 
 /// Check if a tagged-union value has a specific tag.

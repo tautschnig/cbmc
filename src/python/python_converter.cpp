@@ -994,24 +994,34 @@ exprt python_convertert::wrap_value(const exprt &e)
   }
 
   // For struct types (class instances, dicts, etc.) that don't
-  // fit in the tagged union, return a python_value tagged INT
-  // with int_val = 1 — a concrete, non-NONE value. This
-  // preserves the invariant that 'wrap_value(class_instance) is
-  // not None' evaluates to True, which in turn makes
-  // 'Optional[T]' return-type inference correct: a function
-  // that returns ClassName() or None now lets the caller's
-  // 'is not None' check dispatch precisely via the tag.
-  //
-  // The downside: the caller can no longer call methods on the
-  // wrapped class instance (the struct's data is lost). Where
-  // methods are needed, users should stick with the
-  // class-typed parameter / variable rather than relying on the
-  // tagged-union wrap.
+  // fit in the tagged union as a primitive, wrap with tag CLASS
+  // and an address-of pointer. This preserves non-None identity
+  // (tag != NONE) and keeps the underlying struct reachable via
+  // python_value_class_ptr for future per-class dispatch.
   if(
     e.type().id() == ID_struct && !is_python_string_type(e.type()) &&
     !is_python_list_type(e.type()))
+  {
+    // We need a persistent pointer target. Materialise the struct
+    // into a static-lifetime symbol so address_of yields a valid
+    // pointer across statement boundaries.
+    static unsigned class_wrap_counter = 0;
+    std::string tmp_name = "__class_val_" + std::to_string(class_wrap_counter++);
+    std::string tmp_qname = qualify_name(tmp_name);
+    irep_idt tmp_id{tmp_qname};
+    if(symbol_table.lookup(tmp_id) == nullptr)
+    {
+      symbolt tmp_sym{tmp_id, e.type(), "python"};
+      tmp_sym.base_name = tmp_name;
+      tmp_sym.is_lvalue = true;
+      tmp_sym.is_state_var = true;
+      symbol_table.add(tmp_sym);
+    }
+    const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+    pending_checks.push_back(code_frontend_assignt{tmp_sym.symbol_expr(), e});
     return make_python_value(
-      python_type_tagt::INT, from_integer(1, signedbv_typet{64}));
+      python_type_tagt::CLASS, address_of_exprt{tmp_sym.symbol_expr()});
+  }
 
   return make_python_value(tag, e);
 }
