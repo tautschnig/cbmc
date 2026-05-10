@@ -117,11 +117,13 @@ the limitation, the test will pass and be promoted to CORE.
 - **Symbolic strings** still KNOWNBUG
   (`string-to-number-coerce-symbolic`) — needs refined string solver.
 
-### Array.splice with symbolic args
+### Array.splice with symbolic deleteCount — RESOLVED via per-case encoding
+- **Was**: test was KNOWNBUG (symbolic length and element shift)
+- **Now**: test is CORE. For constant source array, constant start,
+  and symbolic deleteCount, emit a per-slot `if_exprt` chain:
+  `result[i] = i < start ? src[i] :
+               (i + dc < src_len ? src[i + dc] : 0)`.
 - **Test**: `regression/typescript/array-splice-symbolic`
-- **Why**: symbolic insert at symbolic index changes both length and
-  content. Doable similar to slice but more complex. Similar
-  per-slot `if_exprt` pattern would work.
 
 ### Array.sort with symbolic elements
 - **Test**: `regression/typescript/array-sort-symbolic`
