@@ -107,6 +107,19 @@ private:
   /// approximation).
   std::map<irep_idt, std::string> c_intrinsic_range_map;
 
+  /// Optional C-int bit-width from
+  /// ``@c_intrinsic('name', int_width=32)``. When set, every
+  /// Python ``int`` parameter or return of the decorated
+  /// function is projected onto a C ``signed int`` of the
+  /// specified width when constructing the C function
+  /// signature. Without this annotation, Python ``int`` maps
+  /// to ``signedbv 64`` which conflicts with CBMC's built-in
+  /// declarations for C functions that take 32-bit ``int`` —
+  /// notably the ctype predicates (isdigit, isalpha, ...) and
+  /// the ``toupper`` / ``tolower`` / ``abs`` / ``atoi``
+  /// families. Recognised widths: 32 and 64.
+  std::map<irep_idt, int> c_intrinsic_int_width_map;
+
   /// Return the mathematical domain predicate for a single-argument
   /// math-module function. Returns nullopt when the function has no
   /// domain restriction. Used by the Option-4 domain-check logic

@@ -2,21 +2,17 @@
 C standard-library intrinsics for use from Python via
 ``@c_intrinsic``.
 
-Users can ``from cbmc_c import strlen`` to call the named C
-functions directly. Each entry is a one-line stub decorated
-with ``@c_intrinsic``; the front-end lowers calls to the C
-library at link-to-library time so CBMC's built-in model of
-each routine applies.
+Users can ``from cbmc_c import strlen, toupper`` to call the
+named C functions directly. Each entry is a one-line stub
+decorated with ``@c_intrinsic``; the front-end lowers calls
+to the C library at link-to-library time so CBMC's built-in
+model of each routine applies.
 
-Coverage is currently limited to functions whose signatures
-use 64-bit ints and ``char *`` / ``size_t``, which match our
-Python type projections exactly (Python ``int`` → signedbv 64,
-Python ``str`` → ``char *``). Functions taking C ``int`` (32
-bits) — the ctype predicates, ``toupper`` / ``tolower``,
-``abs`` family, and ``atoi`` — aren't exposed here because the
-C signature conflicts with our 64-bit projection and the
-resulting re-declaration confuses the linker. A per-intrinsic
-int-width annotation would unblock them; flagged as follow-up.
+Functions declared with ``int_width=32`` take or return a C
+``int`` (32 bits) rather than Python's default 64-bit
+``int``. The frontend transparently narrows int arguments and
+widens int results so callers still work with 64-bit Python
+ints end-to-end.
 """
 
 from __cbmc__ import c_intrinsic
@@ -49,7 +45,7 @@ def strncasecmp(a: str, b: str, n: int) -> int: ...
 def strstr(haystack: str, needle: str) -> str: ...
 
 
-@c_intrinsic("strerror")
+@c_intrinsic("strerror", int_width=32)
 def strerror(errnum: int) -> str: ...
 
 
@@ -58,3 +54,86 @@ def strerror(errnum: int) -> str: ...
 # ---------------------------------------------------------------
 @c_intrinsic("getenv")
 def getenv(name: str) -> str: ...
+
+
+@c_intrinsic("abs", int_width=32)
+def abs(n: int) -> int: ...
+
+
+@c_intrinsic("labs")
+def labs(n: int) -> int: ...
+
+
+@c_intrinsic("llabs")
+def llabs(n: int) -> int: ...
+
+
+@c_intrinsic("atoi", int_width=32)
+def atoi(s: str) -> int: ...
+
+
+@c_intrinsic("atol")
+def atol(s: str) -> int: ...
+
+
+@c_intrinsic("atoll")
+def atoll(s: str) -> int: ...
+
+
+# ---------------------------------------------------------------
+# <ctype.h>
+#
+# All take and return C int (32 bits) — declared with
+# int_width=32 so the frontend projects Python ``int`` to
+# ``signedbv 32`` for these specifically.
+# ---------------------------------------------------------------
+@c_intrinsic("isalnum", int_width=32)
+def isalnum(c: int) -> int: ...
+
+
+@c_intrinsic("isalpha", int_width=32)
+def isalpha(c: int) -> int: ...
+
+
+@c_intrinsic("iscntrl", int_width=32)
+def iscntrl(c: int) -> int: ...
+
+
+@c_intrinsic("isdigit", int_width=32)
+def isdigit(c: int) -> int: ...
+
+
+@c_intrinsic("isgraph", int_width=32)
+def isgraph(c: int) -> int: ...
+
+
+@c_intrinsic("islower", int_width=32)
+def islower(c: int) -> int: ...
+
+
+@c_intrinsic("isprint", int_width=32)
+def isprint(c: int) -> int: ...
+
+
+@c_intrinsic("ispunct", int_width=32)
+def ispunct(c: int) -> int: ...
+
+
+@c_intrinsic("isspace", int_width=32)
+def isspace(c: int) -> int: ...
+
+
+@c_intrinsic("isupper", int_width=32)
+def isupper(c: int) -> int: ...
+
+
+@c_intrinsic("isxdigit", int_width=32)
+def isxdigit(c: int) -> int: ...
+
+
+@c_intrinsic("tolower", int_width=32)
+def tolower(c: int) -> int: ...
+
+
+@c_intrinsic("toupper", int_width=32)
+def toupper(c: int) -> int: ...
