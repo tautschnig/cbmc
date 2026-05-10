@@ -12701,6 +12701,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     bool has_value_return = false;
     bool has_bare_return = false;
     bool has_none_return = false;
+    // Inferred yield-element type for generator functions.
+    // Starts as python_int_type; widens to float / str / bool
+    // when the scanner observes a matching yield-literal.
+    typet yield_element_type = python_int_type();
     std::function<void(const jsont &)> scan = [&](const jsont &body_node)
     {
       if(!body_node.is_array())
@@ -12750,12 +12754,30 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             }
           }
         }
-        // Detect yield (generator function)
+        // Detect yield (generator function) and infer the
+        // yielded-value type from the yield expression. Used
+        // below to pick the generator's list element type.
         if(is_node_type(s, "Expr"))
         {
           const jsont &val = json_member(s, "value");
           if(is_node_type(val, "Yield") || is_node_type(val, "YieldFrom"))
+          {
             has_yield = true;
+            const jsont &yield_val = json_member(val, "value");
+            if(is_node_type(yield_val, "Constant"))
+            {
+              const jsont &cv = json_member(yield_val, "value");
+              if(cv.is_number())
+              {
+                if(cv.value.find('.') != std::string::npos)
+                  yield_element_type = double_type();
+              }
+              else if(cv.is_string())
+                yield_element_type = python_string_type();
+              else if(cv.is_true() || cv.is_false())
+                yield_element_type = bool_typet{};
+            }
+          }
         }
         // Recurse into if/else/while/for/try bodies
         if(json_member(s, "body").is_array())
@@ -12772,9 +12794,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     };
     scan(json_member(stmt, "body"));
 
-    // Generator functions return a list (eager evaluation)
+    // Generator functions return a list of the inferred yield-
+    // element type (eager-evaluation model).
     if(has_yield)
-      return_type = python_list_type(python_int_type());
+      return_type = python_list_type(yield_element_type);
     else if(
       has_value_return && has_none_return &&
       (return_type.id() == ID_struct_tag || return_type.id() == ID_struct))
