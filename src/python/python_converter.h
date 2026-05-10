@@ -95,6 +95,18 @@ private:
   /// 'abs_le_1', 'ge_1'. When absent, no domain check is emitted.
   std::map<irep_idt, std::string> c_intrinsic_domain_map;
 
+  /// Optional return-range predicate name from
+  /// ``@c_intrinsic('name', fold='op', range='kind')``. When the
+  /// call-site's argument is symbolic (not foldable), the front-
+  /// end returns a nondet value constrained by the named range
+  /// predicate — mimicking the per-op constraints that
+  /// CPython+CBMC's C math model enforces. The 'kind' string is
+  /// one of: 'bound_pm_1' (|result| <= 1, for sin/cos),
+  /// 'nonneg' (>= 0, for sqrt), 'positive' (> 0, for exp). When
+  /// absent, the nondet return is unconstrained (sound over-
+  /// approximation).
+  std::map<irep_idt, std::string> c_intrinsic_range_map;
+
   /// Return the mathematical domain predicate for a single-argument
   /// math-module function. Returns nullopt when the function has no
   /// domain restriction. Used by the Option-4 domain-check logic
@@ -195,7 +207,6 @@ private:
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
-  std::set<std::string> imported_math_funcs;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.

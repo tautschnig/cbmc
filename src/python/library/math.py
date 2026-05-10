@@ -43,7 +43,7 @@ nan: float = float("nan")
 # Power and logarithmic. Domain-restricted entries are also handled
 # by python_convertert::math_function_domain (Option 4).
 # ---------------------------------------------------------------
-@c_intrinsic("sqrt", fold="sqrt", domain="nonneg")
+@c_intrinsic("sqrt", fold="sqrt", domain="nonneg", range="nonneg")
 def sqrt(x: float) -> float: ...
 
 
@@ -51,15 +51,15 @@ def sqrt(x: float) -> float: ...
 def cbrt(x: float) -> float: ...
 
 
-@c_intrinsic("exp", fold="exp")
+@c_intrinsic("exp", fold="exp", range="positive")
 def exp(x: float) -> float: ...
 
 
-@c_intrinsic("exp2", fold="exp2")
+@c_intrinsic("exp2", fold="exp2", range="positive")
 def exp2(x: float) -> float: ...
 
 
-@c_intrinsic("expm1", fold="expm1")
+@c_intrinsic("expm1", fold="expm1", range="positive")
 def expm1(x: float) -> float: ...
 
 
@@ -86,11 +86,11 @@ def pow(x: float, y: float) -> float: ...
 # ---------------------------------------------------------------
 # Trigonometric and hyperbolic.
 # ---------------------------------------------------------------
-@c_intrinsic("sin", fold="sin")
+@c_intrinsic("sin", fold="sin", range="bound_pm_1")
 def sin(x: float) -> float: ...
 
 
-@c_intrinsic("cos", fold="cos")
+@c_intrinsic("cos", fold="cos", range="bound_pm_1")
 def cos(x: float) -> float: ...
 
 

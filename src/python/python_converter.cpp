@@ -3810,7 +3810,10 @@ exprt python_convertert::convert_call(const jsont &expr)
             get_location(expr)};
           return std::move(call);
         }
-        // PLR stdlib: math module functions — delegate to imported_math_funcs
+        // PLR stdlib: math module functions — the attribute-style
+        // math.X(...) form has its own inline handler below. The
+        // bare-name 'from math import X; X(...)' form is handled
+        // via the @c_intrinsic decorators in library/math.py.
         if(obj_name == "math")
         {
           // Math constants
@@ -3841,10 +3844,12 @@ exprt python_convertert::convert_call(const jsont &expr)
               return val.to_expr();
             }
           }
-          // Register and route through the math handler
-          imported_math_funcs.insert(method_name);
-          // Inline: call convert_call with the math function name
-          // by constructing a synthetic Name-based Call node
+          // Dispatch with the math function name. The attribute
+          // form uses the following inline block (exact models
+          // for ceil/floor/fabs/isclose; domain-checked folding;
+          // nondet-with-constraints for symbolic args). A future
+          // cleanup will migrate this to the decorator path for
+          // parity with the bare-name form.
           std::string saved_func = func_name;
           func_name = method_name;
           exprt math_arg =
@@ -7910,284 +7915,13 @@ exprt python_convertert::convert_call(const jsont &expr)
 
   irep_idt symbol_id{"python::" + func_name};
   const symbolt *sym = symbol_table.lookup(symbol_id);
-
-  // Intercept imported math functions: route through our math model
-  if(imported_math_funcs.count(func_name))
-  {
-    exprt arg = args.is_array() && !as_array(args).empty()
-                  ? convert_expression(*as_array(args).begin())
-                  : side_effect_expr_nondett{double_type(), get_location(expr)};
-    if(
-      arg.type().id() != ID_floatbv && func_name != "factorial" &&
-      func_name != "comb")
-    {
-      // Convert constant ints to float constants for exact evaluation
-      if(arg.is_constant() && arg.type().id() == ID_signedbv)
-      {
-        mp_integer iv;
-        if(!to_integer(to_constant_expr(arg), iv))
-        {
-          ieee_floatt fv{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          fv.from_integer(iv);
-          arg = fv.to_expr();
-        }
-        else
-          arg = safe_typecast(arg, double_type());
-      }
-      else
-        arg = safe_typecast(arg, double_type());
-    }
-
-    // Exact models for ceil, floor, fabs, trunc, copysign, isnan, etc.
-    if(func_name == "ceil")
-      return plus_exprt{
-        typecast_exprt{arg, python_int_type()},
-        if_exprt{
-          binary_relation_exprt{
-            typecast_exprt{
-              typecast_exprt{arg, python_int_type()}, double_type()},
-            ID_lt,
-            arg},
-          from_integer(1, python_int_type()),
-          from_integer(0, python_int_type())}};
-    if(func_name == "floor")
-      return minus_exprt{
-        typecast_exprt{arg, python_int_type()},
-        if_exprt{
-          binary_relation_exprt{
-            typecast_exprt{
-              typecast_exprt{arg, python_int_type()}, double_type()},
-            ID_gt,
-            arg},
-          from_integer(1, python_int_type()),
-          from_integer(0, python_int_type())}};
-    if(func_name == "fabs")
-      return if_exprt{
-        binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
-        unary_minus_exprt{arg},
-        arg};
-    if(func_name == "trunc")
-      return typecast_exprt{arg, python_int_type()};
-    if(func_name == "isnan")
-      return isnan_exprt{arg};
-    if(func_name == "isinf")
-      return isinf_exprt{arg};
-    if(func_name == "isfinite")
-      return and_exprt{
-        not_exprt{isnan_exprt{arg}}, not_exprt{isinf_exprt{arg}}};
-    if(func_name == "copysign")
-    {
-      exprt arg2 = as_array(args).size() >= 2
-                     ? convert_expression(*std::next(as_array(args).begin()))
-                     : arg;
-      if(arg2.type().id() != ID_floatbv)
-        arg2 = safe_typecast(arg2, double_type());
-      exprt abs_x = if_exprt{
-        binary_relation_exprt{arg, ID_lt, safe_zero(double_type())},
-        unary_minus_exprt{arg},
-        arg};
-      return if_exprt{
-        binary_relation_exprt{arg2, ID_lt, safe_zero(double_type())},
-        unary_minus_exprt{abs_x},
-        abs_x};
-    }
-    if(func_name == "isclose")
-    {
-      exprt arg2 = as_array(args).size() >= 2
-                     ? convert_expression(*std::next(as_array(args).begin()))
-                     : arg;
-      if(arg2.type().id() != ID_floatbv)
-        arg2 = safe_typecast(arg2, double_type());
-      ieee_floatt tol{
-        ieee_float_spect::double_precision(),
-        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      tol.from_double(1e-9);
-      exprt diff = if_exprt{
-        binary_relation_exprt{
-          minus_exprt{arg, arg2}, ID_lt, safe_zero(double_type())},
-        unary_minus_exprt{minus_exprt{arg, arg2}},
-        minus_exprt{arg, arg2}};
-      return binary_relation_exprt{diff, ID_le, tol.to_expr()};
-    }
-
-    // Constant evaluation for trig/log/exp/sqrt
-    if(arg.is_constant())
-    {
-      // factorial and comb: integer args, integer result
-      if(func_name == "factorial" && arg.type().id() == ID_signedbv)
-      {
-        mp_integer n;
-        if(!to_integer(to_constant_expr(arg), n) && n >= 0 && n <= 20)
-        {
-          mp_integer result{1};
-          for(mp_integer i = 2; i <= n; ++i)
-            result *= i;
-          return from_integer(result, python_int_type());
-        }
-      }
-      if(
-        func_name == "comb" && arg.type().id() == ID_signedbv &&
-        args.is_array() && as_array(args).size() >= 2)
-      {
-        exprt arg2 = convert_expression(*std::next(as_array(args).begin()));
-        if(arg2.is_constant() && arg2.type().id() == ID_signedbv)
-        {
-          mp_integer n, k;
-          if(
-            !to_integer(to_constant_expr(arg), n) &&
-            !to_integer(to_constant_expr(arg2), k) && n >= 0 && k >= 0 &&
-            k <= n && n <= 30)
-          {
-            // C(n, k) = n! / (k! * (n-k)!)
-            mp_integer result{1};
-            for(mp_integer i = 0; i < k; ++i)
-              result = result * (n - i) / (i + 1);
-            return from_integer(result, python_int_type());
-          }
-        }
-      }
-
-      // Float functions — Option-4 constant-folding with domain
-      // check: fold when in-domain and constant, raise ValueError
-      // when out-of-domain (constant) or conditionally (non-
-      // constant), fall through to nondet+constraints otherwise.
-      if(arg.type().id() == ID_floatbv)
-      {
-        auto domain_opt = math_function_domain(func_name, arg);
-        auto cval = try_eval_double(arg);
-        if(cval.has_value())
-        {
-          double val = cval.value();
-
-          // Determine in-domain at parse time.
-          bool in_domain = true;
-          if(domain_opt.has_value())
-          {
-            if(func_name == "sqrt")
-              in_domain = val >= 0;
-            else if(
-              func_name == "log" || func_name == "log2" || func_name == "log10")
-              in_domain = val > 0;
-            else if(func_name == "log1p")
-              in_domain = val > -1;
-            else if(func_name == "asin" || func_name == "acos")
-              in_domain = val >= -1 && val <= 1;
-            else if(func_name == "atanh")
-              in_domain = val > -1 && val < 1;
-            else if(func_name == "acosh")
-              in_domain = val >= 1;
-          }
-
-          if(!in_domain)
-          {
-            // Case 2: constant out of domain — raise ValueError.
-            emit_value_error(false_exprt{});
-            // Return a nondet double; the exception check will
-            // intercept before the caller sees the value.
-            return side_effect_expr_nondett{double_type(), get_location(expr)};
-          }
-
-          // Case 1: constant in domain — fold exactly.
-          double res = 0;
-          bool computed = true;
-          if(func_name == "sqrt")
-            res = std::sqrt(val);
-          else if(func_name == "sin")
-            res = std::sin(val);
-          else if(func_name == "cos")
-            res = std::cos(val);
-          else if(func_name == "tan")
-            res = std::tan(val);
-          else if(func_name == "asin")
-            res = std::asin(val);
-          else if(func_name == "acos")
-            res = std::acos(val);
-          else if(func_name == "atan")
-            res = std::atan(val);
-          else if(func_name == "log")
-            res = std::log(val);
-          else if(func_name == "log2")
-            res = std::log2(val);
-          else if(func_name == "log10")
-            res = std::log10(val);
-          else if(func_name == "exp")
-            res = std::exp(val);
-          else if(func_name == "exp2")
-            res = std::exp2(val);
-          else
-            computed = false;
-          if(computed)
-            return double_to_floatbv(res);
-        }
-        else
-        {
-          // Case 3: non-constant argument — emit guarded ValueError
-          // and fall through to the nondet-with-constraints path.
-          if(domain_opt.has_value())
-            emit_value_error(domain_opt.value());
-        }
-      } // end if(arg.type().id() == ID_floatbv)
-    }
-
-    // Nondet-with-constraints models (matching C frontend math.c pattern)
-    side_effect_expr_nondett nondet_ret{double_type(), get_location(expr)};
-    static unsigned math_tmp_ctr = 0;
-    std::string tmp_name = "__math_ret_" + std::to_string(math_tmp_ctr++);
-    std::string tmp_qname = qualify_name(tmp_name);
-    irep_idt tmp_id{tmp_qname};
-    if(symbol_table.lookup(tmp_id) == nullptr)
-    {
-      symbolt tmp_sym{tmp_id, double_type(), "python"};
-      tmp_sym.base_name = tmp_name;
-      tmp_sym.is_lvalue = true;
-      tmp_sym.is_state_var = true;
-      symbol_table.add(tmp_sym);
-    }
-    symbol_exprt tmp_var = symbol_table.lookup_ref(tmp_id).symbol_expr();
-    pending_checks.push_back(code_frontend_assignt{tmp_var, nondet_ret});
-
-    ieee_floatt fone{
-      ieee_float_spect::double_precision(),
-      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-    fone.from_double(1.0);
-    ieee_floatt fneg_one{
-      ieee_float_spect::double_precision(),
-      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-    fneg_one.from_double(-1.0);
-    ieee_floatt fzero{
-      ieee_float_spect::double_precision(),
-      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-    fzero.from_double(0.0);
-
-    if(func_name == "sin" || func_name == "cos")
-    {
-      pending_checks.push_back(code_assumet{
-        binary_relation_exprt{tmp_var, ID_ge, fneg_one.to_expr()}});
-      pending_checks.push_back(
-        code_assumet{binary_relation_exprt{tmp_var, ID_le, fone.to_expr()}});
-    }
-    else if(func_name == "sqrt")
-    {
-      pending_checks.push_back(
-        code_assumet{binary_relation_exprt{tmp_var, ID_ge, fzero.to_expr()}});
-    }
-    else if(func_name == "exp" || func_name == "exp2" || func_name == "expm1")
-    {
-      pending_checks.push_back(
-        code_assumet{binary_relation_exprt{tmp_var, ID_gt, fzero.to_expr()}});
-    }
-    else if(func_name == "factorial" || func_name == "comb")
-    {
-      // Returns int >= 0
-      pending_checks.push_back(
-        code_assumet{binary_relation_exprt{tmp_var, ID_ge, fzero.to_expr()}});
-    }
-    // log, tan, asin, acos, atan, etc.: unconstrained nondet (sound)
-
-    return std::move(tmp_var);
-  }
+  // The former ad-hoc math-function block has been retired.
+  // math.py declares each function with @c_intrinsic('name',
+  // fold='op', domain='kind', range='kind').
+  // The decorator path a few hundred lines below handles the
+  // complete semantics: parse-time fold for constants, guarded
+  // ValueError for domain violations, and range-constrained
+  // nondet return for symbolic arguments.
 
   // Check function aliases (lambda assignments: double = lambda x: x*2)
   if(sym == nullptr || sym->type.id() != ID_code)
@@ -8631,6 +8365,118 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(computed && std::isfinite(r))
           return double_to_floatbv(r);
       }
+    }
+
+    // Symbolic-argument handling for decorator-driven math.
+    //
+    // When fold= is set but the argument is symbolic (not a
+    // compile-time constant), we model the call as a nondet
+    // return constrained by the optional domain= and range=
+    // keywords — matching the semantics of CPython's math
+    // functions plus CBMC's C math-library model:
+    //
+    //   * domain= named predicate: emit guarded ValueError if
+    //     the predicate rejects the argument at runtime.
+    //   * range= named predicate: constrain the nondet return
+    //     accordingly.
+    //
+    // Return type follows func_type (the Python declaration).
+    // For most math functions this is double_type().
+    auto range_it = c_intrinsic_range_map.find(sym->name);
+    bool is_math_float_fn =
+      fold_it != c_intrinsic_fold_map.end() && arguments.size() == 1 &&
+      to_code_type(func_type).return_type().id() == ID_floatbv;
+    if(is_math_float_fn)
+    {
+      // Domain check for symbolic args: emit guarded ValueError.
+      if(domain_it != c_intrinsic_domain_map.end())
+      {
+        const std::string &dom = domain_it->second;
+        ieee_floatt zf{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        zf.from_double(0.0);
+        ieee_floatt onef = zf;
+        onef.from_double(1.0);
+        ieee_floatt neg_onef = zf;
+        neg_onef.from_double(-1.0);
+        exprt in_domain;
+        // Ensure arg is in floatbv for the comparisons.
+        exprt farg = arguments[0];
+        if(farg.type().id() != ID_floatbv)
+          farg = safe_typecast(farg, double_type());
+        if(dom == "nonneg")
+          in_domain = binary_relation_exprt{farg, ID_ge, zf.to_expr()};
+        else if(dom == "positive")
+          in_domain = binary_relation_exprt{farg, ID_gt, zf.to_expr()};
+        else if(dom == "gt_neg_one")
+          in_domain = binary_relation_exprt{farg, ID_gt, neg_onef.to_expr()};
+        else if(dom == "abs_le_1")
+          in_domain = and_exprt{
+            binary_relation_exprt{farg, ID_ge, neg_onef.to_expr()},
+            binary_relation_exprt{farg, ID_le, onef.to_expr()}};
+        else if(dom == "abs_lt_1")
+          in_domain = and_exprt{
+            binary_relation_exprt{farg, ID_gt, neg_onef.to_expr()},
+            binary_relation_exprt{farg, ID_lt, onef.to_expr()}};
+        else if(dom == "ge_1")
+          in_domain = binary_relation_exprt{farg, ID_ge, onef.to_expr()};
+        else
+          in_domain = true_exprt{};
+        // emit_value_error raises ValueError when condition is
+        // NOT satisfied; we pass the in-domain predicate.
+        emit_value_error(in_domain);
+      }
+
+      // Fresh nondet return + range constraint.
+      side_effect_expr_nondett nondet_ret{double_type(), get_location(expr)};
+      static unsigned ci_math_ctr = 0;
+      std::string tmp_name = "__ci_math_ret_" + std::to_string(ci_math_ctr++);
+      std::string tmp_qname = qualify_name(tmp_name);
+      irep_idt tmp_id{tmp_qname};
+      if(symbol_table.lookup(tmp_id) == nullptr)
+      {
+        symbolt tmp_sym{tmp_id, double_type(), "python"};
+        tmp_sym.base_name = tmp_name;
+        tmp_sym.is_lvalue = true;
+        tmp_sym.is_state_var = true;
+        symbol_table.add(tmp_sym);
+      }
+      symbol_exprt tmp_var = symbol_table.lookup_ref(tmp_id).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{tmp_var, nondet_ret});
+
+      if(range_it != c_intrinsic_range_map.end())
+      {
+        const std::string &rng = range_it->second;
+        ieee_floatt zf{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        zf.from_double(0.0);
+        ieee_floatt onef = zf;
+        onef.from_double(1.0);
+        ieee_floatt neg_onef = zf;
+        neg_onef.from_double(-1.0);
+        if(rng == "bound_pm_1")
+        {
+          pending_checks.push_back(code_assumet{
+            binary_relation_exprt{tmp_var, ID_ge, neg_onef.to_expr()}});
+          pending_checks.push_back(code_assumet{
+            binary_relation_exprt{tmp_var, ID_le, onef.to_expr()}});
+        }
+        else if(rng == "nonneg")
+        {
+          pending_checks.push_back(
+            code_assumet{binary_relation_exprt{tmp_var, ID_ge, zf.to_expr()}});
+        }
+        else if(rng == "positive")
+        {
+          pending_checks.push_back(
+            code_assumet{binary_relation_exprt{tmp_var, ID_gt, zf.to_expr()}});
+        }
+        // other named ranges or unrecognised: leave unconstrained
+      }
+
+      return std::move(tmp_var);
     }
 
     const pointer_typet c_char_ptr{char_type(), config.ansi_c.pointer_width};
@@ -10149,7 +9995,12 @@ codet python_convertert::convert_statement(const jsont &stmt)
           // Register known math functions
           if(module == "math")
           {
-            imported_math_funcs.insert(asname);
+            // library/math.py is loaded via the ImportFrom
+            // library-resolve path (see Pass 0.2 at the top of
+            // this function). Here we only handle the module
+            // constants (pi, e) as static double symbols; the
+            // function entries are populated by the library's
+            // @c_intrinsic decorators.
             // Constants: register as global variables
             if(name == "pi" || name == "e")
             {
@@ -10168,7 +10019,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
               }
               continue;
             }
-            // Other math functions: just registered in imported_math_funcs
+            // Other math functions: handled by the library's
+            // @c_intrinsic decorators; no registration here.
           }
           // typing module — type aliases, no-op
           else if(module == "typing")
@@ -12518,6 +12370,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   std::string c_intrinsic_name;
   std::string c_intrinsic_fold;
   std::string c_intrinsic_domain;
+  std::string c_intrinsic_range;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -12526,11 +12379,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         is_node_type(dec, "Name") &&
         json_string(json_member(dec, "id")) == "overload")
         return code_skipt{};
-      // @c_intrinsic('NAME', fold='OP', domain='KIND') — route
-      // calls to the named C function. Optional ``fold`` enables
-      // parse-time constant folding; optional ``domain`` raises
-      // Python ValueError for constant arguments that fail the
-      // named domain predicate.
+      // @c_intrinsic('NAME', fold='OP', domain='KIND', range='KIND')
+      // routes calls to the named C function. Optional ``fold``
+      // enables parse-time constant folding; optional ``domain``
+      // raises Python ValueError for constant arguments that
+      // fail the named domain predicate; optional ``range``
+      // constrains the nondet return for symbolic arguments.
       if(is_node_type(dec, "Call"))
       {
         const jsont &dec_func = json_member(dec, "func");
@@ -12561,6 +12415,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 c_intrinsic_fold = json_string(json_member(val, "value"));
               else if(arg_name == "domain")
                 c_intrinsic_domain = json_string(json_member(val, "value"));
+              else if(arg_name == "range")
+                c_intrinsic_range = json_string(json_member(val, "value"));
             }
           }
         }
@@ -12843,6 +12699,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       c_intrinsic_fold_map[symbol_id] = c_intrinsic_fold;
     if(!c_intrinsic_domain.empty())
       c_intrinsic_domain_map[symbol_id] = c_intrinsic_domain;
+    if(!c_intrinsic_range.empty())
+      c_intrinsic_range_map[symbol_id] = c_intrinsic_range;
   }
 
   // Create parameter symbols
@@ -14289,8 +14147,7 @@ void python_convertert::process_imported_module(
             std::string c_name = json_string(json_member(first, "value"));
             if(!c_name.empty())
               c_intrinsic_map[irep_idt{"python::" + fname}] = c_name;
-            // Pick up optional fold= and domain= keywords on the
-            // decorator.
+            // Pick up optional fold=, domain=, and range= keywords.
             const jsont &dec_kwargs = json_member(dec, "keywords");
             if(!c_name.empty() && dec_kwargs.is_array())
             {
@@ -14308,6 +14165,8 @@ void python_convertert::process_imported_module(
                 else if(arg_name == "domain")
                   c_intrinsic_domain_map[irep_idt{"python::" + fname}] =
                     arg_val;
+                else if(arg_name == "range")
+                  c_intrinsic_range_map[irep_idt{"python::" + fname}] = arg_val;
               }
             }
           }
@@ -14546,9 +14405,7 @@ bool python_convertert::convert()
       else if(is_node_type(stmt, "ImportFrom"))
       {
         std::string module = json_string(json_member(stmt, "module"));
-        if(
-          module_resolver && module != "math" && module != "typing" &&
-          module != "random")
+        if(module_resolver && module != "typing" && module != "random")
         {
           const jsont *mod_ast = module_resolver(module);
           if(mod_ast != nullptr && !mod_ast->is_null())
