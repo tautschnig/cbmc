@@ -209,7 +209,9 @@ std::string expr2typescript(const exprt &expr, const namespacet &ns)
       return out + "]";
     }
     // String: {length, data}
-    if(tag == "typescript_string" && expr.operands().size() >= 2)
+    if(
+      tag == CPROVER_PREFIX "refined_string_type" &&
+      expr.operands().size() >= 2)
     {
       std::string out = "\"";
       const exprt &data = expr.operands()[1];

@@ -7,7 +7,9 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/cprover_prefix.h>
 #include <util/ieee_float.h>
+#include <util/refined_string_type.h>
 #include <util/std_types.h>
 
 /// TypeScript `number` type — IEEE 754 double-precision float.
@@ -28,10 +30,15 @@ inline typet typescript_boolean_type()
 /// "The String type is the set of all ordered sequences of zero or more
 ///  16-bit unsigned integer values."
 ///
-/// handled by CBMC's string solver (--refine-strings).
+/// Strings are tagged with CBMC's refined-string-type tag so the
+/// refined string solver (`--refine-strings`) can recognise them.
+/// The struct shape stays compatible with our existing fixed-size
+/// model:
+///   - length:  signedbv[32]
+///   - data:    unsignedbv[16] array (inline, max TYPESCRIPT_MAX_STRING_LENGTH)
+/// Auto-enabled for .ts/.tsx files in cbmc_parse_options.cpp.
 // ES2024 sec-ecmascript-language-types-string-type:
 // Strings are sequences of UTF-16 code units (unsignedbv[16]).
-// Modeled as struct{length: signedbv[32], data: unsignedbv[16][MAX]}.
 #define TYPESCRIPT_MAX_STRING_LENGTH 64
 
 inline struct_typet typescript_string_type()
@@ -44,14 +51,14 @@ inline struct_typet typescript_string_type()
       unsignedbv_typet{16},
       from_integer(TYPESCRIPT_MAX_STRING_LENGTH, signedbv_typet{64})}});
   struct_typet result{components};
-  result.set_tag("typescript_string");
+  result.set_tag(CPROVER_PREFIX "refined_string_type");
   return result;
 }
 
 inline bool is_typescript_string_type(const typet &type)
 {
   return type.id() == ID_struct &&
-         to_struct_type(type).get_tag() == "typescript_string";
+         to_struct_type(type).get_tag() == CPROVER_PREFIX "refined_string_type";
 }
 
 #endif // CPROVER_TYPESCRIPT_TYPESCRIPT_TYPES_H
