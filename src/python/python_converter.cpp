@@ -7726,6 +7726,34 @@ exprt python_convertert::convert_call(const jsont &expr)
         const jsont &elts = json_member(*it, "elts");
         if(elts.is_array() && !obj.is_nil())
         {
+          // Tagged union: OR the per-tag checks.
+          if(is_python_value_type(obj.type()))
+          {
+            exprt any_match = false_exprt{};
+            for(const auto &elt : as_array(elts))
+            {
+              if(!is_node_type(elt, "Name"))
+                continue;
+              std::string tname = json_string(json_member(elt, "id"));
+              exprt m;
+              if(tname == "int")
+                m = python_value_is(obj, python_type_tagt::INT);
+              else if(tname == "float")
+                m = python_value_is(obj, python_type_tagt::FLOAT);
+              else if(tname == "bool")
+                m = python_value_is(obj, python_type_tagt::BOOL);
+              else if(tname == "str")
+                m = python_value_is(obj, python_type_tagt::STR);
+              else if(tname == "list")
+                m = python_value_is(obj, python_type_tagt::LIST);
+              else if(class_types.count(tname) > 0)
+                m = python_value_is(obj, python_type_tagt::CLASS);
+              else
+                continue;
+              any_match = or_exprt{any_match, m};
+            }
+            return any_match;
+          }
           exprt result = false_exprt{};
           for(const auto &elt : as_array(elts))
           {
@@ -7802,6 +7830,13 @@ exprt python_convertert::convert_call(const jsont &expr)
             return python_value_is(obj, python_type_tagt::STR);
           if(cls_name == "list")
             return python_value_is(obj, python_type_tagt::LIST);
+          // User-defined class: dispatch on the CLASS tag. This
+          // is coarse — any CLASS-tagged value matches any
+          // user-class name — but sound for provability when
+          // the caller's 'isinstance(x, Foo)' only needs to
+          // distinguish Foo from primitive types or None.
+          if(class_types.count(cls_name) > 0)
+            return python_value_is(obj, python_type_tagt::CLASS);
           return false_exprt{}; // not a known type
         }
 
