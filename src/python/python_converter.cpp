@@ -14739,7 +14739,7 @@ bool python_convertert::convert()
             // didn't reach the decorator semantics. The
             // attribute-style handler uses these maps, so both
             // import forms now share the same source of truth.
-            if(module_resolver && name != "typing" && name != "random")
+            if(module_resolver && name != "typing")
             {
               const jsont *mod_ast = module_resolver(name);
               if(mod_ast != nullptr && !mod_ast->is_null())
@@ -14751,7 +14751,7 @@ bool python_convertert::convert()
       else if(is_node_type(stmt, "ImportFrom"))
       {
         std::string module = json_string(json_member(stmt, "module"));
-        if(module_resolver && module != "typing" && module != "random")
+        if(module_resolver && module != "typing")
         {
           const jsont *mod_ast = module_resolver(module);
           if(mod_ast != nullptr && !mod_ast->is_null())
