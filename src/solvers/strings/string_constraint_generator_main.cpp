@@ -250,6 +250,21 @@ string_constraint_generatort::add_axioms_for_function_application(
     // translated regex.
     return {expr, {}};
   }
+  else if(
+    id == ID_cprover_string_repeat_func ||
+    id == ID_cprover_string_compare_func || id == ID_cprover_string_chr_func ||
+    id == ID_cprover_string_strip_func ||
+    id == ID_cprover_string_index_of_from_func ||
+    id == ID_cprover_string_split_func)
+  {
+    // Python-string Phase 3 infrastructure intrinsics
+    // (see doc/architectural/python-string-phase2-backend-
+    // abstraction.md). The refine-strings back-end returns a
+    // sound nondet result with no axioms today; real axioms
+    // will be added in Phase 3's follow-up PRs when the
+    // frontend migrates the call-sites one at a time.
+    return {expr, {}};
+  }
   else if(id == ID_cprover_string_index_of_func)
     return add_axioms_for_index_of(expr);
   else if(id == ID_cprover_string_last_index_of_func)
