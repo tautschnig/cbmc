@@ -349,6 +349,17 @@ private:
   /// doc/architectural/python-string-phase2-backend-abstraction.md.
   exprt python_string_literal(const std::string &s);
 
+  /// Emit a guarded ValueError for a symbolic math argument
+  /// whose domain predicate rejects it, plus a fresh nondet
+  /// return symbol constrained by the named range predicate.
+  /// Shared by the decorator-driven path and the attribute-
+  /// style ``math.X(...)`` handler. Returns the nondet symbol.
+  exprt emit_math_intrinsic_nondet(
+    const std::string &domain_kind,
+    const std::string &range_kind,
+    const exprt &arg,
+    const source_locationt &loc);
+
   /// Return the CBMC type used for Python int.
   typet python_int_type() const
   {
