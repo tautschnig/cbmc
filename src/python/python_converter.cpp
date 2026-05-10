@@ -14002,6 +14002,41 @@ codet python_convertert::convert_try(const jsont &stmt)
               from_integer(type_hash, python_int_type())}};
         }
       }
+      else if(
+        !handler_type.is_null() && is_node_type(handler_type, "Tuple") &&
+        exc_type_sym != nullptr)
+      {
+        // except (A, B, C): — match any of the named exception
+        // types. Build the OR over their hashes; 'Exception' in
+        // the tuple is a catch-all and falls back to the plain
+        // active-flag condition.
+        const jsont &elts = json_member(handler_type, "elts");
+        exprt any_match = false_exprt{};
+        bool has_catch_all = false;
+        if(elts.is_array())
+        {
+          for(const auto &elt : as_array(elts))
+          {
+            if(!is_node_type(elt, "Name"))
+              continue;
+            std::string htype = json_string(json_member(elt, "id"));
+            if(
+              htype.empty() || htype == "Exception" || htype == "BaseException")
+            {
+              has_catch_all = true;
+              break;
+            }
+            long type_hash = exception_type_hash(htype);
+            any_match = or_exprt{
+              any_match,
+              equal_exprt{
+                exc_type_sym->symbol_expr(),
+                from_integer(type_hash, python_int_type())}};
+          }
+        }
+        if(!has_catch_all)
+          condition = and_exprt{condition, any_match};
+      }
 
       handler_chain = code_ifthenelset{
         condition, std::move(except_block), std::move(handler_chain)};
