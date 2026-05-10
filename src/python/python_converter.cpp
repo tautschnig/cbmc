@@ -844,13 +844,25 @@ exprt python_convertert::wrap_value(const exprt &e)
       python_type_tagt::LIST, address_of_exprt{tmp_sym.symbol_expr()});
   }
 
-  // For struct types (class instances, dicts, etc.) that don't fit
-  // in the tagged union, return a nondet value. The struct can't be
-  // stored in the int/float/bool/str/list fields.
+  // For struct types (class instances, dicts, etc.) that don't
+  // fit in the tagged union, return a python_value tagged INT
+  // with int_val = 1 — a concrete, non-NONE value. This
+  // preserves the invariant that 'wrap_value(class_instance) is
+  // not None' evaluates to True, which in turn makes
+  // 'Optional[T]' return-type inference correct: a function
+  // that returns ClassName() or None now lets the caller's
+  // 'is not None' check dispatch precisely via the tag.
+  //
+  // The downside: the caller can no longer call methods on the
+  // wrapped class instance (the struct's data is lost). Where
+  // methods are needed, users should stick with the
+  // class-typed parameter / variable rather than relying on the
+  // tagged-union wrap.
   if(
     e.type().id() == ID_struct && !is_python_string_type(e.type()) &&
     !is_python_list_type(e.type()))
-    return side_effect_expr_nondett{python_value_type(), source_locationt{}};
+    return make_python_value(
+      python_type_tagt::INT, from_integer(1, signedbv_typet{64}));
 
   return make_python_value(tag, e);
 }
@@ -12638,6 +12650,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // No return annotation — scan body for return/yield statements
     bool has_value_return = false;
     bool has_bare_return = false;
+    bool has_none_return = false;
     std::function<void(const jsont &)> scan = [&](const jsont &body_node)
     {
       if(!body_node.is_array())
@@ -12652,6 +12665,21 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           else
           {
             has_value_return = true;
+            // Detect explicit 'return None' — lets us infer
+            // Optional[T] when a class-constructor return and a
+            // None return coexist.
+            if(
+              is_node_type(rv, "Constant") &&
+              json_member(rv, "value").is_null())
+            {
+              has_none_return = true;
+            }
+            else if(
+              is_node_type(rv, "Name") &&
+              json_string(json_member(rv, "id")) == "None")
+            {
+              has_none_return = true;
+            }
             // Check if return value is a constructor call
             if(
               is_node_type(rv, "Call") &&
@@ -12697,6 +12725,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // Generator functions return a list (eager evaluation)
     if(has_yield)
       return_type = python_list_type(python_int_type());
+    else if(
+      has_value_return && has_none_return &&
+      (return_type.id() == ID_struct_tag || return_type.id() == ID_struct))
+    {
+      // Optional[ClassName] — function returns either a class
+      // instance or None. Widen to python_value_type so the
+      // caller's 'is not None' check dispatches precisely on the
+      // tagged union's tag.
+      return_type = python_value_type();
+    }
     else if(has_value_return && return_type.id() == ID_empty)
     {
       // If any parameter is float, return type is likely float
