@@ -92,6 +92,10 @@ private:
   // Current generic instantiation context
   std::string current_generic_type_param;
   std::string current_generic_concrete;
+  // Multi-parameter generic instantiation: each type parameter name
+  // maps to its concrete type. Populated at call sites that pass
+  // multiple type arguments (e.g. pair<number, string>(1, "x")).
+  std::map<std::string, std::string> current_generic_type_map;
   // Default parameter values: func_id → {param_index → default_expr}
   std::map<irep_idt, std::map<std::size_t, exprt>>
     default_values; // stmts to emit before current expr

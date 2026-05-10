@@ -1,8 +1,7 @@
-KNOWNBUG
+CORE
 main.ts
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-Generic functions with multiple type parameters not fully monomorphized

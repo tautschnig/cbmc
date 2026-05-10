@@ -5205,31 +5205,40 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     auto gen_it = generic_functions.find(func_name);
     if(gen_it != generic_functions.end())
     {
-      // Get type parameter names first
-      std::set<std::string> tp_names;
+      // Get type parameter names (in declaration order)
+      std::vector<std::string> tp_order;
       const jsont &tp0 = json_member(gen_it->second, "typeParameters");
       if(tp0.is_array())
         for(const auto &t : to_json_array(tp0))
         {
           std::string n = json_string(json_member(t, "_type"));
           if(!n.empty())
-            tp_names.insert(n);
+            tp_order.push_back(n);
         }
-      std::string tp_name = tp_names.empty() ? "T" : *tp_names.begin();
-      // Determine concrete type:
-      //   1. Check if return type mentions the type parameter → use return type
-      //   2. Otherwise, infer from first argument that has T as its type
-      std::string call_type;
-      std::string ret_type_str =
-        json_string(json_member(gen_it->second, "_returnType"));
-      if(ret_type_str == tp_name)
+      std::set<std::string> tp_names(tp_order.begin(), tp_order.end());
+      // For multi-type-param generics, build a map from each type
+      // parameter name to its concrete type at the call site. Sources,
+      // in order of preference:
+      //   1. Explicit typeArguments at the call site: fn<A, B>(...)
+      //   2. Inference from arg types matching each param
+      std::map<std::string, std::string> type_map;
+      const jsont &type_args = json_member(node, "typeArguments");
+      if(type_args.is_array())
       {
-        // Return type is the type parameter → call's _type is concrete T
-        call_type = json_string(json_member(node, "_type"));
+        std::size_t i = 0;
+        for(const auto &ta : to_json_array(type_args))
+        {
+          if(i >= tp_order.size())
+            break;
+          std::string concrete = json_string(json_member(ta, "_type"));
+          if(!concrete.empty())
+            type_map[tp_order[i]] = concrete;
+          ++i;
+        }
       }
-      else
+      // Fill any missing type-params by inference from arguments.
+      if(type_map.size() < tp_order.size())
       {
-        // Find argument with type T and use its concrete type
         const jsont &params = json_member(gen_it->second, "parameters");
         if(params.is_array() && args.is_array())
         {
@@ -5239,17 +5248,65 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                 arg_it != to_json_array(args).end())
           {
             std::string pt = json_string(json_member(*param_it, "_type"));
-            if(pt == tp_name)
+            if(tp_names.count(pt) > 0 && type_map.count(pt) == 0)
             {
-              call_type = json_string(json_member(*arg_it, "_type"));
-              break;
+              std::string concrete = json_string(json_member(*arg_it, "_type"));
+              if(concrete == "true" || concrete == "false")
+                concrete = "boolean";
+              if(
+                !concrete.empty() &&
+                (std::isdigit(concrete[0]) || concrete[0] == '-'))
+                concrete = "number";
+              if(!concrete.empty())
+                type_map[pt] = concrete;
             }
             ++param_it;
             ++arg_it;
           }
         }
-        if(call_type.empty())
+      }
+      std::string tp_name = tp_order.empty() ? "T" : tp_order[0];
+      // Determine concrete type:
+      //   1. Check if return type mentions the type parameter → use return type
+      //   2. Otherwise, infer from first argument that has T as its type
+      std::string call_type;
+      if(type_map.count(tp_name) > 0)
+      {
+        call_type = type_map[tp_name];
+      }
+      else
+      {
+        std::string ret_type_str =
+          json_string(json_member(gen_it->second, "_returnType"));
+        if(ret_type_str == tp_name)
+        {
+          // Return type is the type parameter → call's _type is concrete T
           call_type = json_string(json_member(node, "_type"));
+        }
+        else
+        {
+          // Find argument with type T and use its concrete type
+          const jsont &params = json_member(gen_it->second, "parameters");
+          if(params.is_array() && args.is_array())
+          {
+            auto param_it = to_json_array(params).begin();
+            auto arg_it = to_json_array(args).begin();
+            while(param_it != to_json_array(params).end() &&
+                  arg_it != to_json_array(args).end())
+            {
+              std::string pt = json_string(json_member(*param_it, "_type"));
+              if(pt == tp_name)
+              {
+                call_type = json_string(json_member(*arg_it, "_type"));
+                break;
+              }
+              ++param_it;
+              ++arg_it;
+            }
+          }
+          if(call_type.empty())
+            call_type = json_string(json_member(node, "_type"));
+        }
       }
       if(call_type.empty())
         call_type = "number";
@@ -5270,8 +5327,34 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           c == '|' || c == '[' || c == ']')
           c = '_';
       }
+      // Include every type-arg in the specialized name so different
+      // concrete-type combinations get distinct instantiations.
+      std::string full_name_suffix = safe_type;
+      if(type_map.size() > 1)
+      {
+        full_name_suffix.clear();
+        for(const auto &name : tp_order)
+        {
+          auto it = type_map.find(name);
+          if(it != type_map.end())
+          {
+            std::string s = it->second;
+            for(char &c : s)
+            {
+              if(
+                c == ' ' || c == '{' || c == '}' || c == ':' || c == ';' ||
+                c == '<' || c == '>' || c == ',' || c == '(' || c == ')' ||
+                c == '|' || c == '[' || c == ']')
+                c = '_';
+            }
+            if(!full_name_suffix.empty())
+              full_name_suffix += "__";
+            full_name_suffix += s;
+          }
+        }
+      }
       // Create specialized instance name
-      std::string spec_name = func_name + "__" + safe_type;
+      std::string spec_name = func_name + "__" + full_name_suffix;
       irep_idt spec_id{"typescript::" + spec_name};
       // Instantiate if not already done
       if(symbol_table.lookup(spec_id) == nullptr)
@@ -5280,14 +5363,20 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         const jsont &gen_node = gen_it->second;
         jsont saved_node = gen_node;
         generic_functions.erase(gen_it);
-        // Store the concrete type mapping for this instantiation
+        // Store the concrete type mapping for this instantiation.
+        // Save/restore BOTH the single-param state (for legacy paths)
+        // AND the multi-param map.
         std::string saved_generic_type_param = current_generic_type_param;
         std::string saved_generic_concrete = current_generic_concrete;
+        auto saved_type_map = current_generic_type_map;
         current_generic_type_param = tp_name;
         current_generic_concrete = call_type;
+        if(!type_map.empty())
+          current_generic_type_map = type_map;
         convert_function_declaration_with_name(saved_node, spec_name);
         current_generic_type_param = saved_generic_type_param;
         current_generic_concrete = saved_generic_concrete;
+        current_generic_type_map = saved_type_map;
         // Restore
         generic_functions[func_name] = saved_node;
       }

@@ -81,7 +81,15 @@ source_locationt typescript_convertert::get_location(const jsont &node) const
 
 typet typescript_convertert::convert_type(const std::string &ts_type) const
 {
-  // Resolve generic type parameters
+  // Resolve generic type parameters. First check the multi-param map
+  // (used when the call site has multiple type arguments), then the
+  // single-param context (for legacy single-type-param generics).
+  if(!current_generic_type_map.empty())
+  {
+    auto it = current_generic_type_map.find(ts_type);
+    if(it != current_generic_type_map.end())
+      return convert_type(it->second);
+  }
   if(
     !current_generic_type_param.empty() &&
     ts_type == current_generic_type_param)
