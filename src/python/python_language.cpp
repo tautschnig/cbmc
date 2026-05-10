@@ -45,6 +45,9 @@ void python_languaget::set_language_options(
   python_strict_warnings = options.get_bool_option("python-strict-warnings");
   python_use_stdlib_source =
     options.get_bool_option("python-use-stdlib-source");
+  python_string_kind = options.get_bool_option("python-smt-strings")
+                         ? python_string_kindt::smt_string
+                         : python_string_kindt::refined;
   std::string max_str = options.get_option("python-max-string-length");
   if(!max_str.empty())
     max_string_length = std::stoul(max_str);

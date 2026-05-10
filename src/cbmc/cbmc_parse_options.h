@@ -76,6 +76,7 @@ class optionst;
   "(python-no-body-check)" \
   "(python-strict-warnings)" \
   "(python-use-stdlib-source)" \
+  "(python-smt-strings)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

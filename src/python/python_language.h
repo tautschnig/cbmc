@@ -85,6 +85,20 @@ protected:
   /// imports only via the user's PYTHONPATH / system CPython source.
   /// Controlled by the --python-use-stdlib-source command line flag.
   bool python_use_stdlib_source = false;
+  /// Python string back-end selector. Default
+  /// 'python_string_kindt::refined' keeps every string as a
+  /// refined-string struct {length, data}. When
+  /// 'python_string_kindt::smt_string' is set, SMT-capable
+  /// back-ends (CVC5, Z3) receive strings as SMT-LIB String
+  /// values instead; other back-ends fall back to refined.
+  /// Controlled by --python-smt-strings. See
+  /// doc/architectural/python-string-phase2-backend-abstraction.md.
+  enum class python_string_kindt
+  {
+    refined,
+    smt_string,
+  };
+  python_string_kindt python_string_kind = python_string_kindt::refined;
   std::size_t max_string_length = PYTHON_MAX_STRING_LENGTH;
   std::size_t max_list_length = PYTHON_MAX_LIST_LENGTH;
 
