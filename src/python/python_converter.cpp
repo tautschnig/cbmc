@@ -4866,6 +4866,20 @@ exprt python_convertert::convert_call(const jsont &expr)
               tv,
               side_effect_expr_nondett{
                 python_string_type(), get_location(expr)}});
+            // Both ASSUMEs use cprover_string_length_func so the
+            // len()-consumer (which also goes through the intrinsic)
+            // sees a value coordinated with the input's length.
+            // The .length member-access path remains valid too
+            // because refine-strings' array_pool.find() respects
+            // the struct's .length field for non-constant
+            // pointers.
+            exprt result_len_intr = emit_string_int_function(
+              ID_cprover_string_length_func, tv, symbol_table, pending_checks);
+            exprt input_len_intr = emit_string_int_function(
+              ID_cprover_string_length_func, obj, symbol_table, pending_checks);
+            // Legacy member-access accessors: still needed for
+            // comparisons with literal-constructed strings where
+            // the struct_exprt.length is a constant int.
             member_exprt result_len{tv, "length", signedbv_typet{64}};
             member_exprt input_len{obj, "length", signedbv_typet{64}};
             // strip/lstrip/rstrip: result length <= input length
@@ -4877,6 +4891,11 @@ exprt python_convertert::convert_call(const jsont &expr)
                 binary_relation_exprt{
                   result_len, ID_ge, from_integer(0, signedbv_typet{64})},
                 binary_relation_exprt{result_len, ID_le, input_len}}});
+              pending_checks.push_back(code_assumet{and_exprt{
+                binary_relation_exprt{
+                  result_len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
+                binary_relation_exprt{
+                  result_len_intr, ID_le, input_len_intr}}});
             }
             // capitalize/title/swapcase/casefold: same length
             else if(
@@ -4885,6 +4904,8 @@ exprt python_convertert::convert_call(const jsont &expr)
             {
               pending_checks.push_back(
                 code_assumet{equal_exprt{result_len, input_len}});
+              pending_checks.push_back(
+                code_assumet{equal_exprt{result_len_intr, input_len_intr}});
             }
             return std::move(tv);
           }
@@ -6198,12 +6219,18 @@ exprt python_convertert::convert_call(const jsont &expr)
     pending_checks.push_back(code_frontend_assignt{
       tmp, side_effect_expr_nondett{python_string_type(), get_location(expr)}});
     member_exprt len{tmp, "length", signedbv_typet{64}};
+    // Also expose the intrinsic-based length so downstream
+    // len() consumers (which now route through
+    // cprover_string_length_func) see the same constraint.
+    exprt len_intr = emit_string_int_function(
+      ID_cprover_string_length_func, tmp, symbol_table, pending_checks);
     // If size argument provided, constrain length == size
     if(args.is_array() && !as_array(args).empty())
     {
       exprt size = convert_expression(*as_array(args).begin());
-      pending_checks.push_back(code_assumet{
-        equal_exprt{len, safe_typecast(size, signedbv_typet{64})}});
+      exprt size_i64 = safe_typecast(size, signedbv_typet{64});
+      pending_checks.push_back(code_assumet{equal_exprt{len, size_i64}});
+      pending_checks.push_back(code_assumet{equal_exprt{len_intr, size_i64}});
     }
     else
     {
@@ -6211,6 +6238,13 @@ exprt python_convertert::convert_call(const jsont &expr)
         binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
         binary_relation_exprt{
           len,
+          ID_le,
+          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
+      pending_checks.push_back(code_assumet{and_exprt{
+        binary_relation_exprt{
+          len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
+        binary_relation_exprt{
+          len_intr,
           ID_le,
           from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
     }
@@ -6487,9 +6521,18 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
-        if(
-          is_python_string_type(arg.type()) ||
-          is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
+        // Python string: route through the refinement intrinsic
+        // so the back-end (refine-strings or future SMT strings)
+        // controls the semantics.
+        if(is_python_string_type(arg.type()))
+        {
+          exprt result = emit_string_int_function(
+            ID_cprover_string_length_func, arg, symbol_table, pending_checks);
+          if(result.type() != python_int_type())
+            result = safe_typecast(result, python_int_type());
+          return result;
+        }
+        if(is_python_list_type(arg.type()) || is_python_dict_type(arg.type()))
           return member_exprt{arg, "length", python_int_type()};
 
         // Tuple: number of components
