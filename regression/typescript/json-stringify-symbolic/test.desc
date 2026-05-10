@@ -1,8 +1,7 @@
-KNOWNBUG
+CORE
 main.ts
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-JSON.stringify on symbolic input returns nondet

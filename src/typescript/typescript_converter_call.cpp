@@ -208,6 +208,39 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         auto s = stringify(arg);
         if(s.has_value())
           return convert_string_literal_from_text(s.value());
+        // Symbolic number: emit a string whose length is constrained
+        // to be >= 1 (every non-NaN/Infinity number produces at
+        // least one digit). Content remains nondet.
+        if(arg.type().id() == ID_floatbv)
+        {
+          struct_typet str_type = typescript_string_type();
+          typet len_type = str_type.components()[0].type();
+          typet data_type = str_type.components()[1].type();
+          exprt data_nondet =
+            side_effect_expr_nondett{data_type, source_locationt{}};
+          // Create a nondet length constrained via assume.
+          static unsigned sym_ctr = 0;
+          std::string name = "__ts_json_str_len_" + std::to_string(sym_ctr++);
+          irep_idt sym_id{"typescript::" + name};
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt ls{sym_id, len_type, "typescript"};
+            ls.base_name = name;
+            ls.is_lvalue = true;
+            ls.is_state_var = true;
+            symbol_table.add(ls);
+          }
+          exprt len_sym = symbol_table.lookup_ref(sym_id).symbol_expr();
+          pending_stmts.push_back(code_frontend_assignt{
+            len_sym, side_effect_expr_nondett{len_type, source_locationt{}}});
+          pending_stmts.push_back(code_assumet{and_exprt{
+            binary_relation_exprt{len_sym, ID_ge, from_integer(1, len_type)},
+            binary_relation_exprt{
+              len_sym,
+              ID_le,
+              from_integer(TYPESCRIPT_MAX_STRING_LENGTH, len_type)}}});
+          return struct_exprt{{len_sym, data_nondet}, str_type};
+        }
         // Nondet fallback for non-constant
         return side_effect_expr_nondett{
           typescript_string_type(), get_location(node)};
