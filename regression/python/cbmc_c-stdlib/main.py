@@ -1,16 +1,32 @@
-# cbmc_c library: C string-library intrinsics accessible from
-# Python. Each function is declared via @c_intrinsic; the
-# front-end lowers calls to the named C function.
+# cbmc_c library: both 64-bit-int string-library functions and
+# 32-bit-int ctype / toupper / tolower / abs functions.
 
 from cbmc_c import strlen, getenv
+from cbmc_c import isdigit, isalpha, isspace, toupper, tolower, abs
 
-# strlen on a literal: CBMC's built-in model returns the exact
-# length, so we can assert the value.
+# 64-bit: strlen folds under CBMC's model.
 assert strlen("hello") == 5
 assert strlen("") == 0
-assert strlen("abcdef") == 6
 
-# getenv: the call itself is pointer-safe thanks to the
-# string_constantt persistence for @c_intrinsic str args.
+# getenv: pointer-safe via the string_constantt persistence.
 _ = getenv("HOME")
-_ = getenv("PATH")
+
+# 32-bit ctype predicates
+assert isdigit(ord("5")) != 0
+assert isdigit(ord("a")) == 0
+
+assert isalpha(ord("x")) != 0
+assert isalpha(ord("1")) == 0
+
+assert isspace(ord(" ")) != 0
+assert isspace(ord("x")) == 0
+
+# 32-bit transforms
+assert toupper(ord("a")) == ord("A")
+assert toupper(ord("A")) == ord("A")  # already upper
+assert tolower(ord("Z")) == ord("z")
+assert tolower(ord("z")) == ord("z")  # already lower
+
+# abs on a constant int
+assert abs(-5) == 5
+assert abs(7) == 7

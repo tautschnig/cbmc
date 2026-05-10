@@ -8485,18 +8485,38 @@ exprt python_convertert::convert_call(const jsont &expr)
     auto is_py_str = [](const typet &t) { return is_python_string_type(t); };
 
     // Build the C function signature by projecting each Python
-    // parameter onto a C equivalent.
+    // parameter onto a C equivalent. Python str → C char*.
+    // Python int → C signed int of the width declared by the
+    // @c_intrinsic('name', int_width=N) annotation (default 64).
+    auto iw_it = c_intrinsic_int_width_map.find(sym->name);
+    int int_width =
+      iw_it != c_intrinsic_int_width_map.end() ? iw_it->second : 64;
+    auto maybe_narrow_int = [&](typet &t)
+    {
+      if(t.id() == ID_signedbv)
+      {
+        const auto sz = to_signedbv_type(t).get_width();
+        if(
+          static_cast<int>(sz) != int_width &&
+          (int_width == 32 || int_width == 64))
+          t = signedbv_typet{static_cast<std::size_t>(int_width)};
+      }
+    };
     code_typet c_func_type = to_code_type(func_type);
     for(auto &p : c_func_type.parameters())
     {
       if(is_py_str(p.type()))
         p.type() = c_char_ptr;
+      else
+        maybe_narrow_int(p.type());
       p.set_identifier(irep_idt{});
     }
     typet c_return_type = c_func_type.return_type();
     const bool return_is_py_str = is_py_str(c_return_type);
     if(return_is_py_str)
       c_func_type.return_type() = c_char_ptr;
+    else
+      maybe_narrow_int(c_func_type.return_type());
 
     irep_idt c_id{c_name};
     if(symbol_table.lookup(c_id) == nullptr)
@@ -8589,6 +8609,14 @@ exprt python_convertert::convert_call(const jsont &expr)
           pointer_typet{unsignedbv_typet{8}, config.ansi_c.pointer_width}};
         arguments[i] = typecast_exprt{std::move(data), c_char_ptr};
       }
+      else if(
+        arguments[i].type().id() == ID_signedbv &&
+        c_params[i].type().id() == ID_signedbv &&
+        arguments[i].type() != c_params[i].type())
+      {
+        // int width narrowing / widening for int_width= callees.
+        arguments[i] = typecast_exprt{arguments[i], c_params[i].type()};
+      }
     }
 
     symbol_exprt callee_expr = symbol_table.lookup_ref(c_id).symbol_expr();
@@ -8600,7 +8628,19 @@ exprt python_convertert::convert_call(const jsont &expr)
       get_location(expr)};
 
     if(!return_is_py_str)
+    {
+      // If int_width= narrowed the return type, widen back to
+      // the Python-declared int so downstream code gets the
+      // expected signedbv width.
+      const typet &py_return = to_code_type(func_type).return_type();
+      if(
+        call.type().id() == ID_signedbv && py_return.id() == ID_signedbv &&
+        call.type() != py_return)
+      {
+        return typecast_exprt{std::move(call), py_return};
+      }
       return call;
+    }
 
     // Marshal the return: wrap the returned char* into a Python
     // refined-string struct. The length is nondet (we can't
@@ -12371,6 +12411,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   std::string c_intrinsic_fold;
   std::string c_intrinsic_domain;
   std::string c_intrinsic_range;
+  int c_intrinsic_int_width = 0;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -12379,12 +12420,15 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         is_node_type(dec, "Name") &&
         json_string(json_member(dec, "id")) == "overload")
         return code_skipt{};
-      // @c_intrinsic('NAME', fold='OP', domain='KIND', range='KIND')
-      // routes calls to the named C function. Optional ``fold``
-      // enables parse-time constant folding; optional ``domain``
-      // raises Python ValueError for constant arguments that
-      // fail the named domain predicate; optional ``range``
-      // constrains the nondet return for symbolic arguments.
+      // @c_intrinsic('NAME', fold='OP', domain='KIND', range='KIND',
+      //              int_width=N) — route calls to the named C
+      // function. Optional ``fold`` enables parse-time constant
+      // folding; optional ``domain`` raises Python ValueError for
+      // constant arguments that fail the named domain predicate;
+      // optional ``range`` constrains the nondet return for
+      // symbolic arguments; optional ``int_width`` overrides the
+      // default Python-int→signedbv64 projection for C functions
+      // that take/return 32-bit int.
       if(is_node_type(dec, "Call"))
       {
         const jsont &dec_func = json_member(dec, "func");
@@ -12411,12 +12455,29 @@ codet python_convertert::convert_function_def(const jsont &stmt)
               if(!is_node_type(val, "Constant"))
                 continue;
               std::string arg_name = json_string(json_member(kw, "arg"));
+              if(arg_name == "int_width")
+              {
+                // Integer literal: its stringified form lives in
+                // .value as a decimal string, not in the json_string()
+                // wrapper (which expects a string-typed value).
+                const jsont &iv_node = json_member(val, "value");
+                try
+                {
+                  c_intrinsic_int_width = std::stoi(iv_node.value);
+                }
+                catch(...)
+                {
+                  c_intrinsic_int_width = 0;
+                }
+                continue;
+              }
+              std::string arg_val = json_string(json_member(val, "value"));
               if(arg_name == "fold")
-                c_intrinsic_fold = json_string(json_member(val, "value"));
+                c_intrinsic_fold = arg_val;
               else if(arg_name == "domain")
-                c_intrinsic_domain = json_string(json_member(val, "value"));
+                c_intrinsic_domain = arg_val;
               else if(arg_name == "range")
-                c_intrinsic_range = json_string(json_member(val, "value"));
+                c_intrinsic_range = arg_val;
             }
           }
         }
@@ -12701,6 +12762,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       c_intrinsic_domain_map[symbol_id] = c_intrinsic_domain;
     if(!c_intrinsic_range.empty())
       c_intrinsic_range_map[symbol_id] = c_intrinsic_range;
+    if(c_intrinsic_int_width == 32 || c_intrinsic_int_width == 64)
+      c_intrinsic_int_width_map[symbol_id] = c_intrinsic_int_width;
   }
 
   // Create parameter symbols
@@ -14147,7 +14210,8 @@ void python_convertert::process_imported_module(
             std::string c_name = json_string(json_member(first, "value"));
             if(!c_name.empty())
               c_intrinsic_map[irep_idt{"python::" + fname}] = c_name;
-            // Pick up optional fold=, domain=, and range= keywords.
+            // Pick up optional fold=, domain=, range=, int_width=
+            // keywords.
             const jsont &dec_kwargs = json_member(dec, "keywords");
             if(!c_name.empty() && dec_kwargs.is_array())
             {
@@ -14157,6 +14221,24 @@ void python_convertert::process_imported_module(
                 if(!is_node_type(val, "Constant"))
                   continue;
                 std::string arg_name = json_string(json_member(kw, "arg"));
+                if(arg_name == "int_width")
+                {
+                  // Integer literal: its stringified form is in
+                  // .value directly (see parallel logic at
+                  // convert_function_def).
+                  const jsont &iv_node = json_member(val, "value");
+                  try
+                  {
+                    int w = std::stoi(iv_node.value);
+                    if(w == 32 || w == 64)
+                      c_intrinsic_int_width_map[irep_idt{"python::" + fname}] =
+                        w;
+                  }
+                  catch(...)
+                  {
+                  }
+                  continue;
+                }
                 std::string arg_val = json_string(json_member(val, "value"));
                 if(arg_val.empty())
                   continue;
