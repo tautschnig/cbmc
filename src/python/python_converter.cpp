@@ -307,7 +307,7 @@ static exprt build_string_struct(const std::string &s)
   return struct_exprt({length, content}, python_string_type());
 }
 
-/// Persistent-storage variant of build_string_struct: installs
+/// Persistent-storage variant of python_string_literal: installs
 /// the backing array as a static-lifetime symbol and returns a
 /// struct_exprt whose .data points into that symbol. Kept as a
 /// hook for future callers; the current @c_intrinsic path uses a
@@ -367,6 +367,18 @@ exprt python_convertert::build_string_literal(const std::string &s)
   exprt length =
     from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
   return struct_exprt{{length, content}, python_string_type()};
+}
+
+/// Back-end-dispatching Python string literal. See
+/// python-string-phase2-backend-abstraction.md.
+exprt python_convertert::python_string_literal(const std::string &s)
+{
+  // Refined-string back-end: the struct-exprt shape is
+  // what every downstream site already expects. For the
+  // SMT-string back-end this will emit an
+  // smt_string_constant_exprt instead; the lowering lands in
+  // a follow-up PR and currently falls back to refined.
+  return build_string_struct(s);
 }
 
 /// Create a nondet refined string expression (length + content pointer).
@@ -1569,7 +1581,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
 
     // All parts are constant — build the string literal
-    result = build_string_struct(all_bytes);
+    result = python_string_literal(all_bytes);
   }
   else if(node_type == "Lambda")
     result = convert_lambda(expr);
@@ -1788,7 +1800,7 @@ exprt python_convertert::convert_constant(const jsont &expr)
     }
 
     // String literal
-    return build_string_struct(str_val);
+    return python_string_literal(str_val);
   }
 
     log.error() << "Unsupported constant value" << messaget::eom;
@@ -1823,7 +1835,7 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "__debug__")
     return true_exprt{};
   else if(id == "__name__")
-    return build_string_struct("__main__");
+    return python_string_literal("__main__");
 
   // Look up in symbol table — check versioned names first, then
   // function-scoped, then global
@@ -2014,7 +2026,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           rv = it->second;
       }
       if(lv.has_value() && rv.has_value())
-        return build_string_struct(lv.value() + rv.value());
+        return python_string_literal(lv.value() + rv.value());
     }
     // Fallback: use string solver for non-constant concat
     {
@@ -2178,7 +2190,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         std::string result;
         for(int i = 0; i < static_cast<int>(nv.value()); i++)
           result += sv.value();
-        return build_string_struct(result);
+        return python_string_literal(result);
       }
     }
     return side_effect_expr_nondett{python_string_type(), source_locationt{}};
@@ -2982,9 +2994,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
         !is_python_value_type(right.type()))
       {
         if(is_python_string_type(current_left.type()))
-          right = build_string_struct("__NEVER_EQUAL__");
+          right = python_string_literal("__NEVER_EQUAL__");
         else
-          current_left = build_string_struct("__NEVER_EQUAL__");
+          current_left = python_string_literal("__NEVER_EQUAL__");
       }
       else if(current_left.type().id() == ID_floatbv)
       {
@@ -4283,7 +4295,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 to_array_type(to_struct_type(list_type).components()[1].type());
               exprt::operandst list_elems;
               for(const auto &p : parts)
-                list_elems.push_back(build_string_struct(p));
+                list_elems.push_back(python_string_literal(p));
               while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
                 list_elems.push_back(safe_zero(python_string_type()));
               return struct_exprt{
@@ -4358,7 +4370,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                   exprt::operandst list_elems;
                   for(const auto &part : parts)
                   {
-                    list_elems.push_back(build_string_struct(part));
+                    list_elems.push_back(python_string_literal(part));
                   }
                   while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
                     list_elems.push_back(safe_zero(python_string_type()));
@@ -4392,7 +4404,7 @@ exprt python_convertert::convert_call(const jsont &expr)
             std::string result = sv.value();
             for(auto &c : result)
               c = (method_name == "upper") ? toupper(c) : tolower(c);
-            return build_string_struct(result);
+            return python_string_literal(result);
           }
           // Use string solver for non-constant upper/lower
           {
@@ -4682,7 +4694,7 @@ exprt python_convertert::convert_call(const jsont &expr)
             else
               result = s; // fallback for unhandled methods
             if(result.size() <= PYTHON_MAX_STRING_LENGTH)
-              return build_string_struct(result);
+              return python_string_literal(result);
           }
           // Return nondet string with constraints for symbolic strings
           {
@@ -4765,7 +4777,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 pos = found + old_s.size();
               }
               // Build string literal
-              return build_string_struct(result);
+              return python_string_literal(result);
             }
           }
           // PLib stdtypes: str.format() — substitute {} placeholders
@@ -4877,7 +4889,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
               if(all_const)
               {
-                return build_string_struct(result);
+                return python_string_literal(result);
               }
             }
           }
@@ -5263,7 +5275,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                     }
                   }
                   if(all_const)
-                    return build_string_struct(result);
+                    return python_string_literal(result);
                 }
               }
             }
@@ -5593,7 +5605,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                   exprt dst =
                     plus_exprt{length, from_integer(i, signedbv_typet{64})};
                   exprt ch_str =
-                    build_string_struct(std::string(1, sv.value()[i]));
+                    python_string_literal(std::string(1, sv.value()[i]));
                   if(ch_str.type() != data_type.element_type())
                     ch_str = safe_typecast(ch_str, data_type.element_type());
                   pending_checks.push_back(
@@ -5746,7 +5758,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               exprt::operandst ks, vs;
               for(const auto &[n, v] : unmatched)
               {
-                ks.push_back(build_string_struct(n));
+                ks.push_back(python_string_literal(n));
                 if(is_python_value_type(vat.element_type()))
                   vs.push_back(wrap_value(v));
                 else
@@ -6580,7 +6592,7 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
             result = (negative ? "-0b" : "0b") + digits;
           }
-          return build_string_struct(result);
+          return python_string_literal(result);
         }
       }
     }
@@ -6679,7 +6691,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         chars.push_back(safe_typecast(code_point, unsignedbv_typet{8}));
       }
 
-      // For constant code points, use build_string_struct
+      // For constant code points, use python_string_literal
       if(code_point.is_constant())
       {
         std::string s;
@@ -6689,7 +6701,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           if(!to_integer(to_constant_expr(c), v))
             s += static_cast<char>(v.to_long());
         }
-        return build_string_struct(s);
+        return python_string_literal(s);
       }
       // Non-constant: build pointer-based string
       array_typet at(
@@ -6821,7 +6833,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       {
         std::string kname = json_string(json_member(kw, "arg"));
         exprt kval = convert_expression(json_member(kw, "value"));
-        keys.push_back(build_string_struct(kname));
+        keys.push_back(python_string_literal(kname));
         if(kval.type() != vals_arr_type.element_type())
           kval = safe_typecast(kval, vals_arr_type.element_type());
         vals.push_back(kval);
@@ -7260,9 +7272,9 @@ exprt python_convertert::convert_call(const jsont &expr)
       if(arg.type().id() == ID_bool || arg.type().id() == ID_c_bool)
       {
         if(arg.is_true())
-          return build_string_struct("True");
+          return python_string_literal("True");
         if(arg.is_false())
-          return build_string_struct("False");
+          return python_string_literal("False");
       }
       // str(class_instance) — call __str__ if available
       if(arg.type().id() == ID_struct)
@@ -7309,7 +7321,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 s.pop_back();
             }
           }
-          return build_string_struct(s);
+          return python_string_literal(s);
         }
       }
       // str(int_constant) — legacy path
@@ -7319,7 +7331,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(!to_integer(to_constant_expr(arg), iv))
         {
           std::string s = integer2string(iv);
-          return build_string_struct(s);
+          return python_string_literal(s);
         }
       }
       // str(float_constant)
@@ -7335,12 +7347,12 @@ exprt python_convertert::convert_call(const jsont &expr)
           while(s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.')
             s.pop_back();
         }
-        return build_string_struct(s);
+        return python_string_literal(s);
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
     // str() with no arguments → empty string
-    return build_string_struct("");
+    return python_string_literal("");
   }
   // all(genexp) / any(genexp) — unroll for literal iterables
   else if(func_name == "all" || func_name == "any")
@@ -8083,7 +8095,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       exprt::operandst key_elems, val_elems;
       for(const auto &[name, val] : unmatched_kw)
       {
-        key_elems.push_back(build_string_struct(name));
+        key_elems.push_back(python_string_literal(name));
         if(is_python_value_type(vals_arr_type.element_type()))
           val_elems.push_back(wrap_value(val));
         else
@@ -8866,7 +8878,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         if(is_reverse)
         {
           std::string rev(s.rbegin(), s.rend());
-          return build_string_struct(rev);
+          return python_string_literal(rev);
         }
         else
         {
@@ -8889,8 +8901,8 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           if(hi > len)
             hi = len;
           if(lo >= hi)
-            return build_string_struct("");
-          return build_string_struct(s.substr(lo, hi - lo));
+            return python_string_literal("");
+          return python_string_literal(s.substr(lo, hi - lo));
         }
       }
       // Non-constant string: return nondet
@@ -8985,7 +8997,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           int i = static_cast<int>(nv.value());
           int len = static_cast<int>(sv.value().size());
           if(i >= 0 && i < len)
-            return build_string_struct(std::string(1, sv.value()[i]));
+            return python_string_literal(std::string(1, sv.value()[i]));
         }
       }
     }
@@ -11464,7 +11476,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         // Update tracking
         if(lhs.id() == ID_symbol)
           string_constants[to_symbol_expr(lhs).get_identifier()] = result;
-        return code_frontend_assignt{lhs, build_string_struct(result)};
+        return code_frontend_assignt{lhs, python_string_literal(result)};
       }
     }
     // Non-constant: assign nondet
