@@ -9632,6 +9632,23 @@ exprt python_convertert::convert_attribute(const jsont &expr)
        std::string{PYTHON_VALUE_TAG});
   if(base_is_module_value)
   {
+    // If any known user class has this attribute, dereference
+    // __class_ptr through its struct type and read the field.
+    // We pick the first matching class; when multiple classes
+    // share the attribute name the result's type comes from
+    // the first. Callers that need precision should narrow
+    // with isinstance first.
+    for(const auto &[cls_name, cls_type] : class_types)
+    {
+      if(!cls_type.has_component(attr))
+        continue;
+      const typet &field_type = cls_type.get_component(attr).type();
+      exprt class_ptr = python_value_class_ptr(value);
+      pointer_typet cls_ptr_type{cls_type, 64};
+      dereference_exprt deref{
+        typecast_exprt{class_ptr, cls_ptr_type}, cls_type};
+      return member_exprt{std::move(deref), attr, field_type};
+    }
     log_overapprox("attribute '" + attr + "': using nondet over-approximation");
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
   }
@@ -11454,6 +11471,36 @@ codet python_convertert::convert_assign(const jsont &stmt)
             block.add(std::move(assign));
             continue;
           }
+        }
+        // Tagged-union base: route through __class_ptr. Same
+        // selection logic as convert_attribute's read path.
+        else if(
+          obj_type.id() == ID_struct_tag &&
+          id2string(to_struct_tag_type(obj_type).get_identifier()) ==
+            std::string{PYTHON_VALUE_TAG})
+        {
+          bool done = false;
+          for(const auto &[cls_name, cls_type] : class_types)
+          {
+            if(!cls_type.has_component(attr))
+              continue;
+            const typet &field_type = cls_type.get_component(attr).type();
+            exprt class_ptr = python_value_class_ptr(obj);
+            pointer_typet cls_ptr_type{cls_type, 64};
+            dereference_exprt deref{
+              typecast_exprt{class_ptr, cls_ptr_type}, cls_type};
+            member_exprt lhs{std::move(deref), attr, field_type};
+            exprt typed_rhs = rhs;
+            if(typed_rhs.type() != lhs.type())
+              typed_rhs = safe_typecast(typed_rhs, lhs.type());
+            code_frontend_assignt assign{lhs, typed_rhs};
+            assign.add_source_location() = loc;
+            block.add(std::move(assign));
+            done = true;
+            break;
+          }
+          if(done)
+            continue;
         }
       }
     }
