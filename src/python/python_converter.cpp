@@ -4264,7 +4264,15 @@ exprt python_convertert::convert_call(const jsont &expr)
                 return double_to_floatbv(res);
             }
           }
-          // Two-arg constant evaluation: pow, atan2, fmod, log(x, base)
+          // Two-arg constant evaluation. Delegates to the
+          // same fold table the @c_intrinsic decorator uses
+          // for bare-name calls, so math.X(a, b) and X(a, b)
+          // (after `from math import X`) share semantics.
+          //
+          // log(x, base) is the one attribute-only case not
+          // in the decorator's fold map (the bare-name log
+          // routes through its own single-arg fold): keep its
+          // inline handling below.
           if(as_array(args).size() >= 2)
           {
             exprt arg2 = convert_expression(*std::next(as_array(args).begin()));
@@ -4275,26 +4283,32 @@ exprt python_convertert::convert_call(const jsont &expr)
             if(ev1.has_value() && ev2.has_value())
             {
               double v1 = ev1.value(), v2 = ev2.value();
-              double res = 0;
-              bool ok = true;
-              if(func_name == "pow")
-                res = std::pow(v1, v2);
-              else if(func_name == "atan2")
-                res = std::atan2(v1, v2);
-              else if(func_name == "fmod")
-                res = std::fmod(v1, v2);
-              else if(func_name == "log" && v2 > 0 && v1 > 0)
-                res = std::log(v1) / std::log(v2);
-              else if(func_name == "copysign")
-                res = std::copysign(v1, v2);
-              else if(func_name == "hypot")
-                res = std::hypot(v1, v2);
-              else if(func_name == "remainder")
-                res = std::remainder(v1, v2);
-              else
-                ok = false;
-              if(ok)
-                return double_to_floatbv(res);
+              if(func_name == "log" && v2 > 0 && v1 > 0)
+                return double_to_floatbv(std::log(v1) / std::log(v2));
+              irep_idt math_id{"python::" + func_name};
+              auto fi = c_intrinsic_fold_map.find(math_id);
+              if(fi != c_intrinsic_fold_map.end())
+              {
+                const std::string &op = fi->second;
+                double r = 0;
+                bool ok = true;
+                if(op == "pow")
+                  r = std::pow(v1, v2);
+                else if(op == "atan2")
+                  r = std::atan2(v1, v2);
+                else if(op == "fmod")
+                  r = std::fmod(v1, v2);
+                else if(op == "hypot")
+                  r = std::hypot(v1, v2);
+                else if(op == "copysign")
+                  r = std::copysign(v1, v2);
+                else if(op == "remainder")
+                  r = std::remainder(v1, v2);
+                else
+                  ok = false;
+                if(ok && std::isfinite(r))
+                  return double_to_floatbv(r);
+              }
             }
           }
           // Nondet with constraints. Look up domain= / range=
