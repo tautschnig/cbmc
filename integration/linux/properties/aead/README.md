@@ -61,6 +61,20 @@ approach; `test_copyfail.c` shows the same bug caught through
 contracts, which is the mechanism that will scale to real kernel
 source.
 
+## Coccinelle prefilter
+
+`aead.cocci` ships alongside the contracts.  It is the coarse-filter
+stage of the scan pipeline: it flags every call to
+`aead_request_set_crypt` as a candidate for the CBMC scan.  Precision
+is intentionally left to CBMC.  See `../../scan/README.md` for how
+the prefilter is invoked from `scan.py`.
+
+Example match on Linux 5.10 `crypto/algif_aead.c`:
+
+```
+crypto/algif_aead.c:280:1-23: aead: aead_request_set_crypt call site
+```
+
 ## Known gaps
 
 - No contract captures the kernel's own invariant that AEAD

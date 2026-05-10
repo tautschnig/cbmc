@@ -63,6 +63,14 @@ Completed through commit — see `git log -- integration/linux/`:
 - M3 (stretch): `scan/compile_file.sh` validated against real
   `crypto/algif_aead.c` from Linux 5.10; end-to-end link-up
   deferred to M4.
+- M4a: PR-scan driver
+  [`scan/scan.py`](scan/scan.py), Coccinelle prefilter for the
+  `aead` module, structured JSON report, self-test
+  [`scan/run.sh`](scan/run.sh).  Also updates LIM-002 to RESOLVED
+  via `--dfcc`, LIM-001 to RESOLVED via cleaning
+  `regression/cbmc-library/`.
 
-In progress / next: M4 (PR-scan driver + link-up of property
-modules against real kernel goto binaries).
+In progress / next: M4b (real-kernel link-up via a source-level
+adapter that intercepts `static inline` kernel setters before GCC
+inlines them; see
+[`scan/README.md`](scan/README.md)).
