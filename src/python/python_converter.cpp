@@ -3462,6 +3462,37 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Eq")
     {
+      // PLR §3.3.1 __eq__: if the class defines __eq__, use it
+      // in preference to structural equality.
+      if(
+        current_left.type().id() == ID_struct && right.type().id() == ID_struct)
+      {
+        const auto &eq_st = to_struct_type(current_left.type());
+        std::string eq_tag = id2string(eq_st.get_tag());
+        if(eq_tag.substr(0, 13) == "python_class_")
+        {
+          std::string cls = eq_tag.substr(13);
+          irep_idt mid{"python::" + cls + "::__eq__"};
+          const symbolt *msym = symbol_table.lookup(mid);
+          if(msym != nullptr && msym->type.id() == ID_code)
+          {
+            const code_typet &mty = to_code_type(msym->type);
+            exprt self_ptr = address_of_exprt{current_left};
+            exprt other_arg = right;
+            if(
+              mty.parameters().size() >= 2 &&
+              other_arg.type() != mty.parameters()[1].type())
+              other_arg = safe_typecast(other_arg, mty.parameters()[1].type());
+            side_effect_expr_function_callt call{
+              msym->symbol_expr(),
+              {self_ptr, std::move(other_arg)},
+              mty.return_type(),
+              get_location(expr)};
+            cmp = std::move(call);
+            goto done_cmp;
+          }
+        }
+      }
       if(
         is_python_set_type(current_left.type()) &&
         is_python_set_type(right.type()))
@@ -3632,6 +3663,46 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
     {
+      // PLR §3.3.8 Emulating numeric types / §3.3.1 ordering:
+      // if the struct class defines __lt__ / __le__ / __gt__
+      // / __ge__, route through it. Only the exact name is
+      // checked — Python's 'reflected' operand fallback (__gt__
+      // on the right operand when left defines no __lt__) is
+      // not yet modelled.
+      if(
+        current_left.type().id() == ID_struct && right.type().id() == ID_struct)
+      {
+        const auto &lt_st = to_struct_type(current_left.type());
+        std::string lt_tag = id2string(lt_st.get_tag());
+        if(lt_tag.substr(0, 13) == "python_class_")
+        {
+          std::string cls = lt_tag.substr(13);
+          std::string mname = op == "Lt"    ? "__lt__"
+                              : op == "LtE" ? "__le__"
+                              : op == "Gt"  ? "__gt__"
+                                            : "__ge__";
+          irep_idt mid{"python::" + cls + "::" + mname};
+          const symbolt *msym = symbol_table.lookup(mid);
+          if(msym != nullptr && msym->type.id() == ID_code)
+          {
+            const code_typet &mty = to_code_type(msym->type);
+            // Build the call: method(&left, right)
+            exprt self_ptr = address_of_exprt{current_left};
+            exprt other_arg = right;
+            if(
+              mty.parameters().size() >= 2 &&
+              other_arg.type() != mty.parameters()[1].type())
+              other_arg = safe_typecast(other_arg, mty.parameters()[1].type());
+            side_effect_expr_function_callt call{
+              msym->symbol_expr(),
+              {self_ptr, std::move(other_arg)},
+              mty.return_type(),
+              get_location(expr)};
+            cmp = std::move(call);
+            goto done_cmp;
+          }
+        }
+      }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
       irep_idt rel_id = op == "Lt"    ? ID_lt
