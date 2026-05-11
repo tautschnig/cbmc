@@ -472,21 +472,9 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   }
   // ES2024 sec-array-objects
   // TSH: Everyday Types > Arrays
-  // Array types: number[], string[], etc.
-  if(ts_type.size() > 2 && ts_type.substr(ts_type.size() - 2) == "[]")
-  {
-    std::string elem = ts_type.substr(0, ts_type.size() - 2);
-    typet elem_type = convert_type(elem);
-    std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
-    array_typet arr_type{elem_type, from_integer(max_len, signedbv_typet{64})};
-    struct_typet list_type;
-    list_type.components().push_back(
-      struct_typet::componentt{"length", signedbv_typet{64}});
-    list_type.components().push_back(
-      struct_typet::componentt{"data", arr_type});
-    list_type.set_tag("typescript_array");
-    return list_type;
-  }
+  // Array types like "number[]" are handled at the TOP of this
+  // function (before the bracket-tuple check) so "[T,U][]" parses
+  // as array-of-tuple. No fallback needed here.
   // Default: treat as number for now
   return double_type();
 }
