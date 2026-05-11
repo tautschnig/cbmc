@@ -381,7 +381,7 @@ private:
 
   /// Unwrap a tagged-union value to a specific type, or return it as-is
   /// if it's already a concrete type.
-  exprt unwrap_value(const exprt &e, const typet &target_type) const;
+  exprt unwrap_value(const exprt &e, const typet &target_type);
 
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
