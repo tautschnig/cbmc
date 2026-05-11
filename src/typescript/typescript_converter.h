@@ -129,6 +129,18 @@ private:
     return list_type;
   }
 
+  /// Build a refined_string_exprt suitable for passing to a
+  /// cprover_string_*_func. The input is one of our TypeScript-
+  /// string-typed values (inline-array struct shape); we copy its
+  /// length and data into scalar-typed temporaries, emit the
+  /// array <-> pointer and length <-> array associations into
+  /// `pending_stmts`, and return a refined struct whose children
+  /// are all scalar-typed (so the solver's recursive walker doesn't
+  /// trip over our refined-string-typed originals).
+  ///
+  /// See doc/refined-string-migration-plan.md for context.
+  exprt ts_string_to_refined(const exprt &ts_string);
+
   // --- Expression conversion ---
   exprt convert_expression(const jsont &node);
   exprt convert_binary_expression(const jsont &node);

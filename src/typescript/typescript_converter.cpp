@@ -1542,6 +1542,80 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
   return "";
 }
 
+exprt typescript_convertert::ts_string_to_refined(const exprt &ts_string)
+{
+  // Boundary conversion from our inline-array string struct to a
+  // refined_string_exprt the solver can consume. See header for the
+  // subtlety about the solver's recursive walker and why we copy into
+  // scalar-typed temporaries first.
+  typet our_len_type = signedbv_typet{32};
+  typet solver_len_type = signedbv_typet{64};
+  typet char_type = unsignedbv_typet{16};
+  array_typet data_array_type{
+    char_type, from_integer(TYPESCRIPT_MAX_STRING_LENGTH, solver_len_type)};
+  pointer_typet char_ptr_type{char_type, 64};
+
+  static unsigned str_tmp_ctr = 0;
+  auto fresh = [this](const std::string &base, const typet &t)
+  {
+    std::string name = base + "_" + std::to_string(str_tmp_ctr++);
+    irep_idt id{"typescript::" + name};
+    symbolt s{id, t, "typescript"};
+    s.base_name = name;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    symbol_table.add(s);
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+
+  // Copy length and data into scalar-typed temps.
+  exprt temp_data = fresh("__ts_str_data", data_array_type);
+  pending_stmts.push_back(code_frontend_assignt{
+    temp_data, member_exprt{ts_string, "data", data_array_type}});
+  exprt temp_len = fresh("__ts_str_len", solver_len_type);
+  pending_stmts.push_back(code_frontend_assignt{
+    temp_len,
+    typecast_exprt{
+      member_exprt{ts_string, "length", our_len_type}, solver_len_type}});
+  exprt pointer = address_of_exprt{
+    index_exprt{temp_data, from_integer(0, solver_len_type), char_type},
+    char_ptr_type};
+
+  // Declare and emit the two associate_* function calls.
+  auto declare_assoc =
+    [this](const irep_idt &name, const typet &arg1_t, const typet &arg2_t)
+  {
+    if(symbol_table.lookup(name) == nullptr)
+    {
+      std::vector<typet> arg_types = {arg1_t, arg2_t};
+      mathematical_function_typet ft(std::move(arg_types), signedbv_typet{32});
+      symbolt fs{name, ft, "typescript"};
+      fs.base_name = id2string(name);
+      symbol_table.add(fs);
+    }
+  };
+  declare_assoc(
+    ID_cprover_associate_array_to_pointer_func, data_array_type, char_ptr_type);
+  declare_assoc(
+    ID_cprover_associate_length_to_array_func,
+    data_array_type,
+    solver_len_type);
+
+  auto emit_assoc = [&](const irep_idt &func, const exprt &a, const exprt &b)
+  {
+    exprt rc = fresh("__ts_str_assoc_rc", signedbv_typet{32});
+    function_application_exprt app(
+      symbol_exprt{func, symbol_table.lookup_ref(func).type}, {a, b});
+    app.type() = signedbv_typet{32};
+    pending_stmts.push_back(code_frontend_assignt{rc, app});
+  };
+  emit_assoc(ID_cprover_associate_array_to_pointer_func, temp_data, pointer);
+  emit_assoc(ID_cprover_associate_length_to_array_func, temp_data, temp_len);
+
+  refined_string_typet refined_ty{solver_len_type, char_ptr_type};
+  return struct_exprt{{temp_len, pointer}, refined_ty};
+}
+
 exprt typescript_convertert::convert_string_literal_from_text(
   const std::string &text)
 {
