@@ -1865,37 +1865,61 @@ exprt python_convertert::convert_expression(const jsont &expr)
         // padded decimal but for verification purposes the
         // length constraint is what callers usually check.
         bool handled_by_pad_spec = false;
-        if(
-          spec_constant && !spec_str.empty() && spec_str[0] == '0' &&
-          spec_str.size() >= 2)
+        // :0N, :>N, :<N, :^N — pad to width N. Result length
+        // is exactly N when the value fits (our
+        // over-approximation). The spec can optionally lead
+        // with an alignment char and/or fill char; we only
+        // recognise the zero-pad and bare alignment variants.
+        auto parse_width_spec =
+          [&](const std::string &s) -> std::optional<long long>
         {
-          bool all_digits = true;
-          for(std::size_t i = 1; i < spec_str.size(); i++)
-            if(!std::isdigit(static_cast<unsigned char>(spec_str[i])))
-            {
-              all_digits = false;
-              break;
-            }
-          if(all_digits)
+          std::string digits;
+          if(s.empty())
+            return std::nullopt;
+          if(s[0] == '0' && s.size() >= 2 && std::isdigit((unsigned char)s[1]))
+            digits = s.substr(1);
+          else if((s[0] == '>' || s[0] == '<' || s[0] == '^') && s.size() >= 2)
+            digits = s.substr(1);
+          else
+            digits = s;
+          if(digits.empty())
+            return std::nullopt;
+          for(char c : digits)
+            if(!std::isdigit((unsigned char)c))
+              return std::nullopt;
+          try
           {
-            long long width = std::stoll(spec_str.substr(1));
-            exprt inner_pad = convert_expression(json_member(v, "value"));
-            if(
-              inner_pad.type().id() == ID_signedbv ||
-              inner_pad.type().id() == ID_integer)
+            return std::stoll(digits);
+          }
+          catch(...)
+          {
+            return std::nullopt;
+          }
+        };
+        std::optional<long long> width_opt;
+        if(spec_constant)
+          width_opt = parse_width_spec(spec_str);
+        if(width_opt.has_value())
+        {
+          exprt inner_pad = convert_expression(json_member(v, "value"));
+          if(
+            inner_pad.type().id() == ID_signedbv ||
+            inner_pad.type().id() == ID_integer ||
+            is_python_string_type(inner_pad.type()))
+          {
+            long long width = *width_opt;
+            // Materialise a nondet string and constrain its length.
+            static unsigned pad_ctr = 0;
+            std::string tn = "__fstr_pad_" + std::to_string(pad_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
             {
-              // Materialise a nondet string and constrain its length.
-              static unsigned pad_ctr = 0;
-              std::string tn = "__fstr_pad_" + std::to_string(pad_ctr++);
-              std::string tq = qualify_name(tn);
-              irep_idt ti{tq};
-              if(symbol_table.lookup(ti) == nullptr)
-              {
-                symbolt ts{ti, python_string_type(), "python"};
-                ts.base_name = tn;
-                ts.is_lvalue = true;
-                ts.is_state_var = true;
-                symbol_table.add(ts);
+              symbolt ts{ti, python_string_type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
               }
               symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
               pending_checks.push_back(code_frontend_assignt{
@@ -1911,7 +1935,6 @@ exprt python_convertert::convert_expression(const jsont &expr)
                 len_intr, from_integer(width, signedbv_typet{64})}});
               parts.push_back(std::move(tv));
               handled_by_pad_spec = true;
-            }
           }
         }
         if(handled_by_pad_spec)
@@ -12010,6 +12033,15 @@ codet python_convertert::convert_statement(const jsont &stmt)
         }
       }
     }
+    result = code_skipt{};
+  }
+  // PLR §7.13 / PEP 695: `type X = ...` — type alias
+  // statement. The alias name is tracked as a type
+  // reference; for verification we accept it as a no-op
+  // (annotations referring to it resolve via the generic
+  // annotation handler).
+  else if(node_type == "TypeAlias")
+  {
     result = code_skipt{};
   }
   else
