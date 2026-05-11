@@ -10682,10 +10682,53 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     }
   }
 
-  // For struct types (classes), access the member directly
+  // For struct types (classes), access the member directly.
+  // PLR §3.3.2: an @property-decorated method is accessed
+  // like a field — emit the call with self as sole arg.
   if(value.type().id() == ID_struct)
   {
     const auto &st = to_struct_type(value.type());
+    std::string stag = id2string(st.get_tag());
+    if(stag.substr(0, 13) == "python_class_")
+    {
+      std::string cls = stag.substr(13);
+      auto pit = class_property_methods.find(cls);
+      if(pit != class_property_methods.end() && pit->second.count(attr))
+      {
+        irep_idt mid{"python::" + cls + "::" + attr};
+        const symbolt *msym = symbol_table.lookup(mid);
+        if(msym != nullptr && msym->type.id() == ID_code)
+        {
+          const code_typet &mty = to_code_type(msym->type);
+          // Materialise into a tmp so the ASSIGN (via
+          // pending_checks) is visible to subsequent
+          // statements. A bare side_effect_expr_function_callt
+          // return was getting dropped in some assignment
+          // paths.
+          static unsigned prop_ctr = 0;
+          std::string tn = "__prop_" + std::to_string(prop_ctr++);
+          std::string tq = qualify_name(tn);
+          irep_idt ti{tq};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, mty.return_type(), "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            symbol_table.add(ts);
+          }
+          symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            tv,
+            side_effect_expr_function_callt{
+              msym->symbol_expr(),
+              {address_of_exprt{value}},
+              mty.return_type(),
+              get_location(expr)}});
+          return std::move(tv);
+        }
+      }
+    }
     if(st.has_component(attr))
       return member_exprt{value, attr, st.get_component(attr).type()};
   }
@@ -15040,6 +15083,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 is_classmethod = true;
               if(dname == "staticmethod")
                 is_staticmethod = true;
+              if(dname == "property")
+              {
+                // Record this method as a property of the class.
+                std::string m = json_string(json_member(item, "name"));
+                class_property_methods[class_name].insert(m);
+              }
             }
           }
         }
