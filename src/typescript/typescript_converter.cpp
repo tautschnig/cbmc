@@ -1832,12 +1832,101 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         !is_typescript_string_type(right.type()) || !rs_raw.empty();
       if(left_concrete && right_concrete)
         return convert_string_literal_from_text(ls + rs);
-      // Symbolic concatenation: we don't know some of the concrete
-      // characters, but we DO know the resulting length:
-      //   length = left.length + right.length.
-      // Return a struct with that length and a nondet data array. This
-      // lets length-based properties verify correctly even across
-      // function-parameter string concatenations.
+      // Symbolic concatenation via the refined-string solver.
+      // Only do this if BOTH sides are our typescript string type.
+      if(
+        is_typescript_string_type(left.type()) &&
+        is_typescript_string_type(right.type()))
+      {
+        exprt refined_left = ts_string_to_refined(left);
+        exprt refined_right = ts_string_to_refined(right);
+        refined_string_typet refined_ty =
+          to_refined_string_type(refined_left.type());
+        // Call cprover_string_concat_func. Signature
+        //   int cprover_string_concat_func(
+        //     result_length, result_content, left_refined, right_refined)
+        // Returns int return code (0 on success) and constrains the
+        // refined_string(result_length, result_content) to be the
+        // concatenation of left and right.
+        typet solver_len_type = signedbv_typet{64};
+        typet char_type = unsignedbv_typet{16};
+        pointer_typet char_ptr_type{char_type, 64};
+        static unsigned concat_ctr = 0;
+        auto fresh = [this](const std::string &base, const typet &t)
+        {
+          std::string name = base + "_" + std::to_string(concat_ctr++);
+          irep_idt id{"typescript::" + name};
+          symbolt s{id, t, "typescript"};
+          s.base_name = name;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+          return symbol_table.lookup_ref(id).symbol_expr();
+        };
+        exprt result_len_sym = fresh("__ts_concat_len", solver_len_type);
+        exprt result_ptr_sym = fresh("__ts_concat_ptr", char_ptr_type);
+
+        if(symbol_table.lookup(ID_cprover_string_concat_func) == nullptr)
+        {
+          std::vector<typet> arg_types = {
+            solver_len_type, char_ptr_type, refined_ty, refined_ty};
+          mathematical_function_typet ft(
+            std::move(arg_types), signedbv_typet{32});
+          symbolt fs{ID_cprover_string_concat_func, ft, "typescript"};
+          fs.base_name = id2string(ID_cprover_string_concat_func);
+          symbol_table.add(fs);
+        }
+        function_application_exprt concat_app(
+          symbol_exprt{
+            ID_cprover_string_concat_func,
+            symbol_table.lookup_ref(ID_cprover_string_concat_func).type},
+          {result_len_sym, result_ptr_sym, refined_left, refined_right});
+        concat_app.type() = signedbv_typet{32};
+        exprt concat_rc = fresh("__ts_concat_rc", signedbv_typet{32});
+        pending_stmts.push_back(code_frontend_assignt{concat_rc, concat_app});
+
+        // Declare cprover_string_char_at_func(str, i) → char.
+        if(symbol_table.lookup(ID_cprover_string_char_at_func) == nullptr)
+        {
+          std::vector<typet> ca_arg_types = {refined_ty, signedbv_typet{32}};
+          mathematical_function_typet ca_ft(std::move(ca_arg_types), char_type);
+          symbolt cas{ID_cprover_string_char_at_func, ca_ft, "typescript"};
+          cas.base_name = id2string(ID_cprover_string_char_at_func);
+          symbol_table.add(cas);
+        }
+
+        // Build our inline-array result: each slot is
+        //   (i < len) ? char_at(refined(len, ptr), i) : 0
+        // where refined(len, ptr) is a fresh struct_exprt from the
+        // scalar temporaries.
+        struct_typet str_type = typescript_string_type();
+        const auto &data_arr_type =
+          to_array_type(str_type.components()[1].type());
+        exprt result_len_32 =
+          typecast_exprt{result_len_sym, signedbv_typet{32}};
+        exprt::operandst result_chars;
+        for(std::size_t i = 0; i < TYPESCRIPT_MAX_STRING_LENGTH; ++i)
+        {
+          exprt idx = from_integer(i, signedbv_typet{32});
+          exprt refined_arg =
+            struct_exprt{{result_len_sym, result_ptr_sym}, refined_ty};
+          function_application_exprt char_at_app(
+            symbol_exprt{
+              ID_cprover_string_char_at_func,
+              symbol_table.lookup_ref(ID_cprover_string_char_at_func).type},
+            {refined_arg, idx});
+          char_at_app.type() = char_type;
+          exprt in_bounds = binary_relation_exprt{idx, ID_lt, result_len_32};
+          result_chars.push_back(if_exprt{
+            in_bounds, std::move(char_at_app), from_integer(0, char_type)});
+        }
+        return struct_exprt{
+          {result_len_32, array_exprt{std::move(result_chars), data_arr_type}},
+          str_type};
+      }
+
+      // Mixed-type fallback (e.g. string + number after coercion
+      // already handled by the earlier coerce_to_string step).
       struct_typet str_type = typescript_string_type();
       const auto &data_type = to_array_type(str_type.components()[1].type());
       exprt::operandst nondet_chars;
