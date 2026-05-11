@@ -6,7 +6,7 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-632 programs across all documented features; four remaining
+642 programs across all documented features; three remaining
 documented-limitation tests are marked `KNOWNBUG` (see the "Known
 limitations" section at the end of this guide).
 
@@ -190,13 +190,15 @@ string solver:
 | `s.startsWith(x)` | ✓ | ✓ (via `cprover_string_is_prefix_func`) |
 | `s.endsWith(x)` | ✓ | ✓ (via `cprover_string_is_suffix_func`) |
 | `s.substring`, `s.slice` | ✓ | ✓ (for constant args) |
-| `s.toUpperCase / toLowerCase / trim` | ✓ | — |
+| `s.toUpperCase` | ✓ | ✓ (via `cprover_string_to_upper_case_func`) |
+| `s.toLowerCase` | ✓ | ✓ (via `cprover_string_to_lower_case_func`) |
+| `s.trim` | ✓ | ✓ (via `cprover_string_trim_func`) |
 | `s.repeat(n)` | ✓ | ✓ (length only; content nondet) |
 | `s.padStart / padEnd` | ✓ | ✓ (length only) |
 | `s.replace / replaceAll` | ✓ | — |
-| `s.split(delim)` | ✓ | — |
+| `s.split(delim)` | ✓ | ✓ for `split("")` (per-char) |
 | `+s` (ToNumber) | ✓ | ✓ (via `cprover_string_parse_int_func`) |
-| `s1 + s2` | ✓ | Length is precise; content is nondet |
+| `s1 + s2` | ✓ | ✓ character-precise (via `cprover_string_concat_func`) |
 | `s1 === s2` | ✓ | ✓ (native struct compare) |
 | `String.fromCharCode(code)` | ✓ | — |
 | `JSON.parse` / `JSON.stringify` | ✓ primitives, arrays, one-level nested objects | Length only for symbolic args |
@@ -370,9 +372,9 @@ loops, indices, and modulo arithmetic. Variables used with `%`, `&`,
 
 ## Known limitations
 
-Documented `KNOWNBUG` tests indicate verifiable cases where a design
-trade-off intentionally gives an unsound answer, or where a feature
-is not yet implemented:
+Documented `KNOWNBUG` tests indicate cases where a design trade-off
+intentionally gives an unsound or imprecise answer. All 3 remaining
+KNOWNBUGs are design trade-offs.
 
 ### Design trade-offs
 
@@ -382,39 +384,26 @@ is not yet implemented:
    `--ts-async-threading`, which unlocks the interleaving model at
    the cost of much higher verification time.
 
-2. **`integration-url-parser`** — complex nested symbolic string
-   parsing hits the CBMC solver's bit-vector flattening limit
-   (`boolbv_width::get_entry`). This is independent of our frontend.
+2. **`object-prototype-chain`** — `Object.getPrototypeOf` and
+   `isPrototypeOf` are not modelled. Our struct model has no
+   prototype chain; classes are represented as flat structs.
 
 3. **`strict-nan-not-equal`** — per ES2024 §7.2.14, `NaN === NaN`
    is false. Our frontend represents `null`, `undefined`, and `NaN`
    all as IEEE-754 NaN, so `NaN === NaN` returns true in exchange
    for correct `null === null` and `undefined === undefined`.
 
-### Not yet modelled
-
-4. **`object-prototype-chain`** — `Object.getPrototypeOf` and
-   `isPrototypeOf` are not modelled. Our struct model has no
-   prototype chain; classes are represented as flat structs.
-
-### Known frontend crashes
-
-5. **`class-param-properties`** — TypeScript's parameter-property
-   shorthand (`constructor(public x: number) {}`) crashes the
-   frontend. Write it out as a separate field declaration plus a
-   manual `this.x = x` in the constructor body.
-
-6. **`array-flat-nested`** — `Array.prototype.flat()` on nested
-   arrays (`number[][]`) crashes. The 1-D no-op case works.
-
 ### Other documented edge cases
 
 - `Object.is(+0, -0)` returns `false` per ES2024 for constant zeros,
   but only in the constant path — symbolic zero-sign tracking is not
   available.
-- Symbolic string concatenation gives a precise length but nondet
-  content. Properties about the resulting string's content need
-  constant-string receivers.
+- Symbolic string concatenation's result content is solver-backed
+  via `cprover_string_concat_func` (so e.g. `(a + b) === "ab"`
+  verifies when a and b are constrained). Other symbolic string
+  methods (`includes`, `startsWith`, `endsWith`, `toLowerCase`,
+  `toUpperCase`, `trim`) also route through the refined string
+  solver. `substring` is still per-slot with constant offsets.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.

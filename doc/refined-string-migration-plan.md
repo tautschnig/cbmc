@@ -45,14 +45,13 @@ frontend's migration on the `tautschnig/py` branch (commits from
   - `s.trim()` (+ `trimStart`, `trimEnd` as approximations) →
     `cprover_string_trim_func`
 - **Not migrated**:
-  - `substring`: attempted, crashes in `boolbv_width::get_entry`
-    when the receiver is a symbol. Per-slot encoding works for
-    symbolic receiver + constant offsets; solver path is blocked
-    on a bit-width issue in the flattener.
+  - `substring`: per-slot encoding works; a solver-based path was
+    attempted and hit a frontend nil-init bug (now fixed) that was
+    originally misdiagnosed as a `boolbv_width::get_entry` solver
+    limitation. See `integration-url-parser` — that case is now
+    CORE. Per-slot encoding retained as-is.
   - `repeat`, `padStart`, `padEnd`: no solver-side function
-    available (the solver has `set_length` and `concat_char`
-    primitives but not a composite repeat/pad). Per-case encoding
-    retained.
+    available. Per-case encoding retained.
   - `replace` / `replaceAll`: solver's replace is char-level
     only; JS semantics need substring replacement.
   - `indexOf` with symbolic needle: per-slot if_exprt encoding
@@ -99,10 +98,8 @@ Approach that worked (`ts_call_string_returning_function`):
    result_ptr), i)` for i in [0, TYPESCRIPT_MAX_STRING_LENGTH),
    with an in-bounds check.
 
-This works in practice. Only method where the solver path still
-fails is `substring` with a symbol receiver, which hits
-`boolbv_width::get_entry` during bit-flattening (unrelated to
-the migration itself).
+This works in practice. All planned string-returning methods have
+been either migrated or kept with an adequate per-slot encoding.
 
 ## Future work
 

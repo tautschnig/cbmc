@@ -280,9 +280,8 @@ the column shows `—`.
 | Test | Symptom | ES2024 / TSH ref |
 |------|---------|------------------|
 | `async-race-undetected` | Sequential async misses unobserved-race bugs (opt-in fix via `--ts-async-threading`) | §27.2 |
-| `integration-url-parser` | Nested symbolic string ops exceed solver capacity | §22.1 |
-| `generic-heterogeneous-tuple` | `[A, B]` return with mixed types fails type unification | TSH Generics |
-| `optional-chaining` | `?.` doesn't short-circuit on missing struct-typed optional fields (parser emits `optional` flag but struct model lacks per-field undefined tracking) | §13.3.9 |
+| `object-prototype-chain` | Our struct model has no prototype chain; `getPrototypeOf` / `isPrototypeOf` not modelled | §20.1 |
+| `strict-nan-not-equal` | `NaN === NaN` returns `true` in our null-as-NaN model (spec says `false`) | §7.2.14 |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 
