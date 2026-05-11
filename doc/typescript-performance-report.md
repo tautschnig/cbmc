@@ -1,9 +1,31 @@
 # TypeScript Frontend Performance Report (Updated)
 
-**Date:** 2026-05-07
-**Tests:** 540 CORE, 2 KNOWNBUG
-**Total verification time:** ~520s (8.7 minutes)
-**Average per test:** 960ms
+**Date:** 2026-05-11 (daemon results added)
+**Tests:** 629 CORE, 5 KNOWNBUG
+**Previous total (one-shot node):** ~600s (10 min)
+**Current total (parse daemon):** ~33s (18× speedup)
+**Average per test (daemon):** 55ms
+
+## Parse daemon (2026-05-11)
+
+Added `scripts/cbmc_ts_server` + `src/typescript/ts_ast_server.js`
+— a Unix-socket parse daemon using the TypeScript Language Service
+to keep the compiler program alive across CBMC invocations.
+lib.d.ts loaded once at daemon start; each subsequent parse reuses
+the cached types.
+
+| Mode | 629-test total | Mean parse |
+|------|---------------|------------|
+| No daemon (one-shot node) | 598 s | 917 ms |
+| Daemon (Language Service) | 33 s | ~50 ms |
+
+**Speedup: 18×**. The daemon is fully optional — CBMC checks the
+`CBMC_TS_SERVER_SOCKET` env var and falls back to one-shot node
+when unset. CMake (`FIXTURES_SETUP/CLEANUP`) and Makefile targets
+manage the lifecycle automatically.
+
+For reproducibility (profiling, benchmarks), run `make
+test-no-daemon` to bypass the daemon entirely.
 
 ## Time Breakdown
 
