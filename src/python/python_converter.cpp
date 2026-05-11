@@ -3743,15 +3743,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
     {
       // PLR §3.3.8 Emulating numeric types / §3.3.1 ordering:
       // if the struct class defines __lt__ / __le__ / __gt__
-      // / __ge__, route through it. Only the exact name is
-      // checked — Python's 'reflected' operand fallback (__gt__
-      // on the right operand when left defines no __lt__) is
-      // not yet modelled.
+      // / __ge__, route through it. PLR also requires a
+      // 'reflected' fallback: when left's method is absent
+      // but right's reflected method exists (e.g. left __lt__
+      // missing, right __gt__ present), dispatch to the
+      // right operand with arguments reversed.
       if(
         current_left.type().id() == ID_struct && right.type().id() == ID_struct)
       {
         const auto &lt_st = to_struct_type(current_left.type());
         std::string lt_tag = id2string(lt_st.get_tag());
+        const auto &rt_st = to_struct_type(right.type());
+        std::string rt_tag = id2string(rt_st.get_tag());
         if(lt_tag.substr(0, 13) == "python_class_")
         {
           std::string cls = lt_tag.substr(13);
@@ -3775,6 +3778,38 @@ exprt python_convertert::convert_compare(const jsont &expr)
               msym->symbol_expr(),
               {self_ptr, std::move(other_arg)},
               mty.return_type(),
+              get_location(expr)};
+            cmp = std::move(call);
+            goto done_cmp;
+          }
+        }
+        // Left has no matching dunder — try right's reflected.
+        //   left <  right  →  right >  left   (__gt__ on right)
+        //   left <= right  →  right >= left   (__ge__ on right)
+        //   left >  right  →  right <  left   (__lt__ on right)
+        //   left >= right  →  right <= left   (__le__ on right)
+        if(rt_tag.substr(0, 13) == "python_class_")
+        {
+          std::string rcls = rt_tag.substr(13);
+          std::string rname = op == "Lt"    ? "__gt__"
+                              : op == "LtE" ? "__ge__"
+                              : op == "Gt"  ? "__lt__"
+                                            : "__le__";
+          irep_idt rmid{"python::" + rcls + "::" + rname};
+          const symbolt *rmsym = symbol_table.lookup(rmid);
+          if(rmsym != nullptr && rmsym->type.id() == ID_code)
+          {
+            const code_typet &rmty = to_code_type(rmsym->type);
+            exprt self_ptr = address_of_exprt{right};
+            exprt other_arg = current_left;
+            if(
+              rmty.parameters().size() >= 2 &&
+              other_arg.type() != rmty.parameters()[1].type())
+              other_arg = safe_typecast(other_arg, rmty.parameters()[1].type());
+            side_effect_expr_function_callt call{
+              rmsym->symbol_expr(),
+              {self_ptr, std::move(other_arg)},
+              rmty.return_type(),
               get_location(expr)};
             cmp = std::move(call);
             goto done_cmp;
