@@ -125,15 +125,134 @@ CBMC will:
 ## Known Limitations
 
 - **Dynamic typing**: Variables cannot change type (e.g., `x = 1; x = "hello"`)
-- **Imports**: `import` statements are silently ignored; imported names
-  are treated as unknown (nondet return values with a warning)
-- **Generators**: Generator expressions and `yield` are not supported
-- **Decorators**: Not supported
-- **`*args`/`**kwargs`**: Not supported
-- **Slice expressions**: `lst[1:3]` not supported
-- **String content tracking**: String concatenation tracks length but not
-  character content
-- **Exception types**: `except` catches all exceptions regardless of type
+- **Imports**: `import` statements resolve via CBMC's bundled Python
+  library (`src/python/library/`) first, then `PYTHONPATH`. Modules
+  without a bundled stub get a best-effort generic treatment.
+- **Generators**: `yield` is emulated by eager-list accumulation; full
+  PEP-380 semantics (send/throw/close) aren't modelled.
+- **Decorators**: `@c_intrinsic(...)` and `@dataclass` are recognised;
+  others are ignored.
+- **`*args`/`**kwargs`**: Accepted in function signatures; forwarded
+  calls pack keyword arguments into a dict param.
+- **Slice expressions**: `lst[1:3]` is accepted but falls back to
+  nondet; constant-index subscripts are precise.
+- **String content tracking**: Length is tracked precisely via the
+  refinement-string solver; content is tracked for constant strings
+  and the `cprover_string_of_int_func` / `cprover_string_of_double_func`
+  / `cprover_string_parse_int_func` / `cprover_string_concat_func`
+  paths. `str.format()` and f-strings with format specs (`:d`,
+  `:.2f`) or conversions (`!r`, `!s`) fall back to nondet.
+- **Exception types**: `except` dispatches on exception-type hash; a
+  single-string `__exception_payload` reaches `except T as e: str(e)`.
+  Multi-arg exception payloads and `e.args` tuple are not yet tracked.
+
+## Architecture Notes
+
+### The tagged-union `python_value_type`
+
+Values whose static type is a union (e.g. `Optional[T]`,
+`Union[A, B]`, return values from functions with type-varying
+branches) are carried at runtime as a struct with a
+discriminator field:
+
+```
+python_value_type {
+    int32_t  __tag;           // NONE=0 INT=1 FLOAT=2 BOOL=3
+                              // STR=4 LIST=5 CLASS=6
+    int64_t  __int_val;
+    double   __float_val;
+    int32_t  __bool_val;
+    str*     __str_val;
+    list*    __list_val;
+    void*    __class_ptr;     // points to materialised class instance
+}
+```
+
+Operations on tagged-union values dispatch on `__tag`:
+
+- `isinstance(x, T)` for a primitive `T` compares `__tag`
+  against the constant for `T`. For a user-defined `T`,
+  reads `__class_tag` at offset 0 of `*__class_ptr` (int32)
+  and OR-compares against `class_tag_ids[T]` plus every
+  transitive subclass of `T`.
+
+- `x.attr` and `x.attr = v` cast `__class_ptr` to the first
+  `class_types[C]` whose struct has `attr`, then dereference.
+
+- `x.method(...)` picks the class whose method table owns
+  `method_name`. When multiple classes define the same
+  `method_name`, dispatches virtually via `__class_tag`
+  (if-chain of guarded calls, each assigning to a shared
+  `__vdisp_N` tmp — PLR 3.3.2).
+
+### The `@c_intrinsic` decorator
+
+Functions in `src/python/library/` can be declared with
+`@c_intrinsic("c_function_name")` to route the call through
+a C-library model. Optional keyword arguments extend the
+semantics:
+
+- `fold="op"`: At parse time, if the call's arguments are
+  all constants, evaluate in C++ using `std::op` and return
+  the result as a `constant_exprt`. Supports one-arg
+  (`sqrt`, `sin`, `log`, ...) and two-arg (`pow`, `atan2`,
+  `hypot`, `fmod`, `copysign`, `remainder`) forms.
+- `domain="pred_name"`: Emit a guarded `ValueError` at the
+  call site if a named predicate rejects the argument.
+- `range="range_name"`: Constrain the returned value to
+  the named interval (e.g., `[-1, 1]` for `sin`).
+
+### The library directory
+
+`src/python/library/*.py` holds CBMC's built-in model of
+the Python standard library plus a curated set of popular
+third-party packages. Each file declares the type shape
+and (where meaningful) implements the semantics in
+Python. The frontend prefers bundled stubs over the
+system CPython source; override with
+`--python-use-stdlib-source` to force the latter.
+
+The library currently covers: `math`, `cmath`, `struct`,
+`itertools`, `functools`, `operator`, `string`, `re`,
+`io`, `hashlib`, `base64`, `copy`, `enum`, `dataclasses`,
+`abc`, `random`, `decimal`, `os` / `os.path`, `pathlib`,
+`time`, `datetime`, `json`, `csv`, `logging`, `argparse`,
+`textwrap`, `contextlib`, `warnings`, `traceback`,
+`inspect`, `collections`, `heapq`, `bisect`, `signal`,
+`errno`, `configparser`, `typing`, `urllib.parse`,
+`subprocess`, `socket`, `threading`, `asyncio`, `yaml`,
+`requests`.
+
+### `--python-lazy-stubs`
+
+Adds an optional processing mode where imported-module
+function bodies are skipped — only type signatures are
+registered. Calls return nondet via symex's no-body
+fallback. Use when stub bodies dominate verification
+cost (e.g., large third-party type stubs with embedded
+assertions that are not relevant to the property being
+verified).
+
+### Correctness invariants enforced by PLR review
+
+The Python-frontend work of the late 2025 sessions
+added regression coverage and fixes for several PLR
+(Python Language Reference) semantic rules:
+
+- **§3.3.2 MRO / virtual dispatch**: tagged-union method
+  calls pick the class whose `__class_tag` matches —
+  not the first class in the symbol table.
+- **§7.2.1 assignment**: the target list is bound only
+  after the expression list on the right is fully
+  evaluated. `a, b = b, a` snapshots the RHS into a
+  `__unpack_N` tmp before mutating either LHS.
+- **§9.2.2 super()**: multi-level chains (C → B → A, D
+  → C → B → A) inline every parent's body. A local
+  buffer prevents the shared `pending_checks` vector
+  from being clobbered across recursion.
+- **§2.4.3 f-strings**: multi-part f-strings chain through
+  `cprover_string_concat_func` so every part's content is
+  visible to the string solver.
 
 ## Command-Line Options
 
@@ -141,8 +260,16 @@ CBMC will:
 |--------|-------------|
 | `--function NAME` | Verify a specific function with nondet inputs |
 | `--python-unbounded-ints` | Use mathematical integers (requires `--z3`) |
+| `--python-max-string-length N` | Bound string length (default 256) |
+| `--python-max-list-length N` | Bound list length (default 64) |
+| `--python-no-body-check` | Suppress the missing-function-body check |
+| `--python-strict-warnings` | Raise over-approximation log messages to warning level |
+| `--python-use-stdlib-source` | Skip CBMC's bundled stubs; resolve via system CPython |
+| `--python-smt-strings` | Use the SMT string theory instead of refinement strings |
+| `--python-lazy-stubs` | Import module signatures only; skip stub bodies |
 | `--unwind N` | Bound loop/recursion unwinding to N iterations |
 | `--z3` | Use Z3 SMT solver (required for unbounded ints) |
+| `--cvc5` | Use CVC5 SMT solver |
 | `--trace` | Show counterexample trace on failure |
 | `--show-parse-tree` | Show the Python AST as JSON |
 | `--show-properties` | List all generated properties |
