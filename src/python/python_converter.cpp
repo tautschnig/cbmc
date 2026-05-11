@@ -4255,15 +4255,18 @@ exprt python_convertert::convert_call(const jsont &expr)
         static thread_local std::size_t super_depth = 0;
         struct guardt
         {
-          ~guardt() { super_depth--; }
+          ~guardt()
+          {
+            super_depth--;
+          }
         } gd;
         super_depth++;
         if(super_depth > 64)
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         // Compute the next class in the MRO chain.
-        std::string root = mro_root_class.empty() ? current_class
-                                                  : mro_root_class;
+        std::string root =
+          mro_root_class.empty() ? current_class : mro_root_class;
         std::string base_class;
         auto mit = class_mro.find(root);
         if(mit != class_mro.end())
@@ -4286,62 +4289,62 @@ exprt python_convertert::convert_call(const jsont &expr)
           base_class = class_bases[current_class][0];
         if(!base_class.empty())
         {
-        // Inline super().__init__() by re-converting the base class's
-        // __init__ body with the current self pointer. This avoids
-        // pointer type mismatches (Derived* vs Base*).
-        // Find the base class __init__ AST
-        const jsont &module_body = json_member(parse_tree.ast_json, "body");
-        if(module_body.is_array())
-        {
-          for(const auto &top_stmt : as_array(module_body))
+          // Inline super().__init__() by re-converting the base class's
+          // __init__ body with the current self pointer. This avoids
+          // pointer type mismatches (Derived* vs Base*).
+          // Find the base class __init__ AST
+          const jsont &module_body = json_member(parse_tree.ast_json, "body");
+          if(module_body.is_array())
           {
-            if(
-              is_node_type(top_stmt, "ClassDef") &&
-              json_string(json_member(top_stmt, "name")) == base_class)
+            for(const auto &top_stmt : as_array(module_body))
             {
-              const jsont &cls_body = json_member(top_stmt, "body");
-              if(cls_body.is_array())
+              if(
+                is_node_type(top_stmt, "ClassDef") &&
+                json_string(json_member(top_stmt, "name")) == base_class)
               {
-                for(const auto &item : as_array(cls_body))
+                const jsont &cls_body = json_member(top_stmt, "body");
+                if(cls_body.is_array())
                 {
-                  if(
-                    (is_node_type(item, "FunctionDef") ||
-                     is_node_type(item, "AsyncFunctionDef")) &&
-                    json_string(json_member(item, "name")) == method_name)
+                  for(const auto &item : as_array(cls_body))
                   {
-                    // Convert the base __init__ body statements
-                    // in the current scope (so self refers to Derived).
-                    // Collect into a local buffer first, because
-                    // convert_statement() clears the shared
-                    // pending_checks on entry — if we push directly
-                    // into pending_checks, each statement clobbers
-                    // whatever the previous statement added.
-                    const jsont &init_body = json_member(item, "body");
-                    if(init_body.is_array())
+                    if(
+                      (is_node_type(item, "FunctionDef") ||
+                       is_node_type(item, "AsyncFunctionDef")) &&
+                      json_string(json_member(item, "name")) == method_name)
                     {
-                      std::string saved_class = current_class;
-                      std::string saved_mro_root = mro_root_class;
-                      if(mro_root_class.empty())
-                        mro_root_class = saved_class;
-                      current_class = base_class;
-                      std::vector<codet> inlined;
-                      for(const auto &s : as_array(init_body))
-                        inlined.push_back(convert_statement(s));
-                      current_class = saved_class;
-                      mro_root_class = saved_mro_root;
-                      for(auto &st : inlined)
-                        pending_checks.push_back(std::move(st));
+                      // Convert the base __init__ body statements
+                      // in the current scope (so self refers to Derived).
+                      // Collect into a local buffer first, because
+                      // convert_statement() clears the shared
+                      // pending_checks on entry — if we push directly
+                      // into pending_checks, each statement clobbers
+                      // whatever the previous statement added.
+                      const jsont &init_body = json_member(item, "body");
+                      if(init_body.is_array())
+                      {
+                        std::string saved_class = current_class;
+                        std::string saved_mro_root = mro_root_class;
+                        if(mro_root_class.empty())
+                          mro_root_class = saved_class;
+                        current_class = base_class;
+                        std::vector<codet> inlined;
+                        for(const auto &s : as_array(init_body))
+                          inlined.push_back(convert_statement(s));
+                        current_class = saved_class;
+                        mro_root_class = saved_mro_root;
+                        for(auto &st : inlined)
+                          pending_checks.push_back(std::move(st));
+                      }
+                      // Return a no-op value (the side effects are in
+                      // pending_checks)
+                      return from_integer(0, python_int_type());
                     }
-                    // Return a no-op value (the side effects are in
-                    // pending_checks)
-                    return from_integer(0, python_int_type());
                   }
                 }
+                break;
               }
-              break;
             }
           }
-        }
         }
       }
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};
@@ -12503,6 +12506,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
   }
 
   // Detect bound method assignment: method = obj.func
+  // Exclusion: when attr is a @property, obj.attr evaluates
+  // the property method and produces a value — not a bound-
+  // method reference. Fall through to the normal assign path.
   {
     const jsont &val_node = json_member(stmt, "value");
     if(is_node_type(val_node, "Attribute"))
@@ -12516,20 +12522,29 @@ codet python_convertert::convert_assign(const jsont &stmt)
       {
         std::string tag = id2string(to_struct_type(obj_expr.type()).get_tag());
         std::string cls_name = tag.substr(13);
-        irep_idt method_id{"python::" + cls_name + "::" + attr};
-        if(symbol_table.lookup(method_id) != nullptr)
+        // Skip @property — attribute access is a value, not a method alias.
+        auto pit = class_property_methods.find(cls_name);
+        if(pit != class_property_methods.end() && pit->second.count(attr))
         {
-          for(const auto &target : as_array(targets))
+          // Fall through to normal assign path.
+        }
+        else
+        {
+          irep_idt method_id{"python::" + cls_name + "::" + attr};
+          if(symbol_table.lookup(method_id) != nullptr)
           {
-            if(is_node_type(target, "Name"))
+            for(const auto &target : as_array(targets))
             {
-              std::string var_name = json_string(json_member(target, "id"));
-              std::string qname = qualify_name(var_name);
-              function_aliases[qname] = method_id;
-              bound_methods[qname] = {method_id, address_of_exprt{obj_expr}};
+              if(is_node_type(target, "Name"))
+              {
+                std::string var_name = json_string(json_member(target, "id"));
+                std::string qname = qualify_name(var_name);
+                function_aliases[qname] = method_id;
+                bound_methods[qname] = {method_id, address_of_exprt{obj_expr}};
+              }
             }
+            return code_skipt{};
           }
-          return code_skipt{};
         }
       }
     }
