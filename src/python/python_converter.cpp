@@ -11771,7 +11771,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
     else
       result = code_skipt{};
   }
-  // PLR §8.6: The match statement — desugar to if-elif chain
+  // PLR §10.6: The match statement — desugar to if-elif chain
   else if(node_type == "Match")
   {
     exprt subject = convert_expression(json_member(stmt, "subject"));
@@ -11779,7 +11779,97 @@ codet python_convertert::convert_statement(const jsont &stmt)
     if(!cases.is_array() || subject.is_nil())
       return code_skipt{};
 
-    // Build if-elif chain from cases (reverse order)
+    // Helper: compile a pattern into a (condition, bindings)
+    // pair. Bindings are statements that bind names from the
+    // matched subject; they prepend the case body.
+    std::function<std::pair<exprt, code_blockt>(const jsont &, const exprt &)>
+      compile_pattern = [&](const jsont &pat, const exprt &subj)
+      -> std::pair<exprt, code_blockt>
+    {
+      code_blockt binds;
+      // MatchValue: constant comparison.
+      if(is_node_type(pat, "MatchValue"))
+      {
+        exprt val = convert_expression(json_member(pat, "value"));
+        if(val.is_nil())
+          return {false_exprt{}, std::move(binds)};
+        if(val.type() != subj.type())
+          val = safe_typecast(val, subj.type());
+        return {equal_exprt{subj, val}, std::move(binds)};
+      }
+      // MatchSingleton: None, True, False.
+      if(is_node_type(pat, "MatchSingleton"))
+      {
+        exprt val = convert_expression(json_member(pat, "value"));
+        if(val.is_nil())
+          return {true_exprt{}, std::move(binds)};
+        if(val.type() != subj.type())
+          val = safe_typecast(val, subj.type());
+        return {equal_exprt{subj, val}, std::move(binds)};
+      }
+      // MatchOr: alternation.
+      if(is_node_type(pat, "MatchOr"))
+      {
+        const jsont &alts = json_member(pat, "patterns");
+        exprt any_match = false_exprt{};
+        code_blockt any_binds;
+        if(alts.is_array())
+        {
+          for(const auto &alt : as_array(alts))
+          {
+            auto [c, b] = compile_pattern(alt, subj);
+            any_match = or_exprt{std::move(any_match), std::move(c)};
+            for(const auto &st : b.statements())
+              any_binds.add(st);
+          }
+        }
+        return {std::move(any_match), std::move(any_binds)};
+      }
+      // MatchAs: 'pattern as name' binds name on match; also
+      // covers wildcard (no pattern, no name) and name-only
+      // (binding wildcard: 'x' matches anything).
+      if(is_node_type(pat, "MatchAs"))
+      {
+        const jsont &name = json_member(pat, "name");
+        const jsont &inner = json_member(pat, "pattern");
+        // Wildcard: _ — matches anything, no binding.
+        if(name.is_null() && (!inner.is_object() || inner.is_null()))
+          return {true_exprt{}, std::move(binds)};
+        // Inner pattern (if any) contributes the condition.
+        exprt cond = true_exprt{};
+        if(inner.is_object() && !inner.is_null())
+        {
+          auto [c, b] = compile_pattern(inner, subj);
+          cond = std::move(c);
+          for(const auto &st : b.statements())
+            binds.add(st);
+        }
+        // Name binding.
+        if(name.is_string() && !name.value.empty())
+        {
+          std::string var_name = name.value;
+          std::string qname = qualify_name(var_name);
+          irep_idt sym_id{qname};
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt ns{sym_id, subj.type(), "python"};
+            ns.base_name = var_name;
+            ns.is_lvalue = true;
+            ns.is_state_var = true;
+            ns.is_static_lifetime = current_function.empty();
+            symbol_table.add(ns);
+          }
+          binds.add(code_frontend_assignt{
+            symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // Unsupported patterns (MatchSequence / MatchMapping /
+      // MatchClass / MatchStar) — match-anything for soundness.
+      return {true_exprt{}, std::move(binds)};
+    };
+
+    // Build if-elif chain from cases (reverse order).
     codet chain = code_skipt{};
     std::vector<const jsont *> case_list;
     for(const auto &c : as_array(cases))
@@ -11789,35 +11879,26 @@ codet python_convertert::convert_statement(const jsont &stmt)
     {
       const jsont &match_case = **it;
       const jsont &pattern = json_member(match_case, "pattern");
+      const jsont &guard = json_member(match_case, "guard");
       const jsont &body = json_member(match_case, "body");
 
+      auto [cond, binds] = compile_pattern(pattern, subject);
+      // PLR §10.6: optional guard runs after pattern matches.
+      if(guard.is_object() && !guard.is_null())
+      {
+        exprt g = convert_expression(guard);
+        if(!g.is_nil())
+          cond = and_exprt{std::move(cond), std::move(g)};
+      }
       code_blockt case_body;
+      for(const auto &st : binds.statements())
+        case_body.add(st);
       if(body.is_array())
       {
         for(const auto &s : as_array(body))
           case_body.add(convert_statement(s));
       }
-
-      // MatchValue: case <constant>
-      if(is_node_type(pattern, "MatchValue"))
-      {
-        exprt val = convert_expression(json_member(pattern, "value"));
-        if(!val.is_nil())
-        {
-          exprt cond = equal_exprt{subject, safe_typecast(val, subject.type())};
-          chain =
-            code_ifthenelset{cond, std::move(case_body), std::move(chain)};
-          continue;
-        }
-      }
-      // MatchAs with name=None: case _ (wildcard/default)
-      if(is_node_type(pattern, "MatchAs"))
-      {
-        chain = std::move(case_body);
-        continue;
-      }
-      // Unsupported pattern — use as default
-      chain = std::move(case_body);
+      chain = code_ifthenelset{cond, std::move(case_body), std::move(chain)};
     }
     result = std::move(chain);
   }
