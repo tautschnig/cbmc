@@ -21,6 +21,7 @@ For the conceptual architecture, see `cbmc-frontend-architecture.md`.
    - **Per-spec soundness review** (highly recommended)
      - First pass: constant-input probes
      - Second pass: symbolic-input probes
+   - **Coverage-driven test expansion** (once mostly complete)
 6. [Common Pitfalls](#common-pitfalls)
 7. [Performance and Soundness](#performance-and-soundness)
 8. [Maintenance Considerations](#maintenance-considerations)
@@ -702,6 +703,83 @@ Prioritize by user impact:
 
 Reviewing in this order ensures high-frequency code paths get the
 most attention first.
+
+### Coverage-driven test expansion
+
+Once the frontend is meaningfully complete, measure line coverage
+against your regression suite. Uncovered branches point to either:
+
+- Features exercised by no test (write tests)
+- Error handling paths that need specific setup (write them or
+  document as unreachable)
+- Dead code (delete it)
+
+This complements the per-spec review: per-spec works top-down from
+the specification (what should be tested), coverage works bottom-up
+from the implementation (what ISN'T being tested).
+
+**Tooling**. CBMC's CI already uses lcov + gcov for whole-project
+coverage (see `.github/workflows/coverage.yaml`). For a single
+frontend you want a filtered view. The TypeScript frontend ships
+`scripts/ts_coverage.sh` as a template:
+
+```bash
+# Full pass: build + regression + --trace exercise + report.
+scripts/ts_coverage.sh
+
+# Faster iteration: regenerate report from existing .gcda counters.
+scripts/ts_coverage.sh --report-only
+```
+
+Key points if you adapt this for your frontend:
+
+1. **Build with `-Denable_coverage=1`** in a dedicated build
+   directory (e.g. `build-cov`). The root CMakeLists wires up the
+   `--coverage -g` compile and link flags.
+
+2. **Run tests against the coverage-instrumented binary**. `.gcda`
+   files accumulate per-run; delete them before a fresh measurement
+   with `find build-cov -name "*.gcda" -delete`.
+
+3. **Exercise the error paths intentionally**. Regression tests all
+   pass by design, so crash handlers and fallback code rarely run.
+   Add explicit `--trace` runs on a failing program to cover
+   `from_expr` / `from_type`, and run WITHOUT any performance
+   daemon / cache to exercise one-shot code paths.
+
+4. **Filter to your frontend's subdirectory**:
+
+   ```bash
+   lcov --capture --directory build-cov --output-file all.info
+   lcov --extract all.info '*/src/mylang/*' --output-file mylang.info
+   ```
+
+   Don't use `--no-external`: the in-tree source lives outside the
+   build directory, so it would exclude your own code.
+
+5. **Render HTML** and open in a browser to eyeball uncovered
+   regions:
+
+   ```bash
+   genhtml mylang.info --output-directory coverage/html
+   ```
+
+6. **Focus on the big-uncovered ranges first**. A contiguous block
+   of 20+ uncovered lines usually means an entire code path is
+   missing a test. Many scattered single lines are usually error
+   branches of error branches and less actionable.
+
+**Realistic targets**. 85% line coverage is a reasonable baseline
+for a frontend with a mix of converter logic (easily covered by
+regression) and trace-format / daemon code (harder). Pushing much
+beyond 90% typically means writing tests for edge cases that
+actually don't matter. Use the uncovered-functions report as a
+source of ideas rather than a hard target.
+
+**Coverage as a soundness tool**. When refactoring, a drop in
+coverage without a corresponding drop in test count is a smell:
+either something got disconnected or a test silently stopped
+exercising a code path. Track coverage on significant refactors.
 
 ---
 
