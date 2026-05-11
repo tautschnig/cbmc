@@ -4027,17 +4027,23 @@ exprt python_convertert::convert_call(const jsont &expr)
                     json_string(json_member(item, "name")) == method_name)
                   {
                     // Convert the base __init__ body statements
-                    // in the current scope (so self refers to Derived)
+                    // in the current scope (so self refers to Derived).
+                    // Collect into a local buffer first, because
+                    // convert_statement() clears the shared
+                    // pending_checks on entry — if we push directly
+                    // into pending_checks, each statement clobbers
+                    // whatever the previous statement added.
                     const jsont &init_body = json_member(item, "body");
                     if(init_body.is_array())
                     {
-                      // Set current_class to base so nested super()
-                      // resolves to the grandparent, not back to parent
                       std::string saved_class = current_class;
                       current_class = base_class;
+                      std::vector<codet> inlined;
                       for(const auto &s : as_array(init_body))
-                        pending_checks.push_back(convert_statement(s));
+                        inlined.push_back(convert_statement(s));
                       current_class = saved_class;
+                      for(auto &st : inlined)
+                        pending_checks.push_back(std::move(st));
                     }
                     // Return a no-op value (the side effects are in
                     // pending_checks)
