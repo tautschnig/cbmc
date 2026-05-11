@@ -4243,26 +4243,49 @@ exprt python_convertert::convert_call(const jsont &expr)
       is_node_type(json_member(obj_node, "func"), "Name") &&
       json_string(json_member(json_member(obj_node, "func"), "id")) == "super")
     {
-      // Find the current class and its base class.
-      //
-      // Current model: pick class_bases[current_class][0] —
-      // the first declared base. This is correct for single
-      // inheritance (and the linear hierarchy tested by
-      // multi-level-super). It is INCORRECT for diamond
-      // inheritance: from B's perspective (after D inlined
-      // B via super), the MRO-correct target is C, not A.
-      // Full C3 linearization would require tracking the
-      // root class whose dispatch we're in and walking
-      // class_mro[root] to find the next step.
-      //
-      // class_mro is computed at ClassDef time (see below)
-      // so it's available for a future MRO-aware rewrite
-      // of this handler.
-      if(
-        !current_class.empty() && class_bases.count(current_class) &&
-        !class_bases[current_class].empty())
+      // PLR §3.3.2.1 C3 linearization for super() dispatch.
+      // class_mro[root_class] is computed at ClassDef time.
+      // mro_root_class tracks the dispatch root (the class
+      // whose method invocation started the current super
+      // chain) — preserved across nested super() inlining so
+      // every hop consults the same MRO.
+      if(!current_class.empty())
       {
-        std::string base_class = class_bases[current_class][0];
+        // Diagnostic recursion guard (stack-overflow safety).
+        static thread_local std::size_t super_depth = 0;
+        struct guardt
+        {
+          ~guardt() { super_depth--; }
+        } gd;
+        super_depth++;
+        if(super_depth > 64)
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        // Compute the next class in the MRO chain.
+        std::string root = mro_root_class.empty() ? current_class
+                                                  : mro_root_class;
+        std::string base_class;
+        auto mit = class_mro.find(root);
+        if(mit != class_mro.end())
+        {
+          const auto &mro = mit->second;
+          for(std::size_t i = 0; i + 1 < mro.size(); ++i)
+          {
+            if(mro[i] == current_class)
+            {
+              base_class = mro[i + 1];
+              break;
+            }
+          }
+        }
+        // Fallback: first declared base (single-inheritance
+        // heuristic) when MRO lookup fails.
+        if(
+          base_class.empty() && class_bases.count(current_class) &&
+          !class_bases[current_class].empty())
+          base_class = class_bases[current_class][0];
+        if(!base_class.empty())
+        {
         // Inline super().__init__() by re-converting the base class's
         // __init__ body with the current self pointer. This avoids
         // pointer type mismatches (Derived* vs Base*).
@@ -4297,11 +4320,15 @@ exprt python_convertert::convert_call(const jsont &expr)
                     if(init_body.is_array())
                     {
                       std::string saved_class = current_class;
+                      std::string saved_mro_root = mro_root_class;
+                      if(mro_root_class.empty())
+                        mro_root_class = saved_class;
                       current_class = base_class;
                       std::vector<codet> inlined;
                       for(const auto &s : as_array(init_body))
                         inlined.push_back(convert_statement(s));
                       current_class = saved_class;
+                      mro_root_class = saved_mro_root;
                       for(auto &st : inlined)
                         pending_checks.push_back(std::move(st));
                     }
@@ -4314,6 +4341,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               break;
             }
           }
+        }
         }
       }
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};
@@ -14986,7 +15014,25 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // MRO(C) = [C] + merge(MRO(B1), MRO(B2), ..., [B1, B2, ...])
   // where merge picks the head of the first list that isn't in
   // the tail of any other list; repeat until all lists empty.
+  //
+  // Idempotent: convert_class_def is invoked multiple times
+  // across the passes (pre-register, full register, method
+  // body convert); compute MRO exactly once per class to
+  // avoid accumulating duplicates from re-runs over the
+  // append-based class_bases map.
+  if(class_mro.count(class_name) == 0)
   {
+    // Dedup class_bases[class_name] in case previous passes
+    // over the same ClassDef duplicated entries.
+    auto &bv = class_bases[class_name];
+    std::vector<std::string> dedup;
+    std::set<std::string> seen;
+    for(const auto &b : bv)
+    {
+      if(seen.insert(b).second)
+        dedup.push_back(b);
+    }
+    bv = dedup;
     std::vector<std::string> mro{class_name};
     std::vector<std::vector<std::string>> seqs;
     for(const auto &b : class_bases[class_name])
@@ -15033,11 +15079,16 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         }
         if(!in_tail)
         {
-          mro.push_back(head);
+          // Copy head by value — the following erase loop may
+          // invalidate seqs[i]'s iterators/references, making
+          // the `head` reference dangling and causing subsequent
+          // seqs[j].front() != head mis-comparisons.
+          std::string head_val = head;
+          mro.push_back(head_val);
           // Remove head from the front of every sequence.
           for(auto &s : seqs)
           {
-            if(!s.empty() && s.front() == head)
+            if(!s.empty() && s.front() == head_val)
               s.erase(s.begin());
           }
           progress = true;

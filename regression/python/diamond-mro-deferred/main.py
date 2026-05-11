@@ -1,22 +1,18 @@
-# PLR 3.3.2.1: diamond inheritance.
+# PLR 3.3.2.1: C3 linearization for diamond inheritance.
 #
-# This test documents the current state. Full C3 MRO is a
-# known limitation: our super() handler picks
-# class_bases[X][0] (first declared base) rather than
-# walking the C3 linearization of the dispatch root's MRO.
+#       A
+#      / \
+#     B   C
+#      \ /
+#       D
 #
-# Single and linear (multi-level) inheritance work
-# correctly (see regression/python/multi-level-super).
-# True diamond (two bases sharing a common ancestor) does
-# NOT chain through both sides — B's super() goes to A
-# directly, skipping C.
-#
-# class_mro is computed at class-def time and stored per
-# class; a future rewrite of the super() handler can walk
-# it with a tracked root class to fix this.
+# MRO(D) = [D, B, C, A, object]. Calling super() from D
+# dispatches to B; super() from B (inlined in D's dispatch)
+# dispatches to C; super() from C (also in D's dispatch)
+# dispatches to A. All four __init__ bodies must run so
+# every field is assigned.
 
 
-# Linear 3-level inheritance: works correctly.
 class A:
     def __init__(self) -> None:
         self.a = 1
@@ -28,13 +24,26 @@ class B(A):
         self.b = 2
 
 
-class C(B):
+class C(A):
     def __init__(self) -> None:
         super().__init__()
         self.c = 3
 
 
-c = C()
-assert c.a == 1
-assert c.b == 2
-assert c.c == 3
+class D(B, C):
+    def __init__(self) -> None:
+        super().__init__()
+        self.d = 4
+
+
+d = D()
+assert d.a == 1
+assert d.b == 2
+assert d.c == 3
+assert d.d == 4
+
+
+# Method override walks MRO too — Z inherits Y's greet via
+# its own MRO entry after the method-dispatch improvement
+# lands. For now, this test only covers constructor MRO
+# chaining (which the C3 linearization fix enables).
