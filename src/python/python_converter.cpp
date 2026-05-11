@@ -11865,6 +11865,31 @@ codet python_convertert::convert_assign(const jsont &stmt)
       if(elts.is_array() && is_python_tuple_type(rhs.type()))
       {
         const auto &tuple_st = to_struct_type(rhs.type());
+        // PLR §7.2.1: the assignment target list is bound
+        // _after_ the expression list on the right is
+        // fully evaluated, so the swap idiom
+        //     a, b = b, a
+        // must not read the updated a/b from its own LHS.
+        // Materialise the RHS into a fresh tmp so every
+        // field read references the snapshot before any
+        // LHS update.
+        static unsigned unpack_ctr = 0;
+        std::string tmpn = "__unpack_" + std::to_string(unpack_ctr++);
+        std::string tmpq = qualify_name(tmpn);
+        irep_idt tmpid{tmpq};
+        if(symbol_table.lookup(tmpid) == nullptr)
+        {
+          symbolt ts{tmpid, rhs.type(), "python"};
+          ts.base_name = tmpn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt rhs_snapshot =
+          symbol_table.lookup_ref(tmpid).symbol_expr();
+        block.add(code_frontend_assignt{rhs_snapshot, rhs});
+        exprt src = rhs_snapshot;
         std::size_t idx = 0;
         for(const auto &elt : as_array(elts))
         {
@@ -11875,7 +11900,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             continue;
           }
           typet field_type = tuple_st.get_component(field).type();
-          member_exprt field_expr{rhs, field, field_type};
+          member_exprt field_expr{src, field, field_type};
 
           // Recursive unpack: if elt is Tuple/List, unpack the field
           if(is_node_type(elt, "Tuple") || is_node_type(elt, "List"))
