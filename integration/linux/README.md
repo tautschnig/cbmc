@@ -23,7 +23,8 @@ CBMC-based pre-merge static analysis of the Linux kernel.  See
   own make system.
 - `cve-*/` — per-CVE regression harnesses that exercise one or more
   property modules against the source shape of a historical bug.
-  First entry: [`cve-2026-31431/`](cve-2026-31431/) ("Copy Fail").
+  Current entries: [`cve-2026-31431/`](cve-2026-31431/) ("Copy
+  Fail"); [`cve-2022-0847/`](cve-2022-0847/) ("Dirty Pipe").
 
 ## Running the regressions
 
@@ -31,13 +32,19 @@ Each `cve-*/` and `properties/<module>/` directory carries its own
 `run.sh` that produces a structured pass/fail report.  Examples:
 
 ```sh
-# Fast CVE regression (abstract model, ~20 s)
-./cve-2026-31431/run.sh
+# Fast CVE regressions (abstract models, ~seconds each)
+./cve-2026-31431/run.sh       # Copy Fail
+./cve-2022-0847/run.sh        # Dirty Pipe
 
 # Per-module property tests
 ./properties/page_provenance/run.sh
 ./properties/scatterlist/run.sh
 ./properties/aead/run.sh
+./properties/pipe_buffer/run.sh
+
+# End-to-end scan (requires $LINUX_TREE; ~5-10 min for full aead
+# vacuity probe + verification)
+LINUX_TREE=/path/to/linux ./scan/run.sh
 ```
 
 The scripts assume `cbmc`, `goto-cc` and `goto-instrument` are at
