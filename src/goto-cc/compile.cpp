@@ -359,6 +359,63 @@ bool compilet::link(std::optional<symbol_tablet> &&symbol_table)
     mangler.mangle();
   }
 
+  // Warn about functions that are CALLED from a linked body but have
+  // no body of their own.  At verification time, cbmc replaces each
+  // such call with a nondet-return stub; if the caller is a
+  // harness's entry function and the missing body is the subject of
+  // the analysis, the verification is silently vacuous.  LIM-009 in
+  // integration/linux/CBMC_LIMITATIONS.md documents the concrete
+  // failure mode: a kernel `static` symbol bound to an empty extern
+  // stub because the caller's `extern` declaration used the
+  // unmangled name.
+  //
+  // We collect the set of functions actually called from any body,
+  // then diff against the set of functions with bodies, and report
+  // each missing-body call-target with a suggestion pointing at
+  // --export-file-local-symbols.
+  if(mode == COMPILE_LINK_EXECUTABLE || mode == COMPILE_LINK)
+  {
+    std::set<irep_idt> called_functions;
+    for(const auto &f : goto_model.goto_functions.function_map)
+    {
+      if(!f.second.body_available())
+        continue;
+      for(const auto &ins : f.second.body.instructions)
+      {
+        if(ins.is_function_call())
+        {
+          const auto &callee = ins.call_function();
+          if(callee.id() == ID_symbol)
+            called_functions.insert(to_symbol_expr(callee).get_identifier());
+        }
+      }
+    }
+
+    for(const auto &name : called_functions)
+    {
+      auto it = goto_model.goto_functions.function_map.find(name);
+      if(it == goto_model.goto_functions.function_map.end())
+        continue; // unresolved (would already be an error elsewhere)
+      if(it->second.body_available())
+        continue;
+      // Skip well-known CBMC library functions that are legitimately
+      // nondet-returning (malloc, __CPROVER_allocate, etc.) — those
+      // are intentional, not accidental.
+      const std::string s = id2string(name);
+      if(
+        s.substr(0, 10) == "__CPROVER_" || s == "malloc" || s == "free" ||
+        s == "calloc" || s == "realloc")
+        continue;
+      log.warning()
+        << "symbol '" << s << "' is called but has no linked body; "
+        << "cbmc will treat it as a nondet-return stub.  "
+        << "If this symbol is `static` in the target translation "
+        << "unit, compile with --export-file-local-symbols and call "
+        << "it via its `__CPROVER_file_local_<file>_<sym>` mangled "
+        << "name." << messaget::eom;
+    }
+  }
+
   if(write_bin_object_file(output_file_executable, goto_model))
     return true;
 
