@@ -11959,8 +11959,138 @@ codet python_convertert::convert_statement(const jsont &stmt)
         }
         return {std::move(cond), std::move(binds)};
       }
+      // MatchClass: case Point(x, y) or Point(x=a, y=b).
+      // Check isinstance(subj, cls) then bind positional /
+      // keyword attributes. Positional bindings require the
+      // class to expose __match_args__ — we approximate by
+      // using the class's declared fields in order (first
+      // after __class_tag).
+      if(is_node_type(pat, "MatchClass"))
+      {
+        const jsont &cls_node = json_member(pat, "cls");
+        std::string cls_name;
+        if(is_node_type(cls_node, "Name"))
+          cls_name = json_string(json_member(cls_node, "id"));
+        if(cls_name.empty() || class_types.count(cls_name) == 0)
+          return {true_exprt{}, std::move(binds)};
+        const auto &cls_type = class_types.at(cls_name);
+        // isinstance-style check. For tagged-union subjects,
+        // read __class_tag through __class_ptr; for concrete
+        // struct subjects, compare the declared type.
+        exprt cond = true_exprt{};
+        // Normalise a pointer subject by dereferencing it,
+        // so member access works uniformly.
+        exprt usubj = subj;
+        if(
+          usubj.type().id() == ID_pointer &&
+          to_pointer_type(usubj.type()).base_type().id() == ID_struct)
+          usubj = dereference_exprt{usubj};
+        if(is_python_value_type(subj.type()))
+        {
+          pointer_typet i32_ptr{signedbv_typet{32}, 64};
+          dereference_exprt class_tag{
+            typecast_exprt{python_value_class_ptr(subj), i32_ptr},
+            signedbv_typet{32}};
+          auto ti = class_tag_ids.find(cls_name);
+          if(ti != class_tag_ids.end())
+          {
+            cond = and_exprt{
+              python_value_is(subj, python_type_tagt::CLASS),
+              equal_exprt{
+                class_tag, from_integer(ti->second, signedbv_typet{32})}};
+          }
+        }
+        else if(
+          usubj.type().id() == ID_struct || usubj.type().id() == ID_struct_tag)
+        {
+          std::string stag;
+          if(usubj.type().id() == ID_struct)
+            stag = id2string(to_struct_type(usubj.type()).get_tag());
+          else
+            stag = id2string(to_struct_tag_type(usubj.type()).get_identifier());
+          if(stag.find("python_class_" + cls_name) != std::string::npos)
+            cond = true_exprt{};
+          else
+            cond = false_exprt{};
+        }
+        // Cast the subject to the class struct so we can
+        // access fields for binding.
+        exprt cls_subj;
+        if(is_python_value_type(subj.type()))
+        {
+          pointer_typet cls_ptr_type{cls_type, 64};
+          cls_subj = dereference_exprt{
+            typecast_exprt{python_value_class_ptr(subj), cls_ptr_type},
+            cls_type};
+        }
+        else if(
+          usubj.type().id() == ID_struct || usubj.type().id() == ID_struct_tag)
+        {
+          cls_subj = usubj;
+        }
+        // Positional patterns: bind the first N declared
+        // fields (skipping __class_tag) in declaration order.
+        const jsont &pos_pats = json_member(pat, "patterns");
+        if(
+          pos_pats.is_array() && !cls_subj.is_nil() &&
+          (cls_subj.type().id() == ID_struct ||
+           cls_subj.type().id() == ID_struct_tag))
+        {
+          std::vector<std::string> fields;
+          for(const auto &c : cls_type.components())
+          {
+            std::string nm = id2string(c.get_name());
+            if(nm == "__class_tag")
+              continue;
+            fields.push_back(nm);
+          }
+          std::size_t i = 0;
+          for(const auto &sub : as_array(pos_pats))
+          {
+            if(i >= fields.size())
+              break;
+            typet ft = cls_type.get_component(fields[i]).type();
+            member_exprt field_expr{cls_subj, fields[i], ft};
+            auto [sc, sb] = compile_pattern(sub, field_expr);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+            i++;
+          }
+        }
+        // Keyword patterns: bind by attribute name.
+        const jsont &kwd_attrs = json_member(pat, "kwd_attrs");
+        const jsont &kwd_patterns = json_member(pat, "kwd_patterns");
+        if(
+          kwd_attrs.is_array() && kwd_patterns.is_array() &&
+          !cls_subj.is_nil() &&
+          (cls_subj.type().id() == ID_struct ||
+           cls_subj.type().id() == ID_struct_tag))
+        {
+          const auto &ka = as_array(kwd_attrs);
+          const auto &kp = as_array(kwd_patterns);
+          auto ait = ka.begin();
+          auto pit = kp.begin();
+          while(ait != ka.end() && pit != kp.end())
+          {
+            std::string attr_name = ait->is_string() ? ait->value : "";
+            if(!attr_name.empty() && cls_type.has_component(attr_name))
+            {
+              typet ft = cls_type.get_component(attr_name).type();
+              member_exprt field_expr{cls_subj, attr_name, ft};
+              auto [sc, sb] = compile_pattern(*pit, field_expr);
+              cond = and_exprt{std::move(cond), std::move(sc)};
+              for(const auto &st : sb.statements())
+                binds.add(st);
+            }
+            ++ait;
+            ++pit;
+          }
+        }
+        return {std::move(cond), std::move(binds)};
+      }
       // Unsupported patterns (MatchSequence / MatchMapping /
-      // MatchClass / MatchStar) — match-anything for soundness.
+      // MatchStar) — match-anything for soundness.
       return {true_exprt{}, std::move(binds)};
     };
 
