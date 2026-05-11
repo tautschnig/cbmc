@@ -5396,6 +5396,12 @@ exprt python_convertert::convert_call(const jsont &expr)
               // Build string literal
               return python_string_literal(result);
             }
+            // Symbolic-string replace not wired: the solver's
+            // cprover_string_replace_func handles char-to-char
+            // replacement only (5 args, chars not strings).
+            // str.replace(old, new) on general strings needs
+            // a new multi-char solver intrinsic. Falls through
+            // to nondet for now.
           }
           // PLib stdtypes: str.format() — substitute {} placeholders
           if(method_name == "format")
