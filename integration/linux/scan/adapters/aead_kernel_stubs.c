@@ -102,6 +102,33 @@ static void init_provenance_once(void)
 }
 
 // ---------------------------------------------------------------------------
+// sg_init_table body: the kernel's body lives in lib/scatterlist.c
+// which is not in our TU, so `extern` would resolve to a nondet-
+// return stub and the SGL array entries we don't explicitly
+// populate would retain nondet `page_link` bits.  That causes the
+// walker (sgl_all_user_writable) to find "failures" unrelated to
+// the Copy Fail shape — specifically on the fixed code path, where
+// the walker should terminate at SG_END on sg[0].
+//
+// We provide a property-preserving body: zero all entries, then
+// mark the last one as end.  SG_END's bit-pattern matches
+// include/linux/scatterlist.h's SG_END = 2.
+// ---------------------------------------------------------------------------
+
+void sg_init_table(struct scatterlist *sgl, unsigned int nents)
+{
+  if(!sgl || nents == 0)
+    return;
+  for(unsigned int i = 0; i < nents; i++)
+  {
+    sgl[i].page_link = 0;
+    sgl[i].offset = 0;
+    sgl[i].length = 0;
+  }
+  sgl[nents - 1].page_link |= 2u; // SG_END
+}
+
+// ---------------------------------------------------------------------------
 // Socket / sleep helpers.
 // ---------------------------------------------------------------------------
 

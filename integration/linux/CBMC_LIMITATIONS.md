@@ -326,3 +326,64 @@ great for debuggability.
 C stubs (essentially a `scan/adapters/kernel_stubs.c` per subsystem)
 rather than relying on goto-instrument's regex-driven body
 generation.  Same plan under LIM-006.
+
+## LIM-010 — Stub fidelity: fix-direction regression not passing
+
+**First hit:** attempted fix-direction regression after LIM-009 was
+resolved.  With a synthetic fix applied to
+`crypto/algif_aead.c` (both `sg_unmark_end` and `sg_chain` removed
+from the decrypt-with-chain block), scan.py **still** reports
+`cbmc_status: "failed"` with `precondition.3` fired — even though
+the walker, on paper, should terminate cleanly at
+`sg[0].page_link & SG_END`.  The counterexample trace shows cbmc
+walking two SGL entries via a phantom `SG_CHAIN` bit pattern, then
+dereferencing a `NULL + N` pointer the harness never placed.
+
+**Root cause (probable).** Incomplete stub fidelity in
+`scan/adapters/aead_kernel_stubs.c`: several kernel helpers the
+decrypt-with-chain path calls on its way to
+`aead_request_set_crypt` are still unlinked externs and return
+nondet values that corrupt the SGL array cbmc then walks through
+the contract predicate.  Candidates so far:
+
+- `crypto_aead_copy_sgl` (file-local static in algif_aead.c; has
+  a body but transitively invokes `crypto_skcipher_encrypt` which
+  is extern, so the SSA formula includes a nondet-taint on the
+  destination SGL via aliasing).
+- `sock_kmalloc`: my stub `__CPROVER_allocate`s the requested
+  size but leaves its bytes nondet — `sg_init_table` then runs on
+  nondet memory, and aggressive-slice's slicing of the formula
+  may drop some of those writes.
+
+**Workaround for now.** The regression for the vulnerable-direction
+(case 2 in `scan/run.sh`) continues to pass: on the unmodified
+Linux 5.10 tree, the scan correctly reports `cbmc_status: "failed"`
+and names `precondition.3`, so the bug-detection direction is
+sound.  Case 3 validates the vacuity guardrails themselves (a
+broken harness is caught as `vacuity-risk`).  What's missing is
+case 4: the fix-direction regression.
+
+**Resolution direction.** Two paths, either a source-level stub
+expansion or a goto-level pinning:
+
+1. Add a proper body for every extern kernel helper the path
+   touches on the way to the contract call site, not just the two
+   `af_alg_*` helpers we have today.  Inventory: `list_for_each_*`
+   primitives (if not static-inline), `sock_kmalloc` with
+   zero-init, `crypto_skcipher_encrypt` returning 0, etc.
+
+2. Switch the harness to call `aead_request_set_crypt` directly
+   with a hand-built SGL shape (as
+   `cve-2026-31431/harness_kernel.c` already does) rather than
+   routing through `_aead_recvmsg`.  Give up on
+   automatic-path-synthesis from the full kernel body and rely on
+   the Coccinelle prefilter + harness-driven regression as the
+   substantive property test.  Trade-off: weakens the scan's
+   claim to automatically synthesise vulnerable inputs from real
+   kernel control flow.
+
+Path (1) is preferred for the aead module since we are close; path
+(2) is the fallback that would also generalise cleanly to M5
+(pipe_buffer + CVE-2022-0847 Dirty Pipe) and every subsequent
+module.  Either way, this is logged as LIM-010 and tracked
+separately from LIM-009.

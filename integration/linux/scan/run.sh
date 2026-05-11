@@ -14,7 +14,13 @@
 #       `precondition.3` (sgl_all_user_writable) assertion violated
 #       at line 280.
 #
-# Exit code 0 iff both cases behave as expected.
+#   3.  Meta-regression on the vacuity guardrails: deliberately
+#       break the harness to call the unmangled `_aead_recvmsg`
+#       (the LIM-009 bug) and confirm scan.py reports
+#       `cbmc_status: "vacuity-risk"` instead of silently
+#       succeeding or failing.
+#
+# Exit code 0 iff all cases behave as expected.
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 source "$SCRIPT_DIR/_lib.sh"
@@ -69,6 +75,39 @@ else
     echo "  [FAIL] expected rc 1 + line-280 hit + cbmc_status=failed + precondition.3" >&2
     echo "         actual rc=$rc; last 30 lines of output:" >&2
     tail -30 "$tmp/case2.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
+echo
+echo "=== case 3: vacuity guardrail on crypto/algif_aead.c ==="
+# Meta-regression: deliberately break the harness so it calls the
+# unmangled _aead_recvmsg (the LIM-009 bug).  scan.py must report
+# `cbmc_status: "vacuity-risk"`, not a silent success or failure.
+if [[ ! -f $KERNEL_C ]]; then
+  echo "  [skip] no kernel tree at $LINUX_TREE"
+else
+  harness="$SCRIPT_DIR/adapters/aead_kernel_harness.c"
+  cp "$harness" "$tmp/harness.orig.c"
+  python3 -c "
+p = '$harness'
+s = open(p).read()
+s2 = s.replace(
+    '__CPROVER_file_local_algif_aead_c__aead_recvmsg(',
+    '_aead_recvmsg(')
+open(p, 'w').write(s2)
+"
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --json "$tmp/case3.json" > "$tmp/case3.out" 2>&1
+  rc=$?
+  set -e
+  cp "$tmp/harness.orig.c" "$harness"  # restore before checking
+  if grep -q '"cbmc_status": "vacuity-risk"' "$tmp/case3.json"; then
+    echo "  [ok] broken harness caught as vacuity-risk"
+  else
+    echo "  [FAIL] expected cbmc_status=vacuity-risk; guardrail did not fire" >&2
+    echo "         actual rc=$rc; last 15 lines of output:" >&2
+    tail -15 "$tmp/case3.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
   fi
 fi
