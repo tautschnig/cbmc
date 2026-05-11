@@ -11391,7 +11391,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
             module == "socket" || module == "http" || module == "http.client" ||
             module == "urllib" || module == "urllib.request" ||
             module == "cmath" || module == "statistics" ||
-            module == "fractions" || module == "numbers")
+            module == "fractions" || module == "numbers" ||
+            module == "asyncio" || module == "yaml" || module == "requests")
           {
             // Stdlib modules: register imported names as variables (not
             // functions) so the unknown-function handler returns nondet
