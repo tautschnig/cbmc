@@ -2147,7 +2147,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         auto it = to_json_array(args).begin();
         exprt start = convert_expression(*it);
         ++it;
-        exprt end_arg;
+        exprt end_arg = nil_exprt{};
         if(it != to_json_array(args).end())
           end_arg = convert_expression(*it);
         struct_typet str_type = typescript_string_type();
@@ -2157,7 +2157,10 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(start.type() != signedbv_typet{32})
           start = typecast_exprt{start, signedbv_typet{32}};
         exprt end_e;
-        if(end_arg.is_nil())
+        // Both nil_exprt and a default-constructed exprt signal
+        // "no end provided". Default-constructed exprts have an
+        // empty id, NOT ID_nil, so check both.
+        if(end_arg.is_nil() || end_arg.id().empty())
           end_e = len_e;
         else
         {

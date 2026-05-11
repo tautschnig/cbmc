@@ -1,8 +1,7 @@
-KNOWNBUG
+CORE
 main.ts
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
-Complex string parsing with nested indexOf+substring on non-constant strings hits solver boolbv limitations
