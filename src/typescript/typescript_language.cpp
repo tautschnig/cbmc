@@ -140,6 +140,10 @@ function n2j(node) {
       if(node.type) r.typeAnnotation = n2j(node.type);
       if(node.initializer) r.initializer = n2j(node.initializer);
       if(node.dotDotDotToken) r.isRest = true;
+      if(node.modifiers && node.modifiers.length > 0)
+        r.modifiers = node.modifiers.map((m) => ({
+          _kind: ts.SyntaxKind[m.kind],
+        }));
       break;
     case ts.SyntaxKind.Block:
       r.statements = node.statements.map(n2j);

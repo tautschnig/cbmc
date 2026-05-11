@@ -3901,6 +3901,67 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(s && !s->value.is_nil())
           src = s->value;
       }
+      // If the inner element type is itself a typescript_array, we
+      // flatten one level: iterate over outer elements, and within
+      // each inner array copy its elements into the result. Returning
+      // a value of a different type than the receiver is essential
+      // to avoid solver-level type mismatches downstream.
+      if(src.id() == ID_struct && src.operands().size() >= 2)
+      {
+        const auto &outer_st = to_struct_type(src.type());
+        const auto &outer_data_type =
+          to_array_type(outer_st.components()[1].type());
+        const typet &inner_elem = outer_data_type.element_type();
+        bool is_nested =
+          inner_elem.id() == ID_struct &&
+          to_struct_type(inner_elem).get_tag() == "typescript_array";
+        if(is_nested)
+        {
+          // Collect inner elements at conversion time if both the
+          // outer array and each inner array have constant length and
+          // inline data.
+          mp_integer outer_len{0};
+          if(src.operands()[0].is_constant())
+            to_integer(to_constant_expr(src.operands()[0]), outer_len);
+          const exprt &outer_data = src.operands()[1];
+          const auto &inner_st = to_struct_type(inner_elem);
+          const auto &inner_data_type =
+            to_array_type(inner_st.components()[1].type());
+          typet leaf_type = inner_data_type.element_type();
+          exprt::operandst result_elts;
+          for(mp_integer i = 0; i < outer_len; ++i)
+          {
+            auto oi = i.to_ulong();
+            if(oi >= outer_data.operands().size())
+              break;
+            const exprt &sub = outer_data.operands()[oi];
+            if(sub.id() != ID_struct || sub.operands().size() < 2)
+              continue;
+            mp_integer sub_len{0};
+            if(sub.operands()[0].is_constant())
+              to_integer(to_constant_expr(sub.operands()[0]), sub_len);
+            const exprt &sub_data = sub.operands()[1];
+            for(mp_integer j = 0; j < sub_len; ++j)
+            {
+              auto sj = j.to_ulong();
+              if(sj < sub_data.operands().size())
+                result_elts.push_back(sub_data.operands()[sj]);
+            }
+          }
+          std::size_t actual = result_elts.size();
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          while(result_elts.size() < max_len)
+            result_elts.push_back(from_integer(0, leaf_type));
+          array_typet arr_type{
+            leaf_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type = make_array_struct_type(arr_type);
+          return struct_exprt{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(result_elts), arr_type}},
+            list_type};
+        }
+      }
+      // 1-D array (or unknown shape): flat is a no-op.
       return src;
     }
     // ES2024 sec-array.prototype.at

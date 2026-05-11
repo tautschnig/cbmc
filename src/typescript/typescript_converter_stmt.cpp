@@ -664,6 +664,53 @@ codet typescript_convertert::convert_statement(const jsont &node)
           if(json_member(m, "isPrivate").is_true())
             private_fields[cls_name].insert(pname);
         }
+        // ES2024 §15.7.13 (Class Constructors): parameter-property
+        // shorthand. A Constructor parameter declared with a modifier
+        // (public / private / protected / readonly) is ALSO a field
+        // of the class. The TypeScript compiler normally emits an
+        // implicit `this.<name> = <name>` in the constructor body
+        // during lowering to JavaScript; our converter reads the AST
+        // directly so we add both the field and the assignment
+        // ourselves (assignment is emitted below in the Constructor
+        // member branch).
+        else if(mk == "Constructor")
+        {
+          const jsont &params = json_member(m, "parameters");
+          if(params.is_array())
+          {
+            for(const auto &p : to_json_array(params))
+            {
+              const jsont &modifiers = json_member(p, "modifiers");
+              if(!modifiers.is_array())
+                continue;
+              bool has_access_mod = false;
+              bool is_priv = false;
+              for(const auto &mod : to_json_array(modifiers))
+              {
+                std::string mk2 = json_string(json_member(mod, "_kind"));
+                if(
+                  mk2 == "PublicKeyword" || mk2 == "PrivateKeyword" ||
+                  mk2 == "ProtectedKeyword" || mk2 == "ReadonlyKeyword")
+                {
+                  has_access_mod = true;
+                  if(mk2 == "PrivateKeyword")
+                    is_priv = true;
+                }
+              }
+              if(!has_access_mod)
+                continue;
+              std::string pname =
+                json_string(json_member(json_member(p, "name"), "text"));
+              if(pname.empty())
+                continue;
+              std::string ptype = json_string(json_member(p, "_type"));
+              cls_type.components().push_back(
+                struct_typet::componentt{pname, convert_type(ptype)});
+              if(is_priv)
+                private_fields[cls_name].insert(pname);
+            }
+          }
+        }
       }
     }
     // Register class type
@@ -787,7 +834,69 @@ codet typescript_convertert::convert_statement(const jsont &node)
           {
             std::string saved = current_function;
             current_function = ctor_name;
-            fs.value = convert_block(body);
+            // Prepend implicit `this.<name> = <name>` assignments
+            // for each parameter-property (public/private/protected/
+            // readonly) — see ES2024 §15.7.13. The TS compiler emits
+            // these during lowering to JS; our direct-AST converter
+            // needs to do it explicitly.
+            code_blockt prologue;
+            const jsont &ctor_params_for_props = json_member(m, "parameters");
+            if(ctor_params_for_props.is_array())
+            {
+              symbol_exprt this_sym{
+                "typescript::" + ctor_name + "::this",
+                pointer_typet{cls_type, 64}};
+              for(const auto &p : to_json_array(ctor_params_for_props))
+              {
+                const jsont &modifiers = json_member(p, "modifiers");
+                if(!modifiers.is_array())
+                  continue;
+                bool has_access_mod = false;
+                for(const auto &mod : to_json_array(modifiers))
+                {
+                  std::string mk2 = json_string(json_member(mod, "_kind"));
+                  if(
+                    mk2 == "PublicKeyword" || mk2 == "PrivateKeyword" ||
+                    mk2 == "ProtectedKeyword" || mk2 == "ReadonlyKeyword")
+                  {
+                    has_access_mod = true;
+                    break;
+                  }
+                }
+                if(!has_access_mod)
+                  continue;
+                std::string pname =
+                  json_string(json_member(json_member(p, "name"), "text"));
+                if(pname.empty() || !cls_type.has_component(pname))
+                  continue;
+                typet ft_type = cls_type.component_type(pname);
+                symbol_exprt p_sym{
+                  "typescript::" + ctor_name + "::" + pname, ft_type};
+                prologue.add(code_frontend_assignt{
+                  member_exprt{dereference_exprt{this_sym}, pname, ft_type},
+                  p_sym});
+              }
+            }
+            codet body_code = convert_block(body);
+            if(!prologue.statements().empty())
+            {
+              // Splice prologue in front of the body's statements.
+              code_blockt combined = std::move(prologue);
+              if(body_code.get_statement() == ID_block)
+              {
+                for(auto &s : to_code_block(body_code).statements())
+                  combined.add(std::move(s));
+              }
+              else
+              {
+                combined.add(std::move(body_code));
+              }
+              fs.value = std::move(combined);
+            }
+            else
+            {
+              fs.value = std::move(body_code);
+            }
             current_function = saved;
           }
           if(symbol_table.lookup(fid) == nullptr)
