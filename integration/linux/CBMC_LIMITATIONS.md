@@ -387,3 +387,66 @@ Path (1) is preferred for the aead module since we are close; path
 (pipe_buffer + CVE-2022-0847 Dirty Pipe) and every subsequent
 module.  Either way, this is logged as LIM-010 and tracked
 separately from LIM-009.
+
+## LIM-011 — goto-cc link conflict on `static inline` kernel helpers across kernel versions
+
+**First hit:** newer-kernel smoke test on Linux 5.12-rc3 (via
+`scan/smoke-newer-kernel.sh`).
+
+When scan.py compiles `crypto/algif_aead.c` under Linux 5.12-rc3
+and links it with our adapter, stubs, and harness (all three of
+which include kernel headers via `scan/compile_file.sh`), `goto-cc`
+aborts with:
+
+```
+./include/linux/pagemap.h:979:1:
+  error: conflicting function declarations 'readahead_count'
+  old definition in module 'algif_aead' file
+  ./include/linux/pagemap.h line 979
+  unsigned int (struct readahead_control *)
+```
+
+The conflict arises because `readahead_count` is `static inline`
+in `<linux/pagemap.h>` on 5.12 but absent on 5.10 where we
+developed.  `goto-cc --export-file-local-symbols` gives the
+static inline a per-TU mangled name, and several of our TUs
+transitively include `pagemap.h` through the kernel header graph,
+so each produces its own mangled copy.  At link time, two mangled
+copies are reported as conflicting because one appears to come
+from the kernel TU (`algif_aead`) and one from our adapter TUs
+with slightly different call-graph context.
+
+**Workaround for now.** The 5.12 smoke test documents this as a
+known failure mode.  `crypto/algif_aead.c` on 5.12 reports
+`cbmc_status: "error"` with a `goto-cc exit 1` note; the Dirty
+Pipe Coccinelle prefilter on `fs/splice.c` and `lib/iov_iter.c`
+still fires correctly, so the newer-kernel smoke test's
+infrastructure-regression check stays green.
+
+**Resolution direction.** Three options, preferred in this order:
+
+1. **Minimise header inclusion in the adapter.**  Split the
+   adapter into (a) a minimal contract-declaration-only file
+   compiled as plain C without kernel headers (already the
+   case for `aead_kernel_adapter.c`), and (b) kernel-header-
+   dependent predicate helpers that live in the same kernel TU
+   as the target source (via `-include` at compile time rather
+   than standalone compilation).  Eliminates the duplicate-
+   mangling cross-TU conflict by ensuring only one TU ever
+   compiles each `static inline`.
+
+2. **Teach goto-cc to deduplicate identical `static inline`
+   bodies across TUs.**  If two mangled names refer to byte-
+   identical goto programs, they should merge, not conflict.
+   Upstream CBMC work; would benefit every downstream user of
+   the goto-cc link step.
+
+3. **Split the kernel scan into separate per-version adapter
+   configurations.**  Ship a per-kernel-version KERNEL_ADAPTERS
+   spec with (version-pinned) include paths.  Scales with the
+   number of kernels × property modules; ugly.
+
+Path 1 is what the `aead_kernel_harness.c` already approximates
+by including as few headers as possible (`<crypto/if_alg.h>`,
+`<crypto/aead.h>`, and necessary siblings).  Sharpening that
+pattern further should close most cross-version conflicts.
