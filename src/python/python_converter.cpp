@@ -862,7 +862,6 @@ std::string python_convertert::qualify_name(const std::string &name) const
 }
 
 exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
-  const
 {
   if(!is_python_value_type(e.type()))
     return e; // already concrete
@@ -888,11 +887,16 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     exprt float_true = and_exprt{
       python_value_is(e, python_type_tagt::FLOAT),
       notequal_exprt{python_value_float(e), safe_zero(double_type())}};
+    // For STR: check length-is-nonzero through the string
+    // intrinsic so consumers see the same precise value as
+    // len() does. Previously used member_exprt on .length,
+    // which required producer-side dual-emission ASSUMEs.
+    exprt str_val = python_value_str(e);
+    exprt str_len = emit_string_int_function(
+      ID_cprover_string_length_func, str_val, symbol_table, pending_checks);
     exprt str_true = and_exprt{
       python_value_is(e, python_type_tagt::STR),
-      notequal_exprt{
-        member_exprt{python_value_str(e), "length", signedbv_typet{64}},
-        from_integer(0, signedbv_typet{64})}};
+      notequal_exprt{str_len, from_integer(0, signedbv_typet{64})}};
     exprt list_true = and_exprt{
       python_value_is(e, python_type_tagt::LIST),
       notequal_exprt{
@@ -5049,20 +5053,11 @@ exprt python_convertert::convert_call(const jsont &expr)
               ID_cprover_string_length_func, tv, symbol_table, pending_checks);
             exprt input_len_intr = emit_string_int_function(
               ID_cprover_string_length_func, obj, symbol_table, pending_checks);
-            // Legacy member-access accessors: still needed for
-            // comparisons with literal-constructed strings where
-            // the struct_exprt.length is a constant int.
-            member_exprt result_len{tv, "length", signedbv_typet{64}};
-            member_exprt input_len{obj, "length", signedbv_typet{64}};
             // strip/lstrip/rstrip: result length <= input length
             if(
               method_name == "strip" || method_name == "lstrip" ||
               method_name == "rstrip")
             {
-              pending_checks.push_back(code_assumet{and_exprt{
-                binary_relation_exprt{
-                  result_len, ID_ge, from_integer(0, signedbv_typet{64})},
-                binary_relation_exprt{result_len, ID_le, input_len}}});
               pending_checks.push_back(code_assumet{and_exprt{
                 binary_relation_exprt{
                   result_len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
@@ -5074,8 +5069,6 @@ exprt python_convertert::convert_call(const jsont &expr)
               method_name == "capitalize" || method_name == "title" ||
               method_name == "swapcase" || method_name == "casefold")
             {
-              pending_checks.push_back(
-                code_assumet{equal_exprt{result_len, input_len}});
               pending_checks.push_back(
                 code_assumet{equal_exprt{result_len_intr, input_len_intr}});
             }
@@ -6960,10 +6953,9 @@ exprt python_convertert::convert_call(const jsont &expr)
     symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
     pending_checks.push_back(code_frontend_assignt{
       tmp, side_effect_expr_nondett{python_string_type(), get_location(expr)}});
-    member_exprt len{tmp, "length", signedbv_typet{64}};
-    // Also expose the intrinsic-based length so downstream
-    // len() consumers (which now route through
-    // cprover_string_length_func) see the same constraint.
+    // Emit the length constraint through the intrinsic so
+    // downstream len() consumers (which route through
+    // cprover_string_length_func) see the same value.
     exprt len_intr = emit_string_int_function(
       ID_cprover_string_length_func, tmp, symbol_table, pending_checks);
     // If size argument provided, constrain length == size
@@ -6971,17 +6963,10 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       exprt size = convert_expression(*as_array(args).begin());
       exprt size_i64 = safe_typecast(size, signedbv_typet{64});
-      pending_checks.push_back(code_assumet{equal_exprt{len, size_i64}});
       pending_checks.push_back(code_assumet{equal_exprt{len_intr, size_i64}});
     }
     else
     {
-      pending_checks.push_back(code_assumet{and_exprt{
-        binary_relation_exprt{len, ID_ge, from_integer(0, signedbv_typet{64})},
-        binary_relation_exprt{
-          len,
-          ID_le,
-          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
       pending_checks.push_back(code_assumet{and_exprt{
         binary_relation_exprt{
           len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
