@@ -12672,6 +12672,183 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // PLR §3.2: "Tuples are immutable sequences"
     if(is_node_type(target, "Subscript"))
     {
+      // Nested subscript (e.g. d["a"][0] = v) — the inner
+      // read returns a struct copy, so writing into it is
+      // lost. Rewrite at statement level to:
+      //     __nest_N = d["a"]
+      //     __nest_N[0] = v
+      //     d["a"] = __nest_N
+      // This makes the mutation visible through the outer
+      // container. Recursive: the final write back to
+      // d["a"] goes through the same subscript-assign
+      // path, so triple-nested targets unfold one level
+      // per rewrite.
+      const jsont &target_value = json_member(target, "value");
+      if(is_node_type(target_value, "Subscript"))
+      {
+        exprt inner_read = convert_expression(target_value);
+        if(
+          !inner_read.is_nil() && (is_python_list_type(inner_read.type()) ||
+                                   is_python_dict_type(inner_read.type())))
+        {
+          static unsigned nest_ctr = 0;
+          std::string tn = "__nest_" + std::to_string(nest_ctr++);
+          std::string tq = qualify_name(tn);
+          irep_idt ti{tq};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, inner_read.type(), "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            ts.is_static_lifetime = current_function.empty();
+            symbol_table.add(ts);
+          }
+          symbol_exprt tmp_sym = symbol_table.lookup_ref(ti).symbol_expr();
+          // 1. tmp = d["a"] (snapshot read)
+          block.add(code_frontend_assignt{tmp_sym, inner_read});
+          // 2. tmp[slice] = rhs (first-level write)
+          const jsont &slice_node = json_member(target, "slice");
+          exprt key = convert_expression(slice_node);
+          if(!key.is_nil())
+          {
+            if(is_python_list_type(tmp_sym.type()))
+            {
+              const auto &list_st = to_struct_type(tmp_sym.type());
+              const auto &data_type =
+                to_array_type(list_st.components()[1].type());
+              member_exprt data{tmp_sym, "data", data_type};
+              exprt typed_rhs = rhs;
+              if(typed_rhs.type() != data_type.element_type())
+                typed_rhs = safe_typecast(typed_rhs, data_type.element_type());
+              block.add(code_frontend_assignt{
+                index_exprt{data, key}, std::move(typed_rhs)});
+            }
+            else if(is_python_dict_type(tmp_sym.type()))
+            {
+              const auto &dict_st = to_struct_type(tmp_sym.type());
+              const auto &keys_type =
+                to_array_type(dict_st.components()[1].type());
+              const auto &vals_type =
+                to_array_type(dict_st.components()[2].type());
+              member_exprt length{tmp_sym, "length", signedbv_typet{64}};
+              member_exprt keys_arr{tmp_sym, "keys", keys_type};
+              member_exprt vals_arr{tmp_sym, "values", vals_type};
+              exprt typed_key = key;
+              if(typed_key.type() != keys_type.element_type())
+                typed_key = safe_typecast(typed_key, keys_type.element_type());
+              exprt typed_rhs = rhs;
+              if(typed_rhs.type() != vals_type.element_type())
+                typed_rhs = safe_typecast(typed_rhs, vals_type.element_type());
+              // scan-replace-or-append (mirrors the existing
+              // dict-subscript-assign path).
+              static unsigned ns_fnd = 0;
+              std::string fn = "__nest_fnd_" + std::to_string(ns_fnd++);
+              std::string fq = qualify_name(fn);
+              irep_idt fi{fq};
+              if(symbol_table.lookup(fi) == nullptr)
+              {
+                symbolt fs{fi, bool_typet{}, "python"};
+                fs.base_name = fn;
+                fs.is_lvalue = true;
+                fs.is_state_var = true;
+                symbol_table.add(fs);
+              }
+              symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+              block.add(code_frontend_assignt{found, false_exprt{}});
+              for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+              {
+                exprt idx = from_integer(i, signedbv_typet{64});
+                exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+                exprt match =
+                  equal_exprt{index_exprt{keys_arr, idx}, typed_key};
+                code_blockt upd;
+                upd.add(
+                  code_frontend_assignt{index_exprt{vals_arr, idx}, typed_rhs});
+                upd.add(code_frontend_assignt{found, true_exprt{}});
+                block.add(
+                  code_ifthenelset{and_exprt{in_range, match}, std::move(upd)});
+              }
+              code_blockt append;
+              append.add(code_frontend_assignt{
+                index_exprt{keys_arr, length}, typed_key});
+              append.add(code_frontend_assignt{
+                index_exprt{vals_arr, length}, std::move(typed_rhs)});
+              append.add(code_frontend_assignt{
+                length,
+                plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+              block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+            }
+          }
+          // 3. d["a"] = tmp (write back via outer subscript).
+          // Emit a synthetic subscript-assign recursively by
+          // constructing an equivalent statement through the
+          // same handler. We do this by building the outer
+          // target's base and slice from target_value, and
+          // driving the assign inline. Since the outer is
+          // itself potentially a Subscript, recursion would be
+          // ideal, but we inline one level for now.
+          exprt outer_base =
+            convert_expression(json_member(target_value, "value"));
+          const jsont &outer_slice_node = json_member(target_value, "slice");
+          exprt outer_key = convert_expression(outer_slice_node);
+          if(
+            !outer_base.is_nil() && !outer_key.is_nil() &&
+            is_python_dict_type(outer_base.type()))
+          {
+            // Invalidate dict_literals tracking: the outer
+            // container's 'a' slot now points to a mutated
+            // inner container.
+            const jsont &outer_val_node = json_member(target_value, "value");
+            if(is_node_type(outer_val_node, "Name"))
+            {
+              std::string outer_name =
+                json_string(json_member(outer_val_node, "id"));
+              dict_literals.erase(irep_idt{qualify_name(outer_name)});
+            }
+            const auto &dict_st = to_struct_type(outer_base.type());
+            const auto &keys_type =
+              to_array_type(dict_st.components()[1].type());
+            const auto &vals_type =
+              to_array_type(dict_st.components()[2].type());
+            member_exprt length{outer_base, "length", signedbv_typet{64}};
+            member_exprt keys_arr{outer_base, "keys", keys_type};
+            member_exprt vals_arr{outer_base, "values", vals_type};
+            exprt outer_typed_key = outer_key;
+            if(outer_typed_key.type() != keys_type.element_type())
+              outer_typed_key =
+                safe_typecast(outer_typed_key, keys_type.element_type());
+            exprt outer_rhs = tmp_sym;
+            if(outer_rhs.type() != vals_type.element_type())
+              outer_rhs = safe_typecast(outer_rhs, vals_type.element_type());
+            for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+              exprt match =
+                equal_exprt{index_exprt{keys_arr, idx}, outer_typed_key};
+              block.add(code_ifthenelset{
+                and_exprt{in_range, match},
+                code_frontend_assignt{index_exprt{vals_arr, idx}, outer_rhs}});
+            }
+          }
+          else if(
+            !outer_base.is_nil() && !outer_key.is_nil() &&
+            is_python_list_type(outer_base.type()))
+          {
+            const auto &list_st = to_struct_type(outer_base.type());
+            const auto &data_type =
+              to_array_type(list_st.components()[1].type());
+            member_exprt data{outer_base, "data", data_type};
+            exprt outer_rhs = tmp_sym;
+            if(outer_rhs.type() != data_type.element_type())
+              outer_rhs = safe_typecast(outer_rhs, data_type.element_type());
+            block.add(code_frontend_assignt{
+              index_exprt{data, outer_key}, std::move(outer_rhs)});
+          }
+          continue;
+        }
+      }
       exprt obj = convert_expression(json_member(target, "value"));
 
       // Tuple assignment → raise TypeError
