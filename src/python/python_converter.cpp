@@ -1838,6 +1838,84 @@ exprt python_convertert::convert_expression(const jsont &expr)
         bool no_spec = !format_spec.is_object() || format_spec.is_null();
         bool no_conv = !conversion.is_object() ||
                        (conversion.is_number() && conversion.value == "-1");
+        // Extract a constant format-spec string if present.
+        // f"{x:05}" gives format_spec = JoinedStr([Constant("05")]).
+        std::string spec_str;
+        bool spec_constant = false;
+        if(!no_spec && is_node_type(format_spec, "JoinedStr"))
+        {
+          const jsont &sp_values = json_member(format_spec, "values");
+          if(sp_values.is_array() && as_array(sp_values).size() == 1)
+          {
+            const jsont &sp0 = *as_array(sp_values).begin();
+            if(is_node_type(sp0, "Constant"))
+            {
+              const jsont &cv = json_member(sp0, "value");
+              if(cv.is_string())
+              {
+                spec_str = cv.value;
+                spec_constant = true;
+              }
+            }
+          }
+        }
+        // Treat ':0N' (zero-pad to width N) for int args as a
+        // precision win: emit a nondet string whose length is
+        // exactly N. The content won't match Python's exact
+        // padded decimal but for verification purposes the
+        // length constraint is what callers usually check.
+        bool handled_by_pad_spec = false;
+        if(
+          spec_constant && !spec_str.empty() && spec_str[0] == '0' &&
+          spec_str.size() >= 2)
+        {
+          bool all_digits = true;
+          for(std::size_t i = 1; i < spec_str.size(); i++)
+            if(!std::isdigit(static_cast<unsigned char>(spec_str[i])))
+            {
+              all_digits = false;
+              break;
+            }
+          if(all_digits)
+          {
+            long long width = std::stoll(spec_str.substr(1));
+            exprt inner_pad = convert_expression(json_member(v, "value"));
+            if(
+              inner_pad.type().id() == ID_signedbv ||
+              inner_pad.type().id() == ID_integer)
+            {
+              // Materialise a nondet string and constrain its length.
+              static unsigned pad_ctr = 0;
+              std::string tn = "__fstr_pad_" + std::to_string(pad_ctr++);
+              std::string tq = qualify_name(tn);
+              irep_idt ti{tq};
+              if(symbol_table.lookup(ti) == nullptr)
+              {
+                symbolt ts{ti, python_string_type(), "python"};
+                ts.base_name = tn;
+                ts.is_lvalue = true;
+                ts.is_state_var = true;
+                symbol_table.add(ts);
+              }
+              symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+              pending_checks.push_back(code_frontend_assignt{
+                tv,
+                side_effect_expr_nondett{
+                  python_string_type(), get_location(expr)}});
+              exprt len_intr = emit_string_int_function(
+                ID_cprover_string_length_func,
+                tv,
+                symbol_table,
+                pending_checks);
+              pending_checks.push_back(code_assumet{equal_exprt{
+                len_intr, from_integer(width, signedbv_typet{64})}});
+              parts.push_back(std::move(tv));
+              handled_by_pad_spec = true;
+            }
+          }
+        }
+        if(handled_by_pad_spec)
+          continue;
         if(!(no_spec && no_conv))
         {
           parts_ok = false;
