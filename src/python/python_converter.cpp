@@ -14694,6 +14694,34 @@ codet python_convertert::convert_raise(const jsont &stmt)
     block.add(std::move(set_type));
   }
 
+  // Exception payload: first positional arg (typically a message
+  // string). Register a global '__exception_payload' string symbol
+  // on first use so 'except T as e: str(e)' can read it back.
+  if(is_node_type(exc, "Call"))
+  {
+    const jsont &exc_args = json_member(exc, "args");
+    if(exc_args.is_array() && !as_array(exc_args).empty())
+    {
+      irep_idt payload_id{"python::__exception_payload"};
+      if(symbol_table.lookup(payload_id) == nullptr)
+      {
+        symbolt ps{payload_id, python_string_type(), "python"};
+        ps.base_name = "__exception_payload";
+        ps.is_lvalue = true;
+        ps.is_state_var = true;
+        symbol_table.add(ps);
+      }
+      exprt arg0 = convert_expression(*as_array(exc_args).begin());
+      if(is_python_string_type(arg0.type()))
+      {
+        code_frontend_assignt set_payload{
+          symbol_table.lookup_ref(payload_id).symbol_expr(), arg0};
+        set_payload.add_source_location() = loc;
+        block.add(std::move(set_payload));
+      }
+    }
+  }
+
   // Add a failing assertion for uncaught exceptions only at top level
   // outside of try blocks
   if(current_function.empty() && try_depth == 0)
@@ -14918,18 +14946,34 @@ codet python_convertert::convert_try(const jsont &stmt)
         std::string ename = handler_name.value;
         std::string eqname = qualify_name(ename);
         irep_idt eid{eqname};
+        // Exception-bound name is typed as python_string so
+        // 'except T as e: str(e)' can return the payload
+        // registered by raise (or an empty string if no
+        // payload was set).
         if(symbol_table.lookup(eid) == nullptr)
         {
-          symbolt esym{eid, python_int_type(), "python"};
+          symbolt esym{eid, python_string_type(), "python"};
           esym.base_name = ename;
           esym.is_lvalue = true;
           esym.is_state_var = true;
           symbol_table.add(esym);
         }
-        // Assign a nondet value (exception object)
-        except_block.add(code_frontend_assignt{
-          symbol_table.lookup_ref(eid).symbol_expr(),
-          side_effect_expr_nondett{python_int_type(), source_locationt{}}});
+        // If __exception_payload exists, copy it; otherwise
+        // assign an empty string.
+        irep_idt payload_id{"python::__exception_payload"};
+        const symbolt *payload_sym = symbol_table.lookup(payload_id);
+        if(payload_sym != nullptr)
+        {
+          except_block.add(code_frontend_assignt{
+            symbol_table.lookup_ref(eid).symbol_expr(),
+            payload_sym->symbol_expr()});
+        }
+        else
+        {
+          except_block.add(code_frontend_assignt{
+            symbol_table.lookup_ref(eid).symbol_expr(),
+            python_string_literal("")});
+        }
       }
 
       const jsont &handler_body = json_member(handler, "body");
