@@ -10201,25 +10201,74 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   {
     std::string var_name;
     std::vector<const jsont *> values;
+    std::vector<exprt> const_values;
   };
   std::vector<gen_info> gens;
 
   for(const auto &gen : as_array(generators))
   {
     const jsont &gen_iter = json_member(gen, "iter");
-    if(!is_node_type(gen_iter, "List"))
+    gen_info gi;
+    gi.var_name = json_string(json_member(json_member(gen, "target"), "id"));
+    // Literal-list form: [f(x) for x in [1, 2, 3]]
+    if(is_node_type(gen_iter, "List"))
+    {
+      const jsont &elts = json_member(gen_iter, "elts");
+      if(elts.is_array())
+      {
+        for(const auto &e : as_array(elts))
+          gi.values.push_back(&e);
+      }
+    }
+    // Name form: xs = [1, 2, 3]; [f(x) for x in xs]
+    // Resolve via list_literals if the name points to a
+    // tracked literal list.
+    else if(is_node_type(gen_iter, "Name"))
+    {
+      std::string iter_name = json_string(json_member(gen_iter, "id"));
+      auto it = list_literals.find(irep_idt{qualify_name(iter_name)});
+      if(it != list_literals.end())
+      {
+        // The list_literal is a struct_exprt with [length,
+        // data]. data is an array_exprt whose operands are
+        // the values. But we need JSON pointers for the same
+        // values — we can't plug non-JSON exprt values into
+        // the gens structure.
+        // Build synthetic JSON Constant nodes? Too complex.
+        // Instead, just take the values directly into
+        // a secondary 'const_values' stream.
+        const exprt &list_struct = it->second;
+        if(list_struct.operands().size() >= 2)
+        {
+          const exprt &length_expr = list_struct.operands()[0];
+          if(length_expr.is_constant())
+          {
+            mp_integer len;
+            if(!to_integer(to_constant_expr(length_expr), len))
+            {
+              const exprt &data_arr = list_struct.operands()[1];
+              for(mp_integer i = 0; i < len; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx < data_arr.operands().size())
+                  gi.const_values.push_back(data_arr.operands()[idx]);
+              }
+            }
+          }
+        }
+      }
+      if(gi.values.empty() && gi.const_values.empty())
+      {
+        log.warning() << "List comprehension iterable '" << iter_name
+                      << "' is not a known literal list" << messaget::eom;
+        return nil_exprt{};
+      }
+    }
+    else
     {
       log.warning() << "List comprehension only supports literal list iterables"
                     << messaget::eom;
       return nil_exprt{};
-    }
-    gen_info gi;
-    gi.var_name = json_string(json_member(json_member(gen, "target"), "id"));
-    const jsont &elts = json_member(gen_iter, "elts");
-    if(elts.is_array())
-    {
-      for(const auto &e : as_array(elts))
-        gi.values.push_back(&e);
     }
     gens.push_back(std::move(gi));
   }
@@ -10250,9 +10299,12 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   for(const auto &gi : gens)
   {
     std::vector<std::vector<std::size_t>> new_combos;
+    // Use whichever source of values is populated.
+    std::size_t n =
+      gi.values.empty() ? gi.const_values.size() : gi.values.size();
     for(const auto &combo : combos)
     {
-      for(std::size_t i = 0; i < gi.values.size(); i++)
+      for(std::size_t i = 0; i < n; i++)
       {
         auto new_combo = combo;
         new_combo.push_back(i);
@@ -10270,7 +10322,11 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     std::vector<std::pair<irep_idt, exprt>> bindings;
     for(std::size_t g = 0; g < gens.size(); g++)
     {
-      exprt val = convert_expression(*gens[g].values[combo[g]]);
+      exprt val;
+      if(!gens[g].values.empty())
+        val = convert_expression(*gens[g].values[combo[g]]);
+      else
+        val = gens[g].const_values[combo[g]];
       bindings.push_back({irep_idt{qualify_name(gens[g].var_name)}, val});
     }
 
