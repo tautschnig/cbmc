@@ -13753,7 +13753,28 @@ codet python_convertert::convert_if(const jsont &stmt)
 // expression is true."
 codet python_convertert::convert_while(const jsont &stmt)
 {
+  // Convert the test. Walrus (NamedExpr) inside the test
+  // generates pending_checks that bind variables used by
+  // the body; those bindings must re-execute every
+  // iteration, not only at loop entry. We rewrite
+  //
+  //     while cond: body
+  //
+  // as
+  //
+  //     while true:
+  //         <test-side-effects>
+  //         if not cond: break
+  //         body
+  //
+  // to put the pending_checks inside the loop body. This
+  // is a no-op when the test has no side effects.
+  std::vector<codet> test_side_effects;
+  pending_checks.swap(test_side_effects);
   exprt test = convert_expression(json_member(stmt, "test"));
+  std::vector<codet> test_pending;
+  pending_checks.swap(test_pending);
+  pending_checks.swap(test_side_effects); // restore outer state
   if(test.is_nil())
     return code_skipt{};
 
@@ -13766,6 +13787,20 @@ codet python_convertert::convert_while(const jsont &stmt)
   {
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
+  }
+
+  if(!test_pending.empty())
+  {
+    // Wrap: while(true) { side_effects; if(!test) break; body; }
+    code_blockt loop_body;
+    for(auto &c : test_pending)
+      loop_body.add(std::move(c));
+    loop_body.add(code_ifthenelset{not_exprt{test}, code_breakt{}});
+    for(const auto &s : body_block.statements())
+      loop_body.add(s);
+    code_whilet while_stmt{true_exprt{}, std::move(loop_body)};
+    while_stmt.add_source_location() = get_location(stmt);
+    return std::move(while_stmt);
   }
 
   code_whilet while_stmt{test, std::move(body_block)};
