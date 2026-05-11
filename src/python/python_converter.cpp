@@ -15241,12 +15241,20 @@ codet python_convertert::convert_raise(const jsont &stmt)
     assume.add_source_location() = loc;
     block.add(std::move(assume));
   }
+  else if(try_depth > 0)
+  {
+    // PLR §8.4: raise inside a try body. Do NOT return here —
+    // the enclosing convert_try body loop guards each
+    // subsequent statement with !__exception_active so the
+    // raise effectively skips the rest of the try body, and
+    // the except/finally machinery takes over. Emitting a
+    // return here would bypass the handler.
+  }
   else
   {
-    // Inside a function: the exception flag is set, and the caller's
-    // try/except will check __exception_active. We need to return a
-    // value of the correct type. Use safe_zero of the current return
-    // type, which may be updated later by a return statement.
+    // Inside a function but outside any try block: the
+    // exception flag is set and we must unwind to the
+    // caller. Return a value of the correct type.
     irep_idt func_id{"python::" + current_function};
     const symbolt *func_sym = symbol_table.lookup(func_id);
     if(
@@ -15419,6 +15427,33 @@ codet python_convertert::convert_try(const jsont &stmt)
 
   // Check for except handlers
   const jsont &handlers = json_member(stmt, "handlers");
+
+  // PLR §8.4: the else clause runs iff no exception was raised
+  // in the try body. Snapshot __exception_active BEFORE the
+  // handler_chain runs (the handler clears it when catching),
+  // so we can test the pre-handler state.
+  const jsont &orelse = json_member(stmt, "orelse");
+  bool has_else = orelse.is_array() && !as_array(orelse).empty();
+  exprt exc_before =
+    exc_sym != nullptr ? exprt{exc_sym->symbol_expr()} : exprt{};
+  if(has_else && exc_sym != nullptr)
+  {
+    static unsigned try_else_ctr = 0;
+    std::string tn = "__try_exc_before_" + std::to_string(try_else_ctr++);
+    std::string tq = qualify_name(tn);
+    irep_idt tid{tq};
+    if(symbol_table.lookup(tid) == nullptr)
+    {
+      symbolt ts{tid, bool_typet{}, "python"};
+      ts.base_name = tn;
+      ts.is_lvalue = true;
+      ts.is_state_var = true;
+      symbol_table.add(ts);
+    }
+    exc_before = symbol_table.lookup_ref(tid).symbol_expr();
+    block.add(code_frontend_assignt{exc_before, exc_sym->symbol_expr()});
+  }
+
   if(handlers.is_array() && !as_array(handlers).empty() && exc_sym != nullptr)
   {
     // PLR §8.4: iterate all except handlers sequentially
@@ -15546,22 +15581,31 @@ codet python_convertert::convert_try(const jsont &stmt)
 
     block.add(std::move(handler_chain));
 
-    // Execute else block (runs when no exception)
-    const jsont &orelse = json_member(stmt, "orelse");
-    if(orelse.is_array())
+    // PLR §8.4: else runs iff no exception was raised in try
+    // body. Use the snapshot captured before handler_chain.
+    if(has_else)
     {
+      code_blockt else_block;
       for(const auto &s : as_array(orelse))
-        block.add(convert_statement(s));
+        else_block.add(convert_statement(s));
+      block.add(code_ifthenelset{not_exprt{exc_before}, std::move(else_block)});
     }
   }
   else
   {
-    // No handlers — just execute the else block
-    const jsont &orelse = json_member(stmt, "orelse");
-    if(orelse.is_array())
+    // No handlers — just execute the else block (guarded by
+    // no-exception; in a try/else/finally without except, a
+    // raise in try propagates past and else is skipped).
+    if(has_else)
     {
+      code_blockt else_block;
       for(const auto &s : as_array(orelse))
-        block.add(convert_statement(s));
+        else_block.add(convert_statement(s));
+      if(exc_sym != nullptr)
+        block.add(code_ifthenelset{
+          not_exprt{exc_sym->symbol_expr()}, std::move(else_block)});
+      else
+        block.add(std::move(else_block));
     }
   }
 
