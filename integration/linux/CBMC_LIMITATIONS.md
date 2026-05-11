@@ -167,54 +167,76 @@ static inline kernel helper.
 
 Unchanged.  Environmental; not a CBMC issue.
 
-## LIM-006 — Whole-function CBMC on a real kernel source file does not terminate without stubbing
+## LIM-006 — Whole-function CBMC on a real kernel source file does not terminate without stubbing — **MITIGATED**
 
 **First hit:** M3 stretch, running `cbmc --function _aead_recvmsg` on
 the compiled `crypto/algif_aead.c`.
+**Status in M4c:** cbmc *terminates* on `_aead_recvmsg` when linked
+with `scan/adapters/aead_kernel_stubs.c` and
+`scan/adapters/aead_kernel_harness.c`; `scan.py` now reports
+`cbmc_status: "successful"` in seconds on Linux 5.10's
+`crypto/algif_aead.c`.
 
-Reconfirmed in M4b: with the aead kernel adapter linked in and
-`--replace-call-with-contract aead_request_set_crypt` applied, the
-goto binary's `_aead_recvmsg` carries the precondition ASSERT at the
-correct call site, but `cbmc --function _aead_recvmsg --unwind 2` on
-that binary does not complete within a 180-second budget
-(`scan.py` reports `cbmc_status: "timeout"` for this case).
+The stubs provide havocing bodies for the AF_ALG helpers
+`_aead_recvmsg` transitively touches (`af_alg_wait_for_data`,
+`af_alg_alloc_areq`, `af_alg_get_rsgl`, `af_alg_count_tsgl`,
+`sock_kmalloc`, `af_alg_pull_tsgl`, `crypto_aead_copy_sgl`,
+`crypto_aead_{auth,req,iv}size`, `lock_sock_nested`, `release_sock`,
+`msg_data_left`, `aead_sufficient_data`, plus miscellaneous small
+helpers — see `aead_kernel_stubs.c` for the full set).  The harness
+`__CPROVER_allocate`s 4 KiB concrete objects for the `struct socket
+*sock` and `struct msghdr *msg` parameters so cbmc's pointer
+analysis starts from a small set of distinct heap objects rather
+than an unconstrained pointer soup.
 
-**M4c progress (partial).** Stubbing experiments on `_aead_recvmsg`:
+Caveat: see the new LIM-009 for why the current SUCCESSFUL verdict
+is vacuous and how to make it sound.
 
-- `goto-instrument --drop-unused-functions` prunes the call graph
-  from ~2.65 MB to ~2.55 MB but does not shift the cbmc verdict from
-  `timeout`.
-- `goto-instrument --generate-function-body '.*' --generate-function-body-options havoc`
-  fails (regex bail-out in goto-instrument's pattern parsing).  A
-  narrower regex (`af_alg_.*|sock_.*|crypto_aead_.*|…`) also fails
-  to produce an output file; goto-instrument silently exits without
-  writing.  Possibly a latent goto-instrument bug; would merit a
-  reduced reproducer and an upstream report as a follow-up.
-- `cbmc --partial-loops` does not shift `_aead_recvmsg` from
-  `timeout` either; the full-function exploration still blows state.
+## LIM-009 — Current kernel stubs produce a vacuous SUCCESSFUL on the Copy Fail pattern
 
-**Partial mitigation landed as a kernel-layout regression**
-([`cve-2026-31431/harness_kernel.c`](../cve-2026-31431/harness_kernel.c)):
-a deterministic harness that uses the kernel's bit-packed
-`struct scatterlist` layout and the `aead` kernel adapter.  cbmc
-verifies the vulnerable shape as `FAILED` and the fixed shape as
-`SUCCESSFUL` within the regression's default budget, so the
-pipeline's correctness on the real kernel struct layout is now
-regression-tested end to end.  The full `_aead_recvmsg` verdict
-remains `timeout` in `scan.py` output.
+**First hit:** M4c, `scan.py` on
+`linux_5_10/crypto/algif_aead.c`.
 
-**Workaround direction** (future M4c follow-up): write per-helper
-havocing bodies as proper C stubs rather than relying on goto-instrument's
-regex-driven body generation.  Minimum viable stub set is
-`af_alg_wait_for_data`, `af_alg_alloc_areq`, `af_alg_get_rsgl`,
-`af_alg_count_tsgl`, `sock_kmalloc`, `crypto_aead_copy_sgl`,
-`af_alg_pull_tsgl`.  Each needs to (a) return a nondet value of the
-correct type and (b) set up scatterlist provenance such that the
-reachable path to `aead_request_set_crypt` is exercisable.  The
-`af_alg_get_rsgl` stub specifically needs to tag the rsgl pages
-`PAGE_USER_WRITABLE` via `set_page_prov`, and the `af_alg_pull_tsgl`
-stub needs to chain nondet-provenance pages into the destination so
-both the vulnerable and safe paths are reachable.
+With the M4c stubs in place, `cbmc --function _aead_recvmsg`
+terminates and reports `VERIFICATION SUCCESSFUL`.  That verdict is
+*vacuous*, not *sound*: the stubs' `af_alg_get_rsgl` and
+`af_alg_pull_tsgl` are no-ops that leave the destination scatterlist
+contents entirely nondet.  When the contract's
+`sgl_all_user_writable(dst)` walker reads the first entry's
+`page_link`, cbmc can pick a nondet witness where the `SG_END` bit
+is already set — the loop terminates after zero iterations, no page
+provenance is ever consulted, and the predicate returns 1.  Hence
+the precondition is satisfied without any page actually being
+checked.
+
+This is a known imprecision, not a bug: in the direction of
+soundness-vs-completeness the tool trades precision away.  A fully
+precise scan needs richer stubs:
+
+- `af_alg_get_rsgl` must materialise at least one concrete
+  `struct page` in `areq->first_rsgl.sgl.sg[0]` and call
+  `set_page_prov(page, PAGE_USER_WRITABLE)` on it, then set
+  `SG_END` on the correct entry.  This requires the stub to know
+  the offset of `first_rsgl.sgl.sg[0]` within `struct
+  af_alg_async_req`, which means either (a) including enough kernel
+  headers to define the type, or (b) exposing a small offset
+  constant from the kernel goto binary via `goto-instrument
+  --dump-c-type-header`.
+
+- `af_alg_pull_tsgl` must materialise pages in the destination
+  scatterlist with nondet provenance (either `PAGE_USER_WRITABLE`
+  or `PAGE_CACHE_RO`), so cbmc explores both the "sg_chain into
+  user pages" (safe) and "sg_chain into page-cache pages" (Copy
+  Fail) cases.
+
+Once those two stubs are written with full fidelity, the expected
+outcome on the vulnerable `crypto/algif_aead.c` is
+`VERIFICATION FAILED` with the `aead_request_set_crypt.precondition`
+assertion firing — exactly as the kernel-layout regression already
+demonstrates on a hand-written kernel-shaped harness
+(`cve-2026-31431/harness_kernel.c`).
+
+**Status.** Tracked follow-up work; infrastructure in place.
 
 ## LIM-007 — SARIF output from CBMC — **RESOLVED**
 

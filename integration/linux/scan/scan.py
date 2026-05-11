@@ -233,10 +233,14 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
 
 # Per-module kernel adapter: path to the adapter source file plus the
 # extra goto-cc inputs needed alongside it (typically the shared
-# page_provenance ghost state).
+# page_provenance ghost state, plus havocing stubs for kernel helpers
+# and an entry-point harness that controls the initial-state
+# geometry).  See scan/adapters/README.md for how each piece fits.
 KERNEL_ADAPTERS: dict[str, dict] = {
     "aead": {
         "adapter": SCRIPT_DIR / "adapters" / "aead_kernel_adapter.c",
+        "stubs":   SCRIPT_DIR / "adapters" / "aead_kernel_stubs.c",
+        "harness": SCRIPT_DIR / "adapters" / "aead_kernel_harness.c",
         "deps": [PROPERTIES_DIR / "page_provenance" / "page_provenance.c"],
     },
 }
@@ -390,10 +394,14 @@ def run_cbmc_kernel(
             ),
         ), None)
 
-    # Link kernel binary + adapter + deps.
+    # Link kernel binary + adapter + stubs + harness + deps.
     linked_gb = tmp / f"{target.stem}.linked.gb"
-    link_inputs = [str(kernel_gb), str(spec["adapter"])] \
-        + [str(p) for p in spec["deps"]]
+    link_inputs = [str(kernel_gb), str(spec["adapter"])]
+    if "stubs" in spec:
+        link_inputs.append(str(spec["stubs"]))
+    if "harness" in spec:
+        link_inputs.append(str(spec["harness"]))
+    link_inputs += [str(p) for p in spec.get("deps", [])]
     _run(
         [str(goto_cc), *link_inputs, "-o", str(linked_gb)],
         timeout=GOTOCC_TIMEOUT, check=True,
@@ -410,11 +418,15 @@ def run_cbmc_kernel(
         timeout=GI_TIMEOUT, check=True,
     )
 
-    # Pick a per-module kernel entry point.  For aead this is
-    # _aead_recvmsg in algif_aead.c.  If the file does not have this
-    # symbol, fall back to the file's main if any.
+    # Pick a per-module kernel entry point.  If the spec ships a
+    # harness, its main() is the entry point.  Otherwise fall back to
+    # the `_aead_recvmsg`-style per-module default or cbmc's synthesised
+    # main.
     entry_candidates = {"aead": "_aead_recvmsg"}
-    entry = entry_candidates.get(module, "main")
+    if "harness" in spec:
+        entry = "main"
+    else:
+        entry = entry_candidates.get(module, "main")
 
     mr = ModuleReport(module=module)
     sarif = tmp / f"{target.stem}.{module}.sarif"

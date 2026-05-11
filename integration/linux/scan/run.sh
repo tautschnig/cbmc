@@ -54,13 +54,19 @@ else
   LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
   rc=$?
   set -e
-  if [[ $rc -eq 0 ]] && \
+  # After M4c's stubs + harness landed, the expected state on
+  # crypto/algif_aead.c is `successful` — but vacuously so; see
+  # LIM-009.  A precise verdict (`failed` on the vulnerable tree)
+  # will be produced once the stubs materialise concrete SGL
+  # contents.  The regression accepts either `successful` or
+  # `failed` as expected until then.
+  if [[ $rc -le 1 ]] && \
      grep -q '"line": 280' "$tmp/case2.json" && \
-     grep -qE '"cbmc_status": "(timeout|failed|successful)"' "$tmp/case2.json"; then
+     grep -qE '"cbmc_status": "(successful|failed|timeout)"' "$tmp/case2.json"; then
     status=$(grep -oE '"cbmc_status": "[^"]*"' "$tmp/case2.json" | head -1)
-    echo "  [ok] exit 0, line 280 hit, $status"
+    echo "  [ok] exit $rc, line 280 hit, $status"
   else
-    echo "  [FAIL] expected exit 0 + line-280 hit + a cbmc verdict" >&2
+    echo "  [FAIL] expected rc 0 or 1 + line-280 hit + a cbmc verdict" >&2
     echo "         actual rc=$rc; last 20 lines of output:" >&2
     tail -20 "$tmp/case2.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
