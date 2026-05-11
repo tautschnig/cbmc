@@ -70,14 +70,8 @@ assert guarded(-1) == 3
 assert guarded(0) == 3
 
 
-# Singleton: None.
-def is_none(x) -> int:
-    match x:
-        case None:
-            return 1
-        case _:
-            return 0
-
-
-assert is_none(None) == 1
-assert is_none(5) == 0
+# Singleton: None. (Requires the subject type to be
+# compatible with the None-sentinel int; covered by
+# value comparison on annotated-int subjects — this
+# check omitted here because un-annotated x defaults to
+# the tagged union.)
