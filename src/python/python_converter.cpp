@@ -7999,6 +7999,45 @@ exprt python_convertert::convert_call(const jsont &expr)
         ensure_fn(ID_cprover_associate_length_to_array_func);
         return result;
       }
+      // Symbolic float: emit cprover_string_of_double_func
+      // (Python floats are double-precision) so the solver
+      // knows the result's content precisely.
+      if(arg.type().id() == ID_floatbv)
+      {
+        exprt result = emit_string_function(
+          ID_cprover_string_of_double_func,
+          {arg},
+          symbol_table,
+          pending_checks);
+        auto ensure_fn2 = [&](const irep_idt &fid)
+        {
+          if(symbol_table.lookup(fid) == nullptr)
+          {
+            array_typet inf_array_type{
+              unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
+            std::vector<typet> at;
+            if(fid == ID_cprover_associate_array_to_pointer_func)
+            {
+              at.push_back(inf_array_type);
+              at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
+            }
+            else
+            {
+              at.push_back(inf_array_type);
+              at.push_back(signedbv_typet{64});
+            }
+            symbolt fs{
+              fid,
+              mathematical_function_typet(std::move(at), signedbv_typet{32}),
+              "python"};
+            fs.base_name = id2string(fid);
+            symbol_table.add(fs);
+          }
+        };
+        ensure_fn2(ID_cprover_associate_array_to_pointer_func);
+        ensure_fn2(ID_cprover_associate_length_to_array_func);
+        return result;
+      }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
     // str() with no arguments → empty string
