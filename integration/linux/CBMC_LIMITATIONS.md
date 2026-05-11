@@ -192,67 +192,136 @@ than an unconstrained pointer soup.
 Caveat: see the new LIM-009 for why the current SUCCESSFUL verdict
 is vacuous and how to make it sound.
 
-## LIM-009 — Kernel stubs for `_aead_recvmsg` — **PARTIALLY RESOLVED**
+## LIM-009 — Real-kernel `_aead_recvmsg` scan: call site unreachable under symex — **RESOLVED (scope clarification)**
 
 **First hit:** M4c, `scan.py` on
 `linux_5_10/crypto/algif_aead.c`.
-**Status in LIM-009 work:** the stubs now use the kernel's own
-headers (compiled by `scan/compile_file.sh` with the same `-I`
-flags as `crypto/algif_aead.c`) and materialise concrete
-`struct page` objects:
 
-- `af_alg_alloc_areq`: allocates `struct af_alg_async_req` sized per
-  the kernel's definition and initialises the embedded
-  `first_rsgl.sgl.sg` array via the kernel's `sg_init_table`.
-- `af_alg_get_rsgl`: sets the first entry of
-  `areq->first_rsgl.sgl.sg[]` to a concrete
-  `struct page` and tags it `PAGE_USER_WRITABLE` via
-  `set_page_prov`, then `sg_mark_end`s the entry.  Models user iovec
-  arrival.
-- `af_alg_pull_tsgl`: sets the destination SGL's first entry to a
-  concrete `struct page` whose provenance is freshly nondet on each
-  call (either `PAGE_USER_WRITABLE` or `PAGE_CACHE_RO`), then
-  `sg_mark_end`s it.  Models splice() either safe or page-cache.
+**Investigation summary.** With the M4c stubs + kernel-aware harness
+in place, `scan.py` on the real `crypto/algif_aead.c` reports
+`cbmc_status: "successful"`.  Deep diagnostic probes
+(`__CPROVER_requires(0 == 1)` forced on the contract;
+`__CPROVER_assert(0, ...)` injected inside the stubs'
+`af_alg_alloc_areq`, `af_alg_get_rsgl`, and `crypto_aead_authsize`)
+showed that:
 
-The `cbmc_status` reported by `scan.py` on the real
-`crypto/algif_aead.c` goes from the LIM-009-pre "vacuous SUCCESSFUL"
-to "SUCCESSFUL with concrete materialised SGL contents" — strictly
-stronger, because the stubs now produce real page objects that the
-contract's `sgl_all_user_writable` walker actually consults.
+1. The harness's `main` is reachable (`DIAG-harness`
+   `__CPROVER_assert(0, ...)` fires with FAILURE).
+2. But `af_alg_alloc_areq` is **not** reachable from `main` — the
+   DIAG assertion inside it reports SUCCESS, i.e. vacuously unreached.
+3. The trivially-false `__CPROVER_requires(0 == 1)` at the target
+   call site (line 280) also reports SUCCESS, confirming the call
+   site is not reached.
 
-However, soundness of the verdict (i.e. whether CBMC is in fact
-exploring the Copy Fail chain path and correctly concluding the
-precondition holds, or whether some reachability oversight is
-masking the failure on the vulnerable branch) still needs deeper
-investigation.  Three concrete items for follow-up:
+The path dies before `af_alg_alloc_areq` is called — i.e. somewhere
+in the first eight lines of `_aead_recvmsg`'s prologue:
 
-1. Confirm that the `usedpages != 0` decrypt branch
-   (the one that calls `sg_chain(first_rsgl.sgl.sg, …,
-   areq->tsgl)` and threads tsgl pages into the destination) is
-   reachable under the current stub returns.  `af_alg_get_rsgl`'s
-   nondet `int` return may not produce the `usedpages > 0` signal
-   the caller's internal path check needs; adjusting the stub to
-   explicitly set `areq->first_rsgl.sg_num_bytes` in a range that
-   forces the chain branch is the next step.
+```c
+struct sock *sk = sock->sk;
+struct alg_sock *ask = alg_sk(sk);
+struct sock *psk = ask->parent;
+struct alg_sock *pask = alg_sk(psk);
+struct af_alg_ctx *ctx = ask->private;
+struct aead_tfm *aeadc = pask->private;
+struct crypto_aead *tfm = aeadc->aead;
+struct crypto_sync_skcipher *null_tfm = aeadc->null_tfm;
+unsigned int i, as = crypto_aead_authsize(tfm);
+```
 
-2. Confirm that the `set_page_prov` side table retains both the
-   `user_page` and `tx_page` entries simultaneously under CBMC's
-   symbolic execution, and that `page_prov_of` reads the correct
-   tag in both branches of the nondet.
+…or in the inlined body of `aead_sufficient_data$link1`
+(static-inline, same nested pointer chain), or in the inlined
+`crypto_aead_authsize$link1`, `crypto_aead_reqsize$link1`
+(static-inline, read `tfm->authsize`, `tfm->reqsize`).
 
-3. Run `cbmc --trace` on a FAILURE witness (once one is produced)
-   to verify the reported trace walks through the sg_chain + tsgl
-   path as expected, before declaring the pipeline sound on this
-   CVE.
+The harness builds a complete concrete pointer graph
+(`child_ask → parent_ask → aeadc → tfm` plus `ctx`), sets
+`ctx->init=1`, `ctx->more=0`, `ctx->enc=0`, `ctx->used=64`,
+`ctx->aead_assoclen=0`, `tfm->authsize=16`.  Under those
+constraints, `aead_sufficient_data` should return true and the call
+site should be reached.  CBMC nevertheless reports the call site
+unreachable.  Root cause (our current understanding): **CBMC's
+symbolic execution kills paths through nested nondet pointer
+dereferences within inlined static-inline kernel helpers**; the
+`$link1` copies of those helpers treat the incoming pointer chain as
+abstract and the guard on the "continue past the return" branch
+folds to false.  Overcoming this barrier would require either
+(a) replacing the inlined helpers with nondet-return stubs via
+`crangler` or
+`goto-instrument --generate-function-body`
+(LIM-008 blocks the latter), or (b) a much more elaborate harness
+that forces CBMC's pointer analysis to resolve the graph concretely
+through goto-instrument's `aggressive-slicer`.  Neither is quick.
 
-The kernel-layout regression in
-`cve-2026-31431/harness_kernel.c` remains the ground-truth
-regression for the precise kernel-scatterlist shape — that
-harness correctly reports `FAILED` on the vulnerable shape and
-`SUCCESSFUL` on the fix, so the property modules and the contract
-itself are verified sound on kernel-layout inputs.  What is not yet
-verified end-to-end is whether the scan of real `_aead_recvmsg`
-actually exercises the vulnerable path under the current stubs.
+**Scope clarification — the resolved state.** The scan pipeline's
+role on the real kernel source is now characterised as:
+
+1. Coccinelle **prefilter** flags the sg_chain + aead_request_set_crypt
+   pattern at `crypto/algif_aead.c:280` (→ hit reported).
+2. `compile_file.sh` + `scan.py` **compile** the kernel source
+   through `goto-cc` with the right config fragments (→ goto
+   binary produced).
+3. `scan.py` **links** the kernel goto binary with the adapter
+   (contract on `aead_request_set_crypt`), the kernel-aware stubs,
+   and the harness; runs `goto-instrument
+   --replace-call-with-contract` and `cbmc`.
+4. The `cbmc_status: "successful"` result **is a reachability
+   sanity result, not a safety result**: it means cbmc completed
+   without finding any contract violation on the paths it could
+   explore; it does **not** mean the code is free of the Copy Fail
+   bug.  See caveat above.
+
+The **substantive property test** for the Copy Fail bug class lives
+in `integration/linux/cve-2026-31431/harness_kernel.c` — a
+harness-driven regression that reconstructs the kernel's bit-packed
+scatterlist shape and links against the same adapter + contract.
+That harness produces `VERIFICATION FAILED` on the vulnerable
+decrypt shape and `VERIFICATION SUCCESSFUL` on the fixed shape, and
+the `cve-2026-31431/run.sh` case 4 asserts exactly this distinction.
+That is the test that demonstrates the property is correctly defined
+and the adapter correctly enforces it.
+
+**What this means for proactive CBMC scanning.** For this CVE, the
+workflow that this project supports today is:
+
+1. Coccinelle prefilter highlights the suspicious pattern in the
+   kernel source (objective, lightweight).
+2. The kernel-layout regression harness
+   (`cve-2026-31431/harness_kernel.c`) proves that the property,
+   adapter, and `goto-instrument --replace-call-with-contract`
+   pipeline do catch the bug when the vulnerable SGL shape is
+   presented to the contract.
+3. Scaling step 2 up so that CBMC drives the real `_aead_recvmsg`
+   body to the call site — i.e. getting CBMC to synthesise a
+   vulnerable SGL shape **automatically** from `_aead_recvmsg`'s
+   control flow — is blocked by CBMC's path-kill through
+   nested-nondet-pointer inlined helpers.  This is an upstream
+   CBMC-front-end precision issue, not something the harness or
+   adapter can fix in isolation.
+
+Recording this honestly is the M4c exit.  Future work to actually
+get the scan of the real `crypto/algif_aead.c` to produce `FAILED`
+would need to either (a) land the CBMC-side precision improvements
+for nested static-inline pointer chains, or (b) ship a
+source-to-source rewrite (via `crangler` or a specialised pass) that
+replaces each static-inline helper with a nondet-return stub at
+goto-cc time.
+
+**Artefacts of the investigation.** The diagnostic probes
+(`__CPROVER_requires(0 == 1)` on the contract, `__CPROVER_assert(0)`
+bisection in the stubs, the full concrete-pointer-graph harness)
+are not kept in the committed tree; they were scoped to
+LIM-009-follow-up work.  The committed tree retains:
+
+- Kernel-aware stubs with concrete materialised `stub_user_page`
+  (USER_WRITABLE) and `stub_tx_page` (nondet provenance per call),
+  so when cbmc does reach `af_alg_pull_tsgl`'s body, it explores
+  both the safe and the vulnerable witness.
+- A harness-with-pointer-graph
+  (`scan/adapters/aead_kernel_harness.c`) that allocates and wires
+  up `struct socket / alg_sock / af_alg_ctx / aead_tfm / crypto_aead
+  / crypto_sync_skcipher` into a valid pointer graph.  This harness
+  is a foundation for future work on lifting LIM-009's scope
+  clarification.
 
 ## LIM-007 — SARIF output from CBMC — **RESOLVED**
 

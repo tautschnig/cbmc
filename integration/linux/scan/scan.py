@@ -396,8 +396,12 @@ def run_cbmc_kernel(
 
     # Compile the kernel-aware stubs (if any) with the same kernel
     # flags — they `#include <linux/…>` and need the same -I soup.
-    # The adapter and harness are kept free of kernel-header deps and
-    # are linked as plain C via goto-cc below.
+    # Same story for the harness, which wants to include kernel
+    # headers so it can build a valid pointer graph for the entry
+    # function (otherwise nested nondet dereferences inside inlined
+    # helpers kill reachability before the target call site is
+    # reached).  The adapter is kept free of kernel-header deps and
+    # is linked as plain C via goto-cc below.
     stubs_gb: Path | None = None
     if "stubs" in spec:
         stubs_gb = tmp / f"{target.stem}.stubs.gb"
@@ -415,13 +419,30 @@ def run_cbmc_kernel(
                 ),
             ), None)
 
+    harness_gb: Path | None = None
+    if "harness" in spec:
+        harness_gb = tmp / f"{target.stem}.harness.gb"
+        try:
+            _run(
+                [str(SCRIPT_DIR / "compile_file.sh"), ktree,
+                 str(Path(spec["harness"]).resolve()), str(harness_gb)],
+                timeout=GOTOCC_TIMEOUT, check=True,
+            )
+        except subprocess.TimeoutExpired:
+            return (ModuleReport(
+                module=module, cbmc_status="error",
+                cbmc_notes=(
+                    f"compile_file.sh exceeded {GOTOCC_TIMEOUT}s on harness"
+                ),
+            ), None)
+
     # Link kernel binary + stubs binary + adapter + harness + deps.
     linked_gb = tmp / f"{target.stem}.linked.gb"
     link_inputs = [str(kernel_gb), str(spec["adapter"])]
     if stubs_gb is not None:
         link_inputs.append(str(stubs_gb))
-    if "harness" in spec:
-        link_inputs.append(str(spec["harness"]))
+    if harness_gb is not None:
+        link_inputs.append(str(harness_gb))
     link_inputs += [str(p) for p in spec.get("deps", [])]
     _run(
         [str(goto_cc), *link_inputs, "-o", str(linked_gb)],

@@ -107,7 +107,8 @@ static void init_provenance_once(void)
 
 int af_alg_wait_for_data(struct sock *sk, unsigned int flags, unsigned int min)
 {
-  return stub_nondet_int();
+  // Force success so the caller does not early-return on a nondet error.
+  return 0;
 }
 
 void lock_sock_nested(struct sock *sk, int subclass)
@@ -181,7 +182,7 @@ int af_alg_get_rsgl(
   areq->last_rsgl = &areq->first_rsgl;
   if(outlen)
     *outlen = 4096;
-  return stub_nondet_int();
+  return 0; // Force no-error.
 }
 
 /// af_alg_count_tsgl: bounded nondet count of TX SG entries.
@@ -246,7 +247,7 @@ int crypto_aead_copy_sgl(
   struct scatterlist *dst,
   unsigned int len)
 {
-  return stub_nondet_int();
+  return 0; // Force no-error.
 }
 
 int crypto_aead_encrypt(struct aead_request *req)
@@ -270,7 +271,7 @@ u32 crypto_aead_get_flags(struct crypto_aead *tfm)
 
 int aead_sufficient_data(struct sock *sk)
 {
-  return stub_nondet_int();
+  return 1; // Force sufficient.
 }
 
 void crypto_init_wait(struct crypto_wait *wait)
