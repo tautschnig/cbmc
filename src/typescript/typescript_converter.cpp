@@ -1604,6 +1604,94 @@ exprt typescript_convertert::ts_string_to_refined(const exprt &ts_string)
   return struct_exprt{{temp_len, pointer}, refined_ty};
 }
 
+exprt typescript_convertert::ts_call_string_returning_function(
+  const irep_idt &func_id,
+  const exprt::operandst &args)
+{
+  // Allocate fresh scalar temps for the result length and content,
+  // then call the cprover_string_*_func with
+  //   (result_length, result_content, args...)
+  // and unpack back into our inline-array struct via per-slot
+  // cprover_string_char_at_func applications.
+  typet solver_len_type = signedbv_typet{64};
+  typet char_type = unsignedbv_typet{16};
+  pointer_typet char_ptr_type{char_type, 64};
+  refined_string_typet refined_ty{solver_len_type, char_ptr_type};
+
+  static unsigned ret_ctr = 0;
+  auto fresh = [this](const std::string &base, const typet &t)
+  {
+    std::string name = base + "_" + std::to_string(ret_ctr++);
+    irep_idt id{"typescript::" + name};
+    symbolt s{id, t, "typescript"};
+    s.base_name = name;
+    s.is_lvalue = true;
+    s.is_state_var = true;
+    symbol_table.add(s);
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+  exprt result_len_sym = fresh("__ts_strfn_len", solver_len_type);
+  exprt result_ptr_sym = fresh("__ts_strfn_ptr", char_ptr_type);
+
+  // Declare the function if not already in the symbol table.
+  if(symbol_table.lookup(func_id) == nullptr)
+  {
+    std::vector<typet> arg_types = {solver_len_type, char_ptr_type};
+    for(const auto &a : args)
+      arg_types.push_back(a.type());
+    mathematical_function_typet ft(std::move(arg_types), signedbv_typet{32});
+    symbolt fs{func_id, ft, "typescript"};
+    fs.base_name = id2string(func_id);
+    symbol_table.add(fs);
+  }
+
+  // Build the call: func(result_len, result_ptr, args...).
+  exprt::operandst call_args;
+  call_args.push_back(result_len_sym);
+  call_args.push_back(result_ptr_sym);
+  for(const auto &a : args)
+    call_args.push_back(a);
+  function_application_exprt app(
+    symbol_exprt{func_id, symbol_table.lookup_ref(func_id).type}, call_args);
+  app.type() = signedbv_typet{32};
+  exprt rc_sym = fresh("__ts_strfn_rc", signedbv_typet{32});
+  pending_stmts.push_back(code_frontend_assignt{rc_sym, app});
+
+  // Declare cprover_string_char_at_func if needed.
+  if(symbol_table.lookup(ID_cprover_string_char_at_func) == nullptr)
+  {
+    std::vector<typet> ca_arg_types = {refined_ty, signedbv_typet{32}};
+    mathematical_function_typet ca_ft(std::move(ca_arg_types), char_type);
+    symbolt cas{ID_cprover_string_char_at_func, ca_ft, "typescript"};
+    cas.base_name = id2string(ID_cprover_string_char_at_func);
+    symbol_table.add(cas);
+  }
+
+  // Unpack into our inline-array struct.
+  struct_typet str_type = typescript_string_type();
+  const auto &data_arr_type = to_array_type(str_type.components()[1].type());
+  exprt result_len_32 = typecast_exprt{result_len_sym, signedbv_typet{32}};
+  exprt::operandst result_chars;
+  for(std::size_t i = 0; i < TYPESCRIPT_MAX_STRING_LENGTH; ++i)
+  {
+    exprt idx = from_integer(i, signedbv_typet{32});
+    exprt refined_arg =
+      struct_exprt{{result_len_sym, result_ptr_sym}, refined_ty};
+    function_application_exprt char_at_app(
+      symbol_exprt{
+        ID_cprover_string_char_at_func,
+        symbol_table.lookup_ref(ID_cprover_string_char_at_func).type},
+      {refined_arg, idx});
+    char_at_app.type() = char_type;
+    exprt in_bounds = binary_relation_exprt{idx, ID_lt, result_len_32};
+    result_chars.push_back(
+      if_exprt{in_bounds, std::move(char_at_app), from_integer(0, char_type)});
+  }
+  return struct_exprt{
+    {result_len_32, array_exprt{std::move(result_chars), data_arr_type}},
+    str_type};
+}
+
 exprt typescript_convertert::convert_string_literal_from_text(
   const std::string &text)
 {

@@ -1980,6 +1980,28 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             list_type};
         }
       }
+      // ES2024 §22.1.3.25-31: Symbolic toLowerCase / toUpperCase /
+      // trim / trimStart / trimEnd via the refined-string solver.
+      if(
+        !obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()) &&
+        (method == "toLowerCase" || method == "toUpperCase" ||
+         method == "trim" || method == "trimStart" || method == "trimEnd") &&
+        (!args.is_array() || to_json_array(args).empty()))
+      {
+        irep_idt func_id;
+        if(method == "toLowerCase")
+          func_id = ID_cprover_string_to_lower_case_func;
+        else if(method == "toUpperCase")
+          func_id = ID_cprover_string_to_upper_case_func;
+        else if(method == "trim")
+          func_id = ID_cprover_string_trim_func;
+        else if(method == "trimStart")
+          func_id = ID_cprover_string_trim_func; // closest: trim start+end
+        else
+          func_id = ID_cprover_string_trim_func; // closest: trim start+end
+        exprt refined_self = ts_string_to_refined(obj_expr);
+        return ts_call_string_returning_function(func_id, {refined_self});
+      }
       // ES2024 sec-string.prototype.indexof
       // indexOf on non-constant strings with constant search target:
       // scan data array for matching substring

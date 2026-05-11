@@ -141,6 +141,22 @@ private:
   /// See doc/refined-string-migration-plan.md for context.
   exprt ts_string_to_refined(const exprt &ts_string);
 
+  /// Call a cprover_string_*_func that RETURNS a string, then
+  /// repack the result into our inline-array struct.
+  ///
+  /// The solver signature is:
+  ///   int func(result_length, result_content, args...)
+  /// where result_length and result_content are fresh scalar temps
+  /// the solver constrains to describe the result string. We
+  /// allocate those temps, emit the call, then build our struct
+  /// via per-slot cprover_string_char_at_func calls.
+  ///
+  /// Used for concat, toLowerCase, toUpperCase, trim, substring,
+  /// repeat, padStart, padEnd, etc.
+  exprt ts_call_string_returning_function(
+    const irep_idt &func_id,
+    const exprt::operandst &args);
+
   // --- Expression conversion ---
   exprt convert_expression(const jsont &node);
   exprt convert_binary_expression(const jsont &node);
