@@ -214,6 +214,10 @@ private:
   /// starting with the class itself. Populated on ClassDef by
   /// compute_c3_mro().
   std::map<std::string, std::vector<std::string>> class_mro;
+  /// Per-class set of method names that are declared with
+  /// @property. Attribute reads of these names call the method
+  /// with self as the single argument (PLR §3.3.2).
+  std::map<std::string, std::set<std::string>> class_property_methods;
   /// The class whose method call initiated the current super()
   /// dispatch. Set by the call site (e.g. when D() is called,
   /// set to "D"); nested super() inlining preserves it. Empty
