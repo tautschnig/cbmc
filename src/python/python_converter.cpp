@@ -6220,55 +6220,157 @@ exprt python_convertert::convert_call(const jsont &expr)
       if(obj_base_type.id() != ID_struct)
       {
         // Tagged-union (python_value_type) values: route the
-        // method call through __class_ptr. Pick the first
-        // class_type whose method table has 'method_name' and
-        // dispatch to that class's method with (CastToClass*)
-        // __class_ptr as self.
+        // method call through __class_ptr with virtual
+        // dispatch on __class_tag.
         //
-        // Matches the attribute read/write path — coarse when
-        // multiple classes share the method name, precise when
-        // the caller narrowed via isinstance first.
+        // PLR §3.3.2 Method resolution order: Python picks the
+        // override along the MRO. Our CLASS tag stores the
+        // concrete class tag at wrap time; we emit an if-chain
+        // comparing *(__class_ptr as int32*) against the tag
+        // of every class that both (a) defines method_name and
+        // (b) is a compatible entry point (defines or inherits
+        // it). The first matching class wins when multiple
+        // classes share the method name but aren't
+        // subclass-related — matches Python semantics when the
+        // caller has not narrowed via isinstance.
         if(
           obj_base_type.id() == ID_struct_tag &&
           id2string(to_struct_tag_type(obj_base_type).get_identifier()) ==
             std::string{PYTHON_VALUE_TAG})
         {
+          // Collect classes that define method_name directly.
+          std::vector<std::string> method_owners;
           for(const auto &[cls_name, cls_type] : class_types)
           {
             irep_idt mid{"python::" + cls_name + "::" + method_name};
             const symbolt *msym = symbol_table.lookup(mid);
-            if(msym == nullptr || msym->type.id() != ID_code)
-              continue;
+            if(msym != nullptr && msym->type.id() == ID_code)
+              method_owners.push_back(cls_name);
+          }
+          if(method_owners.empty())
+            return side_effect_expr_nondett{obj.type(), get_location(expr)};
+
+          // Build argument list (shared across all branches).
+          exprt::operandst call_args;
+          if(args.is_array())
+          {
+            for(const auto &a : as_array(args))
+              call_args.push_back(convert_expression(a));
+          }
+
+          // Single owner: simple dispatch (common case).
+          if(method_owners.size() == 1)
+          {
+            const std::string &cls_name = method_owners.front();
+            const auto &cls_type = class_types.at(cls_name);
+            irep_idt mid{"python::" + cls_name + "::" + method_name};
+            const symbolt *msym = symbol_table.lookup_ref(mid).name.empty()
+                                    ? nullptr
+                                    : &symbol_table.lookup_ref(mid);
             const code_typet &mty = to_code_type(msym->type);
             exprt::operandst mcall_args;
-            // self pointer: (ClassType*) __class_ptr
-            exprt class_ptr = python_value_class_ptr(obj);
             pointer_typet cls_ptr_type{cls_type, 64};
-            exprt self_ptr = typecast_exprt{class_ptr, cls_ptr_type};
+            exprt self_ptr =
+              typecast_exprt{python_value_class_ptr(obj), cls_ptr_type};
             bool has_self = !mty.parameters().empty() &&
                             mty.parameters()[0].type().id() == ID_pointer;
             if(has_self)
               mcall_args.push_back(self_ptr);
-            if(args.is_array())
+            for(std::size_t i = 0; i < call_args.size(); i++)
             {
-              for(const auto &a : as_array(args))
-              {
-                exprt av = convert_expression(a);
-                std::size_t idx = mcall_args.size();
-                if(
-                  idx < mty.parameters().size() &&
-                  av.type() != mty.parameters()[idx].type())
-                  av = safe_typecast(av, mty.parameters()[idx].type());
-                mcall_args.push_back(std::move(av));
-              }
+              exprt av = call_args[i];
+              std::size_t pidx = mcall_args.size();
+              if(
+                pidx < mty.parameters().size() &&
+                av.type() != mty.parameters()[pidx].type())
+                av = safe_typecast(av, mty.parameters()[pidx].type());
+              mcall_args.push_back(std::move(av));
             }
+            return side_effect_expr_function_callt{
+              msym->symbol_expr(),
+              std::move(mcall_args),
+              mty.return_type(),
+              get_location(expr)};
+          }
+
+          // Multi-owner: virtual dispatch via __class_tag.
+          // Assign the matching branch's call result to a
+          // shared tmp symbol.
+          //
+          // Return type: use the first owner's return type;
+          // the code_typet contract across overrides is
+          // conventionally the same.
+          irep_idt first_mid{
+            "python::" + method_owners.front() + "::" + method_name};
+          const symbolt *first_sym = symbol_table.lookup(first_mid);
+          typet ret_type = to_code_type(first_sym->type).return_type();
+
+          static unsigned vdisp_ctr = 0;
+          std::string tn = "__vdisp_" + std::to_string(vdisp_ctr++);
+          std::string tq = qualify_name(tn);
+          irep_idt ti{tq};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, ret_type, "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            symbol_table.add(ts);
+          }
+          symbol_exprt result_sym = symbol_table.lookup_ref(ti).symbol_expr();
+
+          // Read __class_tag from the wrapped struct.
+          pointer_typet i32_ptr{signedbv_typet{32}, 64};
+          dereference_exprt class_tag{
+            typecast_exprt{python_value_class_ptr(obj), i32_ptr},
+            signedbv_typet{32}};
+
+          for(const auto &cls_name : method_owners)
+          {
+            const auto &cls_type = class_types.at(cls_name);
+            irep_idt mid{"python::" + cls_name + "::" + method_name};
+            const symbolt *msym = symbol_table.lookup(mid);
+            const code_typet &mty = to_code_type(msym->type);
+
+            exprt::operandst mcall_args;
+            pointer_typet cls_ptr_type{cls_type, 64};
+            exprt self_ptr =
+              typecast_exprt{python_value_class_ptr(obj), cls_ptr_type};
+            bool has_self = !mty.parameters().empty() &&
+                            mty.parameters()[0].type().id() == ID_pointer;
+            if(has_self)
+              mcall_args.push_back(self_ptr);
+            for(std::size_t i = 0; i < call_args.size(); i++)
+            {
+              exprt av = call_args[i];
+              std::size_t pidx = mcall_args.size();
+              if(
+                pidx < mty.parameters().size() &&
+                av.type() != mty.parameters()[pidx].type())
+                av = safe_typecast(av, mty.parameters()[pidx].type());
+              mcall_args.push_back(std::move(av));
+            }
+
+            auto tit = class_tag_ids.find(cls_name);
+            if(tit == class_tag_ids.end())
+              continue;
+            exprt tag_match = equal_exprt{
+              class_tag, from_integer(tit->second, signedbv_typet{32})};
+
+            code_blockt branch;
             side_effect_expr_function_callt call{
               msym->symbol_expr(),
               std::move(mcall_args),
               mty.return_type(),
               get_location(expr)};
-            return std::move(call);
+            exprt call_result = call;
+            if(call_result.type() != ret_type)
+              call_result = safe_typecast(call_result, ret_type);
+            branch.add(code_frontend_assignt{result_sym, call_result});
+            pending_checks.push_back(
+              code_ifthenelset{std::move(tag_match), std::move(branch)});
           }
+          return std::move(result_sym);
         }
         // Non-struct type (e.g., struct_tag_typet for strings) — return nondet
         return side_effect_expr_nondett{obj.type(), get_location(expr)};
