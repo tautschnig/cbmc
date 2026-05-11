@@ -1,9 +1,12 @@
 # Refined String Solver Migration Plan for TypeScript Frontend
 
-Status: Phase 1 + Phase 10 done; Phases 2–8 deferred. See
-"Execution status" section.
+Status: Phase 1 + Phase 10 done; boundary-conversion pilot
+succeeded (2026-05-11) — `+str` symbolic, includes, startsWith,
+endsWith migrated. See "Execution status" section.
+
 Model: the Python frontend's migration on branch `tautschnig/py`  
-Estimated effort: ~500 LOC in our frontend + ~20 LOC in CBMC solver/ + ~50 test adjustments
+Estimated effort: ~500 LOC for full migration;
+boundary-conversion piecewise approach uses ~100 LOC per method.
 
 This document describes a detailed step-by-step plan for adopting
 CBMC's refined string solver (`src/solvers/strings/`) in the
@@ -11,29 +14,69 @@ TypeScript frontend. The plan is derived from studying the Python
 frontend's migration on the `tautschnig/py` branch (commits from
 `5555d73df0` through `7228ef8db5`).
 
-## Execution status (as of 2026-05-10)
+## Execution status (as of 2026-05-11)
 
-- **Phase 1 (type retag)**: DONE. Struct keeps inline-array shape,
-  only the tag changed to `CPROVER_PREFIX "refined_string_type"`.
-  The plan called for switching data to a pointer; we chose a
-  safer minimal change that keeps all 626 CORE tests passing.
-- **Phase 10 (auto-enable)**: DONE. `.ts`/`.tsx` source triggers
-  `--refine-strings` automatically unless `--z3`/`--smt2` is set.
-- **Phases 2–8 (handler migration)**: NOT DONE. Deferred because:
-  - All 4 originally-targeted string KNOWNBUGs were already
-    closed in the previous session via per-case symbolic
-    encodings (see `doc/over-approximation-audit.md`).
-  - Full migration requires switching our inline-array struct to
-    a pointer-based `refined_string_exprt`, which is invasive
-    (~500 LOC) and risks destabilising the 626 existing CORE
-    tests.
-  - The refined-string solver now *recognises* our strings (via
-    the retagged type), but doesn't yet *constrain* any of our
-    string operations because our handlers emit struct literals
-    rather than `cprover_string_*_func` applications.
-- **Phase 9 (solver patches)**: NOT NEEDED yet; the solver
-  accepts our shape with the retagged type without the patches
-  described in the plan.
+- **Phase 1 (type retag)**: DONE (2026-05-10). Struct keeps inline-
+  array shape, only the tag changed to
+  `CPROVER_PREFIX "refined_string_type"`.
+- **Phase 10 (auto-enable)**: DONE (2026-05-10). `.ts`/`.tsx`
+  source triggers `--refine-strings` automatically unless
+  `--z3`/`--smt2` is set.
+- **Boundary-conversion pilot**: DONE (2026-05-11). Added
+  `ts_string_to_refined` helper that copies our struct's length +
+  data into scalar-typed temporaries and emits the solver's
+  `cprover_associate_array_to_pointer_func` / `associate_length_
+  to_array_func` calls, then returns a `refined_string_exprt`.
+- **Migrated methods (2026-05-11)**:
+  - `+str` (symbolic) → `cprover_string_parse_int_func`.
+    Closes `string-to-number-coerce-symbolic` KNOWNBUG.
+  - `s.includes(needle)` → `cprover_string_contains_func`
+  - `s.startsWith(needle)` → `cprover_string_is_prefix_func`
+  - `s.endsWith(needle)` → `cprover_string_is_suffix_func`
+- **Not migrated**: methods that return strings (e.g. `concat`,
+  `toLowerCase`, `substring`). See "Return-shape issue" below.
+- **Phase 9 (solver patches)**: NOT NEEDED; the solver accepts
+  our shape via the boundary helper.
+
+## Key implementation subtlety (for future migrations)
+
+The string solver's constraint generator walks every subexpression
+of each call argument looking for types tagged
+`refined_string_type`, then `expr_checked_cast`s each match to
+`struct_exprt`. Since our `typescript_string_type()` has that tag,
+any `member_exprt(operand_symbol, "length", ...)` inside the
+refined struct would make the walker visit the operand symbol
+(which has refined_string_type but is NOT a struct_exprt), causing
+an invariant failure.
+
+Fix applied in `ts_string_to_refined`: copy the length and data
+into **scalar-typed temporary symbols** first, then build the
+refined struct from those temps. The walker no longer sees our
+underlying typed operand.
+
+## Return-shape issue (why not all methods migrated)
+
+Methods that return **booleans** or **integers** (predicates +
+parse_int) work cleanly: the solver returns a plain scalar, no
+type-shape mismatch.
+
+Methods that return **strings** (concat, toLowerCase, substring,
+repeat, padStart, etc.) are harder: the solver returns a
+`refined_string_exprt` with **pointer** content, but downstream
+TypeScript code expects our **inline-array** struct shape. Any
+`.data[i]` access, `===` comparison, or member copy would fail
+the shape mismatch.
+
+Resolving this requires either:
+
+1. **Full pointer-based switch** of `typescript_string_type()`
+   (what the original plan attempted — ~25 test failures).
+2. **Per-character copy loop** from the solver result back into
+   our inline-array shape (verbose; CBMC may not simplify well).
+3. **Unified string type that the solver accepts natively**
+   (long-term cleanup).
+
+Deferred until we have a concrete KNOWNBUG that requires it.
 
 ## Future work
 

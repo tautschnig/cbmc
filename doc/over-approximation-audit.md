@@ -114,8 +114,19 @@ the limitation, the test will pass and be promoted to CORE.
 - **Now**: test is CORE for constant-string inputs. Parses digits
   at conversion time (trimmed). `+"abc"` yields NaN correctly.
 - **Test**: `regression/typescript/string-to-number-coerce`
-- **Symbolic strings** still KNOWNBUG
-  (`string-to-number-coerce-symbolic`) — needs refined string solver.
+- **Symbolic strings**: now also RESOLVED via refined-string solver
+  boundary conversion (2026-05-11). `+str` with symbolic `str`
+  routes through `cprover_string_parse_int_func`.
+- **Test**: `regression/typescript/string-to-number-coerce-symbolic`
+
+### Symbolic string.includes / startsWith / endsWith — RESOLVED
+- **Was**: these methods fell through to nondet bool on symbolic
+  receivers even when the receiver was constrained.
+- **Now**: route through the refined-string solver via
+  `cprover_string_contains_func` / `is_prefix_func` / `is_suffix_func`
+  using the `ts_string_to_refined` boundary helper.
+- **Tests**: `regression/typescript/string-includes-symbolic`,
+  `string-startswith-symbolic`.
 
 ### Array.splice with symbolic deleteCount — RESOLVED via per-case encoding
 - **Was**: test was KNOWNBUG (symbolic length and element shift)
