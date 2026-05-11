@@ -164,7 +164,18 @@ public:
     python_strict_warnings = v;
   }
 
+  void set_python_lazy_stubs(bool v)
+  {
+    python_lazy_stubs = v;
+  }
+
 private:
+  /// Lazy-stubs mode: imported modules get symbol-table entries
+  /// (types, classes, function signatures) but no function
+  /// bodies. Calls through returns nondet, no embedded
+  /// assertions fire. Reduces memory/time blow-up when user
+  /// code imports large stub trees.
+  bool python_lazy_stubs = false;
   /// Emit a message about a front-end over-approximation. In the
   /// default mode the message goes to log.debug() so it is only
   /// visible at high verbosity; when --python-strict-warnings is

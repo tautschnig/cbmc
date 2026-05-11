@@ -15501,15 +15501,26 @@ void python_convertert::process_imported_module(
           enclosing_functions.push_back(current_function);
         current_function = fname;
         code_blockt body_block;
-        const jsont &func_body = json_member(stmt, "body");
-        if(func_body.is_array())
+        // Lazy-stubs mode: skip body conversion entirely for
+        // imported-module functions. Calls to the function
+        // return nondet (the symex fallback for no-body
+        // callees). This skips large stub method bodies with
+        // their embedded assertions — the stub becomes a pure
+        // type surface. The main-file functions are handled
+        // by convert_function_def (non-lazy) so they still
+        // get their bodies.
+        if(!python_lazy_stubs)
         {
-          for(const auto &s : as_array(func_body))
-            body_block.add(convert_statement(s));
+          const jsont &func_body = json_member(stmt, "body");
+          if(func_body.is_array())
+          {
+            for(const auto &s : as_array(func_body))
+              body_block.add(convert_statement(s));
+          }
+          // Add default return
+          if(ret_type.id() != ID_empty)
+            body_block.add(code_frontend_returnt{safe_zero(ret_type)});
         }
-        // Add default return
-        if(ret_type.id() != ID_empty)
-          body_block.add(code_frontend_returnt{safe_zero(ret_type)});
         current_function = saved_func;
         if(
           !enclosing_functions.empty() &&
