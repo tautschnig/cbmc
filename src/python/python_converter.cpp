@@ -11883,22 +11883,40 @@ codet python_convertert::convert_statement(const jsont &stmt)
       const jsont &body = json_member(match_case, "body");
 
       auto [cond, binds] = compile_pattern(pattern, subject);
-      // PLR §10.6: optional guard runs after pattern matches.
+      code_blockt body_block;
+      if(body.is_array())
+      {
+        for(const auto &s : as_array(body))
+          body_block.add(convert_statement(s));
+      }
+      // When the pattern matches, run bindings. Then check
+      // the guard — if it fails, fall through to the rest of
+      // the chain (PLR 10.6: 'If the guard evaluates as
+      // false, the match statement proceeds to check the
+      // next case block').
+      code_blockt matched;
+      for(const auto &st : binds.statements())
+        matched.add(st);
       if(guard.is_object() && !guard.is_null())
       {
         exprt g = convert_expression(guard);
         if(!g.is_nil())
-          cond = and_exprt{std::move(cond), std::move(g)};
+        {
+          matched.add(code_ifthenelset{
+            std::move(g), std::move(body_block), codet{chain}});
+        }
+        else
+        {
+          for(const auto &st : body_block.statements())
+            matched.add(st);
+        }
       }
-      code_blockt case_body;
-      for(const auto &st : binds.statements())
-        case_body.add(st);
-      if(body.is_array())
+      else
       {
-        for(const auto &s : as_array(body))
-          case_body.add(convert_statement(s));
+        for(const auto &st : body_block.statements())
+          matched.add(st);
       }
-      chain = code_ifthenelset{cond, std::move(case_body), std::move(chain)};
+      chain = code_ifthenelset{cond, std::move(matched), std::move(chain)};
     }
     result = std::move(chain);
   }
