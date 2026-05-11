@@ -1,25 +1,22 @@
-# PLR §6.12: Assignment expressions (':=', a.k.a. walrus operator).
-# The expression evaluates to its RHS and, as a side effect, binds
-# the RHS to the target name in the enclosing scope.
-
-# Used directly in a condition; target visible after the if.
-if (n := 10) > 5:
-    assert n == 10
-
-# Re-bind later; both paths see the same target.
-if (m := 1) > 0:
-    assert m == 1
-m = m + 1
-assert m == 2
+# PEP 572: walrus operator :=
+# Binds as a side-effect of an expression.
 
 
-# Inside a function, binding a fresh local.
-def count_positive(a: int, b: int) -> int:
-    total: int = 0
-    if (s := a + b) > 0:
-        total = s
-    return total
+# In an if-condition.
+n = 10
+if (m := n * 2) > 15:
+    assert m == 20
 
 
-assert count_positive(3, 4) == 7
-assert count_positive(-1, -2) == 0
+# In a while-condition — side effects re-execute every
+# iteration.
+i = 0
+while (x := i + 1) < 5:
+    i = x
+assert i == 4
+
+
+# In an expression list.
+y = (z := 7) + 3
+assert z == 7
+assert y == 10
