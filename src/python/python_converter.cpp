@@ -7716,8 +7716,97 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // PLR builtins: sorted(iterable, /, *, key=None, reverse=False).
+      // Pick up the reverse=... keyword; key= is not yet supported.
+      bool sorted_reverse = false;
+      const jsont &sorted_kw = json_member(expr, "keywords");
+      if(sorted_kw.is_array())
+      {
+        for(const auto &k : as_array(sorted_kw))
+        {
+          std::string kn = json_string(json_member(k, "arg"));
+          if(kn == "reverse")
+          {
+            exprt kv = convert_expression(json_member(k, "value"));
+            if(kv.is_true())
+              sorted_reverse = true;
+          }
+        }
+      }
       if(is_python_list_type(arg.type()))
       {
+        // Parse-time fast path: literal or tracked list sorted
+        // in C++; returns a pre-sorted list_exprt.
+        const exprt *lit = nullptr;
+        if(arg.id() == ID_struct)
+          lit = &arg;
+        else if(arg.id() == ID_symbol)
+        {
+          auto it = list_literals.find(to_symbol_expr(arg).get_identifier());
+          if(it != list_literals.end())
+            lit = &it->second;
+        }
+        if(
+          lit != nullptr && lit->operands().size() >= 2 &&
+          lit->operands()[0].is_constant())
+        {
+          mp_integer lv;
+          if(!to_integer(to_constant_expr(lit->operands()[0]), lv))
+          {
+            const exprt &data_arr = lit->operands()[1];
+            std::vector<std::pair<mp_integer, exprt>> pairs;
+            bool all_const = true;
+            for(mp_integer i = 0; i < lv; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx >= data_arr.operands().size())
+              {
+                all_const = false;
+                break;
+              }
+              const exprt &e = data_arr.operands()[idx];
+              if(!e.is_constant() || e.type().id() != ID_signedbv)
+              {
+                all_const = false;
+                break;
+              }
+              mp_integer val;
+              if(to_integer(to_constant_expr(e), val))
+              {
+                all_const = false;
+                break;
+              }
+              pairs.emplace_back(val, e);
+            }
+            if(all_const)
+            {
+              if(sorted_reverse)
+                std::sort(
+                  pairs.begin(),
+                  pairs.end(),
+                  [](const auto &a, const auto &b)
+                  { return a.first > b.first; });
+              else
+                std::sort(
+                  pairs.begin(),
+                  pairs.end(),
+                  [](const auto &a, const auto &b)
+                  { return a.first < b.first; });
+              const auto &list_st = to_struct_type(arg.type());
+              const auto &data_type =
+                to_array_type(list_st.components()[1].type());
+              exprt::operandst sorted_elems;
+              for(const auto &p : pairs)
+                sorted_elems.push_back(p.second);
+              while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
+                sorted_elems.push_back(safe_zero(data_type.element_type()));
+              return struct_exprt{
+                {lit->operands()[0],
+                 array_exprt{std::move(sorted_elems), data_type}},
+                arg.type()};
+            }
+          }
+        }
         // Create a copy and sort it
         static unsigned sorted_counter = 0;
         std::string tmp_name = "__sorted_" + std::to_string(sorted_counter++);
@@ -7747,7 +7836,9 @@ exprt python_convertert::convert_call(const jsont &expr)
             exprt guard = and_exprt{
               binary_relation_exprt{next, ID_lt, length},
               binary_relation_exprt{
-                index_exprt{data, idx}, ID_gt, index_exprt{data, next}}};
+                index_exprt{data, idx},
+                sorted_reverse ? ID_lt : ID_gt,
+                index_exprt{data, next}}};
             static unsigned stmp = 0;
             std::string sn = "__stmp_" + std::to_string(stmp++);
             std::string sq = qualify_name(sn);
