@@ -5815,8 +5815,109 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "update")
         {
-          // d.update(other) — copy entries from other into d
-          // Simplified: just return None, actual mutation is complex
+          // PLR dict.update(other): merge entries from other
+          // into d. If other is a dict literal (struct_exprt
+          // with constant length + keys + values), emit one
+          // dict-subscript-assign statement per entry to
+          // preserve dict_literals tracking on both sides.
+          // Non-literal 'other' or non-dict — fall through to
+          // returning None (no mutation) as an
+          // over-approximation.
+          if(args.is_array() && !as_array(args).empty())
+          {
+            exprt other = convert_expression(*as_array(args).begin());
+            const exprt *olit = nullptr;
+            if(other.id() == ID_struct)
+              olit = &other;
+            else if(other.id() == ID_symbol)
+            {
+              auto it =
+                dict_literals.find(to_symbol_expr(other).get_identifier());
+              if(it != dict_literals.end())
+                olit = &it->second;
+            }
+            if(
+              olit != nullptr && olit->operands().size() >= 3 &&
+              olit->operands()[0].is_constant() &&
+              is_python_dict_type(obj.type()))
+            {
+              mp_integer olen;
+              if(!to_integer(to_constant_expr(olit->operands()[0]), olen))
+              {
+                // Invalidate dict_literals tracking on obj so
+                // subsequent d["key"] lookups read from the
+                // mutated struct, not the stale literal.
+                if(obj.id() == ID_symbol)
+                  dict_literals.erase(to_symbol_expr(obj).get_identifier());
+                const auto &dst_st = to_struct_type(obj.type());
+                const auto &keys_type =
+                  to_array_type(dst_st.components()[1].type());
+                const auto &vals_type =
+                  to_array_type(dst_st.components()[2].type());
+                member_exprt dst_len{obj, "length", signedbv_typet{64}};
+                member_exprt dst_keys{obj, "keys", keys_type};
+                member_exprt dst_vals{obj, "values", vals_type};
+                const exprt &src_keys = olit->operands()[1];
+                const exprt &src_vals = olit->operands()[2];
+                for(mp_integer i = 0; i < olen; ++i)
+                {
+                  auto idx = i.to_ulong();
+                  if(
+                    idx >= src_keys.operands().size() ||
+                    idx >= src_vals.operands().size())
+                    break;
+                  exprt k = src_keys.operands()[idx];
+                  exprt v = src_vals.operands()[idx];
+                  if(k.type() != keys_type.element_type())
+                    k = safe_typecast(k, keys_type.element_type());
+                  if(v.type() != vals_type.element_type())
+                    v = safe_typecast(v, vals_type.element_type());
+                  // Scan existing keys, replace or append.
+                  // Matches the Assign-to-subscript handler
+                  // pattern used for d[k] = v statements.
+                  static unsigned upd_ctr = 0;
+                  std::string fn = "__upd_found_" + std::to_string(upd_ctr++);
+                  std::string fq = qualify_name(fn);
+                  irep_idt fi{fq};
+                  if(symbol_table.lookup(fi) == nullptr)
+                  {
+                    symbolt fs{fi, bool_typet{}, "python"};
+                    fs.base_name = fn;
+                    fs.is_lvalue = true;
+                    fs.is_state_var = true;
+                    symbol_table.add(fs);
+                  }
+                  symbol_exprt found =
+                    symbol_table.lookup_ref(fi).symbol_expr();
+                  pending_checks.push_back(
+                    code_frontend_assignt{found, false_exprt{}});
+                  for(std::size_t si = 0; si < PYTHON_MAX_DICT_SIZE; si++)
+                  {
+                    exprt sidx = from_integer(si, signedbv_typet{64});
+                    exprt in_range =
+                      binary_relation_exprt{sidx, ID_lt, dst_len};
+                    exprt match = equal_exprt{index_exprt{dst_keys, sidx}, k};
+                    code_blockt upd;
+                    upd.add(
+                      code_frontend_assignt{index_exprt{dst_vals, sidx}, v});
+                    upd.add(code_frontend_assignt{found, true_exprt{}});
+                    pending_checks.push_back(code_ifthenelset{
+                      and_exprt{in_range, match}, std::move(upd)});
+                  }
+                  code_blockt append;
+                  append.add(
+                    code_frontend_assignt{index_exprt{dst_keys, dst_len}, k});
+                  append.add(
+                    code_frontend_assignt{index_exprt{dst_vals, dst_len}, v});
+                  append.add(code_frontend_assignt{
+                    dst_len,
+                    plus_exprt{dst_len, from_integer(1, signedbv_typet{64})}});
+                  pending_checks.push_back(
+                    code_ifthenelset{not_exprt{found}, std::move(append)});
+                }
+              }
+            }
+          }
           return from_integer(0, python_int_type());
         }
         if(
