@@ -852,9 +852,30 @@ static std::set<std::string> collect_param_names(const jsont &func_def)
 
 std::string python_convertert::qualify_name(const std::string &name) const
 {
-  // If inside a function and the name is declared global, use module scope
+  // PLR §7.12: 'global x' — bind to module scope.
   if(!current_function.empty() && global_names.count(name))
     return "python::" + name;
+  // PLR §7.13: 'nonlocal x' — bind to the nearest enclosing
+  // function whose scope has x. We look at enclosing_functions
+  // bottom-up; if x isn't found there (e.g. will be created
+  // by the nonlocal statement itself), fall back to the
+  // outermost enclosing function so the assignment writes
+  // somewhere useful.
+  if(!current_function.empty() && nonlocal_names.count(name))
+  {
+    for(auto it = enclosing_functions.rbegin();
+        it != enclosing_functions.rend();
+        ++it)
+    {
+      std::string candidate = "python::" + *it + "::" + name;
+      if(symbol_table.lookup(irep_idt{candidate}) != nullptr)
+        return candidate;
+    }
+    // Fallback: outermost enclosing function (if any).
+    if(!enclosing_functions.empty())
+      return "python::" + enclosing_functions.front() + "::" + name;
+    return "python::" + name;
+  }
   // Otherwise use function scope if inside a function
   if(!current_function.empty())
     return "python::" + current_function + "::" + name;
@@ -2149,6 +2170,13 @@ exprt python_convertert::convert_name(const jsont &expr)
   auto ver_it = variable_versions.find(qname);
   if(ver_it != variable_versions.end())
     sym = symbol_table.lookup(ver_it->second);
+
+  // PLR §7.12 / §7.13: if qualify_name has redirected us to a
+  // global or nonlocal binding, honour that before falling back
+  // to the current function's local scope. Without this, the
+  // local-scope lookup below clobbers the nonlocal redirect.
+  if(sym == nullptr)
+    sym = symbol_table.lookup(irep_idt{qname});
 
   if(sym == nullptr && !current_function.empty())
   {
@@ -11592,15 +11620,22 @@ codet python_convertert::convert_statement(const jsont &stmt)
     result = convert_try(stmt);
   else if(node_type == "Global" || node_type == "Nonlocal")
   {
-    // PLR §7.12/§7.13: global/nonlocal — track names for scope resolution
-    // Nonlocal is treated like global (simplified: no closure support)
+    // PLR §7.12 (global) / §7.13 (nonlocal): track names for
+    // scope resolution. The two differ in where the target
+    // symbol lives — global writes module scope, nonlocal
+    // writes the nearest enclosing function scope.
     const jsont &names = json_member(stmt, "names");
     if(names.is_array())
     {
       for(const auto &name : as_array(names))
       {
         if(name.is_string())
-          global_names.insert(name.value);
+        {
+          if(node_type == "Global")
+            global_names.insert(name.value);
+          else
+            nonlocal_names.insert(name.value);
+        }
       }
     }
     result = code_skipt{};
@@ -14184,6 +14219,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     enclosing_functions.push_back(current_function);
   current_function = func_name;
   global_names.clear();
+  nonlocal_names.clear();
 
   // For generator functions, create __gen_result list
   bool is_generator = generator_functions.count(func_name) > 0;
@@ -14257,6 +14293,28 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       {
         std::string nested_name = json_string(json_member(s, "name"));
         std::set<std::string> nested_params = collect_param_names(s);
+        // Collect names declared 'nonlocal' or 'global' inside the
+        // nested function — these must not be captured by value;
+        // they resolve through qualify_name's nonlocal/global
+        // redirect directly to the enclosing/module scope.
+        std::set<std::string> nested_nonlocal_global;
+        const jsont &nbody = json_member(s, "body");
+        if(nbody.is_array())
+        {
+          for(const auto &ns : as_array(nbody))
+          {
+            if(is_node_type(ns, "Nonlocal") || is_node_type(ns, "Global"))
+            {
+              const jsont &nnames = json_member(ns, "names");
+              if(nnames.is_array())
+              {
+                for(const auto &n : as_array(nnames))
+                  if(n.is_string())
+                    nested_nonlocal_global.insert(n.value);
+              }
+            }
+          }
+        }
         std::set<std::string> refs;
         collect_name_refs(json_member(s, "body"), refs);
         std::vector<std::tuple<std::string, std::string, typet>> captures;
@@ -14264,6 +14322,8 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         {
           if(nested_params.count(ref) || !our_params.count(ref))
             continue;
+          if(nested_nonlocal_global.count(ref))
+            continue; // handled by qualify_name redirect at use site
           // Find the variable's symbol and type
           std::string var_id = "python::" + func_name + "::" + ref;
           const symbolt *var_sym = symbol_table.lookup(irep_idt{var_id});
