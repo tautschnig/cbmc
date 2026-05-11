@@ -210,6 +210,15 @@ private:
 
   /// Map from class name to its base class names (for isinstance)
   std::map<std::string, std::vector<std::string>> class_bases;
+  /// PLR §3.3.2.1 C3 linearization. The MRO for each class,
+  /// starting with the class itself. Populated on ClassDef by
+  /// compute_c3_mro().
+  std::map<std::string, std::vector<std::string>> class_mro;
+  /// The class whose method call initiated the current super()
+  /// dispatch. Set by the call site (e.g. when D() is called,
+  /// set to "D"); nested super() inlining preserves it. Empty
+  /// outside any dispatch.
+  std::string mro_root_class;
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;

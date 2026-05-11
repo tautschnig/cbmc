@@ -4094,7 +4094,21 @@ exprt python_convertert::convert_call(const jsont &expr)
       is_node_type(json_member(obj_node, "func"), "Name") &&
       json_string(json_member(json_member(obj_node, "func"), "id")) == "super")
     {
-      // Find the current class and its base class
+      // Find the current class and its base class.
+      //
+      // Current model: pick class_bases[current_class][0] —
+      // the first declared base. This is correct for single
+      // inheritance (and the linear hierarchy tested by
+      // multi-level-super). It is INCORRECT for diamond
+      // inheritance: from B's perspective (after D inlined
+      // B via super), the MRO-correct target is C, not A.
+      // Full C3 linearization would require tracking the
+      // root class whose dispatch we're in and walking
+      // class_mro[root] to find the next step.
+      //
+      // class_mro is computed at ClassDef time (see below)
+      // so it's available for a future MRO-aware rewrite
+      // of this handler.
       if(
         !current_class.empty() && class_bases.count(current_class) &&
         !class_bases[current_class].empty())
@@ -14674,6 +14688,72 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       if(is_node_type(base, "Name"))
         class_bases[class_name].push_back(json_string(json_member(base, "id")));
     }
+  }
+
+  // PLR §3.3.2.1: compute C3 linearization MRO for this class.
+  // MRO(C) = [C] + merge(MRO(B1), MRO(B2), ..., [B1, B2, ...])
+  // where merge picks the head of the first list that isn't in
+  // the tail of any other list; repeat until all lists empty.
+  {
+    std::vector<std::string> mro{class_name};
+    std::vector<std::vector<std::string>> seqs;
+    for(const auto &b : class_bases[class_name])
+    {
+      auto it = class_mro.find(b);
+      if(it != class_mro.end())
+        seqs.push_back(it->second);
+      else
+        seqs.push_back({b}); // unknown base — assume just itself
+    }
+    if(!class_bases[class_name].empty())
+      seqs.push_back(class_bases[class_name]);
+    // Merge
+    bool progress = true;
+    while(progress)
+    {
+      progress = false;
+      // Strip any now-empty lists.
+      seqs.erase(
+        std::remove_if(
+          seqs.begin(),
+          seqs.end(),
+          [](const std::vector<std::string> &v) { return v.empty(); }),
+        seqs.end());
+      if(seqs.empty())
+        break;
+      for(std::size_t i = 0; i < seqs.size(); ++i)
+      {
+        const std::string &head = seqs[i].front();
+        // head must not appear in the tail of any other list.
+        bool in_tail = false;
+        for(std::size_t j = 0; j < seqs.size() && !in_tail; ++j)
+        {
+          if(i == j)
+            continue;
+          for(std::size_t k = 1; k < seqs[j].size(); ++k)
+          {
+            if(seqs[j][k] == head)
+            {
+              in_tail = true;
+              break;
+            }
+          }
+        }
+        if(!in_tail)
+        {
+          mro.push_back(head);
+          // Remove head from the front of every sequence.
+          for(auto &s : seqs)
+          {
+            if(!s.empty() && s.front() == head)
+              s.erase(s.begin());
+          }
+          progress = true;
+          break;
+        }
+      }
+    }
+    class_mro[class_name] = std::move(mro);
   }
 
   // Register the class type in the symbol table
