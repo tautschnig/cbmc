@@ -140,6 +140,10 @@ private:
 
   /// Names declared 'global' in the current function
   std::set<std::string> global_names;
+  /// PLR §7.13: names declared 'nonlocal' resolve to the nearest
+  /// enclosing function's scope, not the module scope. Tracked per
+  /// compilation (cleared when a function body begins).
+  std::set<std::string> nonlocal_names;
 
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
