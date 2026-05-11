@@ -8,6 +8,8 @@
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/irep.h>
+#include <util/mathematical_expr.h>
+#include <util/mathematical_types.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
@@ -2073,6 +2075,45 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
               if_exprt{cond, from_integer(p, signedbv_typet{64}), result};
           }
           return typecast_exprt{result, double_type()};
+        }
+      }
+      // ES2024 §22.1.3.7: String.prototype.includes — symbolic path.
+      // When either the receiver or the needle is symbolic we route
+      // through the refined string solver via
+      // cprover_string_contains_func. Receiver and needle both get
+      // converted via ts_string_to_refined (which emits the
+      // solver-side associations as pending statements).
+      if(
+        (method == "includes" || method == "startsWith" ||
+         method == "endsWith") &&
+        args.is_array() && !to_json_array(args).empty() && !obj_expr.is_nil() &&
+        is_typescript_string_type(obj_expr.type()))
+      {
+        exprt needle_arg = convert_expression(*to_json_array(args).begin());
+        if(is_typescript_string_type(needle_arg.type()))
+        {
+          exprt refined_self = ts_string_to_refined(obj_expr);
+          exprt refined_needle = ts_string_to_refined(needle_arg);
+          refined_string_typet refined_ty =
+            to_refined_string_type(refined_self.type());
+          irep_idt func_id =
+            method == "includes"     ? ID_cprover_string_contains_func
+            : method == "startsWith" ? ID_cprover_string_is_prefix_func
+                                     : ID_cprover_string_is_suffix_func;
+          // Declare the function.
+          if(symbol_table.lookup(func_id) == nullptr)
+          {
+            std::vector<typet> arg_types = {refined_ty, refined_ty};
+            mathematical_function_typet ft(std::move(arg_types), bool_typet{});
+            symbolt fs{func_id, ft, "typescript"};
+            fs.base_name = id2string(func_id);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app(
+            symbol_exprt{func_id, symbol_table.lookup_ref(func_id).type},
+            {refined_self, refined_needle});
+          app.type() = bool_typet{};
+          return std::move(app);
         }
       }
       // ES2024 sec-string.prototype.substring
