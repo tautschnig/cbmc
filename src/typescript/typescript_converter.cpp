@@ -17,6 +17,8 @@
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/irep.h>
+#include <util/mathematical_expr.h>
+#include <util/mathematical_types.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
@@ -2323,9 +2325,109 @@ exprt typescript_convertert::convert_prefix_unary_expression(const jsont &node)
         v.make_NaN();
         return v.to_expr();
       }
-      // Symbolic string: return nondet number (not yet supported
-      // symbolically without the refined string solver).
-      return side_effect_expr_nondett{double_type(), source_locationt{}};
+      // Symbolic string: route through the refined-string solver via
+      // cprover_string_parse_int_func. We build a refined_string_exprt
+      // boundary view of our {length, inline-array} struct, emit the
+      // solver-side associations (array <-> pointer, length <-> array)
+      // as pending statements, then call the parse function.
+      //
+      // Key subtlety: the solver walks arguments recursively looking
+      // for any subexpression of refined_string_type, which it then
+      // casts to struct_exprt. Our `operand` is a symbol_exprt whose
+      // TYPE has the refined_string tag — so passing a struct whose
+      // children (length, pointer) contain member_exprt(operand, ...)
+      // would make the walker visit `operand` (symbol, not struct)
+      // and invariant-fail. Avoid this by computing length and
+      // pointer into scalar-typed temporary symbols FIRST, then
+      // building the refined struct from those temporaries.
+      typet our_len_type = signedbv_typet{32};
+      typet solver_len_type = signedbv_typet{64};
+      typet char_type = unsignedbv_typet{16};
+      array_typet data_array_type{
+        char_type, from_integer(TYPESCRIPT_MAX_STRING_LENGTH, solver_len_type)};
+      pointer_typet char_ptr_type{char_type, 64};
+      static unsigned str_tmp_ctr = 0;
+      auto fresh_symbol = [this](const std::string &base, const typet &t)
+      {
+        std::string name = base + "_" + std::to_string(str_tmp_ctr++);
+        irep_idt id{"typescript::" + name};
+        symbolt s{id, t, "typescript"};
+        s.base_name = name;
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+        return symbol_table.lookup_ref(id).symbol_expr();
+      };
+      // temp_data: copy of our struct's data array (must be an
+      // array-typed symbol so the solver can insert it into
+      // array_pool).
+      exprt temp_data = fresh_symbol("__ts_str_data", data_array_type);
+      pending_stmts.push_back(code_frontend_assignt{
+        temp_data, member_exprt{operand, "data", data_array_type}});
+      // temp_len: 64-bit length.
+      exprt temp_len = fresh_symbol("__ts_str_len", solver_len_type);
+      pending_stmts.push_back(code_frontend_assignt{
+        temp_len,
+        typecast_exprt{
+          member_exprt{operand, "length", our_len_type}, solver_len_type}});
+      // pointer = &temp_data[0].
+      exprt pointer = address_of_exprt{
+        index_exprt{temp_data, from_integer(0, solver_len_type), char_type},
+        char_ptr_type};
+      // Declare the associate_* functions in the symbol table.
+      auto declare_assoc_func =
+        [this](const irep_idt &name, const typet &arg1_t, const typet &arg2_t)
+      {
+        if(symbol_table.lookup(name) == nullptr)
+        {
+          std::vector<typet> arg_types = {arg1_t, arg2_t};
+          mathematical_function_typet ft(
+            std::move(arg_types), signedbv_typet{32});
+          symbolt fs{name, ft, "typescript"};
+          fs.base_name = id2string(name);
+          symbol_table.add(fs);
+        }
+      };
+      declare_assoc_func(
+        ID_cprover_associate_array_to_pointer_func,
+        data_array_type,
+        char_ptr_type);
+      declare_assoc_func(
+        ID_cprover_associate_length_to_array_func,
+        data_array_type,
+        solver_len_type);
+      auto emit_assoc =
+        [&](const irep_idt &func, const exprt &a, const exprt &b)
+      {
+        exprt rc = fresh_symbol("__ts_str_assoc_rc", signedbv_typet{32});
+        function_application_exprt app(
+          symbol_exprt{func, symbol_table.lookup_ref(func).type}, {a, b});
+        app.type() = signedbv_typet{32};
+        pending_stmts.push_back(code_frontend_assignt{rc, app});
+      };
+      emit_assoc(
+        ID_cprover_associate_array_to_pointer_func, temp_data, pointer);
+      emit_assoc(
+        ID_cprover_associate_length_to_array_func, temp_data, temp_len);
+      // Build the refined_string from the scalar temps.
+      refined_string_typet refined_ty{solver_len_type, char_ptr_type};
+      exprt refined = struct_exprt{{temp_len, pointer}, refined_ty};
+      typet int_result_type = signedbv_typet{32};
+      if(symbol_table.lookup(ID_cprover_string_parse_int_func) == nullptr)
+      {
+        std::vector<typet> arg_types = {refined_ty};
+        mathematical_function_typet ft(std::move(arg_types), int_result_type);
+        symbolt fs{ID_cprover_string_parse_int_func, ft, "typescript"};
+        fs.base_name = id2string(ID_cprover_string_parse_int_func);
+        symbol_table.add(fs);
+      }
+      function_application_exprt app(
+        symbol_exprt{
+          ID_cprover_string_parse_int_func,
+          symbol_table.lookup_ref(ID_cprover_string_parse_int_func).type},
+        {refined});
+      app.type() = int_result_type;
+      return typecast_exprt{app, double_type()};
     }
     return operand; // unary + is identity for numbers
   }
