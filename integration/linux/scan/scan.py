@@ -246,6 +246,16 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
 KERNEL_ADAPTERS: dict[str, dict] = {
     "aead": {
         "adapter": SCRIPT_DIR / "adapters" / "aead_kernel_adapter.c",
+        # Vacuity-probe adapter: same declarations as `adapter` but
+        # the contract's substantive precondition is replaced by
+        # `__CPROVER_requires(0 == 1)`.  scan.py links this in place
+        # of the real adapter for a one-shot probe run; cbmc MUST
+        # report FAILED on the precondition, proving the contract
+        # call site is reached on at least one path.  If the probe
+        # reports SUCCESS, the pipeline has silently regressed to
+        # vacuous and scan.py refuses to emit a verdict.
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "aead_kernel_adapter_probe.c",
         "stubs":   SCRIPT_DIR / "adapters" / "aead_kernel_stubs.c",
         "harness": SCRIPT_DIR / "adapters" / "aead_kernel_harness.c",
         "deps": [PROPERTIES_DIR / "page_provenance" / "page_provenance.c"],
@@ -258,6 +268,23 @@ KERNEL_ADAPTERS: dict[str, dict] = {
             "page_prov_of",
             "k_sg_next",
             "k_sg_page",
+        ],
+        # Functions that MUST have a non-empty body in the linked
+        # goto binary.  Post-link, scan.py verifies each.  The
+        # check catches the exact failure mode LIM-009 resolved:
+        # a `static` kernel symbol that silently binds to an empty
+        # external stub because the harness called the unmangled
+        # name.
+        "required_bodies": [
+            # Kernel entry function (static in algif_aead.c, only
+            # visible under --export-file-local-symbols).
+            "__CPROVER_file_local_algif_aead_c__aead_recvmsg",
+            # Adapter-provided predicate — referenced from the
+            # contract's `__CPROVER_requires`.
+            "sgl_all_user_writable",
+            # page_provenance ghost-state backend.
+            "page_prov_of",
+            "set_page_prov",
         ],
     },
 }
@@ -356,6 +383,186 @@ def run_cbmc_native(
         mr.cbmc_notes = f"cbmc exit {result.returncode}; see stderr"
 
     return mr, sarif if sarif.is_file() else None
+
+
+def _list_goto_function_bodies(
+    goto_instrument: Path, binary: Path
+) -> set[str]:
+    """Return the set of function names that have a non-empty body in
+    `binary`.
+
+    Uses `goto-instrument --list-goto-functions`, which emits one
+    line per function in the form
+
+        symbol_name /* source_name */                 — has body
+        symbol_name /* source_name, body not available */
+
+    We collect both the symbol name and the source name (the kernel's
+    `static` symbols are exposed under
+    `__CPROVER_file_local_<file>_<sym>` in the source-name position
+    but retain the short symbol name before the /* comment, so we
+    index under both to match either lookup style).
+    """
+    result = subprocess.run(
+        [str(goto_instrument), "--list-goto-functions", str(binary)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    text = result.stdout.decode("utf-8", errors="replace")
+    with_body: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or "/*" not in line:
+            continue
+        has_body = "body not available" not in line
+        if not has_body:
+            continue
+        symbol = line.split("/*", 1)[0].strip()
+        comment = line.split("/*", 1)[1].rsplit("*/", 1)[0].strip()
+        # The comment may have the form "source_name" or
+        # "source_name, body not available"; we already filtered the
+        # latter.
+        src_name = comment.split(",", 1)[0].strip()
+        with_body.add(symbol)
+        with_body.add(src_name)
+    return with_body
+
+
+def _verify_required_bodies(
+    goto_instrument: Path,
+    binary: Path,
+    required: list[str],
+) -> list[str]:
+    """Return the subset of `required` names that do NOT have a body
+    in `binary`.  An empty list means all requirements are met."""
+    present = _list_goto_function_bodies(goto_instrument, binary)
+    return [name for name in required if name not in present]
+
+
+def _apply_kernel_transformations(
+    goto_instrument: Path,
+    module: str,
+    target: Path,
+    spec: dict,
+    tmp: Path,
+    linked_gb: Path,
+    transformed_suffix: str,
+) -> Path:
+    """Apply the common goto-instrument transformation chain: strip
+    bodies of CBMC-symex-problematic kernel helpers, replace each
+    contract function call with its attached contract, then
+    aggressive-slice preserving adapter predicates.
+
+    `transformed_suffix` is appended to filenames so real and
+    vacuity-probe pipelines can coexist in the same tmp dir.
+
+    Returns the final transformed binary path.
+    """
+    current_input = linked_gb
+
+    # Kernel helpers that CBMC's symex can't currently lower (use of
+    # gcc's __builtin_*_overflow in statement expressions trips up
+    # symex_assign with an "Unreachable" invariant violation).  Strip
+    # their bodies so each call site becomes a nondet-return stub;
+    # this is sound for our property as those helpers are unrelated
+    # to the scatterlist/provenance reasoning.
+    kernel_symex_problem_functions = [
+        "__CPROVER_file_local_overflow_h_array_size",
+        "__CPROVER_file_local_overflow_h_array3_size",
+        "__CPROVER_file_local_overflow_h_struct_size",
+    ]
+    for fn in kernel_symex_problem_functions:
+        step_out = tmp / f"{target.stem}.{transformed_suffix}.nobody.{fn}.gb"
+        result = _run(
+            [str(goto_instrument), "--remove-function-body", fn,
+             str(current_input), str(step_out)],
+            timeout=GI_TIMEOUT, check=False,
+        )
+        if result.returncode == 0:
+            current_input = step_out
+
+    # Replace the contract function's calls with the adapter-attached
+    # contract.  Some symbols may not exist in every link; apply each
+    # replacement in its own goto-instrument invocation so a missing
+    # symbol does not abort the pipeline.
+    for fn in CONTRACT_FUNCTIONS.get(module, []):
+        step_out = (
+            tmp / f"{target.stem}.{transformed_suffix}.trans.{fn}.gb"
+        )
+        result = _run(
+            [str(goto_instrument), "--replace-call-with-contract", fn,
+             str(current_input), str(step_out)],
+            timeout=GI_TIMEOUT, check=False,
+        )
+        if result.returncode == 0:
+            current_input = step_out
+
+    # Aggressive slicing — keep only function bodies on the trace to
+    # the replaced contract sites.  Preserve the adapter predicates
+    # explicitly (contract requires clauses are not CFG edges to the
+    # slicer).
+    sliced = tmp / f"{target.stem}.{transformed_suffix}.sliced.gb"
+    slice_args = [str(goto_instrument), "--aggressive-slice"]
+    for preserve in spec.get("slice_preserve", []):
+        slice_args += ["--aggressive-slice-preserve-function", preserve]
+    slice_args += [str(current_input), str(sliced)]
+    result = _run(slice_args, timeout=GI_TIMEOUT, check=False)
+    if result.returncode == 0:
+        current_input = sliced
+
+    final = tmp / f"{target.stem}.{transformed_suffix}.gb"
+    if current_input == linked_gb:
+        import shutil
+        shutil.copy(str(linked_gb), str(final))
+    else:
+        current_input.rename(final)
+    return final
+
+
+def _run_cbmc_on_trans(
+    cbmc: Path, trans_gb: Path, entry: str, sarif: Path | None,
+    timeout_s: int,
+) -> tuple[str, str, str, list[CbmcFailure]]:
+    """Run cbmc on a transformed binary, return
+    (status, notes, combined_output, failures).
+
+    status is one of: "successful", "failed", "timeout", "error".
+    """
+    args = [str(cbmc), str(trans_gb),
+            "--function", entry,
+            "--unwind", "2", "--no-unwinding-assertions",
+            "--no-standard-checks",
+            # --slice-formula drops parts of the SSA formula that do
+            # not influence the assertions.  Essential on
+            # kernel-scale inputs where the SAT solver otherwise
+            # OOMs.
+            "--slice-formula"]
+    if sarif is not None:
+        args += ["--sarif-result", str(sarif)]
+    try:
+        result = _run(args, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return ("timeout",
+                f"cbmc exceeded {timeout_s}s on entry '{entry}'. "
+                "This is the LIM-006 state-explosion case; mitigation "
+                "requires aggressive stubbing of kernel helpers (see "
+                "CBMC_LIMITATIONS.md).",
+                "", [])
+
+    combined = result.stdout + result.stderr
+    failures: list[CbmcFailure] = []
+    if "VERIFICATION SUCCESSFUL" in combined:
+        return ("successful", "", combined, failures)
+    if "VERIFICATION FAILED" in combined:
+        for line in combined.splitlines():
+            m = re.match(r"^\[([^\]]+)\]\s+(.*?)\s*:\s*FAILURE$", line)
+            if m:
+                failures.append(CbmcFailure(
+                    assertion=m.group(1),
+                    location=m.group(2),
+                ))
+        return ("failed", "", combined, failures)
+    return ("error", f"cbmc exit {result.returncode} on entry '{entry}'",
+            combined, failures)
 
 
 def run_cbmc_kernel(
@@ -472,141 +679,120 @@ def run_cbmc_kernel(
             ), None)
 
     # Link kernel binary + stubs binary + adapter + harness + deps.
-    linked_gb = tmp / f"{target.stem}.linked.gb"
-    link_inputs = [str(kernel_gb), str(spec["adapter"])]
-    if stubs_gb is not None:
-        link_inputs.append(str(stubs_gb))
-    if harness_gb is not None:
-        link_inputs.append(str(harness_gb))
-    link_inputs += [str(p) for p in spec.get("deps", [])]
-    _run(
-        [str(goto_cc), *link_inputs, "-o", str(linked_gb)],
-        timeout=GOTOCC_TIMEOUT, check=True,
-    )
-
-    # Replace the contract function's calls with the adapter-attached
-    # contract.  Some symbols may not exist in every link (e.g. the
-    # file-local mangled form only exists when the kernel source being
-    # scanned calls a static-inline contract target); apply each
-    # replacement in its own goto-instrument invocation so a missing
-    # symbol in one does not abort the pipeline.  The previous binary
-    # is piped into the next step via an intermediate file.
-    trans_gb = tmp / f"{target.stem}.trans.gb"
-    current_input = linked_gb
-
-    # Kernel helpers that CBMC's symex can't currently lower (use of
-    # gcc's __builtin_*_overflow in statement expressions trips up
-    # symex_assign with an "Unreachable" invariant violation).  Strip
-    # their bodies so each call site becomes a nondet-return stub;
-    # this is sound for our property as those helpers are unrelated
-    # to the scatterlist/provenance reasoning.
-    kernel_symex_problem_functions = [
-        "__CPROVER_file_local_overflow_h_array_size",
-        "__CPROVER_file_local_overflow_h_array3_size",
-        "__CPROVER_file_local_overflow_h_struct_size",
-    ]
-    for fn in kernel_symex_problem_functions:
-        step_out = tmp / f"{target.stem}.nobody.{fn}.gb"
-        result = _run(
-            [str(goto_instrument), "--remove-function-body", fn,
-             str(current_input), str(step_out)],
-            timeout=GI_TIMEOUT, check=False,
+    # We build two linked binaries: one with the real adapter (the
+    # `verify_gb`) and one with the vacuity-probe adapter (the
+    # `probe_gb`).  The probe run is the primary guardrail against
+    # vacuity: if its trivially-false contract reports SUCCESSFUL,
+    # the call site is unreachable in the linked binary and the
+    # scan is refused with `cbmc_status: "vacuity-risk"`.
+    def _link_with(adapter_path: Path, suffix: str) -> Path:
+        linked = tmp / f"{target.stem}.{suffix}.linked.gb"
+        inputs = [str(kernel_gb), str(adapter_path)]
+        if stubs_gb is not None:
+            inputs.append(str(stubs_gb))
+        if harness_gb is not None:
+            inputs.append(str(harness_gb))
+        inputs += [str(p) for p in spec.get("deps", [])]
+        _run(
+            [str(goto_cc), *inputs, "-o", str(linked)],
+            timeout=GOTOCC_TIMEOUT, check=True,
         )
-        if result.returncode == 0:
-            current_input = step_out
+        return linked
 
-    for fn in CONTRACT_FUNCTIONS.get(module, []):
-        step_out = tmp / f"{target.stem}.trans.{fn}.gb"
-        result = _run(
-            [str(goto_instrument), "--replace-call-with-contract", fn,
-             str(current_input), str(step_out)],
-            timeout=GI_TIMEOUT, check=False,
+    linked_gb = _link_with(Path(spec["adapter"]), "verify")
+
+    # ---------------- Guardrail 1: symbol-body check -----------------
+    # Before any transformation, confirm the functions that MUST have
+    # bodies in the linked binary actually do.  LIM-009's root cause
+    # was that the kernel TU's `static _aead_recvmsg` bound to an
+    # empty external stub (symbol present, body absent) — which is
+    # detected here.
+    required_bodies = spec.get("required_bodies", [])
+    if required_bodies:
+        missing = _verify_required_bodies(
+            goto_instrument, linked_gb, required_bodies,
         )
-        if result.returncode == 0:
-            current_input = step_out
+        if missing:
+            return (ModuleReport(
+                module=module, cbmc_status="vacuity-risk",
+                cbmc_notes=(
+                    "required function(s) have no body in the linked "
+                    "goto binary: " + ", ".join(missing) + ". "
+                    "Likely cause: a `static` or `static inline` "
+                    "kernel symbol was called via an unmangled "
+                    "`extern` declaration and bound to an empty "
+                    "external stub.  Update the harness to call the "
+                    "`__CPROVER_file_local_<file>_<sym>` mangled "
+                    "name, or extend KERNEL_ADAPTERS[...][required_"
+                    "bodies] if the symbol is genuinely optional."
+                ),
+            ), None)
 
-    # Aggressive slicing: keep only function bodies on the trace from
-    # the entry point to the (now-replaced) contract call sites.
-    # Without this, the SAT formula is multi-gigabyte — all the
-    # unrelated kernel helpers brought in by algif_aead.c's transitive
-    # includes (networking, cgroups, vfs, dma, etc.) show up and the
-    # SAT solver OOMs.  With --aggressive-slice the kernel-scale
-    # formula becomes tractable.
-    #
-    # Preserve the adapter's pure predicates (the ones that appear in
-    # `__CPROVER_requires(...)` expressions), since aggressive-slice's
-    # reachability analysis does not see contract clauses as regular
-    # CFG edges.  Without the explicit preservation, cbmc would
-    # synthesise a nondet return for the predicate — yielding a
-    # meaningless FAILURE unrelated to the SGL shape.
-    sliced = tmp / f"{target.stem}.sliced.gb"
-    slice_args = [str(goto_instrument), "--aggressive-slice"]
-    for preserve in spec.get("slice_preserve", []):
-        slice_args += ["--aggressive-slice-preserve-function", preserve]
-    slice_args += [str(current_input), str(sliced)]
-    result = _run(slice_args, timeout=GI_TIMEOUT, check=False)
-    if result.returncode == 0:
-        current_input = sliced
-
-    # Final binary is whatever survived the chain.
-    if current_input != linked_gb:
-        # Rename to the expected trans_gb path for downstream cbmc.
-        current_input.rename(trans_gb)
-    else:
-        # Nothing applied — copy the linked binary as-is.
-        import shutil
-        shutil.copy(str(linked_gb), str(trans_gb))
-
-    # Pick a per-module kernel entry point.  If the spec ships a
-    # harness, its main() is the entry point.  Otherwise fall back to
-    # the `_aead_recvmsg`-style per-module default or cbmc's synthesised
-    # main.
     entry_candidates = {"aead": "_aead_recvmsg"}
     if "harness" in spec:
         entry = "main"
     else:
         entry = entry_candidates.get(module, "main")
 
+    # ---------------- Guardrail 2: vacuity probe ---------------------
+    # Link the same kernel + stubs + harness with a probe adapter
+    # whose contract has `__CPROVER_requires(0 == 1)`.  Run the same
+    # transformation chain; cbmc MUST report FAILED on the
+    # precondition, proving the contract call site is reached.  If
+    # it reports SUCCESSFUL, the scan is vacuous and we refuse a
+    # verdict.  `timeout` on the probe is reported as "unknown"
+    # (we can't tell whether the site is reached) but does not
+    # block the real run.
+    if "adapter_probe" in spec:
+        probe_linked = _link_with(
+            Path(spec["adapter_probe"]), "probe",
+        )
+        probe_trans = _apply_kernel_transformations(
+            goto_instrument, module, target, spec, tmp,
+            probe_linked, transformed_suffix="probe",
+        )
+        probe_status, probe_notes, _, _ = _run_cbmc_on_trans(
+            cbmc, probe_trans, entry, None, KERNEL_CBMC_TIMEOUT,
+        )
+        if probe_status == "successful":
+            return (ModuleReport(
+                module=module, cbmc_status="vacuity-risk",
+                cbmc_notes=(
+                    "vacuity probe reported SUCCESSFUL — the contract "
+                    "call site is unreachable in the linked binary, "
+                    "so any 'successful' from the main run would be "
+                    "vacuous.  Check the harness, stubs, and "
+                    "KERNEL_ADAPTERS configuration for this module."
+                ),
+            ), None)
+        if probe_status == "error":
+            return (ModuleReport(
+                module=module, cbmc_status="vacuity-risk",
+                cbmc_notes=(
+                    f"vacuity probe failed with cbmc error: "
+                    f"{probe_notes}"
+                ),
+            ), None)
+        # probe_status in {"failed", "timeout"} — either the probe
+        # correctly fired (non-vacuous) or it timed out before
+        # reaching a verdict.  We proceed with the real run in both
+        # cases; the real-run cbmc verdict is still informative
+        # under timeout-only-on-probe.
+
+    # ---------------- Real verification ------------------------------
+    trans_gb = _apply_kernel_transformations(
+        goto_instrument, module, target, spec, tmp,
+        linked_gb, transformed_suffix="verify",
+    )
+
     mr = ModuleReport(module=module)
     sarif = tmp / f"{target.stem}.{module}.sarif"
-    try:
-        result = _run(
-            [str(cbmc), str(trans_gb),
-             "--function", entry,
-             "--unwind", "2", "--no-unwinding-assertions",
-             "--no-standard-checks",
-             # --slice-formula drops parts of the SSA formula that do
-             # not influence the assertions.  Essential on kernel-scale
-             # inputs where the SAT solver otherwise OOMs.
-             "--slice-formula",
-             "--sarif-result", str(sarif)],
-            timeout=KERNEL_CBMC_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        mr.cbmc_status = "timeout"
-        mr.cbmc_notes = (
-            f"cbmc exceeded {KERNEL_CBMC_TIMEOUT}s on entry '{entry}'. "
-            "This is the LIM-006 state-explosion case; mitigation "
-            "requires aggressive stubbing of kernel helpers (see "
-            "CBMC_LIMITATIONS.md)."
-        )
-        return mr, None
-
-    combined = result.stdout + result.stderr
-    if "VERIFICATION SUCCESSFUL" in combined:
-        mr.cbmc_status = "successful"
-    elif "VERIFICATION FAILED" in combined:
-        mr.cbmc_status = "failed"
-        for line in combined.splitlines():
-            m = re.match(r"^\[([^\]]+)\]\s+(.*?)\s*:\s*FAILURE$", line)
-            if m:
-                mr.cbmc_failures.append(CbmcFailure(
-                    assertion=m.group(1),
-                    location=m.group(2),
-                ))
-    else:
-        mr.cbmc_status = "error"
-        mr.cbmc_notes = f"cbmc exit {result.returncode} on entry '{entry}'"
+    status, notes, combined, failures = _run_cbmc_on_trans(
+        cbmc, trans_gb, entry, sarif, KERNEL_CBMC_TIMEOUT,
+    )
+    mr.cbmc_status = status
+    mr.cbmc_notes = notes
+    mr.cbmc_failures = failures
     return mr, sarif if sarif.is_file() else None
 
 
