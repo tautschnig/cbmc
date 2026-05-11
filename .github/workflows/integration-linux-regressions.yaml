@@ -1,0 +1,165 @@
+name: integration/linux kernel-scan regressions
+
+on:
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - 'integration/linux/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/integration-linux-regressions.yaml'
+  schedule:
+    # Nightly run picks up any drift in the kernel tree that
+    # would otherwise go unnoticed between PR events.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  property-module-regressions:
+    # Runs the fast abstract-model regressions (seconds each).
+    # Does NOT require a kernel tree checkout; can run on every PR.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Install packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+              clang-19 clang++-19 flex bison cmake ninja-build ccache
+
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-cmake-cbmc-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-24.04-cmake-cbmc-${{ github.ref }}
+            ${{ runner.os }}-24.04-cmake-cbmc
+
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+          ccache -z --max-size=500M
+
+      - name: Configure
+        run: |
+          cmake -S . -Bbuild -GNinja \
+              -DCMAKE_CXX_COMPILER=clang++-19 \
+              -DCMAKE_C_COMPILER=clang-19 \
+              -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build CBMC tools
+        run: cmake --build build --target cbmc goto-cc goto-instrument -j4
+
+      - name: ccache stats
+        run: ccache -s
+
+      - name: Run property-module and CVE regressions
+        run: |
+          set -e
+          for d in \
+              integration/linux/properties/page_provenance \
+              integration/linux/properties/scatterlist \
+              integration/linux/properties/aead \
+              integration/linux/properties/pipe_buffer \
+              integration/linux/cve-2026-31431 \
+              integration/linux/cve-2022-0847; do
+            echo "::group::$d"
+            "$d/run.sh"
+            echo "::endgroup::"
+          done
+
+  scan-on-kernel:
+    # Runs the full scan pipeline against Linux 5.10.  Heavier (the
+    # aead scan vacuity probe + verification take a few hundred
+    # seconds of wall-clock) so gated behind the `linux-scan` label
+    # for PRs and always-on for the nightly schedule.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: >
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'linux-scan') ||
+      github.event_name == 'workflow_dispatch'
+    needs: property-module-regressions
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Install packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+              clang-19 clang++-19 flex bison cmake ninja-build ccache \
+              coccinelle python3 gcc make bc libelf-dev libssl-dev \
+              flex bison
+
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-scan-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-24.04-scan-${{ github.ref }}
+            ${{ runner.os }}-24.04-scan
+
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+          ccache -z --max-size=1G
+
+      - name: Configure and build CBMC tools
+        run: |
+          cmake -S . -Bbuild -GNinja \
+              -DCMAKE_CXX_COMPILER=clang++-19 \
+              -DCMAKE_C_COMPILER=clang-19 \
+              -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target cbmc goto-cc goto-instrument -j4
+
+      - name: Cache Linux 5.10 kernel tree
+        id: kernel-cache
+        uses: actions/cache@v5
+        with:
+          path: $HOME/linux_5_10
+          # Pin by a canonical commit; change this key when you
+          # intentionally update the reference kernel.
+          key: linux-5.10-stable-configured-v1
+
+      - name: Fetch + configure Linux 5.10
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME
+          git clone --depth 1 -b linux-5.10.y \
+              https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
+              $HOME/linux_5_10
+          integration/linux/scan/configure.sh $HOME/linux_5_10 \
+              baseline.config crypto-aead.config
+
+      - name: Run scan regression (case 1, 2, 3)
+        env:
+          LINUX_TREE: $HOME/linux_5_10
+        run: |
+          integration/linux/scan/run.sh
+
+      - name: Upload SARIF artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-linux-scan-sarif
+          path: |
+            /tmp/*.sarif
+            integration/linux/scan/*.sarif
+          if-no-files-found: ignore
