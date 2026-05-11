@@ -14,7 +14,7 @@ TypeScript frontend. The plan is derived from studying the Python
 frontend's migration on the `tautschnig/py` branch (commits from
 `5555d73df0` through `7228ef8db5`).
 
-## Execution status (as of 2026-05-11)
+## Execution status (as of 2026-05-11 afternoon)
 
 - **Phase 1 (type retag)**: DONE (2026-05-10). Struct keeps inline-
   array shape, only the tag changed to
@@ -22,19 +22,41 @@ frontend's migration on the `tautschnig/py` branch (commits from
 - **Phase 10 (auto-enable)**: DONE (2026-05-10). `.ts`/`.tsx`
   source triggers `--refine-strings` automatically unless
   `--z3`/`--smt2` is set.
-- **Boundary-conversion pilot**: DONE (2026-05-11). Added
-  `ts_string_to_refined` helper that copies our struct's length +
-  data into scalar-typed temporaries and emits the solver's
-  `cprover_associate_array_to_pointer_func` / `associate_length_
-  to_array_func` calls, then returns a `refined_string_exprt`.
-- **Migrated methods (2026-05-11)**:
-  - `+str` (symbolic) → `cprover_string_parse_int_func`.
-    Closes `string-to-number-coerce-symbolic` KNOWNBUG.
+- **Boundary-conversion helpers**: DONE.
+  - `ts_string_to_refined(our_struct)` copies length + data into
+    scalar-typed temporaries and emits the solver's
+    `cprover_associate_array_to_pointer_func` /
+    `associate_length_to_array_func` calls, then returns a
+    `refined_string_exprt`.
+  - `ts_call_string_returning_function(func_id, args)` allocates
+    result length + content-pointer temps, calls
+    `func(result_len, result_ptr, args...)`, and unpacks the
+    result back into our inline-array struct via per-slot
+    `cprover_string_char_at_func` applications.
+- **Migrated methods**:
+  - `+str` (symbolic) → `cprover_string_parse_int_func`
   - `s.includes(needle)` → `cprover_string_contains_func`
   - `s.startsWith(needle)` → `cprover_string_is_prefix_func`
   - `s.endsWith(needle)` → `cprover_string_is_suffix_func`
-- **Not migrated**: methods that return strings (e.g. `concat`,
-  `toLowerCase`, `substring`). See "Return-shape issue" below.
+  - `a + b` (both operands symbolic strings) →
+    `cprover_string_concat_func`
+  - `s.toLowerCase()` → `cprover_string_to_lower_case_func`
+  - `s.toUpperCase()` → `cprover_string_to_upper_case_func`
+  - `s.trim()` (+ `trimStart`, `trimEnd` as approximations) →
+    `cprover_string_trim_func`
+- **Not migrated**:
+  - `substring`: attempted, crashes in `boolbv_width::get_entry`
+    when the receiver is a symbol. Per-slot encoding works for
+    symbolic receiver + constant offsets; solver path is blocked
+    on a bit-width issue in the flattener.
+  - `repeat`, `padStart`, `padEnd`: no solver-side function
+    available (the solver has `set_length` and `concat_char`
+    primitives but not a composite repeat/pad). Per-case encoding
+    retained.
+  - `replace` / `replaceAll`: solver's replace is char-level
+    only; JS semantics need substring replacement.
+  - `indexOf` with symbolic needle: per-slot if_exprt encoding
+    works; solver-based migration not attempted yet.
 - **Phase 9 (solver patches)**: NOT NEEDED; the solver accepts
   our shape via the boundary helper.
 
@@ -55,28 +77,32 @@ refined struct from those temps. The walker no longer sees our
 underlying typed operand.
 
 ## Return-shape issue (why not all methods migrated)
+## Return-shape: resolved via per-slot char-at repack
 
-Methods that return **booleans** or **integers** (predicates +
-parse_int) work cleanly: the solver returns a plain scalar, no
+Methods that return **booleans** or **integers** (predicates,
+parse_int) were easy: the solver returns a plain scalar, no
 type-shape mismatch.
 
-Methods that return **strings** (concat, toLowerCase, substring,
-repeat, padStart, etc.) are harder: the solver returns a
-`refined_string_exprt` with **pointer** content, but downstream
-TypeScript code expects our **inline-array** struct shape. Any
-`.data[i]` access, `===` comparison, or member copy would fail
-the shape mismatch.
+Methods that return **strings** were initially blocked: the
+solver returns a `refined_string_exprt` with **pointer** content,
+but downstream TypeScript code expects our **inline-array** struct
+shape.
 
-Resolving this requires either:
+Approach that worked (`ts_call_string_returning_function`):
 
-1. **Full pointer-based switch** of `typescript_string_type()`
-   (what the original plan attempted — ~25 test failures).
-2. **Per-character copy loop** from the solver result back into
-   our inline-array shape (verbose; CBMC may not simplify well).
-3. **Unified string type that the solver accepts natively**
-   (long-term cleanup).
+1. Allocate fresh scalar temps for result length + content pointer.
+2. Call `func(result_len, result_ptr, args...)` with the void-
+   returning (or int-returning return-code) signature the solver
+   builtins actually expect — not a string-returning function.
+3. Rebuild our inline-array struct from `result_len` +
+   per-slot `cprover_string_char_at_func(refined(result_len,
+   result_ptr), i)` for i in [0, TYPESCRIPT_MAX_STRING_LENGTH),
+   with an in-bounds check.
 
-Deferred until we have a concrete KNOWNBUG that requires it.
+This works in practice. Only method where the solver path still
+fails is `substring` with a symbol receiver, which hits
+`boolbv_width::get_entry` during bit-flattening (unrelated to
+the migration itself).
 
 ## Future work
 
