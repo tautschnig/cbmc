@@ -18,10 +18,18 @@
 #include <util/symbol.h>
 #include <util/tempfile.h>
 
+#include <sys/socket.h>
+#include <sys/un.h>
+
 #include "expr2typescript.h"
 #include "typescript_converter.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <sstream>
+#include <unistd.h>
+#include <vector>
 
 std::unique_ptr<languaget> new_typescript_language()
 {
@@ -425,6 +433,127 @@ fs.writeFileSync(outputFile, JSON.stringify((() => {
 })()));
 )JS";
   // clang-format on
+
+  // Daemon fast path: if CBMC_TS_SERVER_SOCKET points at a live
+  // Unix-domain socket exposed by scripts/cbmc_ts_server, send the
+  // source path there and read back the JSON AST. Avoids per-call
+  // node/tsc startup (~900 ms → ~50 ms). The daemon caches lib.d.ts
+  // across connections via the TypeScript Language Service.
+  if(const char *sock_env = std::getenv("CBMC_TS_SERVER_SOCKET"))
+  {
+    std::string sock_path = sock_env;
+    if(!sock_path.empty())
+    {
+      int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+      if(fd >= 0)
+      {
+        struct sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        if(sock_path.size() < sizeof(addr.sun_path))
+        {
+          std::memcpy(addr.sun_path, sock_path.data(), sock_path.size());
+          if(::connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+          {
+            // Resolve to absolute so the daemon (which has its own
+            // cwd) can find the file.
+            std::string abs_path;
+            char *rp = ::realpath(path.c_str(), nullptr);
+            if(rp != nullptr)
+            {
+              abs_path = rp;
+              std::free(rp);
+            }
+            else
+            {
+              abs_path = path;
+            }
+            // Send "<path>\n".
+            std::string req = abs_path + "\n";
+            ssize_t sent = ::write(fd, req.data(), req.size());
+            if(sent == static_cast<ssize_t>(req.size()))
+            {
+              // Read header "<length>\n" then payload.
+              std::string header;
+              char hb;
+              while(::read(fd, &hb, 1) == 1 && hb != '\n')
+                header.push_back(hb);
+              std::size_t length = 0;
+              try
+              {
+                length = std::stoul(header);
+              }
+              catch(...)
+              {
+                length = 0;
+              }
+              std::string payload;
+              payload.reserve(length);
+              std::vector<char> buf(4096);
+              while(payload.size() < length)
+              {
+                ssize_t n = ::read(
+                  fd,
+                  buf.data(),
+                  std::min<std::size_t>(buf.size(), length - payload.size()));
+                if(n <= 0)
+                  break;
+                payload.append(buf.data(), buf.data() + n);
+              }
+              ::close(fd);
+              if(payload.size() == length && length > 0)
+              {
+                std::istringstream iss{payload};
+                if(parse_json(iss, path, message_handler, ast_json))
+                {
+                  log.error()
+                    << "Failed to parse JSON from daemon" << messaget::eom;
+                  return true;
+                }
+                // Detect the server's error-envelope (returned when
+                // TS type-check failed).
+                if(ast_json.is_object())
+                {
+                  const auto &obj = static_cast<const json_objectt &>(ast_json);
+                  auto kind_it = obj.find("_kind");
+                  if(
+                    kind_it != obj.end() && kind_it->second.is_string() &&
+                    kind_it->second.value == "Error")
+                  {
+                    auto msg_it = obj.find("message");
+                    log.error()
+                      << "Daemon parse error: "
+                      << (msg_it != obj.end() && msg_it->second.is_string()
+                            ? msg_it->second.value
+                            : std::string{"unknown"})
+                      << messaget::eom;
+                    return true;
+                  }
+                }
+                return false;
+              }
+              // Fall through to one-shot node on any framing error.
+            }
+            else
+            {
+              ::close(fd);
+            }
+          }
+          else
+          {
+            ::close(fd);
+          }
+        }
+        else
+        {
+          ::close(fd);
+        }
+      }
+      // Any error with the daemon path: fall back to one-shot node
+      // below (unchanged behaviour). This keeps the daemon fully
+      // optional.
+    }
+  }
 
   // Write the TypeScript AST converter script to a temp file
   temporary_filet script_tmp{"cbmc_ts_script_", ".js"};
