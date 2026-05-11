@@ -69,6 +69,7 @@ fi
 
 cd -- "$KTREE"
 "$GOTOCC" --native-compiler gcc \
+  --export-file-local-symbols \
   -nostdinc \
   -isystem "$(gcc -print-file-name=include)" \
   -I./arch/x86/include -I./arch/x86/include/generated \

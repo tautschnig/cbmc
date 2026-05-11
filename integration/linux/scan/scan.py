@@ -56,7 +56,7 @@ REPO_ROOT = INTEG_ROOT.parent.parent        # repository root
 
 # Memory cap: 4 GiB virtual per tool invocation.  Raise via env var for
 # investigative work on very large binaries.
-MEMORY_LIMIT_BYTES = int(os.environ.get("SCAN_MEMORY_LIMIT", 4 * 1024 * 1024 * 1024))
+MEMORY_LIMIT_BYTES = int(os.environ.get("SCAN_MEMORY_LIMIT", 24 * 1024 * 1024 * 1024))
 
 # CPU-time cap as an inner backstop to the wall-clock timeout.  A tool
 # that's stuck in a tight SAT/symex loop may burn CPU under the wall-clock
@@ -226,6 +226,13 @@ def file_uses_property_modules(target: Path) -> bool:
 # abstract.  When a new module's cocci reports hits, map it here.
 CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     "aead": [
+        # The kernel's `aead_request_set_crypt` is `static inline` in
+        # <crypto/aead.h>, so goto-cc with --export-file-local-symbols
+        # exposes it under this mangled name at call sites in
+        # crypto/algif_aead.c (the _aead_recvmsg body).
+        "__CPROVER_file_local_aead_h_aead_request_set_crypt",
+        # Keep the external name too, for any path that resolves the
+        # non-static symbol (stand-alone harnesses, older link modes).
         "aead_request_set_crypt",
     ],
 }
@@ -242,12 +249,22 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "stubs":   SCRIPT_DIR / "adapters" / "aead_kernel_stubs.c",
         "harness": SCRIPT_DIR / "adapters" / "aead_kernel_harness.c",
         "deps": [PROPERTIES_DIR / "page_provenance" / "page_provenance.c"],
+        # Pure predicates referenced from contract `__CPROVER_requires`
+        # clauses.  `--aggressive-slice` cannot see requires clauses
+        # as CFG edges and will otherwise drop these bodies, yielding
+        # a meaningless nondet-return FAILURE at the contract site.
+        "slice_preserve": [
+            "sgl_all_user_writable",
+            "page_prov_of",
+            "k_sg_next",
+            "k_sg_page",
+        ],
     },
 }
 
 
 # Budget for cbmc runs against real kernel binaries, in seconds.
-KERNEL_CBMC_TIMEOUT = 180
+KERNEL_CBMC_TIMEOUT = 600
 # Budget for cbmc runs on property-module-native harnesses.
 NATIVE_CBMC_TIMEOUT = 60
 # Wall-clock cap for goto-cc and goto-instrument invocations.
@@ -288,11 +305,29 @@ def run_cbmc_native(
         return ModuleReport(module=module, cbmc_status="not-run",
                             cbmc_notes="no contract functions declared"), None
 
+    # Apply each replacement in its own goto-instrument invocation so
+    # that a symbol absent from this particular link does not abort
+    # the pipeline (we pass both the external name and any
+    # file-local-mangled form, and only one will typically resolve
+    # in any given target).
     trans_gb = tmp / f"{target.stem}.trans.gb"
-    _run(
-        [str(goto_instrument), *contract_args, str(gb), str(trans_gb)],
-        timeout=GI_TIMEOUT, check=True,
-    )
+    current_input = gb
+    applied_any = False
+    for fn in CONTRACT_FUNCTIONS.get(module, []):
+        step_out = tmp / f"{target.stem}.trans.{fn}.gb"
+        result = _run(
+            [str(goto_instrument), "--replace-call-with-contract", fn,
+             str(current_input), str(step_out)],
+            timeout=GI_TIMEOUT, check=False,
+        )
+        if result.returncode == 0:
+            current_input = step_out
+            applied_any = True
+    if applied_any and current_input != gb:
+        current_input.rename(trans_gb)
+    else:
+        import shutil
+        shutil.copy(str(gb), str(trans_gb))
 
     sarif = tmp / f"{target.stem}.{module}.sarif"
     result = _run(
@@ -450,15 +485,77 @@ def run_cbmc_kernel(
     )
 
     # Replace the contract function's calls with the adapter-attached
-    # contract.
-    contract_args: list[str] = []
-    for fn in CONTRACT_FUNCTIONS.get(module, []):
-        contract_args += ["--replace-call-with-contract", fn]
+    # contract.  Some symbols may not exist in every link (e.g. the
+    # file-local mangled form only exists when the kernel source being
+    # scanned calls a static-inline contract target); apply each
+    # replacement in its own goto-instrument invocation so a missing
+    # symbol in one does not abort the pipeline.  The previous binary
+    # is piped into the next step via an intermediate file.
     trans_gb = tmp / f"{target.stem}.trans.gb"
-    _run(
-        [str(goto_instrument), *contract_args, str(linked_gb), str(trans_gb)],
-        timeout=GI_TIMEOUT, check=True,
-    )
+    current_input = linked_gb
+
+    # Kernel helpers that CBMC's symex can't currently lower (use of
+    # gcc's __builtin_*_overflow in statement expressions trips up
+    # symex_assign with an "Unreachable" invariant violation).  Strip
+    # their bodies so each call site becomes a nondet-return stub;
+    # this is sound for our property as those helpers are unrelated
+    # to the scatterlist/provenance reasoning.
+    kernel_symex_problem_functions = [
+        "__CPROVER_file_local_overflow_h_array_size",
+        "__CPROVER_file_local_overflow_h_array3_size",
+        "__CPROVER_file_local_overflow_h_struct_size",
+    ]
+    for fn in kernel_symex_problem_functions:
+        step_out = tmp / f"{target.stem}.nobody.{fn}.gb"
+        result = _run(
+            [str(goto_instrument), "--remove-function-body", fn,
+             str(current_input), str(step_out)],
+            timeout=GI_TIMEOUT, check=False,
+        )
+        if result.returncode == 0:
+            current_input = step_out
+
+    for fn in CONTRACT_FUNCTIONS.get(module, []):
+        step_out = tmp / f"{target.stem}.trans.{fn}.gb"
+        result = _run(
+            [str(goto_instrument), "--replace-call-with-contract", fn,
+             str(current_input), str(step_out)],
+            timeout=GI_TIMEOUT, check=False,
+        )
+        if result.returncode == 0:
+            current_input = step_out
+
+    # Aggressive slicing: keep only function bodies on the trace from
+    # the entry point to the (now-replaced) contract call sites.
+    # Without this, the SAT formula is multi-gigabyte — all the
+    # unrelated kernel helpers brought in by algif_aead.c's transitive
+    # includes (networking, cgroups, vfs, dma, etc.) show up and the
+    # SAT solver OOMs.  With --aggressive-slice the kernel-scale
+    # formula becomes tractable.
+    #
+    # Preserve the adapter's pure predicates (the ones that appear in
+    # `__CPROVER_requires(...)` expressions), since aggressive-slice's
+    # reachability analysis does not see contract clauses as regular
+    # CFG edges.  Without the explicit preservation, cbmc would
+    # synthesise a nondet return for the predicate — yielding a
+    # meaningless FAILURE unrelated to the SGL shape.
+    sliced = tmp / f"{target.stem}.sliced.gb"
+    slice_args = [str(goto_instrument), "--aggressive-slice"]
+    for preserve in spec.get("slice_preserve", []):
+        slice_args += ["--aggressive-slice-preserve-function", preserve]
+    slice_args += [str(current_input), str(sliced)]
+    result = _run(slice_args, timeout=GI_TIMEOUT, check=False)
+    if result.returncode == 0:
+        current_input = sliced
+
+    # Final binary is whatever survived the chain.
+    if current_input != linked_gb:
+        # Rename to the expected trans_gb path for downstream cbmc.
+        current_input.rename(trans_gb)
+    else:
+        # Nothing applied — copy the linked binary as-is.
+        import shutil
+        shutil.copy(str(linked_gb), str(trans_gb))
 
     # Pick a per-module kernel entry point.  If the spec ships a
     # harness, its main() is the entry point.  Otherwise fall back to
@@ -478,6 +575,10 @@ def run_cbmc_kernel(
              "--function", entry,
              "--unwind", "2", "--no-unwinding-assertions",
              "--no-standard-checks",
+             # --slice-formula drops parts of the SSA formula that do
+             # not influence the assertions.  Essential on kernel-scale
+             # inputs where the SAT solver otherwise OOMs.
+             "--slice-formula",
              "--sarif-result", str(sarif)],
             timeout=KERNEL_CBMC_TIMEOUT,
         )

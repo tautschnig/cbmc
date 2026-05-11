@@ -9,10 +9,10 @@
 #
 #   2.  Run scan.py against a real kernel source file
 #       (crypto/algif_aead.c under $LINUX_TREE, if present).
-#       After M4b's kernel adapter landed, the expected state on an
-#       unstubbed _aead_recvmsg is `timeout` (LIM-006).  When
-#       aggressive-stubbing is added (M4c), this may flip to `failed`
-#       or `successful`.
+#       After LIM-009 was resolved, the expected state on the
+#       vulnerable Linux 5.10 `_aead_recvmsg` is `failed`, with the
+#       `precondition.3` (sgl_all_user_writable) assertion violated
+#       at line 280.
 #
 # Exit code 0 iff both cases behave as expected.
 
@@ -54,21 +54,21 @@ else
   LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
   rc=$?
   set -e
-  # After M4c's stubs + harness landed, the expected state on
-  # crypto/algif_aead.c is `successful` — but vacuously so; see
-  # LIM-009.  A precise verdict (`failed` on the vulnerable tree)
-  # will be produced once the stubs materialise concrete SGL
-  # contents.  The regression accepts either `successful` or
-  # `failed` as expected until then.
-  if [[ $rc -le 1 ]] && \
+  # LIM-009 is now RESOLVED: the scan drives CBMC through the full
+  # `_aead_recvmsg` body and reports `cbmc_status: "failed"` on the
+  # vulnerable 5.10 tree, naming the
+  # `__CPROVER_file_local_aead_h_aead_request_set_crypt.precondition.3`
+  # (sgl_all_user_writable) contract violation at line 280.  Anything
+  # weaker is a regression.
+  if [[ $rc -eq 1 ]] && \
      grep -q '"line": 280' "$tmp/case2.json" && \
-     grep -qE '"cbmc_status": "(successful|failed|timeout)"' "$tmp/case2.json"; then
-    status=$(grep -oE '"cbmc_status": "[^"]*"' "$tmp/case2.json" | head -1)
-    echo "  [ok] exit $rc, line 280 hit, $status"
+     grep -q '"cbmc_status": "failed"' "$tmp/case2.json" && \
+     grep -q 'precondition.3' "$tmp/case2.json"; then
+    echo "  [ok] exit 1, line 280 hit, cbmc_status=failed, precondition.3 named"
   else
-    echo "  [FAIL] expected rc 0 or 1 + line-280 hit + a cbmc verdict" >&2
-    echo "         actual rc=$rc; last 20 lines of output:" >&2
-    tail -20 "$tmp/case2.out" | sed 's/^/         /' >&2
+    echo "  [FAIL] expected rc 1 + line-280 hit + cbmc_status=failed + precondition.3" >&2
+    echo "         actual rc=$rc; last 30 lines of output:" >&2
+    tail -30 "$tmp/case2.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
   fi
 fi

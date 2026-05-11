@@ -4,7 +4,7 @@
 #   source "$(dirname "${BASH_SOURCE[0]}")/../../scan/_lib.sh"
 #
 # Provides:
-#   - ulimit -v based on $SCAN_MEMORY_LIMIT_KB (default 4 GiB).
+#   - ulimit -v based on $SCAN_MEMORY_LIMIT_KB (default 24 GiB).
 #   - Timeout budgets in $GOTOCC_TIMEOUT / $GI_TIMEOUT / $CBMC_TIMEOUT,
 #     overridable via env.
 #   - Helpers run_gotocc / run_gi / run_cbmc that wrap each tool in
@@ -15,7 +15,7 @@
 
 set -u
 
-: "${SCAN_MEMORY_LIMIT_KB:=$((4 * 1024 * 1024))}"  # 4 GiB
+: "${SCAN_MEMORY_LIMIT_KB:=$((24 * 1024 * 1024))}"  # 24 GiB
 : "${GOTOCC_TIMEOUT:=120}"
 : "${GI_TIMEOUT:=120}"
 : "${CBMC_TIMEOUT:=60}"

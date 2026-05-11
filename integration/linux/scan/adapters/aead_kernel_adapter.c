@@ -121,12 +121,33 @@ int sgl_all_user_writable(struct scatterlist *sgl)
   return 0;
 }
 
-// ---------------------------------------------------------------------------
-// The contract itself.  Attached to a declaration (no body here — the
+// The contract itself, attached to a declaration (no body here — the
 // kernel binary supplies the body; goto-instrument will replace the
 // call with this contract).
-// ---------------------------------------------------------------------------
+//
+// Because `aead_request_set_crypt` is `static inline` in
+// <crypto/aead.h> — and therefore ends up as
+// `__CPROVER_file_local_aead_h_aead_request_set_crypt` under `goto-cc
+// --export-file-local-symbols` — we declare the contract against the
+// mangled name.  The call site inside `_aead_recvmsg` (which is itself
+// `static inline` in algif_aead.c) is rewritten by goto-cc into a
+// call to this mangled name, and `goto-instrument
+// --replace-call-with-contract
+// __CPROVER_file_local_aead_h_aead_request_set_crypt` attaches the
+// precondition at that site.
 
+void __CPROVER_file_local_aead_h_aead_request_set_crypt(
+  struct aead_request *req,
+  struct scatterlist *src,
+  struct scatterlist *dst,
+  unsigned int cryptlen,
+  u8 *iv) __CPROVER_requires(req != (struct aead_request *)0)
+  __CPROVER_requires(dst != (struct scatterlist *)0)
+    __CPROVER_requires(sgl_all_user_writable(dst) == 1) __CPROVER_assigns();
+
+// Keep the external-name contract as a compatibility shim for any
+// linker path that still resolves a non-static `aead_request_set_crypt`
+// symbol (e.g. stand-alone regression harnesses).
 void aead_request_set_crypt(
   struct aead_request *req,
   struct scatterlist *src,
