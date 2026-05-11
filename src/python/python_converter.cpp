@@ -5794,6 +5794,60 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "items")
         {
+          // PLR dict.items(): view of (key, value) pairs. We
+          // materialise as a python_list of python_tuple(key,
+          // value) — precise for dict literals, falls through
+          // to nondet otherwise.
+          const exprt *dict_val = nullptr;
+          if(obj.id() == ID_struct)
+            dict_val = &obj;
+          else if(obj.id() == ID_symbol)
+          {
+            auto it = dict_literals.find(to_symbol_expr(obj).get_identifier());
+            if(it != dict_literals.end())
+              dict_val = &it->second;
+          }
+          if(
+            dict_val != nullptr && dict_val->operands().size() >= 3 &&
+            dict_val->operands()[0].is_constant())
+          {
+            mp_integer lv;
+            if(!to_integer(to_constant_expr(dict_val->operands()[0]), lv))
+            {
+              const auto &dict_st = to_struct_type(obj_base_type);
+              const auto &keys_type =
+                to_array_type(dict_st.components()[1].type());
+              const auto &vals_type =
+                to_array_type(dict_st.components()[2].type());
+              const typet key_t = keys_type.element_type();
+              const typet val_t = vals_type.element_type();
+              struct_typet tuple_t = python_tuple_type({key_t, val_t});
+              tuple_t.set_tag("python_tuple");
+              struct_typet list_t = python_list_type(tuple_t);
+              const auto &list_data_type =
+                to_array_type(list_t.components()[1].type());
+              const exprt &src_keys = dict_val->operands()[1];
+              const exprt &src_vals = dict_val->operands()[2];
+              exprt::operandst elems;
+              for(mp_integer i = 0; i < lv; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(
+                  idx >= src_keys.operands().size() ||
+                  idx >= src_vals.operands().size())
+                  break;
+                elems.push_back(struct_exprt{
+                  {src_keys.operands()[idx], src_vals.operands()[idx]},
+                  tuple_t});
+              }
+              while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+                elems.push_back(safe_zero(tuple_t));
+              return struct_exprt{
+                {dict_val->operands()[0],
+                 array_exprt{std::move(elems), list_data_type}},
+                list_t};
+            }
+          }
           // Returns list of tuples — simplified to nondet for now
           return side_effect_expr_nondett{
             python_list_type(python_int_type()), get_location(expr)};
