@@ -47,14 +47,25 @@ if [[ ! -f $KTREE/include/generated/autoconf.h ]]; then
   echo "run 'make olddefconfig && make prepare scripts' there first." >&2
   exit 2
 fi
-if [[ ! -f $KTREE/$SOURCE ]]; then
-  echo "source file not found: $KTREE/$SOURCE" >&2
+if [[ ! -f $KTREE/$SOURCE && ! -f $SOURCE ]]; then
+  echo "source file not found: $KTREE/$SOURCE (and not at $SOURCE either)" >&2
   exit 2
 fi
 
 # Derive a reasonable basename for KBUILD_* defines.
 base=$(basename -- "$SOURCE" .c)
-modfile=${SOURCE%.c}
+
+# Accept either a kernel-tree-relative path or an absolute path
+# outside the kernel tree.  External files still compile against the
+# kernel's includes because we cd into the kernel tree below.
+if [[ $SOURCE = /* ]]; then
+  # absolute path; goto-cc will find it directly
+  source_for_gotocc=$SOURCE
+  modfile=$base
+else
+  source_for_gotocc=$SOURCE
+  modfile=${SOURCE%.c}
+fi
 
 cd -- "$KTREE"
 "$GOTOCC" --native-compiler gcc \
@@ -75,4 +86,4 @@ cd -- "$KTREE"
   -DKBUILD_MODFILE="\"$modfile\"" \
   -DKBUILD_BASENAME="\"$base\"" \
   -DKBUILD_MODNAME="\"$base\"" \
-  -c -o "$OUT" "$SOURCE"
+  -c -o "$OUT" "$source_for_gotocc"

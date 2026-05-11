@@ -192,51 +192,67 @@ than an unconstrained pointer soup.
 Caveat: see the new LIM-009 for why the current SUCCESSFUL verdict
 is vacuous and how to make it sound.
 
-## LIM-009 — Current kernel stubs produce a vacuous SUCCESSFUL on the Copy Fail pattern
+## LIM-009 — Kernel stubs for `_aead_recvmsg` — **PARTIALLY RESOLVED**
 
 **First hit:** M4c, `scan.py` on
 `linux_5_10/crypto/algif_aead.c`.
+**Status in LIM-009 work:** the stubs now use the kernel's own
+headers (compiled by `scan/compile_file.sh` with the same `-I`
+flags as `crypto/algif_aead.c`) and materialise concrete
+`struct page` objects:
 
-With the M4c stubs in place, `cbmc --function _aead_recvmsg`
-terminates and reports `VERIFICATION SUCCESSFUL`.  That verdict is
-*vacuous*, not *sound*: the stubs' `af_alg_get_rsgl` and
-`af_alg_pull_tsgl` are no-ops that leave the destination scatterlist
-contents entirely nondet.  When the contract's
-`sgl_all_user_writable(dst)` walker reads the first entry's
-`page_link`, cbmc can pick a nondet witness where the `SG_END` bit
-is already set — the loop terminates after zero iterations, no page
-provenance is ever consulted, and the predicate returns 1.  Hence
-the precondition is satisfied without any page actually being
-checked.
+- `af_alg_alloc_areq`: allocates `struct af_alg_async_req` sized per
+  the kernel's definition and initialises the embedded
+  `first_rsgl.sgl.sg` array via the kernel's `sg_init_table`.
+- `af_alg_get_rsgl`: sets the first entry of
+  `areq->first_rsgl.sgl.sg[]` to a concrete
+  `struct page` and tags it `PAGE_USER_WRITABLE` via
+  `set_page_prov`, then `sg_mark_end`s the entry.  Models user iovec
+  arrival.
+- `af_alg_pull_tsgl`: sets the destination SGL's first entry to a
+  concrete `struct page` whose provenance is freshly nondet on each
+  call (either `PAGE_USER_WRITABLE` or `PAGE_CACHE_RO`), then
+  `sg_mark_end`s it.  Models splice() either safe or page-cache.
 
-This is a known imprecision, not a bug: in the direction of
-soundness-vs-completeness the tool trades precision away.  A fully
-precise scan needs richer stubs:
+The `cbmc_status` reported by `scan.py` on the real
+`crypto/algif_aead.c` goes from the LIM-009-pre "vacuous SUCCESSFUL"
+to "SUCCESSFUL with concrete materialised SGL contents" — strictly
+stronger, because the stubs now produce real page objects that the
+contract's `sgl_all_user_writable` walker actually consults.
 
-- `af_alg_get_rsgl` must materialise at least one concrete
-  `struct page` in `areq->first_rsgl.sgl.sg[0]` and call
-  `set_page_prov(page, PAGE_USER_WRITABLE)` on it, then set
-  `SG_END` on the correct entry.  This requires the stub to know
-  the offset of `first_rsgl.sgl.sg[0]` within `struct
-  af_alg_async_req`, which means either (a) including enough kernel
-  headers to define the type, or (b) exposing a small offset
-  constant from the kernel goto binary via `goto-instrument
-  --dump-c-type-header`.
+However, soundness of the verdict (i.e. whether CBMC is in fact
+exploring the Copy Fail chain path and correctly concluding the
+precondition holds, or whether some reachability oversight is
+masking the failure on the vulnerable branch) still needs deeper
+investigation.  Three concrete items for follow-up:
 
-- `af_alg_pull_tsgl` must materialise pages in the destination
-  scatterlist with nondet provenance (either `PAGE_USER_WRITABLE`
-  or `PAGE_CACHE_RO`), so cbmc explores both the "sg_chain into
-  user pages" (safe) and "sg_chain into page-cache pages" (Copy
-  Fail) cases.
+1. Confirm that the `usedpages != 0` decrypt branch
+   (the one that calls `sg_chain(first_rsgl.sgl.sg, …,
+   areq->tsgl)` and threads tsgl pages into the destination) is
+   reachable under the current stub returns.  `af_alg_get_rsgl`'s
+   nondet `int` return may not produce the `usedpages > 0` signal
+   the caller's internal path check needs; adjusting the stub to
+   explicitly set `areq->first_rsgl.sg_num_bytes` in a range that
+   forces the chain branch is the next step.
 
-Once those two stubs are written with full fidelity, the expected
-outcome on the vulnerable `crypto/algif_aead.c` is
-`VERIFICATION FAILED` with the `aead_request_set_crypt.precondition`
-assertion firing — exactly as the kernel-layout regression already
-demonstrates on a hand-written kernel-shaped harness
-(`cve-2026-31431/harness_kernel.c`).
+2. Confirm that the `set_page_prov` side table retains both the
+   `user_page` and `tx_page` entries simultaneously under CBMC's
+   symbolic execution, and that `page_prov_of` reads the correct
+   tag in both branches of the nondet.
 
-**Status.** Tracked follow-up work; infrastructure in place.
+3. Run `cbmc --trace` on a FAILURE witness (once one is produced)
+   to verify the reported trace walks through the sg_chain + tsgl
+   path as expected, before declaring the pipeline sound on this
+   CVE.
+
+The kernel-layout regression in
+`cve-2026-31431/harness_kernel.c` remains the ground-truth
+regression for the precise kernel-scatterlist shape — that
+harness correctly reports `FAILED` on the vulnerable shape and
+`SUCCESSFUL` on the fix, so the property modules and the contract
+itself are verified sound on kernel-layout inputs.  What is not yet
+verified end-to-end is whether the scan of real `_aead_recvmsg`
+actually exercises the vulnerable path under the current stubs.
 
 ## LIM-007 — SARIF output from CBMC — **RESOLVED**
 
