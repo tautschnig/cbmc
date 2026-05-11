@@ -1747,69 +1747,134 @@ exprt python_convertert::convert_expression(const jsont &expr)
 
     if(!all_constant)
     {
-      // Targeted improvement: f"{n}" with a single FormattedValue
-      // whose value is int-typed. Emit cprover_string_of_int_func
-      // so the solver knows the result's content precisely.
-      const auto &arr = as_array(values);
-      if(arr.size() == 1 && is_node_type(*arr.begin(), "FormattedValue"))
+      // Multi-part f-string: convert each part to a string,
+      // then chain-concat them via cprover_string_concat_func.
+      //
+      // Parts:
+      //   - Constant string: python_string_literal.
+      //   - FormattedValue with int-typed value: route via
+      //     cprover_string_of_int_func.
+      //   - FormattedValue with float-typed value: route
+      //     via cprover_string_of_double_func.
+      //   - FormattedValue with str-typed value: use the
+      //     value directly.
+      //   - Anything else: fall through to full nondet.
+      //
+      // Format specs (:d, :.2f) and conversions (!r, !s, !a)
+      // are not yet honoured — we convert as if unspecified.
+      auto ensure_fn = [&](const irep_idt &fid)
       {
-        const jsont &fv = *arr.begin();
-        // Only handle the plain conversion case (no format_spec).
-        const jsont &conversion = json_member(fv, "conversion");
-        const jsont &format_spec = json_member(fv, "format_spec");
+        if(symbol_table.lookup(fid) == nullptr)
+        {
+          array_typet inf_array_type{
+            unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
+          std::vector<typet> at;
+          if(fid == ID_cprover_associate_array_to_pointer_func)
+          {
+            at.push_back(inf_array_type);
+            at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
+          }
+          else
+          {
+            at.push_back(inf_array_type);
+            at.push_back(signedbv_typet{64});
+          }
+          symbolt fs{
+            fid,
+            mathematical_function_typet(std::move(at), signedbv_typet{32}),
+            "python"};
+          fs.base_name = id2string(fid);
+          symbol_table.add(fs);
+        }
+      };
+      std::vector<exprt> parts;
+      bool parts_ok = true;
+      for(const auto &v : as_array(values))
+      {
+        if(is_node_type(v, "Constant"))
+        {
+          const jsont &cval = json_member(v, "value");
+          if(cval.is_string())
+            parts.push_back(python_string_literal(cval.value));
+          else
+          {
+            parts_ok = false;
+            break;
+          }
+          continue;
+        }
+        if(!is_node_type(v, "FormattedValue"))
+        {
+          parts_ok = false;
+          break;
+        }
+        const jsont &conversion = json_member(v, "conversion");
+        const jsont &format_spec = json_member(v, "format_spec");
         bool no_spec = !format_spec.is_object() || format_spec.is_null();
         bool no_conv = !conversion.is_object() ||
                        (conversion.is_number() && conversion.value == "-1");
-        if(no_spec && no_conv)
+        if(!(no_spec && no_conv))
         {
-          exprt inner = convert_expression(json_member(fv, "value"));
-          if(
-            inner.type().id() == ID_signedbv || inner.type().id() == ID_integer)
-          {
-            exprt as_i64 = inner.type() == signedbv_typet{64}
-                             ? inner
-                             : safe_typecast(inner, signedbv_typet{64});
-            exprt result = emit_string_function(
-              ID_cprover_string_of_int_func,
-              {as_i64},
-              symbol_table,
-              pending_checks);
-            // Ensure the cprover_associate_* function symbols
-            // exist in the symbol table. The solver looks them
-            // up via ns.lookup() when processing of_int; their
-            // absence triggers an invariant violation at
-            // namespace.h. We declare only — no axioms emitted.
-            auto ensure_fn = [&](const irep_idt &fid)
-            {
-              if(symbol_table.lookup(fid) == nullptr)
-              {
-                array_typet inf_array_type{
-                  unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64})};
-                std::vector<typet> at;
-                if(fid == ID_cprover_associate_array_to_pointer_func)
-                {
-                  at.push_back(inf_array_type);
-                  at.push_back(pointer_typet(unsignedbv_typet{8}, 64));
-                }
-                else
-                {
-                  at.push_back(inf_array_type);
-                  at.push_back(signedbv_typet{64});
-                }
-                symbolt fs{
-                  fid,
-                  mathematical_function_typet(
-                    std::move(at), signedbv_typet{32}),
-                  "python"};
-                fs.base_name = id2string(fid);
-                symbol_table.add(fs);
-              }
-            };
-            ensure_fn(ID_cprover_associate_array_to_pointer_func);
-            ensure_fn(ID_cprover_associate_length_to_array_func);
-            return result;
-          }
+          parts_ok = false;
+          break;
         }
+        exprt inner = convert_expression(json_member(v, "value"));
+        if(inner.type().id() == ID_signedbv || inner.type().id() == ID_integer)
+        {
+          exprt i64 = inner.type() == signedbv_typet{64}
+                        ? inner
+                        : safe_typecast(inner, signedbv_typet{64});
+          parts.push_back(emit_string_function(
+            ID_cprover_string_of_int_func,
+            {i64},
+            symbol_table,
+            pending_checks));
+          ensure_fn(ID_cprover_associate_array_to_pointer_func);
+          ensure_fn(ID_cprover_associate_length_to_array_func);
+        }
+        else if(inner.type().id() == ID_floatbv)
+        {
+          parts.push_back(emit_string_function(
+            ID_cprover_string_of_double_func,
+            {inner},
+            symbol_table,
+            pending_checks));
+          ensure_fn(ID_cprover_associate_array_to_pointer_func);
+          ensure_fn(ID_cprover_associate_length_to_array_func);
+        }
+        else if(is_python_string_type(inner.type()))
+          parts.push_back(inner);
+        else
+        {
+          parts_ok = false;
+          break;
+        }
+      }
+      if(parts_ok && !parts.empty())
+      {
+        // Chain-concatenate. emit_string_function with
+        // ID_cprover_string_concat_func takes two string
+        // args (each a {length, data} struct) and returns a
+        // new string.
+        auto to_struct = [](const exprt &s) -> exprt
+        {
+          if(s.id() == ID_struct && s.operands().size() == 2)
+            return s;
+          return struct_exprt(
+            {member_exprt(s, "length", signedbv_typet{64}),
+             member_exprt(s, "data", pointer_typet(unsignedbv_typet{8}, 64))},
+            s.type());
+        };
+        exprt acc = parts[0];
+        for(std::size_t i = 1; i < parts.size(); i++)
+        {
+          acc = emit_string_function(
+            ID_cprover_string_concat_func,
+            {to_struct(acc), to_struct(parts[i])},
+            symbol_table,
+            pending_checks);
+        }
+        return acc;
       }
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
     }
