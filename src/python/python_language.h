@@ -85,6 +85,14 @@ protected:
   /// imports only via the user's PYTHONPATH / system CPython source.
   /// Controlled by the --python-use-stdlib-source command line flag.
   bool python_use_stdlib_source = false;
+  /// When true, imported modules (via PYTHONPATH / library path)
+  /// only have their function signatures and class fields
+  /// registered — function bodies are NOT converted. Calls to
+  /// these functions return nondet. Reduces symex memory when
+  /// user code imports large stub trees (e.g. boto3). The main
+  /// entry-point file's functions are unaffected.
+  /// Controlled by the --python-lazy-stubs command line flag.
+  bool python_lazy_stubs = false;
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When
