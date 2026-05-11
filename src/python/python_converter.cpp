@@ -7126,7 +7126,10 @@ exprt python_convertert::convert_call(const jsont &expr)
         // Tagged union: dispatch on tag
         if(is_python_value_type(arg.type()))
           return unwrap_value(arg, python_int_type());
-        // int("60") — parse constant string to int
+        // int("60") — parse constant string to int.
+        // PLR builtins: int(x, base=10) parses the string
+        // representation, accepting leading/trailing
+        // whitespace and an optional sign.
         if(is_python_string_type(arg.type()))
         {
           auto sv = extract_string_value(arg);
@@ -7141,6 +7144,18 @@ exprt python_convertert::convert_call(const jsont &expr)
             {
             }
           }
+          // Symbolic string: emit cprover_string_parse_int_func
+          // so the solver knows the int's relationship to the
+          // string's characters. Inverse of str(n) / f"{n}" /
+          // "{}".format(n) which emit cprover_string_of_int_func.
+          exprt parsed = emit_string_int_function(
+            ID_cprover_string_parse_int_func,
+            arg,
+            symbol_table,
+            pending_checks);
+          if(parsed.type() != python_int_type())
+            parsed = safe_typecast(parsed, python_int_type());
+          return parsed;
         }
         return safe_typecast(arg, python_int_type());
       }
