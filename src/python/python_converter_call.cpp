@@ -5349,7 +5349,49 @@ exprt python_convertert::convert_call(const jsont &expr)
   if(args.is_array())
   {
     for(const auto &arg : as_array(args))
+    {
+      // PEP 448: f(*c) — spread known list literals at
+      // conversion time. Non-literal iterables are
+      // over-approximated by appending a single nondet.
+      if(is_node_type(arg, "Starred"))
+      {
+        exprt inner = convert_expression(json_member(arg, "value"));
+        if(inner.is_nil())
+        {
+          arguments.push_back(nil_exprt{});
+          continue;
+        }
+        const exprt *lit = nullptr;
+        if(inner.id() == ID_struct && inner.operands().size() >= 2)
+          lit = &inner;
+        else if(inner.id() == ID_symbol)
+        {
+          auto it = list_literals.find(to_symbol_expr(inner).get_identifier());
+          if(it != list_literals.end())
+            lit = &it->second;
+        }
+        if(
+          lit != nullptr && lit->operands().size() >= 2 &&
+          lit->operands()[0].is_constant())
+        {
+          mp_integer len_val;
+          if(!to_integer(to_constant_expr(lit->operands()[0]), len_val))
+          {
+            const exprt &data_arr = lit->operands()[1];
+            std::size_t n = len_val.to_ulong();
+            for(std::size_t i = 0; i < n && i < data_arr.operands().size(); i++)
+              arguments.push_back(data_arr.operands()[i]);
+            continue;
+          }
+        }
+        log_overapprox(
+          "PEP 448 call unpacking of non-literal iterable — nondet");
+        arguments.push_back(
+          side_effect_expr_nondett{python_int_type(), source_locationt{}});
+        continue;
+      }
       arguments.push_back(convert_expression(arg));
+    }
   }
 
   // Handle keyword arguments: match by parameter name
