@@ -773,7 +773,7 @@ by extending `scan/fragments/scan-compat.h` with specific
 overrides, or by filing focused CBMC front-end PRs per
 idiom.  Left open.
 
-## LIM-016 — `goto-instrument --replace-call-with-contract` invariant violation on signature mismatch [OPEN, blocks LIM-013 path forward]
+## LIM-016 — `goto-instrument --replace-call-with-contract` invariant violation on signature mismatch [PARTIAL]
 
 **First hit:** Phase 2 task 5 investigation of per-file harness
 generation.  Using `goto-harness --harness-type call-function` to
@@ -844,8 +844,27 @@ The existing `==` semantics on `code_typet` remain useful
 elsewhere (e.g. to detect genuine re-declarations with
 different signatures).
 
-**Status.** OPEN.  Blocks the real LIM-013 path (per-file
-harness synthesis via goto-harness + --replace-call-with-
-contract on the kernel TU's static-inline target).  Filed
-in `doc/upstream-contributions.md` as a candidate for
-upstream work.
+**Status.** PARTIAL.  Partial upstream fix landed in commit
+9c17432e1a — `get_contract` now strips the known irrelevant
+metadata (`#source_location`, `#identifier`, `#base_name`,
+`spec_requires` / `spec_ensures` / `spec_assigns` / `spec_frees`)
+from both types before comparing.  Contract-only sub-irep
+differences no longer trigger the invariant.  All CORE
+contracts tests and all nine integration/linux regressions
+remain green.
+
+**Remaining:** the property module's adapter declares
+`struct cred` with a MINIMAL layout (two fields: `usage` +
+padding); the kernel TU's declaration comes with the FULL
+struct definition (hundreds of fields).  After linking these
+have different `struct_tag` bodies, so even with metadata
+stripped the two types are not structurally equal — and that's
+a legitimate semantic mismatch rather than a CBMC bug.
+Closing this out needs an adapter-side change: forward-declare
+`struct cred;` in the adapter (no field definitions), rely on
+the kernel TU's linked definition for the struct shape, and
+have the property module access cred-adjacent state through
+the ghost table rather than through field dereferences.
+Tracked as follow-up; not blocking because the direct-call
+harness path already works and gives meaningful per-bug-class
+verdicts.
