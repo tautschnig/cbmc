@@ -42,6 +42,70 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
+  // PLR §3.3.1: binary-operator dunder dispatch — if the
+  // left operand is a user-defined class instance with a
+  // matching __<op>__ method, dispatch to it. (Python's
+  // reflected-operand __r<op>__ path is not yet covered.)
+  {
+    static const std::map<std::string, std::string> op_to_dunder = {
+      {"Add", "__add__"},
+      {"Sub", "__sub__"},
+      {"Mult", "__mul__"},
+      {"MatMult", "__matmul__"},
+      {"Div", "__truediv__"},
+      {"FloorDiv", "__floordiv__"},
+      {"Mod", "__mod__"},
+      {"Pow", "__pow__"},
+      {"LShift", "__lshift__"},
+      {"RShift", "__rshift__"},
+      {"BitOr", "__or__"},
+      {"BitXor", "__xor__"},
+      {"BitAnd", "__and__"}};
+    auto du = op_to_dunder.find(op);
+    if(du != op_to_dunder.end())
+    {
+      std::string tag;
+      if(left.type().id() == ID_struct)
+        tag = id2string(to_struct_type(left.type()).get_tag());
+      else if(left.type().id() == ID_struct_tag)
+        tag = id2string(to_struct_tag_type(left.type()).get_identifier());
+      if(tag.substr(0, 13) == "python_class_")
+      {
+        std::string bare = tag.substr(13);
+        for(const std::string &prefix :
+            {std::string{"python::"} + tag + "::" + du->second,
+             std::string{"python::"} + bare + "::" + du->second})
+        {
+          const symbolt *ds = symbol_table.lookup(irep_idt{prefix});
+          if(ds != nullptr)
+          {
+            typet ret_type = left.type();
+            exprt other_arg = right;
+            if(ds->type.id() == ID_code)
+            {
+              const auto &ct = to_code_type(ds->type);
+              ret_type = ct.return_type();
+              // Match parameter-1 type (other); safe_typecast
+              // handles wrap/unwrap between tagged-union and
+              // concrete struct.
+              if(ct.parameters().size() >= 2)
+              {
+                const typet &param1_t = ct.parameters()[1].type();
+                if(other_arg.type() != param1_t)
+                  other_arg = safe_typecast(other_arg, param1_t);
+              }
+            }
+            return side_effect_expr_function_callt{
+              ds->symbol_expr(),
+              {address_of_exprt{left}, other_arg},
+              ret_type,
+              source_locationt{}};
+          }
+        }
+      }
+    }
+  }
+
   // PLR §6.7: type compatibility for binary operators. Python
   // raises TypeError at runtime for mismatched operand types
   // (e.g. int + list). CBMC's solver layers do not tolerate
