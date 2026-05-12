@@ -170,15 +170,15 @@ af_alg_alloc_areq(struct sock *sk, unsigned int areqlen)
 {
   init_provenance_once();
   if(areqlen < sizeof(struct af_alg_async_req))
-    return NULL;
+    return (struct af_alg_async_req *)0;
   struct af_alg_async_req *areq = __CPROVER_allocate(areqlen, 0);
   if(!areq)
-    return NULL;
+    return (struct af_alg_async_req *)0;
   sg_init_table(areq->first_rsgl.sgl.sg, ALG_MAX_PAGES + 1);
   areq->first_rsgl.sgl.npages = 0;
   areq->first_rsgl.sg_num_bytes = 0;
-  areq->last_rsgl = NULL;
-  areq->tsgl = NULL;
+  areq->last_rsgl = (struct af_alg_rsgl *)0;
+  areq->tsgl = (struct scatterlist *)0;
   areq->tsgl_entries = 0;
   areq->outlen = 0;
   areq->areqlen = areqlen;

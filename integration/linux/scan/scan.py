@@ -260,14 +260,18 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "harness": SCRIPT_DIR / "adapters" / "aead_kernel_harness.c",
         "deps": [PROPERTIES_DIR / "page_provenance" / "page_provenance.c"],
         # Pure predicates referenced from contract `__CPROVER_requires`
-        # clauses.  `--aggressive-slice` cannot see requires clauses
-        # as CFG edges and will otherwise drop these bodies, yielding
-        # a meaningless nondet-return FAILURE at the contract site.
+        # clauses, plus the minimum stub body required to keep the
+        # call-site reachable through aggressive-slice.  LIM-012 in
+        # CBMC_LIMITATIONS.md records the deeper finding: the
+        # precise set of `slice_preserve` names changes the scan's
+        # verdict non-monotonically — different combinations yield
+        # FAILED, SUCCESSFUL, TIMEOUT, or vacuity-risk on the same
+        # kernel source.  This list is the minimum that reproduces
+        # the historical LIM-009 end-to-end behaviour; a truly
+        # robust scan needs a reworked stub / slice design.
         "slice_preserve": [
-            "sgl_all_user_writable",
-            "page_prov_of",
-            "k_sg_next",
-            "k_sg_page",
+            "sgl_all_user_writable", "page_prov_of", "k_sg_next", "k_sg_page",
+            "af_alg_alloc_areq",
         ],
         # Functions that MUST have a non-empty body in the linked
         # goto binary.  Post-link, scan.py verifies each.  The

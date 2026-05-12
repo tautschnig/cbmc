@@ -450,3 +450,86 @@ Path 1 is what the `aead_kernel_harness.c` already approximates
 by including as few headers as possible (`<crypto/if_alg.h>`,
 `<crypto/aead.h>`, and necessary siblings).  Sharpening that
 pattern further should close most cross-version conflicts.
+
+## LIM-012 — scan verdict is non-monotonically dependent on `slice_preserve`
+
+**First hit:** Phase 1 of the follow-up plan to LIM-010, when the
+fix-direction regression kept reporting FAILED and the
+investigation dug into why.
+
+**Finding.** On the exact same kernel source and the exact same
+adapter + stubs + harness, the scan's `cbmc_status` depends on
+which stub bodies are in the `slice_preserve` list in a
+non-monotonically-intuitive way.  A bisection on
+`crypto/algif_aead.c` (unmodified Linux 5.10) with
+`--aggressive-slice` gave:
+
+```
+preserve predicates only                           -> vacuity-risk
++ af_alg_alloc_areq                                -> failed   (*)
++ af_alg_get_rsgl (no alloc_areq)                  -> successful
++ af_alg_alloc_areq + af_alg_get_rsgl              -> timeout
++ all three aead stubs                             -> successful
+```
+
+(\*) is the historic LIM-009 end-to-end verdict the project has
+been claiming is the "Copy Fail detection".
+
+The problem is not one of these results being "right" — it is
+that **the scan is sensitive to a configuration knob whose effect
+on soundness is not understood**.  Different combinations of
+preserved bodies carve out different reachable-state space
+approximations, and the solver's verdict on the contract
+precondition follows.  The "failed" result we gate the scan
+regression on (`scan/run.sh` case 2) is partly driven by cbmc
+walking nondet bits in `first_rsgl.sgl.sg` left there when
+`af_alg_get_rsgl`'s stub body is sliced away — not purely by the
+Copy Fail scatterlist shape.
+
+**What this means.**
+
+- The LIM-009 "resolved" claim is **partially correct**: the scan
+  does report FAILED on the vulnerable kernel source, and the
+  vacuity probe correctly confirms the call site is reached.  The
+  guardrails do their job.
+- But the FAILED is not **exclusively** caused by the Copy Fail
+  shape; some of the failure is from nondet-return stubs
+  poisoning the scatterlist.  A sufficiently complete, aggressive
+  fix of the `slice_preserve` list and stub bodies would change
+  that verdict in either direction.
+- A proper fix-direction regression (LIM-010) is therefore
+  impossible under the current pipeline design — because the
+  vulnerable-direction is itself not a clean reflection of the
+  property.
+
+**Resolution direction.** Two options, substantive work each:
+
+1. **Stop relying on aggressive-slice** and instead route the
+   scan through `--reachability-slice` plus a hand-authored list
+   of bodies to remove.  Gives the operator direct control over
+   what gets nondet-stubbed; removes the subtle
+   preserve-list-vs-verdict coupling.  Scales worse (every new
+   module needs its own list) but is predictable.
+
+2. **Replace the through-kernel-control-flow scan with a
+   direct-call harness pattern** (the `cve-2026-31431/
+   harness_kernel.c` pattern, promoted to
+   `scan/adapters/aead_kernel_direct_harness.c`): construct a
+   known-vulnerable and a known-safe SGL shape in C, call
+   `aead_request_set_crypt` directly, exercise the contract.
+   Gives up the "CBMC synthesises the vulnerable input
+   automatically from the kernel body" claim in exchange for
+   predictable, sound end-to-end verdicts.  Generalises cleanly
+   to every subsequent property module.
+
+Either is a day or two of focused work.  Option (2) is what the
+blog-post draft already implicitly falls back to when it talks
+about the "kernel-layout regression pattern" — aligning the
+day-to-day scan pipeline with that pattern would let us close
+LIM-010 and LIM-012 together.
+
+**For now.** `scan/run.sh` case 2 still gates on FAILED with
+precondition.3 fired.  The guardrails from commit 6ae97dbf48
+continue to catch the LIM-009-style regressions (broken harness
+→ `vacuity-risk`).  Case 4 (fix-direction) remains open pending
+either of the resolution paths above.
