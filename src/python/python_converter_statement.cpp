@@ -1,0 +1,886 @@
+/// Python to GOTO converter — Statement dispatcher
+/// (PLR §7 / §8). Includes the match/case handler inline.
+///
+/// Extracted from python_converter.cpp to reduce the main file size.
+/// All logic and class-member state remains unchanged — this file is
+/// a pure source-split.
+
+#include <util/arith_tools.h>
+#include <util/bitvector_types.h>
+#include <util/c_types.h>
+#include <util/json.h>
+#include <util/pointer_expr.h>
+#include <util/std_code.h>
+#include <util/std_expr.h>
+#include <util/std_types.h>
+#include <util/symbol.h>
+
+#include "python_converter.h"
+#include "python_converter_helpers.h"
+#include "python_types.h"
+#include "python_value_type.h"
+
+// --- Statement conversion ---
+
+codet python_convertert::convert_statement(const jsont &stmt)
+{
+  std::string node_type = json_string(json_member(stmt, "_type"));
+
+  // Clear pending checks before converting this statement
+  pending_checks.clear();
+
+  codet result = code_skipt{};
+
+  if(node_type == "AnnAssign")
+    result = convert_ann_assign(stmt);
+  else if(node_type == "Assign")
+    result = convert_assign(stmt);
+  else if(node_type == "AugAssign")
+    result = convert_aug_assign(stmt);
+  else if(node_type == "Assert")
+    result = convert_assert(stmt);
+  else if(node_type == "If")
+    result = convert_if(stmt);
+  else if(node_type == "While")
+    result = convert_while(stmt);
+  else if(node_type == "For")
+    result = convert_for(stmt);
+  else if(node_type == "Return")
+    result = convert_return(stmt);
+  else if(node_type == "FunctionDef" || node_type == "AsyncFunctionDef")
+    result = convert_function_def(stmt);
+  else if(node_type == "ClassDef")
+    result = convert_class_def(stmt);
+  else if(node_type == "Expr")
+    result = convert_expr_stmt(stmt);
+  else if(node_type == "Break")
+    result = convert_break();
+  else if(node_type == "Continue")
+    result = convert_continue();
+  else if(node_type == "Pass")
+    result = convert_pass();
+  else if(node_type == "Import" || node_type == "ImportFrom")
+  {
+    // Handle imports by registering known standard library functions.
+    // Unknown imports are silently ignored (functions will get no-body
+    // warnings when called).
+    // Handle 'import MODULE' — register module name for MODULE.func() calls
+    if(node_type == "Import")
+    {
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+      {
+        for(const auto &alias : as_array(names))
+        {
+          std::string name = json_string(json_member(alias, "name"));
+          std::string asname = json_string(json_member(alias, "asname"));
+          if(asname.empty())
+            asname = name;
+          imported_modules.insert(asname);
+          // Module symbol was registered in Pass 0.1 so function
+          // bodies processed earlier can already see it.
+        }
+      }
+    }
+
+    // Handle 'from MODULE import NAME'
+    if(node_type == "ImportFrom")
+    {
+      std::string module = json_string(json_member(stmt, "module"));
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+      {
+        for(const auto &alias : as_array(names))
+        {
+          std::string name = json_string(json_member(alias, "name"));
+          std::string asname = json_string(json_member(alias, "asname"));
+          if(asname.empty())
+            asname = name;
+
+          // Register known math functions
+          if(module == "math")
+          {
+            // library/math.py is loaded via the ImportFrom
+            // library-resolve path (see Pass 0.2 at the top of
+            // this function). Here we only handle the module
+            // constants (pi, e) as static double symbols; the
+            // function entries are populated by the library's
+            // @c_intrinsic decorators.
+            // Constants: register as global variables
+            if(name == "pi" || name == "e")
+            {
+              irep_idt sym_id{"python::" + asname};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt sym{sym_id, double_type(), "python"};
+                sym.base_name = asname;
+                sym.is_lvalue = true;
+                sym.is_state_var = true;
+                sym.is_static_lifetime = true;
+                // pi ≈ 3.14159, e ≈ 2.71828 — use nondet with constraints
+                sym.value =
+                  side_effect_expr_nondett{double_type(), source_locationt{}};
+                symbol_table.add(sym);
+              }
+              continue;
+            }
+            // Other math functions: handled by the library's
+            // @c_intrinsic decorators; no registration here.
+          }
+          // typing module — type aliases, no-op
+          else if(module == "typing")
+          {
+            // Names like Any, Optional, List, Dict are type aliases
+          }
+          else if(module == "re")
+          {
+            // re module: compile/search/match/sub/findall/split
+            // Return nondet int (truthy, not None) so stub assertions
+            // like `assert compile(r).search(v) is not None` pass.
+            irep_idt fid{"python::" + asname};
+            if(symbol_table.lookup(fid) == nullptr)
+            {
+              code_typet ft{
+                {code_typet::parametert{python_string_type()}},
+                python_int_type()};
+              symbolt fs{fid, ft, "python"};
+              fs.base_name = asname;
+              fs.is_lvalue = true;
+              symbol_table.add(fs);
+            }
+          }
+          else if(
+            module == "urllib.parse" || module == "os" || module == "os.path" ||
+            module == "sys" || module == "json" || module == "datetime" ||
+            module == "time" || module == "collections" ||
+            module == "functools" || module == "itertools" || module == "io" ||
+            module == "pathlib" || module == "hashlib" || module == "base64" ||
+            module == "copy" || module == "enum" || module == "dataclasses" ||
+            module == "abc" || module == "random" || module == "decimal" ||
+            module == "operator" || module == "string" || module == "struct" ||
+            module == "csv" || module == "logging" || module == "unittest" ||
+            module == "argparse" || module == "textwrap" ||
+            module == "contextlib" || module == "warnings" ||
+            module == "traceback" || module == "inspect" ||
+            module == "threading" || module == "multiprocessing" ||
+            module == "subprocess" || module == "shutil" ||
+            module == "tempfile" || module == "glob" || module == "fnmatch" ||
+            module == "socket" || module == "http" || module == "http.client" ||
+            module == "urllib" || module == "urllib.request" ||
+            module == "cmath" || module == "statistics" ||
+            module == "fractions" || module == "numbers" ||
+            module == "asyncio" || module == "yaml" || module == "requests" ||
+            module == "numpy" || module == "pandas" || module == "sqlalchemy" ||
+            module == "click" || module == "pytest")
+          {
+            // Stdlib modules: register imported names as variables (not
+            // functions) so the unknown-function handler returns nondet
+            // instead of CBMC trying to inline a no-body function.
+            irep_idt fid{"python::" + asname};
+            if(symbol_table.lookup(fid) == nullptr)
+            {
+              symbolt fs{fid, python_int_type(), "python"};
+              fs.base_name = asname;
+              fs.is_lvalue = true;
+              fs.is_state_var = true;
+              symbol_table.add(fs);
+            }
+          }
+        }
+      }
+    }
+    result = code_skipt{};
+  }
+  else if(node_type == "Raise")
+    result = convert_raise(stmt);
+  else if(node_type == "Delete")
+  {
+    // del lst[i]: shift elements left, decrement length
+    const jsont &targets = json_member(stmt, "targets");
+    if(targets.is_array())
+    {
+      code_blockt del_block;
+      source_locationt loc = get_location(stmt);
+      for(const auto &target : as_array(targets))
+      {
+        if(is_node_type(target, "Subscript"))
+        {
+          exprt obj = convert_expression(json_member(target, "value"));
+          if(!obj.is_nil() && is_python_list_type(obj.type()))
+          {
+            exprt idx = convert_expression(json_member(target, "slice"));
+            const auto &list_st = to_struct_type(obj.type());
+            const auto &data_type =
+              to_array_type(list_st.components()[1].type());
+            member_exprt data{obj, "data", data_type};
+            member_exprt length{obj, "length", signedbv_typet{64}};
+
+            // Shift elements: for j in [i, length-2]: data[j] = data[j+1]
+            // For simplicity, generate unrolled shifts up to MAX_LIST_LENGTH
+            for(std::size_t j = 0; j < PYTHON_MAX_LIST_LENGTH - 1; j++)
+            {
+              exprt jexpr = from_integer(j, signedbv_typet{64});
+              // Guard: j >= idx and j < length - 1
+              exprt guard = and_exprt{
+                binary_relation_exprt{jexpr, ID_ge, idx},
+                binary_relation_exprt{
+                  jexpr,
+                  ID_lt,
+                  minus_exprt{length, from_integer(1, signedbv_typet{64})}}};
+              exprt src = index_exprt{
+                data, plus_exprt{jexpr, from_integer(1, signedbv_typet{64})}};
+              index_exprt dst{data, jexpr};
+              code_ifthenelset shift{guard, code_frontend_assignt{dst, src}};
+              del_block.add(std::move(shift));
+            }
+
+            // length -= 1
+            del_block.add(code_frontend_assignt{
+              length,
+              minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          }
+          // PLR §7.5: del d["key"] on dict — scan, shift, decrement
+          else if(!obj.is_nil() && is_python_dict_type(obj.type()))
+          {
+            // Invalidate dict literal tracking
+            if(
+              json_member(target, "value").is_object() &&
+              is_node_type(json_member(target, "value"), "Name"))
+            {
+              std::string vn =
+                json_string(json_member(json_member(target, "value"), "id"));
+              dict_literals.erase(irep_idt{qualify_name(vn)});
+            }
+            exprt key = convert_expression(json_member(target, "slice"));
+            if(!key.is_nil())
+            {
+              const auto &dict_st = to_struct_type(obj.type());
+              const auto &keys_type =
+                to_array_type(dict_st.components()[1].type());
+              const auto &vals_type =
+                to_array_type(dict_st.components()[2].type());
+              member_exprt length{obj, "length", signedbv_typet{64}};
+              member_exprt keys_arr{obj, "keys", keys_type};
+              member_exprt vals_arr{obj, "values", vals_type};
+
+              if(key.type() != keys_type.element_type())
+                key = safe_typecast(key, keys_type.element_type());
+
+              // Find key, shift remaining left, decrement length
+              static unsigned del_dict_ctr = 0;
+              std::string fn =
+                "__del_dict_found_" + std::to_string(del_dict_ctr++);
+              std::string fq = qualify_name(fn);
+              irep_idt fi{fq};
+              if(symbol_table.lookup(fi) == nullptr)
+              {
+                symbolt fs{fi, bool_typet{}, "python"};
+                fs.base_name = fn;
+                fs.is_lvalue = true;
+                fs.is_state_var = true;
+                symbol_table.add(fs);
+              }
+              symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+              del_block.add(code_frontend_assignt{found, false_exprt{}});
+              for(std::size_t i = 0; i + 1 < PYTHON_MAX_DICT_SIZE; i++)
+              {
+                exprt idx = from_integer(i, signedbv_typet{64});
+                exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+                exprt match = equal_exprt{index_exprt{keys_arr, idx}, key};
+                // Set found on match
+                del_block.add(code_ifthenelset{
+                  and_exprt{in_range, and_exprt{not_exprt{found}, match}},
+                  code_frontend_assignt{found, true_exprt{}}});
+                // If found, shift left
+                exprt next = from_integer(i + 1, signedbv_typet{64});
+                code_blockt shift;
+                shift.add(code_frontend_assignt{
+                  index_exprt{keys_arr, idx}, index_exprt{keys_arr, next}});
+                shift.add(code_frontend_assignt{
+                  index_exprt{vals_arr, idx}, index_exprt{vals_arr, next}});
+                del_block.add(code_ifthenelset{
+                  and_exprt{in_range, found}, std::move(shift)});
+              }
+              del_block.add(code_ifthenelset{
+                found,
+                code_frontend_assignt{
+                  length,
+                  minus_exprt{length, from_integer(1, signedbv_typet{64})}}});
+            }
+          }
+        }
+      }
+      result = std::move(del_block);
+    }
+    else
+      result = code_skipt{};
+  }
+  // PLR §10.6: The match statement — desugar to if-elif chain
+  else if(node_type == "Match")
+  {
+    exprt subject = convert_expression(json_member(stmt, "subject"));
+    const jsont &cases = json_member(stmt, "cases");
+    if(!cases.is_array() || subject.is_nil())
+      return code_skipt{};
+
+    // Helper: compile a pattern into a (condition, bindings)
+    // pair. Bindings are statements that bind names from the
+    // matched subject; they prepend the case body.
+    std::function<std::pair<exprt, code_blockt>(const jsont &, const exprt &)>
+      compile_pattern =
+        [&](
+          const jsont &pat, const exprt &subj) -> std::pair<exprt, code_blockt>
+    {
+      code_blockt binds;
+      // MatchValue: constant comparison.
+      if(is_node_type(pat, "MatchValue"))
+      {
+        exprt val = convert_expression(json_member(pat, "value"));
+        if(val.is_nil())
+          return {false_exprt{}, std::move(binds)};
+        if(val.type() != subj.type())
+          val = safe_typecast(val, subj.type());
+        return {equal_exprt{subj, val}, std::move(binds)};
+      }
+      // MatchSingleton: None, True, False.
+      if(is_node_type(pat, "MatchSingleton"))
+      {
+        exprt val = convert_expression(json_member(pat, "value"));
+        if(val.is_nil())
+          return {true_exprt{}, std::move(binds)};
+        if(val.type() != subj.type())
+          val = safe_typecast(val, subj.type());
+        return {equal_exprt{subj, val}, std::move(binds)};
+      }
+      // MatchOr: alternation.
+      if(is_node_type(pat, "MatchOr"))
+      {
+        const jsont &alts = json_member(pat, "patterns");
+        exprt any_match = false_exprt{};
+        code_blockt any_binds;
+        if(alts.is_array())
+        {
+          for(const auto &alt : as_array(alts))
+          {
+            auto [c, b] = compile_pattern(alt, subj);
+            any_match = or_exprt{std::move(any_match), std::move(c)};
+            for(const auto &st : b.statements())
+              any_binds.add(st);
+          }
+        }
+        return {std::move(any_match), std::move(any_binds)};
+      }
+      // MatchAs: 'pattern as name' binds name on match; also
+      // covers wildcard (no pattern, no name) and name-only
+      // (binding wildcard: 'x' matches anything).
+      if(is_node_type(pat, "MatchAs"))
+      {
+        const jsont &name = json_member(pat, "name");
+        const jsont &inner = json_member(pat, "pattern");
+        // Wildcard: _ — matches anything, no binding.
+        if(name.is_null() && (!inner.is_object() || inner.is_null()))
+          return {true_exprt{}, std::move(binds)};
+        // Inner pattern (if any) contributes the condition.
+        exprt cond = true_exprt{};
+        if(inner.is_object() && !inner.is_null())
+        {
+          auto [c, b] = compile_pattern(inner, subj);
+          cond = std::move(c);
+          for(const auto &st : b.statements())
+            binds.add(st);
+        }
+        // Name binding.
+        if(name.is_string() && !name.value.empty())
+        {
+          std::string var_name = name.value;
+          std::string qname = qualify_name(var_name);
+          irep_idt sym_id{qname};
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt ns{sym_id, subj.type(), "python"};
+            ns.base_name = var_name;
+            ns.is_lvalue = true;
+            ns.is_state_var = true;
+            ns.is_static_lifetime = current_function.empty();
+            symbol_table.add(ns);
+          }
+          binds.add(code_frontend_assignt{
+            symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // MatchClass: case Point(x, y) or Point(x=a, y=b).
+      // Check isinstance(subj, cls) then bind positional /
+      // keyword attributes. Positional bindings require the
+      // class to expose __match_args__ — we approximate by
+      // using the class's declared fields in order (first
+      // after __class_tag).
+      if(is_node_type(pat, "MatchClass"))
+      {
+        const jsont &cls_node = json_member(pat, "cls");
+        std::string cls_name;
+        if(is_node_type(cls_node, "Name"))
+          cls_name = json_string(json_member(cls_node, "id"));
+        if(cls_name.empty() || class_types.count(cls_name) == 0)
+          return {true_exprt{}, std::move(binds)};
+        const auto &cls_type = class_types.at(cls_name);
+        // isinstance-style check. For tagged-union subjects,
+        // read __class_tag through __class_ptr; for concrete
+        // struct subjects, compare the declared type.
+        exprt cond = true_exprt{};
+        // Normalise a pointer subject by dereferencing it,
+        // so member access works uniformly.
+        exprt usubj = subj;
+        if(
+          usubj.type().id() == ID_pointer &&
+          to_pointer_type(usubj.type()).base_type().id() == ID_struct)
+          usubj = dereference_exprt{usubj};
+        if(is_python_value_type(subj.type()))
+        {
+          pointer_typet i32_ptr{signedbv_typet{32}, 64};
+          dereference_exprt class_tag{
+            typecast_exprt{python_value_class_ptr(subj), i32_ptr},
+            signedbv_typet{32}};
+          auto ti = class_tag_ids.find(cls_name);
+          if(ti != class_tag_ids.end())
+          {
+            cond = and_exprt{
+              python_value_is(subj, python_type_tagt::CLASS),
+              equal_exprt{
+                class_tag, from_integer(ti->second, signedbv_typet{32})}};
+          }
+        }
+        else if(
+          usubj.type().id() == ID_struct || usubj.type().id() == ID_struct_tag)
+        {
+          std::string stag;
+          if(usubj.type().id() == ID_struct)
+            stag = id2string(to_struct_type(usubj.type()).get_tag());
+          else
+            stag = id2string(to_struct_tag_type(usubj.type()).get_identifier());
+          if(stag.find("python_class_" + cls_name) != std::string::npos)
+            cond = true_exprt{};
+          else
+            cond = false_exprt{};
+        }
+        // Cast the subject to the class struct so we can
+        // access fields for binding.
+        exprt cls_subj;
+        if(is_python_value_type(subj.type()))
+        {
+          pointer_typet cls_ptr_type{cls_type, 64};
+          cls_subj = dereference_exprt{
+            typecast_exprt{python_value_class_ptr(subj), cls_ptr_type},
+            cls_type};
+        }
+        else if(
+          usubj.type().id() == ID_struct || usubj.type().id() == ID_struct_tag)
+        {
+          cls_subj = usubj;
+        }
+        // Positional patterns: bind the first N declared
+        // fields (skipping __class_tag) in declaration order.
+        const jsont &pos_pats = json_member(pat, "patterns");
+        if(
+          pos_pats.is_array() && !cls_subj.is_nil() &&
+          (cls_subj.type().id() == ID_struct ||
+           cls_subj.type().id() == ID_struct_tag))
+        {
+          std::vector<std::string> fields;
+          for(const auto &c : cls_type.components())
+          {
+            std::string nm = id2string(c.get_name());
+            if(nm == "__class_tag")
+              continue;
+            fields.push_back(nm);
+          }
+          std::size_t i = 0;
+          for(const auto &sub : as_array(pos_pats))
+          {
+            if(i >= fields.size())
+              break;
+            typet ft = cls_type.get_component(fields[i]).type();
+            member_exprt field_expr{cls_subj, fields[i], ft};
+            auto [sc, sb] = compile_pattern(sub, field_expr);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+            i++;
+          }
+        }
+        // Keyword patterns: bind by attribute name.
+        const jsont &kwd_attrs = json_member(pat, "kwd_attrs");
+        const jsont &kwd_patterns = json_member(pat, "kwd_patterns");
+        if(
+          kwd_attrs.is_array() && kwd_patterns.is_array() &&
+          !cls_subj.is_nil() &&
+          (cls_subj.type().id() == ID_struct ||
+           cls_subj.type().id() == ID_struct_tag))
+        {
+          const auto &ka = as_array(kwd_attrs);
+          const auto &kp = as_array(kwd_patterns);
+          auto ait = ka.begin();
+          auto pit = kp.begin();
+          while(ait != ka.end() && pit != kp.end())
+          {
+            std::string attr_name = ait->is_string() ? ait->value : "";
+            if(!attr_name.empty() && cls_type.has_component(attr_name))
+            {
+              typet ft = cls_type.get_component(attr_name).type();
+              member_exprt field_expr{cls_subj, attr_name, ft};
+              auto [sc, sb] = compile_pattern(*pit, field_expr);
+              cond = and_exprt{std::move(cond), std::move(sc)};
+              for(const auto &st : sb.statements())
+                binds.add(st);
+            }
+            ++ait;
+            ++pit;
+          }
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // MatchSequence: case [a, b, c] or case [a, *rest, b].
+      // Check list type + length, then recurse on each element.
+      if(is_node_type(pat, "MatchSequence"))
+      {
+        if(!is_python_list_type(subj.type()))
+          return {false_exprt{}, std::move(binds)};
+        const jsont &pats = json_member(pat, "patterns");
+        if(!pats.is_array())
+          return {true_exprt{}, std::move(binds)};
+        const auto &pat_arr = as_array(pats);
+        // Find star index (if any).
+        std::size_t star_idx = pat_arr.size();
+        {
+          std::size_t i = 0;
+          for(const auto &p : pat_arr)
+          {
+            if(is_node_type(p, "MatchStar"))
+            {
+              star_idx = i;
+              break;
+            }
+            i++;
+          }
+        }
+        const auto &list_st = to_struct_type(subj.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt length{subj, "length", signedbv_typet{64}};
+        member_exprt data{subj, "data", data_type};
+        exprt cond;
+        if(star_idx == pat_arr.size())
+        {
+          // No star: exact length match.
+          cond = equal_exprt{
+            length,
+            from_integer((long long)pat_arr.size(), signedbv_typet{64})};
+          std::size_t i = 0;
+          for(const auto &p : pat_arr)
+          {
+            exprt elem = index_exprt{data, from_integer(i, signedbv_typet{64})};
+            auto [sc, sb] = compile_pattern(p, elem);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+            i++;
+          }
+        }
+        else
+        {
+          // With star: length >= prefix + suffix.
+          std::size_t prefix = star_idx;
+          std::size_t suffix = pat_arr.size() - star_idx - 1;
+          long long minlen = (long long)(prefix + suffix);
+          cond = binary_relation_exprt{
+            length, ID_ge, from_integer(minlen, signedbv_typet{64})};
+          // Index into pat_arr by copying to a vector first.
+          std::vector<const jsont *> pvec;
+          for(const auto &p : pat_arr)
+            pvec.push_back(&p);
+          // Match prefix against index 0..prefix-1.
+          for(std::size_t i = 0; i < prefix; i++)
+          {
+            exprt elem = index_exprt{data, from_integer(i, signedbv_typet{64})};
+            auto [sc, sb] = compile_pattern(*pvec[i], elem);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+          }
+          // Bind the star name if present.
+          {
+            const jsont &star_pat = *pvec[star_idx];
+            const jsont &star_name = json_member(star_pat, "name");
+            if(star_name.is_string() && !star_name.value.empty())
+            {
+              // Bind a copy of the input list as the star binding;
+              // precise slice modelling would be per-index.
+              std::string var_name = star_name.value;
+              std::string qname = qualify_name(var_name);
+              irep_idt sym_id{qname};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt ns{sym_id, subj.type(), "python"};
+                ns.base_name = var_name;
+                ns.is_lvalue = true;
+                ns.is_state_var = true;
+                ns.is_static_lifetime = current_function.empty();
+                symbol_table.add(ns);
+              }
+              binds.add(code_frontend_assignt{
+                symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+            }
+          }
+          // Match suffix against the last `suffix` elements.
+          for(std::size_t j = 0; j < suffix; j++)
+          {
+            exprt idx = minus_exprt{
+              length,
+              from_integer((long long)(suffix - j), signedbv_typet{64})};
+            exprt elem = index_exprt{data, idx};
+            auto [sc, sb] = compile_pattern(*pvec[star_idx + 1 + j], elem);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+          }
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // MatchMapping: case {"k": v, "k2": w}. Check dict type
+      // and each key's presence + pattern match.
+      if(is_node_type(pat, "MatchMapping"))
+      {
+        if(!is_python_dict_type(subj.type()))
+          return {false_exprt{}, std::move(binds)};
+        const jsont &keys = json_member(pat, "keys");
+        const jsont &pats = json_member(pat, "patterns");
+        const jsont &rest = json_member(pat, "rest");
+        if(!keys.is_array() || !pats.is_array())
+          return {true_exprt{}, std::move(binds)};
+        const auto &key_arr = as_array(keys);
+        const auto &pat_arr = as_array(pats);
+        exprt cond = true_exprt{};
+        auto kit = key_arr.begin();
+        auto pit = pat_arr.begin();
+        const auto &dict_st = to_struct_type(subj.type());
+        const auto &keys_type = to_array_type(dict_st.components()[1].type());
+        const auto &vals_type = to_array_type(dict_st.components()[2].type());
+        member_exprt length{subj, "length", signedbv_typet{64}};
+        member_exprt dkeys{subj, "keys", keys_type};
+        member_exprt dvals{subj, "values", vals_type};
+        while(kit != key_arr.end() && pit != pat_arr.end())
+        {
+          // Each key pattern should be a Constant. Evaluate.
+          exprt key_expr = convert_expression(*kit);
+          if(key_expr.is_nil())
+          {
+            ++kit;
+            ++pit;
+            continue;
+          }
+          if(key_expr.type() != keys_type.element_type())
+            key_expr = safe_typecast(key_expr, keys_type.element_type());
+          // Search for the key in dict.keys. Build condition
+          // "key is present AND its value matches pattern".
+          exprt key_found = false_exprt{};
+          exprt val_match = true_exprt{};
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt key_eq = equal_exprt{index_exprt{dkeys, idx}, key_expr};
+            exprt slot_match = and_exprt{in_range, std::move(key_eq)};
+            key_found = or_exprt{std::move(key_found), slot_match};
+            // Value pattern match: if key is at this slot, val
+            // must match. OR together.
+          }
+          // For the binding part, recursive compile_pattern on
+          // the slot value. Approximate by picking slot 0 when
+          // key_found — precise matching would need per-slot
+          // dispatch.
+          exprt val_expr =
+            index_exprt{dvals, from_integer(0, signedbv_typet{64})};
+          auto [vc, vb] = compile_pattern(*pit, val_expr);
+          val_match = std::move(vc);
+          for(const auto &st : vb.statements())
+            binds.add(st);
+          cond = and_exprt{
+            std::move(cond),
+            and_exprt{std::move(key_found), std::move(val_match)}};
+          ++kit;
+          ++pit;
+        }
+        // rest name: bind the dict itself (approximation —
+        // precise rest would exclude matched keys).
+        if(rest.is_string() && !rest.value.empty())
+        {
+          std::string var_name = rest.value;
+          std::string qname = qualify_name(var_name);
+          irep_idt sym_id{qname};
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt ns{sym_id, subj.type(), "python"};
+            ns.base_name = var_name;
+            ns.is_lvalue = true;
+            ns.is_state_var = true;
+            ns.is_static_lifetime = current_function.empty();
+            symbol_table.add(ns);
+          }
+          binds.add(code_frontend_assignt{
+            symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // MatchStar alone (shouldn't appear at top-level): treat
+      // as match-anything.
+      if(is_node_type(pat, "MatchStar"))
+        return {true_exprt{}, std::move(binds)};
+      // Unknown pattern kind — match-anything for soundness.
+      return {true_exprt{}, std::move(binds)};
+    };
+
+    // Build if-elif chain from cases (reverse order).
+    codet chain = code_skipt{};
+    std::vector<const jsont *> case_list;
+    for(const auto &c : as_array(cases))
+      case_list.push_back(&c);
+
+    for(auto it = case_list.rbegin(); it != case_list.rend(); ++it)
+    {
+      const jsont &match_case = **it;
+      const jsont &pattern = json_member(match_case, "pattern");
+      const jsont &guard = json_member(match_case, "guard");
+      const jsont &body = json_member(match_case, "body");
+
+      auto [cond, binds] = compile_pattern(pattern, subject);
+      code_blockt body_block;
+      if(body.is_array())
+      {
+        for(const auto &s : as_array(body))
+          body_block.add(convert_statement(s));
+      }
+      // When the pattern matches, run bindings. Then check
+      // the guard — if it fails, fall through to the rest of
+      // the chain (PLR 10.6: 'If the guard evaluates as
+      // false, the match statement proceeds to check the
+      // next case block').
+      code_blockt matched;
+      for(const auto &st : binds.statements())
+        matched.add(st);
+      if(guard.is_object() && !guard.is_null())
+      {
+        exprt g = convert_expression(guard);
+        if(!g.is_nil())
+        {
+          matched.add(code_ifthenelset{
+            std::move(g), std::move(body_block), codet{chain}});
+        }
+        else
+        {
+          for(const auto &st : body_block.statements())
+            matched.add(st);
+        }
+      }
+      else
+      {
+        for(const auto &st : body_block.statements())
+          matched.add(st);
+      }
+      chain = code_ifthenelset{cond, std::move(matched), std::move(chain)};
+    }
+    result = std::move(chain);
+  }
+  else if(node_type == "With")
+    result = convert_with(stmt);
+  else if(node_type == "Try" || node_type == "TryStar")
+    result = convert_try(stmt);
+  else if(node_type == "Global" || node_type == "Nonlocal")
+  {
+    // PLR §7.12 (global) / §7.13 (nonlocal): track names for
+    // scope resolution. The two differ in where the target
+    // symbol lives — global writes module scope, nonlocal
+    // writes the nearest enclosing function scope.
+    const jsont &names = json_member(stmt, "names");
+    if(names.is_array())
+    {
+      for(const auto &name : as_array(names))
+      {
+        if(name.is_string())
+        {
+          if(node_type == "Global")
+            global_names.insert(name.value);
+          else
+            nonlocal_names.insert(name.value);
+        }
+      }
+    }
+    result = code_skipt{};
+  }
+  // PLR §7.13 / PEP 695: `type X = ...` — type alias
+  // statement. The alias name is tracked as a type
+  // reference; for verification we accept it as a no-op
+  // (annotations referring to it resolve via the generic
+  // annotation handler).
+  else if(node_type == "TypeAlias")
+  {
+    result = code_skipt{};
+  }
+  else
+  {
+    log.warning() << "Unsupported Python statement type: " << node_type
+                  << messaget::eom;
+    result = code_skipt{};
+  }
+
+  // If expression conversion generated checks, prepend them
+  if(!pending_checks.empty())
+  {
+    code_blockt block;
+    for(auto &check : pending_checks)
+      block.add(std::move(check));
+    // Pending checks may set __exception_active (e.g. the Option-4
+    // math-domain check raises ValueError for a known out-of-domain
+    // input). If such a check is present, guard the main body so
+    // a subsequent 'return math.sqrt(-1.0)' inside a try/except
+    // doesn't return before the handler can run. We only install
+    // the guard when at least one pending check actually assigns
+    // to __exception_active — a blanket guard on every statement
+    // with any pending_checks would (a) pessimise the symex graph
+    // with a boolean test on every single statement and (b)
+    // create spurious control-flow dependency on the exception
+    // state that CBMC's solver then has to reason about, which
+    // has been observed to slow the boto3-heavy benchmarks and
+    // to introduce spurious verification failures where the
+    // dependency combines poorly with refined-string reasoning.
+    auto pending_sets_exception = [](const code_blockt &b)
+    {
+      std::function<bool(const exprt &)> has_exc_assign =
+        [&](const exprt &e) -> bool
+      {
+        if(
+          e.id() == ID_code && e.get(ID_statement) == ID_assign &&
+          e.operands().size() >= 1 && e.operands()[0].id() == ID_symbol &&
+          to_symbol_expr(e.operands()[0]).get_identifier() ==
+            "python::__exception_active")
+          return true;
+        for(const auto &op : e.operands())
+          if(has_exc_assign(op))
+            return true;
+        return false;
+      };
+      for(const auto &stmt : b.statements())
+        if(has_exc_assign(stmt))
+          return true;
+      return false;
+    };
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    if(exc_sym != nullptr && pending_sets_exception(block))
+      block.add(
+        code_ifthenelset{not_exprt{exc_sym->symbol_expr()}, std::move(result)});
+    else
+      block.add(std::move(result));
+    pending_checks.clear();
+    return std::move(block);
+  }
+
+  return result;
+}
