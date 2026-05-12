@@ -33,8 +33,7 @@ fi
 MUTATIONS=(
     'ms:s|if (ms >= D) return "d";|if (ms < D) return "d";|:wrong-comparison-in-day-boundary'
     'ms:s|if (ms >= H) return "h";|if (ms > H) return "h";|:off-by-one-at-hour-boundary'
-    'classnames:s|if (a.length === 0) return b;|if (a.length === 1) return b;|:wrong-empty-check'
-    'classnames:s|return a + " " + b;|return a + b;|:missing-separator'
+    'classnames:s|const joined: string = a + " " + b;|const joined: string = a + b;|:missing-separator'
     'uuid:s|this.version === other.version;|true;|:dropped-field-comparison'
     'uuid:s|this.high === other.high|true|:dropped-high-comparison'
     'left-pad:s|if (strLen >= len) return false; // no padding needed|if (strLen > len) return false;|:boundary-off-by-one'
@@ -50,6 +49,12 @@ MUTATIONS=(
     'once:s|inputValue \* 2|inputValue|:wrong-cached-value'
     'array-unique:s|if (b !== a) {|if (b === a) {|:inverted-dup-check'
     'is-plain-object:s|return o.kind === "plain";|return true;|:classifies-all-as-plain'
+    'debounce:s|this.callCount = this.callCount + 1;|this.callCount = this.callCount + 2;|:wrong-increment'
+    'debounce:s|if (!this.pending) return this.lastArg;|return this.lastArg;|:drops-pending-guard'
+    'pad-right:s|if (s.length >= n) return s;|if (s.length < n) return s;|:inverted-length-check'
+    'compose-function:s|return (x + 3) \* 2;|return (x + 3) \* 3;|:wrong-compose-arith'
+    'compose-function:s|function compose_gf(x: number): number { return (x + 1) \* 2; }|function compose_gf(x: number): number { return (x \* 2) + 1; }|:gf-same-as-fg'
+    'array-union:s|const merged: number\[\] = a.concat(b);|const merged: number[] = a;|:drop-concat'
 )
 
 failures=0

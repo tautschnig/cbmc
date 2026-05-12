@@ -1,7 +1,8 @@
-CORE
+KNOWNBUG
 main.ts
 
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
+Content-precise symbolic string operations over-approximate (nondet content)

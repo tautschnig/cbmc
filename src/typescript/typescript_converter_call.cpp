@@ -1981,7 +1981,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
       }
       // ES2024 §22.1.3.25-31: Symbolic toLowerCase / toUpperCase /
-      // trim / trimStart / trimEnd via the refined-string solver.
+      // ES2024 §22.1.3.25-31: Symbolic toLowerCase / toUpperCase /
+      // trim via the refined-string solver. Uses
+      // ts_call_string_returning_function.
       if(
         !obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()) &&
         (method == "toLowerCase" || method == "toUpperCase" ||
@@ -1993,12 +1995,8 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           func_id = ID_cprover_string_to_lower_case_func;
         else if(method == "toUpperCase")
           func_id = ID_cprover_string_to_upper_case_func;
-        else if(method == "trim")
-          func_id = ID_cprover_string_trim_func;
-        else if(method == "trimStart")
-          func_id = ID_cprover_string_trim_func; // closest: trim start+end
         else
-          func_id = ID_cprover_string_trim_func; // closest: trim start+end
+          func_id = ID_cprover_string_trim_func;
         exprt refined_self = ts_string_to_refined(obj_expr);
         return ts_call_string_returning_function(func_id, {refined_self});
       }
@@ -2137,6 +2135,34 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           app.type() = bool_typet{};
           return std::move(app);
         }
+      }
+      // ES2024 §22.1.3.17/18: padStart/padEnd on a symbolic receiver
+      // (e.g. function parameter typed as string). Emit length =
+      // max(src.length, n); content is nondet.
+      if(
+        !obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()) &&
+        (method == "padStart" || method == "padEnd") && args.is_array() &&
+        !to_json_array(args).empty())
+      {
+        exprt target_arg = convert_expression(*to_json_array(args).begin());
+        struct_typet str_type = typescript_string_type();
+        typet len_type = str_type.components()[0].type();
+        // Cast both to the length type via IEEE float.
+        exprt src_len_i = member_exprt{obj_expr, "length", len_type};
+        // target_arg is an IEEE float. Compute max in float then cast.
+        exprt src_len_f = typecast_exprt{src_len_i, double_type()};
+        exprt cond = binary_relation_exprt{target_arg, ID_gt, src_len_f};
+        exprt result_len_f = if_exprt{cond, target_arg, src_len_f};
+        exprt result_len = typecast_exprt{result_len_f, len_type};
+        typet data_type = to_array_type(str_type.components()[1].type());
+        array_typet data_arr_type = to_array_type(data_type);
+        exprt::operandst nondet_chars;
+        while(nondet_chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+          nondet_chars.push_back(
+            side_effect_expr_nondett{unsignedbv_typet{16}, source_locationt{}});
+        return struct_exprt{
+          {result_len, array_exprt{std::move(nondet_chars), data_arr_type}},
+          str_type};
       }
       // ES2024 sec-string.prototype.substring
       // substring on non-constant strings — copy data from start..end
@@ -5110,8 +5136,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       const auto &st = to_struct_type(obj_expr.type());
       std::string tag = id2string(st.get_tag());
       if(
-        tag != "typescript_array" &&
-        tag != CPROVER_PREFIX "refined_string_type" &&
+        tag != "typescript_array" && tag != "typescript_string" &&
         tag != "typescript_union" && tag != "typescript_tuple" &&
         tag.substr(0, 17) != "typescript_class_")
       {

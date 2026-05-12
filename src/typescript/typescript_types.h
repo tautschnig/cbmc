@@ -51,14 +51,20 @@ inline struct_typet typescript_string_type()
       unsignedbv_typet{16},
       from_integer(TYPESCRIPT_MAX_STRING_LENGTH, signedbv_typet{64})}});
   struct_typet result{components};
-  result.set_tag(CPROVER_PREFIX "refined_string_type");
+  // Use a TypeScript-specific tag. DO NOT use CPROVER_PREFIX
+  // "refined_string_type" — that tag is reserved for the string
+  // solver's own refined_string_typet, which has a completely
+  // different structure ({length: index_type, content: char*}).
+  // Sharing the tag caused is_refined_string_type() to return true
+  // for our inline-array struct, confusing the solver.
+  result.set_tag("typescript_string");
   return result;
 }
 
 inline bool is_typescript_string_type(const typet &type)
 {
   return type.id() == ID_struct &&
-         to_struct_type(type).get_tag() == CPROVER_PREFIX "refined_string_type";
+         to_struct_type(type).get_tag() == "typescript_string";
 }
 
 #endif // CPROVER_TYPESCRIPT_TYPESCRIPT_TYPES_H
