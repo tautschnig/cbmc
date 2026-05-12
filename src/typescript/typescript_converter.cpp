@@ -1606,9 +1606,27 @@ exprt typescript_convertert::ts_string_to_refined(const exprt &ts_string)
   }
   pending_stmts.push_back(code_frontend_assignt{solver_arr, arr_val});
 
-  exprt pointer = address_of_exprt{
-    index_exprt{solver_arr, from_integer(0, solver_len_type), char_type},
-    char_ptr_type};
+  // Allocate the pointer on the heap via ID_allocate. This is
+  // crucial for call-site uniqueness when ts_string_to_refined
+  // executes inside a helper function that the user program calls
+  // more than once: address_of(solver_arr[0]) is a storage-based
+  // expression whose value is the same across all invocations of
+  // the same helper (address_of does not change with SSA version).
+  // If two call sites emit the same pointer, the solver's
+  // array_pool links them to the first-registered array, producing
+  // stale axioms for subsequent calls. A fresh allocation per call
+  // site breaks this tie. We also assign solver_arr's content into
+  // the dereference so the solver's char-array-for-pointer lookup
+  // sees our actual data.
+  exprt pointer = fresh("__ts_str_ptr", char_ptr_type);
+  pending_stmts.push_back(code_frontend_assignt{
+    pointer,
+    side_effect_exprt{
+      ID_allocate,
+      {from_integer(TYPESCRIPT_MAX_STRING_LENGTH * 2, size_type()),
+       false_exprt{}},
+      char_ptr_type,
+      source_locationt{}}});
 
   // Declare and emit associate calls.
   auto declare_assoc =
@@ -1671,18 +1689,63 @@ exprt typescript_convertert::ts_call_string_returning_function(
     return symbol_table.lookup_ref(id).symbol_expr();
   };
   exprt result_len_sym = fresh("__ts_strfn_len", solver_len_type);
-  exprt result_ptr_sym = fresh("__ts_strfn_ptr", char_ptr_type);
 
-  // Create our side-channel array for the result and associate it
-  // with result_ptr_sym BEFORE the string-function call so our
-  // association wins the race in array_pool (see idempotent insert
-  // in array_pool.cpp). If we emitted the associate AFTER the call,
-  // the solver's own make_char_array_for_char_pointer would register
-  // a fresh char_array_* for result_ptr_sym first, and our insert
-  // would be silently ignored — leaving our res_arr disconnected
-  // from the solver's view and zeroing out b.data[] in traces.
+  // Seed the result-length symbol with a nondet value. Without an
+  // assignment in the SSA the symbol is only read (as the first
+  // argument to the solver function and in the per-slot readout
+  // below), which means if the same
+  // ts_call_string_returning_function body is reused across
+  // multiple call sites (e.g. a user-defined helper that chains
+  // string operations and is called more than once), all call
+  // sites share the same SSA version #0 of this free variable.
+  // The solver's axioms from one call then contradict the axioms
+  // from another on the same variable, producing VERIFICATION
+  // FAILED even when each call in isolation would succeed. Writing
+  // the symbol (nondet → new SSA version per call site) gives each
+  // call independent solver reasoning.
+  pending_stmts.push_back(code_frontend_assignt{
+    result_len_sym,
+    side_effect_expr_nondett{solver_len_type, source_locationt{}}});
+
+  // Allocate the result buffer on the heap via ID_allocate. This is
+  // the crucial bit for multi-call correctness: each execution of
+  // this function body (one per call site of a string-returning
+  // helper in the user program) produces a unique dynamic object,
+  // so the solver's array_pool keys (which are pointer expressions
+  // simplified to their allocated addresses) are distinct across
+  // call sites. Without per-call allocation, result_ptr_sym =
+  // address_of(res_arr_symbol[0]) resolves to the SAME underlying
+  // storage across call sites (address_of tracks the variable's
+  // storage, independent of SSA version), which made array_pool
+  // reject the second-call association via the idempotent-insert
+  // path and leave the second call's axioms targeting the first
+  // call's array. See regression
+  // string-concat-chained-in-function.
+  //
+  // We allocate enough bytes for TYPESCRIPT_MAX_STRING_LENGTH UTF-16
+  // characters (2 bytes each). The solver only uses
+  // result_ptr_sym as an opaque key plus the declared length, so
+  // the exact size is just an over-approximation bound.
   array_typet infty_arr_type{char_type, infinity_exprt(solver_len_type)};
+  exprt result_ptr_sym = fresh("__ts_strfn_ptr", char_ptr_type);
+  pending_stmts.push_back(code_frontend_assignt{
+    result_ptr_sym,
+    side_effect_exprt{
+      ID_allocate,
+      {from_integer(TYPESCRIPT_MAX_STRING_LENGTH * 2, size_type()),
+       false_exprt{}},
+      char_ptr_type,
+      source_locationt{}}});
+
+  // Create a companion array symbol to hold the solver's view of
+  // the allocated buffer's content. We associate this array with
+  // the allocated pointer so the solver reads/writes our res_arr
+  // rather than inventing its own fresh char_array_*. The array
+  // needs a nondet seed for the same SSA-versioning reason as
+  // result_len_sym above.
   exprt res_arr = fresh("__ts_strfn_arr", infty_arr_type);
+  pending_stmts.push_back(code_frontend_assignt{
+    res_arr, side_effect_expr_nondett{infty_arr_type, source_locationt{}}});
 
   auto declare_assoc2 =
     [this](const irep_idt &name, const typet &a1, const typet &a2)
