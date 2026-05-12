@@ -147,62 +147,80 @@ make sure we don't introduce nondet-path explosions.
 
 ## #7 Split python_converter.cpp
 
-### Scope
+### Status: in progress (~38% reduction landed)
 
-`src/python/python_converter.cpp` is 17k+ lines. Every
-new feature adds 50-200 lines. Contributors reading or
-bisecting the file face a growing cost. A split into
-cohesive sub-files would:
+Incremental split landed across 9 commits. Main
+`python_converter.cpp` reduced from 17789 to
+11029 lines (38.0% reduction).
 
-- Reduce build times per change (only the touched file
-  recompiles).
-- Improve code review (smaller diffs per file).
-- Make the implementation accessible to new
-  contributors.
+### Landed splits
 
-### Proposed split
+| File | Lines | Contents |
+|------|-------|----------|
+| `python_converter_helpers.h` | 168 | Shared `static inline` helpers: `emit_string_bool_function`, `emit_string_function`, `make_nondet_string`, `double_to_floatbv`, `collect_name_refs`, `collect_param_names`. |
+| `python_converter_compare.cpp` | 966 | `convert_compare` (PLR §6.10). |
+| `python_converter_lambda.cpp` | 112 | `convert_lambda` (§6.14). |
+| `python_converter_comprehension.cpp` | 565 | `convert_list_comp`, `convert_dict_comp` (§6.2.5 / §6.2.6). |
+| `python_converter_expressions.cpp` | 750 | `convert_if_exp`, `convert_subscript`, `convert_tuple`, `convert_list`, `convert_attribute`, `convert_dict` (§6.2.x / §6.13). |
+| `python_converter_ops.cpp` | 1095 | `convert_bin_op`, `convert_unary_op`, `convert_bool_op` (§6.6 / §6.7 / §6.8 / §6.9 / §6.11). |
+| `python_converter_terms.cpp` | 323 | `convert_constant`, `convert_name` (§6.2.1 / §6.2.2). |
+| `python_converter_control.cpp` | 747 | `convert_assert`, `convert_if`, `convert_while`, `convert_for`, `convert_return` (§7.3 / §7.6 / §8.1 / §8.2 / §8.3). |
+| `python_converter_except.cpp` | 547 | `convert_break`, `convert_continue`, `convert_pass`, `convert_raise`, `convert_with`, `convert_try` (§7.1 / §7.8 / §7.9 / §7.10 / §8.4 / §8.5). |
+| `python_converter_assign.cpp` | 1665 | `convert_ann_assign`, `convert_assign`, `convert_aug_assign` (§7.2 / §7.2.1 / §7.2.2). |
 
-- `python_expressions.cpp` — convert_expression,
-  convert_call, convert_binop, convert_compare,
-  convert_attribute (~4000 lines).
-- `python_statements.cpp` — convert_statement dispatch,
-  convert_assign, convert_if, convert_for,
-  convert_while, convert_try, convert_match,
-  convert_with (~5000 lines).
-- `python_types.cpp` — type inference, annotation
-  resolution, class-struct building (~2000 lines).
-- `python_module.cpp` — convert_module_body, pass 0,
-  pass 0.1, pass 0.25, import resolution (~2000 lines).
-- `python_intrinsics.cpp` — @c_intrinsic decorator,
-  fold/domain/range maps, library-function dispatch
-  (~1500 lines).
-- `python_converter.cpp` — entry point, convert(),
-  shared state, helpers (~2500 lines).
+### Remaining in main file
 
-### Why deferred
+- `python_convertert` constructor + core helpers
+  (`json_member`, `unwrap_value`, `wrap_value`,
+  `safe_typecast`, etc.).
+- `convert_expression` dispatch table.
+- `convert_call` (PLR §6.3.4, ~5930 lines — the
+  largest remaining cohesive block).
+- `convert_statement` dispatch table.
+- `convert_function_def` (§8.7).
+- `convert_module_body`.
+- Several smaller helpers.
 
-Mechanical but high-risk:
-- Every function's forward declarations need to move
-  to `python_converter.h`.
-- Shared static helpers need to be exposed or
-  duplicated.
-- The CMake rule for `python_converter.cpp` needs to
-  gain the new `.cpp` files.
-- Static `thread_local` variables that are currently
-  file-local may need to move to class members.
-- Cross-file template/lambda captures need audit.
+### Next recommended extractions
 
-Done wrong, the split introduces subtle linker issues
-or build-order bugs. Done right, it's a week of focused
-work with no behavioural change — fully verified by
-ensuring the 346 CORE tests keep passing after each
-incremental split.
+- `python_converter_call.cpp` — the 5930-line
+  `convert_call` beast. Will need additional
+  helpers promoted: `build_string_struct`,
+  `emit_string_int_function`,
+  `register_string_with_solver`. This is the
+  single biggest reduction available.
+- `python_converter_function_def.cpp` — the
+  `convert_function_def` for user-defined
+  functions (~1400 lines).
+- `python_converter_module.cpp` — module-level
+  passes (pass 0, pass 0.1, pass 0.25, import
+  resolution).
 
-This is best done in a single dedicated session with
-full context budget and `ctest --output-on-failure`
-running in a watch loop. Not suitable for a
-long-running autonomous session where interruptions
-could leave the codebase in an inconsistent state.
+A final dedicated session should bring the main
+file under 5000 lines. At that point it would
+primarily hold the entry-point dispatcher and
+shared state.
+
+### Migration pattern (for future splits)
+
+1. Pick a cohesive function or small group.
+2. Find the function's line range with `grep -n
+   "^exprt python_convertert::<name>"`.
+3. Check static-helper dependencies with
+   `awk ... | grep -oE "(double_to_floatbv|...)" |
+   sort -u`.
+4. Promote any file-scope statics into
+   `python_converter_helpers.h` as `static inline`.
+5. Extract the function body to a new .cpp with
+   the standard include prelude (`python_converter.h`,
+   util headers, `python_converter_helpers.h`,
+   `python_types.h`, `python_value_type.h`).
+6. `cmake -S . -Bbuild` to re-glob.
+7. Build. Fix any missing-include errors.
+8. Run regression + integration.
+9. Commit with the "Nth step" format.
+
+
 
 ## #9b Generator `.send()` / `.throw()` support
 
