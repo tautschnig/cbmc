@@ -41,8 +41,10 @@ void cred_lifetime_init(struct cred *c, unsigned int usage);
 void cred_lifetime_get(struct cred *c);
 void cred_lifetime_put(struct cred *c);
 
-// Contract target (declared by the adapter).
-void put_cred(struct cred *cred);
+// Contract target (declared by the adapter).  Signature matches
+// the kernel's <linux/cred.h>:
+//   static inline void put_cred(const struct cred *_cred);
+void put_cred(const struct cred *_cred);
 
 int main(void)
 {

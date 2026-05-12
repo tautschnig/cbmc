@@ -49,11 +49,20 @@ int cred_live(struct cred *c);
 // Contracts.
 // ---------------------------------------------------------------------------
 
-// Contract on the mangled static-inline form.
-void __CPROVER_file_local_cred_h_put_cred(struct cred *cred)
-  __CPROVER_requires(cred != (struct cred *)0)
-    __CPROVER_requires(cred_live(cred) == 1) __CPROVER_assigns();
+// Contract on the mangled static-inline form.  Note the parameter
+// type is `const struct cred *` AND the parameter name is
+// `_cred` — both must match the kernel's actual
+// <linux/cred.h> signature:
+//   static inline void put_cred(const struct cred *_cred);
+// Parameter name mismatch triggers an invariant violation in
+// goto-instrument --replace-call-with-contract at contract-
+// installation time (CBMC's type comparison treats parameter
+// names as part of code_with_contract_typet equality).
+void __CPROVER_file_local_cred_h_put_cred(const struct cred *_cred)
+  __CPROVER_requires(_cred != (const struct cred *)0) __CPROVER_requires(
+    cred_live((struct cred *)_cred) == 1) __CPROVER_assigns();
 
 // External-name contract for direct-call harness links.
-void put_cred(struct cred *cred) __CPROVER_requires(cred != (struct cred *)0)
-  __CPROVER_requires(cred_live(cred) == 1) __CPROVER_assigns();
+void put_cred(const struct cred *_cred)
+  __CPROVER_requires(_cred != (const struct cred *)0) __CPROVER_requires(
+    cred_live((struct cred *)_cred) == 1) __CPROVER_assigns();

@@ -77,7 +77,50 @@ Commit: `c86617c94c`.
 
 ## Investigated but not yet upstream-ready
 
-### (none — LIM-008 previously lived here; now RESOLVED, see above)
+### LIM-014 — goto-cc constant-folding pathologies on Linux 6.x headers
+
+- **What.**  `__is_constexpr(x)` + `__builtin_choose_expr` and
+  `?:`-with-missing-middle-operand inside `__aligned(...)` both
+  mis-fold in CBMC's ansi-c front-end when the argument contains
+  a runtime expression.  Manifests on Linux 6.x kernel headers
+  (`<linux/bits.h>` `GENMASK_INPUT_CHECK` and `<linux/cache.h>`
+  `__cacheline_group_begin_aligned`).
+- **Why it's not yet ready.**  Front-end constant-folding logic
+  is subtle and involves multiple classes in `src/ansi-c/`.
+  Needs careful isolation of each idiom, regression tests under
+  `regression/ansi-c/`, and checking against other kernel
+  versions.
+- **Workaround shipped in this repo.**
+  `integration/linux/scan/fragments/scan-compat.h` overrides the
+  offending macros to sound-but-loose values via `-include` after
+  the kernel's own headers.  Kernel semantics unchanged; only
+  some compile-time checks are disabled.
+
+### LIM-016 — `goto-instrument --replace-call-with-contract` invariant violation
+
+- **What.**  `get_contract` in
+  `src/goto-instrument/contracts/contracts.cpp:593` compares the
+  contract-declaration's `code_typet` with the function-
+  declaration's `code_typet` via `irept::operator==`, which
+  recurses into every sub-irep including the attached
+  `spec_requires` / `spec_assigns` clauses.  The two types are
+  structurally different (contract has extra sub-ireps), and
+  the DATA_INVARIANT fires even when the signatures match.
+- **Why it's not yet ready.**  The fix — add
+  `code_typet::structurally_equal(other)` that strips contract
+  sub-ireps before comparing, and switch the DATA_INVARIANT to
+  it — is mechanically straightforward but needs a regression
+  test that installs a contract on a function whose declaration
+  doesn't have attached clauses and checks it succeeds.
+- **Blocks:** the full LIM-013 resolution path (per-file harness
+  generation from prefilter hits).  Without this fix,
+  goto-harness-synthesised harnesses that call into kernel TUs
+  whose static-inline contract targets have their own
+  declarations trigger the invariant.  Documented in LIM-016 in
+  CBMC_LIMITATIONS.md.
+
+### (LIM-008 previously lived here; now RESOLVED + upstreamable,
+see "Ready to upstream" above.)
 
 ## Not pursued (inherent to CBMC's design)
 

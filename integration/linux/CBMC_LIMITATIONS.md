@@ -595,7 +595,7 @@ Consequences:
   generalises to M5b (pipe_buffer kernel adapter) and every
   subsequent module.
 
-## LIM-013 — scan cannot currently give per-file bug verdicts
+## LIM-013 — scan cannot currently give per-file bug verdicts [PARTIAL]
 
 **First hit:** Phase 2.3 corpus experiment (see
 `doc/corpus.md`).  Running the scan against a 13-file corpus of
@@ -661,9 +661,23 @@ sound.
    reliability) and the uncomitted goto-symex optimisation
    backlog.
 
-For now, the scan's regressions (`scan/run.sh` cases 1–5) are
+For now, the scan's regressions (`scan/run.sh` cases 1–6) are
 sound in what they test, and `doc/corpus.md` calls out the
 per-file limitation explicitly.
+
+**Partial progress (task 5 investigation).** The goto-harness
+tool (`src/goto-harness/`) generates exactly the shape we'd
+need: `goto-harness --harness-type call-function --function
+do_coredump` emits a synthetic main that calls `do_coredump`
+with nondet parameters.  Combined with the LIM-008 allocation
+cap (which keeps nondet-struct-init bounded), this produces a
+useful per-file harness in seconds on real kernel TUs.  The
+remaining blocker is LIM-016 (below) — the DATA_INVARIANT in
+`get_contract` fires when the contract-declaration has
+`__CPROVER_requires` clauses but the kernel TU's re-declaration
+doesn't.  That bug is in `src/goto-instrument/contracts/`
+contracts.cpp:593`; fixing it unblocks the full LIM-013
+resolution.
 
 ## LIM-014 — goto-cc constant-folding pathologies on Linux 6.x headers [WORKAROUND]
 
@@ -758,3 +772,80 @@ through other kernel TUs that do compile on 6.6
 by extending `scan/fragments/scan-compat.h` with specific
 overrides, or by filing focused CBMC front-end PRs per
 idiom.  Left open.
+
+## LIM-016 — `goto-instrument --replace-call-with-contract` invariant violation on signature mismatch [OPEN, blocks LIM-013 path forward]
+
+**First hit:** Phase 2 task 5 investigation of per-file harness
+generation.  Using `goto-harness --harness-type call-function` to
+synthesise a harness that invokes `do_coredump` from
+`fs/coredump.c` (the cocci-flagged put_cred site), then running
+
+```
+goto-instrument --replace-call-with-contract \
+    __CPROVER_file_local_cred_h_put_cred harness.gb out.gb
+```
+
+triggers an invariant violation at
+`src/goto-instrument/contracts/contracts.cpp:593`:
+
+```
+--- begin invariant violation report ---
+Invariant check failed
+File: src/goto-instrument/contracts/contracts.cpp:593
+  function: get_contract
+Condition: type == function_symbol.type
+Reason: front-end should have rejected re-declarations with a
+  different type
+```
+
+**Root cause.** `get_contract` compares the contract-declaration
+symbol's type with the function-declaration symbol's type via
+`irept::operator==`, which recurses into every sub-irep.  The
+contract-declaration has `spec_requires` / `spec_assigns` sub-
+ireps attached to its `code_typet` (by virtue of the
+`__CPROVER_requires(...)` / `__CPROVER_assigns()` attributes in
+the adapter source); the plain function declaration from the
+kernel TU does not.  The two types are structurally different
+and the DATA_INVARIANT fires, even though the *signature*
+(return type + parameter types + parameter names) matches
+exactly.
+
+**Why the direct-harness scan still works.**  `scan.py` applies
+each contract name in its own goto-instrument invocation with
+`check=False` in the `_run` wrapper (see
+`integration/linux/scan/scan.py` around the `CONTRACT_FUNCTIONS`
+iteration).  For the direct-call harness, only ONE of the two
+names in `CONTRACT_FUNCTIONS['cred_lifetime']` actually has a
+body-present call site in the linked binary; the other
+crashes but is silently tolerated.  In the per-file harness
+path every kernel TU we target has the static-inline-mangled
+name present, so the crash is unavoidable.
+
+**Workaround scoped for the direct-call harness.**
+`scan/adapters/cred_kernel_adapter.c` matches the kernel's
+`<linux/cred.h>` signature exactly — parameter TYPE (`const
+struct cred *`) and parameter NAME (`_cred`) — to defer the
+DATA_INVARIANT until the contract sub-ireps are the only
+difference.  This hardens the existing scan pipeline against
+future fallout from the silent-tolerance of the
+`check=False`-wrapped crash.  Per-file harnesses remain
+blocked.
+
+**Resolution direction.** CBMC upstream fix: `get_contract` in
+`src/goto-instrument/contracts/contracts.cpp` should compare
+the code_typet's structural fields (return type, parameter
+types, parameter names) without also comparing the attached
+contract clauses.  Cleanest is a new helper
+`code_typet::structurally_equal(other)` that strips
+`spec_requires` / `spec_ensures` / `spec_assigns` / `spec_
+frees` sub-ireps before comparing; `get_contract`'s
+DATA_INVARIANT then switches to the structural comparison.
+The existing `==` semantics on `code_typet` remain useful
+elsewhere (e.g. to detect genuine re-declarations with
+different signatures).
+
+**Status.** OPEN.  Blocks the real LIM-013 path (per-file
+harness synthesis via goto-harness + --replace-call-with-
+contract on the kernel TU's static-inline target).  Filed
+in `doc/upstream-contributions.md` as a candidate for
+upstream work.

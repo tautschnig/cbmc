@@ -69,7 +69,7 @@
 #ifdef __cacheline_group_begin_aligned
 #  undef __cacheline_group_begin_aligned
 #endif
-#define __cacheline_group_begin_aligned(GROUP, ...) \
+#define __cacheline_group_begin_aligned(GROUP, ...)                            \
   __cacheline_group_begin(GROUP) __aligned(SMP_CACHE_BYTES)
 
 #ifdef __cacheline_group_end_aligned

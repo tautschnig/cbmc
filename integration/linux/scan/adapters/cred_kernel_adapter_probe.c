@@ -11,7 +11,8 @@ struct cred
   unsigned long _pad;
 };
 
-void __CPROVER_file_local_cred_h_put_cred(struct cred *cred)
+void __CPROVER_file_local_cred_h_put_cred(const struct cred *_cred)
   __CPROVER_requires(0 == 1) __CPROVER_assigns();
 
-void put_cred(struct cred *cred) __CPROVER_requires(0 == 1) __CPROVER_assigns();
+void put_cred(const struct cred *_cred)
+  __CPROVER_requires(0 == 1) __CPROVER_assigns();
