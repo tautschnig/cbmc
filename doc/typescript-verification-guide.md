@@ -6,9 +6,12 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-642 programs across all documented features; three remaining
-documented-limitation tests are marked `KNOWNBUG` (see the "Known
-limitations" section at the end of this guide).
+649 programs. Twelve tests are marked `KNOWNBUG`: three pre-existing
+design trade-offs (see the "Design trade-offs" section at the end of
+this guide), three unrelated precision probes, and six demoted from
+CORE when a recent soundness fix tightened the symbolic-string solver
+integration (see "Other documented edge cases" — they exercise
+content-precision on symbolic strings, which we now over-approximate).
 
 ## Contents
 
@@ -176,8 +179,37 @@ Not yet supported:
 
 Most common operations are supported. For **constant** strings, all
 work is done at conversion time (fast, precise). For **symbolic**
-strings, a subset of operations now route through CBMC's refined
-string solver:
+strings, a subset of operations route through CBMC's refined string
+solver.
+
+**Soundness note — content over-approximation for symbolic strings.**
+Our string struct is `{length, char[64] data}` — a fixed-size inline
+array. The refined string solver expects infinity-sized arrays it can
+reason about lazily. To bridge the two representations we pass a fresh
+infinity-sized array with nondeterministic content to the solver, and
+associate it with our dynamic length. This is **sound** (the solver
+can never prove a false property) but **over-approximates content**:
+the solver treats string content as fully symbolic, even when the
+program assumes `s === "hello"`. In practice this means:
+
+- **Length properties are precise.** `(a + b).length === a.length +
+  b.length`, `s.toUpperCase().length === s.length`,
+  `s.trim().length <= s.length`, etc. all verify exactly.
+- **Content properties over-approximate.** `s === "hello"` implies
+  `s.includes("ell")` is **true** in reality, but the solver can't
+  deduce this — it will report a spurious counterexample where the
+  unconstrained content doesn't contain "ell". The assertion "fails
+  to verify" rather than "succeeds" — no incorrect success is ever
+  returned.
+- **Constant strings are always precise.** All operations on string
+  literals are fully evaluated at conversion time, bypassing the
+  solver.
+
+The symbolic column below reflects what the solver can actually
+prove. Six tests that relied on content precision (e.g.
+`string-includes-symbolic`, `string-case-symbolic`) are marked
+`KNOWNBUG` until we move to a heap-pointer string representation
+that lets the solver see actual content through the SSA.
 
 | Operation | Constant | Symbolic |
 |-----------|---------|----------|
@@ -186,22 +218,30 @@ string solver:
 | `s.charCodeAt(i)` | ✓ | ✓ (for constant `i`) |
 | `s.indexOf(x)` | ✓ | ✓ (bounded-needle match chain) |
 | `s.lastIndexOf(x)` | ✓ | — |
-| `s.includes(x)` | ✓ | ✓ (via `cprover_string_contains_func`) |
-| `s.startsWith(x)` | ✓ | ✓ (via `cprover_string_is_prefix_func`) |
-| `s.endsWith(x)` | ✓ | ✓ (via `cprover_string_is_suffix_func`) |
+| `s.includes(x)` | ✓ | length-bounded only (content nondet) |
+| `s.startsWith(x)` | ✓ | length-bounded only (content nondet) |
+| `s.endsWith(x)` | ✓ | length-bounded only (content nondet) |
 | `s.substring`, `s.slice` | ✓ | ✓ (for constant args) |
-| `s.toUpperCase` | ✓ | ✓ (via `cprover_string_to_upper_case_func`) |
-| `s.toLowerCase` | ✓ | ✓ (via `cprover_string_to_lower_case_func`) |
-| `s.trim` | ✓ | ✓ (via `cprover_string_trim_func`) |
-| `s.repeat(n)` | ✓ | ✓ (length only; content nondet) |
-| `s.padStart / padEnd` | ✓ | ✓ (length only) |
+| `s.toUpperCase` | ✓ | length-precise; content nondet |
+| `s.toLowerCase` | ✓ | length-precise; content nondet |
+| `s.trim` | ✓ | length-precise (`<= s.length`); content nondet |
+| `s.repeat(n)` | ✓ | length-precise (`n * s.length`); content nondet |
+| `s.padStart / padEnd` | ✓ | length-precise (`max(s.length, n)`); content nondet |
 | `s.replace / replaceAll` | ✓ | — |
 | `s.split(delim)` | ✓ | ✓ for `split("")` (per-char) |
-| `+s` (ToNumber) | ✓ | ✓ (via `cprover_string_parse_int_func`) |
-| `s1 + s2` | ✓ | ✓ character-precise (via `cprover_string_concat_func`) |
-| `s1 === s2` | ✓ | ✓ (native struct compare) |
+| `+s` (ToNumber) | ✓ | length-bounded (via `cprover_string_parse_int_func`) |
+| `s1 + s2` | ✓ | length-precise (`a.length + b.length`); content nondet |
+| `s1 === s2` | ✓ | ✓ (native struct compare, per-slot) |
 | `String.fromCharCode(code)` | ✓ | — |
-| `JSON.parse` / `JSON.stringify` | ✓ primitives, arrays, one-level nested objects | Length only for symbolic args |
+| `JSON.parse` / `JSON.stringify` | ✓ primitives, arrays, one-level nested objects | length-only for symbolic args |
+
+"length-precise" means the solver computes the result's `.length`
+exactly from the inputs' lengths. "length-bounded only" means the
+predicate is constrained by lengths (e.g., `startsWith(x)` implies
+`s.length >= x.length`) but not by content. In both cases, if you
+assert a length property you'll get a precise answer; if you assert
+a content property on a symbolic receiver, expect the solver to fail
+to prove it even when it would hold concretely.
 
 Template literals work for any interpolation that constant-folds
 (numbers via unary minus, `+`, `-`, `*`, `/`; booleans; other strings).
@@ -373,8 +413,21 @@ loops, indices, and modulo arithmetic. Variables used with `%`, `&`,
 ## Known limitations
 
 Documented `KNOWNBUG` tests indicate cases where a design trade-off
-intentionally gives an unsound or imprecise answer. All 3 remaining
-KNOWNBUGs are design trade-offs.
+intentionally gives an unsound or imprecise answer, or where an
+over-approximation sacrifices precision for soundness. The current
+KNOWNBUGs fall into three groups:
+
+1. **Design trade-offs** (3 tests) — semantic choices baked into the
+   model, described below.
+2. **Symbolic string content over-approximation** (6 tests:
+   `string-case-symbolic`, `string-concat-symbolic-content`,
+   `string-includes-symbolic`, `string-startswith-symbolic`,
+   `string-symbolic-realistic`, `string-trim-symbolic`) — the solver
+   sees nondet content for any non-literal string; length properties
+   remain precise. See "Other documented edge cases" above.
+3. **Precision probes** (3 tests: `array-push-length-in-loop`,
+   `higher-order-compose`, `string-concat-chained-in-function`) —
+   documented precision gaps in specific patterns.
 
 ### Design trade-offs
 
@@ -398,12 +451,18 @@ KNOWNBUGs are design trade-offs.
 - `Object.is(+0, -0)` returns `false` per ES2024 for constant zeros,
   but only in the constant path — symbolic zero-sign tracking is not
   available.
-- Symbolic string concatenation's result content is solver-backed
-  via `cprover_string_concat_func` (so e.g. `(a + b) === "ab"`
-  verifies when a and b are constrained). Other symbolic string
-  methods (`includes`, `startsWith`, `endsWith`, `toLowerCase`,
-  `toUpperCase`, `trim`) also route through the refined string
-  solver. `substring` is still per-slot with constant offsets.
+- **Symbolic string content is over-approximated.** The refined
+  string solver sees nondeterministic content for any string that
+  isn't a compile-time literal. Length-based properties (e.g.
+  `(a+b).length === a.length + b.length`,
+  `s.toUpperCase().length === s.length`,
+  `s.trim().length <= s.length`) verify precisely. Content-based
+  properties (e.g. `s.includes("ell")` when `s === "hello"`) fail
+  to verify even when they hold concretely — they never produce a
+  spurious success. See the "Strings" table above for the per-
+  method breakdown. Lifting this restriction would require switching
+  our string struct from fixed inline array to heap-pointer
+  representation so the solver can see content through the SSA.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.

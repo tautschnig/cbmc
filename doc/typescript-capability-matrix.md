@@ -169,26 +169,40 @@ the column shows `—`.
 
 ### String (ES2024 §22.1)
 
+**Symbolic-string soundness note.** Non-literal strings (e.g.
+`nondet_string()`, function parameters typed `string`) have
+nondeterministic content from the solver's perspective. Length-based
+properties verify precisely; content-based predicates on symbolic
+receivers (e.g. `s.includes("ell")` when `s === "hello"`) fail to
+verify even when they hold concretely. This is sound (no false
+positives) but imprecise. Constant strings are fully evaluated at
+conversion time and remain character-precise. See
+`doc/typescript-verification-guide.md` §Strings for details.
+
 | Feature | Status | Notes | Test(s) |
 |--------|--------|-------|---------|
-| `length` | ✅ |  | `string-length`, `string-length-check` |
-| Concatenation (`+`) | ✅ |  | `string-concat`, `string-concat-multi` |
-| Concatenation (`concat` method) | ✅ | Fixed 2026-05-07 | `string-concat-method` |
-| Split | ✅ |  | `string-split` |
-| Replace / replaceAll | ✅ |  | `string-replace`, `string-replaceAll`, `string-replaceAll-multi` |
-| Slice | ✅ |  | `string-slice`, `string-slice-negative` |
-| Substring (with spec-compliant swap) | ✅ | Fixed 2026-05-07 | `string-substring-swap` |
-| Repeat | ✅ | Safety-capped at 10000 | `string-repeat` |
+| `length` | ✅ | Precise on symbolic too | `string-length`, `string-length-check` |
+| Concatenation (`+`) | ✅ | Constant: precise; Symbolic: length-precise, content nondet | `string-concat`, `string-concat-multi` |
+| Concatenation (`concat` method) | ✅ | Fixed 2026-05-07 (constant); symbolic as `+` | `string-concat-method` |
+| Split | ✅ | Constant only | `string-split` |
+| Replace / replaceAll | ✅ | Constant only | `string-replace`, `string-replaceAll`, `string-replaceAll-multi` |
+| Slice | ✅ | Constant args only | `string-slice`, `string-slice-negative` |
+| Substring (with spec-compliant swap) | ✅ | Constant args only | `string-substring-swap` |
+| Repeat | ✅ | Safety-capped at 10000; symbolic content nondet | `string-repeat` |
 | String-number conversion | ⚠️ |  | `string-number-convert` |
-| Multi-method chains | ✅ |  | `string-methods-chain`, `string-methods-combined` |
-| Comparison | ✅ |  | `string-comparison-ops`, `string-equality` |
-| `indexOf` (with fromIndex) | ✅ | fromIndex fixed 2026-05-07 | `string-indexof-fromindex` |
-| `lastIndexOf` | ✅ | Added 2026-05-07 | `string-last-index-of` |
-| `startsWith` / `endsWith` (with position) | ✅ | Position arg fixed 2026-05-07 | `string-starts-ends-position` |
+| Multi-method chains | ✅ | On constants | `string-methods-chain`, `string-methods-combined` |
+| Comparison (`===`, `!==`) | ✅ | Per-slot struct compare; works on symbolic | `string-comparison-ops`, `string-equality` |
+| `indexOf` (with fromIndex) | ✅ | fromIndex fixed 2026-05-07; constant only | `string-indexof-fromindex` |
+| `lastIndexOf` | ✅ | Constant only | `string-last-index-of` |
+| `startsWith` / `endsWith` (with position) | ✅ | Position arg fixed 2026-05-07 (constant). Symbolic over-approximates content | `string-starts-ends-position` |
+| `includes` on symbolic strings | ⚠️ | Over-approximates: content is nondet in the solver | `string-includes-symbolic` [KNOWNBUG] |
+| `startsWith` / `endsWith` on symbolic strings | ⚠️ | Over-approximates as above | `string-startswith-symbolic` [KNOWNBUG] |
+| `toUpperCase` / `toLowerCase` on symbolic strings | ⚠️ | Length precise, content nondet | `string-case-symbolic` [KNOWNBUG] |
+| `trim` on symbolic strings | ⚠️ | Length bound (`<= input.length`) precise; content nondet | `string-trim-symbolic` [KNOWNBUG] |
 | `padStart` / `padEnd` (short-circuit) | ✅ | Fixed 2026-05-07 | `string-pad-short-circuit` |
 | `padStart` / `padEnd` (multi-char pad) | ✅ | Fixed 2026-05-07 | `string-pad-multichar` |
-| `trim` | ✅ |  | (covered in `string-methods`) |
-| `trimStart` / `trimEnd` | ✅ | Added 2026-05-07 | `string-trim-start-end` |
+| `trim` (constant) | ✅ |  | (covered in `string-methods`) |
+| `trimStart` / `trimEnd` | ✅ | Added 2026-05-07; constant | `string-trim-start-end` |
 | `charCodeAt`, `String.fromCharCode` | ❌ | Not implemented | — |
 | Empty-string receiver | ⚠️ | Most methods bypass empty-string receivers | — |
 
@@ -275,13 +289,41 @@ the column shows `—`.
 | `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
 | `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## KNOWNBUG tests (4)
+## KNOWNBUG tests (12)
+
+**Design trade-offs (3):**
 
 | Test | Symptom | ES2024 / TSH ref |
 |------|---------|------------------|
 | `async-race-undetected` | Sequential async misses unobserved-race bugs (opt-in fix via `--ts-async-threading`) | §27.2 |
 | `object-prototype-chain` | Our struct model has no prototype chain; `getPrototypeOf` / `isPrototypeOf` not modelled | §20.1 |
 | `strict-nan-not-equal` | `NaN === NaN` returns `true` in our null-as-NaN model (spec says `false`) | §7.2.14 |
+
+**Symbolic-string content over-approximation (6):**
+
+The refined-string solver sees nondet content for any non-literal
+string. Length properties verify precisely; content properties on
+symbolic receivers fail to verify even when they hold concretely
+(sound over-approximation). Restoring precision would require
+switching our string struct from fixed inline array to heap-pointer
+representation.
+
+| Test | Symptom | ES2024 / TSH ref |
+|------|---------|------------------|
+| `string-case-symbolic` | `s === "hello"` ⇒ `s.toUpperCase() === "HELLO"` not provable (content nondet) | §22.1.3.30 |
+| `string-concat-symbolic-content` | `a === "foo"` ∧ `b === "bar"` ⇒ `(a+b) === "foobar"` not provable | §22.1.3.3 |
+| `string-includes-symbolic` | `s === "hello"` ⇒ `s.includes("ell")` not provable | §22.1.3.7 |
+| `string-startswith-symbolic` | `s === "hello"` ⇒ `s.startsWith("he")` not provable | §22.1.3.23 |
+| `string-symbolic-realistic` | Combines several of the above on realistic code | §22.1 |
+| `string-trim-symbolic` | `s === "  hi  "` ⇒ `s.trim() === "hi"` not provable | §22.1.3.32 |
+
+**Precision probes (3):**
+
+| Test | Symptom | Notes |
+|------|---------|-------|
+| `array-push-length-in-loop` | Symbolic array length tracking imprecise through loops | Unresolved design question |
+| `higher-order-compose` | Nested function composition loses type information | Monomorphisation limitation |
+| `string-concat-chained-in-function` | Chained concat results lose length precision across function boundaries | Related to symbolic string content over-approximation |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 
@@ -315,15 +357,20 @@ catches it.
 ## Overall assessment
 
 **Well supported** (works for 90%+ of real code): primitives, classes,
-generics, narrowing, most Array/String methods, Promises, imports/exports.
+generics, narrowing, most Array/String methods on constants, Promises,
+imports/exports.
 
 **Partial:** float-loop unwinding, mapped/conditional types, Map/Set
 iteration, Unicode edge cases, destructuring defaults, abstract class
 enforcement.
 
-**Not supported** (see KNOWNBUG): nullish/optional chaining, dynamic
-imports, string enums, sort with comparator, heterogeneous tuple returns,
-`+"42"` string-to-number coercion.
+**Sound over-approximation** (see KNOWNBUG): content-based predicates
+on symbolic strings (`s.includes(x)`, `s.startsWith(x)`,
+`s.toUpperCase() === "…"`, `(a+b) === "…"`). Length properties on
+symbolic strings remain precise.
+
+**Not supported** (see KNOWNBUG): dynamic imports, heterogeneous
+tuple returns.
 
 ## Workarounds
 
