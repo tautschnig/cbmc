@@ -123,6 +123,30 @@ codet python_convertert::convert_if(const jsont &stmt)
 // expression is true."
 codet python_convertert::convert_while(const jsont &stmt)
 {
+  // PLR §8.2: while test: body [else: orelse]
+  // If orelse is non-empty, create a break-flag symbol so the
+  // else clause is skipped on break.
+  const jsont &orelse_stmts = json_member(stmt, "orelse");
+  bool have_orelse = orelse_stmts.is_array() && !as_array(orelse_stmts).empty();
+
+  irep_idt break_flag_id;
+  if(have_orelse)
+  {
+    static unsigned while_else_ctr = 0;
+    std::string flag_name = "__loop_broke_" + std::to_string(while_else_ctr++);
+    std::string flag_q = qualify_name(flag_name);
+    break_flag_id = irep_idt{flag_q};
+    if(symbol_table.lookup(break_flag_id) == nullptr)
+    {
+      symbolt fs{break_flag_id, bool_typet{}, "python"};
+      fs.base_name = flag_name;
+      fs.is_lvalue = true;
+      fs.is_state_var = true;
+      fs.is_static_lifetime = current_function.empty();
+      symbol_table.add(fs);
+    }
+    loop_break_flags.push_back(break_flag_id);
+  }
   // Convert the test. Walrus (NamedExpr) inside the test
   // generates pending_checks that bind variables used by
   // the body; those bindings must re-execute every
@@ -159,6 +183,26 @@ codet python_convertert::convert_while(const jsont &stmt)
       body_block.add(convert_statement(s));
   }
 
+  auto wrap_with_else = [&](codet &&loop_code) -> codet
+  {
+    if(!have_orelse)
+      return std::move(loop_code);
+
+    loop_break_flags.pop_back();
+
+    code_blockt outer;
+    const symbolt &flag_sym = symbol_table.lookup_ref(break_flag_id);
+    outer.add(code_frontend_assignt{flag_sym.symbol_expr(), false_exprt{}});
+    outer.add(std::move(loop_code));
+
+    code_blockt else_block;
+    for(const auto &s : as_array(orelse_stmts))
+      else_block.add(convert_statement(s));
+    outer.add(code_ifthenelset{
+      not_exprt{flag_sym.symbol_expr()}, std::move(else_block)});
+    return std::move(outer);
+  };
+
   if(!test_pending.empty())
   {
     // Wrap: while(true) { side_effects; if(!test) break; body; }
@@ -170,12 +214,12 @@ codet python_convertert::convert_while(const jsont &stmt)
       loop_body.add(s);
     code_whilet while_stmt{true_exprt{}, std::move(loop_body)};
     while_stmt.add_source_location() = get_location(stmt);
-    return std::move(while_stmt);
+    return wrap_with_else(std::move(while_stmt));
   }
 
   code_whilet while_stmt{test, std::move(body_block)};
   while_stmt.add_source_location() = get_location(stmt);
-  return std::move(while_stmt);
+  return wrap_with_else(std::move(while_stmt));
 }
 
 // PLR §8.3: The for statement
@@ -190,6 +234,51 @@ codet python_convertert::convert_for(const jsont &stmt)
   const jsont &iter = json_member(stmt, "iter");
   source_locationt loc = get_location(stmt);
   typet int_type = python_int_type();
+
+  // PLR §8.3: for target in iter: body [else: orelse]
+  // If orelse is non-empty, create a break-flag symbol so the
+  // else clause is skipped on break.
+  const jsont &orelse_stmts_for = json_member(stmt, "orelse");
+  bool have_orelse_for =
+    orelse_stmts_for.is_array() && !as_array(orelse_stmts_for).empty();
+  irep_idt for_break_flag_id;
+  if(have_orelse_for)
+  {
+    static unsigned for_else_ctr = 0;
+    std::string flag_name = "__loop_broke_f_" + std::to_string(for_else_ctr++);
+    std::string flag_q = qualify_name(flag_name);
+    for_break_flag_id = irep_idt{flag_q};
+    if(symbol_table.lookup(for_break_flag_id) == nullptr)
+    {
+      symbolt fs{for_break_flag_id, bool_typet{}, "python"};
+      fs.base_name = flag_name;
+      fs.is_lvalue = true;
+      fs.is_state_var = true;
+      fs.is_static_lifetime = current_function.empty();
+      symbol_table.add(fs);
+    }
+    loop_break_flags.push_back(for_break_flag_id);
+  }
+
+  // RAII-like guard: any early return from convert_for must
+  // still pop the break-flag stack. For the non-orelse case
+  // this is a no-op.
+  auto finalize_for = [&](codet &&c) -> codet
+  {
+    if(!have_orelse_for)
+      return std::move(c);
+    loop_break_flags.pop_back();
+    code_blockt outer;
+    const symbolt &flag_sym = symbol_table.lookup_ref(for_break_flag_id);
+    outer.add(code_frontend_assignt{flag_sym.symbol_expr(), false_exprt{}});
+    outer.add(std::move(c));
+    code_blockt else_block;
+    for(const auto &s : as_array(orelse_stmts_for))
+      else_block.add(convert_statement(s));
+    outer.add(code_ifthenelset{
+      not_exprt{flag_sym.symbol_expr()}, std::move(else_block)});
+    return std::move(outer);
+  };
 
   std::string var_name = json_string(json_member(target, "id"));
   // For tuple targets (for a, b in ...), use a synthetic name
@@ -207,7 +296,7 @@ codet python_convertert::convert_for(const jsont &stmt)
   {
     const jsont &range_args = json_member(iter, "args");
     if(!range_args.is_array() || as_array(range_args).empty())
-      return code_skipt{};
+      return finalize_for(code_skipt{});
 
     // PLib stdtypes: range(start, stop[, step])
     exprt start, stop, step;
@@ -287,7 +376,7 @@ codet python_convertert::convert_for(const jsont &stmt)
     code_blockt result;
     result.add(std::move(init));
     result.add(std::move(while_stmt));
-    return std::move(result);
+    return finalize_for(std::move(result));
   }
 
   // for x in iterable (list or string)
@@ -295,7 +384,7 @@ codet python_convertert::convert_for(const jsont &stmt)
   //   x = iterable.data[__idx]; body; __idx += 1; }
   exprt iterable = convert_expression(iter);
   if(iterable.is_nil())
-    return code_skipt{};
+    return finalize_for(code_skipt{});
 
   // If the iterable is a complex expression (e.g., enumerate() result),
   // store it in a temp symbol so it doesn't get simplified away.
@@ -385,14 +474,14 @@ codet python_convertert::convert_for(const jsont &stmt)
     code_whilet while_stmt{
       binary_relation_exprt{idx_var, ID_lt, length}, std::move(body_block)};
     result.add(std::move(while_stmt));
-    return std::move(result);
+    return finalize_for(std::move(result));
   }
 
   if(!is_list && !is_string)
   {
     log_overapprox(
       "for-in iteration: unsupported iterable type, skipping body");
-    return code_skipt{};
+    return finalize_for(code_skipt{});
   }
 
   // Determine element type
@@ -553,9 +642,9 @@ codet python_convertert::convert_for(const jsont &stmt)
   {
     for(auto &s : result.statements())
       pre_loop.add(std::move(s));
-    return std::move(pre_loop);
+    return finalize_for(std::move(pre_loop));
   }
-  return std::move(result);
+  return finalize_for(std::move(result));
 }
 
 // PLR §7.6: The return statement

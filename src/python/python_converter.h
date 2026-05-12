@@ -285,6 +285,15 @@ private:
   /// next statement. Populated by expression converters, consumed by
   /// statement converters.
   std::vector<codet> pending_checks;
+
+  /// PLR §8.2 / §8.3: for-else / while-else support.
+  /// Stack of break-flag symbol ids, pushed when entering a
+  /// loop whose orelse is non-empty and popped on exit. Each
+  /// break statement nested inside sets the top-of-stack flag
+  /// to true before breaking. The else clause runs when the
+  /// flag remains false after the loop.
+  std::vector<irep_idt> loop_break_flags;
+
   codet convert_if(const jsont &stmt);
   codet convert_while(const jsont &stmt);
   codet convert_for(const jsont &stmt);
