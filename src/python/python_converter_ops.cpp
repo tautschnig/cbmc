@@ -1069,6 +1069,44 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
   if(operand.is_nil())
     return nil_exprt{};
 
+  // PLR §3.3.8: unary-operator dunder dispatch — if the
+  // operand is a user-defined class instance with a
+  // matching __<op>__ method, dispatch to it.
+  {
+    static const std::map<std::string, std::string> op_to_dunder = {
+      {"USub", "__neg__"}, {"UAdd", "__pos__"}, {"Invert", "__invert__"}};
+    auto du = op_to_dunder.find(op);
+    if(du != op_to_dunder.end())
+    {
+      std::string tag;
+      if(operand.type().id() == ID_struct)
+        tag = id2string(to_struct_type(operand.type()).get_tag());
+      else if(operand.type().id() == ID_struct_tag)
+        tag = id2string(to_struct_tag_type(operand.type()).get_identifier());
+      if(tag.substr(0, 13) == "python_class_")
+      {
+        std::string bare = tag.substr(13);
+        for(const std::string &prefix :
+            {std::string{"python::"} + tag + "::" + du->second,
+             std::string{"python::"} + bare + "::" + du->second})
+        {
+          const symbolt *ds = symbol_table.lookup(irep_idt{prefix});
+          if(ds != nullptr)
+          {
+            typet ret_type = operand.type();
+            if(ds->type.id() == ID_code)
+              ret_type = to_code_type(ds->type).return_type();
+            return side_effect_expr_function_callt{
+              ds->symbol_expr(),
+              {address_of_exprt{operand}},
+              ret_type,
+              source_locationt{}};
+          }
+        }
+      }
+    }
+  }
+
   // Unwrap tagged-union values
   if(is_python_value_type(operand.type()))
     operand = unwrap_value(operand, python_int_type());
