@@ -36,7 +36,7 @@ struct mutex;
 
 // Ghost-state API.
 void lock_state_lock(struct mutex *m);
-void lock_state_unlock_ghost(struct mutex *m);  // internal ghost dec.
+void lock_state_unlock_ghost(struct mutex *m); // internal ghost dec.
 void lock_state_reset(struct mutex *m);
 unsigned int lock_state_held_count(struct mutex *m);
 

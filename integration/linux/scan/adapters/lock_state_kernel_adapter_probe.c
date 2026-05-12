@@ -7,5 +7,5 @@
 
 struct mutex;
 
-void mutex_unlock(struct mutex *lock)
-  __CPROVER_requires(0 == 1) __CPROVER_assigns();
+void mutex_unlock(struct mutex *lock) __CPROVER_requires(0 == 1)
+  __CPROVER_assigns();
