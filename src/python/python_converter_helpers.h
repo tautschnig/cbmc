@@ -259,4 +259,169 @@ make_nondet_string(symbol_table_baset &symbol_table)
   return result;
 }
 
+/// Emit a one-string-argument int-returning intrinsic call (e.g.,
+/// cprover_string_length_func).
+[[maybe_unused]] static inline exprt emit_string_int_function(
+  const irep_idt &func_id,
+  const exprt &str,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  const typet int_type = signedbv_typet{64};
+  irep_idt sym_id{func_id};
+  if(symbol_table.lookup(sym_id) == nullptr)
+  {
+    std::vector<typet> arg_types{str.type()};
+    symbolt fs{
+      sym_id,
+      mathematical_function_typet(std::move(arg_types), int_type),
+      "python"};
+    fs.base_name = id2string(func_id);
+    symbol_table.add(fs);
+  }
+
+  function_application_exprt app(
+    symbol_table.lookup_ref(sym_id).symbol_expr(), {str});
+  app.type() = int_type;
+
+  std::size_t ctr = symbol_table.symbols.size();
+  std::string rc_name = "__str_int_" + std::to_string(ctr);
+  irep_idt rc_id{"python::" + rc_name};
+  if(symbol_table.lookup(rc_id) == nullptr)
+  {
+    symbolt rs{rc_id, int_type, "python"};
+    rs.base_name = rc_name;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  pending_checks.push_back(
+    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  return symbol_table.lookup_ref(rc_id).symbol_expr();
+}
+
+/// Build a string literal and register it with the string solver.
+/// Uses ID_cprover_string_literal_func so the solver knows the content.
+[[maybe_unused]] static inline exprt build_solver_string_literal(
+  const std::string &s,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  constant_exprt lit_val{s, string_typet{}};
+  return emit_string_function(
+    ID_cprover_string_literal_func, {lit_val}, symbol_table, pending_checks);
+}
+
+/// Build a struct_exprt representing an inline string literal with a
+/// backing char array of exactly s.size() bytes.
+[[maybe_unused]] static inline exprt build_string_struct(const std::string &s)
+{
+  exprt::operandst chars;
+  for(char c : s)
+    chars.push_back(
+      from_integer(static_cast<unsigned char>(c), unsignedbv_typet{8}));
+  array_typet at(
+    unsignedbv_typet{8}, from_integer(chars.size(), signedbv_typet{64}));
+  array_exprt arr(std::move(chars), at);
+  exprt content = address_of_exprt(
+    index_exprt(arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
+  exprt length =
+    from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
+  return struct_exprt({length, content}, python_string_type());
+}
+
+/// Register a string expression with the string solver's array_pool.
+[[maybe_unused]] static inline void register_string_with_solver(
+  const exprt &str_expr,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  exprt length =
+    (str_expr.id() == ID_struct && str_expr.operands().size() == 2)
+      ? str_expr.operands()[0]
+      : exprt(member_exprt(str_expr, "length", signedbv_typet{64}));
+  exprt content =
+    (str_expr.id() == ID_struct && str_expr.operands().size() == 2)
+      ? str_expr.operands()[1]
+      : exprt(member_exprt(
+          str_expr, "data", pointer_typet(unsignedbv_typet{8}, 64)));
+
+  std::size_t arr_ctr = symbol_table.symbols.size();
+  std::string arr_name = "__str_arr_" + std::to_string(arr_ctr);
+  irep_idt arr_id{"python::" + arr_name};
+  array_typet inf_array_type(
+    unsignedbv_typet{8}, infinity_exprt(signedbv_typet{64}));
+  if(symbol_table.lookup(arr_id) == nullptr)
+  {
+    symbolt as{arr_id, inf_array_type, "python"};
+    as.base_name = arr_name;
+    as.is_lvalue = true;
+    as.is_state_var = true;
+    symbol_table.add(as);
+  }
+  exprt array_sym = symbol_table.lookup_ref(arr_id).symbol_expr();
+
+  {
+    irep_idt fn_id{ID_cprover_associate_array_to_pointer_func};
+    if(symbol_table.lookup(fn_id) == nullptr)
+    {
+      std::vector<typet> arg_types{inf_array_type, content.type()};
+      symbolt fs{
+        fn_id,
+        mathematical_function_typet(std::move(arg_types), signedbv_typet{32}),
+        "python"};
+      fs.base_name = id2string(fn_id);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app(
+      symbol_table.lookup_ref(fn_id).symbol_expr(), {array_sym, content});
+    app.type() = signedbv_typet{32};
+
+    std::size_t rc_ctr = symbol_table.symbols.size();
+    std::string rc_name = "__assoc_rc_" + std::to_string(rc_ctr);
+    irep_idt rc_id{"python::" + rc_name};
+    if(symbol_table.lookup(rc_id) == nullptr)
+    {
+      symbolt rs{rc_id, signedbv_typet{32}, "python"};
+      rs.base_name = rc_name;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      symbol_table.add(rs);
+    }
+    pending_checks.push_back(
+      code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  }
+
+  {
+    irep_idt fn_id{ID_cprover_associate_length_to_array_func};
+    if(symbol_table.lookup(fn_id) == nullptr)
+    {
+      std::vector<typet> arg_types{inf_array_type, length.type()};
+      symbolt fs{
+        fn_id,
+        mathematical_function_typet(std::move(arg_types), signedbv_typet{32}),
+        "python"};
+      fs.base_name = id2string(fn_id);
+      symbol_table.add(fs);
+    }
+    function_application_exprt app(
+      symbol_table.lookup_ref(fn_id).symbol_expr(), {array_sym, length});
+    app.type() = signedbv_typet{32};
+
+    std::size_t rc2_ctr = symbol_table.symbols.size();
+    std::string rc_name = "__assoc_len_rc_" + std::to_string(rc2_ctr);
+    irep_idt rc_id{"python::" + rc_name};
+    if(symbol_table.lookup(rc_id) == nullptr)
+    {
+      symbolt rs{rc_id, signedbv_typet{32}, "python"};
+      rs.base_name = rc_name;
+      rs.is_lvalue = true;
+      rs.is_state_var = true;
+      symbol_table.add(rs);
+    }
+    pending_checks.push_back(
+      code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+  }
+}
+
 #endif
