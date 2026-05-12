@@ -252,6 +252,12 @@ private:
   // Track constant string values for string method evaluation
   std::map<irep_idt, std::string> string_constants;
   std::map<irep_idt, exprt> dict_literals; // track dict literal values
+  /// Map from function name to the set of constant keys in
+  /// its return-statement dict literal. Used by convert_assign
+  /// to propagate dict_literals across function-call boundaries:
+  /// if the callee returns {'managed': ..., 'inline': ...},
+  /// the caller's receiving variable can trust those keys.
+  std::map<std::string, std::set<std::string>> function_returned_dict_keys;
   std::map<irep_idt, exprt> list_literals; // track list literal values
   std::map<irep_idt, double> float_constants; // track float/int constant values
   std::optional<std::string> extract_string_value(const exprt &e) const;

@@ -893,6 +893,43 @@ codet python_convertert::convert_return(const jsont &stmt)
   }
 
   exprt ret_val = convert_expression(value);
+
+  // PLR: record dict-literal return keys for caller-side
+  // dict_literals propagation. If a function returns a dict
+  // literal with constant keys, callers that assign the
+  // result to a local variable can trust those keys exist.
+  if(
+    !current_function.empty() && ret_val.id() == ID_struct &&
+    is_python_dict_type(ret_val.type()) && ret_val.operands().size() >= 2)
+  {
+    const exprt &length_expr = ret_val.operands()[0];
+    if(length_expr.is_constant())
+    {
+      mp_integer len_val;
+      if(!to_integer(to_constant_expr(length_expr), len_val))
+      {
+        const exprt &keys_arr = ret_val.operands()[1];
+        std::set<std::string> keys;
+        bool all_constant = true;
+        for(mp_integer i = 0; i < len_val; ++i)
+        {
+          std::size_t idx = i.to_ulong();
+          if(idx >= keys_arr.operands().size())
+            break;
+          auto kv = extract_string_value(keys_arr.operands()[idx]);
+          if(!kv.has_value())
+          {
+            all_constant = false;
+            break;
+          }
+          keys.insert(kv.value());
+        }
+        if(all_constant && !keys.empty())
+          function_returned_dict_keys[current_function] = std::move(keys);
+      }
+    }
+  }
+
   if(ret_val.is_nil())
   {
     // Expression conversion failed — return default value
