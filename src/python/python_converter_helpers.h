@@ -23,6 +23,8 @@
 #include <util/std_types.h>
 #include <util/symbol.h>
 
+#include "python_types.h"
+
 #include <cstdint>
 #include <cstring>
 #include <set>
@@ -163,6 +165,98 @@ collect_param_names(const jsont &func_def)
   return constant_exprt{
     integer2bvrep(mp_integer{bits}, 64),
     ieee_float_spect::double_precision().to_type()};
+}
+
+/// Create a nondet refined string expression (length + content pointer).
+/// Used as the result of string operations that the solver will constrain.
+[[maybe_unused]] static inline exprt
+make_nondet_string(symbol_table_baset &symbol_table)
+{
+  // Uniquifier based on symbol-table size — monotonic across all
+  // call sites in one converter instance, TU-safe (no per-TU
+  // counter).
+  std::size_t ctr = symbol_table.symbols.size();
+  std::string len_name = "__string_len_" + std::to_string(ctr);
+  std::string ptr_name = "__string_ptr_" + std::to_string(ctr);
+
+  irep_idt len_id{"python::" + len_name};
+  if(symbol_table.lookup(len_id) == nullptr)
+  {
+    symbolt ls{len_id, signedbv_typet{64}, "python"};
+    ls.base_name = len_name;
+    ls.is_lvalue = true;
+    ls.is_state_var = true;
+    symbol_table.add(ls);
+  }
+
+  irep_idt ptr_id{"python::" + ptr_name};
+  if(symbol_table.lookup(ptr_id) == nullptr)
+  {
+    symbolt ps{ptr_id, pointer_typet(unsignedbv_typet{8}, 64), "python"};
+    ps.base_name = ptr_name;
+    ps.is_lvalue = true;
+    ps.is_state_var = true;
+    symbol_table.add(ps);
+  }
+
+  exprt len_expr = symbol_table.lookup_ref(len_id).symbol_expr();
+  exprt ptr_expr = symbol_table.lookup_ref(ptr_id).symbol_expr();
+  return struct_exprt({len_expr, ptr_expr}, python_string_type());
+}
+
+/// Emit a cprover_string_* function application (multi-arg, string-returning).
+/// Creates: return_code = func_id(result.length, result.content, args...)
+/// Returns the result string expression.
+[[maybe_unused]] static inline exprt emit_string_function(
+  const irep_idt &func_id,
+  const exprt::operandst &extra_args,
+  symbol_table_baset &symbol_table,
+  std::vector<codet> &pending_checks)
+{
+  exprt result = make_nondet_string(symbol_table);
+
+  std::vector<typet> arg_types;
+  arg_types.push_back(signedbv_typet{64});
+  arg_types.push_back(pointer_typet(unsignedbv_typet{8}, 64));
+  for(const auto &a : extra_args)
+    arg_types.push_back(a.type());
+
+  irep_idt sym_id{func_id};
+  if(symbol_table.lookup(sym_id) == nullptr)
+  {
+    symbolt fs{
+      sym_id,
+      mathematical_function_typet(std::move(arg_types), signedbv_typet{32}),
+      "python"};
+    fs.base_name = id2string(func_id);
+    symbol_table.add(fs);
+  }
+
+  exprt::operandst args;
+  args.push_back(result.operands()[0]);
+  args.push_back(result.operands()[1]);
+  args.insert(args.end(), extra_args.begin(), extra_args.end());
+
+  function_application_exprt app(
+    symbol_table.lookup_ref(sym_id).symbol_expr(), args);
+  app.type() = signedbv_typet{32};
+
+  // TU-safe uniquifier via symbol-table size (monotonic).
+  std::size_t ctr = symbol_table.symbols.size();
+  std::string rc_name = "__str_rc_" + std::to_string(ctr);
+  irep_idt rc_id{"python::" + rc_name};
+  if(symbol_table.lookup(rc_id) == nullptr)
+  {
+    symbolt rs{rc_id, signedbv_typet{32}, "python"};
+    rs.base_name = rc_name;
+    rs.is_lvalue = true;
+    rs.is_state_var = true;
+    symbol_table.add(rs);
+  }
+  pending_checks.push_back(
+    code_frontend_assignt{symbol_table.lookup_ref(rc_id).symbol_expr(), app});
+
+  return result;
 }
 
 #endif
