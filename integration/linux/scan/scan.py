@@ -251,6 +251,12 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # External-name fallback for direct-call harness links.
         "put_cred",
     ],
+    "lock_state": [
+        # mutex_unlock is an ordinary `extern void` in
+        # <linux/mutex.h> — not static inline — so the external
+        # name is all we need.
+        "mutex_unlock",
+    ],
 }
 
 
@@ -370,6 +376,27 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "cred_live",
             "cred_lifetime_usage",
+        ],
+    },
+    "lock_state": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "lock_state_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "lock_state_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "lock_state_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "lock_state" / "lock_state.c",
+        ],
+        "slice_preserve": [
+            "lock_held", "lock_state_held_count",
+            "lock_state_lock", "lock_state_unlock_ghost",
+            "lock_state_ghost_find", "lock_state_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "lock_held",
+            "lock_state_held_count",
         ],
     },
 }

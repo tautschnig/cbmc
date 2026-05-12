@@ -269,6 +269,49 @@ else
   fi
 fi
 
+echo
+echo "=== case 7: real-kernel lock_state on kernel/bpf/dispatcher.c ==="
+# Fourth property module end-to-end.  kernel/bpf/dispatcher.c
+# matches the lock_state prefilter on mutex_unlock call sites in
+# its bpf_dispatcher_update paths.
+LOCK_KERNEL_C="$LINUX_TREE/kernel/bpf/dispatcher.c"
+if [[ ! -f $LOCK_KERNEL_C ]]; then
+  echo "  [skip] no $LOCK_KERNEL_C"
+else
+  # 7a: vulnerable direction.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$LOCK_KERNEL_C" \
+    --json "$tmp/case7a.json" > "$tmp/case7a.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     grep -q '"cbmc_status": "failed"' "$tmp/case7a.json" && \
+     grep -q 'mutex_unlock.precondition' "$tmp/case7a.json"; then
+    echo "  [ok] 7a (vuln): exit 1, cbmc_status=failed, mutex_unlock precondition named"
+  else
+    echo "  [FAIL] 7a expected rc 1 + cbmc_status=failed + mutex_unlock precondition" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case7a.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # 7b: fix direction.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$LOCK_KERNEL_C" --direction=fix \
+    --json "$tmp/case7b.json" > "$tmp/case7b.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]] && \
+     grep -q '"cbmc_status": "successful"' "$tmp/case7b.json"; then
+    echo "  [ok] 7b (fix):  exit 0, cbmc_status=successful"
+  else
+    echo "  [FAIL] 7b expected rc 0 + cbmc_status=successful" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case7b.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
   echo "scan.py regressions passed."
