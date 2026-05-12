@@ -215,6 +215,34 @@ jobs:
           # code.
           checkout_path: ${{ env.HOME }}/linux_5_10
 
+      - name: Run full corpus scan (nightly only)
+        # Phase 2.3 scale-out: sweep every .c file under the
+        # per-module seed-pattern scopes (corpus-scan.sh
+        # auto-discovery, capped at $CORPUS_MAX).  PR runs skip
+        # this; the nightly schedule runs it on a cached kernel
+        # tree.  Each file scan has a 900s wall-clock backstop
+        # on top of scan.py's per-tool RLIMIT_AS/RLIMIT_CPU.
+        if: github.event_name == 'schedule'
+        env:
+          LINUX_TREE: $HOME/linux_5_10
+          CORPUS_MAX: '120'
+          PARALLEL: '4'
+        run: |
+          integration/linux/scan/corpus-scan.sh \
+              $RUNNER_TEMP/corpus-scan \
+              | tee $RUNNER_TEMP/corpus-scan.summary.txt
+
+      - name: Upload corpus scan results
+        if: github.event_name == 'schedule' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-linux-corpus-scan
+          path: |
+            ${{ runner.temp }}/corpus-scan/*.json
+            ${{ runner.temp }}/corpus-scan/*.log
+            ${{ runner.temp }}/corpus-scan.summary.txt
+          if-no-files-found: ignore
+
       - name: Upload SARIF artifacts
         if: always()
         uses: actions/upload-artifact@v7

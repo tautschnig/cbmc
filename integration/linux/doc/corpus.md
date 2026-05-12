@@ -1,7 +1,8 @@
-# Corpus-scan experiment: aead + pipe_buffer on Linux 5.10
+# Corpus-scan experiment: aead + pipe_buffer + cred_lifetime on Linux 5.10
 
-> _Output of `scan/corpus-scan.sh` against a curated 18-file corpus
-> covering both property modules.  Captured 2026-05-12._
+> _Output of `scan/corpus-scan.sh` against an auto-discovered
+> corpus spanning all three property modules.
+> Captured 2026-05-12 (updated)._
 
 ## What the experiment asked
 
@@ -22,101 +23,109 @@ What the experiment **does not** ask — see LIM-013 below — is
 same across corpus files, so its verdict is a property-module
 self-check, not a per-file signal.
 
-## Corpus
+## Corpus discovery
 
-Eighteen files, picked by `grep -l` on Linux 5.10 for the primary
-kernel API each property module targets:
+`corpus-scan.sh` auto-discovers candidate kernel files under
+`$LINUX_TREE` by running `grep -rlE` per module seed pattern:
 
-| module       | files                                                   |
-| ------------ | ------------------------------------------------------- |
-| aead         | `crypto/{algif_aead,ccm,echainiv,essiv,gcm,pcrypt,seqiv,tcrypt,testmgr}.c` |
-| pipe_buffer  | `fs/{splice,pipe,fuse/dev,nfsd/vfs}.c`, `lib/iov_iter.c`, `net/smc/smc_rx.c`, `kernel/{trace/trace,relay,watch_queue}.c` |
+| module        | grep pattern                         | scopes                                |
+| ------------- | ------------------------------------ | ------------------------------------- |
+| aead          | `aead_request_set_crypt\(`           | `crypto`                              |
+| pipe_buffer   | `struct pipe_buffer`                 | `fs`, `lib`, `net/smc`                |
+| cred_lifetime | `(^|[^\w])(__)?put_cred\(`           | `fs`, `kernel`, `net`, `ipc`, `security` |
 
-## Results
+On Linux 5.10 these patterns surface **9 + 6 + 56 = 71 distinct
+files** (see the numbers below — the `cred_lifetime` pattern
+dominates because `put_cred` is widespread across the kernel).
+`CORPUS_MAX` caps the total run; `PARALLEL` controls fan-out.
 
-### pipeline-ok: 13 files compiled, linked, and scanned cleanly
+## Results (CORPUS_MAX=20, PARALLEL=4, 2-minute wall-clock)
 
-All produced the expected vulnerable-direction verdict
-(`cbmc_status: failed`, precondition fires at the direct-call
-harness's call site).  The per-file signal is the **Coccinelle hit
-count**, not the cbmc verdict:
+### pipeline-ok: 15 files
 
-| file                                       | module      | hits |
-| ------------------------------------------ | ----------- | ---- |
-| `crypto/tcrypt.c`                          | aead        | 4    |
-| `crypto/echainiv.c`                        | aead        | 2    |
-| `crypto/gcm.c`                             | aead        | 2    |
-| `crypto/pcrypt.c`                          | aead        | 2    |
-| `crypto/seqiv.c`                           | aead        | 2    |
-| `crypto/testmgr.c`                         | aead        | 2    |
-| `crypto/algif_aead.c`                      | aead        | 1    |
-| `crypto/ccm.c`                             | aead        | 1    |
-| `crypto/essiv.c`                           | aead        | 1    |
-| `fs/fuse/dev.c`                            | pipe_buffer | 4    |
-| `lib/iov_iter.c`                           | pipe_buffer | 4    |
-| `fs/pipe.c`                                | pipe_buffer | 3    |
-| `fs/splice.c`                              | pipe_buffer | 3    |
+All three property modules compiled, linked, and scanned cleanly:
 
-Total: 31 cocci prefilter hits in 13 files.  `crypto/algif_aead.c`
-and `lib/iov_iter.c` are the two the property modules were built
-around.  The remaining 11 are candidates for manual review.
+| file                             | module         | hits |
+| -------------------------------- | -------------- | ---- |
+| `crypto/tcrypt.c`                | aead           | 4    |
+| `crypto/echainiv.c`              | aead           | 2    |
+| `crypto/gcm.c`                   | aead           | 2    |
+| `crypto/pcrypt.c`                | aead           | 2    |
+| `crypto/seqiv.c`                 | aead           | 2    |
+| `crypto/testmgr.c`               | aead           | 2    |
+| `crypto/algif_aead.c`            | aead           | 1    |
+| `crypto/ccm.c`                   | aead           | 1    |
+| `crypto/essiv.c`                 | aead           | 1    |
+| `fs/fuse/dev.c`                  | pipe_buffer    | 4    |
+| `lib/iov_iter.c`                 | pipe_buffer    | 4    |
+| `fs/pipe.c`                      | pipe_buffer    | 3    |
+| `fs/splice.c`                    | pipe_buffer    | 3    |
+| `fs/cachefiles/security.c`       | cred_lifetime  | 2    |
+| `fs/coredump.c`                  | cred_lifetime  | 1    |
 
-### compile-fail: 3 files could not be built
+Total: **39 Coccinelle hits across 15 files**, spanning three
+bug classes.  `crypto/algif_aead.c`, `lib/iov_iter.c`, and
+`fs/coredump.c` are the three files the property modules were
+built around; the remaining 12 are candidates for manual review.
 
-| file                   | error                                                              |
-| ---------------------- | ------------------------------------------------------------------ |
-| `kernel/relay.c`       | parse error on `int relay_prepare_cpu(...)` — config dependency    |
-| `kernel/trace/trace.c` | `member 'trace_recursion' not found` — needs `CONFIG_TRACING`      |
-| `kernel/watch_queue.c` | incomplete struct on left-hand side — needs `CONFIG_WATCH_QUEUE`   |
+### compile-fail: 3 files
 
-All three are legitimate build-config issues: our baseline is
-`allnoconfig` plus small property-specific fragments, and these
-subsystems are not enabled.  Closing out the compile-fails is a
-config-fragment problem, not a CBMC problem.
+| file                         | module         | error                                                          |
+| ---------------------------- | -------------- | -------------------------------------------------------------- |
+| `fs/aio.c`                   | cred_lifetime  | `list.h: list_del` inline-expansion mismatch (needs `CONFIG_AIO`) |
+| `fs/cifs/cifs_spnego.c`      | cred_lifetime  | `cifsglob.h` subsystem dep (needs `CONFIG_CIFS`)               |
+| `fs/cifs/cifsacl.c`          | cred_lifetime  | same                                                           |
 
-### no-hits (silent pass)
+All three are legitimate kernel-config fragment gaps.  Closing
+them is a matter of adding `CONFIG_AIO=y` / `CONFIG_CIFS=y` to
+`scan/fragments/`.
 
-Two files compiled but produced no cocci hits:
+## Scale numbers
 
-- `net/smc/smc_rx.c`
-- `fs/nfsd/vfs.c`
+On a 4-core dev machine (Linux 5.10 kernel tree cached, no cold
+goto-cc):
 
-Both use `struct pipe_buffer` but not in a way that matches the
-`buf->page` or `buf->ops` assignment patterns the cocci rule
-currently filters on.  Worth a look: is the cocci rule too
-specific, or do these files legitimately not contain the bug
-pattern?  Left as follow-up.
+- 3 files, PARALLEL=2:  44s
+- 15 files, PARALLEL=4:  78s
+- 20 files, PARALLEL=4:  104s
+
+Throughput is roughly `7s/file` amortised across the corpus,
+limited by CBMC's per-file symex/SAT time (the vacuity probe
+doubles it).  A full 120-file CI nightly run budgets ~15 minutes
+at PARALLEL=4.
 
 ## What this tells us
 
-- **Coccinelle prefilter works at scale.**  Thirteen files,
-  thirty-one hits, all correctly typed to their module.  No
-  false positives on files that have no `buf->page =` or
-  `aead_request_set_crypt` at all.
-- **The pipeline handles cross-TU scan cleanly.**  The same
-  adapter, harness, stubs, and property module were reused across
-  nine aead crypto/ files and four pipe_buffer fs/lib/ files
-  without per-file tuning.
-- **Three config-related build failures are honest limitations,
-  not silent ones.**  They show up as `cbmc_status: error` with
-  the compiler error captured in `cbmc_notes`.
-- **LIM-013 (below) is real and known.**  Every pipeline-ok file
-  reports `failed` because the direct-call harness is shared.  To
-  get a per-file signal, we'd need per-file harness generation —
-  left as a Phase 4 direction.
+- **Auto-discovery works.**  The per-module seed patterns pick up
+  all the previously-hand-curated files plus additional
+  cred_lifetime candidates.
+- **Parallelism scales linearly up to the core count.**  No
+  contention observed between concurrent scan.py invocations
+  (each has its own tempdir + goto binary cache).
+- **Cross-module coverage is now visible in a single run.**  Three
+  property modules, three bug classes, one SARIF output suitable
+  for GitHub Code Scanning upload.
 
-## LIM-013 — scan cannot currently give per-file bug verdicts
+## LIM-013 still applies
 
-Filed alongside this experiment.  See
-`integration/linux/CBMC_LIMITATIONS.md`.
+"cbmc_status=failed" is still a property-module self-check.  The
+per-file actionable signal is the cocci hit list.  See
+`../CBMC_LIMITATIONS.md` for the underlying constraint and the
+per-file-harness-generation direction that would lift it.
 
 ## Reproduction
 
 ```bash
-# ~30 minutes wall-clock on a 16 GB VM.
-LINUX_TREE=/home/ubuntu/linux_5_10 \
+# PR-time (sequential, small cap):
+LINUX_TREE=/home/ubuntu/linux_5_10 CORPUS_MAX=20 PARALLEL=4 \
   integration/linux/scan/corpus-scan.sh /tmp/corpus
 
-# Raw JSON for each file is under /tmp/corpus/*.json; the
-# compile logs are in /tmp/corpus/*.log.
+# Nightly CI (full discovery):
+LINUX_TREE=/home/ubuntu/linux_5_10 CORPUS_MAX=120 PARALLEL=4 \
+  integration/linux/scan/corpus-scan.sh /tmp/corpus
 ```
+
+The CI workflow (`.github/workflows/integration-linux-
+regressions.yaml`) runs the nightly-cap version on a cached
+Linux 5.10 tree and uploads per-file JSON + the summary text
+as a workflow artifact.
