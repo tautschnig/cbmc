@@ -539,6 +539,41 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // Set membership: x in s → (s.bitmap >> x) & 1
       exprt container = right;
       exprt item = current_left;
+      // PLR §3.3.1: custom __contains__ dunder — if the
+      // container is a user-defined class instance with a
+      // __contains__ method, dispatch to it.
+      {
+        std::string tag;
+        if(container.type().id() == ID_struct)
+          tag = id2string(to_struct_type(container.type()).get_tag());
+        else if(container.type().id() == ID_struct_tag)
+          tag =
+            id2string(to_struct_tag_type(container.type()).get_identifier());
+        if(!tag.empty())
+        {
+          // Class tag is python_class_X for user classes; look up
+          // under both python::python_class_X::__contains__ and
+          // python::X::__contains__ for robustness.
+          std::string bare =
+            tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+          for(const std::string &prefix :
+              {std::string{"python::"} + tag + "::__contains__",
+               std::string{"python::"} + bare + "::__contains__"})
+          {
+            const symbolt *cs = symbol_table.lookup(irep_idt{prefix});
+            if(cs != nullptr)
+            {
+              side_effect_expr_function_callt call{
+                cs->symbol_expr(),
+                {address_of_exprt{container}, item},
+                bool_typet{},
+                source_locationt{}};
+              cmp = (op == "In") ? exprt{call} : exprt{not_exprt{call}};
+              goto done_cmp;
+            }
+          }
+        }
+      }
       if(is_python_value_type(container.type()))
       {
         // Try to detect if it's a set by checking the tag
