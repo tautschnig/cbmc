@@ -373,7 +373,7 @@ on kernel-layout inputs; required-bodies + vacuity guardrails
 confirm the linked binary is well-formed.  This generalises
 cleanly to every subsequent module.
 
-## LIM-011 — goto-cc link conflict on `static inline` kernel helpers across kernel versions
+## LIM-011 — goto-cc link conflict on `static inline` kernel helpers across kernel versions [RESOLVED]
 
 **First hit:** newer-kernel smoke test on Linux 5.12-rc3 (via
 `scan/smoke-newer-kernel.sh`).
@@ -435,6 +435,25 @@ Path 1 is what the `aead_kernel_harness.c` already approximates
 by including as few headers as possible (`<crypto/if_alg.h>`,
 `<crypto/aead.h>`, and necessary siblings).  Sharpening that
 pattern further should close most cross-version conflicts.
+
+**Resolution.** Applied the Phase 3.1 fix: deleted
+`scan/adapters/aead_kernel_stubs.c` (which was the only remaining
+adapter file that pulled in `<crypto/if_alg.h>` and `<net/sock.h>`,
+both of which transitively include `<linux/pagemap.h>` on 5.12+).
+
+Under the LIM-012 path-2 direct-call harness, the kernel TU's
+`_aead_recvmsg` body is never called from `main`, so the kernel
+externs that stubs file was providing bodies for are unreachable
+in cbmc's analysis.  goto-cc resolves them as nondet-return
+stubs automatically; CBMC does not explore them.  The stubs file
+was dead weight whose only effect was pulling cross-TU static
+inlines in and triggering the LIM-011 conflict.
+
+After the fix, the 5.12-rc3 smoke test reports all three targets
+(`crypto/algif_aead.c`, `fs/splice.c`, `lib/iov_iter.c`) as
+`cbmc_status: "failed"` with their respective preconditions
+named, matching the 5.10 behaviour exactly.  The scan pipeline
+is now validated on two kernel versions.
 
 ## LIM-012 — scan verdict is non-monotonically dependent on `slice_preserve` [RESOLVED]
 

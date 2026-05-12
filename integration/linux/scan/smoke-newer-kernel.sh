@@ -77,13 +77,17 @@ for t in "${TARGETS[@]}"; do
   LINUX_TREE=$KTREE \
     "$SCRIPT_DIR/scan.py" "$full" --json "$out" 2>&1 | tail -5
 
-  # Expect either an adapter-needed / successful / failed result
-  # for a clean run, or an honest error with a note pointing at
-  # either a known LIM-NNN or a kernel-compile compatibility
-  # issue.  Never a crash, never a vacuity-risk (if the scan
-  # infrastructure itself regresses we want to know).
+  # Expect a `failed` verdict with the precondition named (the
+  # direct-call harness's vulnerable branch fires the contract).
+  # `error` was acceptable before LIM-011 was resolved in Phase
+  # 3.1; after the `aead_kernel_stubs.c` retirement, none of the
+  # three targets should hit cross-TU static-inline conflicts
+  # any more.  Any error or vacuity-risk is now a regression.
   if grep -q '"cbmc_status": "vacuity-risk"' "$out"; then
     echo "  [FAIL] vacuity-risk on $t — infrastructure regression" >&2
+    fail=$((fail + 1))
+  elif grep -q '"cbmc_status": "error"' "$out"; then
+    echo "  [FAIL] cbmc_status=error on $t — LIM-011 regression?" >&2
     fail=$((fail + 1))
   fi
 done

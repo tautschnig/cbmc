@@ -264,7 +264,6 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         # vacuous and scan.py refuses to emit a verdict.
         "adapter_probe":
             SCRIPT_DIR / "adapters" / "aead_kernel_adapter_probe.c",
-        "stubs":   SCRIPT_DIR / "adapters" / "aead_kernel_stubs.c",
         # Direct-call harness (LIM-012 resolution path 2).  Builds
         # kernel-layout scatterlist shapes explicitly and calls
         # the contract target.  Compiled twice per scan run:

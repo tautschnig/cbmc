@@ -33,18 +33,22 @@ and `properties/page_provenance/page_provenance.c`, applies
   vacuity-probe variant of the adapter (contract has
   `__CPROVER_requires(0 == 1)`).  `scan.py` runs a probe scan
   against the linked binary to detect unreachable call sites.
-- [`aead_kernel_stubs.c`](aead_kernel_stubs.c) — havocing bodies
-  for kernel externs referenced when `crypto/algif_aead.c` is
-  linked in.  Only the predicates used inside the contract and
-  the page-provenance ghost backend are actually exercised under
-  the LIM-012 path-2 direct-call scan; the remaining bodies keep
-  the linker happy on the kernel TU.
 - [`aead_kernel_direct_harness.c`](aead_kernel_direct_harness.c) —
   direct-call harness.  Builds a kernel-layout scatterlist
   explicitly (vulnerable or safe, selected by `-DFIXED`) and
   calls the contract target.  This supersedes the earlier
   through-`_aead_recvmsg` harness that LIM-012 showed was not
   soundly end-to-end.
+
+(An earlier iteration shipped an `aead_kernel_stubs.c` that
+provided havocing bodies for the kernel externs
+`crypto/algif_aead.c` references.  Under the direct-call harness
+the kernel TU's `_aead_recvmsg` body is never called from `main`,
+so those stubs were dead weight whose kernel-header inclusions
+produced cross-TU `static inline` conflicts on newer kernels —
+see LIM-011, now RESOLVED.  The stubs file has been retired;
+goto-cc resolves the remaining kernel externs as nondet-return
+stubs automatically, and they are unreachable from `main`.)
 
 Validated end-to-end against Linux 5.10 `crypto/algif_aead.c`:
 - Default (`--direction=vuln`): `cbmc_status: "failed"`,
