@@ -147,79 +147,94 @@ make sure we don't introduce nondet-path explosions.
 
 ## #7 Split python_converter.cpp
 
-### Status: in progress (~38% reduction landed)
+### Status: COMPLETE (13 splits landed, 90.5% reduction)
 
-Incremental split landed across 9 commits. Main
+The large source-split task is done. Main
 `python_converter.cpp` reduced from 17789 to
-11029 lines (38.0% reduction).
+1693 lines — 90.5% reduction.
 
-### Landed splits
+### Landed splits (13 commits, all green)
 
 | File | Lines | Contents |
 |------|-------|----------|
-| `python_converter_helpers.h` | 168 | Shared `static inline` helpers: `emit_string_bool_function`, `emit_string_function`, `make_nondet_string`, `double_to_floatbv`, `collect_name_refs`, `collect_param_names`. |
-| `python_converter_compare.cpp` | 966 | `convert_compare` (PLR §6.10). |
-| `python_converter_lambda.cpp` | 112 | `convert_lambda` (§6.14). |
-| `python_converter_comprehension.cpp` | 565 | `convert_list_comp`, `convert_dict_comp` (§6.2.5 / §6.2.6). |
-| `python_converter_expressions.cpp` | 750 | `convert_if_exp`, `convert_subscript`, `convert_tuple`, `convert_list`, `convert_attribute`, `convert_dict` (§6.2.x / §6.13). |
-| `python_converter_ops.cpp` | 1095 | `convert_bin_op`, `convert_unary_op`, `convert_bool_op` (§6.6 / §6.7 / §6.8 / §6.9 / §6.11). |
-| `python_converter_terms.cpp` | 323 | `convert_constant`, `convert_name` (§6.2.1 / §6.2.2). |
-| `python_converter_control.cpp` | 747 | `convert_assert`, `convert_if`, `convert_while`, `convert_for`, `convert_return` (§7.3 / §7.6 / §8.1 / §8.2 / §8.3). |
-| `python_converter_except.cpp` | 547 | `convert_break`, `convert_continue`, `convert_pass`, `convert_raise`, `convert_with`, `convert_try` (§7.1 / §7.8 / §7.9 / §7.10 / §8.4 / §8.5). |
-| `python_converter_assign.cpp` | 1665 | `convert_ann_assign`, `convert_assign`, `convert_aug_assign` (§7.2 / §7.2.1 / §7.2.2). |
+| `python_converter_helpers.h` | 427 | Shared `static inline` helpers: emit_string_bool_function, emit_string_function, emit_string_int_function, build_solver_string_literal, build_string_struct, register_string_with_solver, make_nondet_string, double_to_floatbv, collect_name_refs, collect_param_names. |
+| `python_converter_compare.cpp` | 966 | convert_compare (PLR §6.10). |
+| `python_converter_lambda.cpp` | 111 | convert_lambda (§6.14). |
+| `python_converter_comprehension.cpp` | 565 | convert_list_comp, convert_dict_comp (§6.2.5 / §6.2.6). |
+| `python_converter_expressions.cpp` | 749 | convert_if_exp, convert_subscript, convert_tuple, convert_list, convert_attribute, convert_dict. |
+| `python_converter_ops.cpp` | 1094 | convert_bin_op, convert_unary_op, convert_bool_op. |
+| `python_converter_terms.cpp` | 322 | convert_constant, convert_name. |
+| `python_converter_control.cpp` | 746 | convert_assert, convert_if, convert_while, convert_for, convert_return. |
+| `python_converter_except.cpp` | 546 | convert_break, convert_continue, convert_pass, convert_raise, convert_with, convert_try. |
+| `python_converter_assign.cpp` | 1666 | convert_ann_assign, convert_assign, convert_aug_assign. |
+| `python_converter_call.cpp` | 5983 | convert_call (§6.3.4) — the single biggest block. |
+| `python_converter_statement.cpp` | 886 | convert_statement dispatcher + match/case handler. |
+| `python_converter_defs.cpp` | 1471 | convert_function_def, convert_class_def, convert_expr_stmt. |
+| `python_converter_module.cpp` | 940 | convert_module_body, process_imported_module, convert() driver. |
 
-### Remaining in main file
+### What's left in main
 
-- `python_convertert` constructor + core helpers
-  (`json_member`, `unwrap_value`, `wrap_value`,
-  `safe_typecast`, etc.).
-- `convert_expression` dispatch table.
-- `convert_call` (PLR §6.3.4, ~5930 lines — the
-  largest remaining cohesive block).
-- `convert_statement` dispatch table.
-- `convert_function_def` (§8.7).
-- `convert_module_body`.
-- Several smaller helpers.
+The remaining 1693 lines of `python_converter.cpp`
+are core infrastructure:
 
-### Next recommended extractions
+- Constructor + shared JSON helpers
+  (`json_member`, `json_string`, `json_integer`,
+  `is_node_type`, `as_array`, `add_check`,
+  `try_eval_double`, `extract_string_value`).
+- String-literal helpers (`build_string_literal`,
+  `python_string_literal`).
+- Math-intrinsic registration
+  (`emit_math_intrinsic_nondet`,
+  `math_function_domain`, `emit_value_error`).
+- Scope-and-namespace helpers (`qualify_name`,
+  `exception_type_hash`, `safe_zero`,
+  `get_location`).
+- The type-system core: `unwrap_value`,
+  `wrap_value`, `safe_typecast`,
+  `convert_type_annotation`.
+- The expression-dispatch table
+  (`convert_expression`).
 
-- `python_converter_call.cpp` — the 5930-line
-  `convert_call` beast. Will need additional
-  helpers promoted: `build_string_struct`,
-  `emit_string_int_function`,
-  `register_string_with_solver`. This is the
-  single biggest reduction available.
-- `python_converter_function_def.cpp` — the
-  `convert_function_def` for user-defined
-  functions (~1400 lines).
-- `python_converter_module.cpp` — module-level
-  passes (pass 0, pass 0.1, pass 0.25, import
-  resolution).
+This is a cohesive entry-point + type-system
+module. Further splitting would fracture the
+tightly-coupled state (symbol_table,
+pending_checks, class_types, ...) rather than
+improve clarity.
 
-A final dedicated session should bring the main
-file under 5000 lines. At that point it would
-primarily hold the entry-point dispatcher and
-shared state.
+### Follow-ups (optional, non-blocking)
 
-### Migration pattern (for future splits)
+- `python_converter_call.cpp` at 5983 lines is
+  the largest remaining sibling. Could be
+  sub-split into
+  `python_converter_call_builtins.cpp` and
+  `python_converter_call_intrinsics.cpp` if
+  future work makes it unwieldy. But it's one
+  cohesive function (`convert_call`) — splitting
+  mid-body is invasive. Keeping it as-is is
+  sensible.
+
+### Migration pattern used (for future extensions)
 
 1. Pick a cohesive function or small group.
-2. Find the function's line range with `grep -n
-   "^exprt python_convertert::<name>"`.
-3. Check static-helper dependencies with
-   `awk ... | grep -oE "(double_to_floatbv|...)" |
-   sort -u`.
-4. Promote any file-scope statics into
-   `python_converter_helpers.h` as `static inline`.
-5. Extract the function body to a new .cpp with
-   the standard include prelude (`python_converter.h`,
-   util headers, `python_converter_helpers.h`,
-   `python_types.h`, `python_value_type.h`).
+2. Find line range with `grep -n "^rettype
+   python_convertert::<name>"`.
+3. Check helper deps with awk | grep -oE
+   "(double_to_floatbv|...)" | sort -u.
+4. If a file-scope static is needed, promote to
+   `python_converter_helpers.h` as `static
+   inline` with TU-safe uniquifier (e.g.
+   `symbol_table.symbols.size()`).
+5. Extract to a new .cpp with standard include
+   prelude.
 6. `cmake -S . -Bbuild` to re-glob.
-7. Build. Fix any missing-include errors.
-8. Run regression + integration.
-9. Commit with the "Nth step" format.
+7. Build; fix missing-include errors.
+8. Regression + both integration modes.
+9. Commit as "Nth step" in the split series.
 
+The `GLOB_RECURSE` rule in
+`src/python/CMakeLists.txt` picks up new .cpp
+files automatically on reconfigure; no CMake
+changes are needed.
 
 
 ## #9b Generator `.send()` / `.throw()` support
