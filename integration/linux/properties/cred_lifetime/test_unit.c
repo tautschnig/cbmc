@@ -8,6 +8,17 @@
 #  define __CPROVER_assert(cond, msg) assert(cond)
 #endif
 
+// Concrete struct cred for this abstract test.  The property
+// module's public header forward-declares it (so scan adapters
+// can link with the kernel's real definition); any TU that
+// wants to stack-allocate a cred sentinel provides its own
+// layout.  The field doesn't matter — the ghost table only
+// uses the pointer identity.
+struct cred
+{
+  int dummy;
+};
+
 int main(void)
 {
   struct cred a, b, c;

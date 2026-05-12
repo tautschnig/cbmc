@@ -27,17 +27,16 @@
 ///
 /// ## Struct layout
 ///
-/// We re-declare `struct cred` with just the `usage` field
-/// (matching the kernel's first-field layout) plus enough padding
-/// that taking pointers stays compatible with the kernel TU.
+/// `struct cred` is left as an opaque forward-declaration here.
+/// At link time with a real kernel TU, the kernel's full
+/// `<linux/cred.h>` definition is unified in.  The adapter
+/// itself never dereferences cred fields — the contract
+/// predicate `cred_live(c)` uses pointer identity via the
+/// property module's ghost table.  Embedding a minimal struct
+/// definition here would structurally conflict with the kernel's
+/// full struct and block cross-TU contract application (LIM-016).
 
-struct cred
-{
-  // Matches `atomic_t usage` — modeled as unsigned int for
-  // abstract reasoning.
-  unsigned int usage;
-  unsigned long _pad;
-};
+struct cred;
 
 // ---------------------------------------------------------------------------
 // Predicate from the cred_lifetime property module.

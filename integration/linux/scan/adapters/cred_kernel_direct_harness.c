@@ -3,13 +3,14 @@
 /// cred_lifetime property module / CVE-2026-23297 class.
 ///
 /// Mirrors the design of aead_kernel_direct_harness.c: build a
-/// kernel-layout `struct cred` explicitly (vulnerable or safe,
-/// selected by `-DFIXED`) and call the contract target
-/// (`put_cred`).  Because --replace-call-with-contract replaces
-/// the body of put_cred with only the contract (no ghost-state
-/// update), the harness explicitly updates the cred_lifetime
-/// ghost alongside each put_cred call — this mirrors the real
-/// kernel's `put_cred` body which atomically decrements usage.
+/// cred sentinel, register it with the ghost table, and call
+/// the contract target (`put_cred`) in a vulnerable-or-safe
+/// shape selected by `-DFIXED`.  Because
+/// --replace-call-with-contract replaces the body of put_cred
+/// with only the contract (no ghost-state update), the harness
+/// explicitly updates the cred_lifetime ghost alongside each
+/// put_cred call — this mirrors the real kernel's `put_cred`
+/// body which atomically decrements usage.
 ///
 /// ### Vulnerable harness
 ///
@@ -27,14 +28,20 @@
 /// Step 1 initialises `usage = 2`.  After the first put the
 /// harness drops usage to 1; both put_cred calls therefore see
 /// a live cred.
+///
+/// ### Opaque struct cred
+///
+/// The property module forward-declares `struct cred` without
+/// fields (see LIM-016 resolution).  We can't stack-allocate
+/// it here; instead we back a sentinel with a byte buffer
+/// large enough for any plausible kernel struct cred (the
+/// content doesn't matter — cred_lifetime only uses pointer
+/// identity), and cast to `struct cred *` for the ghost-state
+/// API.
 
 typedef unsigned long size_t;
 
-struct cred
-{
-  unsigned int usage;
-  unsigned long _pad;
-};
+struct cred;
 
 // Ghost-state API from the property module.
 void cred_lifetime_init(struct cred *c, unsigned int usage);
@@ -48,26 +55,31 @@ void put_cred(const struct cred *_cred);
 
 int main(void)
 {
-  struct cred c;
+  // Backing buffer larger than any plausible kernel struct cred
+  // (x86_64 struct cred in recent kernels is ~200 bytes).  The
+  // content is irrelevant; only the address is used as a ghost-
+  // table key.
+  static char cred_sentinel[1024];
+  struct cred *c = (struct cred *)cred_sentinel;
 
 #ifndef FIXED
   // Vulnerable: initial usage = 1.  First put drops to 0; second
   // put fires the cred_live precondition.
-  cred_lifetime_init(&c, 1);
+  cred_lifetime_init(c, 1);
 #else
   // Safe: initial usage = 2.  Both puts land on a still-live
   // cred and the precondition holds throughout.
-  cred_lifetime_init(&c, 2);
+  cred_lifetime_init(c, 2);
 #endif
 
-  put_cred(&c);
+  put_cred(c);
   // Mirror the real put_cred's side effect on ghost state.  The
   // contract replaces the body so the ghost isn't updated by
   // put_cred itself — see the file-level comment above.
-  cred_lifetime_put(&c);
+  cred_lifetime_put(c);
 
-  put_cred(&c);
-  cred_lifetime_put(&c);
+  put_cred(c);
+  cred_lifetime_put(c);
 
   return 0;
 }

@@ -39,21 +39,24 @@
 
 #include <stddef.h>
 
-// Minimal kernel-layout-compatible struct cred.  The kernel's real
-// struct has many more fields; we only ever read `usage`, and the
-// adapter re-declares the same `usage`-in-first-field layout so
-// linking with a real kernel TU unifies cleanly.  `struct cred` is
-// a complete type (one-word padding) so non-kernel callers — the
-// unit test and the abstract CVE harnesses — can stack-allocate
-// sentinels for ghost-table identity.
-struct cred
-{
-  // Matches the kernel's `atomic_t usage;` as a plain unsigned
-  // int for abstract reasoning; the property does not care about
-  // atomicity.
-  unsigned int usage;
-  unsigned long _pad;
-};
+// `struct cred` is left as an opaque forward-declaration in the
+// property module's public header.  Callers that need to stack-
+// allocate a cred (abstract unit tests, abstract CVE harnesses)
+// should provide their own concrete definition in their TU; the
+// property module only ever uses `struct cred *` as a ghost-table
+// key and never dereferences fields on it.  Scan adapters that
+// link with a real kernel binary get the kernel's full
+// `<linux/cred.h>` definition at link time.
+//
+// Historically this header defined `struct cred { unsigned int
+// usage; unsigned long _pad; };` inline, which structurally
+// conflicted with the kernel's full struct when both TUs were
+// linked together.  The mismatch blocked LIM-013's per-file
+// harness path — see LIM-016 in CBMC_LIMITATIONS.md for the
+// investigation.  Forward-declaring it here, and leaving
+// concrete definitions to the TUs that need them, removes that
+// blocker.
+struct cred;
 
 // Ghost state API.  The property module stores a per-cred usage
 // count keyed by pointer identity, independent of what the
