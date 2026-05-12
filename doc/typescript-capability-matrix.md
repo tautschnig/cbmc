@@ -169,20 +169,20 @@ the column shows `—`.
 
 ### String (ES2024 §22.1)
 
-**Symbolic-string soundness note.** Non-literal strings (e.g.
-`nondet_string()`, function parameters typed `string`) have
-nondeterministic content from the solver's perspective. Length-based
-properties verify precisely; content-based predicates on symbolic
-receivers (e.g. `s.includes("ell")` when `s === "hello"`) fail to
-verify even when they hold concretely. This is sound (no false
-positives) but imprecise. Constant strings are fully evaluated at
-conversion time and remain character-precise. See
-`doc/typescript-verification-guide.md` §Strings for details.
+**Symbolic-string precision.** Non-literal strings
+(`nondet_string()`, function parameters typed `string`) are now
+character-precise through the refined-string solver for the
+typical one-solver-call-per-receiver pattern. Two or more refined-
+string method calls on the same symbolic receiver in one
+verification hit a refinement-loop convergence issue; affected
+assertions report FAILURE (sound, not an incorrect success) and
+are tracked as KNOWNBUG. Constant strings remain fully precise via
+conversion-time evaluation.
 
 | Feature | Status | Notes | Test(s) |
 |--------|--------|-------|---------|
 | `length` | ✅ | Precise on symbolic too | `string-length`, `string-length-check` |
-| Concatenation (`+`) | ✅ | Constant: precise; Symbolic: length-precise, content nondet | `string-concat`, `string-concat-multi` |
+| Concatenation (`+`) | ✅ | Character-precise on symbolic (single call) | `string-concat`, `string-concat-symbolic-content`, `string-concat-content-precise` |
 | Concatenation (`concat` method) | ✅ | Fixed 2026-05-07 (constant); symbolic as `+` | `string-concat-method` |
 | Split | ✅ | Constant only | `string-split` |
 | Replace / replaceAll | ✅ | Constant only | `string-replace`, `string-replaceAll`, `string-replaceAll-multi` |
@@ -194,11 +194,10 @@ conversion time and remain character-precise. See
 | Comparison (`===`, `!==`) | ✅ | Per-slot struct compare; works on symbolic | `string-comparison-ops`, `string-equality` |
 | `indexOf` (with fromIndex) | ✅ | fromIndex fixed 2026-05-07; constant only | `string-indexof-fromindex` |
 | `lastIndexOf` | ✅ | Constant only | `string-last-index-of` |
-| `startsWith` / `endsWith` (with position) | ✅ | Position arg fixed 2026-05-07 (constant). Symbolic over-approximates content | `string-starts-ends-position` |
-| `includes` on symbolic strings | ⚠️ | Over-approximates: content is nondet in the solver | `string-includes-symbolic` [KNOWNBUG] |
-| `startsWith` / `endsWith` on symbolic strings | ⚠️ | Over-approximates as above | `string-startswith-symbolic` [KNOWNBUG] |
-| `toUpperCase` / `toLowerCase` on symbolic strings | ⚠️ | Length precise, content nondet | `string-case-symbolic` [KNOWNBUG] |
-| `trim` on symbolic strings | ⚠️ | Length bound (`<= input.length`) precise; content nondet | `string-trim-symbolic` [KNOWNBUG] |
+| `includes` on symbolic strings | ✅ | Character-precise for single call | `string-includes-content-precise`; multi-call: `string-includes-symbolic` [KNOWNBUG] |
+| `startsWith` / `endsWith` on symbolic strings | ✅ | Character-precise for single call | `string-startswith-content-precise`; multi-call: `string-startswith-symbolic` [KNOWNBUG] |
+| `toUpperCase` / `toLowerCase` on symbolic strings | ✅ | Character-precise for single call | `string-toupper-content-precise`; multi-call: `string-case-symbolic` [KNOWNBUG] |
+| `trim` on symbolic strings | ✅ | Length-precise; content precise single-call | multi-call: `string-trim-symbolic` [KNOWNBUG] |
 | `padStart` / `padEnd` (short-circuit) | ✅ | Fixed 2026-05-07 | `string-pad-short-circuit` |
 | `padStart` / `padEnd` (multi-char pad) | ✅ | Fixed 2026-05-07 | `string-pad-multichar` |
 | `trim` (constant) | ✅ |  | (covered in `string-methods`) |
@@ -289,7 +288,7 @@ conversion time and remain character-precise. See
 | `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
 | `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## KNOWNBUG tests (12)
+## KNOWNBUG tests (11)
 
 **Design trade-offs (3):**
 
@@ -299,23 +298,23 @@ conversion time and remain character-precise. See
 | `object-prototype-chain` | Our struct model has no prototype chain; `getPrototypeOf` / `isPrototypeOf` not modelled | §20.1 |
 | `strict-nan-not-equal` | `NaN === NaN` returns `true` in our null-as-NaN model (spec says `false`) | §7.2.14 |
 
-**Symbolic-string content over-approximation (6):**
+**Multi-solver-call-per-receiver pattern (5):**
 
-The refined-string solver sees nondet content for any non-literal
-string. Length properties verify precisely; content properties on
-symbolic receivers fail to verify even when they hold concretely
-(sound over-approximation). Restoring precision would require
-switching our string struct from fixed inline array to heap-pointer
-representation.
+Single-call variants of these methods are character-precise and
+covered by CORE tests `string-*-content-precise`. The multi-call
+case (two or more refined-string method calls fire on the same
+symbolic receiver in one verification) hits a refinement-loop
+convergence issue: the solver ends up with zero universal axioms
+for the second and subsequent calls. Assertions report FAILURE
+rather than an incorrect SUCCESS, so results remain sound.
 
-| Test | Symptom | ES2024 / TSH ref |
+| Test | Pattern | ES2024 / TSH ref |
 |------|---------|------------------|
-| `string-case-symbolic` | `s === "hello"` ⇒ `s.toUpperCase() === "HELLO"` not provable (content nondet) | §22.1.3.30 |
-| `string-concat-symbolic-content` | `a === "foo"` ∧ `b === "bar"` ⇒ `(a+b) === "foobar"` not provable | §22.1.3.3 |
-| `string-includes-symbolic` | `s === "hello"` ⇒ `s.includes("ell")` not provable | §22.1.3.7 |
-| `string-startswith-symbolic` | `s === "hello"` ⇒ `s.startsWith("he")` not provable | §22.1.3.23 |
-| `string-symbolic-realistic` | Combines several of the above on realistic code | §22.1 |
-| `string-trim-symbolic` | `s === "  hi  "` ⇒ `s.trim() === "hi"` not provable | §22.1.3.32 |
+| `string-case-symbolic` | Multiple toUpperCase/toLowerCase + === on the same receiver | §22.1.3.30/31 |
+| `string-includes-symbolic` | Multiple includes calls on the same receiver | §22.1.3.7 |
+| `string-startswith-symbolic` | Multiple startsWith/endsWith calls on the same receiver | §22.1.3.23/7 |
+| `string-symbolic-realistic` | Combined chain of symbolic string methods | §22.1 |
+| `string-trim-symbolic` | trim + === on the same receiver | §22.1.3.32 |
 
 **Precision probes (3):**
 
@@ -323,7 +322,7 @@ representation.
 |------|---------|-------|
 | `array-push-length-in-loop` | Symbolic array length tracking imprecise through loops | Unresolved design question |
 | `higher-order-compose` | Nested function composition loses type information | Monomorphisation limitation |
-| `string-concat-chained-in-function` | Chained concat results lose length precision across function boundaries | Related to symbolic string content over-approximation |
+| `string-concat-chained-in-function` | Chained concat results lose length precision across function boundaries | Related to multi-call symbolic string pattern |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 
@@ -357,17 +356,17 @@ catches it.
 ## Overall assessment
 
 **Well supported** (works for 90%+ of real code): primitives, classes,
-generics, narrowing, most Array/String methods on constants, Promises,
-imports/exports.
+generics, narrowing, most Array/String methods (constant + single-
+call symbolic), Promises, imports/exports.
 
 **Partial:** float-loop unwinding, mapped/conditional types, Map/Set
 iteration, Unicode edge cases, destructuring defaults, abstract class
 enforcement.
 
-**Sound over-approximation** (see KNOWNBUG): content-based predicates
-on symbolic strings (`s.includes(x)`, `s.startsWith(x)`,
-`s.toUpperCase() === "…"`, `(a+b) === "…"`). Length properties on
-symbolic strings remain precise.
+**Sound precision cliff on multi-call symbolic string patterns**
+(see KNOWNBUG): two or more refined-string method calls on the same
+symbolic receiver within one verification run hit a refinement-loop
+convergence issue. Single-call variants are character-precise.
 
 **Not supported** (see KNOWNBUG): dynamic imports, heterogeneous
 tuple returns.

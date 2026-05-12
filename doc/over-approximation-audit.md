@@ -1,31 +1,39 @@
 # TypeScript Frontend Over-Approximation Audit
 
-Date: 2026-05-08; revised 2026-05-12 after soundness fix
-Status: substantial progress; symbolic string content over-approximation
-re-introduced 2026-05-12 as a sound replacement for an earlier unsound
-"resolution"
+Date: 2026-05-08; revised 2026-05-12 (soundness fix + content
+precision restore)
 
 This document enumerates every place the TypeScript frontend returns a
 nondet fallback or otherwise over-approximates symbolic inputs, and
 investigates whether the over-approximation is necessary. Many cases
 have precise encodings via CBMC primitives that the C frontend uses.
 
-## ⚠️  Soundness correction (2026-05-12)
+## ⚠️  Soundness correction + content precision restore (2026-05-12)
 
 Between 2026-05-09 and 2026-05-12 this document claimed that
 `s.includes`, `s.startsWith`, `s.endsWith`, `s.toUpperCase`,
 `s.toLowerCase`, `s.trim`, and symbolic concatenation content were
-precisely resolved via the refined-string solver. Those "resolutions"
-were **unsound**: a type-tag collision + a static-size mismatch
-between our `char[64]` inline array and the solver's length tracking
-caused every path that went through the solver to become vacuously
-UNSAT, making all assertions trivially succeed. The soundness fix in
-commit 5abee1595d renames the tag, switches to infinity-sized arrays
-with nondet content on the solver side, and re-establishes soundness
-at the cost of content precision. Symbolic-string predicates now
-correctly over-approximate (sound; may fail to prove true positives
-but cannot prove false ones). See the "⚠️ Sound over-approximation
-(current)" section below.
+precisely resolved via the refined-string solver. Those
+"resolutions" were **unsound**: a type-tag collision + a static-size
+mismatch between our `char[64]` inline array and the solver's length
+tracking caused every path that went through the solver to become
+vacuously UNSAT. Commit `5abee1595d` fixed soundness by passing a
+fresh nondet array to the solver (sound but content-imprecise).
+Commit `c2ebe4d81f` restored content precision by copying the inline
+data into the solver-side array via a with_exprt chain (one SSA
+assignment, no per-position blowup) and by reading results through
+`cprover_string_char_at_func` (which goes through the solver's
+canonical read path).
+
+**Current state (2026-05-12)**: content precision works for the
+one-solver-call-per-receiver pattern. Multi-call patterns (two or
+more refined-string method calls on the same symbolic receiver in
+one verification run) hit a refinement-loop convergence issue where
+the solver emits zero universal axioms for the second and subsequent
+calls. Affected assertions report FAILURE (sound, not an incorrect
+success). Tracked as 5 KNOWNBUG tests (`string-case-symbolic`,
+`string-includes-symbolic`, `string-startswith-symbolic`,
+`string-symbolic-realistic`, `string-trim-symbolic`).
 
 ## Methodology
 
@@ -94,12 +102,11 @@ For each over-approximation:
 
 ### String concatenation with parameter-typed strings
 - **Was**: returned fully-nondet struct
-- **Now**: returns struct with correct symbolic length
-  (`left.length + right.length`) via refined-string solver; content
-  is nondet (see "Sound over-approximation" below).
-- **Genuine limitation**: reconstructing the data array symbolically
-  requires our solver-side array to see actual character values.
-  Blocked on migrating to heap-pointer string representation.
+- **Now (since 2026-05-12)**: character-precise when only one
+  concat is produced per verification run (via refined-string
+  solver + with_exprt boundary copy + char_at_func readouts).
+  Multi-call pattern hits the refinement-loop convergence issue
+  described in the "Sound precision cliff" section.
 
 ## ❌ Genuine limitations (documented, each with a KNOWNBUG test)
 
@@ -154,53 +161,41 @@ the limitation, the test will pass and be promoted to CORE.
   permutation search, expensive and our BMC model doesn't support.
   Could encode a sorting network for bounded sizes.
 
-## ⚠️  Sound over-approximation (current)
+## ⚠️  Sound precision cliff (current)
 
-### Symbolic string content — OVER-APPROXIMATES (2026-05-12)
+### Multi-call symbolic string pattern — IMPRECISE (2026-05-12)
 
-The refined-string solver is now integrated for `includes`,
+The refined-string solver is integrated for `includes`,
 `startsWith`, `endsWith`, `toUpperCase`, `toLowerCase`, `trim`,
-`repeat`, `padStart`, `padEnd`, `concat`, and `parseInt`. However,
-for any non-literal string receiver (`nondet_string()`, function
-parameters typed `string`, `a + b` results with symbolic operands),
-**the solver sees nondeterministic content**, not the program's
-assumed content.
+`repeat`, `padStart`, `padEnd`, `concat`, and `parseInt`. For the
+**one-solver-call-per-receiver** pattern, symbolic-receiver calls
+are character-precise: `s === "hello"` ⇒ `s.includes("ell")`,
+`s.toUpperCase() === "HELLO"`, `(a + "bar") === "foobar"`, etc. all
+verify.
 
-**Root cause**: our TypeScript string is `struct {length:
-signedbv[32], data: char[64]}` — a fixed-size inline array. The
-refined-string solver expects infinity-sized arrays it can reason
-about lazily. To bridge the two: `ts_string_to_refined` passes a
-fresh infinity-sized nondet-content array to the solver with the
-dynamic length. Copying our actual `data[0..length]` into this
-infinity array caused (a) SSA blowup with per-element assignment,
-(b) solver invariant crash with bulk typecast. So we pass nondet
-content, which is sound but imprecise.
+**Limitation**: when two or more refined-string method calls fire
+on the same symbolic receiver within one verification run, the
+`string_refinement` pipeline produces zero universal axioms for the
+second and subsequent calls (still under investigation — looks like
+a dependency-graph or equation-canonicalisation issue). The
+assertions report FAILURE rather than an incorrect SUCCESS, so
+results remain sound.
 
-**Impact**:
-- **Length properties on symbolic strings are precise.**
-  `(a+b).length === a.length + b.length`,
-  `s.toUpperCase().length === s.length`,
-  `s.trim().length <= s.length`, etc. all verify.
-- **Content properties on symbolic strings over-approximate.**
-  `s === "hello"` ⇒ `s.includes("ell")` is true concretely, but the
-  solver cannot deduce this — it reports a spurious counterexample.
-  The assertion "fails to verify" rather than "succeeds". No
-  incorrect success is ever returned (sound).
-- **Constant strings remain fully precise** — all operations on
-  string literals are evaluated at conversion time.
+**How to work around**: either split the assertions across
+independent receivers (copy the symbolic string into separate
+`let`-bindings), or accept the precision cliff until the underlying
+solver interaction is fixed.
 
 **Tests** (all `KNOWNBUG`):
-`string-case-symbolic`, `string-concat-symbolic-content`,
-`string-includes-symbolic`, `string-startswith-symbolic`,
-`string-symbolic-realistic`, `string-trim-symbolic`.
+`string-case-symbolic`, `string-includes-symbolic`,
+`string-startswith-symbolic`, `string-symbolic-realistic`,
+`string-trim-symbolic`.
 
-**Path to resolution**: switch the string struct from fixed inline
-array to heap-pointer representation (matching Java's approach in
-`java_string_library_preprocess.cpp`). The solver would then read
-actual content through the pointer via its normal SSA traversal.
-Estimated effort: ~500 LOC plus updates to string literal
-construction, `===` comparison, `expr2typescript` printer, and all
-string method encodings. Substantial but tractable.
+Single-call content-precise variants are tracked as CORE tests:
+`string-concat-symbolic-content`,
+`string-concat-content-precise`, `string-toupper-content-precise`,
+`string-includes-content-precise`,
+`string-startswith-content-precise`.
 
 ## Refined string solver: integration status
 
@@ -213,24 +208,27 @@ pointer, length: int}`) and special builtin function calls like
 
 JBMC uses this for Java strings: see
 `jbmc/src/java_bytecode/java_string_library_preprocess.cpp` where
-`java.lang.String` is preprocessed to `refined_string_exprt`. Crucially
+`java.lang.String` is preprocessed to `refined_string_exprt`.
 Java's representation has the character data in a heap-allocated
-infinity-sized array behind a pointer, so the solver can read actual
-content through the pointer.
+infinity-sized array behind a pointer, so the solver can read
+actual content through the pointer.
 
-**Our TypeScript frontend does integrate it** (since 2026-05-09) for
-the methods listed in the "Sound over-approximation" section above.
-Because our string struct holds data inline as `char[64]` rather than
-behind a pointer, we can't pass the actual content to the solver
-without either crashing (typecast to infinity array) or blowing up the
-SAT encoding (per-element copy). So we pass nondet content and
-preserve soundness by over-approximating.
+**Our TypeScript frontend integrates the refined-string solver**
+(since 2026-05-09, soundness-fixed 2026-05-12, content-precision
+restored same day). Our string struct `{length, char[64] data}`
+keeps the inline-array representation. At the solver boundary
+(`ts_string_to_refined`), we copy the inline data into an
+infinity-sized side-channel array via a single-SSA-assignment
+with_exprt chain and associate that array with the pointer. Return
+values from solver functions are read back via
+`cprover_string_char_at_func` (per position) into the inline
+struct. This is character-precise for single-call-per-receiver
+patterns and keeps soundness for everything else.
 
-**Full content precision** requires migrating to a heap-pointer string
-representation (see the path-to-resolution note above). That is tracked
-as open work; the 6 `string-*-symbolic` KNOWNBUG tests serve as
-regression markers that will turn back into CORE tests when content
-precision is restored.
+**Multi-call scalability** is the remaining gap (see "Sound
+precision cliff" above). Heap-pointer string representation
+remains a possible long-term improvement but is no longer required
+for content precision.
 
 ## Summary of resolution rate
 
