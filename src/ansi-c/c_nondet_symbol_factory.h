@@ -29,6 +29,14 @@ class symbol_factoryt
 
   const lifetimet lifetime;
 
+  /// Running count of dynamic objects this factory has allocated so
+  /// far.  Compared against
+  /// `object_factory_params.max_dynamic_object_instances`; when the
+  /// cap is hit, pointers are initialised to NULL instead of
+  /// recursively expanded.  See the parameter's docstring for the
+  /// kernel-struct motivation.
+  std::size_t dynamic_object_instance_count = 0;
+
 public:
   typedef std::set<irep_idt> recursion_sett;
 

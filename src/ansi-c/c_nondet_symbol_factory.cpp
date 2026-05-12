@@ -80,6 +80,22 @@ void symbol_factoryt::gen_nondet_init(
       }
     }
 
+    // Belt-and-braces: cap the total number of dynamic objects the
+    // factory will emit for a single nondet-init root.  The depth cap
+    // above only fires when the same struct tag re-appears on the
+    // pointer chain; wide-but-non-recursive struct hierarchies (most
+    // kernel structs) bypass it entirely and blow up exponentially in
+    // the absence of this cap.  See LIM-008.
+    if(
+      dynamic_object_instance_count >=
+      object_factory_params.max_dynamic_object_instances)
+    {
+      assignments.add(
+        code_frontend_assignt{expr, null_pointer_exprt{pointer_type}, loc});
+      return;
+    }
+    ++dynamic_object_instance_count;
+
     code_blockt non_null_inst;
 
     typet object_type = base_type;

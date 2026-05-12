@@ -1,0 +1,17 @@
+CORE
+main.c
+--generate-function-body make_l1 --generate-function-body-options havoc --max-dynamic-object-instances 50
+^EXIT=0$
+^SIGNAL=0$
+--
+^warning: ignoring
+^\*\*\*\* WARNING: no body for function
+--
+LIM-008 regression.  Without the per-root allocation cap introduced
+in c_object_factory_parameterst, havoc body generation for a
+function returning a pointer to a wide, deep, non-recursive struct
+hierarchy hangs and then OOMs.  With the cap (explicit here to
+keep the test fast; the default is higher), generation terminates
+in bounded time.  EXIT=0 suffices — the point is that goto-
+instrument does not hang or abort; no substantive property on the
+resulting goto binary.

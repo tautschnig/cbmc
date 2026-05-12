@@ -57,6 +57,29 @@ struct object_factory_parameterst
   /// initialized to their full depth.
   size_t max_nondet_tree_depth = 5;
 
+  /// Maximum total number of dynamic objects the object factory will
+  /// allocate on behalf of a single nondet-initialisation root.
+  ///
+  /// The ``max_nondet_tree_depth`` cap above only fires when the same
+  /// struct tag appears twice on the same pointer chain, which is the
+  /// pattern the object factory historically worried about (linked
+  /// lists, trees).  Kernel struct hierarchies, by contrast, are
+  /// typically *wide and deep without revisiting the same type*: a
+  /// single ``struct sock *`` pointer transitively reaches hundreds
+  /// of further pointer-to-struct fields, none of which cycle back
+  /// to ``struct sock``, so the depth cap never fires and the object
+  /// factory generates an exponentially large init body.
+  ///
+  /// This hard cap on allocation count provides a belt-and-braces
+  /// termination guarantee independent of the depth cap.  When the
+  /// cap is hit, further pointers are initialized to NULL rather
+  /// than to freshly-allocated sub-structs.  LIM-008 in
+  /// integration/linux/CBMC_LIMITATIONS.md is the concrete motivator:
+  /// ``goto-instrument --generate-function-body af_alg_alloc_areq
+  /// --generate-function-body-options havoc`` on a real kernel goto
+  /// binary used to hang indefinitely because of this runaway.
+  size_t max_dynamic_object_instances = 1000;
+
   /// To force a certain depth of non-null objects.
   /// The default is that objects are 'maybe null' up to the nondet tree depth.
   /// Examples:
