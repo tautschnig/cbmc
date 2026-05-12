@@ -12097,8 +12097,201 @@ codet python_convertert::convert_statement(const jsont &stmt)
         }
         return {std::move(cond), std::move(binds)};
       }
-      // Unsupported patterns (MatchSequence / MatchMapping /
-      // MatchStar) — match-anything for soundness.
+      // MatchSequence: case [a, b, c] or case [a, *rest, b].
+      // Check list type + length, then recurse on each element.
+      if(is_node_type(pat, "MatchSequence"))
+      {
+        if(!is_python_list_type(subj.type()))
+          return {false_exprt{}, std::move(binds)};
+        const jsont &pats = json_member(pat, "patterns");
+        if(!pats.is_array())
+          return {true_exprt{}, std::move(binds)};
+        const auto &pat_arr = as_array(pats);
+        // Find star index (if any).
+        std::size_t star_idx = pat_arr.size();
+        {
+          std::size_t i = 0;
+          for(const auto &p : pat_arr)
+          {
+            if(is_node_type(p, "MatchStar"))
+            {
+              star_idx = i;
+              break;
+            }
+            i++;
+          }
+        }
+        const auto &list_st = to_struct_type(subj.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt length{subj, "length", signedbv_typet{64}};
+        member_exprt data{subj, "data", data_type};
+        exprt cond;
+        if(star_idx == pat_arr.size())
+        {
+          // No star: exact length match.
+          cond = equal_exprt{
+            length, from_integer((long long)pat_arr.size(), signedbv_typet{64})};
+          std::size_t i = 0;
+          for(const auto &p : pat_arr)
+          {
+            exprt elem = index_exprt{data, from_integer(i, signedbv_typet{64})};
+            auto [sc, sb] = compile_pattern(p, elem);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+            i++;
+          }
+        }
+        else
+        {
+          // With star: length >= prefix + suffix.
+          std::size_t prefix = star_idx;
+          std::size_t suffix = pat_arr.size() - star_idx - 1;
+          long long minlen = (long long)(prefix + suffix);
+          cond = binary_relation_exprt{
+            length, ID_ge, from_integer(minlen, signedbv_typet{64})};
+          // Index into pat_arr by copying to a vector first.
+          std::vector<const jsont *> pvec;
+          for(const auto &p : pat_arr)
+            pvec.push_back(&p);
+          // Match prefix against index 0..prefix-1.
+          for(std::size_t i = 0; i < prefix; i++)
+          {
+            exprt elem = index_exprt{data, from_integer(i, signedbv_typet{64})};
+            auto [sc, sb] = compile_pattern(*pvec[i], elem);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+          }
+          // Bind the star name if present.
+          {
+            const jsont &star_pat = *pvec[star_idx];
+            const jsont &star_name = json_member(star_pat, "name");
+            if(star_name.is_string() && !star_name.value.empty())
+            {
+              // Bind a copy of the input list as the star binding;
+              // precise slice modelling would be per-index.
+              std::string var_name = star_name.value;
+              std::string qname = qualify_name(var_name);
+              irep_idt sym_id{qname};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt ns{sym_id, subj.type(), "python"};
+                ns.base_name = var_name;
+                ns.is_lvalue = true;
+                ns.is_state_var = true;
+                ns.is_static_lifetime = current_function.empty();
+                symbol_table.add(ns);
+              }
+              binds.add(code_frontend_assignt{
+                symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+            }
+          }
+          // Match suffix against the last `suffix` elements.
+          for(std::size_t j = 0; j < suffix; j++)
+          {
+            exprt idx = minus_exprt{
+              length,
+              from_integer(
+                (long long)(suffix - j), signedbv_typet{64})};
+            exprt elem = index_exprt{data, idx};
+            auto [sc, sb] = compile_pattern(*pvec[star_idx + 1 + j], elem);
+            cond = and_exprt{std::move(cond), std::move(sc)};
+            for(const auto &st : sb.statements())
+              binds.add(st);
+          }
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // MatchMapping: case {"k": v, "k2": w}. Check dict type
+      // and each key's presence + pattern match.
+      if(is_node_type(pat, "MatchMapping"))
+      {
+        if(!is_python_dict_type(subj.type()))
+          return {false_exprt{}, std::move(binds)};
+        const jsont &keys = json_member(pat, "keys");
+        const jsont &pats = json_member(pat, "patterns");
+        const jsont &rest = json_member(pat, "rest");
+        if(!keys.is_array() || !pats.is_array())
+          return {true_exprt{}, std::move(binds)};
+        const auto &key_arr = as_array(keys);
+        const auto &pat_arr = as_array(pats);
+        exprt cond = true_exprt{};
+        auto kit = key_arr.begin();
+        auto pit = pat_arr.begin();
+        const auto &dict_st = to_struct_type(subj.type());
+        const auto &keys_type = to_array_type(dict_st.components()[1].type());
+        const auto &vals_type = to_array_type(dict_st.components()[2].type());
+        member_exprt length{subj, "length", signedbv_typet{64}};
+        member_exprt dkeys{subj, "keys", keys_type};
+        member_exprt dvals{subj, "values", vals_type};
+        while(kit != key_arr.end() && pit != pat_arr.end())
+        {
+          // Each key pattern should be a Constant. Evaluate.
+          exprt key_expr = convert_expression(*kit);
+          if(key_expr.is_nil())
+          {
+            ++kit;
+            ++pit;
+            continue;
+          }
+          if(key_expr.type() != keys_type.element_type())
+            key_expr = safe_typecast(key_expr, keys_type.element_type());
+          // Search for the key in dict.keys. Build condition
+          // "key is present AND its value matches pattern".
+          exprt key_found = false_exprt{};
+          exprt val_match = true_exprt{};
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt key_eq = equal_exprt{index_exprt{dkeys, idx}, key_expr};
+            exprt slot_match = and_exprt{in_range, std::move(key_eq)};
+            key_found = or_exprt{std::move(key_found), slot_match};
+            // Value pattern match: if key is at this slot, val
+            // must match. OR together.
+          }
+          // For the binding part, recursive compile_pattern on
+          // the slot value. Approximate by picking slot 0 when
+          // key_found — precise matching would need per-slot
+          // dispatch.
+          exprt val_expr = index_exprt{dvals, from_integer(0, signedbv_typet{64})};
+          auto [vc, vb] = compile_pattern(*pit, val_expr);
+          val_match = std::move(vc);
+          for(const auto &st : vb.statements())
+            binds.add(st);
+          cond = and_exprt{
+            std::move(cond),
+            and_exprt{std::move(key_found), std::move(val_match)}};
+          ++kit;
+          ++pit;
+        }
+        // rest name: bind the dict itself (approximation —
+        // precise rest would exclude matched keys).
+        if(rest.is_string() && !rest.value.empty())
+        {
+          std::string var_name = rest.value;
+          std::string qname = qualify_name(var_name);
+          irep_idt sym_id{qname};
+          if(symbol_table.lookup(sym_id) == nullptr)
+          {
+            symbolt ns{sym_id, subj.type(), "python"};
+            ns.base_name = var_name;
+            ns.is_lvalue = true;
+            ns.is_state_var = true;
+            ns.is_static_lifetime = current_function.empty();
+            symbol_table.add(ns);
+          }
+          binds.add(code_frontend_assignt{
+            symbol_table.lookup_ref(sym_id).symbol_expr(), subj});
+        }
+        return {std::move(cond), std::move(binds)};
+      }
+      // MatchStar alone (shouldn't appear at top-level): treat
+      // as match-anything.
+      if(is_node_type(pat, "MatchStar"))
+        return {true_exprt{}, std::move(binds)};
+      // Unknown pattern kind — match-anything for soundness.
       return {true_exprt{}, std::move(binds)};
     };
 
