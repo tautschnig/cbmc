@@ -77,4 +77,28 @@
 #endif
 #define __cacheline_group_end_aligned(GROUP) __cacheline_group_end(GROUP)
 
+/* Linux 6.12 introduced a family of compile-time string-buffer
+ * checks built around `__builtin_has_attribute(expr, nonstring)`.
+ * CBMC's ansi-c front-end parses __builtin_has_attribute but
+ * then tries to look up the attribute name ('nonstring') as an
+ * ordinary identifier and fails.  Override __must_be_cstr to 0
+ * (skipping the check) and __must_be_array to 0 as well for
+ * symmetry — both are BUILD_BUG_ON_ZERO wrappers that encode
+ * GCC-builtin probes.  Sound for goto-cc scans: the kernel
+ * semantics are unchanged; only the compile-time attribute
+ * probes are dropped. */
+#include <linux/compiler.h>
+#ifdef __must_be_cstr
+#  undef __must_be_cstr
+#endif
+#define __must_be_cstr(p) 0
+#ifdef __must_be_array
+#  undef __must_be_array
+#endif
+#define __must_be_array(a) 0
+#ifdef __annotated
+#  undef __annotated
+#endif
+#define __annotated(p, attr) 0
+
 #endif

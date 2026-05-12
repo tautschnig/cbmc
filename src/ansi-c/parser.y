@@ -1114,6 +1114,26 @@ declaring_list:
           // add the initializer
           to_ansi_c_declaration(parser_stack($$)).add_initializer(parser_stack($5));
         }
+        | type_qualifier_list TOK_GCC_AUTO_TYPE declarator
+          post_declarator_attributes_opt '=' initializer
+        {
+          // Qualified __auto_type: 'const/volatile/... __auto_type
+          // var = initializer;' is equivalent to
+          // '<qualifiers> typeof(initializer) var = initializer;'.
+          // Build the typeof-of-initializer node, then wrap it with
+          // the qualifiers.
+          parser_stack($2).id(ID_typeof);
+          parser_stack($2).copy_to_operands(parser_stack($6));
+          // Merge qualifiers into the typeof type.
+          $2 = merge($1, $2);
+
+          $3 = merge($4, $3);
+
+          init($$, ID_declaration);
+          parser_stack($$).type().swap(parser_stack($2));
+          PARSER.add_declarator(parser_stack($$), parser_stack($3));
+          to_ansi_c_declaration(parser_stack($$)).add_initializer(parser_stack($6));
+        }
         | declaring_list ',' gcc_type_attribute_opt declarator
           post_declarator_attributes_opt
           {
