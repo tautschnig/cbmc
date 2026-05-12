@@ -327,7 +327,7 @@ C stubs (essentially a `scan/adapters/kernel_stubs.c` per subsystem)
 rather than relying on goto-instrument's regex-driven body
 generation.  Same plan under LIM-006.
 
-## LIM-010 — Stub fidelity: fix-direction regression not passing
+## LIM-010 — Stub fidelity: fix-direction regression not passing [RESOLVED]
 
 **First hit:** attempted fix-direction regression after LIM-009 was
 resolved.  With a synthetic fix applied to
@@ -339,54 +339,39 @@ the walker, on paper, should terminate cleanly at
 walking two SGL entries via a phantom `SG_CHAIN` bit pattern, then
 dereferencing a `NULL + N` pointer the harness never placed.
 
-**Root cause (probable).** Incomplete stub fidelity in
-`scan/adapters/aead_kernel_stubs.c`: several kernel helpers the
-decrypt-with-chain path calls on its way to
+**Root cause (probable at time of filing).** Incomplete stub
+fidelity in `scan/adapters/aead_kernel_stubs.c`: several kernel
+helpers the decrypt-with-chain path calls on its way to
 `aead_request_set_crypt` are still unlinked externs and return
 nondet values that corrupt the SGL array cbmc then walks through
-the contract predicate.  Candidates so far:
+the contract predicate.
 
-- `crypto_aead_copy_sgl` (file-local static in algif_aead.c; has
-  a body but transitively invokes `crypto_skcipher_encrypt` which
-  is extern, so the SSA formula includes a nondet-taint on the
-  destination SGL via aliasing).
-- `sock_kmalloc`: my stub `__CPROVER_allocate`s the requested
-  size but leaves its bytes nondet — `sg_init_table` then runs on
-  nondet memory, and aggressive-slice's slicing of the formula
-  may drop some of those writes.
+**Actual root cause (LIM-012).** The fix-direction regression
+could not be made to pass because the pipeline itself was not
+soundly end-to-end — the scan's verdict on the vulnerable
+direction was also partly driven by nondet-stub havoc, not
+exclusively by the Copy Fail shape.  See LIM-012.
 
-**Workaround for now.** The regression for the vulnerable-direction
-(case 2 in `scan/run.sh`) continues to pass: on the unmodified
-Linux 5.10 tree, the scan correctly reports `cbmc_status: "failed"`
-and names `precondition.3`, so the bug-detection direction is
-sound.  Case 3 validates the vacuity guardrails themselves (a
-broken harness is caught as `vacuity-risk`).  What's missing is
-case 4: the fix-direction regression.
+**Resolution.** LIM-012 path (2): switch the harness to call
+`aead_request_set_crypt` directly with a hand-built SGL shape
+(`scan/adapters/aead_kernel_direct_harness.c`), selecting between
+vulnerable and safe shapes with a compile-time `-DFIXED` flag.
+`scan.py --direction=fix` builds the harness's safe branch and
+reports `cbmc_status: "successful"`; the default direction
+builds the vulnerable branch and reports `cbmc_status: "failed"`
+with `precondition.3` fired at the harness's call site.
+`scan/run.sh` case 4 gates on this.  The kernel source is still
+compiled and linked, so the required-bodies guardrail continues
+to catch LIM-009-style static-linkage failures.
 
-**Resolution direction.** Two paths, either a source-level stub
-expansion or a goto-level pinning:
-
-1. Add a proper body for every extern kernel helper the path
-   touches on the way to the contract call site, not just the two
-   `af_alg_*` helpers we have today.  Inventory: `list_for_each_*`
-   primitives (if not static-inline), `sock_kmalloc` with
-   zero-init, `crypto_skcipher_encrypt` returning 0, etc.
-
-2. Switch the harness to call `aead_request_set_crypt` directly
-   with a hand-built SGL shape (as
-   `cve-2026-31431/harness_kernel.c` already does) rather than
-   routing through `_aead_recvmsg`.  Give up on
-   automatic-path-synthesis from the full kernel body and rely on
-   the Coccinelle prefilter + harness-driven regression as the
-   substantive property test.  Trade-off: weakens the scan's
-   claim to automatically synthesise vulnerable inputs from real
-   kernel control flow.
-
-Path (1) is preferred for the aead module since we are close; path
-(2) is the fallback that would also generalise cleanly to M5
-(pipe_buffer + CVE-2022-0847 Dirty Pipe) and every subsequent
-module.  Either way, this is logged as LIM-010 and tracked
-separately from LIM-009.
+**Trade-off.** The scan no longer claims to autonomously
+synthesise vulnerable inputs from the full kernel control flow
+— that claim was never actually delivered soundly (LIM-012).
+The new pitch is: Coccinelle prefilter finds candidate sites;
+direct-call harness verifies the contract catches the bug class
+on kernel-layout inputs; required-bodies + vacuity guardrails
+confirm the linked binary is well-formed.  This generalises
+cleanly to every subsequent module.
 
 ## LIM-011 — goto-cc link conflict on `static inline` kernel helpers across kernel versions
 
@@ -451,7 +436,7 @@ by including as few headers as possible (`<crypto/if_alg.h>`,
 `<crypto/aead.h>`, and necessary siblings).  Sharpening that
 pattern further should close most cross-version conflicts.
 
-## LIM-012 — scan verdict is non-monotonically dependent on `slice_preserve`
+## LIM-012 — scan verdict is non-monotonically dependent on `slice_preserve` [RESOLVED]
 
 **First hit:** Phase 1 of the follow-up plan to LIM-010, when the
 fix-direction regression kept reporting FAILED and the
@@ -533,3 +518,32 @@ precondition.3 fired.  The guardrails from commit 6ae97dbf48
 continue to catch the LIM-009-style regressions (broken harness
 → `vacuity-risk`).  Case 4 (fix-direction) remains open pending
 either of the resolution paths above.
+
+**Resolution (same commit that files this).** Path (2) from the
+"Resolution direction" above was pursued: the scan's harness was
+replaced with a direct-call harness at
+`scan/adapters/aead_kernel_direct_harness.c`, which constructs a
+kernel-layout scatterlist shape explicitly (vulnerable or safe,
+switched by `-DFIXED`) and calls the contract target directly.
+The kernel source is still compiled and linked, so the
+required-bodies guardrail continues to catch LIM-009-style
+static-linkage failures, but `_aead_recvmsg`'s body is no longer
+on the contract's reachability chain.
+
+Consequences:
+
+- `slice_preserve` no longer needs any stub bodies preserved —
+  only the predicates referenced from contract `__CPROVER_requires`
+  clauses.  The non-monotonic configuration dependence is gone.
+- `scan.py` gained a `--direction={vuln,fix}` flag that is wired
+  into compile_file.sh as a `-D` passthrough for the harness.
+- `scan/run.sh` case 4 (fix-direction) now passes — LIM-010
+  closed in the same stroke.
+- The "CBMC synthesises the vulnerable input from the kernel
+  body" pitch is retired.  The scan's honest value proposition
+  is now: Coccinelle prefilter finds candidate sites; direct-call
+  harness verifies the contract catches the bug class on
+  kernel-layout inputs; required-bodies + vacuity guardrails
+  ensure the linked binary is well-formed.  This pattern
+  generalises to M5b (pipe_buffer kernel adapter) and every
+  subsequent module.

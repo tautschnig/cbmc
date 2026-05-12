@@ -2,6 +2,15 @@
 
 > **Status.** Draft, not yet published.  Polish before shipping —
 > see `Notes to self` at the bottom.
+>
+> **LIM-012 update.** The narrative in sections 5–9 has been
+> revised to reflect the finding that the through-`_aead_recvmsg`
+> scan approach, while it caught the vulnerability, did so partly
+> for the wrong reasons (nondet-stub havoc in the SGL, not the
+> Copy Fail shape exclusively).  The published pipeline is now
+> the direct-call harness pattern described in sections 5 and 9.
+> The LIM-009 vacuity story survives unchanged — it's an
+> independent and complementary lesson.
 
 ## 1. The bug
 
@@ -136,11 +145,22 @@ So we built a small "kernel adapter" per property module.  For
    invariant the unit tests assert is the one CBMC checks on
    real kernel source.
 
-On top of that, a harness (`aead_kernel_harness.c`) builds up a
-valid pointer graph using kernel headers, and a stubs file
-(`aead_kernel_stubs.c`) provides bodies for the small number of
-extern kernel helpers the decrypt path needs.  All of it compiles
-under `goto-cc` with the same `-I` soup the kernel itself uses.
+On top of that, a harness
+(`aead_kernel_direct_harness.c`) constructs a kernel-layout
+scatterlist explicitly — vulnerable shape if compiled plain,
+safe shape if compiled with `-DFIXED` — and calls the contract
+target directly.  A stubs file (`aead_kernel_stubs.c`) provides
+bodies for kernel externs the linker needs; the harness does
+not route through `_aead_recvmsg`.  All of it compiles under
+`goto-cc` with the same `-I` soup the kernel itself uses.
+
+(An earlier iteration of the harness did drive CBMC through the
+full `_aead_recvmsg` body, intending for the solver to discover
+the vulnerable shape autonomously from the kernel control flow.
+Section 8 explains why we retired that approach: the through-
+kernel path was non-monotonically sensitive to a slicing knob
+whose effect on soundness we couldn't bound.  The direct-call
+pattern gives the same end-to-end behaviour without that gap.)
 
 ## 6. The vacuity trap
 
@@ -222,15 +242,18 @@ The scan now reports:
 
 ```
 cbmc_status: "failed"
-[...precondition.3] line 280 Check requires clause of
-  __CPROVER_file_local_aead_h_aead_request_set_crypt in
-  __CPROVER_file_local_algif_aead_c__aead_recvmsg: FAILURE
+[...precondition.3] Check requires clause of
+  aead_request_set_crypt in main: FAILURE
 ```
 
-— the `sgl_all_user_writable(dst) == 1` clause at the call site
-on line 280 of `crypto/algif_aead.c`.  That's the Copy Fail
-signal, produced from the unmodified kernel source, using only
-the property we wrote, the Coccinelle prefilter, and the
+— the `sgl_all_user_writable(dst) == 1` clause at the harness's
+`aead_request_set_crypt` call site, fired against a
+kernel-layout SGL the harness constructs directly from the
+vulnerable shape.  That's the Copy Fail signal, produced from
+an off-the-shelf Linux 5.10 tree (the kernel source is
+compiled, linked, and required-body-checked as part of the
+pipeline), using only the property we wrote, the Coccinelle
+prefilter that pointed at `crypto/algif_aead.c`, and the
 toolchain defaults.
 
 The lesson is not about CBMC.  The lesson is about *vacuity*.
@@ -263,16 +286,92 @@ Doubling the SAT work per scan is a price worth paying for the
 guarantee.  It makes a *class* of mistakes impossible to
 silently ship.
 
+## 8a. The second trap
+
+We thought we were done.  We weren't.
+
+Pushing on the next piece of the regression — the fix-direction
+test, which applies a synthetic fix to the kernel source and
+asserts `cbmc_status: "successful"` — we kept seeing the scan
+report FAILED on the fixed source too.  The bug shape was
+demonstrably not there in the fixed file.  CBMC shouldn't
+have fired.
+
+We dug into what the scan was actually doing, and ran a bisect
+on the `slice_preserve` list — the list of function bodies
+`--aggressive-slice` shouldn't drop.  On the same kernel source,
+same adapter, same stubs, same harness:
+
+```
+preserve predicates only                -> vacuity-risk
++ af_alg_alloc_areq                     -> failed
++ af_alg_get_rsgl (no alloc_areq)       -> successful
++ af_alg_alloc_areq + af_alg_get_rsgl   -> timeout
++ all three stubs                       -> successful
+```
+
+Five different answers on the same code, picked by flipping
+which stub bodies the slicer kept or dropped.  What we had been
+calling "CBMC detects Copy Fail on the vulnerable 5.10 tree"
+was, partly, CBMC walking nondet bits in the destination
+scatterlist that aggressive-slice had left there by dropping
+the stub body that would have populated them cleanly.
+
+The bug was present, and the scan did fire.  But the firing
+mechanism was entangled with a slicer knob, and different
+settings of the knob produced different verdicts — some FAILED,
+some SUCCESSFUL, some timeouts.  The "scan detects Copy Fail"
+claim we had shipped was partly true.  Not sufficiently true.
+
+## 8b. Retiring a pitch
+
+The original framing — "we scan unmodified kernel source and
+CBMC synthesises the vulnerable input from the kernel's control
+flow" — was the pitch we built around.  LIM-012 showed we
+couldn't deliver it soundly under the current pipeline design,
+and path-(a) fixes (pin every dropped stub body that matters,
+tame the slicer) were a rabbit hole with no obvious bottom.
+
+We picked path (b) instead.  The scan now:
+
+1. Uses Coccinelle as the textual bug-finder on unmodified
+   kernel source.  (This is what Coccinelle is good at.  It's
+   fast, has a decade of kernel deployment, and is unaffected
+   by slicer pathologies.)
+
+2. Runs a *direct-call harness* (section 5) that constructs
+   kernel-layout vulnerable and safe SGL shapes explicitly in
+   C, then calls `aead_request_set_crypt`.  Two compilations
+   of the same `.c` file — `-DFIXED` or not — drive the two
+   directions.  The contract fires on the vulnerable shape and
+   passes on the safe one, reproducibly, with no slicer
+   sensitivity.
+
+3. Still compiles and links the candidate kernel source file,
+   so the required-bodies and vacuity guardrails continue to
+   catch LIM-009-style linkage failures for that file.
+
+We give up "CBMC autonomously discovers the vulnerable input
+from the full kernel body" — a pitch we couldn't cash.  We keep
+the claim we *can* cash: Coccinelle + property modules +
+direct-call harnesses against kernel-layout inputs, with
+CBMC-level guardrails, is a bounded, sound, deployable
+workflow.  And the LIM-009 vacuity-trap story is unchanged:
+that class of mistake still happens, and the guardrails still
+catch it.
+
 ## 9. What this gets you
 
 Three things:
 
-1. **For this CVE.**  `scan/run.sh` case 2 is an always-green
-   regression on the Linux 5.10 `crypto/algif_aead.c`
-   vulnerability, detected automatically from the kernel source
-   using the property module + Coccinelle prefilter + CBMC
-   pipeline.  The regression takes ~200 seconds wall-clock end to
-   end.
+1. **For this CVE.**  `scan/run.sh` cases 2 and 4 are
+   always-green regressions on the Linux 5.10
+   `crypto/algif_aead.c` vulnerability, covering both the
+   vulnerable direction (FAILED, expected) and the
+   fix-direction (SUCCESSFUL, expected) on the same pipeline.
+   Coccinelle pointed us at the file; the direct-call harness
+   verifies the contract catches the Copy Fail shape.  The
+   full regression takes ~200 seconds wall-clock end to end.
 
 2. **For future kernels.**  The workflow generalises: we've
    shipped a second property module (`pipe_buffer`) for the
@@ -282,9 +381,9 @@ Three things:
    classes is a bounded engineering task.
 
 3. **For the tool itself.**  Along the way we've hit — and
-   closed, documented, or at least honestly tracked — half a
-   dozen CBMC front-end precision issues (`LIM-001` through
-   `LIM-010`), any of which would have silently produced
+   closed, documented, or at least honestly tracked — a dozen
+   CBMC front-end precision issues (`LIM-001` through
+   `LIM-012`), any of which would have silently produced
    bad results for any other user of the tool on kernel-scale
    inputs.
 
@@ -321,8 +420,9 @@ remaining tasks are:
   concerns.
 - *Code excerpts*.  Pull the actual adapter + harness +
   contract into sidebars; they're short enough.
-- *LIM-010 call-out*.  The fix-direction regression is not yet
-  clean; mention honestly in the "what's next" list.
+- *LIM-010 / LIM-012 call-out*.  Both are now RESOLVED via the
+  direct-call harness refactor; section 8a/8b tells the story.
+  No longer a "what's next" item.
 - *Link structure*.  Link to the repo (develop branch post this
   commit series), the CBMC project, the Coccinelle project, the
   CVE-2026-31431 advisory, and the Dirty Pipe writeup.

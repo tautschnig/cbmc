@@ -29,26 +29,32 @@ and `properties/page_provenance/page_provenance.c`, applies
 
 - [`aead_kernel_adapter.c`](aead_kernel_adapter.c) — adapts the
   aead module.  Uses the kernel's `scatterlist.page_link` layout.
+- [`aead_kernel_adapter_probe.c`](aead_kernel_adapter_probe.c) —
+  vacuity-probe variant of the adapter (contract has
+  `__CPROVER_requires(0 == 1)`).  `scan.py` runs a probe scan
+  against the linked binary to detect unreachable call sites.
 - [`aead_kernel_stubs.c`](aead_kernel_stubs.c) — havocing bodies
-  for `af_alg_wait_for_data`, `af_alg_alloc_areq`, `af_alg_get_rsgl`,
-  `af_alg_count_tsgl`, `sock_kmalloc`, `af_alg_pull_tsgl`,
-  `crypto_aead_copy_sgl`, `crypto_aead_{auth,req,iv}size`,
-  `lock_sock_nested`, `release_sock`, `msg_data_left`,
-  `aead_sufficient_data`, plus minor helpers.
-- [`aead_kernel_harness.c`](aead_kernel_harness.c) — harness
-  allocating 4 KiB each for `struct socket` and `struct msghdr`,
-  invoking `_aead_recvmsg`.
+  for kernel externs referenced when `crypto/algif_aead.c` is
+  linked in.  Only the predicates used inside the contract and
+  the page-provenance ghost backend are actually exercised under
+  the LIM-012 path-2 direct-call scan; the remaining bodies keep
+  the linker happy on the kernel TU.
+- [`aead_kernel_direct_harness.c`](aead_kernel_direct_harness.c) —
+  direct-call harness.  Builds a kernel-layout scatterlist
+  explicitly (vulnerable or safe, selected by `-DFIXED`) and
+  calls the contract target.  This supersedes the earlier
+  through-`_aead_recvmsg` harness that LIM-012 showed was not
+  soundly end-to-end.
 
 Validated end-to-end against Linux 5.10 `crypto/algif_aead.c`:
-cbmc terminates with `cbmc_status: "successful"` in seconds.
-Caveat (LIM-009): the SUCCESSFUL verdict is vacuous because
-`af_alg_get_rsgl` / `af_alg_pull_tsgl` are no-op stubs.  Soundly
-refuting the Copy Fail pattern on `crypto/algif_aead.c` requires
-richer stubs that materialise scatterlist entries with concrete
-provenance; see LIM-009 in `../../CBMC_LIMITATIONS.md` for the
-next-step plan.  The kernel-layout-shaped regression
-(`../../cve-2026-31431/harness_kernel.c`) already demonstrates the
-precise behaviour on hand-written kernel-shaped code.
+- Default (`--direction=vuln`): `cbmc_status: "failed"`,
+  `precondition.3` (sgl_all_user_writable) fires at the harness's
+  call site.  The same kernel source is compiled and linked, so
+  LIM-009's required-bodies guardrail continues to catch any
+  regression in the static-symbol name resolution.
+- Fix direction (`--direction=fix`): `cbmc_status: "successful"`,
+  demonstrating the contract accepts a safe SGL shape on the
+  same pipeline.  Closes LIM-010 / LIM-012.
 
 ## Adding a new adapter
 

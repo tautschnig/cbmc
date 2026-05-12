@@ -25,14 +25,15 @@
 
 set -u
 
-if [[ $# -ne 3 ]]; then
-  echo "usage: $0 <kernel-tree> <source.c> <output.gb>" >&2
+if [[ $# -lt 3 || $# -gt 4 ]]; then
+  echo "usage: $0 <kernel-tree> <source.c> <output.gb> [extra-define]" >&2
   exit 2
 fi
 
 KTREE=$1
 SOURCE=$2
 OUT=$3
+EXTRA_DEFINE=${4:-}
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../../.." &>/dev/null && pwd)
@@ -68,6 +69,12 @@ else
 fi
 
 cd -- "$KTREE"
+
+EXTRA_ARGS=()
+if [[ -n $EXTRA_DEFINE ]]; then
+  EXTRA_ARGS+=("-D$EXTRA_DEFINE")
+fi
+
 "$GOTOCC" --native-compiler gcc \
   --export-file-local-symbols \
   -Wall \
@@ -88,4 +95,5 @@ cd -- "$KTREE"
   -DKBUILD_MODFILE="\"$modfile\"" \
   -DKBUILD_BASENAME="\"$base\"" \
   -DKBUILD_MODNAME="\"$base\"" \
+  "${EXTRA_ARGS[@]}" \
   -c -o "$OUT" "$source_for_gotocc"

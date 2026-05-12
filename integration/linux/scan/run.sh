@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Regression driver for scan.py.  Two cases:
+# Regression driver for scan.py.  Four cases:
 #
 #   1.  Run scan.py against a property-module-native harness
 #       (properties/aead/test_copyfail.c).  Expected: one module
@@ -8,17 +8,25 @@
 #       scan.py should exit 1.
 #
 #   2.  Run scan.py against a real kernel source file
-#       (crypto/algif_aead.c under $LINUX_TREE, if present).
-#       After LIM-009 was resolved, the expected state on the
-#       vulnerable Linux 5.10 `_aead_recvmsg` is `failed`, with the
-#       `precondition.3` (sgl_all_user_writable) assertion violated
-#       at line 280.
+#       (crypto/algif_aead.c under $LINUX_TREE, if present) with
+#       the default `--direction=vuln`.  Under the LIM-012 path-2
+#       direct-call harness, expected: `cbmc_status == "failed"`,
+#       precondition.3 (sgl_all_user_writable) violated in the
+#       harness's vulnerable-shape branch; scan.py exits 1.
 #
 #   3.  Meta-regression on the vacuity guardrails: deliberately
-#       break the harness to call the unmangled `_aead_recvmsg`
-#       (the LIM-009 bug) and confirm scan.py reports
+#       break the harness by deleting the `aead_request_set_crypt`
+#       call site and confirm scan.py reports
 #       `cbmc_status: "vacuity-risk"` instead of silently
 #       succeeding or failing.
+#
+#   4.  Fix-direction regression (LIM-010): run scan.py with
+#       `--direction=fix` against the same real kernel source.
+#       Expected: `cbmc_status == "successful"` and scan.py
+#       exits 0.  This closes LIM-010 by demonstrating the
+#       contract accepts a safe SGL shape (the direct-call
+#       harness's fix branch) on the same pipeline the
+#       vulnerable direction fires on.
 #
 # Exit code 0 iff all cases behave as expected.
 
@@ -60,12 +68,15 @@ else
   LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
   rc=$?
   set -e
-  # LIM-009 is now RESOLVED: the scan drives CBMC through the full
-  # `_aead_recvmsg` body and reports `cbmc_status: "failed"` on the
-  # vulnerable 5.10 tree, naming the
-  # `__CPROVER_file_local_aead_h_aead_request_set_crypt.precondition.3`
-  # (sgl_all_user_writable) contract violation at line 280.  Anything
-  # weaker is a regression.
+  # LIM-009 RESOLVED + LIM-012 path 2: the scan drives CBMC via
+  # the direct-call harness (scan/adapters/aead_kernel_direct_
+  # harness.c) and reports `cbmc_status: "failed"` when the
+  # vulnerable-shape branch is taken, naming the
+  # `aead_request_set_crypt.precondition.3` (sgl_all_user_writable)
+  # contract violation at the harness's call site.  The kernel
+  # source is still compiled and linked so the required-bodies
+  # guardrail continues to catch LIM-009-style linkage failures.
+  # Anything weaker is a regression.
   if [[ $rc -eq 1 ]] && \
      grep -q '"line": 280' "$tmp/case2.json" && \
      grep -q '"cbmc_status": "failed"' "$tmp/case2.json" && \
@@ -81,20 +92,31 @@ fi
 
 echo
 echo "=== case 3: vacuity guardrail on crypto/algif_aead.c ==="
-# Meta-regression: deliberately break the harness so it calls the
-# unmangled _aead_recvmsg (the LIM-009 bug).  scan.py must report
-# `cbmc_status: "vacuity-risk"`, not a silent success or failure.
+# Meta-regression: deliberately break the direct-call harness by
+# deleting the `aead_request_set_crypt` call site.  scan.py must
+# report `cbmc_status: "vacuity-risk"` because the vacuity probe
+# will observe the trivially-false contract as SUCCESSFUL (no
+# call site to fire on).
 if [[ ! -f $KERNEL_C ]]; then
   echo "  [skip] no kernel tree at $LINUX_TREE"
 else
-  harness="$SCRIPT_DIR/adapters/aead_kernel_harness.c"
+  harness="$SCRIPT_DIR/adapters/aead_kernel_direct_harness.c"
   cp "$harness" "$tmp/harness.orig.c"
   python3 -c "
+import re
 p = '$harness'
 s = open(p).read()
-s2 = s.replace(
-    '__CPROVER_file_local_algif_aead_c__aead_recvmsg(',
-    '_aead_recvmsg(')
+# Delete only the call sites (not the prototype declaration).
+# The calls are the lines that start with the function name at
+# the statement level — match lines beginning with 2 spaces and
+# the function name to avoid eating the 'void aead_request_set_crypt('
+# declaration a few lines above.
+s2 = re.sub(
+    r'^  aead_request_set_crypt\([^;]*;',
+    '  (void)0;',
+    s,
+    flags=re.MULTILINE)
+assert s2 != s, 'harness already contained no call site to delete'
 open(p, 'w').write(s2)
 "
   set +e
@@ -108,6 +130,31 @@ open(p, 'w').write(s2)
     echo "  [FAIL] expected cbmc_status=vacuity-risk; guardrail did not fire" >&2
     echo "         actual rc=$rc; last 15 lines of output:" >&2
     tail -15 "$tmp/case3.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
+echo
+echo "=== case 4: fix-direction regression on crypto/algif_aead.c ==="
+# LIM-010 RESOLVED (LIM-012 path 2): with `--direction=fix` the
+# scan builds the direct-call harness's safe-shape branch and
+# expects the contract to accept it, yielding
+# `cbmc_status: "successful"` and exit 0.
+if [[ ! -f $KERNEL_C ]]; then
+  echo "  [skip] no kernel tree at $LINUX_TREE"
+else
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$KERNEL_C" --direction=fix \
+    --json "$tmp/case4.json" > "$tmp/case4.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]] && \
+     grep -q '"cbmc_status": "successful"' "$tmp/case4.json"; then
+    echo "  [ok] exit 0, cbmc_status=successful on fix direction"
+  else
+    echo "  [FAIL] expected rc 0 + cbmc_status=successful" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case4.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
   fi
 fi

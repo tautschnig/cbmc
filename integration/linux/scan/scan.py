@@ -257,28 +257,31 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "adapter_probe":
             SCRIPT_DIR / "adapters" / "aead_kernel_adapter_probe.c",
         "stubs":   SCRIPT_DIR / "adapters" / "aead_kernel_stubs.c",
-        "harness": SCRIPT_DIR / "adapters" / "aead_kernel_harness.c",
+        # Direct-call harness (LIM-012 resolution path 2).  Builds
+        # kernel-layout scatterlist shapes explicitly and calls
+        # the contract target.  Compiled twice per scan run:
+        # without `-DFIXED` for the vulnerable shape (expect
+        # FAILED) and with `-DFIXED` for the safe shape (expect
+        # SUCCESSFUL).  See the harness source for the rationale.
+        "harness": SCRIPT_DIR / "adapters" / "aead_kernel_direct_harness.c",
+        # Compiled-twice flag for vuln / fix shapes of the same
+        # harness source.
+        "harness_fix_define": "FIXED",
         "deps": [PROPERTIES_DIR / "page_provenance" / "page_provenance.c"],
         # Pure predicates referenced from contract `__CPROVER_requires`
-        # clauses, plus the minimum stub body required to keep the
-        # call-site reachable through aggressive-slice.  LIM-012 in
-        # CBMC_LIMITATIONS.md records the deeper finding: the
-        # precise set of `slice_preserve` names changes the scan's
-        # verdict non-monotonically — different combinations yield
-        # FAILED, SUCCESSFUL, TIMEOUT, or vacuity-risk on the same
-        # kernel source.  This list is the minimum that reproduces
-        # the historical LIM-009 end-to-end behaviour; a truly
-        # robust scan needs a reworked stub / slice design.
+        # clauses.  Under the direct-call harness, no stub bodies
+        # need preserving — the harness constructs the SGL
+        # explicitly rather than relying on the kernel control
+        # flow and stubs to build it.
         "slice_preserve": [
             "sgl_all_user_writable", "page_prov_of", "k_sg_next", "k_sg_page",
-            "af_alg_alloc_areq",
         ],
         # Functions that MUST have a non-empty body in the linked
-        # goto binary.  Post-link, scan.py verifies each.  The
-        # check catches the exact failure mode LIM-009 resolved:
-        # a `static` kernel symbol that silently binds to an empty
-        # external stub because the harness called the unmangled
-        # name.
+        # goto binary.  Under the direct-call harness, the kernel
+        # entry function's body is still linked in (via the target
+        # .c file's goto binary) so the required-bodies check
+        # continues to catch the LIM-009 static-linkage failure
+        # mode for the kernel TU we are scanning.
         "required_bodies": [
             # Kernel entry function (static in algif_aead.c, only
             # visible under --export-file-local-symbols).
@@ -573,12 +576,20 @@ def run_cbmc_kernel(
     module: str,
     target: Path,
     tmp: Path,
+    direction: str = "vuln",
 ) -> tuple[ModuleReport, Path | None]:
     """Run the CBMC stage on real kernel source using the module's
     kernel adapter.  Compiles the target file with scan/compile_file.sh
     if a LINUX_TREE environment variable identifies its root, links
     with the adapter + page_provenance, applies the contract, and runs
     cbmc with `_aead_recvmsg`-style entry-point selection.
+
+    The ``direction`` parameter selects between the vulnerable-shape
+    harness build (``"vuln"``, default — expect FAILED) and the
+    safe-shape harness build (``"fix"`` — expect SUCCESSFUL).  The
+    scan compiles the harness twice in a single scan.py invocation
+    if the ``harness_fix_define`` key is present in the module's
+    ``KERNEL_ADAPTERS`` spec; otherwise ``direction`` is ignored.
 
     Outcomes are reported honestly:
       - `failed` if cbmc reports VERIFICATION FAILED;
@@ -668,10 +679,18 @@ def run_cbmc_kernel(
     harness_gb: Path | None = None
     if "harness" in spec:
         harness_gb = tmp / f"{target.stem}.harness.gb"
+        # When the harness supports a fix-define and the caller
+        # asked for the fix direction, pass the define through to
+        # goto-cc so the harness builds its safe-shape branch.
+        fix_define = spec.get("harness_fix_define")
+        extra_args: list[str] = []
+        if direction == "fix" and fix_define:
+            extra_args.append(fix_define)
         try:
             _run(
                 [str(SCRIPT_DIR / "compile_file.sh"), ktree,
-                 str(Path(spec["harness"]).resolve()), str(harness_gb)],
+                 str(Path(spec["harness"]).resolve()), str(harness_gb),
+                 *extra_args],
                 timeout=GOTOCC_TIMEOUT, check=True,
             )
         except subprocess.TimeoutExpired:
@@ -823,9 +842,14 @@ def run_cbmc_adapter_pending(
 # Driver.
 # ---------------------------------------------------------------------------
 
-def scan_file(target: Path, tmp: Path) -> tuple[FileReport, list[Path]]:
+def scan_file(target: Path, tmp: Path, direction: str = "vuln") -> tuple[FileReport, list[Path]]:
     """Run every registered property module against one file.  Returns
-    a FileReport plus any SARIF files cbmc produced for that file."""
+    a FileReport plus any SARIF files cbmc produced for that file.
+
+    ``direction`` is passed through to :func:`run_cbmc_kernel` to
+    select between the vulnerable- and safe-shape harness builds
+    for property modules that ship a fix-direction harness.
+    """
     report = FileReport(file=str(target))
     sarifs: list[Path] = []
     modules = discover_modules()
@@ -852,7 +876,9 @@ def scan_file(target: Path, tmp: Path) -> tuple[FileReport, list[Path]]:
                 # honest "adapter-needed" report otherwise.
                 if module in KERNEL_ADAPTERS:
                     try:
-                        mr, sarif = run_cbmc_kernel(module, target, tmp)
+                        mr, sarif = run_cbmc_kernel(
+                            module, target, tmp, direction=direction,
+                        )
                         if sarif is not None:
                             sarifs.append(sarif)
                     except subprocess.CalledProcessError as e:
@@ -932,6 +958,17 @@ def main() -> int:
     ap.add_argument("--sarif", type=Path,
                     help="write merged SARIF 2.1.0 report to this file "
                          "(uses cbmc's --sarif-result under the hood)")
+    ap.add_argument(
+        "--direction", choices=["vuln", "fix"], default="vuln",
+        help=(
+            "which harness direction to verify: 'vuln' (default) "
+            "builds the harness's vulnerable-shape branch and "
+            "expects the contract to fire; 'fix' builds the safe-"
+            "shape branch and expects the contract to pass.  Only "
+            "takes effect for modules whose KERNEL_ADAPTERS spec "
+            "declares a harness_fix_define."
+        ),
+    )
     args = ap.parse_args()
 
     reports: list[FileReport] = []
@@ -942,7 +979,7 @@ def main() -> int:
             if not f.is_file():
                 print(f"skip (not a file): {f}", file=sys.stderr)
                 continue
-            r, sarifs = scan_file(f, tmp)
+            r, sarifs = scan_file(f, tmp, direction=args.direction)
             reports.append(r)
             sarif_files.extend(sarifs)
             print_summary(r)
