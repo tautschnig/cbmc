@@ -2655,6 +2655,42 @@ exprt python_convertert::convert_call(const jsont &expr)
         std::string class_name = tag.substr(13);
         irep_idt method_id{"python::" + class_name + "::" + method_name};
         const symbolt *method_sym = symbol_table.lookup(method_id);
+        // Strict missing-method detection: if the class is in
+        // class_types (we know its structure) but the method
+        // isn't declared, raise AttributeError rather than
+        // silently over-approximating. This converts MISS→TP
+        // for benchmarks whose 'bug' is a non-existent method
+        // call.
+        //
+        // Skipped under --python-lazy-stubs: in that mode we
+        // deliberately don't convert stub method bodies, so
+        // method existence can't be reliably checked.
+        if(
+          method_sym == nullptr && class_types.count(class_name) > 0 &&
+          method_name.substr(0, 2) != "__" && !python_lazy_stubs)
+        {
+          irep_idt exc_id{"python::__exception_active"};
+          if(symbol_table.lookup(exc_id) != nullptr)
+          {
+            code_blockt err_block;
+            err_block.add(code_frontend_assignt{
+              symbol_table.lookup_ref(exc_id).symbol_expr(), true_exprt{}});
+            irep_idt etype_id{"python::__exception_type"};
+            if(symbol_table.lookup(etype_id) != nullptr)
+            {
+              long h = exception_type_hash("AttributeError");
+              err_block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(etype_id).symbol_expr(),
+                from_integer(h, python_int_type())});
+            }
+            pending_checks.push_back(std::move(err_block));
+          }
+          log_overapprox(
+            "missing method " + class_name + "::" + method_name +
+            " — raising AttributeError");
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        }
         if(method_sym != nullptr)
         {
           const code_typet &method_type = to_code_type(method_sym->type);
@@ -3335,13 +3371,30 @@ exprt python_convertert::convert_call(const jsont &expr)
             member_exprt{python_value_str(arg), "length", python_int_type()};
           exprt list_len =
             member_exprt{python_value_list(arg), "length", python_int_type()};
+          // CLASS tag: the pointed-to struct may be a dict, list,
+          // or string (when wrap_value stored one via __class_ptr),
+          // or a user-defined class. Dicts/lists/strings all have
+          // .length as the first (offset-0) field of signedbv[64].
+          // Cast the class pointer to a pointer-to-int64 and
+          // dereference to read the length directly — this works
+          // regardless of the actual element type of the stored
+          // container, unlike a full struct cast.
+          pointer_typet len_ptr_type{signedbv_typet{64}, 64};
+          exprt class_len = typecast_exprt{
+            dereference_exprt{
+              typecast_exprt{python_value_class_ptr(arg), len_ptr_type},
+              signedbv_typet{64}},
+            python_int_type()};
           return if_exprt{
             python_value_is(arg, python_type_tagt::STR),
             str_len,
             if_exprt{
               python_value_is(arg, python_type_tagt::LIST),
               list_len,
-              from_integer(0, python_int_type())}};
+              if_exprt{
+                python_value_is(arg, python_type_tagt::CLASS),
+                class_len,
+                from_integer(0, python_int_type())}}};
         }
       }
     }

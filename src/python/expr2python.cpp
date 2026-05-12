@@ -141,7 +141,9 @@ std::string expr2python(const exprt &expr, const namespacet &ns)
       {
         const auto &length_expr = struct_expr.operands()[0];
         mp_integer len;
-        if(!to_integer(to_constant_expr(length_expr), len))
+        if(
+          length_expr.is_constant() &&
+          !to_integer(to_constant_expr(length_expr), len))
         {
           const auto &data = struct_expr.operands()[1];
           std::string result = "\"";
@@ -149,9 +151,11 @@ std::string expr2python(const exprt &expr, const namespacet &ns)
           {
             if(i < data.operands().size())
             {
+              const auto &char_expr = data.operands()[i.to_long()];
               mp_integer ch;
-              if(!to_integer(
-                   to_constant_expr(data.operands()[i.to_long()]), ch))
+              if(
+                char_expr.is_constant() &&
+                !to_integer(to_constant_expr(char_expr), ch))
                 result += static_cast<char>(ch.to_long());
             }
           }
