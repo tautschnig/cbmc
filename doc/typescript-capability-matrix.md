@@ -288,7 +288,7 @@ reasons, not precision.
 | `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
 | `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## KNOWNBUG tests (8)
+## KNOWNBUG tests (4)
 
 **Design trade-offs (3):**
 
@@ -298,26 +298,11 @@ reasons, not precision.
 | `object-prototype-chain` | Our struct model has no prototype chain; `getPrototypeOf` / `isPrototypeOf` not modelled | §20.1 |
 | `strict-nan-not-equal` | `NaN === NaN` returns `true` in our null-as-NaN model (spec says `false`) | §7.2.14 |
 
-**SAT-encoding scalability cap on complex symbolic-string content
-equality (2):**
-
-Full content `===` comparison on a long symbolic receiver, combined
-with several chained solver operations, exceeds the default memory
-envelope. Workarounds: assert length only, split across independent
-receivers, or raise `ulimit -v`.
-
-| Test | Pattern | ES2024 / TSH ref |
-|------|---------|------------------|
-| `string-symbolic-realistic` | Composite chain of symbolic string methods including === on content | §22.1 |
-| `string-trim-symbolic` | `trim() === "literal"` on a padded symbolic string | §22.1.3.32 |
-
-**Precision probes (3):**
+**Closure-capture signature mismatch (1):**
 
 | Test | Symptom | Notes |
 |------|---------|-------|
-| `array-push-length-in-loop` | Symbolic array length tracking imprecise through loops | Unresolved design question |
-| `higher-order-compose` | Nested function composition loses type information | Monomorphisation limitation |
-| `string-concat-chained-in-function` | Chained concat results lose length precision across function boundaries | Related to deep solver call chains |
+| `higher-order-compose` | `(f, g) => (x) => f(g(x))` — inner arrow function captures outer parameters; our capture-lifting changes the inner signature but not the outer's declared return type, breaking symex's type-consistency check. Fix requires a closure-environment-struct refactor. | ES2024 §15.3 |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 
