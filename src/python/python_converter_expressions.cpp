@@ -511,6 +511,48 @@ exprt python_convertert::convert_list(const jsont &expr)
   exprt::operandst elements;
   for(const auto &elt : as_array(elts))
   {
+    // PEP 448: iterable unpacking — [*a, 3, 4]. If the
+    // starred expression wraps a list literal whose length
+    // is known at conversion time, splice its elements
+    // directly. Otherwise over-approximate by skipping the
+    // starred element (sound — the resulting list is a
+    // subset of what runtime would produce).
+    if(is_node_type(elt, "Starred"))
+    {
+      const jsont &inner = json_member(elt, "value");
+      exprt inner_expr = convert_expression(inner);
+      if(inner_expr.is_nil())
+        return nil_exprt{};
+
+      const exprt *lit = nullptr;
+      if(inner_expr.id() == ID_struct && inner_expr.operands().size() >= 2)
+        lit = &inner_expr;
+      else if(inner_expr.id() == ID_symbol)
+      {
+        auto it =
+          list_literals.find(to_symbol_expr(inner_expr).get_identifier());
+        if(it != list_literals.end())
+          lit = &it->second;
+      }
+      if(
+        lit != nullptr && lit->operands().size() >= 2 &&
+        lit->operands()[0].is_constant())
+      {
+        mp_integer len_val;
+        if(!to_integer(to_constant_expr(lit->operands()[0]), len_val))
+        {
+          const exprt &data_arr = lit->operands()[1];
+          std::size_t n = len_val.to_ulong();
+          for(std::size_t i = 0; i < n && i < data_arr.operands().size(); i++)
+            elements.push_back(data_arr.operands()[i]);
+          continue;
+        }
+      }
+      log_overapprox(
+        "PEP 448 iterable unpacking of non-literal list — skipping");
+      continue;
+    }
+
     exprt e = convert_expression(elt);
     if(e.is_nil())
       return nil_exprt{};
