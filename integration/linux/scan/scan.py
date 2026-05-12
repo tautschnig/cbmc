@@ -285,15 +285,20 @@ KERNEL_ADAPTERS: dict[str, dict] = {
             "sgl_all_user_writable", "page_prov_of", "k_sg_next", "k_sg_page",
         ],
         # Functions that MUST have a non-empty body in the linked
-        # goto binary.  Under the direct-call harness, the kernel
-        # entry function's body is still linked in (via the target
-        # .c file's goto binary) so the required-bodies check
-        # continues to catch the LIM-009 static-linkage failure
-        # mode for the kernel TU we are scanning.
+        # goto binary.  Post-link, scan.py verifies each.  The
+        # check catches the exact failure mode LIM-009 resolved:
+        # a `static` kernel symbol that silently binds to an empty
+        # external stub because the harness called the unmangled
+        # name.
+        #
+        # Under the direct-call harness (LIM-012 path 2) the
+        # kernel TU's entry function is not called from main, so
+        # we do NOT list it here — doing so would cause every
+        # scan of a corpus file OTHER than crypto/algif_aead.c
+        # to produce a false-positive vacuity-risk.  The checks
+        # that survive are the ones the direct-call harness
+        # actually exercises: adapter predicate + ghost backend.
         "required_bodies": [
-            # Kernel entry function (static in algif_aead.c, only
-            # visible under --export-file-local-symbols).
-            "__CPROVER_file_local_algif_aead_c__aead_recvmsg",
             # Adapter-provided predicate — referenced from the
             # contract's `__CPROVER_requires`.
             "sgl_all_user_writable",
@@ -323,19 +328,13 @@ KERNEL_ADAPTERS: dict[str, dict] = {
             "pipe_buf_merge_safe", "pipe_buffer_is_populated",
             "pipe_buffer_mark_populated", "pipe_buffer_mark_taken_over",
         ],
-        # Bodies required in the linked binary.  The target kernel
-        # file's entry function (we scan lib/iov_iter.c, so
-        # copy_page_to_iter_pipe is the canonical hit site) is
-        # static in its TU and must survive linking; the predicate
-        # and ghost-state backend from the property module must
-        # also be present.
+        # Required-body check: predicate + ghost backend.  We do
+        # NOT list the kernel TU's entry function here for the
+        # same reason as the aead entry above — the direct-call
+        # harness does not call it, and different corpus files
+        # have different entry functions.
         "required_bodies": [
-            # Kernel file-local entry function for the Dirty Pipe
-            # bug site (Linux 5.10 lib/iov_iter.c).
-            "__CPROVER_file_local_iov_iter_c_copy_page_to_iter_pipe",
-            # Adapter-provided predicate.
             "pipe_buf_merge_safe",
-            # Property module's ghost-state backend.
             "pipe_buffer_is_populated",
         ],
     },

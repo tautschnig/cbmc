@@ -547,3 +547,73 @@ Consequences:
   ensure the linked binary is well-formed.  This pattern
   generalises to M5b (pipe_buffer kernel adapter) and every
   subsequent module.
+
+## LIM-013 — scan cannot currently give per-file bug verdicts
+
+**First hit:** Phase 2.3 corpus experiment (see
+`doc/corpus.md`).  Running the scan against a 13-file corpus of
+aead- and pipe_buffer-relevant kernel files produced the same
+`cbmc_status: "failed"` verdict on every file that compiled and
+linked cleanly.
+
+**Why.** The LIM-012 path-2 resolution replaced the
+through-`_aead_recvmsg` scan with a direct-call harness.  The
+harness builds a kernel-layout vulnerable scatterlist / pipe_buffer
+shape explicitly and calls the contract target — and it is the
+same harness regardless of which kernel `.c` file is compiled
+alongside it.  Consequently:
+
+- Every file that compiles + links + reaches the contract site
+  will report `failed` on `--direction=vuln` and `successful` on
+  `--direction=fix`.  The verdict is a **property-module
+  self-check**, not a per-file signal.
+- The per-file signal the scan does produce is the Coccinelle
+  prefilter hit list — a textual match of the bug-class
+  signature.  That is still genuinely useful (it's what finds
+  the candidate files to review), but it's a weaker signal than
+  "CBMC proves this file is buggy."
+
+This was implicit in the LIM-012 resolution — retiring the
+autonomous-shape-synthesis pitch — but the corpus experiment
+makes it concrete.  The scan's honest output today is:
+
+> "Coccinelle flagged N files under prefilter X.  Our property
+> module's contract catches bug class X on kernel-layout inputs.
+> Here are the N files; please review them manually."
+
+**Workaround.** None at this layer.  To get a per-file verdict,
+the pipeline would need a per-file harness that constructs an
+input shape *derived from that file's control flow*.  That is
+exactly what the original through-`_aead_recvmsg` harness tried
+to do — and LIM-012 is the limitation we hit trying to make that
+sound.
+
+**Resolution direction.**
+
+1. **Per-file targeted harness generation.**  For each prefilter
+   hit, emit a small harness that invokes the specific function
+   in the target file that produced the hit, with arguments
+   constructed from that function's signature.  This is the
+   "guided fuzzer" or "harness synthesis" direction — substantial
+   work, and still bounded by the same slicer pathology that
+   blocked LIM-012 once the call graph gets deep.
+
+2. **Coccinelle-only scan with CBMC as property-correctness
+   gate.**  Accept that the scan's per-file output is the cocci
+   hit list, and reposition CBMC's role as "validating that the
+   property module catches the bug class, on the kernel's exact
+   struct layout, every time we change the property code."
+   Simpler, sound, and honest about its limits.  This is where
+   the current pipeline naturally lives.
+
+3. **Sound whole-program scan.**  A full resolution would mean
+   building an analysis that can both (a) reach the contract
+   site through the kernel's control flow and (b) be robust to
+   slicing choices.  This is the direction of future CBMC
+   front-end work — see LIM-008 (`--generate-function-body`
+   reliability) and the uncomitted goto-symex optimisation
+   backlog.
+
+For now, the scan's regressions (`scan/run.sh` cases 1–5) are
+sound in what they test, and `doc/corpus.md` calls out the
+per-file limitation explicitly.
