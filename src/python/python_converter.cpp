@@ -3465,6 +3465,33 @@ exprt python_convertert::convert_compare(const jsont &expr)
     if(current_left.is_nil() || right.is_nil())
       return nil_exprt{};
 
+    // PLR §6.10.1: chained-comparison single-evaluation.
+    // If there is another comparator after this one, the
+    // current right operand becomes the next left operand,
+    // so materialise its side effects into a tmp before
+    // using it for both this comparison and the next.
+    auto peek_next = ops_it;
+    ++peek_next;
+    if(peek_next != as_array(ops).end())
+    {
+      static unsigned chain_snap_ctr = 0;
+      std::string tmpn = "__chained_" + std::to_string(chain_snap_ctr++);
+      std::string tmpq = qualify_name(tmpn);
+      irep_idt tmpid{tmpq};
+      if(symbol_table.lookup(tmpid) == nullptr)
+      {
+        symbolt ts{tmpid, right.type(), "python"};
+        ts.base_name = tmpn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        ts.is_static_lifetime = current_function.empty();
+        symbol_table.add(ts);
+      }
+      symbol_exprt snap = symbol_table.lookup_ref(tmpid).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{snap, right});
+      right = snap;
+    }
+
     // Unwrap tagged-union values (skip for In/NotIn — container stays wrapped)
     if(op != "In" && op != "NotIn")
     {
