@@ -1,14 +1,22 @@
-# TypeScript frontend: SAT-scalability profile of symbolic-string KNOWNBUGs
+# TypeScript frontend: symbolic-string SAT scalability (historical)
 
-Date: 2026-05-12 (revised after commit 05dbb58806)
+Date: 2026-05-12 (closed)
 
 ## Summary
 
-One symbolic-string KNOWNBUG remains: `string-trim-symbolic`. A second
-test, `string-symbolic-realistic`, was closed by commit
-`05dbb58806` and promoted to CORE. This document traces the profile
-before and after the fix, and lists remaining levers for the trim
-case.
+The symbolic-string KNOWNBUG suite is now empty. The two tests
+that historically blew out the SAT encoding —
+`string-symbolic-realistic` and `string-trim-symbolic` — were
+closed by:
+
+1. Commit `05dbb58806`: provenance-gated `===` routing through
+   `cprover_string_equal_func` (closes `string-symbolic-realistic`).
+2. Commit `c7fb844a60`: unconditional counter-example addition on
+   index-set exhaustion in `string_refinementt::dec_solve`
+   (closes `string-trim-symbolic`).
+
+This document stays for historical record and captures the
+measurements that motivated the two commits.
 
 ## Measured numbers (MiniSat, default settings)
 
@@ -163,15 +171,18 @@ Tracked in a separate branch (not in this commit history).
 
 ## Remaining KNOWNBUG
 
-`string-trim-symbolic` fails with
-`"dec_solve: current index set is empty, this should not happen"`
-even for the length-only assertion on a specific input shape
-(`__CPROVER_assume(s === "  hello  "); s.trim().length === 5`).
-The solver enumerates ~150 indices over many refinement iterations
-and then exhausts new indices while the model is still reported as
-SAT-but-not-satisfying-axioms. This is in
-`string_refinementt::dec_solve` (`string_refinement.cpp:~1042`) and
-is orthogonal to clause count — no amount of memory helps. It is a
-CBMC-core issue in how trim's existential witnesses interact with
-the index-set refinement, not something the TypeScript frontend
-can shape away without rewriting trim at our layer.
+None in the symbolic-string suite.
+
+The `string-trim-symbolic` failure (previously documented here) was
+traced to the refinement loop in `string_refinementt::dec_solve`:
+when trim's axioms 6/7 have fully enumerated their bounds and the
+SAT model still violates a universal at some witness index,
+`update_index_set(current_constraints)` returns no new indices and
+the old code bailed with `"dec_solve: current index set is empty,
+this should not happen"`. The fix (commit `c7fb844a60`) is to
+unconditionally add `check_axioms`'s counter-examples as ground-
+level lemmas in that path — the previous guard on
+`axioms.not_contains.empty()` was arbitrarily strict. Counter-
+examples are valid progress for any universal axiom, not just
+not_contains. With the fix, the loop now either converges to
+SAT/UNSAT or exhausts `loop_bound_`, never the stuck state.
