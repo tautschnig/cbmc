@@ -714,7 +714,7 @@ shape" question; the per-file flow complements them with
 "does this specific kernel function's control flow reach the
 contract target on a state the contract rejects".
 
-## LIM-014 — goto-cc constant-folding pathologies on Linux 6.x headers [WORKAROUND]
+## LIM-014 — goto-cc constant-folding pathologies on Linux 6.x headers [RESOLVED]
 
 **First hit:** Phase 2 task 4 (validate pipeline on a recent LTS).
 Building `crypto/algif_aead.c` from Linux 6.6 under `goto-cc`
@@ -773,6 +773,49 @@ the `__is_constexpr` / `__builtin_choose_expr` constant-folding
 logic in the ansi-c front-end.  Filed as a candidate for
 upstream contribution; tracked in
 `integration/linux/doc/upstream-contributions.md`.
+
+**Resolution.** Fixed upstream in
+`src/ansi-c/c_typecheck_expr.cpp`'s `typecheck_expr_trinary`.
+Root cause: when deciding whether one operand of a
+conditional operator was a null pointer constant, the
+type-checker simplified the operand first and then called
+`is_null_pointer()` on the simplified result.  That masked
+the C-standard distinction between an "integer constant
+expression with value 0" and "a runtime expression that
+simplifies to 0":
+
+```
+__is_constexpr(x) :=
+  (sizeof(int) == sizeof(*(8 ? ((void *)((long)(x) * 0l))
+                             : (int *)8)))
+```
+
+For runtime `x`, `(long)(x) * 0L` simplifies to 0, but the
+original expression is not an integer constant expression, so
+the whole `(void *)(…)` is NOT a null pointer constant.  The
+ternary's composite type is therefore `void *`, dereferencing
+that is `void`, and `sizeof(*…) != sizeof(int)` — so
+`__is_constexpr(x) == 0` for runtime `x`.  Previously CBMC
+missed this distinction and reported `__is_constexpr(x) == 1`
+for every `x`, breaking kernel headers that rely on this
+macro to select between constexpr and runtime branches.
+
+Fix: before checking `is_null_pointer()` on the simplified
+operand, verify the *pre-simplification* operand contains no
+non-constant leaves (no `symbol_exprt` / `side_effect_exprt`
+/ `function_application_exprt` / `dereference_exprt`).  The
+check composes: simplify-to-0 + no-non-constant-leaves ⇒
+genuine null pointer constant.
+
+Validated: a standalone reproducer (`__is_constexpr(5)` and
+`__is_constexpr(argc)`) now verifies that the first is 1 and
+the second is 0.  All 98 CBMC CORE regressions pass.  Linux
+6.12's `crypto/algif_aead.c` compiles end-to-end *without*
+the `__is_constexpr` workaround in scan-compat.h (which this
+commit removes).  Other scan-compat.h overrides
+(`GENMASK_INPUT_CHECK`, `__cacheline_group_begin_aligned`,
+`__must_be_cstr`) remain in place — they address separate
+kernel idioms that the front-end still doesn't handle.
 
 ## LIM-015 — further 6.x build failures on specific files [OPEN]
 

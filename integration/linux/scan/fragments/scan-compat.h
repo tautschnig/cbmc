@@ -46,15 +46,20 @@
 #endif
 #define GENMASK_INPUT_CHECK(h, l) 0
 
-/* Same root cause, different macro.  __is_constexpr is defined
- * in <linux/const.h>, which is included transitively by many
- * headers.  Pull it in explicitly for the same "override-after-
- * definition" reason. */
-#include <linux/const.h>
-#ifdef __is_constexpr
-#  undef __is_constexpr
-#endif
-#define __is_constexpr(x) 0
+/* __is_constexpr used to need an override here because CBMC's
+ * conditional-operator typechecking simplified `(long)x * 0L` to
+ * 0 before deciding null-pointer-constant-ness, treating
+ * runtime `x` as constant.  Fixed upstream in c_typecheck_expr
+ * .cpp's typecheck_expr_trinary: we now pre-check that the
+ * original (pre-simplification) operand is free of
+ * non-constant leaves before treating it as a null pointer
+ * constant.  No scan-compat override needed any more.
+ *
+ * Kept as a comment rather than a live #define so future
+ * regressions on this idiom are easy to diagnose: if
+ * __is_constexpr starts misbehaving again, re-adding the
+ * `#define __is_constexpr(x) 0` line is a one-liner workaround.
+ */
 
 /* Another goto-cc constant-folding pathology on 6.x.  The kernel's
  * __cacheline_group_begin_aligned macro expands to
