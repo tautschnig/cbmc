@@ -1,0 +1,52 @@
+name: Python regression tests
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  python-regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential flex bison cmake ninja-build ccache \
+            clang-19 clang++-19 python3 perl
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-pyreg-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-24.04-pyreg-${{ github.ref }}
+            ${{ runner.os }}-24.04-pyreg
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+      - name: Zero ccache stats
+        run: ccache -z --max-size=500M
+      - name: Configure build
+        run: |
+          cmake -S . -Bbuild -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-19 \
+            -DCMAKE_C_COMPILER=clang-19 \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build cbmc
+        run: cmake --build build --target cbmc -j$(nproc)
+      - name: Run Python regression suite
+        run: |
+          cd regression/python
+          timeout 600 perl ../test.pl -e -p -c "$(pwd)/../../build/bin/cbmc" -C 2>&1 | tee test.log
+          # test.pl prints 'All tests were successful' on a clean run.
+          grep -q "All tests were successful" test.log
+      - name: Print ccache stats
+        run: ccache -s
