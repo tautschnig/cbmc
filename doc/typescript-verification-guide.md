@@ -6,11 +6,12 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-653 programs. Eight tests are marked `KNOWNBUG`: three pre-existing
+655 programs. Six tests are marked `KNOWNBUG`: three pre-existing
 design trade-offs (see the "Design trade-offs" section at the end of
-this guide), three unrelated precision probes, and two exercising
-content-equality on complex symbolic-string chains that exceed the
-default SAT memory envelope (see "Other documented edge cases").
+this guide), two unrelated precision probes, and one in the
+symbolic-string suite (`string-trim-symbolic`) that hits a
+CBMC-core issue in the refined-string solver's refinement loop
+(see "Other documented edge cases").
 
 ## Contents
 
@@ -396,22 +397,19 @@ loops, indices, and modulo arithmetic. Variables used with `%`, `&`,
 ## Known limitations
 
 Documented `KNOWNBUG` tests indicate cases where a design trade-off
-intentionally gives an unsound or imprecise answer, or where an
-encoding exceeds the default SAT memory envelope. The current
-KNOWNBUGs fall into three groups:
+intentionally gives an unsound or imprecise answer, or where a
+CBMC-core issue prevents the refined-string solver from
+converging. The current KNOWNBUGs fall into three groups:
 
 1. **Design trade-offs** (3 tests) — semantic choices baked into the
    model, described below.
-2. **Scalability cap on complex symbolic-string content equality**
-   (2 tests: `string-symbolic-realistic`, `string-trim-symbolic`) —
-   a full content `===` comparison on a long symbolic receiver,
-   combined with several chained solver operations, exceeds the
-   default memory envelope. Assert length properties instead, split
-   across independent receivers, or raise `ulimit -v` to work
-   around.
-3. **Precision probes** (3 tests: `array-push-length-in-loop`,
-   `higher-order-compose`, `string-concat-chained-in-function`) —
-   documented precision gaps in specific patterns.
+2. **CBMC-core solver refinement issue** (1 test:
+   `string-trim-symbolic`) — `s.trim()` on a specific symbolic
+   input shape exhausts the refinement-loop's index set. Not a
+   memory issue; orthogonal to the TypeScript encoding.
+3. **Precision probes** (2 tests: `array-push-length-in-loop`,
+   `higher-order-compose`) — documented precision gaps in
+   specific patterns.
 
 ### Design trade-offs
 
@@ -435,13 +433,15 @@ KNOWNBUGs fall into three groups:
 - `Object.is(+0, -0)` returns `false` per ES2024 for constant zeros,
   but only in the constant path — symbolic zero-sign tracking is not
   available.
-- **Scalability of content-equality on trimmed/chained symbolic
-  strings.** A full `s.trim() === "literal"` assertion or a chain
-  of several symbolic string operations composed through function
-  boundaries can blow out the SAT encoding. Two tests
-  (`string-trim-symbolic`, `string-symbolic-realistic`) document
-  these cases. Workarounds: assert length only, assert fewer
-  properties per run, or raise `ulimit -v`.
+- **`s.trim()` on a symbolic receiver with certain input shapes** can
+  hit a CBMC-core refinement-loop issue (`"dec_solve: current
+  index set is empty, this should not happen"`). Even the
+  length-only assertion `s.trim().length === N` fails with a
+  VERIFICATION ERROR on the specific pattern in
+  `string-trim-symbolic`. This is not a SAT-memory problem and
+  adding memory does not help. Symbolic `trim()` on other input
+  shapes (e.g. short strings, no leading/trailing spaces) works
+  correctly.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.

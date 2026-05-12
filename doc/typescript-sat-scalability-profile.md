@@ -1,27 +1,39 @@
 # TypeScript frontend: SAT-scalability profile of symbolic-string KNOWNBUGs
 
-Date: 2026-05-12
+Date: 2026-05-12 (revised after commit 05dbb58806)
 
 ## Summary
 
-Two tests remain `KNOWNBUG` in the symbolic-string suite:
-`string-symbolic-realistic` and `string-trim-symbolic`. Both hit SAT
-memory limits on the same underlying pattern: **comparing a
-solver-produced refined string for full content-equality with a
-literal** (`s.trim() === "hello"`, `result === "foo: bar"` after a
-chain of solver operations).
-
-This document identifies the dominant clause source and lists
-concrete ways to reduce the encoding size.
+One symbolic-string KNOWNBUG remains: `string-trim-symbolic`. A second
+test, `string-symbolic-realistic`, was closed by commit
+`05dbb58806` and promoted to CORE. This document traces the profile
+before and after the fix, and lists remaining levers for the trim
+case.
 
 ## Measured numbers (MiniSat, default settings)
 
-Baseline and the 15× jump:
+Before commit `05dbb58806`:
 
 | Assertion | Peak vars | Peak clauses | Runtime | Verdict |
 |-----------|-----------|--------------|---------|---------|
 | `s.trim().length === 5` | 1.1 M | 4.0 M | 2.5 s | ✓ SUCCESS |
 | `s.trim() === "hello"` | 16.5 M | 62.5 M | 43 s | ✗ Out of memory |
+
+After:
+
+| Assertion | Peak vars | Peak clauses | Runtime | Verdict |
+|-----------|-----------|--------------|---------|---------|
+| Single concat `(a + "bar") === "foobar"` | 6.8 M | **900 K** | 4.6 s | ✓ SUCCESS |
+| `string-symbolic-realistic` (multi-op chain) | 33 M | 100 M | 137 s | ✓ SUCCESS (needs ~12 GB) |
+| `s.trim() === "hello"` | — | — | — | ✗ ERROR (solver index-set issue) |
+| `s.trim().length === 5` (`"  hello  "` input) | — | — | — | ✗ ERROR (same) |
+
+The trim-symbolic failure is NOT a SAT-memory issue any more; the
+solver's refinement loop reports `"current index set is empty,
+this should not happen"` even for the length-only assertion. That
+is a CBMC-core solver issue around how `add_axioms_for_trim`
+interacts with index-set refinement, not an encoding-size
+problem, and sits outside the TypeScript frontend.
 
 (`s` is `nondet_string()` assumed `=== "  hello  "`.)
 
@@ -83,38 +95,55 @@ simplifies down to the ~62 M observed peak.
 
 ## Where to reduce clauses, in rough order of impact
 
-### 1. Shrink `TYPESCRIPT_MAX_STRING_LENGTH` where it is provably safe
+### Implemented (commit `05dbb58806`)
+
+- **Provenance-gated `===` routing.** When at least one operand of a
+  TypeScript string `===` is the struct-exprt output of
+  `ts_call_string_returning_function` (identified by the presence of
+  `function_application_exprt` nodes in its data field), rewrite the
+  equality as a `cprover_string_equal_func` call instead of falling
+  through to the per-slot struct compare. The solver emits a single
+  compact `length_eq ∧ ∀ i<len: s1[i]=s2[i]` pair rather than 64
+  per-slot char_at_func applications plus quadratic Ackermann
+  extensionality. The gate on solver-produced operands preserves the
+  existing per-slot path for `__CPROVER_assume(s === literal)` shapes
+  where `s` is a plain nondet symbol — routing those through
+  `equal_func` instead breaks the solver with "current index set is
+  empty" because the assume's universal quantifier has no axioms to
+  seed the index set from.
+
+### Attempted and reverted
+
+- **Direct `res_arr[i]` indexing** in
+  `ts_call_string_returning_function` instead of per-slot
+  `char_at_func`. The solver's refinement loop relies on
+  `char_at_func` calls to populate its index set for universal-
+  quantifier instantiation; bypassing them broke content precision
+  across the board with the same "current index set is empty"
+  error that plagues `string-trim-symbolic`. See commit message of
+  `05dbb58806` for details.
+
+### Not yet implemented
+
+### Shrink `TYPESCRIPT_MAX_STRING_LENGTH` where it is provably safe
 
 The 64 constant comes from `typescript_types.h`. The SAT cost is
-quadratic in this value via Ackermann (step 2). Lowering it to 32
-would halve the per-slot count and quarter the Ackermann pair
-count. Trade-off: programs with longer literal strings would
-truncate silently.
+quadratic in this value via Ackermann on the input-side of
+`ts_string_to_refined`. Lowering it to 32 would halve the per-slot
+count and quarter the Ackermann pair count on the assume path.
+Trade-off: programs with longer literal strings would truncate
+silently.
 
 A cleaner variant: keep the inline array at 64 but, when comparing
 two refined-strings, emit only the first `max(len_a, len_b)`
 per-slot disjuncts (currently we emit all 64 unconditionally). The
 out-of-range positions are logically zero on both sides, so they
 never contribute to the disequality; elliding them saves both the
-comparison and the `char_at` calls they induce.
+comparison and the `char_at` calls they induce. This would help
+the assume-side `s === literal` shape which the provenance gate
+above deliberately keeps on the per-slot path.
 
-### 2. Route `===` through `cprover_string_equal_func` when either
-operand is solver-produced
-
-The `string_constraint_generator_testing` entry for
-`cprover_string_equal_func` emits a compact
-`length_eq ∧ ∀ i<len: s1[i]=s2[i]` pair. On our numbers that is
-O(length) SAT variables vs O(TYPESCRIPT_MAX_STRING_LENGTH²)
-extensionality. Earlier experiments routing all symbolic `===`
-through the solver broke the assume side with "current index set
-is empty" in the refinement loop. A narrower predicate that only
-routes when at least one side originates from a refined-string
-function call (and not from `__CPROVER_assume(s === literal)`
-where `literal` is a compile-time struct) would likely avoid the
-index-set corner case. Requires tracking solver-provenance on
-string expressions.
-
-### 3. Short-circuit `char_at_func` at constant indices known to
+### Short-circuit `char_at_func` at constant indices known to
 exceed the refined length
 
 Each per-slot readout is guarded by `i < result_len` but the
@@ -125,27 +154,24 @@ trim), we can fold the readout to the 0 branch without generating
 the call. For trim specifically, `result_len ≤ input_len`, which
 at conversion time is a known upper bound for literal inputs — so
 many of the 64 per-slot `char_at_func` calls are provably dead.
+Less impactful now that `===` on solver-produced strings bypasses
+the per-slot readout entirely via the provenance gate above.
 
-### 4. Collapse the Ackermann pairs structurally
+### Collapse the Ackermann pairs structurally
 
-`char_at_func(s, i)` applications with the same `s` and distinct
-constant `i` are known-distinct: the extensionality implication
-`(s==s ∧ i==j) ⇒ result_i==result_j` is only interesting when
-`i==j` is satisfiable, which it never is for distinct constants.
-A targeted override of
-`functionst::add_function_constraints` that skips the pair when
-one pair of arguments is distinct-constant would eliminate most of
-the 4 000 pairs per trim assertion.
+Tracked in a separate branch (not in this commit history).
 
-## Which of these to do first
+## Remaining KNOWNBUG
 
-- #3 is local to `ts_call_string_returning_function` and preserves
-  semantics exactly; likely the cheapest win.
-- #4 is in `functions.cpp` (a CBMC-core file) and would benefit
-  every refined-string user, not just TypeScript.
-- #2 needs a provenance flag on exprts (non-trivial but the
-  biggest precision win in the long run).
-- #1 is a user-visible behaviour change and is a last resort.
-
-None of these are done yet; both KNOWNBUGs remain marked as such
-in `regression/typescript/`.
+`string-trim-symbolic` fails with
+`"dec_solve: current index set is empty, this should not happen"`
+even for the length-only assertion on a specific input shape
+(`__CPROVER_assume(s === "  hello  "); s.trim().length === 5`).
+The solver enumerates ~150 indices over many refinement iterations
+and then exhausts new indices while the model is still reported as
+SAT-but-not-satisfying-axioms. This is in
+`string_refinementt::dec_solve` (`string_refinement.cpp:~1042`) and
+is orthogonal to clause count — no amount of memory helps. It is a
+CBMC-core issue in how trim's existential witnesses interact with
+the index-set refinement, not something the TypeScript frontend
+can shape away without rewriting trim at our layer.
