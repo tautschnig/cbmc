@@ -1582,28 +1582,29 @@ exprt typescript_convertert::ts_string_to_refined(const exprt &ts_string)
     typecast_exprt{
       member_exprt{ts_string, "length", our_len_type}, solver_len_type}});
 
-  // Create an infinity-sized array symbol and assign it from our
-  // inline data. The infinity size ensures attempt_assign_length_from_type
-  // creates a fresh length symbol (not 64). We then associate the
-  // pointer and length so the solver knows both the content and the
-  // dynamic length.
+  // Create an infinity-sized array symbol. Copy the inline data into
+  // it via a SINGLE assignment built from a with_exprt chain (one
+  // position updated per with layer). This yields exactly one SSA
+  // assignment for the whole array, avoiding the 64-fold blowup from
+  // per-position assignments. For each position i in [0, MAX), we
+  // override that position in the symbolic-sized array with
+  //   i < len ? inline_data[i] : 0
+  // but since in-bounds positions hold the content and out-of-bounds
+  // are logically zero (they don't affect the solver because the
+  // refined_string length caps access at `len`), we can simply copy
+  // all MAX positions unconditionally.
   array_typet infty_type{char_type, infinity_exprt(solver_len_type)};
   exprt solver_arr = fresh("__ts_str_sarr", infty_type);
 
-  // Bulk-assign: solver_arr = nondet initially, then we constrain
-  // individual positions via the associate mechanism. Actually, the
-  // solver needs to see the content through the SSA. We assign the
-  // array from our inline data using a byte_extract/array_of pattern.
-  // The simplest working approach: assign each in-range position.
-  // To avoid OOM from 64 assignments, we use a WITH expression chain.
   exprt data_member = member_exprt{ts_string, "data", inline_array_type};
   exprt arr_val = side_effect_expr_nondett{infty_type, source_locationt{}};
+  for(std::size_t i = 0; i < TYPESCRIPT_MAX_STRING_LENGTH; ++i)
+  {
+    exprt idx = from_integer(i, solver_len_type);
+    exprt val = index_exprt{data_member, idx, char_type};
+    arr_val = with_exprt{arr_val, idx, val};
+  }
   pending_stmts.push_back(code_frontend_assignt{solver_arr, arr_val});
-
-  // Now constrain the first `temp_len` positions to match our data.
-  // We use individual assignments only for positions that matter.
-  // Actually, let's just use the array directly and associate it.
-  // The solver will read content from solver_arr through the pointer.
 
   exprt pointer = address_of_exprt{
     index_exprt{solver_arr, from_integer(0, solver_len_type), char_type},
@@ -1672,6 +1673,47 @@ exprt typescript_convertert::ts_call_string_returning_function(
   exprt result_len_sym = fresh("__ts_strfn_len", solver_len_type);
   exprt result_ptr_sym = fresh("__ts_strfn_ptr", char_ptr_type);
 
+  // Create our side-channel array for the result and associate it
+  // with result_ptr_sym BEFORE the string-function call so our
+  // association wins the race in array_pool (see idempotent insert
+  // in array_pool.cpp). If we emitted the associate AFTER the call,
+  // the solver's own make_char_array_for_char_pointer would register
+  // a fresh char_array_* for result_ptr_sym first, and our insert
+  // would be silently ignored — leaving our res_arr disconnected
+  // from the solver's view and zeroing out b.data[] in traces.
+  array_typet infty_arr_type{char_type, infinity_exprt(solver_len_type)};
+  exprt res_arr = fresh("__ts_strfn_arr", infty_arr_type);
+
+  auto declare_assoc2 =
+    [this](const irep_idt &name, const typet &a1, const typet &a2)
+  {
+    if(symbol_table.lookup(name) == nullptr)
+    {
+      std::vector<typet> at = {a1, a2};
+      mathematical_function_typet ft(std::move(at), signedbv_typet{32});
+      symbolt fs{name, ft, "typescript"};
+      fs.base_name = id2string(name);
+      symbol_table.add(fs);
+    }
+  };
+  declare_assoc2(
+    ID_cprover_associate_array_to_pointer_func, infty_arr_type, char_ptr_type);
+  declare_assoc2(
+    ID_cprover_associate_length_to_array_func, infty_arr_type, solver_len_type);
+
+  auto emit_assoc2 = [&](const irep_idt &func, const exprt &a, const exprt &b)
+  {
+    exprt rc2 = fresh("__ts_strfn_assoc_rc", signedbv_typet{32});
+    function_application_exprt app2(
+      symbol_exprt{func, symbol_table.lookup_ref(func).type}, {a, b});
+    app2.type() = signedbv_typet{32};
+    pending_stmts.push_back(code_frontend_assignt{rc2, app2});
+  };
+  emit_assoc2(
+    ID_cprover_associate_array_to_pointer_func, res_arr, result_ptr_sym);
+  emit_assoc2(
+    ID_cprover_associate_length_to_array_func, res_arr, result_len_sym);
+
   // Declare the function if not already in the symbol table.
   if(symbol_table.lookup(func_id) == nullptr)
   {
@@ -1707,56 +1749,38 @@ exprt typescript_convertert::ts_call_string_returning_function(
     symbol_table.add(cas);
   }
 
-  // Build our inline-array result. The solver constrains the result
-  // via (result_len_sym, result_ptr_sym). We create an infinity-
-  // sized array for the result, associate it with the pointer, then
-  // read characters from it into our fixed-size inline struct.
-  array_typet infty_arr_type{char_type, infinity_exprt(solver_len_type)};
-  exprt res_arr = fresh("__ts_strfn_arr", infty_arr_type);
-
-  // Declare associate functions if needed.
-  auto declare_assoc2 =
-    [this](const irep_idt &name, const typet &a1, const typet &a2)
-  {
-    if(symbol_table.lookup(name) == nullptr)
-    {
-      std::vector<typet> at = {a1, a2};
-      mathematical_function_typet ft(std::move(at), signedbv_typet{32});
-      symbolt fs{name, ft, "typescript"};
-      fs.base_name = id2string(name);
-      symbol_table.add(fs);
-    }
-  };
-  declare_assoc2(
-    ID_cprover_associate_array_to_pointer_func, infty_arr_type, char_ptr_type);
-  declare_assoc2(
-    ID_cprover_associate_length_to_array_func, infty_arr_type, solver_len_type);
-
-  auto emit_assoc2 = [&](const irep_idt &func, const exprt &a, const exprt &b)
-  {
-    exprt rc2 = fresh("__ts_strfn_assoc_rc", signedbv_typet{32});
-    function_application_exprt app2(
-      symbol_exprt{func, symbol_table.lookup_ref(func).type}, {a, b});
-    app2.type() = signedbv_typet{32};
-    pending_stmts.push_back(code_frontend_assignt{rc2, app2});
-  };
-  emit_assoc2(
-    ID_cprover_associate_array_to_pointer_func, res_arr, result_ptr_sym);
-  emit_assoc2(
-    ID_cprover_associate_length_to_array_func, res_arr, result_len_sym);
-
-  // Unpack into our inline-array struct by reading from res_arr.
+  // Build our inline-array result by reading from res_arr (which
+  // the solver will have populated via the associate_array_to_pointer
+  // registration emitted above).
   struct_typet str_type = typescript_string_type();
+  // Build our inline-array result by reading per-character from
+  // the refined-string result via cprover_string_char_at_func. This
+  // is the idiomatic way to extract characters from a solver-
+  // produced refined string: the char_at_func returns the i-th
+  // character of the refined string, and the solver constrains it
+  // against the same axioms it uses for the string function's
+  // output. (Directly indexing res_arr does not work reliably
+  // because the SAT encoding of infinity-array indexing doesn't
+  // consistently unify with the axioms applied to the array — the
+  // trace shows res_arr=[correct values] but res_arr[i]=0 in the
+  // model for b.data reads.)
+  exprt refined_result =
+    struct_exprt{{result_len_sym, result_ptr_sym}, refined_ty};
   const auto &data_arr_type = to_array_type(str_type.components()[1].type());
   exprt result_len_32 = typecast_exprt{result_len_sym, signedbv_typet{32}};
   exprt::operandst result_chars;
   for(std::size_t i = 0; i < TYPESCRIPT_MAX_STRING_LENGTH; ++i)
   {
     exprt idx = from_integer(i, solver_len_type);
-    exprt ch = index_exprt{res_arr, idx, char_type};
+    function_application_exprt char_at_app(
+      symbol_exprt{
+        ID_cprover_string_char_at_func,
+        symbol_table.lookup_ref(ID_cprover_string_char_at_func).type},
+      {refined_result, idx});
+    char_at_app.type() = char_type;
     exprt in_bounds = binary_relation_exprt{idx, ID_lt, result_len_sym};
     result_chars.push_back(
-      if_exprt{in_bounds, std::move(ch), from_integer(0, char_type)});
+      if_exprt{in_bounds, std::move(char_at_app), from_integer(0, char_type)});
   }
   return struct_exprt{
     {result_len_32, array_exprt{std::move(result_chars), data_arr_type}},

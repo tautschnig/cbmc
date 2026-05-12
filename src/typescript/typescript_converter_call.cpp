@@ -2129,9 +2129,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             fs.base_name = id2string(func_id);
             symbol_table.add(fs);
           }
+          function_application_exprt::argumentst call_args;
+          if(method == "includes")
+          {
+            // cprover_string_contains_func(str, substr): true iff
+            // substr occurs in str. Arg order matches our semantics:
+            // self.includes(needle).
+            call_args = {refined_self, refined_needle};
+          }
+          else
+          {
+            // cprover_string_is_prefix_func(prefix, str) and
+            // cprover_string_is_suffix_func(suffix, str) — solver
+            // convention puts the sub-string FIRST. Our semantics is
+            // self.startsWith(needle) = "needle is a prefix of self",
+            // so pass needle as prefix (arg 0) and self as str
+            // (arg 1).
+            call_args = {refined_needle, refined_self};
+          }
           function_application_exprt app(
             symbol_exprt{func_id, symbol_table.lookup_ref(func_id).type},
-            {refined_self, refined_needle});
+            std::move(call_args));
           app.type() = bool_typet{};
           return std::move(app);
         }
