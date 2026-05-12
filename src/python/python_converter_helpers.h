@@ -12,12 +12,14 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/json.h>
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -52,12 +54,10 @@
     symbol_table.lookup_ref(sym_id).symbol_expr(), {str1, str2});
   app.type() = c_bool;
 
-  // Use pending_checks.size() as a monotonic-ish uniquifier —
-  // different translation units would otherwise each have their
-  // own counter and risk name collisions in the shared symbol
-  // table. pending_checks grows as the converter emits, so the
-  // size alone uniquely identifies each call site at emission
-  // time.
+  // Use pending_checks.size() and symbol_table.symbols.size() as
+  // monotonic uniquifiers — different translation units would
+  // otherwise each have their own counter and risk name
+  // collisions in the shared symbol table.
   std::string rc_name = "__str_eq_" + std::to_string(pending_checks.size()) +
                         "_" + std::to_string(symbol_table.symbols.size());
   irep_idt rc_id{"python::" + rc_name};
@@ -74,6 +74,77 @@
 
   return typecast_exprt(
     symbol_table.lookup_ref(rc_id).symbol_expr(), bool_typet());
+}
+
+/// Collect all Name references from a JSON AST node.
+/// Used for closure-capture analysis (lambda, comprehensions).
+[[maybe_unused]] static inline void
+collect_name_refs(const jsont &node, std::set<std::string> &names)
+{
+  if(node.is_object())
+  {
+    const jsont &type_node = node["_type"];
+    const jsont &id_node = node["id"];
+    if(
+      type_node.is_string() && type_node.value == "Name" &&
+      id_node.is_string() && !id_node.value.empty())
+    {
+      names.insert(id_node.value);
+    }
+    static const char *fields[] = {
+      "body",        "orelse", "handlers", "finalbody",  "test",
+      "value",       "values", "targets",  "target",     "iter",
+      "args",        "elts",   "keys",     "left",       "right",
+      "func",        "slice",  "elt",      "generators", "ifs",
+      "comparators", "ops",    "exc",      "returns",    "decorator_list",
+      nullptr};
+    for(const char **f = fields; *f; ++f)
+    {
+      const jsont &child = node[*f];
+      if(!child.is_null())
+        collect_name_refs(child, names);
+    }
+  }
+  else if(node.is_array())
+  {
+    for(const auto &elem : to_json_array(node))
+      collect_name_refs(elem, names);
+  }
+}
+
+/// Collect parameter names from a FunctionDef's args.
+[[maybe_unused]] static inline std::set<std::string>
+collect_param_names(const jsont &func_def)
+{
+  std::set<std::string> params;
+  const jsont &args_node = func_def["args"];
+  auto collect_from = [&](const jsont &list)
+  {
+    if(list.is_array())
+    {
+      for(const auto &p : to_json_array(list))
+      {
+        const jsont &arg_node = p["arg"];
+        if(arg_node.is_string())
+          params.insert(arg_node.value);
+      }
+    }
+  };
+  collect_from(args_node["posonlyargs"]);
+  collect_from(args_node["args"]);
+  collect_from(args_node["kwonlyargs"]);
+  auto collect_single = [&](const jsont &arg)
+  {
+    if(!arg.is_null())
+    {
+      const jsont &arg_node = arg["arg"];
+      if(arg_node.is_string())
+        params.insert(arg_node.value);
+    }
+  };
+  collect_single(args_node["vararg"]);
+  collect_single(args_node["kwarg"]);
+  return params;
 }
 
 #endif
