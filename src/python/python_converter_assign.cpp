@@ -1015,6 +1015,77 @@ codet python_convertert::convert_assign(const jsont &stmt)
           append.add(code_frontend_assignt{
             length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
           block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+
+          // dict_literals update: if obj is a symbol and the
+          // assigned key is a compile-time constant string,
+          // add the key to the tracked key-set. Later
+          // subscript reads of the same key can then prove
+          // the key exists. Value-tracking uses typed_val
+          // when it's a constant, otherwise safe_zero.
+          if(
+            obj.id() == ID_symbol &&
+            json_string(json_member(slice_node, "_type")) == "Constant")
+          {
+            auto key_str = extract_string_value(key);
+            if(key_str.has_value())
+            {
+              irep_idt obj_id = to_symbol_expr(obj).get_identifier();
+              auto dli = dict_literals.find(obj_id);
+              if(dli != dict_literals.end())
+              {
+                // Append key to the literal's key array; grow length.
+                exprt &dlit = dli->second;
+                if(
+                  dlit.id() == ID_struct && dlit.operands().size() >= 3 &&
+                  dlit.operands()[0].is_constant())
+                {
+                  mp_integer cur_len;
+                  if(!to_integer(to_constant_expr(dlit.operands()[0]), cur_len))
+                  {
+                    std::size_t idx = cur_len.to_ulong();
+                    if(idx < PYTHON_MAX_DICT_SIZE)
+                    {
+                      // Check if the key already exists — if so,
+                      // just update the value in place, otherwise
+                      // append. Only track when value is constant;
+                      // nondet values invalidate the entry.
+                      bool have_key = false;
+                      for(std::size_t j = 0; j < idx; j++)
+                      {
+                        auto ex = extract_string_value(
+                          dlit.operands()[1].operands()[j]);
+                        if(ex.has_value() && ex.value() == key_str.value())
+                        {
+                          have_key = true;
+                          if(typed_val.is_constant())
+                            dlit.operands()[2].operands()[j] = typed_val;
+                          else
+                            dict_literals.erase(obj_id);
+                          break;
+                        }
+                      }
+                      if(!have_key)
+                      {
+                        dlit.operands()[1].operands()[idx] =
+                          python_string_literal(key_str.value());
+                        if(typed_val.is_constant())
+                          dlit.operands()[2].operands()[idx] = typed_val;
+                        else
+                        {
+                          // Value nondet: drop tracking (can't prove
+                          // specific read values later).
+                          dict_literals.erase(obj_id);
+                          continue;
+                        }
+                        dlit.operands()[0] =
+                          from_integer(cur_len + 1, signedbv_typet{64});
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
           continue;
         }
       }
