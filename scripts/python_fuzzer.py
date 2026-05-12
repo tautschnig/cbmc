@@ -46,6 +46,9 @@ class Gen:
         self.rng = rng
         self.max_depth = max_depth
         self.vars: list[str] = []
+        self.str_vars: list[str] = []
+        self.list_vars: list[str] = []
+        self.dict_vars: list[str] = []
 
     def fresh_name(self) -> str:
         n = self.rng.choice(NAMES)
@@ -56,7 +59,7 @@ class Gen:
     def expr(self, depth: int = 0) -> str:
         if depth >= self.max_depth or not self.vars:
             return self._leaf()
-        choice = self.rng.randint(0, 4)
+        choice = self.rng.randint(0, 7)
         if choice == 0:
             return self._leaf()
         if choice == 1:
@@ -67,6 +70,18 @@ class Gen:
                    f"{self.expr(depth + 1)})"
         if choice == 3:
             return f"abs({self.expr(depth + 1)})"
+        if choice == 4:
+            # list literal
+            n = self.rng.randint(0, 3)
+            elems = ", ".join(self.expr(depth + 1) for _ in range(n))
+            return f"[{elems}]"
+        if choice == 5 and self.list_vars:
+            # list index
+            lv = self.rng.choice(self.list_vars)
+            return f"{lv}[0]"
+        if choice == 6:
+            # string literal usage
+            return self.rng.choice(STR_LITS)
         return f"({self.expr(depth + 1)} if "\
                f"{self.expr(depth + 1)} else {self.expr(depth + 1)})"
 
@@ -78,19 +93,40 @@ class Gen:
     def stmt(self, depth: int = 0) -> list[str]:
         if depth >= self.max_depth:
             return self._simple_stmt()
-        choice = self.rng.randint(0, 5)
-        if choice <= 2:
+        choice = self.rng.randint(0, 8)
+        if choice <= 3:
             return self._simple_stmt()
-        if choice == 3:
-            # if
-            return self._if_stmt(depth)
         if choice == 4:
-            # while with bounded counter
+            return self._if_stmt(depth)
+        if choice == 5:
             return self._while_stmt(depth)
+        if choice == 6:
+            return self._try_stmt(depth)
+        if choice == 7:
+            return self._list_stmt()
         return self._simple_stmt()
 
+    def _list_stmt(self) -> list[str]:
+        n = self.fresh_name()
+        self.list_vars.append(n)
+        count = self.rng.randint(0, 3)
+        items = ", ".join(self.rng.choice(INT_LITS) for _ in range(count))
+        return [f"{n} = [{items}]"]
+
+    def _try_stmt(self, depth: int) -> list[str]:
+        body = self._block(depth + 1)
+        lines = ["try:"]
+        for s in body:
+            lines.append("    " + s)
+        lines.append("except Exception:")
+        lines.append("    pass")
+        if self.rng.random() < 0.3:
+            lines.append("finally:")
+            lines.append("    pass")
+        return lines
+
     def _simple_stmt(self) -> list[str]:
-        choice = self.rng.randint(0, 3)
+        choice = self.rng.randint(0, 4)
         if choice == 0:
             n = self.fresh_name()
             return [f"{n} = {self.expr()}"]
@@ -99,6 +135,8 @@ class Gen:
             return [f"{n} = {self.expr()}"]
         if choice == 2 and self.vars:
             return [f"assert {self.expr()} == {self.expr()}"]
+        if choice == 3 and self.vars:
+            return [f"assert {self.expr()}"]
         return [f"x = {self.rng.choice(INT_LITS)}"]
 
     def _if_stmt(self, depth: int) -> list[str]:
