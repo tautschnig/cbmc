@@ -16390,6 +16390,41 @@ codet python_convertert::convert_raise(const jsont &stmt)
       const jsont &func = json_member(exc, "func");
       if(is_node_type(func, "Name"))
         exc_type = json_string(json_member(func, "id"));
+      // PEP 654: if the raised value is ExceptionGroup(msg, [e]),
+      // and the exception list is a single-element literal, treat
+      // it as raising that one exception's type. Multi-element
+      // groups are over-approximated as raising the first element.
+      if(exc_type == "ExceptionGroup" || exc_type == "BaseExceptionGroup")
+      {
+        const jsont &args = json_member(exc, "args");
+        if(args.is_array() && as_array(args).size() >= 2)
+        {
+          auto args_it = as_array(args).begin();
+          ++args_it;
+          const jsont &excs = *args_it;
+          if(is_node_type(excs, "List") || is_node_type(excs, "Tuple"))
+          {
+            const jsont &elts = json_member(excs, "elts");
+            if(elts.is_array() && !as_array(elts).empty())
+            {
+              const jsont &first = *as_array(elts).begin();
+              if(is_node_type(first, "Call"))
+              {
+                const jsont &f_func = json_member(first, "func");
+                if(is_node_type(f_func, "Name"))
+                  exc_type = json_string(json_member(f_func, "id"));
+              }
+              else if(is_node_type(first, "Name"))
+              {
+                exc_type = json_string(json_member(first, "id"));
+              }
+              if(as_array(elts).size() > 1)
+                log_overapprox(
+                  "ExceptionGroup with >1 element — raising first only");
+            }
+          }
+        }
+      }
     }
     else if(is_node_type(exc, "Name"))
       exc_type = json_string(json_member(exc, "id"));
