@@ -1295,8 +1295,46 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           current_function = class_name + "::" + method_name;
 
           code_blockt method_body;
+          // Under --python-lazy-stubs AND while processing an
+          // imported module, skip the method body. The stub
+          // becomes a pure type surface: method signature only,
+          // returns nondet. This avoids the cascaded assertion
+          // failures and string-refinement-solver blow-ups
+          // that boto3 / similar stubs cause when their dense
+          // regex preconditions interact with nondet kwargs.
+          bool skip_body = python_lazy_stubs && processing_import;
+
+          // Auto-detect PySpec-style typed stubs: a method with
+          // 'kwargs: Unpack[TypedDict]' is almost certainly a
+          // generated stub whose body is precondition
+          // assertions on kwargs. When the caller passes known
+          // constants these are easy for the solver; when the
+          // caller passes nondet values (common for imports
+          // transiently loaded from stub modules), the dense
+          // regex preconditions interact badly with the
+          // string refinement loop. Skip such bodies when
+          // processing imported modules.
+          if(processing_import && !skip_body)
+          {
+            const jsont &margs = json_member(item, "args");
+            const jsont &kwarg = json_member(margs, "kwarg");
+            if(!kwarg.is_null())
+            {
+              const jsont &ann = json_member(kwarg, "annotation");
+              if(is_node_type(ann, "Subscript"))
+              {
+                const jsont &av = json_member(ann, "value");
+                if(is_node_type(av, "Name"))
+                {
+                  std::string an = json_string(json_member(av, "id"));
+                  if(an == "Unpack")
+                    skip_body = true;
+                }
+              }
+            }
+          }
           const jsont &method_body_json = json_member(item, "body");
-          if(method_body_json.is_array())
+          if(!skip_body && method_body_json.is_array())
           {
             for(const auto &s : as_array(method_body_json))
               method_body.add(convert_statement(s));
