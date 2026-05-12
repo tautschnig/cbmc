@@ -1041,19 +1041,37 @@ string_refinementt::dec_solve(const exprt &assumption)
 
       if(index_sets.current.empty())
       {
-        if(axioms.not_contains.empty())
+        // No new indices to instantiate universal axioms at. We
+        // still have violated axioms whose counter-examples (at
+        // concrete witness values returned from check_axioms) can
+        // advance the solver: adding them as ground-level lemmas
+        // directly rules out the current bad model. This path used
+        // to fire only when there were not_contains axioms in
+        // scope, and otherwise bailed out with D_ERROR. That bail
+        // is unnecessarily strict — it rejects programs like
+        // `s.trim().length === 5` on a concretely-constrained
+        // nondet string where trim's universal axioms (a6/a7 in
+        // add_axioms_for_trim) see their bounds fully enumerated
+        // after a few iterations but the SAT model still finds a
+        // counter-witness at a specific index. Adding the
+        // counter-example lemmas closes the gap: subsequent
+        // iterations cannot revisit the same bad model, and the
+        // loop either converges to SAT/UNSAT or exhausts
+        // `loop_bound_`. For the original not_contains-axiom
+        // motivation, this change is a no-op (the else branch
+        // below already did the same thing).
+        if(counter_examples.empty())
         {
-          log.error() << "dec_solve: current index set is empty, "
+          log.error() << "dec_solve: current index set is empty and "
+                      << "check_axioms returned no counter-examples, "
                       << "this should not happen" << messaget::eom;
           return resultt::D_ERROR;
         }
-        else
-        {
-          log.debug() << "dec_solve: current index set is empty, "
-                      << "adding counter examples" << messaget::eom;
-          for(const auto &counter : counter_examples)
-            add_lemma(counter);
-        }
+        log.debug() << "dec_solve: current index set is empty, "
+                    << "adding " << counter_examples.size()
+                    << " counter examples" << messaget::eom;
+        for(const auto &counter : counter_examples)
+          add_lemma(counter);
       }
       current_constraints.clear();
       const auto instances =
