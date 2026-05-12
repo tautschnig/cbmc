@@ -1812,23 +1812,21 @@ exprt typescript_convertert::ts_call_string_returning_function(
     symbol_table.add(cas);
   }
 
-  // Build our inline-array result by reading from res_arr (which
-  // the solver will have populated via the associate_array_to_pointer
-  // registration emitted above).
-  struct_typet str_type = typescript_string_type();
   // Build our inline-array result by reading per-character from
   // the refined-string result via cprover_string_char_at_func. This
   // is the idiomatic way to extract characters from a solver-
   // produced refined string: the char_at_func returns the i-th
   // character of the refined string, and the solver constrains it
   // against the same axioms it uses for the string function's
-  // output. (Directly indexing res_arr does not work reliably
-  // because the SAT encoding of infinity-array indexing doesn't
-  // consistently unify with the axioms applied to the array — the
-  // trace shows res_arr=[correct values] but res_arr[i]=0 in the
-  // model for b.data reads.)
+  // output. A direct index_exprt into res_arr fails because the
+  // solver's refinement loop needs char_at_func calls to populate
+  // its index set (the concrete indices at which it instantiates
+  // universal quantifiers during model recovery) — without them
+  // the loop reports "current index set is empty, this should not
+  // happen" and the assertion returns ERROR.
   exprt refined_result =
     struct_exprt{{result_len_sym, result_ptr_sym}, refined_ty};
+  struct_typet str_type = typescript_string_type();
   const auto &data_arr_type = to_array_type(str_type.components()[1].type());
   exprt result_len_32 = typecast_exprt{result_len_sym, signedbv_typet{32}};
   exprt::operandst result_chars;
@@ -2407,6 +2405,76 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       std::string rs = extract_string_value(right);
       if(!ls.empty() && !rs.empty())
         return ls == rs ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      // Provenance-gated solver routing for string ===. When at
+      // least one operand is the RESULT of a refined-string solver
+      // call (concat, trim, toUpperCase, etc.), the per-slot
+      // struct compare over TYPESCRIPT_MAX_STRING_LENGTH positions
+      // generates TYPESCRIPT_MAX_STRING_LENGTH
+      // cprover_string_char_at_func calls per solver-produced
+      // operand, which boolbv records as uninterpreted functions.
+      // functionst::add_function_constraints then emits quadratic
+      // Ackermann extensionality between every pair of calls,
+      // which for e.g. `s.trim() === "hello"` blew up to ~62 M SAT
+      // clauses. Routing those cases through
+      // cprover_string_equal_func emits a single compact
+      // length-plus-forall-i axiom instead.
+      //
+      // Only gate on solver-produced operands: an
+      // assume-side `s === "literal"` where `s` is a plain
+      // nondet_string() MUST stay on the per-slot path, because
+      // the solver's refinement loop otherwise reports "current
+      // index set is empty, this should not happen" for that
+      // shape (the assume's universal quantifier has no index
+      // set to instantiate from on its own). Literal receivers
+      // are identified by `extract_string_value` returning a
+      // value; plain nondet receivers fall through to the
+      // existing per-slot compare below.
+      auto is_solver_produced = [](const exprt &e)
+      {
+        // Walk the struct's data field looking for any
+        // function_application_exprt. ts_call_string_returning_function
+        // builds the inline data as an array_exprt of if_exprt
+        // guards around cprover_string_char_at_func calls; a
+        // plain literal struct has an array_exprt of constant
+        // chars with no function_applications.
+        if(e.id() != ID_struct)
+          return false;
+        if(e.operands().size() < 2)
+          return false;
+        bool found = false;
+        e.operands()[1].visit_post(
+          [&](const exprt &sub)
+          {
+            if(sub.id() == ID_function_application)
+              found = true;
+          });
+        return found;
+      };
+      if(
+        is_typescript_string_type(left.type()) &&
+        is_typescript_string_type(right.type()) &&
+        (is_solver_produced(left) || is_solver_produced(right)))
+      {
+        exprt refined_left = ts_string_to_refined(left);
+        exprt refined_right = ts_string_to_refined(right);
+        refined_string_typet refined_ty =
+          to_refined_string_type(refined_left.type());
+        if(symbol_table.lookup(ID_cprover_string_equal_func) == nullptr)
+        {
+          std::vector<typet> arg_types = {refined_ty, refined_ty};
+          mathematical_function_typet ft(std::move(arg_types), bool_typet{});
+          symbolt fs{ID_cprover_string_equal_func, ft, "typescript"};
+          fs.base_name = id2string(ID_cprover_string_equal_func);
+          symbol_table.add(fs);
+        }
+        function_application_exprt app(
+          symbol_exprt{
+            ID_cprover_string_equal_func,
+            symbol_table.lookup_ref(ID_cprover_string_equal_func).type},
+          {refined_left, refined_right});
+        app.type() = bool_typet{};
+        return std::move(app);
+      }
     }
     // ES2024 sec-isstrictlyequal: when types differ, === is always false
     // (with one exception: our NaN sentinel for null/undefined should
