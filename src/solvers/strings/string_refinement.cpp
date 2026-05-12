@@ -290,18 +290,74 @@ void string_refinementt::set_to(const exprt &expr, bool value)
     equations.push_back(expr);
 }
 
-/// Return true if the given function_application's target is a
-/// cprover_string_* symbol, i.e. one the refined-string solver
-/// interprets. These need to be fed into the dependency graph even
-/// when CBMC's BMC pipeline consumes them via handle() before they
-/// reach set_to().
+/// Return true if the given function_application's target is one of
+/// the refined-string solver's interpreted built-ins
+/// (ID_cprover_string_*) or one of its associate primitives. These
+/// need to be fed into the dependency graph even when CBMC's BMC
+/// pipeline consumes them via handle() before they reach set_to().
+///
+/// The set mirrors the dispatch tables in
+/// `string_constraint_generatort::add_axioms_for_function_application`
+/// (string_constraint_generator_main.cpp) and
+/// `make_array_pointer_association` there. Keep the two in sync.
 static bool is_cprover_string_application(const function_application_exprt &fa)
 {
   if(fa.function().id() != ID_symbol)
     return false;
-  const auto &id = id2string(to_symbol_expr(fa.function()).get_identifier());
-  return id.find("cprover_string_") != std::string::npos ||
-         id.find("cprover_associate_") != std::string::npos;
+  const irep_idt &id = to_symbol_expr(fa.function()).get_identifier();
+
+  // clang-format off
+  static const std::unordered_set<irep_idt> interpreted_ids = {
+    ID_cprover_associate_array_to_pointer_func,
+    ID_cprover_associate_length_to_array_func,
+    ID_cprover_char_literal_func,
+    ID_cprover_string_literal_func,
+    ID_cprover_string_char_at_func,
+    ID_cprover_string_char_set_func,
+    ID_cprover_string_code_point_at_func,
+    ID_cprover_string_code_point_before_func,
+    ID_cprover_string_code_point_count_func,
+    ID_cprover_string_offset_by_code_point_func,
+    ID_cprover_string_compare_to_func,
+    ID_cprover_string_concat_func,
+    ID_cprover_string_concat_char_func,
+    ID_cprover_string_concat_code_point_func,
+    ID_cprover_string_constrain_characters_func,
+    ID_cprover_string_contains_func,
+    ID_cprover_string_copy_func,
+    ID_cprover_string_delete_func,
+    ID_cprover_string_delete_char_at_func,
+    ID_cprover_string_equal_func,
+    ID_cprover_string_equals_ignore_case_func,
+    ID_cprover_string_empty_string_func,
+    ID_cprover_string_endswith_func,
+    ID_cprover_string_format_func,
+    ID_cprover_string_index_of_func,
+    ID_cprover_string_insert_func,
+    ID_cprover_string_is_prefix_func,
+    ID_cprover_string_is_suffix_func,
+    ID_cprover_string_is_empty_func,
+    ID_cprover_string_last_index_of_func,
+    ID_cprover_string_length_func,
+    ID_cprover_string_of_int_func,
+    ID_cprover_string_of_int_hex_func,
+    ID_cprover_string_of_long_func,
+    ID_cprover_string_of_float_func,
+    ID_cprover_string_of_float_scientific_notation_func,
+    ID_cprover_string_of_double_func,
+    ID_cprover_string_parse_int_func,
+    ID_cprover_string_is_valid_int_func,
+    ID_cprover_string_is_valid_long_func,
+    ID_cprover_string_replace_func,
+    ID_cprover_string_set_length_func,
+    ID_cprover_string_startswith_func,
+    ID_cprover_string_substring_func,
+    ID_cprover_string_to_lower_case_func,
+    ID_cprover_string_to_upper_case_func,
+    ID_cprover_string_trim_func,
+  };
+  // clang-format on
+  return interpreted_ids.count(id) > 0;
 }
 
 literalt string_refinementt::convert_rest(const exprt &expr)
@@ -315,6 +371,15 @@ literalt string_refinementt::convert_rest(const exprt &expr)
       // fresh literal it allocated. That same literal is what the
       // composed goal uses, so tying our string-builtin return_code
       // to it propagates the axiom-assigned truth value back.
+      //
+      // Note: the base class additionally records the application
+      // into `functions.function_map`, so at finish_eager_conversion
+      // it will emit Ackermann extensionality constraints (if args
+      // are pairwise equal, results are equal). Those are redundant
+      // with the string-specific axioms generated via add_node but
+      // also harmless — the SAT literal forced equal to
+      // return_code's literal here makes the two sets of constraints
+      // consistent.
       literalt lit = supert::convert_rest(expr);
       recorded_string_applications.push_back({fa, lit, {}});
       return lit;
@@ -328,6 +393,9 @@ bvt string_refinementt::convert_function_application(
 {
   if(is_cprover_string_application(expr))
   {
+    // See note in convert_rest above regarding the base class's
+    // record and the resulting (redundant-but-consistent)
+    // extensionality constraints.
     bvt bv = supert::convert_function_application(expr);
     recorded_string_applications.push_back({expr, {}, bv});
     return bv;
@@ -763,7 +831,17 @@ string_refinementt::dec_solve(const exprt &assumption)
   // Without this, the add_node walk above never sees the
   // cprover_string_* applications and the refined-string solver
   // reports "0 universal axioms" for those assertions.
-  for(const auto &entry : recorded_string_applications)
+  //
+  // Snapshot + clear before processing: this preserves any entries
+  // that might be added during the processing (via further convert()
+  // calls) for a subsequent dec_solve() invocation. Today no such
+  // recursion happens — add_node produces fresh return_code symbols
+  // and converting a symbol doesn't re-enter convert_rest — but the
+  // snapshot pattern keeps the code robust to future changes.
+  const std::size_t recorded_count = recorded_string_applications.size();
+  const auto recorded_snapshot = std::move(recorded_string_applications);
+  recorded_string_applications.clear();
+  for(const auto &entry : recorded_snapshot)
   {
     log.debug() << "dec_solve: feeding recorded string application: "
                 << format(entry.application) << messaget::eom;
@@ -791,18 +869,15 @@ string_refinementt::dec_solve(const exprt &assumption)
       }
       else if(entry.bv)
       {
-        // Bitvector return: convert the symbol to a bv and tie
-        // each bit.
+        // Bitvector return: tie the whole word.
         const bvt ret_bv = supert::convert_bv(*replacement);
         POSTCONDITION(ret_bv.size() == entry.bv->size());
-        for(std::size_t i = 0; i < ret_bv.size(); ++i)
-          prop.set_equal((*entry.bv)[i], ret_bv[i]);
+        bv_utils.set_equal(*entry.bv, ret_bv);
       }
     }
   }
-  log.debug() << "dec_solve: fed " << recorded_string_applications.size()
+  log.debug() << "dec_solve: fed " << recorded_count
               << " recorded string applications" << messaget::eom;
-  recorded_string_applications.clear();
 
 #ifdef DEBUG
   dependencies.output_dot(log.debug());
