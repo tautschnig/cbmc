@@ -290,6 +290,51 @@ void string_refinementt::set_to(const exprt &expr, bool value)
     equations.push_back(expr);
 }
 
+/// Return true if the given function_application's target is a
+/// cprover_string_* symbol, i.e. one the refined-string solver
+/// interprets. These need to be fed into the dependency graph even
+/// when CBMC's BMC pipeline consumes them via handle() before they
+/// reach set_to().
+static bool is_cprover_string_application(const function_application_exprt &fa)
+{
+  if(fa.function().id() != ID_symbol)
+    return false;
+  const auto &id = id2string(to_symbol_expr(fa.function()).get_identifier());
+  return id.find("cprover_string_") != std::string::npos ||
+         id.find("cprover_associate_") != std::string::npos;
+}
+
+literalt string_refinementt::convert_rest(const exprt &expr)
+{
+  if(expr.id() == ID_function_application)
+  {
+    const auto &fa = to_function_application_expr(expr);
+    if(is_cprover_string_application(fa))
+    {
+      // Let the base class do the conversion first so we capture the
+      // fresh literal it allocated. That same literal is what the
+      // composed goal uses, so tying our string-builtin return_code
+      // to it propagates the axiom-assigned truth value back.
+      literalt lit = supert::convert_rest(expr);
+      recorded_string_applications.push_back({fa, lit, {}});
+      return lit;
+    }
+  }
+  return supert::convert_rest(expr);
+}
+
+bvt string_refinementt::convert_function_application(
+  const function_application_exprt &expr)
+{
+  if(is_cprover_string_application(expr))
+  {
+    bvt bv = supert::convert_function_application(expr);
+    recorded_string_applications.push_back({expr, {}, bv});
+    return bv;
+  }
+  return supert::convert_function_application(expr);
+}
+
 /// Add association for each char pointer in the equation
 /// \param [in,out] symbol_solver: a union_find_replacet object to keep track of
 ///   char pointer equations. Char pointers that have been set equal by an
@@ -706,6 +751,58 @@ string_refinementt::dec_solve(const exprt &assumption)
       local_equations.push_back(eq);
   }
   equations.clear();
+
+  // Also feed the dependency graph from cprover_string_* function
+  // applications that were recorded in convert_rest /
+  // convert_function_application but never appeared inside any
+  // equation passed to set_to(). This happens in CBMC's
+  // multi-assertion path
+  // (symex_target_equationt::convert_assertions): each assertion is
+  // wrapped in a handle() call that bit-blasts the expression into
+  // a fresh literal before the composed goal is given to set_to().
+  // Without this, the add_node walk above never sees the
+  // cprover_string_* applications and the refined-string solver
+  // reports "0 universal axioms" for those assertions.
+  for(const auto &entry : recorded_string_applications)
+  {
+    log.debug() << "dec_solve: feeding recorded string application: "
+                << format(entry.application) << messaget::eom;
+    exprt fa_expr = static_cast<const exprt &>(entry.application);
+    symbol_resolve.replace_expr(fa_expr);
+    string_id_symbol_resolve.replace_expr(fa_expr);
+    const auto replacement = add_node(
+      dependencies, fa_expr, generator.array_pool, generator.fresh_symbol);
+    if(replacement)
+    {
+      // add_node replaced the function_application with a fresh
+      // return_code symbol and stored axioms in `dependencies` that
+      // constrain that symbol. We need the SAT literal of
+      // replacement (the return_code) to be forced equal to the
+      // literal that was already created for the original
+      // function_application (entry.bool_lit / entry.bv). That link
+      // is what makes the assertion's converted form observe the
+      // axiom-assigned truth.
+      if(entry.bool_lit)
+      {
+        // Boolean return: convert the return_code symbol to a
+        // literal and set it equal to the recorded literal.
+        const literalt ret_lit = supert::convert(*replacement);
+        prop.set_equal(*entry.bool_lit, ret_lit);
+      }
+      else if(entry.bv)
+      {
+        // Bitvector return: convert the symbol to a bv and tie
+        // each bit.
+        const bvt ret_bv = supert::convert_bv(*replacement);
+        POSTCONDITION(ret_bv.size() == entry.bv->size());
+        for(std::size_t i = 0; i < ret_bv.size(); ++i)
+          prop.set_equal((*entry.bv)[i], ret_bv[i]);
+      }
+    }
+  }
+  log.debug() << "dec_solve: fed " << recorded_string_applications.size()
+              << " recorded string applications" << messaget::eom;
+  recorded_string_applications.clear();
 
 #ifdef DEBUG
   dependencies.output_dot(log.debug());
