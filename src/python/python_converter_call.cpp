@@ -5265,6 +5265,55 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // PLR §3.3.5: callable instances via __call__. If the
+  // 'function' is actually a symbol naming a class
+  // instance (struct-typed), look up its __call__
+  // method and emit a method call.
+  if(sym == nullptr || sym->type.id() != ID_code)
+  {
+    const symbolt *var_sym =
+      symbol_table.lookup(irep_idt{qualify_name(func_name)});
+    if(var_sym == nullptr)
+      var_sym = symbol_table.lookup(irep_idt{"python::" + func_name});
+    if(var_sym != nullptr)
+    {
+      typet inst_type = var_sym->type;
+      std::string tag;
+      if(inst_type.id() == ID_struct)
+        tag = id2string(to_struct_type(inst_type).get_tag());
+      else if(inst_type.id() == ID_struct_tag)
+        tag = id2string(to_struct_tag_type(inst_type).get_identifier());
+      if(tag.substr(0, 13) == "python_class_")
+      {
+        std::string bare = tag.substr(13);
+        for(const std::string &prefix :
+            {std::string{"python::"} + tag + "::__call__",
+             std::string{"python::"} + bare + "::__call__"})
+        {
+          const symbolt *cs = symbol_table.lookup(irep_idt{prefix});
+          if(cs != nullptr)
+          {
+            typet ret_type = python_int_type();
+            if(cs->type.id() == ID_code)
+              ret_type = to_code_type(cs->type).return_type();
+            exprt::operandst call_args;
+            call_args.push_back(address_of_exprt{var_sym->symbol_expr()});
+            if(args.is_array())
+            {
+              for(const auto &arg : as_array(args))
+                call_args.push_back(convert_expression(arg));
+            }
+            return side_effect_expr_function_callt{
+              cs->symbol_expr(),
+              std::move(call_args),
+              ret_type,
+              get_location(expr)};
+          }
+        }
+      }
+    }
+  }
+
   if(sym == nullptr || sym->type.id() != ID_code)
   {
     // Recognised-but-unmodelled Python built-ins. Returning a sound
