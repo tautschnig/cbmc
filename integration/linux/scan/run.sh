@@ -28,6 +28,12 @@
 #       harness's fix branch) on the same pipeline the
 #       vulnerable direction fires on.
 #
+#   5.  Real-kernel Dirty Pipe regression (CVE-2022-0847): run
+#       scan.py against `lib/iov_iter.c` in both directions.
+#       Vuln: `cbmc_status == "failed"`, precondition.2 named.
+#       Fix:  `cbmc_status == "successful"`.  Demonstrates the
+#       pipe_buffer kernel adapter works end-to-end.
+#
 # Exit code 0 iff all cases behave as expected.
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
@@ -155,6 +161,55 @@ else
     echo "  [FAIL] expected rc 0 + cbmc_status=successful" >&2
     echo "         actual rc=$rc; last 20 lines of output:" >&2
     tail -20 "$tmp/case4.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
+echo
+echo "=== case 5: real-kernel Dirty Pipe on lib/iov_iter.c ==="
+# M5b: pipe_buffer kernel adapter end-to-end.  Runs the scan in
+# both directions against Linux 5.10 `lib/iov_iter.c`:
+#   - default --direction=vuln: prefilter fires on
+#     copy_page_to_iter_pipe's take-over sites (lines 409/411/545/546);
+#     CBMC on the direct-call harness reports
+#     `cbmc_status: "failed"` with `pipe_buf_release.precondition.2`
+#     named (pipe_buf_merge_safe(buf) == 1 violated).
+#   - --direction=fix: same kernel source, harness built with
+#     -DFIXED, cbmc_status: "successful".
+PIPE_KERNEL_C="$LINUX_TREE/lib/iov_iter.c"
+if [[ ! -f $PIPE_KERNEL_C ]]; then
+  echo "  [skip] no $PIPE_KERNEL_C"
+else
+  # 5a: vulnerable direction
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$PIPE_KERNEL_C" \
+    --json "$tmp/case5a.json" > "$tmp/case5a.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     grep -q '"cbmc_status": "failed"' "$tmp/case5a.json" && \
+     grep -q 'pipe_buf_release.precondition' "$tmp/case5a.json"; then
+    echo "  [ok] 5a (vuln): exit 1, cbmc_status=failed, precondition named"
+  else
+    echo "  [FAIL] 5a expected rc 1 + cbmc_status=failed + precondition named" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case5a.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # 5b: fix direction
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$PIPE_KERNEL_C" --direction=fix \
+    --json "$tmp/case5b.json" > "$tmp/case5b.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]] && \
+     grep -q '"cbmc_status": "successful"' "$tmp/case5b.json"; then
+    echo "  [ok] 5b (fix):  exit 0, cbmc_status=successful"
+  else
+    echo "  [FAIL] 5b expected rc 0 + cbmc_status=successful" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case5b.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
   fi
 fi

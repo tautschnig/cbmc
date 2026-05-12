@@ -48,15 +48,32 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Abstract struct.  The kernel's real struct carries more fields;
-// we only need the two that matter for the merge-safety property.
+// Abstract struct.  Layout-compatible with the Linux kernel's
+// `struct pipe_buffer` from <linux/pipe_fs_i.h> so the property
+// module can be linked directly with kernel TUs (and the
+// scan's `pipe_buffer_kernel_adapter.c`) without ODR conflicts.
+// The property only reads `flags` and treats `page` as opaque.
+//
+// `struct page` and `struct pipe_buf_operations` are declared as
+// dummy-field complete types here (rather than opaque forward
+// declarations) so non-kernel callers — the unit test and the
+// abstract CVE harnesses — can stack-allocate them as sentinels
+// for ghost-table identity.  At link time with a real kernel
+// binary, goto-cc unifies against the kernel's fuller struct
+// since we only ever take addresses, never dereference.
+struct page
+{
+  unsigned long _pad;
+};
+struct pipe_buf_operations;
+
 struct pipe_buffer
 {
+  struct page *page;
+  unsigned int offset, len;
+  const struct pipe_buf_operations *ops;
   unsigned int flags;
-  // Opaque identifier for the page the buffer points at.  The
-  // property does not dereference this; it is kept to make ghost
-  // tracking unambiguous across buffers that share a page.
-  const void *page;
+  unsigned long private;
 };
 
 // Flag bit that controls merge behaviour, matching the kernel's

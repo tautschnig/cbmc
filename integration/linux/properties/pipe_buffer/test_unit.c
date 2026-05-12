@@ -14,16 +14,17 @@
 int main(void)
 {
   struct pipe_buffer a, b, c;
+  struct page page_a, page_b, page_c;
 
   // ---- test 1: fresh buffer, flags clear → safe ----
   a.flags = 0;
-  a.page = (const void *)0x1000;
+  a.page = &page_a;
   __CPROVER_assert(pipe_buf_merge_safe(&a) == 1,
                    "flags=0 should be safe");
 
   // ---- test 2: populated buffer with CAN_MERGE set → safe ----
   b.flags = PIPE_BUF_FLAG_CAN_MERGE;
-  b.page = (const void *)0x2000;
+  b.page = &page_b;
   pipe_buffer_mark_populated(&b);
   __CPROVER_assert(pipe_buf_merge_safe(&b) == 1,
                    "populated + CAN_MERGE should be safe");
@@ -31,7 +32,7 @@ int main(void)
   // ---- test 3: taken-over buffer with CAN_MERGE set → UNSAFE ----
   //        this is the Dirty Pipe pattern.
   c.flags = PIPE_BUF_FLAG_CAN_MERGE;
-  c.page = (const void *)0x3000;
+  c.page = &page_c;
   pipe_buffer_mark_taken_over(&c);
   __CPROVER_assert(pipe_buf_merge_safe(&c) == 0,
                    "taken-over + CAN_MERGE must be detected as unsafe");

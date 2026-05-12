@@ -56,6 +56,32 @@ Validated end-to-end against Linux 5.10 `crypto/algif_aead.c`:
   demonstrating the contract accepts a safe SGL shape on the
   same pipeline.  Closes LIM-010 / LIM-012.
 
+### pipe_buffer (Dirty Pipe / CVE-2022-0847)
+
+- [`pipe_buffer_kernel_adapter.c`](pipe_buffer_kernel_adapter.c) —
+  attaches `pipe_buf_merge_safe(buf) == 1` as a contract
+  precondition on `pipe_buf_release` (static inline in
+  `<linux/pipe_fs_i.h>`; contract declared on both the external
+  name and the `__CPROVER_file_local_pipe_fs_i_h_pipe_buf_release`
+  mangled name).
+- [`pipe_buffer_kernel_adapter_probe.c`](pipe_buffer_kernel_adapter_probe.c) —
+  trivially-false-precondition variant for the vacuity probe.
+- [`pipe_buffer_kernel_direct_harness.c`](pipe_buffer_kernel_direct_harness.c) —
+  direct-call harness.  Three-step shape: writer A populates with
+  CAN_MERGE, slot is taken over (vulnerable: without flag reset;
+  fixed with `-DFIXED`: with flag reset), then `pipe_buf_release`
+  is called.  The contract fires in the vulnerable direction and
+  passes in the fix direction.
+
+Validated end-to-end against Linux 5.10 `lib/iov_iter.c`
+(home of `copy_page_to_iter_pipe`, the original Dirty Pipe
+bug site):
+- Default: `cbmc_status: "failed"`,
+  `pipe_buf_release.precondition.2` fires at the harness's
+  `pipe_buf_release` call site.  Coccinelle prefilter surfaces
+  four take-over sites in the file.
+- `--direction=fix`: `cbmc_status: "successful"`.
+
 ## Adding a new adapter
 
 1. Create `scan/adapters/<module>_kernel_{adapter,stubs,harness}.c`

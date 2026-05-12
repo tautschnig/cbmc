@@ -235,6 +235,14 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # non-static symbol (stand-alone harnesses, older link modes).
         "aead_request_set_crypt",
     ],
+    "pipe_buffer": [
+        # pipe_buf_release is `static inline` in
+        # <linux/pipe_fs_i.h>; exposed under this mangled name in
+        # every kernel TU that includes the header.
+        "__CPROVER_file_local_pipe_fs_i_h_pipe_buf_release",
+        # External-name fallback for direct-call harness links.
+        "pipe_buf_release",
+    ],
 }
 
 
@@ -292,6 +300,43 @@ KERNEL_ADAPTERS: dict[str, dict] = {
             # page_provenance ghost-state backend.
             "page_prov_of",
             "set_page_prov",
+        ],
+    },
+    "pipe_buffer": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "pipe_buffer_kernel_adapter.c",
+        # Vacuity-probe adapter.  See the aead entry above for the
+        # semantics of this guardrail.
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "pipe_buffer_kernel_adapter_probe.c",
+        # Direct-call harness: builds kernel-layout pipe_buffer
+        # shapes explicitly and calls `pipe_buf_release`.  See the
+        # harness source for vulnerable / fixed branch details.
+        "harness":
+            SCRIPT_DIR / "adapters" / "pipe_buffer_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "pipe_buffer" / "pipe_buffer.c",
+        ],
+        # Only predicates referenced from the contract clauses.
+        "slice_preserve": [
+            "pipe_buf_merge_safe", "pipe_buffer_is_populated",
+            "pipe_buffer_mark_populated", "pipe_buffer_mark_taken_over",
+        ],
+        # Bodies required in the linked binary.  The target kernel
+        # file's entry function (we scan lib/iov_iter.c, so
+        # copy_page_to_iter_pipe is the canonical hit site) is
+        # static in its TU and must survive linking; the predicate
+        # and ghost-state backend from the property module must
+        # also be present.
+        "required_bodies": [
+            # Kernel file-local entry function for the Dirty Pipe
+            # bug site (Linux 5.10 lib/iov_iter.c).
+            "__CPROVER_file_local_iov_iter_c_copy_page_to_iter_pipe",
+            # Adapter-provided predicate.
+            "pipe_buf_merge_safe",
+            # Property module's ghost-state backend.
+            "pipe_buffer_is_populated",
         ],
     },
 }
