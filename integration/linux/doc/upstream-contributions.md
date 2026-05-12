@@ -46,23 +46,38 @@ Already an upstream PR branch: `origin/sarif-ui` (`64e301b3b5`).
   the develop branch so `integration/linux/scan/scan.py` can use
   it.  Upstream merge is tracked by the `sarif-ui` branch PR.
 
+### 3. Object factory: amortised allocation + tree-size cap (LIM-008)
+
+Commit: `c86617c94c`.
+
+- **What.**  Two independent fixes to `c_object_factory_parameterst`
+  / `symbol_factoryt` / `symbol_table_baset`:
+  - `symbol_table_baset::next_unused_suffix(prefix)` gains a
+    per-prefix hint cache (moved up from the derived
+    `symbol_table_buildert`), making repeated allocation under
+    the same prefix amortised O(1) instead of O(N).
+  - New `max_dynamic_object_instances` (default 1000, CLI flag
+    `--max-dynamic-object-instances`) hard-caps the total number
+    of dynamic allocations the object factory emits for one
+    nondet-init root.  Complements the existing
+    `max_nondet_tree_depth` cap which only fires on recursive
+    chains.
+- **Why.**  LIM-008 reproducer (`goto-instrument --generate-
+  function-body af_alg_alloc_areq` on Linux 5.10's
+  `crypto/algif_aead.c` goto binary) hung indefinitely before
+  this commit; finishes in 2 seconds after.
+- **Regression test.**
+  `regression/goto-instrument/generate-function-body-deep-struct-cap/`.
+- **Testing.**  All 15 CORE labels under goto-cc / goto-instrument
+  / goto-harness / contracts / symbol-table pass; seven
+  `integration/linux/` regressions remain green.
+- **Status.**  Ready for upstream PR.  Both fixes are orthogonal
+  wins for any downstream user of the object factory on
+  non-trivial C programs.
+
 ## Investigated but not yet upstream-ready
 
-### LIM-008 — `goto-instrument --generate-function-body` silent no-op
-
-- **What.**  Some valid-looking regexes cause `goto-instrument
-  --generate-function-body` to silently exit without producing an
-  output file.  A wildcard `.*` triggers a regex-parse abort
-  ("Mismatched '(' and ')'") — likely an ambiguity in the regex
-  parser's capturing-group handling.
-- **Why it's not yet ready.**  Root cause is in goto-instrument's
-  regex matcher and/or the `--generate-function-body` dispatch
-  loop.  Needs a careful reproducer + minimal fix.  Deferred: the
-  `integration/linux` pipeline works around it by hand-writing C
-  stubs rather than relying on regex-driven body generation, so
-  the workflow is unblocked.
-- **Next step.**  File a focused GitHub issue with the reproducer
-  regex from the limitation entry.
+### (none — LIM-008 previously lived here; now RESOLVED, see above)
 
 ## Not pursued (inherent to CBMC's design)
 

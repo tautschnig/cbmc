@@ -293,7 +293,7 @@ PARTIAL/UNSOUND) are preserved in git history for completeness.
 --sarif-result <file>` now emits a SARIF 2.1.0 log; `scan.py --sarif
 <file>` merges per-run logs into a single multi-run document.
 
-## LIM-008 — `goto-instrument --generate-function-body` fails silently on broad regexes
+## LIM-008 — `goto-instrument --generate-function-body` fails silently on broad regexes [RESOLVED]
 
 **First hit:** M4c stubbing experiments on `/tmp/real.trans.gb`.
 
@@ -326,6 +326,34 @@ great for debuggability.
 C stubs (essentially a `scan/adapters/kernel_stubs.c` per subsystem)
 rather than relying on goto-instrument's regex-driven body
 generation.  Same plan under LIM-006.
+
+**Resolution (commit c86617c94c).** Investigated under bounded
+`ulimit`/`timeout` and found two distinct bugs:
+
+1. **O(N²) in `symbol_table_baset::next_unused_suffix`.**  The
+   C object factory's `get_fresh_aux_symbol` restarted the linear
+   scan from 0 on every allocation, so N allocations cost O(N²)
+   total.  Fixed by moving `symbol_table_buildert`'s per-prefix
+   hint-cache up into the base class, making the one-arg
+   `next_unused_suffix(prefix)` amortised O(1).
+
+2. **Runaway tree size in `symbol_factoryt::gen_nondet_init`.**
+   The existing `max_nondet_tree_depth` cap only fires when the
+   same struct tag appears twice on a pointer chain; kernel
+   hierarchies are wide-but-non-recursive, so the cap never
+   triggered and the factory generated an exponentially large
+   init body (what produced the "silent no-op" / OOM-then-exit
+   from the failure-mode description above).  Added a new
+   `max_dynamic_object_instances` parameter (default 1000; CLI
+   flag `--max-dynamic-object-instances`) that hard-caps the
+   total allocations any single nondet-init root produces.
+   Beyond the cap, pointers are initialised to NULL.
+
+The original LIM-008 reproducer (havoc body for
+`af_alg_alloc_areq` on Linux 5.10's `crypto/algif_aead.c` goto
+binary) completes in 2 seconds after this commit instead of
+hanging indefinitely.  Regression covered by
+`regression/goto-instrument/generate-function-body-deep-struct-cap/`.
 
 ## LIM-010 — Stub fidelity: fix-direction regression not passing [RESOLVED]
 
