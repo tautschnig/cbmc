@@ -170,19 +170,19 @@ the column shows `—`.
 ### String (ES2024 §22.1)
 
 **Symbolic-string precision.** Non-literal strings
-(`nondet_string()`, function parameters typed `string`) are now
-character-precise through the refined-string solver for the
-typical one-solver-call-per-receiver pattern. Two or more refined-
-string method calls on the same symbolic receiver in one
-verification hit a refinement-loop convergence issue; affected
-assertions report FAILURE (sound, not an incorrect success) and
-are tracked as KNOWNBUG. Constant strings remain fully precise via
-conversion-time evaluation.
+(`nondet_string()`, function parameters typed `string`) are
+character-precise through the refined-string solver for single-
+call and multi-call patterns. The previously-reported
+"multi-assertion loses axioms" limitation was fixed 2026-05-12 in
+`string_refinementt` (see commit history). Constant strings remain
+fully precise via conversion-time evaluation. Two complex content-
+equality chains remain as `KNOWNBUG` for SAT-encoding memory
+reasons, not precision.
 
 | Feature | Status | Notes | Test(s) |
 |--------|--------|-------|---------|
 | `length` | ✅ | Precise on symbolic too | `string-length`, `string-length-check` |
-| Concatenation (`+`) | ✅ | Character-precise on symbolic (single call) | `string-concat`, `string-concat-symbolic-content`, `string-concat-content-precise` |
+| Concatenation (`+`) | ✅ | Character-precise on symbolic | `string-concat`, `string-concat-symbolic-content`, `string-concat-content-precise` |
 | Concatenation (`concat` method) | ✅ | Fixed 2026-05-07 (constant); symbolic as `+` | `string-concat-method` |
 | Split | ✅ | Constant only | `string-split` |
 | Replace / replaceAll | ✅ | Constant only | `string-replace`, `string-replaceAll`, `string-replaceAll-multi` |
@@ -194,10 +194,10 @@ conversion-time evaluation.
 | Comparison (`===`, `!==`) | ✅ | Per-slot struct compare; works on symbolic | `string-comparison-ops`, `string-equality` |
 | `indexOf` (with fromIndex) | ✅ | fromIndex fixed 2026-05-07; constant only | `string-indexof-fromindex` |
 | `lastIndexOf` | ✅ | Constant only | `string-last-index-of` |
-| `includes` on symbolic strings | ✅ | Character-precise for single call | `string-includes-content-precise`; multi-call: `string-includes-symbolic` [KNOWNBUG] |
-| `startsWith` / `endsWith` on symbolic strings | ✅ | Character-precise for single call | `string-startswith-content-precise`; multi-call: `string-startswith-symbolic` [KNOWNBUG] |
-| `toUpperCase` / `toLowerCase` on symbolic strings | ✅ | Character-precise for single call | `string-toupper-content-precise`; multi-call: `string-case-symbolic` [KNOWNBUG] |
-| `trim` on symbolic strings | ✅ | Length-precise; content precise single-call | multi-call: `string-trim-symbolic` [KNOWNBUG] |
+| `includes` on symbolic strings | ✅ | Character-precise (multi-assertion too) | `string-includes-content-precise`, `string-includes-symbolic` |
+| `startsWith` / `endsWith` on symbolic strings | ✅ | Character-precise (multi-assertion too) | `string-startswith-content-precise`, `string-startswith-symbolic` |
+| `toUpperCase` / `toLowerCase` on symbolic strings | ✅ | Character-precise | `string-toupper-content-precise`, `string-case-symbolic` |
+| `trim` on symbolic strings | ⚠️ | Length-precise; content compare can OOM on complex chains | `string-trim-symbolic` [KNOWNBUG] |
 | `padStart` / `padEnd` (short-circuit) | ✅ | Fixed 2026-05-07 | `string-pad-short-circuit` |
 | `padStart` / `padEnd` (multi-char pad) | ✅ | Fixed 2026-05-07 | `string-pad-multichar` |
 | `trim` (constant) | ✅ |  | (covered in `string-methods`) |
@@ -288,7 +288,7 @@ conversion-time evaluation.
 | `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
 | `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## KNOWNBUG tests (11)
+## KNOWNBUG tests (8)
 
 **Design trade-offs (3):**
 
@@ -298,23 +298,18 @@ conversion-time evaluation.
 | `object-prototype-chain` | Our struct model has no prototype chain; `getPrototypeOf` / `isPrototypeOf` not modelled | §20.1 |
 | `strict-nan-not-equal` | `NaN === NaN` returns `true` in our null-as-NaN model (spec says `false`) | §7.2.14 |
 
-**Multi-solver-call-per-receiver pattern (5):**
+**SAT-encoding scalability cap on complex symbolic-string content
+equality (2):**
 
-Single-call variants of these methods are character-precise and
-covered by CORE tests `string-*-content-precise`. The multi-call
-case (two or more refined-string method calls fire on the same
-symbolic receiver in one verification) hits a refinement-loop
-convergence issue: the solver ends up with zero universal axioms
-for the second and subsequent calls. Assertions report FAILURE
-rather than an incorrect SUCCESS, so results remain sound.
+Full content `===` comparison on a long symbolic receiver, combined
+with several chained solver operations, exceeds the default memory
+envelope. Workarounds: assert length only, split across independent
+receivers, or raise `ulimit -v`.
 
 | Test | Pattern | ES2024 / TSH ref |
 |------|---------|------------------|
-| `string-case-symbolic` | Multiple toUpperCase/toLowerCase + === on the same receiver | §22.1.3.30/31 |
-| `string-includes-symbolic` | Multiple includes calls on the same receiver | §22.1.3.7 |
-| `string-startswith-symbolic` | Multiple startsWith/endsWith calls on the same receiver | §22.1.3.23/7 |
-| `string-symbolic-realistic` | Combined chain of symbolic string methods | §22.1 |
-| `string-trim-symbolic` | trim + === on the same receiver | §22.1.3.32 |
+| `string-symbolic-realistic` | Composite chain of symbolic string methods including === on content | §22.1 |
+| `string-trim-symbolic` | `trim() === "literal"` on a padded symbolic string | §22.1.3.32 |
 
 **Precision probes (3):**
 
@@ -322,7 +317,7 @@ rather than an incorrect SUCCESS, so results remain sound.
 |------|---------|-------|
 | `array-push-length-in-loop` | Symbolic array length tracking imprecise through loops | Unresolved design question |
 | `higher-order-compose` | Nested function composition loses type information | Monomorphisation limitation |
-| `string-concat-chained-in-function` | Chained concat results lose length precision across function boundaries | Related to multi-call symbolic string pattern |
+| `string-concat-chained-in-function` | Chained concat results lose length precision across function boundaries | Related to deep solver call chains |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 
@@ -356,17 +351,17 @@ catches it.
 ## Overall assessment
 
 **Well supported** (works for 90%+ of real code): primitives, classes,
-generics, narrowing, most Array/String methods (constant + single-
-call symbolic), Promises, imports/exports.
+generics, narrowing, most Array/String methods (constant and symbolic),
+Promises, imports/exports.
 
 **Partial:** float-loop unwinding, mapped/conditional types, Map/Set
 iteration, Unicode edge cases, destructuring defaults, abstract class
 enforcement.
 
-**Sound precision cliff on multi-call symbolic string patterns**
-(see KNOWNBUG): two or more refined-string method calls on the same
-symbolic receiver within one verification run hit a refinement-loop
-convergence issue. Single-call variants are character-precise.
+**SAT scalability cap on complex symbolic-string content equality**
+(see KNOWNBUG): `trim() === "literal"` and deeply chained symbolic
+string operations can exceed the default memory envelope. Length
+properties and simpler content predicates verify precisely.
 
 **Not supported** (see KNOWNBUG): dynamic imports, heterogeneous
 tuple returns.

@@ -6,13 +6,11 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-653 programs. Eleven tests are marked `KNOWNBUG`: three pre-existing
+653 programs. Eight tests are marked `KNOWNBUG`: three pre-existing
 design trade-offs (see the "Design trade-offs" section at the end of
-this guide), three unrelated precision probes, and five that exercise
-a multi-solver-call-per-receiver pattern which currently hits a
-refinement-loop convergence issue (see "Other documented edge
-cases"). Single-call cases are character-precise (see the Strings
-table below).
+this guide), three unrelated precision probes, and two exercising
+content-equality on complex symbolic-string chains that exceed the
+default SAT memory envelope (see "Other documented edge cases").
 
 ## Contents
 
@@ -185,23 +183,24 @@ solver.
 
 **Content precision on symbolic strings.** The solver receives the
 actual character content of non-literal strings (`nondet_string()`,
-parameters typed `string`, results of other string operations). For
-the typical **one-solver-call-per-receiver** pattern, content-based
-properties verify precisely: `s === "hello"` ⇒ `s.includes("ell")`,
-`s.toUpperCase() === "HELLO"`, `s + "bar" === "foobar"`, etc.
-Length-based properties also verify exactly.
+parameters typed `string`, results of other string operations).
+Content-based properties verify precisely: `s === "hello"` ⇒
+`s.includes("ell")`, `s.toUpperCase() === "HELLO"`,
+`s + "bar" === "foobar"`, etc. Multi-assertion programs are fully
+supported: the refined-string axioms are generated for every
+`cprover_string_*` call regardless of how many assertions the
+program has (a CBMC-core bug that previously discarded those axioms
+under the multi-assertion BMC path was fixed 2026-05-12).
 
-**Multi-call caveat.** Two or more solver calls on the same
-symbolic receiver within one verification run (e.g.
-`s.startsWith("hello") && s.endsWith("world")` on the same `s`) hit
-a refinement-loop convergence issue where the solver ends up with
-zero universal axioms for the second and subsequent calls. The
-assertion is reported as FAILURE rather than an incorrect success,
-so the result is sound but imprecise. Tests exercising multi-call
-patterns are marked `KNOWNBUG` (see string-*-symbolic entries in
-the "Known limitations" section). For now, split assertions across
-independent receivers or use only one refined-string method call
-per receiver within a single verification.
+**Scalability cap.** The SAT encoding of a full content comparison
+on a long symbolic receiver combined with several chained solver
+operations can exceed the default memory envelope. If you hit
+"Out of memory" or "VERIFICATION ERROR / current index set is
+empty", raise `ulimit -v` or split the assertions across
+independent receivers. Two tests (`string-trim-symbolic`,
+`string-symbolic-realistic`) are documented KNOWNBUGs for the
+combined trim+content compare and chained-operation patterns
+respectively.
 
 | Operation | Constant | Symbolic |
 |-----------|---------|----------|
@@ -210,13 +209,13 @@ per receiver within a single verification.
 | `s.charCodeAt(i)` | ✓ | ✓ (for constant `i`) |
 | `s.indexOf(x)` | ✓ | ✓ (bounded-needle match chain) |
 | `s.lastIndexOf(x)` | ✓ | — |
-| `s.includes(x)` | ✓ | ✓ character-precise (single call per receiver) |
-| `s.startsWith(x)` | ✓ | ✓ character-precise (single call per receiver) |
-| `s.endsWith(x)` | ✓ | ✓ character-precise (single call per receiver) |
+| `s.includes(x)` | ✓ | ✓ character-precise |
+| `s.startsWith(x)` | ✓ | ✓ character-precise |
+| `s.endsWith(x)` | ✓ | ✓ character-precise |
 | `s.substring`, `s.slice` | ✓ | ✓ (for constant args) |
-| `s.toUpperCase` | ✓ | ✓ character-precise (single call per receiver) |
-| `s.toLowerCase` | ✓ | ✓ character-precise (single call per receiver) |
-| `s.trim` | ✓ | ✓ length-precise; content precise on single call |
+| `s.toUpperCase` | ✓ | ✓ character-precise |
+| `s.toLowerCase` | ✓ | ✓ character-precise |
+| `s.trim` | ✓ | length-precise; content precise but scales poorly on content === compare |
 | `s.repeat(n)` | ✓ | length-precise (`n * s.length`); content nondet |
 | `s.padStart / padEnd` | ✓ | length-precise (`max(s.length, n)`); content nondet |
 | `s.replace / replaceAll` | ✓ | — |
@@ -398,19 +397,18 @@ loops, indices, and modulo arithmetic. Variables used with `%`, `&`,
 
 Documented `KNOWNBUG` tests indicate cases where a design trade-off
 intentionally gives an unsound or imprecise answer, or where an
-over-approximation sacrifices precision for soundness. The current
+encoding exceeds the default SAT memory envelope. The current
 KNOWNBUGs fall into three groups:
 
 1. **Design trade-offs** (3 tests) — semantic choices baked into the
    model, described below.
-2. **Multi-solver-call-per-receiver pattern** (5 tests:
-   `string-case-symbolic`, `string-includes-symbolic`,
-   `string-startswith-symbolic`, `string-symbolic-realistic`,
-   `string-trim-symbolic`) — hit a refinement-loop convergence
-   issue when two or more refined-string method calls fire on the
-   same symbolic receiver. Single-call variants are
-   character-precise and live as separate CORE tests (see
-   `string-*-content-precise`).
+2. **Scalability cap on complex symbolic-string content equality**
+   (2 tests: `string-symbolic-realistic`, `string-trim-symbolic`) —
+   a full content `===` comparison on a long symbolic receiver,
+   combined with several chained solver operations, exceeds the
+   default memory envelope. Assert length properties instead, split
+   across independent receivers, or raise `ulimit -v` to work
+   around.
 3. **Precision probes** (3 tests: `array-push-length-in-loop`,
    `higher-order-compose`, `string-concat-chained-in-function`) —
    documented precision gaps in specific patterns.
@@ -437,15 +435,13 @@ KNOWNBUGs fall into three groups:
 - `Object.is(+0, -0)` returns `false` per ES2024 for constant zeros,
   but only in the constant path — symbolic zero-sign tracking is not
   available.
-- **Multi-call pattern on symbolic strings.** The refined-string
-  solver ends up with zero universal axioms when two or more solver
-  calls fire on the same symbolic receiver in one verification run
-  (e.g. `s.startsWith(x) && s.endsWith(y)` with `s` constrained).
-  The affected assertions report FAILURE rather than an incorrect
-  SUCCESS, so results remain sound. A single solver call per
-  receiver is character-precise for all the refined-string methods
-  (includes, startsWith, endsWith, toUpperCase, toLowerCase, trim,
-  concat). Multi-call tests are tracked as KNOWNBUG.
+- **Scalability of content-equality on trimmed/chained symbolic
+  strings.** A full `s.trim() === "literal"` assertion or a chain
+  of several symbolic string operations composed through function
+  boundaries can blow out the SAT encoding. Two tests
+  (`string-trim-symbolic`, `string-symbolic-realistic`) document
+  these cases. Workarounds: assert length only, assert fewer
+  properties per run, or raise `ulimit -v`.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.

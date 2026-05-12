@@ -8,7 +8,7 @@ nondet fallback or otherwise over-approximates symbolic inputs, and
 investigates whether the over-approximation is necessary. Many cases
 have precise encodings via CBMC primitives that the C frontend uses.
 
-## ⚠️  Soundness correction + content precision restore (2026-05-12)
+## ⚠️  Soundness + content-precision + multi-assertion fix (2026-05-12)
 
 Between 2026-05-09 and 2026-05-12 this document claimed that
 `s.includes`, `s.startsWith`, `s.endsWith`, `s.toUpperCase`,
@@ -17,23 +17,25 @@ precisely resolved via the refined-string solver. Those
 "resolutions" were **unsound**: a type-tag collision + a static-size
 mismatch between our `char[64]` inline array and the solver's length
 tracking caused every path that went through the solver to become
-vacuously UNSAT. Commit `5abee1595d` fixed soundness by passing a
-fresh nondet array to the solver (sound but content-imprecise).
-Commit `c2ebe4d81f` restored content precision by copying the inline
-data into the solver-side array via a with_exprt chain (one SSA
-assignment, no per-position blowup) and by reading results through
-`cprover_string_char_at_func` (which goes through the solver's
-canonical read path).
+vacuously UNSAT. Three commits on 2026-05-12 restored correctness:
 
-**Current state (2026-05-12)**: content precision works for the
-one-solver-call-per-receiver pattern. Multi-call patterns (two or
-more refined-string method calls on the same symbolic receiver in
-one verification run) hit a refinement-loop convergence issue where
-the solver emits zero universal axioms for the second and subsequent
-calls. Affected assertions report FAILURE (sound, not an incorrect
-success). Tracked as 5 KNOWNBUG tests (`string-case-symbolic`,
-`string-includes-symbolic`, `string-startswith-symbolic`,
-`string-symbolic-realistic`, `string-trim-symbolic`).
+1. Commit `5abee1595d`: soundness fix — fresh nondet-content array
+   on the solver side (sound, content-imprecise).
+2. Commit `c2ebe4d81f`: content precision — single-assignment
+   with_exprt copy and char_at_func readouts (character-precise
+   single-call).
+3. Commit `8fd1144b50`: multi-assertion axiom propagation — override
+   `convert_rest` and `convert_function_application` in
+   `string_refinementt` to track string function applications that
+   CBMC's multi-assertion BMC path consumes via `handle()` before
+   they reach `set_to`. Tie the fresh SAT literal back to the
+   axiom-generated return_code in `dec_solve`. This eliminated the
+   "0 universal axioms for the 2nd+ assertion" pathology.
+
+Current state: refined-string methods are character-precise on
+symbolic receivers regardless of how many assertions the program
+has. Two remaining KNOWNBUGs are about SAT-encoding memory
+scalability on complex content-equality chains, not precision.
 
 ## Methodology
 
@@ -161,41 +163,36 @@ the limitation, the test will pass and be promoted to CORE.
   permutation search, expensive and our BMC model doesn't support.
   Could encode a sorting network for bounded sizes.
 
-## ⚠️  Sound precision cliff (current)
+## ⚠️  Remaining scalability cap (current)
 
-### Multi-call symbolic string pattern — IMPRECISE (2026-05-12)
+### SAT encoding on complex content-equality chains
 
-The refined-string solver is integrated for `includes`,
-`startsWith`, `endsWith`, `toUpperCase`, `toLowerCase`, `trim`,
-`repeat`, `padStart`, `padEnd`, `concat`, and `parseInt`. For the
-**one-solver-call-per-receiver** pattern, symbolic-receiver calls
-are character-precise: `s === "hello"` ⇒ `s.includes("ell")`,
-`s.toUpperCase() === "HELLO"`, `(a + "bar") === "foobar"`, etc. all
-verify.
+For most symbolic-string assertions (single or multi call), the
+refined-string solver now produces a precise answer. Two test
+programs exercise the worst-case combination — `trim() === "literal"`
+on a padded symbolic string, and a chain of several solver
+operations with content-equality at the end — and exceed the default
+memory envelope. These are tracked as two remaining `KNOWNBUG`
+tests (`string-trim-symbolic`, `string-symbolic-realistic`).
 
-**Limitation**: when two or more refined-string method calls fire
-on the same symbolic receiver within one verification run, the
-`string_refinement` pipeline produces zero universal axioms for the
-second and subsequent calls (still under investigation — looks like
-a dependency-graph or equation-canonicalisation issue). The
-assertions report FAILURE rather than an incorrect SUCCESS, so
-results remain sound.
+**Root cause**: CBMC's refined-string axioms for trim plus the
+per-slot struct compare of our 64-byte inline string produce a very
+wide SAT encoding. With several chained operations, the bit-count
+exceeds the default solver memory envelope.
 
-**How to work around**: either split the assertions across
-independent receivers (copy the symbolic string into separate
-`let`-bindings), or accept the precision cliff until the underlying
-solver interaction is fixed.
+**Workarounds**: assert length-only properties; split assertions
+across independent receivers; raise `ulimit -v`.
 
-**Tests** (all `KNOWNBUG`):
-`string-case-symbolic`, `string-includes-symbolic`,
-`string-startswith-symbolic`, `string-symbolic-realistic`,
-`string-trim-symbolic`.
-
-Single-call content-precise variants are tracked as CORE tests:
-`string-concat-symbolic-content`,
-`string-concat-content-precise`, `string-toupper-content-precise`,
-`string-includes-content-precise`,
-`string-startswith-content-precise`.
+**Historical note**: between 2026-05-09 and 2026-05-12 a separate
+bug discarded refined-string axioms whenever a program had two or
+more assertions using `cprover_string_*` functions. This was caused
+by CBMC's multi-assertion BMC path calling `handle()` on each
+assertion, which bit-blasted the function_application before it
+reached `string_refinementt::set_to()`. Fixed in commit
+`8fd1144b50`: `string_refinementt` now overrides `convert_rest` and
+`convert_function_application` to track the cprover_string_* calls
+it sees, and ties the returned literal/bv to the axiom-generated
+return_code in `dec_solve`.
 
 ## Refined string solver: integration status
 
@@ -215,20 +212,22 @@ actual content through the pointer.
 
 **Our TypeScript frontend integrates the refined-string solver**
 (since 2026-05-09, soundness-fixed 2026-05-12, content-precision
-restored same day). Our string struct `{length, char[64] data}`
+restored same day, multi-assertion axiom-propagation fix same day
+— commit `8fd1144b50`). Our string struct `{length, char[64] data}`
 keeps the inline-array representation. At the solver boundary
 (`ts_string_to_refined`), we copy the inline data into an
 infinity-sized side-channel array via a single-SSA-assignment
 with_exprt chain and associate that array with the pointer. Return
 values from solver functions are read back via
 `cprover_string_char_at_func` (per position) into the inline
-struct. This is character-precise for single-call-per-receiver
-patterns and keeps soundness for everything else.
+struct. This is character-precise regardless of whether the
+program has one or many assertions.
 
-**Multi-call scalability** is the remaining gap (see "Sound
-precision cliff" above). Heap-pointer string representation
-remains a possible long-term improvement but is no longer required
-for content precision.
+**Remaining gap**: only the SAT-encoding scalability cap on
+complex content-equality chains (see "Remaining scalability cap"
+above). Heap-pointer string representation remains a possible
+long-term improvement but is no longer required for content
+precision.
 
 ## Summary of resolution rate
 
