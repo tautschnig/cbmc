@@ -66,6 +66,7 @@ codet python_convertert::convert_raise(const jsont &stmt)
 
   // Extract exception type name for the error message
   std::string exc_type = "Exception";
+  std::vector<std::string> group_types; // PEP 654 multi-element
   const jsont &exc = json_member(stmt, "exc");
   if(!exc.is_null())
   {
@@ -74,10 +75,13 @@ codet python_convertert::convert_raise(const jsont &stmt)
       const jsont &func = json_member(exc, "func");
       if(is_node_type(func, "Name"))
         exc_type = json_string(json_member(func, "id"));
-      // PEP 654: if the raised value is ExceptionGroup(msg, [e]),
-      // and the exception list is a single-element literal, treat
-      // it as raising that one exception's type. Multi-element
-      // groups are over-approximated as raising the first element.
+      // PEP 654: ExceptionGroup(msg, [e1, e2, ...]).
+      // Collect all element-type names for multi-element
+      // support. For a single element, treat as raising
+      // that one type. For multiple, emit a nondet
+      // selection: set __exception_type to any of the
+      // collected hashes — symex will explore each
+      // possibility, giving per-type except* coverage.
       if(exc_type == "ExceptionGroup" || exc_type == "BaseExceptionGroup")
       {
         const jsont &args = json_member(exc, "args");
@@ -91,20 +95,24 @@ codet python_convertert::convert_raise(const jsont &stmt)
             const jsont &elts = json_member(excs, "elts");
             if(elts.is_array() && !as_array(elts).empty())
             {
-              const jsont &first = *as_array(elts).begin();
-              if(is_node_type(first, "Call"))
+              for(const auto &elt : as_array(elts))
               {
-                const jsont &f_func = json_member(first, "func");
-                if(is_node_type(f_func, "Name"))
-                  exc_type = json_string(json_member(f_func, "id"));
+                std::string tn;
+                if(is_node_type(elt, "Call"))
+                {
+                  const jsont &ef = json_member(elt, "func");
+                  if(is_node_type(ef, "Name"))
+                    tn = json_string(json_member(ef, "id"));
+                }
+                else if(is_node_type(elt, "Name"))
+                {
+                  tn = json_string(json_member(elt, "id"));
+                }
+                if(!tn.empty())
+                  group_types.push_back(tn);
               }
-              else if(is_node_type(first, "Name"))
-              {
-                exc_type = json_string(json_member(first, "id"));
-              }
-              if(as_array(elts).size() > 1)
-                log_overapprox(
-                  "ExceptionGroup with >1 element — raising first only");
+              if(!group_types.empty())
+                exc_type = group_types.front();
             }
           }
         }
@@ -138,12 +146,42 @@ codet python_convertert::convert_raise(const jsont &stmt)
   const symbolt *exc_type_sym = symbol_table.lookup(exc_type_sym_id);
   if(exc_type_sym != nullptr)
   {
-    // Use a simple hash: sum of character values
-    long type_hash = exception_type_hash(exc_type);
-    code_frontend_assignt set_type{
-      exc_type_sym->symbol_expr(), from_integer(type_hash, python_int_type())};
-    set_type.add_source_location() = loc;
-    block.add(std::move(set_type));
+    if(group_types.size() > 1)
+    {
+      // PEP 654 multi-element: emit a nondet selector so
+      // symex explores each possible raised type. Chain
+      // of if-else: if(sel==0) type=hash(T0); elif(sel==1)
+      // type=hash(T1); ...
+      symbol_exprt etype = exc_type_sym->symbol_expr();
+      side_effect_expr_nondett sel{python_int_type(), loc};
+      code_blockt chain;
+      for(std::size_t i = 0; i < group_types.size(); ++i)
+      {
+        long h = exception_type_hash(group_types[i]);
+        code_frontend_assignt assign{etype, from_integer(h, etype.type())};
+        if(i + 1 == group_types.size())
+        {
+          chain.add(std::move(assign));
+        }
+        else
+        {
+          code_ifthenelset guarded{
+            equal_exprt{sel, from_integer(i, sel.type())}, std::move(assign)};
+          chain.add(std::move(guarded));
+        }
+      }
+      block.add(std::move(chain));
+    }
+    else
+    {
+      // Use a simple hash: sum of character values
+      long type_hash = exception_type_hash(exc_type);
+      code_frontend_assignt set_type{
+        exc_type_sym->symbol_expr(),
+        from_integer(type_hash, python_int_type())};
+      set_type.add_source_location() = loc;
+      block.add(std::move(set_type));
+    }
   }
 
   // Exception payload: first positional arg (typically a message
