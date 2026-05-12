@@ -1,0 +1,19 @@
+CORE
+main.c
+final-link wall
+^EXIT=0$
+^SIGNAL=0$
+symbol 'foo' is called but has no linked body
+--
+^warning: ignoring
+--
+Check that goto-cc --export-file-local-symbols at link time warns
+when a function body is missing in the linked binary but its name
+is called from another body.  LIM-009 in integration/linux/CBMC_
+LIMITATIONS.md is the concrete motivator: a kernel `static` symbol
+bound to an empty external stub because the caller's `extern`
+declaration used the unmangled name.  Without this warning CBMC
+silently treats the call as nondet-return.  Here, `foo` is
+`static` in foo.c and gets mangled to
+`__CPROVER_file_local_foo_c_foo`; main.c's unmangled `extern int
+foo(void)` therefore has no linked body at final-link time.
