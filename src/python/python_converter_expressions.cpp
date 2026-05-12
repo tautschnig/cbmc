@@ -56,6 +56,41 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   if(value.is_nil())
     return nil_exprt{};
 
+  // PLR §3.3.1: custom __getitem__ dunder on class
+  // instances. 'obj[key]' dispatches to
+  // obj.__getitem__(key).
+  {
+    std::string tag;
+    if(value.type().id() == ID_struct)
+      tag = id2string(to_struct_type(value.type()).get_tag());
+    else if(value.type().id() == ID_struct_tag)
+      tag = id2string(to_struct_tag_type(value.type()).get_identifier());
+    if(tag.substr(0, 13) == "python_class_")
+    {
+      std::string bare = tag.substr(13);
+      for(const std::string &prefix :
+          {std::string{"python::"} + tag + "::__getitem__",
+           std::string{"python::"} + bare + "::__getitem__"})
+      {
+        const symbolt *gs = symbol_table.lookup(irep_idt{prefix});
+        if(gs != nullptr)
+        {
+          exprt slice = convert_expression(json_member(expr, "slice"));
+          if(slice.is_nil())
+            return nil_exprt{};
+          typet return_type = python_int_type();
+          if(gs->type.id() == ID_code)
+            return_type = to_code_type(gs->type).return_type();
+          return side_effect_expr_function_callt{
+            gs->symbol_expr(),
+            {address_of_exprt{value}, slice},
+            return_type,
+            get_location(expr)};
+        }
+      }
+    }
+  }
+
   // Dict subscript: d["key"] → scan keys array for match
   if(is_python_dict_type(value.type()))
   {
