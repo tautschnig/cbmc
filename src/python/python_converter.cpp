@@ -13818,9 +13818,66 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   const jsont &value = json_member(stmt, "value");
   source_locationt loc = get_location(stmt);
 
+  // PLR §7.2.2: augmented assignment evaluates the LHS
+  // expression exactly once. For a[idx()] += ... the
+  // index must be snapshotted so the read and write
+  // share the same index value (rather than calling
+  // idx() twice). If the index is a plain Name or
+  // constant, no rewrite is needed.
+  //
+  // Strategy for the a[side_effect()] case: materialise
+  // the index value into a temp via pending_checks and
+  // construct an index_exprt from the target's container
+  // expression and the temp, building both lhs (read) and
+  // an assignment target referencing the same temp.
+  exprt subscript_lhs;
+  exprt subscript_write_lhs;
+  bool have_subscript_rewrite = false;
+  if(is_node_type(target, "Subscript"))
+  {
+    const jsont &slice = json_member(target, "slice");
+    if(is_node_type(slice, "Call"))
+    {
+      exprt container = convert_expression(json_member(target, "value"));
+      exprt idx_expr = convert_expression(slice);
+      if(!container.is_nil() && !idx_expr.is_nil())
+      {
+        static unsigned auglidx_ctr = 0;
+        std::string tmpn = "__auglidx_" + std::to_string(auglidx_ctr++);
+        std::string tmpq = qualify_name(tmpn);
+        irep_idt tmpid{tmpq};
+        if(symbol_table.lookup(tmpid) == nullptr)
+        {
+          symbolt ts{tmpid, idx_expr.type(), "python"};
+          ts.base_name = tmpn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt snap = symbol_table.lookup_ref(tmpid).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{snap, idx_expr});
+        // Build the indexed reads/writes using the snapshot.
+        if(is_python_list_type(container.type()))
+        {
+          const auto &st = to_struct_type(container.type());
+          typet elem_type =
+            to_array_type(st.get_component("data").type()).element_type();
+          member_exprt data_member{
+            container, "data", to_array_type(st.get_component("data").type())};
+          subscript_lhs = index_exprt{data_member, snap, elem_type};
+          subscript_write_lhs = subscript_lhs;
+          have_subscript_rewrite = true;
+        }
+      }
+    }
+  }
+
   // Determine the LHS expression based on target type
   exprt lhs;
-  if(is_node_type(target, "Name"))
+  if(have_subscript_rewrite)
+    lhs = subscript_lhs;
+  else if(is_node_type(target, "Name"))
     lhs = convert_name(target);
   else if(is_node_type(target, "Subscript"))
     lhs = convert_subscript(target);
