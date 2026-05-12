@@ -11729,7 +11729,8 @@ codet python_convertert::convert_statement(const jsont &stmt)
             module == "cmath" || module == "statistics" ||
             module == "fractions" || module == "numbers" ||
             module == "asyncio" || module == "yaml" || module == "requests" ||
-            module == "numpy" || module == "pandas")
+            module == "numpy" || module == "pandas" ||
+            module == "sqlalchemy" || module == "click" || module == "pytest")
           {
             // Stdlib modules: register imported names as variables (not
             // functions) so the unknown-function handler returns nondet
