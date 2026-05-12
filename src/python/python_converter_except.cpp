@@ -25,6 +25,21 @@
 // "break may only occur syntactically nested in a for or while loop."
 codet python_convertert::convert_break()
 {
+  // PLR §8.2 / §8.3: if we are inside a for/while with an else
+  // clause, set the enclosing loop's break-flag so the else
+  // clause is skipped after the loop exits via break.
+  if(!loop_break_flags.empty())
+  {
+    irep_idt flag_id = loop_break_flags.back();
+    const symbolt *flag_sym = symbol_table.lookup(flag_id);
+    if(flag_sym != nullptr)
+    {
+      code_blockt block;
+      block.add(code_frontend_assignt{flag_sym->symbol_expr(), true_exprt{}});
+      block.add(code_breakt{});
+      return std::move(block);
+    }
+  }
   return code_breakt{};
 }
 
