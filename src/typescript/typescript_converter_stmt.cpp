@@ -2116,15 +2116,37 @@ codet typescript_convertert::convert_if_statement(const jsont &node)
   if(cond.type().id() != ID_bool)
     cond = typecast_exprt{cond, bool_typet{}};
 
+  // If the condition expression produced pending side-effect
+  // statements (typically bounds-check asserts for indexed array
+  // reads inside the condition), drain them into a block that runs
+  // BEFORE the `if` evaluates. Without this, the pending_stmts
+  // queue outlives the `if` converter and gets flushed at the
+  // enclosing statement's trailing flush point, which for
+  // `if (arr[i] ...) { ... }` inside a loop places the bounds
+  // check AFTER the loop body exits — at which point the loop
+  // index has already advanced past the asserted bound and the
+  // check fires spuriously. Draining here keeps each evaluation
+  // of the condition paired with its own bounds checks.
+  code_blockt pre_cond;
+  if(!pending_stmts.empty())
+  {
+    for(auto &s : pending_stmts)
+      pre_cond.add(std::move(s));
+    pending_stmts.clear();
+  }
+
   codet then_code = convert_statement(json_member(node, "thenStatement"));
 
   const jsont &else_node = json_member(node, "elseStatement");
-  if(else_node.is_object())
-  {
-    codet else_code = convert_statement(else_node);
-    return code_ifthenelset{cond, std::move(then_code), std::move(else_code)};
-  }
-  return code_ifthenelset{cond, std::move(then_code)};
+  codet if_code =
+    else_node.is_object()
+      ? code_ifthenelset{cond, std::move(then_code), convert_statement(else_node)}
+      : code_ifthenelset{cond, std::move(then_code)};
+
+  if(pre_cond.statements().empty())
+    return if_code;
+  pre_cond.add(std::move(if_code));
+  return std::move(pre_cond);
 }
 
 // ES2024 sec-while-statement
@@ -2136,8 +2158,36 @@ codet typescript_convertert::convert_while_statement(const jsont &node)
   if(cond.type().id() != ID_bool)
     cond = typecast_exprt{cond, bool_typet{}};
 
+  // Drain any pending side-effect statements the condition produced
+  // (typically bounds-check asserts for indexed array reads). The
+  // condition is re-evaluated on every iteration, so the checks
+  // must run on every iteration too; we accomplish that by lifting
+  // them to the start of the body and rewriting the loop as
+  //   while(true) { <pending>; if(!cond) break; <body> }
+  // which preserves semantics and matches the natural "assert
+  // before access" intent.
+  std::vector<codet> cond_pending;
+  if(!pending_stmts.empty())
+  {
+    for(auto &s : pending_stmts)
+      cond_pending.push_back(std::move(s));
+    pending_stmts.clear();
+  }
+
   codet body = convert_statement(json_member(node, "statement"));
-  code_whilet loop{cond, std::move(body)};
+  if(cond_pending.empty())
+  {
+    code_whilet loop{cond, std::move(body)};
+    loop.add_source_location() = get_location(node);
+    return std::move(loop);
+  }
+
+  code_blockt new_body;
+  for(auto &s : cond_pending)
+    new_body.add(std::move(s));
+  new_body.add(code_ifthenelset{not_exprt{cond}, code_breakt{}});
+  new_body.add(std::move(body));
+  code_whilet loop{true_exprt{}, std::move(new_body)};
   loop.add_source_location() = get_location(node);
   return std::move(loop);
 }
@@ -2154,16 +2204,33 @@ codet typescript_convertert::convert_for_statement(const jsont &node)
 
   // Condition
   exprt cond = true_exprt{};
+  std::vector<codet> cond_pending;
   const jsont &cond_node = json_member(node, "condition");
   if(cond_node.is_object())
   {
     cond = convert_expression(cond_node);
     if(cond.type().id() != ID_bool)
       cond = typecast_exprt{cond, bool_typet{}};
+    // Drain pending stmts from the condition — same reasoning as in
+    // convert_while_statement above.
+    if(!pending_stmts.empty())
+    {
+      for(auto &s : pending_stmts)
+        cond_pending.push_back(std::move(s));
+      pending_stmts.clear();
+    }
   }
 
   // Body + incrementor
   code_blockt loop_body;
+  if(!cond_pending.empty())
+  {
+    // Lift cond's bounds-check stmts + an explicit `if(!cond) break`
+    // into the body so they re-run each iteration.
+    for(auto &s : cond_pending)
+      loop_body.add(std::move(s));
+    loop_body.add(code_ifthenelset{not_exprt{cond}, code_breakt{}});
+  }
   loop_body.add(convert_statement(json_member(node, "statement")));
   const jsont &inc = json_member(node, "incrementor");
   if(inc.is_object())
@@ -2173,7 +2240,9 @@ codet typescript_convertert::convert_for_statement(const jsont &node)
       loop_body.add(code_expressiont{inc_expr});
   }
 
-  code_whilet loop{cond, std::move(loop_body)};
+  code_whilet loop{
+    cond_pending.empty() ? cond : static_cast<exprt>(true_exprt{}),
+    std::move(loop_body)};
   loop.add_source_location() = get_location(node);
   block.add(std::move(loop));
   return std::move(block);
