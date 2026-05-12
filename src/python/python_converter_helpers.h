@@ -1,7 +1,8 @@
 /// Internal helper functions shared between python_converter.cpp
 /// and its source-split siblings (python_converter_compare.cpp,
-/// etc.). These are inline so each translation unit gets its own
-/// copy and avoids multiple-definition link errors.
+/// python_converter_lambda.cpp, etc.). These are inline so each
+/// translation unit gets its own copy and avoids
+/// multiple-definition link errors.
 ///
 /// Kept out of python_converter.h because they are implementation
 /// details, not part of the converter's public interface.
@@ -12,13 +13,18 @@
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
+#include <util/ieee_float.h>
 #include <util/json.h>
 #include <util/mathematical_expr.h>
 #include <util/mathematical_types.h>
+#include <util/pointer_expr.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
+#include <util/std_types.h>
 #include <util/symbol.h>
 
+#include <cstdint>
+#include <cstring>
 #include <set>
 #include <string>
 #include <vector>
@@ -145,6 +151,18 @@ collect_param_names(const jsont &func_def)
   collect_single(args_node["vararg"]);
   collect_single(args_node["kwarg"]);
   return params;
+}
+
+/// Convert a double to a 64-bit floatbv constant expression.
+/// Used for math intrinsics with floating-point constant folding.
+[[maybe_unused]] static inline constant_exprt double_to_floatbv(double d)
+{
+  uint64_t bits;
+  static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64 bits");
+  std::memcpy(&bits, &d, sizeof(bits));
+  return constant_exprt{
+    integer2bvrep(mp_integer{bits}, 64),
+    ieee_float_spect::double_precision().to_type()};
 }
 
 #endif
