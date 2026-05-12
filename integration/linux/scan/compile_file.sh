@@ -85,6 +85,7 @@ fi
   -I./include/uapi -I./include/generated/uapi \
   -include ./include/linux/kconfig.h \
   -include ./include/linux/compiler_types.h \
+  -include "${SCAN_COMPAT_H:-$SCRIPT_DIR/fragments/scan-compat.h}" \
   -D__KERNEL__ -std=gnu89 \
   -m64 -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx \
   -mno-80387 -mno-fp-ret-in-387 \

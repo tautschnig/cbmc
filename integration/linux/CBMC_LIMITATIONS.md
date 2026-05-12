@@ -664,3 +664,97 @@ sound.
 For now, the scan's regressions (`scan/run.sh` cases 1–5) are
 sound in what they test, and `doc/corpus.md` calls out the
 per-file limitation explicitly.
+
+## LIM-014 — goto-cc constant-folding pathologies on Linux 6.x headers [WORKAROUND]
+
+**First hit:** Phase 2 task 4 (validate pipeline on a recent LTS).
+Building `crypto/algif_aead.c` from Linux 6.6 under `goto-cc`
+aborted with:
+
+```
+./include/linux/find.h:63:1: error: expected constant expression,
+  but got '-(size + 18446744073709551615ul >= offset ? 0 : 1)'
+```
+
+**Root cause.** Several Linux 6.x headers use new static-assert
+idioms that CBMC's front-end does not constant-fold correctly:
+
+1. `GENMASK_INPUT_CHECK(h, l)` in `<linux/bits.h>` wraps
+   `BUILD_BUG_ON_ZERO(__builtin_choose_expr(__is_constexpr((l) >
+   (h)), (l) > (h), 0))`.  CBMC mis-evaluates
+   `__is_constexpr(…) * 0l` as a null-pointer-constant even when
+   the argument is runtime, then selects the `(l) > (h)` branch
+   and complains it's not a constant expression at
+   `BUILD_BUG_ON_ZERO` time.
+2. `__cacheline_group_begin_aligned(...)` in `<linux/cache.h>`
+   expands to `__aligned((__VA_ARGS__ + 0) ? : SMP_CACHE_BYTES)`,
+   using GCC's `?:` with missing middle operand inside an
+   alignment attribute.  CBMC's front-end aborts with a
+   `gcc_conditional_expression` irep dump.
+
+**Workaround.** New header
+`scan/fragments/scan-compat.h` preempts both macros with
+sound-but-loose overrides:
+
+- `GENMASK_INPUT_CHECK(h, l)` → `0` (matches the kernel's own
+  `__ASSEMBLY__` fallback).
+- `__is_constexpr(x)` → `0` (forces runtime-expression branch).
+- `__cacheline_group_begin_aligned(GROUP, ...)` →
+  `__cacheline_group_begin(GROUP) __aligned(SMP_CACHE_BYTES)`
+  (plain alignment, no `?:` shape).
+
+Each override forces inclusion of the originating header first
+so the kernel's definition runs, then `#undef`'s and redefines.
+The header's own include guard then silences subsequent
+re-inclusion.
+
+`scan/compile_file.sh` passes `-include $SCRIPT_DIR/fragments/
+scan-compat.h` after the kernel's `-include kconfig.h / compiler_
+types.h`.  The `SCAN_COMPAT_H` environment variable can override
+the path if a future kernel needs a different compatibility set.
+
+**Validated.** With the workaround, `crypto/algif_aead.c`,
+`fs/splice.c`, and `fs/pipe.c` on Linux 6.6 compile cleanly, and
+the `scan/smoke-newer-kernel.sh` run reports `cbmc_status:
+failed` with the expected precondition firing on 6.6 — the
+pipeline is now soundly end-to-end on both 5.10 and 6.6.
+
+**Resolution direction.** Proper fix is upstream CBMC work on
+the `__is_constexpr` / `__builtin_choose_expr` constant-folding
+logic in the ansi-c front-end.  Filed as a candidate for
+upstream contribution; tracked in
+`integration/linux/doc/upstream-contributions.md`.
+
+## LIM-015 — further 6.x build failures on specific files [OPEN]
+
+**First hit:** Phase 2 task 4 corpus check on Linux 6.6 after
+LIM-014's workarounds landed.  Two files that build on 5.10
+still fail on 6.6:
+
+1. `lib/iov_iter.c`:
+   ```
+   error: redeclaration of '_copy_to_iter::1::2::1::3::1::1::1::1::
+   __UNIQUE_ID_x_303' with no linkage
+   ```
+   Triggered by some combination of `_Generic` / `_Static_assert`
+   / nested `__UNIQUE_ID` that CBMC's name-mangling mangles
+   identically for two distinct sub-expressions.
+
+2. `fs/coredump.c`:
+   ```
+   error: expected constant expression, but got '{ .lock={ .raw_lock={ } },
+     .interval=1250, .burst=10, ...
+   ```
+   A rate-limit struct initializer that 6.6 now expects to be a
+   constant expression context but whose body CBMC cannot fold
+   (similar shape to LIM-014 but inside a struct literal).
+
+Neither blocks the overall pipeline: both files are *also*
+covered by the aead / cred_lifetime modules respectively
+through other kernel TUs that do compile on 6.6
+(`crypto/ccm.c`, `fs/coredump` → `kernel/cred.c` etc.).
+
+**Resolution direction.** Unblock each on a case-by-case basis
+by extending `scan/fragments/scan-compat.h` with specific
+overrides, or by filing focused CBMC front-end PRs per
+idiom.  Left open.
