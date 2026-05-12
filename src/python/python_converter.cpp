@@ -935,7 +935,26 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   else if(is_python_dict_type(target_type))
     return side_effect_expr_nondett{target_type, source_locationt{}};
   else if(target_type.id() == ID_struct && !is_python_value_type(target_type))
+  {
+    // Class narrowing via annotation: trust the caller's
+    // declared Dog/Cat/etc. type and dereference
+    // __class_ptr as that class struct. Note the target
+    // class struct itself may have tagged-union fields
+    // (when the class body assigns self.x = value without
+    // an explicit type annotation) — the narrowing returns
+    // a correct Dog struct but attribute reads still see
+    // tagged-union field types. Adding 'self.x: int' class
+    // annotations fixes that case. PLR §3.3.2.
+    std::string ttag = id2string(to_struct_type(target_type).get_tag());
+    if(ttag.substr(0, 13) == "python_class_")
+    {
+      pointer_typet cls_ptr_type{target_type, 64};
+      return dereference_exprt{
+        typecast_exprt{python_value_class_ptr(e), cls_ptr_type},
+        target_type};
+    }
     return side_effect_expr_nondett{target_type, source_locationt{}};
+  }
   else if(
     target_type.id() == ID_struct_tag && !is_python_value_type(target_type))
     return side_effect_expr_nondett{target_type, source_locationt{}};
