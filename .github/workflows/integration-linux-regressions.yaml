@@ -85,6 +85,12 @@ jobs:
     # for PRs and always-on for the nightly schedule.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # security-events: write is required to upload SARIF to the
+    # Code Scanning API; contents: read is required by
+    # github/codeql-action/upload-sarif to resolve the repo URL.
+    permissions:
+      contents: read
+      security-events: write
     if: >
       github.event_name == 'schedule' ||
       contains(github.event.pull_request.labels.*.name, 'linux-scan') ||
@@ -153,6 +159,57 @@ jobs:
           LINUX_TREE: $HOME/linux_5_10
         run: |
           integration/linux/scan/run.sh
+
+      - name: Run cocci prefilter on corpus + emit SARIF
+        # Phase 3.2: GitHub Code Scanning integration.  Runs the
+        # scan against the same curated corpus that
+        # scan/corpus-scan.sh uses (13 pipeline-ok + 3 compile-fail
+        # + 2 zero-cocci under allnoconfig + our fragments), and
+        # emits a SARIF 2.1.0 file anchoring Coccinelle prefilter
+        # hits at their kernel-source file:line locations.  The
+        # next step uploads this SARIF to GitHub Code Scanning.
+        #
+        # We do NOT gate the PR on cocci hits — they are advisory
+        # candidates-for-review, not confirmed bugs (LIM-013).  The
+        # hard regression gates are in scan/run.sh cases 1-5.
+        env:
+          LINUX_TREE: $HOME/linux_5_10
+        if: always()
+        run: |
+          set -eu
+          mkdir -p $RUNNER_TEMP/sarif
+          # The full corpus runs in ~30 minutes; for PR time
+          # budgets we scan only the two primary targets plus a
+          # handful of aead/pipe_buffer crypto / fs / lib files
+          # that are cheap to compile.
+          integration/linux/scan/scan.py \
+              $HOME/linux_5_10/crypto/algif_aead.c \
+              $HOME/linux_5_10/crypto/ccm.c \
+              $HOME/linux_5_10/crypto/gcm.c \
+              $HOME/linux_5_10/crypto/tcrypt.c \
+              $HOME/linux_5_10/lib/iov_iter.c \
+              $HOME/linux_5_10/fs/splice.c \
+              $HOME/linux_5_10/fs/pipe.c \
+              --cocci-sarif $RUNNER_TEMP/sarif/cbmc-linux-scan.sarif \
+              --cocci-sarif-repo-root $HOME/linux_5_10 || true
+
+      - name: Upload cocci SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ runner.temp }}/sarif/cbmc-linux-scan.sarif
+          category: cbmc-linux-scan
+          # Checkout-relative paths in the SARIF would normally be
+          # resolved against the PR checkout; our paths are
+          # kernel-tree-relative (the kernel lives in a separate
+          # clone), so we pass the kernel checkout path so Code
+          # Scanning can resolve them into real URLs.  If the
+          # action is run in a repo without a matching file tree,
+          # results will still render with their textual location
+          # but the "view source" link will be dead — acceptable
+          # given this is an upstream tool scanning third-party
+          # code.
+          checkout_path: ${{ env.HOME }}/linux_5_10
 
       - name: Upload SARIF artifacts
         if: always()

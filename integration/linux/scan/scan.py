@@ -990,6 +990,122 @@ def merge_sarif(inputs: list[Path], output: Path) -> None:
     output.write_text(json.dumps(merged, indent=2))
 
 
+def _sarif_rule_for_module(module: str) -> dict:
+    """SARIF `reportingDescriptor` for a property module.  One rule
+    per module; the module name is the rule id."""
+    descriptions = {
+        "aead": (
+            "AEAD scatterlist may be aliased to a page the user cannot "
+            "write (Copy Fail / CVE-2026-31431 bug class).  The call "
+            "site was flagged by the Coccinelle prefilter; review the "
+            "aead_request_set_crypt arguments and confirm the "
+            "destination scatterlist cannot contain page-cache pages."
+        ),
+        "pipe_buffer": (
+            "pipe_buffer slot assignment without a preceding flags "
+            "reset may carry PIPE_BUF_FLAG_CAN_MERGE from a previous "
+            "occupant (Dirty Pipe / CVE-2022-0847 bug class).  Review "
+            "the take-over site and confirm buf->flags is zeroed before "
+            "the new page is assigned."
+        ),
+    }
+    help_uris = {
+        "aead": "https://github.com/diffblue/cbmc/"
+                "tree/develop/integration/linux/properties/aead",
+        "pipe_buffer": "https://github.com/diffblue/cbmc/"
+                       "tree/develop/integration/linux/properties/pipe_buffer",
+    }
+    return {
+        "id": f"cbmc-linux-scan/{module}",
+        "name": f"cbmc-linux-scan-{module}",
+        "shortDescription": {"text": f"{module} bug-class prefilter hit"},
+        "fullDescription": {
+            "text": descriptions.get(module,
+                f"{module} property module prefilter hit — see README "
+                "for the bug class specification."),
+        },
+        "helpUri": help_uris.get(
+            module,
+            "https://github.com/diffblue/cbmc/tree/develop/integration/linux"),
+        "defaultConfiguration": {"level": "warning"},
+    }
+
+
+def write_cocci_sarif(
+    reports: list["FileReport"],
+    output: Path,
+    repo_root: str | None = None,
+) -> None:
+    """Emit a SARIF 2.1.0 log pinning Coccinelle prefilter hits to
+    their kernel-source file:line locations, suitable for upload
+    via the `github/codeql-action/upload-sarif` action.
+
+    LIM-013 context: the scan's per-file signal is the Coccinelle
+    prefilter hit, not the cbmc_status of the shared direct-call
+    harness.  This function emits exactly that signal — each cocci
+    hit becomes a SARIF result anchored at a kernel-source line,
+    which is what GitHub's Code Scanning tab will render.
+
+    `repo_root` is an optional prefix to strip from file paths so
+    the URIs in the SARIF log are repository-relative rather than
+    absolute.  When uploading under a non-Linux repo (the common
+    case for this scan, which runs against a separate kernel
+    checkout), leave `repo_root` unset.
+    """
+    # Collect modules that actually fired.
+    seen_modules: set[str] = set()
+    results: list[dict] = []
+
+    for r in reports:
+        for m in r.modules:
+            for h in m.cocci_hits:
+                seen_modules.add(m.module)
+                uri = h.file
+                if repo_root and uri.startswith(repo_root):
+                    uri = uri[len(repo_root):].lstrip("/")
+                notes = ""
+                if m.cbmc_status and m.cbmc_status not in (
+                    "not-run", "adapter-needed"
+                ):
+                    notes = (f" [pipeline verdict: cbmc_status="
+                            f"{m.cbmc_status}]")
+                results.append({
+                    "ruleId": f"cbmc-linux-scan/{m.module}",
+                    "level": "warning",
+                    "message": {"text": h.message + notes},
+                    "locations": [{
+                        "physicalLocation": {
+                            "artifactLocation": {
+                                "uri": uri,
+                            },
+                            "region": {"startLine": h.line},
+                        },
+                    }],
+                })
+
+    rules = [_sarif_rule_for_module(m) for m in sorted(seen_modules)]
+
+    sarif: dict = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "cbmc-linux-scan",
+                    "informationUri": (
+                        "https://github.com/diffblue/cbmc/"
+                        "tree/develop/integration/linux"
+                    ),
+                    "rules": rules,
+                    "version": "0.1",
+                },
+            },
+            "results": results,
+        }],
+    }
+    output.write_text(json.dumps(sarif, indent=2))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="PR-scan driver for the CBMC Linux-kernel property modules"
@@ -1001,6 +1117,27 @@ def main() -> int:
     ap.add_argument("--sarif", type=Path,
                     help="write merged SARIF 2.1.0 report to this file "
                          "(uses cbmc's --sarif-result under the hood)")
+    ap.add_argument(
+        "--cocci-sarif", type=Path,
+        help=(
+            "write a separate SARIF 2.1.0 report containing one "
+            "result per Coccinelle prefilter hit, anchored at its "
+            "kernel-source file:line.  Suitable for upload via the "
+            "`github/codeql-action/upload-sarif` action — the "
+            "results will appear in the GitHub Code Scanning tab "
+            "on the actual kernel source line.  See LIM-013 in "
+            "CBMC_LIMITATIONS.md for why the cocci hits are the "
+            "per-file signal."
+        ),
+    )
+    ap.add_argument(
+        "--cocci-sarif-repo-root",
+        help=(
+            "path prefix to strip from file URIs in --cocci-sarif "
+            "output, so the SARIF is repository-relative when the "
+            "scan ran against a checkout at a non-default location."
+        ),
+    )
     ap.add_argument(
         "--direction", choices=["vuln", "fix"], default="vuln",
         help=(
@@ -1030,6 +1167,13 @@ def main() -> int:
         if args.sarif:
             merge_sarif(sarif_files, args.sarif)
             print(f"\nmerged SARIF report written to {args.sarif}")
+
+        if args.cocci_sarif:
+            write_cocci_sarif(
+                reports, args.cocci_sarif,
+                repo_root=args.cocci_sarif_repo_root,
+            )
+            print(f"\ncocci-hit SARIF report written to {args.cocci_sarif}")
 
     if args.json:
         args.json.write_text(json.dumps(report_json(reports), indent=2))

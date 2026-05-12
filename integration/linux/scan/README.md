@@ -92,10 +92,10 @@ the next milestone (M4c).
 - **M4c (next).**  Aggressive stubbing of kernel helpers so the cbmc
   run on real `_aead_recvmsg` either concludes `failed` (with a
   reproducible trace of the Copy Fail precondition violation) or
-  `successful`.  Also: SARIF report emission (CBMC upstream proposal
-  at <https://github.com/diffblue/cbmc/pull/8835>); convert our
-  `cbmc-linux-scan.v1` JSON to SARIF or delegate to CBMC's native
-  output once merged.
+  `successful`.  SARIF report emission is supported directly by
+  CBMC's `--sarif-result` flag (merged via `scan.py --sarif`)
+  and by `scan.py --cocci-sarif` for GitHub Code Scanning
+  integration (see the `Running scan.py in CI` section below).
 
 ## Coccinelle rule style
 
@@ -118,6 +118,36 @@ git diff --name-only $BASE..HEAD | grep '\.c$' | \
 `--json` produces a machine-readable report with a stable schema
 (`schema: "cbmc-linux-scan.v1"`) that downstream consumers can
 convert to SARIF or dashboard-friendly formats.
+
+### GitHub Code Scanning upload
+
+For integration with the GitHub Code Scanning tab, pass
+`--cocci-sarif` and upload the emitted file via
+`github/codeql-action/upload-sarif@v3`:
+
+```sh
+scan.py $files \
+    --cocci-sarif $RUNNER_TEMP/cbmc-linux-scan.sarif \
+    --cocci-sarif-repo-root $LINUX_TREE
+
+# in a subsequent step
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: ${{ runner.temp }}/cbmc-linux-scan.sarif
+    category: cbmc-linux-scan
+    checkout_path: $LINUX_TREE
+```
+
+`--cocci-sarif` anchors each result at the kernel-source
+file:line the Coccinelle prefilter reported, which is what
+`github/codeql-action/upload-sarif` expects for a useful Code
+Scanning experience.  Do NOT gate the PR on these results —
+they are advisory candidates-for-review, not confirmed bugs
+(see LIM-013 in `../CBMC_LIMITATIONS.md`).  Use `scan/run.sh`
+cases 1–5 as the hard regression gate.
+
+`.github/workflows/integration-linux-regressions.yaml` has a
+working end-to-end example of this flow.
 
 ## Limitations and caveats
 
