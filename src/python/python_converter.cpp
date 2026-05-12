@@ -545,7 +545,16 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   else if(is_python_list_type(target_type))
     return python_value_list(e);
   else if(is_python_dict_type(target_type))
-    return side_effect_expr_nondett{target_type, source_locationt{}};
+  {
+    // PLR §3.3.1: unwrap a dict stored via wrap_value.
+    // wrap_value for dicts stores the dict in a static
+    // __class_val_N symbol and tags the tagged-union with
+    // CLASS + address of that symbol. Unwrap dereferences
+    // __class_ptr and casts to the target dict type.
+    pointer_typet cls_ptr_type{target_type, 64};
+    return dereference_exprt{
+      typecast_exprt{python_value_class_ptr(e), cls_ptr_type}, target_type};
+  }
   else if(target_type.id() == ID_struct && !is_python_value_type(target_type))
   {
     // Class narrowing via annotation: trust the caller's
@@ -1080,9 +1089,38 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       // Optional[T] — for now, treat as T (None handling is future work)
       return convert_type_annotation(json_member(annotation, "slice"));
     }
-    // dict[K, V], Set[T], etc. — fall through to base type
-    if(base == "dict")
-      return python_int_type(); // TODO: proper dict type
+    // dict[K, V] / Dict[K, V] — extract key and value types.
+    // Restricted to primitive value types (int/float/bool/str);
+    // complex value types (set, nested dict, class) in the
+    // value position trigger solver-side symbol-table gaps
+    // for refined strings, so fall back to int.
+    if(base == "dict" || base == "Dict")
+    {
+      const jsont &slice = json_member(annotation, "slice");
+      typet key_t = python_string_type();
+      typet val_t = python_int_type();
+      bool safe = false;
+      if(is_node_type(slice, "Tuple"))
+      {
+        const jsont &elts = json_member(slice, "elts");
+        if(elts.is_array() && as_array(elts).size() >= 2)
+        {
+          auto it = as_array(elts).begin();
+          key_t = convert_type_annotation(*it);
+          ++it;
+          val_t = convert_type_annotation(*it);
+          auto is_safe = [](const typet &t)
+          {
+            return t.id() == ID_signedbv || t.id() == ID_floatbv ||
+                   t.id() == ID_bool || is_python_string_type(t);
+          };
+          safe = is_safe(key_t) && is_safe(val_t);
+        }
+      }
+      if(safe)
+        return python_dict_type(key_t, val_t);
+      return python_int_type();
+    }
     if(base == "tuple")
     {
       // tuple[int, int] → struct with _0, _1, ... components

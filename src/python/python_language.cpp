@@ -187,6 +187,12 @@ bool python_languaget::typecheck(
   converter.set_module_resolver(
     [this, &message_handler](const std::string &name) -> const jsont *
     { return resolve_module(name, message_handler); });
+  converter.set_module_path_resolver(
+    [this](const std::string &name) -> std::string
+    {
+      auto it = parsed_module_paths.find(name);
+      return it != parsed_module_paths.end() ? it->second : std::string{};
+    });
   return converter.convert();
 }
 
@@ -454,6 +460,7 @@ const jsont *python_languaget::resolve_module(
   }
 
   parsed_modules[module_name] = std::move(module_ast);
+  parsed_module_paths[module_name] = found_path;
   return &parsed_modules[module_name];
 }
 

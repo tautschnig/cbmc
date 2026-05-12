@@ -124,6 +124,10 @@ protected:
 
   /// Already-parsed module ASTs (to avoid re-parsing)
   std::map<std::string, jsont> parsed_modules;
+  /// Map from module name to its resolved file path; used by
+  /// the converter to attribute source locations to the
+  /// imported file rather than the main source.
+  std::map<std::string, std::string> parsed_module_paths;
 
   /// Resolve and parse a Python module, returning its AST JSON.
   /// Returns nullptr if not found.

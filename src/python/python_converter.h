@@ -47,6 +47,16 @@ public:
     module_resolver = std::move(resolver);
   }
 
+  /// Set a resolver that maps module names to file paths. Used
+  /// by the converter to attribute source locations of imported
+  /// stub code to the stub file rather than the main source.
+  using module_path_resolver_t =
+    std::function<std::string(const std::string &)>;
+  void set_module_path_resolver(module_path_resolver_t resolver)
+  {
+    module_path_resolver = std::move(resolver);
+  }
+
 private:
   symbol_table_baset &symbol_table;
   const python_parse_treet &parse_tree;
@@ -198,6 +208,7 @@ private:
   std::map<irep_idt, const jsont *>
     deferred_method_bodies; // true when inside process_imported_module
   module_resolver_t module_resolver;
+  module_path_resolver_t module_path_resolver;
 
   /// Process an imported module's AST to register its definitions
   void process_imported_module(

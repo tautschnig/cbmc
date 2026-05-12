@@ -127,6 +127,17 @@ void python_convertert::process_imported_module(
 {
   bool saved_processing = processing_import;
   processing_import = true;
+
+  // Swap filename so source locations inside the imported
+  // module point at the stub file rather than the main
+  // source. Restore on exit.
+  std::string saved_filename = filename;
+  if(module_path_resolver)
+  {
+    std::string mp = module_path_resolver(module_name);
+    if(!mp.empty())
+      filename = mp;
+  }
   // Process the module's top-level definitions:
   // - FunctionDef → register as python::module_name::func_name
   // - ClassDef → register class type and constructor
@@ -394,6 +405,7 @@ void python_convertert::process_imported_module(
     }
   }
   processing_import = saved_processing;
+  filename = saved_filename;
 }
 
 bool python_convertert::convert()
