@@ -243,6 +243,14 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # External-name fallback for direct-call harness links.
         "pipe_buf_release",
     ],
+    "cred_lifetime": [
+        # put_cred is `static inline` in <linux/cred.h>; exposed
+        # under this mangled name in every kernel TU that
+        # includes the header.
+        "__CPROVER_file_local_cred_h_put_cred",
+        # External-name fallback for direct-call harness links.
+        "put_cred",
+    ],
 }
 
 
@@ -335,6 +343,33 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "pipe_buf_merge_safe",
             "pipe_buffer_is_populated",
+        ],
+    },
+    "cred_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "cred_kernel_adapter.c",
+        # Vacuity-probe adapter.  Same semantics as the aead /
+        # pipe_buffer entries.
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "cred_kernel_adapter_probe.c",
+        # Direct-call harness (LIM-012 path 2): builds two
+        # `put_cred` calls on an explicitly-initialised cred.
+        "harness":
+            SCRIPT_DIR / "adapters" / "cred_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "cred_lifetime" / "cred_lifetime.c",
+        ],
+        # Predicates referenced from the contract clauses.
+        "slice_preserve": [
+            "cred_live", "cred_lifetime_usage",
+            "cred_lifetime_init", "cred_lifetime_get",
+            "cred_lifetime_put",
+        ],
+        # Required-body check: adapter predicate + ghost backend.
+        "required_bodies": [
+            "cred_live",
+            "cred_lifetime_usage",
         ],
     },
 }

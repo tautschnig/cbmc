@@ -71,8 +71,10 @@ jobs:
               integration/linux/properties/scatterlist \
               integration/linux/properties/aead \
               integration/linux/properties/pipe_buffer \
+              integration/linux/properties/cred_lifetime \
               integration/linux/cve-2026-31431 \
-              integration/linux/cve-2022-0847; do
+              integration/linux/cve-2022-0847 \
+              integration/linux/cve-2026-23297; do
             echo "::group::$d"
             "$d/run.sh"
             echo "::endgroup::"
@@ -190,6 +192,8 @@ jobs:
               $HOME/linux_5_10/lib/iov_iter.c \
               $HOME/linux_5_10/fs/splice.c \
               $HOME/linux_5_10/fs/pipe.c \
+              $HOME/linux_5_10/fs/coredump.c \
+              $HOME/linux_5_10/fs/io_uring.c \
               --cocci-sarif $RUNNER_TEMP/sarif/cbmc-linux-scan.sarif \
               --cocci-sarif-repo-root $HOME/linux_5_10 || true
 

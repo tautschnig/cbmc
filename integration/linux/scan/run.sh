@@ -34,6 +34,14 @@
 #       Fix:  `cbmc_status == "successful"`.  Demonstrates the
 #       pipe_buffer kernel adapter works end-to-end.
 #
+#   6.  Real-kernel cred_lifetime regression (CVE-2026-23297
+#       class): run scan.py against `fs/coredump.c` in both
+#       directions.
+#       Vuln: `cbmc_status == "failed"` with put_cred precondition
+#       fired.  Fix: `cbmc_status == "successful"`.  Demonstrates
+#       the third property module (cred_lifetime) works end-to-end
+#       on unmodified kernel source.
+#
 # Exit code 0 iff all cases behave as expected.
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
@@ -210,6 +218,53 @@ else
     echo "  [FAIL] 5b expected rc 0 + cbmc_status=successful" >&2
     echo "         actual rc=$rc; last 20 lines of output:" >&2
     tail -20 "$tmp/case5b.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
+echo
+echo "=== case 6: real-kernel cred_lifetime on fs/coredump.c ==="
+# Third property module end-to-end.  fs/coredump.c matches the
+# cred_lifetime prefilter on its `put_cred(cred)` call inside the
+# error path of do_coredump's prepare-creds sequence.
+#   - default --direction=vuln: cbmc_status=failed; the
+#     put_cred.precondition fires at the harness's second
+#     put_cred call.
+#   - --direction=fix: cbmc_status=successful.
+CRED_KERNEL_C="$LINUX_TREE/fs/coredump.c"
+if [[ ! -f $CRED_KERNEL_C ]]; then
+  echo "  [skip] no $CRED_KERNEL_C"
+else
+  # 6a: vulnerable direction.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$CRED_KERNEL_C" \
+    --json "$tmp/case6a.json" > "$tmp/case6a.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     grep -q '"cbmc_status": "failed"' "$tmp/case6a.json" && \
+     grep -q 'put_cred.precondition' "$tmp/case6a.json"; then
+    echo "  [ok] 6a (vuln): exit 1, cbmc_status=failed, put_cred precondition named"
+  else
+    echo "  [FAIL] 6a expected rc 1 + cbmc_status=failed + put_cred precondition" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case6a.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # 6b: fix direction.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$CRED_KERNEL_C" --direction=fix \
+    --json "$tmp/case6b.json" > "$tmp/case6b.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]] && \
+     grep -q '"cbmc_status": "successful"' "$tmp/case6b.json"; then
+    echo "  [ok] 6b (fix):  exit 0, cbmc_status=successful"
+  else
+    echo "  [FAIL] 6b expected rc 0 + cbmc_status=successful" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case6b.out" | sed 's/^/         /' >&2
     fail=$((fail + 1))
   fi
 fi

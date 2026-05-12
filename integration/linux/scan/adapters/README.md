@@ -60,9 +60,7 @@ Validated end-to-end against Linux 5.10 `crypto/algif_aead.c`:
   demonstrating the contract accepts a safe SGL shape on the
   same pipeline.  Closes LIM-010 / LIM-012.
 
-### pipe_buffer (Dirty Pipe / CVE-2022-0847)
-
-- [`pipe_buffer_kernel_adapter.c`](pipe_buffer_kernel_adapter.c) —
+### pipe_buffer (Dirty Pipe / CVE-2022-0847)- [`pipe_buffer_kernel_adapter.c`](pipe_buffer_kernel_adapter.c) —
   attaches `pipe_buf_merge_safe(buf) == 1` as a contract
   precondition on `pipe_buf_release` (static inline in
   `<linux/pipe_fs_i.h>`; contract declared on both the external
@@ -84,6 +82,28 @@ bug site):
   `pipe_buf_release.precondition.2` fires at the harness's
   `pipe_buf_release` call site.  Coccinelle prefilter surfaces
   four take-over sites in the file.
+- `--direction=fix`: `cbmc_status: "successful"`.
+
+### cred_lifetime (CVE-2026-23297 class)
+
+- [`cred_kernel_adapter.c`](cred_kernel_adapter.c) — attaches
+  `cred_live(c) == 1` as a contract precondition on `put_cred`
+  (static inline in `<linux/cred.h>`; contract declared on both
+  the external name and the
+  `__CPROVER_file_local_cred_h_put_cred` mangled name).
+- [`cred_kernel_adapter_probe.c`](cred_kernel_adapter_probe.c) —
+  trivially-false-precondition variant for the vacuity probe.
+- [`cred_kernel_direct_harness.c`](cred_kernel_direct_harness.c) —
+  direct-call harness.  Builds a cred with usage=1 (vulnerable)
+  or usage=2 (`-DFIXED`), then calls `put_cred` twice.  The
+  vulnerable shape fires the `cred_live` precondition at the
+  second put; the fixed shape passes.
+
+Validated end-to-end against Linux 5.10 `fs/coredump.c`
+(one of the many sites flagged by the cocci prefilter for
+`put_cred` calls):
+- Default: `cbmc_status: "failed"`, `put_cred.precondition.4`
+  fires at the harness's second `put_cred` call.
 - `--direction=fix`: `cbmc_status: "successful"`.
 
 ## Adding a new adapter
