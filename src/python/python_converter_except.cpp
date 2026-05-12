@@ -111,6 +111,13 @@ codet python_convertert::convert_raise(const jsont &stmt)
     block.add(std::move(set_flag));
   }
 
+  // PLR §7.8: bare `raise` re-raises the currently active
+  // exception without changing its type or payload. Only set
+  // __exception_type / __exception_payload when the raise has
+  // an operand.
+  if(exc.is_null())
+    return std::move(block);
+
   // Set exception type (hash of type name for matching)
   irep_idt exc_type_sym_id{"python::__exception_type"};
   const symbolt *exc_type_sym = symbol_table.lookup(exc_type_sym_id);
