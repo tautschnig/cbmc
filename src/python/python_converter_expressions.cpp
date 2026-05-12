@@ -44,6 +44,20 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
   if(test.type() != bool_typet{})
     test = safe_typecast(test, bool_typet{});
 
+  // PLR §6.13: if safe_typecast could not unify the branches
+  // (e.g. list vs int), a raw if_exprt would violate CBMC's
+  // goto_symex_state invariant that both branches share a
+  // single type. Return a nondet of body.type() so the symex
+  // graph stays well-typed; the caller's reasoning continues
+  // with an over-approximation (sound — both branches are
+  // possible at runtime in Python).
+  if(body.type() != orelse.type())
+  {
+    log_overapprox(
+      "IfExp branches have incompatible types — returning nondet");
+    return side_effect_expr_nondett{body.type(), get_location(expr)};
+  }
+
   return if_exprt{test, body, orelse};
 }
 
