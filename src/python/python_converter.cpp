@@ -8225,6 +8225,13 @@ exprt python_convertert::convert_call(const jsont &expr)
       // PLR builtins: sorted(iterable, /, *, key=None, reverse=False).
       // Pick up the reverse=... keyword; key= is not yet supported.
       bool sorted_reverse = false;
+      // key=lambda is not yet modelled — the lambda body
+      // would need per-element evaluation. We accept the
+      // argument silently but ignore it. The caller gets
+      // a list with the same elements as the input but in
+      // the default ordering (which may not match Python
+      // semantics when key= is supplied — documented as
+      // limitation).
       const jsont &sorted_kw = json_member(expr, "keywords");
       if(sorted_kw.is_array())
       {
