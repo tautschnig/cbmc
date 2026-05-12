@@ -242,17 +242,46 @@ added regression coverage and fixes for several PLR
 - **§3.3.2 MRO / virtual dispatch**: tagged-union method
   calls pick the class whose `__class_tag` matches —
   not the first class in the symbol table.
+- **§3.3.2.1 C3 linearization**: diamond inheritance
+  `D(B, C)` where both B and C chain `super()` through
+  A — every `__init__` body runs.
+- **§3.3.1 ordering dunders**: `<`, `<=`, `>`, `>=` on
+  class instances dispatch to `__lt__`/`__le__`/etc.
+  with reflected-operand fallback.
 - **§7.2.1 assignment**: the target list is bound only
   after the expression list on the right is fully
   evaluated. `a, b = b, a` snapshots the RHS into a
   `__unpack_N` tmp before mutating either LHS.
+- **§7.12 `global`**: names bind to module scope.
+- **§7.13 `nonlocal`**: names bind to the nearest
+  enclosing function's scope. Separate from `global`;
+  closure-capture pass skips `nonlocal`/`global` names
+  so the binding doesn't get shadowed by a pass-by-value
+  parameter.
+- **§8.4 try/except/finally**: `raise` inside a try
+  body is caught by the local `except`, not propagated.
+  `else` runs iff no exception was raised in the try
+  body (distinct from "except caught one").
 - **§9.2.2 super()**: multi-level chains (C → B → A, D
   → C → B → A) inline every parent's body. A local
   buffer prevents the shared `pending_checks` vector
   from being clobbered across recursion.
 - **§2.4.3 f-strings**: multi-part f-strings chain through
   `cprover_string_concat_func` so every part's content is
-  visible to the string solver.
+  visible to the string solver. `:0N` / `:>N` / `:<N` /
+  `:^N` format specs emit length-constrained results.
+- **§10.6 match/case**: patterns covered: `MatchValue`,
+  `MatchSingleton`, `MatchOr`, `MatchAs` (with
+  wildcard and binding), `MatchClass` (keyword
+  patterns), `MatchSequence` (with `MatchStar`),
+  `MatchMapping`. Guards with fall-through semantics.
+- **PEP 572 walrus `:=`**: side-effects in a
+  while-condition re-execute per iteration.
+- **PEP 695 `type X = ...`**: accepted as a no-op.
+- **§6.7 BinOp type safety**: arithmetic on
+  incompatible operand types (int + list, str + dict)
+  emits a nondet result instead of crashing — sound
+  over-approximation of Python's runtime TypeError.
 
 ## Command-Line Options
 
@@ -273,6 +302,79 @@ added regression coverage and fixes for several PLR
 | `--trace` | Show counterexample trace on failure |
 | `--show-parse-tree` | Show the Python AST as JSON |
 | `--show-properties` | List all generated properties |
+
+## Developer tooling
+
+- **`scripts/python_fuzzer.py`** — random-program
+  harness. Generates small Python programs within a
+  bounded grammar (arithmetic, comparison, IfExp,
+  list/dict access, try/except, while, assignments)
+  and runs `cbmc` on each, flagging invariant
+  violations / segfaults / solver errors / timeouts.
+  Example:
+
+    ```
+    scripts/python_fuzzer.py --count 500 --seed 1 \\
+        --save-failures /tmp/cbmc-fuzz
+    ```
+
+  Not a correctness oracle — the generated programs
+  have no expected results. Use as a stability check
+  after frontend changes.
+
+- **`scripts/profile_cbmc.py`** — flamegraph profiler
+  (requires `perf_event_paranoid=-1`). See its `--help`
+  for `--auto`, `--auto-large`, `--auto-csmith`, and
+  `--diff REF_A REF_B` modes.
+
+- **`.github/workflows/python-regression.yaml`** — CI
+  runs the 346 CORE regression tests on every PR to
+  `develop`.
+
+## Worked examples
+
+### Union-return + isinstance
+
+```python
+class Dog:
+    def sound(self) -> int: return 1
+class Cat:
+    def sound(self) -> int: return 2
+
+def pick(b: bool):
+    return Dog() if b else Cat()
+
+x = pick(True)
+# x is tagged-union; method call dispatches via __class_tag
+assert x.sound() == 1
+```
+
+### Match/case over a union
+
+```python
+def classify(v):
+    match v:
+        case 0: return "zero"
+        case n if n > 0: return "positive"
+        case _: return "negative"
+```
+
+### Multi-inheritance diamond
+
+```python
+class A:
+    def __init__(self): self.a = 1
+class B(A):
+    def __init__(self): super().__init__(); self.b = 2
+class C(A):
+    def __init__(self): super().__init__(); self.c = 3
+class D(B, C):
+    def __init__(self): super().__init__(); self.d = 4
+
+d = D()
+# C3 MRO: [D, B, C, A]. All four fields set.
+assert d.a == 1 and d.b == 2 and d.c == 3 and d.d == 4
+```
 
 ## Requirements
 
