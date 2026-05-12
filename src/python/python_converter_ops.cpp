@@ -44,50 +44,57 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   // PLR §3.3.1: binary-operator dunder dispatch — if the
   // left operand is a user-defined class instance with a
-  // matching __<op>__ method, dispatch to it. (Python's
-  // reflected-operand __r<op>__ path is not yet covered.)
+  // matching __<op>__ method, dispatch to it.
+  //
+  // PLR §3.3.1 reflected variant: if left lacks the
+  // method but the right operand has the __r<op>__
+  // reflected method, Python tries right.__r<op>__(left).
+  // We cover both.
   {
-    static const std::map<std::string, std::string> op_to_dunder = {
-      {"Add", "__add__"},
-      {"Sub", "__sub__"},
-      {"Mult", "__mul__"},
-      {"MatMult", "__matmul__"},
-      {"Div", "__truediv__"},
-      {"FloorDiv", "__floordiv__"},
-      {"Mod", "__mod__"},
-      {"Pow", "__pow__"},
-      {"LShift", "__lshift__"},
-      {"RShift", "__rshift__"},
-      {"BitOr", "__or__"},
-      {"BitXor", "__xor__"},
-      {"BitAnd", "__and__"}};
+    static const std::map<std::string, std::pair<std::string, std::string>>
+      op_to_dunder = {
+        {"Add", {"__add__", "__radd__"}},
+        {"Sub", {"__sub__", "__rsub__"}},
+        {"Mult", {"__mul__", "__rmul__"}},
+        {"MatMult", {"__matmul__", "__rmatmul__"}},
+        {"Div", {"__truediv__", "__rtruediv__"}},
+        {"FloorDiv", {"__floordiv__", "__rfloordiv__"}},
+        {"Mod", {"__mod__", "__rmod__"}},
+        {"Pow", {"__pow__", "__rpow__"}},
+        {"LShift", {"__lshift__", "__rlshift__"}},
+        {"RShift", {"__rshift__", "__rrshift__"}},
+        {"BitOr", {"__or__", "__ror__"}},
+        {"BitXor", {"__xor__", "__rxor__"}},
+        {"BitAnd", {"__and__", "__rand__"}}};
     auto du = op_to_dunder.find(op);
     if(du != op_to_dunder.end())
     {
-      std::string tag;
-      if(left.type().id() == ID_struct)
-        tag = id2string(to_struct_type(left.type()).get_tag());
-      else if(left.type().id() == ID_struct_tag)
-        tag = id2string(to_struct_tag_type(left.type()).get_identifier());
-      if(tag.substr(0, 13) == "python_class_")
+      auto try_dispatch = [&](
+                            const exprt &self,
+                            const exprt &other,
+                            const std::string &meth) -> exprt
       {
+        std::string tag;
+        if(self.type().id() == ID_struct)
+          tag = id2string(to_struct_type(self.type()).get_tag());
+        else if(self.type().id() == ID_struct_tag)
+          tag = id2string(to_struct_tag_type(self.type()).get_identifier());
+        if(tag.substr(0, 13) != "python_class_")
+          return nil_exprt{};
         std::string bare = tag.substr(13);
         for(const std::string &prefix :
-            {std::string{"python::"} + tag + "::" + du->second,
-             std::string{"python::"} + bare + "::" + du->second})
+            {std::string{"python::"} + tag + "::" + meth,
+             std::string{"python::"} + bare + "::" + meth})
         {
           const symbolt *ds = symbol_table.lookup(irep_idt{prefix});
           if(ds != nullptr)
           {
-            typet ret_type = left.type();
-            exprt other_arg = right;
+            typet ret_type = self.type();
+            exprt other_arg = other;
             if(ds->type.id() == ID_code)
             {
               const auto &ct = to_code_type(ds->type);
               ret_type = ct.return_type();
-              // Match parameter-1 type (other); safe_typecast
-              // handles wrap/unwrap between tagged-union and
-              // concrete struct.
               if(ct.parameters().size() >= 2)
               {
                 const typet &param1_t = ct.parameters()[1].type();
@@ -95,14 +102,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
                   other_arg = safe_typecast(other_arg, param1_t);
               }
             }
-            return side_effect_expr_function_callt{
+            return exprt{side_effect_expr_function_callt{
               ds->symbol_expr(),
-              {address_of_exprt{left}, other_arg},
+              {address_of_exprt{self}, other_arg},
               ret_type,
-              source_locationt{}};
+              source_locationt{}}};
           }
         }
-      }
+        return nil_exprt{};
+      };
+
+      exprt direct = try_dispatch(left, right, du->second.first);
+      if(direct.id() != ID_nil)
+        return direct;
+      exprt reflected = try_dispatch(right, left, du->second.second);
+      if(reflected.id() != ID_nil)
+        return reflected;
     }
   }
 
