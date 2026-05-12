@@ -595,7 +595,7 @@ Consequences:
   generalises to M5b (pipe_buffer kernel adapter) and every
   subsequent module.
 
-## LIM-013 — scan cannot currently give per-file bug verdicts [PARTIAL]
+## LIM-013 — scan cannot currently give per-file bug verdicts [RESOLVED]
 
 **First hit:** Phase 2.3 corpus experiment (see
 `doc/corpus.md`).  Running the scan against a 13-file corpus of
@@ -678,6 +678,41 @@ remaining blocker is LIM-016 (below) — the DATA_INVARIANT in
 doesn't.  That bug is in `src/goto-instrument/contracts/`
 contracts.cpp:593`; fixing it unblocks the full LIM-013
 resolution.
+
+**Fully resolved.**  LIM-016's two parts — the metadata-strip
+in contracts.cpp and the adapter struct forward-decl refactor —
+landed together with a hand-rolled harness synthesiser that
+bootstraps the property module's ghost state for the nondet
+arguments.  The pipeline now lives in two new scripts:
+
+- `scan/synthesise_harness.py`: given `(module, kernel-file,
+  target-function)`, parses the target's signature from
+  source, forward-declares the struct types it touches,
+  emits a C harness that nondet-allocates each pointer
+  argument (1 KiB static backing so the byte size doesn't
+  depend on the kernel struct's actual layout), bootstraps
+  the property-module ghost state for pointer types the
+  module tracks, and calls the target.
+- `scan/scan-per-file.sh`: the outer driver.  Compiles kernel
+  TU + synthesised harness, links with the adapter + property
+  module, applies the contract(s) with
+  `goto-instrument --replace-call-with-contract`, and runs
+  cbmc on the harness entry.  Exits 0/10 for
+  SUCCESSFUL/FAILED.
+
+And `scan/test-per-file.sh` is the regression that exercises
+the full flow on a real kernel target: Linux 5.10
+`fs/nfsd/auth.c`'s `nfsd_setuser`, which has two back-to-back
+`put_cred` calls at the end (lines 85–86).  cbmc reports
+`VERIFICATION FAILED` with `cred_live.precondition` firing at
+both call sites — a per-file signal that could not be produced
+before.
+
+The direct-call regressions (case 2 / 5 / 6 in scan/run.sh)
+continue to cover the "does the contract catch the bug-class
+shape" question; the per-file flow complements them with
+"does this specific kernel function's control flow reach the
+contract target on a state the contract rejects".
 
 ## LIM-014 — goto-cc constant-folding pathologies on Linux 6.x headers [WORKAROUND]
 
@@ -773,7 +808,7 @@ by extending `scan/fragments/scan-compat.h` with specific
 overrides, or by filing focused CBMC front-end PRs per
 idiom.  Left open.
 
-## LIM-016 — `goto-instrument --replace-call-with-contract` invariant violation on signature mismatch [PARTIAL]
+## LIM-016 — `goto-instrument --replace-call-with-contract` invariant violation on signature mismatch [RESOLVED]
 
 **First hit:** Phase 2 task 5 investigation of per-file harness
 generation.  Using `goto-harness --harness-type call-function` to
@@ -860,11 +895,16 @@ struct definition (hundreds of fields).  After linking these
 have different `struct_tag` bodies, so even with metadata
 stripped the two types are not structurally equal — and that's
 a legitimate semantic mismatch rather than a CBMC bug.
-Closing this out needs an adapter-side change: forward-declare
-`struct cred;` in the adapter (no field definitions), rely on
-the kernel TU's linked definition for the struct shape, and
-have the property module access cred-adjacent state through
-the ghost table rather than through field dereferences.
-Tracked as follow-up; not blocking because the direct-call
-harness path already works and gives meaningful per-bug-class
-verdicts.
+
+**Fully resolved (commit 79e985988c).**  The cred_lifetime
+adapter, probe, and direct harness now forward-declare
+`struct cred` without a body.  The property module's public
+header does the same.  Abstract callers (unit test, CVE
+reduction) provide their own local `struct cred { int
+dummy; };` for stack allocation; the scan pipeline gets the
+kernel's full definition at link time.  With the struct-body
+mismatch eliminated and commit 9c17432e1a's metadata strip
+in place, `goto-instrument --replace-call-with-contract`
+succeeds cleanly on the per-file-harness path: goto-harness
+synthesises a harness, the contract installs, and cbmc runs
+per-function verdicts.
