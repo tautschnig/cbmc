@@ -2364,6 +2364,64 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
 
+  // PLR §6.7: type compatibility for binary operators. Python
+  // raises TypeError at runtime for mismatched operand types
+  // (e.g. int + list). CBMC's solver layers do not tolerate
+  // mixed-type arithmetic in GOTO and abort with an invariant.
+  // Return a nondet int for obviously incompatible operand
+  // combinations so the symex graph stays well-typed; the
+  // caller's reasoning continues with an over-approximation.
+  {
+    bool l_is_list = is_python_list_type(left.type());
+    bool r_is_list = is_python_list_type(right.type());
+    bool l_is_dict = is_python_dict_type(left.type());
+    bool r_is_dict = is_python_dict_type(right.type());
+    bool l_is_set = is_python_set_type(left.type());
+    bool r_is_set = is_python_set_type(right.type());
+    bool l_is_str = is_python_string_type(left.type());
+    bool r_is_str = is_python_string_type(right.type());
+    bool l_is_num =
+      left.type().id() == ID_signedbv || left.type().id() == ID_integer ||
+      left.type().id() == ID_floatbv || left.type().id() == ID_bool;
+    bool r_is_num =
+      right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
+      right.type().id() == ID_floatbv || right.type().id() == ID_bool;
+    bool incompatible = false;
+    // list OP non-list: only list * int (repeat) is valid.
+    if(l_is_list && !r_is_list)
+    {
+      if(!(op == "Mult" && r_is_num))
+        incompatible = true;
+    }
+    if(r_is_list && !l_is_list)
+    {
+      if(!(op == "Mult" && l_is_num))
+        incompatible = true;
+    }
+    // dict / set with anything else is invalid.
+    if(l_is_dict != r_is_dict)
+      incompatible = true;
+    if(l_is_set != r_is_set && (l_is_num || r_is_num))
+      incompatible = true;
+    // str OP non-str/num: invalid unless str * int (repeat).
+    if(l_is_str && !r_is_str)
+    {
+      if(!(op == "Mult" && r_is_num))
+        incompatible = true;
+    }
+    if(r_is_str && !l_is_str)
+    {
+      if(!(op == "Mult" && l_is_num))
+        incompatible = true;
+    }
+    if(incompatible)
+    {
+      log_overapprox(
+        "BinOp " + op + " on incompatible types — returning nondet");
+      return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+    }
+  }
+
   // PLib stdtypes: "str" type, §6.7: binary arithmetic
   // String concatenation: s1 + s2 produces a new string containing the
   // PLR §3.2: Complex number arithmetic
