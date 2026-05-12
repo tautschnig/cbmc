@@ -479,6 +479,148 @@ codet python_convertert::convert_for(const jsont &stmt)
 
   if(!is_list && !is_string)
   {
+    // PLR §3.3.1: custom iterator protocol — class with
+    // __iter__ and __next__. Dispatch to them in a
+    // bounded loop (PYTHON_MAX_LIST_LENGTH iterations).
+    // StopIteration inside __next__ sets
+    // __exception_active → we break out of the loop.
+    std::string tag;
+    if(iterable.type().id() == ID_struct)
+      tag = id2string(to_struct_type(iterable.type()).get_tag());
+    else if(iterable.type().id() == ID_struct_tag)
+      tag = id2string(to_struct_tag_type(iterable.type()).get_identifier());
+    if(tag.substr(0, 13) == "python_class_")
+    {
+      std::string bare = tag.substr(13);
+      const symbolt *iter_sym = nullptr;
+      const symbolt *next_sym = nullptr;
+      for(const std::string &prefix :
+          {std::string{"python::"} + tag + "::__iter__",
+           std::string{"python::"} + bare + "::__iter__"})
+      {
+        const symbolt *s = symbol_table.lookup(irep_idt{prefix});
+        if(s != nullptr)
+        {
+          iter_sym = s;
+          break;
+        }
+      }
+      for(const std::string &prefix :
+          {std::string{"python::"} + tag + "::__next__",
+           std::string{"python::"} + bare + "::__next__"})
+      {
+        const symbolt *s = symbol_table.lookup(irep_idt{prefix});
+        if(s != nullptr)
+        {
+          next_sym = s;
+          break;
+        }
+      }
+
+      if(next_sym != nullptr)
+      {
+        // Determine return type of __next__ for the loop var.
+        typet next_ret = python_int_type();
+        if(next_sym->type.id() == ID_code)
+          next_ret = to_code_type(next_sym->type).return_type();
+
+        // Create loop variable.
+        std::string vname = json_string(json_member(target, "id"));
+        std::string vq = qualify_name(vname);
+        irep_idt vid{vq};
+        if(symbol_table.lookup(vid) == nullptr)
+        {
+          symbolt ns{vid, next_ret, "python"};
+          ns.base_name = vname;
+          ns.is_lvalue = true;
+          ns.is_state_var = true;
+          ns.is_static_lifetime = current_function.empty();
+          symbol_table.add(ns);
+        }
+        symbol_exprt loop_var = symbol_table.lookup_ref(vid).symbol_expr();
+
+        code_blockt result;
+        // Optionally call __iter__ once for its side effects.
+        if(iter_sym != nullptr)
+        {
+          side_effect_expr_function_callt iter_call{
+            iter_sym->symbol_expr(),
+            {address_of_exprt{iterable}},
+            iter_sym->type.id() == ID_code
+              ? to_code_type(iter_sym->type).return_type()
+              : python_int_type(),
+            loc};
+          result.add(code_expressiont{std::move(iter_call)});
+        }
+
+        code_blockt body_block;
+        const jsont &body_j = json_member(stmt, "body");
+        if(body_j.is_array())
+        {
+          for(const auto &s : as_array(body_j))
+            body_block.add(convert_statement(s));
+        }
+
+        // Loop: for N iterations, call __next__, check
+        // exception flag, assign to loop var, run body.
+        code_blockt loop_body;
+        side_effect_expr_function_callt nc{
+          next_sym->symbol_expr(), {address_of_exprt{iterable}}, next_ret, loc};
+        loop_body.add(code_frontend_assignt{loop_var, std::move(nc)});
+
+        // Check __exception_active and break if set.
+        irep_idt exc_id{"python::__exception_active"};
+        const symbolt *exc_sym = symbol_table.lookup(exc_id);
+        if(exc_sym != nullptr)
+        {
+          loop_body.add(
+            code_ifthenelset{exc_sym->symbol_expr(), code_breakt{}});
+        }
+
+        for(const auto &s : body_block.statements())
+          loop_body.add(s);
+
+        // Bounded loop: use PYTHON_MAX_LIST_LENGTH iterations
+        // via an explicit counter.
+        std::string ctr_name =
+          "__iter_ctr_" + std::to_string(symbol_table.symbols.size());
+        std::string ctr_q = qualify_name(ctr_name);
+        irep_idt ctr_id{ctr_q};
+        if(symbol_table.lookup(ctr_id) == nullptr)
+        {
+          symbolt cs{ctr_id, int_type, "python"};
+          cs.base_name = ctr_name;
+          cs.is_lvalue = true;
+          cs.is_state_var = true;
+          cs.is_static_lifetime = current_function.empty();
+          symbol_table.add(cs);
+        }
+        symbol_exprt ctr_var = symbol_table.lookup_ref(ctr_id).symbol_expr();
+        result.add(code_frontend_assignt{ctr_var, from_integer(0, int_type)});
+        // Prepend counter increment to loop body.
+        code_blockt loop_body_with_ctr;
+        loop_body_with_ctr.add(code_frontend_assignt{
+          ctr_var, plus_exprt{ctr_var, from_integer(1, int_type)}});
+        for(const auto &s : loop_body.statements())
+          loop_body_with_ctr.add(s);
+        code_whilet while_stmt{
+          binary_relation_exprt{
+            ctr_var, ID_lt, from_integer(PYTHON_MAX_LIST_LENGTH, int_type)},
+          std::move(loop_body_with_ctr)};
+        while_stmt.add_source_location() = loc;
+        result.add(std::move(while_stmt));
+
+        // Clear the StopIteration exception after the loop.
+        if(exc_sym != nullptr)
+        {
+          result.add(
+            code_frontend_assignt{exc_sym->symbol_expr(), false_exprt{}});
+        }
+
+        return finalize_for(std::move(result));
+      }
+    }
+
     log_overapprox(
       "for-in iteration: unsupported iterable type, skipping body");
     return finalize_for(code_skipt{});

@@ -662,6 +662,50 @@ codet python_convertert::convert_assign(const jsont &stmt)
     // PLR §3.2: "Tuples are immutable sequences"
     if(is_node_type(target, "Subscript"))
     {
+      // PLR §3.3.1: custom __setitem__ dunder — if the
+      // subscripted value is a user-defined class instance
+      // with a __setitem__ method, dispatch to it.
+      bool dispatched_setitem = false;
+      {
+        const jsont &target_value_root = json_member(target, "value");
+        exprt obj_probe = convert_expression(target_value_root);
+        if(!obj_probe.is_nil())
+        {
+          std::string tag;
+          if(obj_probe.type().id() == ID_struct)
+            tag = id2string(to_struct_type(obj_probe.type()).get_tag());
+          else if(obj_probe.type().id() == ID_struct_tag)
+            tag =
+              id2string(to_struct_tag_type(obj_probe.type()).get_identifier());
+          if(tag.substr(0, 13) == "python_class_")
+          {
+            std::string bare = tag.substr(13);
+            for(const std::string &prefix :
+                {std::string{"python::"} + tag + "::__setitem__",
+                 std::string{"python::"} + bare + "::__setitem__"})
+            {
+              const symbolt *ss = symbol_table.lookup(irep_idt{prefix});
+              if(ss != nullptr)
+              {
+                exprt slice = convert_expression(json_member(target, "slice"));
+                if(!slice.is_nil())
+                {
+                  side_effect_expr_function_callt call{
+                    ss->symbol_expr(),
+                    {address_of_exprt{obj_probe}, slice, rhs},
+                    empty_typet{},
+                    loc};
+                  block.add(code_expressiont{std::move(call)});
+                }
+                dispatched_setitem = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+      if(dispatched_setitem)
+        continue;
       // Nested subscript (e.g. d["a"][0] = v) — the inner
       // read returns a struct copy, so writing into it is
       // lost. Rewrite at statement level to:
