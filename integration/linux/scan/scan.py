@@ -113,12 +113,32 @@ class CbmcFailure:
 
 
 @dataclasses.dataclass
+class PerFileVerdict:
+    """One per-hit verdict from the --per-file pipeline.
+
+    Each verdict records the enclosing function the harness was
+    synthesised for, the cocci-hit lines it covers (a single
+    harness can cover multiple hits if they share an enclosing
+    function), and the cbmc verdict.
+    """
+    function: str
+    hit_lines: list[int]
+    status: str                 # successful | failed | timeout | error
+                                # | no-function-found
+    notes: str = ""
+
+
+@dataclasses.dataclass
 class ModuleReport:
     module: str
     cocci_hits: list[CocciHit] = dataclasses.field(default_factory=list)
     cbmc_status: str = "not-run"        # not-run | successful | failed | timeout | adapter-needed | error
     cbmc_failures: list[CbmcFailure] = dataclasses.field(default_factory=list)
     cbmc_notes: str = ""
+    # --per-file mode only: per-hit verdicts produced by running the
+    # synthesised per-function harness on the enclosing function of
+    # each cocci hit.  Empty in adapter-mode scans.
+    per_file: list[PerFileVerdict] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -944,16 +964,298 @@ def run_cbmc_adapter_pending(
 
 
 # ---------------------------------------------------------------------------
+# Per-file mode: synthesise a harness per enclosing function and run
+# the scan pipeline through scan-per-file.sh.
+# ---------------------------------------------------------------------------
+
+# Budget for a single scan-per-file.sh invocation.  The script runs
+# goto-cc + goto-instrument + cbmc end-to-end; each sub-tool has its
+# own rlimit/timeout inside the script, but the outer wrapper caps
+# the whole pipeline so runaway cases are killed cleanly.
+PER_FILE_TIMEOUT = int(os.environ.get("SCAN_PER_FILE_TIMEOUT", 900))
+
+
+def _strip_c_comments_preserve_lines(text: str) -> str:
+    """Remove C block and line comments, preserving newline count so
+    line numbers in the returned text match the original source."""
+    def _block_repl(m: re.Match) -> str:
+        return "\n" * m.group(0).count("\n")
+    text = re.sub(r"/\*.*?\*/", _block_repl, text, flags=re.DOTALL)
+    text = re.sub(r"//[^\n]*", "", text)
+    return text
+
+
+# Function-definition detector: an identifier followed by a
+# parenthesised parameter list, optionally whitespace (possibly
+# including a newline), then an opening '{'.  The parameter list
+# may span multiple lines.  Requires that the signature does not
+# contain a ';' (which would mark it as a declaration only) and
+# that no '{' appears inside the parameters (which would mean we
+# matched a nested block).
+_FUNC_DEF_RE = re.compile(
+    r"(?:^|\n)"
+    r"[\w\s\*]*?"                   # return type soup
+    r"\b(\w+)\s*"                   # function name (captured)
+    r"\(\s*([^;{}]*?)\s*\)"         # parameter list
+    r"(?:\s*__attribute__\s*\(\([^)]*\)\))?"  # optional attribute
+    r"\s*\{",                       # opening brace
+    re.MULTILINE,
+)
+
+
+def find_enclosing_function(source: Path, line_number: int) -> str | None:
+    """Return the name of the function whose body contains
+    `line_number` in `source`, or None if none matches.
+
+    Uses a two-step scan: first find function-definition signatures
+    via regex (preserving line numbers by blanking out comments);
+    then for each match track the matching close-brace by
+    depth-counting.  The innermost function spanning `line_number`
+    is returned.  Kernel-style C (opening '{' flush-left, signatures
+    on a single line or with args wrapping) parses cleanly; unusual
+    layouts may return None and the caller must fall back to
+    adapter mode for that hit.
+    """
+    try:
+        text = source.read_text(errors="replace")
+    except OSError:
+        return None
+    text = _strip_c_comments_preserve_lines(text)
+
+    # Collect (start_line, end_line, name) for every function def.
+    functions: list[tuple[int, int, str]] = []
+    for m in _FUNC_DEF_RE.finditer(text):
+        name = m.group(1)
+        # Guard against misclassifying keywords as the function name.
+        if name in {"if", "for", "while", "switch", "return",
+                    "sizeof", "do", "else", "typeof", "static",
+                    "inline", "extern", "const", "struct", "union",
+                    "enum"}:
+            continue
+        open_brace_pos = m.end() - 1
+        start_line = text.count("\n", 0, m.start(1)) + 1
+        # Depth-count to find the matching close brace.
+        depth = 0
+        i = open_brace_pos
+        end_line = None
+        while i < len(text):
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    end_line = text.count("\n", 0, i + 1) + 1
+                    break
+            i += 1
+        if end_line is not None:
+            functions.append((start_line, end_line, name))
+
+    # Pick the innermost match (smallest span).  This handles
+    # nested functions (rare in kernel C but possible with gcc
+    # extensions) without mis-attributing a hit to an outer scope.
+    best: tuple[int, int, str] | None = None
+    for f in functions:
+        start, end, _ = f
+        if start <= line_number <= end:
+            if best is None or (end - start) < (best[1] - best[0]):
+                best = f
+    return best[2] if best is not None else None
+
+
+# Modules that ship a ghost-bootstrap configuration in
+# synthesise_harness.py AND a default set of contract targets.
+# scan.py passes the contract targets from CONTRACT_FUNCTIONS to
+# scan-per-file.sh explicitly, overriding the script's own
+# fallback defaults; this keeps CONTRACT_FUNCTIONS the single
+# source of truth.
+_PER_FILE_SUPPORTED_MODULES = {
+    "cred_lifetime",
+    "pipe_buffer",
+}
+
+
+def run_cbmc_per_file(
+    module: str,
+    target: Path,
+    hits: list[CocciHit],
+    tmp: Path,
+) -> ModuleReport:
+    """Run the --per-file pipeline against `target` for each cocci
+    hit in `hits`.  Groups hits by enclosing function so a single
+    harness covers multiple hits in the same function.
+
+    Returns a ModuleReport with `per_file` populated and
+    `cbmc_status` aggregated:
+      - "failed"       if any per-hit verdict is "failed";
+      - "timeout"      if any is "timeout" and none are "failed";
+      - "successful"   if all verdicts are "successful";
+      - "error"        if any is "error" and no other signal;
+      - "adapter-needed"  if the module isn't supported here;
+      - "not-run"      if no hits had a resolvable enclosing function.
+    """
+    mr = ModuleReport(module=module, cocci_hits=hits)
+
+    if module not in _PER_FILE_SUPPORTED_MODULES:
+        mr.cbmc_status = "adapter-needed"
+        mr.cbmc_notes = (
+            f"--per-file: module '{module}' is not yet supported by "
+            "synthesise_harness.py's ghost-bootstrap table.  See "
+            "scan/synthesise_harness.py MODULE_GHOST_BOOTSTRAP to "
+            "add support."
+        )
+        return mr
+
+    ktree = os.environ.get("LINUX_TREE")
+    if not ktree:
+        mr.cbmc_status = "error"
+        mr.cbmc_notes = (
+            "--per-file requires LINUX_TREE to point at a kernel tree"
+        )
+        return mr
+
+    # Group hits by enclosing function.
+    by_function: dict[str, list[int]] = {}
+    unresolved: list[int] = []
+    for h in hits:
+        func = find_enclosing_function(target, h.line)
+        if func is None:
+            unresolved.append(h.line)
+            continue
+        by_function.setdefault(func, []).append(h.line)
+
+    # Unresolved hits are recorded as their own verdict so the JSON
+    # report captures the gap honestly.
+    if unresolved:
+        mr.per_file.append(PerFileVerdict(
+            function="",
+            hit_lines=unresolved,
+            status="no-function-found",
+            notes=(
+                "scan.py could not determine the enclosing function "
+                "for these hits via regex-based scanning.  Layouts "
+                "with macro-generated function headers, "
+                "__attribute__((...)) placements, or unusual "
+                "formatting can defeat the scanner."
+            ),
+        ))
+
+    if not by_function:
+        if not unresolved:
+            mr.cbmc_status = "not-run"
+            mr.cbmc_notes = "no cocci hits to scan"
+        else:
+            mr.cbmc_status = "error"
+            mr.cbmc_notes = "no resolvable enclosing functions"
+        return mr
+
+    per_file_sh = SCRIPT_DIR / "scan-per-file.sh"
+
+    # Relative path of the kernel file inside LINUX_TREE — what
+    # scan-per-file.sh expects.
+    try:
+        rel = target.resolve().relative_to(Path(ktree).resolve())
+    except ValueError:
+        mr.cbmc_status = "error"
+        mr.cbmc_notes = (
+            f"--per-file: {target} is not under $LINUX_TREE={ktree}"
+        )
+        return mr
+
+    contract_targets = CONTRACT_FUNCTIONS.get(module, [])
+
+    for func, lines in by_function.items():
+        try:
+            result = _run(
+                [str(per_file_sh), module, str(rel), func,
+                 *contract_targets],
+                timeout=PER_FILE_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            mr.per_file.append(PerFileVerdict(
+                function=func,
+                hit_lines=sorted(lines),
+                status="timeout",
+                notes=(
+                    f"scan-per-file.sh exceeded {PER_FILE_TIMEOUT}s"
+                ),
+            ))
+            continue
+
+        combined = (result.stdout or "") + (result.stderr or "")
+        rc = result.returncode
+        # scan-per-file.sh exit code conventions:
+        #   0  VERIFICATION SUCCESSFUL
+        #   10 VERIFICATION FAILED
+        #   3  infrastructure error (compile/link/etc)
+        #   2  usage error
+        #   other: cbmc non-verdict exit
+        if rc == 0 and "VERIFICATION SUCCESSFUL" in combined:
+            status = "successful"
+            notes = ""
+        elif rc == 10 and "VERIFICATION FAILED" in combined:
+            status = "failed"
+            notes = ""
+        elif rc in (2, 3):
+            status = "error"
+            # Last few informative lines from the script's output.
+            notes = "\n".join(combined.splitlines()[-5:])
+        else:
+            status = "error"
+            notes = (
+                f"scan-per-file.sh exit {rc}; last lines:\n"
+                + "\n".join(combined.splitlines()[-5:])
+            )
+        mr.per_file.append(PerFileVerdict(
+            function=func,
+            hit_lines=sorted(lines),
+            status=status,
+            notes=notes,
+        ))
+
+    # Aggregate.
+    statuses = {v.status for v in mr.per_file}
+    if "failed" in statuses:
+        mr.cbmc_status = "failed"
+    elif "timeout" in statuses:
+        mr.cbmc_status = "timeout"
+    elif "error" in statuses:
+        mr.cbmc_status = "error"
+    elif "successful" in statuses:
+        mr.cbmc_status = "successful"
+    elif "no-function-found" in statuses:
+        mr.cbmc_status = "error"
+        mr.cbmc_notes = "no enclosing functions resolved; see per_file"
+    else:
+        mr.cbmc_status = "not-run"
+    return mr
+
+
+# ---------------------------------------------------------------------------
 # Driver.
 # ---------------------------------------------------------------------------
 
-def scan_file(target: Path, tmp: Path, direction: str = "vuln") -> tuple[FileReport, list[Path]]:
+def scan_file(
+    target: Path,
+    tmp: Path,
+    direction: str = "vuln",
+    per_file: bool = False,
+) -> tuple[FileReport, list[Path]]:
     """Run every registered property module against one file.  Returns
     a FileReport plus any SARIF files cbmc produced for that file.
 
     ``direction`` is passed through to :func:`run_cbmc_kernel` to
     select between the vulnerable- and safe-shape harness builds
     for property modules that ship a fix-direction harness.
+
+    ``per_file`` selects the --per-file pipeline: instead of
+    linking the hand-written direct-call harness from
+    ``KERNEL_ADAPTERS``, scan.py determines the enclosing function
+    for each cocci hit, synthesises a per-function harness via
+    ``scan/synthesise_harness.py``, and runs the scan pipeline
+    through ``scan/scan-per-file.sh``.  Verdicts are reported
+    per-hit in ``ModuleReport.per_file`` and aggregated into
+    ``cbmc_status``.  ``direction`` is ignored in per-file mode.
     """
     report = FileReport(file=str(target))
     sarifs: list[Path] = []
@@ -962,7 +1264,17 @@ def scan_file(target: Path, tmp: Path, direction: str = "vuln") -> tuple[FileRep
         hits = run_cocci(module, cocci, target)
         mr = ModuleReport(module=module, cocci_hits=hits)
         if hits:
-            if file_uses_property_modules(target):
+            if per_file and not file_uses_property_modules(target):
+                # Per-file synthesis only makes sense for real
+                # kernel source (property-module-native test
+                # harnesses don't need enclosing-function
+                # resolution).  Fall through to the adapter /
+                # native code path otherwise.
+                mr = run_cbmc_per_file(module, target, hits, tmp)
+                # per_file mode doesn't emit SARIF directly today
+                # (the cocci_hits + per_file verdicts are written
+                # into the JSON / cocci-SARIF outputs instead).
+            elif file_uses_property_modules(target):
                 try:
                     mr, sarif = run_cbmc_native(module, target, tmp)
                 except subprocess.TimeoutExpired:
@@ -1011,6 +1323,14 @@ def print_summary(report: FileReport) -> None:
         for f in m.cbmc_failures:
             print(f"    FAIL {f.location}")
             print(f"         [{f.assertion}]")
+        for v in m.per_file:
+            lines = ",".join(str(n) for n in v.hit_lines)
+            func = v.function or "(no enclosing function)"
+            print(f"    per-file {func}  lines={lines}  "
+                  f"verdict={v.status}")
+            if v.notes:
+                for note_line in v.notes.splitlines():
+                    print(f"             {note_line}")
         if m.cbmc_notes:
             print(f"    note {m.cbmc_notes}")
 
@@ -1211,6 +1531,22 @@ def main() -> int:
             "declares a harness_fix_define."
         ),
     )
+    ap.add_argument(
+        "--per-file", action="store_true",
+        help=(
+            "Use the per-file pipeline: for each cocci hit, find "
+            "the enclosing function in the kernel source, "
+            "synthesise a per-function harness via "
+            "scan/synthesise_harness.py, and run the scan via "
+            "scan/scan-per-file.sh.  Verdicts are reported per-hit "
+            "in the JSON output's `per_file` field and aggregated "
+            "into the module's cbmc_status.  Currently supported "
+            "for modules {cred_lifetime, pipe_buffer} — see "
+            "synthesise_harness.py MODULE_GHOST_BOOTSTRAP to add "
+            "more.  Ignores --direction (per-file mode has only "
+            "one direction)."
+        ),
+    )
     args = ap.parse_args()
 
     reports: list[FileReport] = []
@@ -1221,7 +1557,9 @@ def main() -> int:
             if not f.is_file():
                 print(f"skip (not a file): {f}", file=sys.stderr)
                 continue
-            r, sarifs = scan_file(f, tmp, direction=args.direction)
+            r, sarifs = scan_file(
+                f, tmp, direction=args.direction, per_file=args.per_file,
+            )
             reports.append(r)
             sarif_files.extend(sarifs)
             print_summary(r)

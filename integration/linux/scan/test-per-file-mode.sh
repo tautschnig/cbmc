@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# Regression driver for scan.py's --per-file mode.
+#
+# Validates that the integrated per-file pipeline (enclosing-
+# function extraction + scan-per-file.sh invocation + per-hit
+# verdict aggregation) produces the same signal as running
+# scan-per-file.sh directly, but through scan.py's standard
+# interface: one CLI invocation per target file, JSON output,
+# aggregated cbmc_status.
+#
+# Cases:
+#
+#   1.  fs/nfsd/auth.c (cred_lifetime): two put_cred hits in
+#       nfsd_setuser.  Expected: cbmc_status=failed, per_file
+#       lists one verdict for nfsd_setuser covering lines 85
+#       and 86, status=failed.  scan.py exits 1.
+#
+#   2.  fs/coredump.c (cred_lifetime): one put_cred hit in
+#       do_coredump.  Expected: cbmc_status=failed, per_file
+#       lists one verdict for do_coredump, status=failed.
+#       scan.py exits 1.
+#
+# Exit 0 iff all cases behave as expected.
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+source "$SCRIPT_DIR/_lib.sh"
+cd -- "$SCRIPT_DIR"
+
+SCAN="$SCRIPT_DIR/scan.py"
+LINUX_TREE=${LINUX_TREE:-/home/ubuntu/linux_5_10}
+
+fail=0
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+echo "=== case 1: --per-file on fs/nfsd/auth.c (cred_lifetime) ==="
+AUTH_C="$LINUX_TREE/fs/nfsd/auth.c"
+if [[ ! -f "$AUTH_C" ]]; then
+  echo "  [skip] no $AUTH_C"
+else
+  set +e
+  LINUX_TREE="$LINUX_TREE" UNWIND=3 \
+    "$SCAN" --per-file "$AUTH_C" \
+    --json "$tmp/case1.json" > "$tmp/case1.out" 2>&1
+  rc=$?
+  set -e
+  # Expect: cbmc_status=failed, nfsd_setuser covering lines 85 and 86.
+  if [[ $rc -eq 1 ]] && \
+     grep -q '"cbmc_status": "failed"' "$tmp/case1.json" && \
+     python3 -c "
+import json, sys
+d = json.load(open('$tmp/case1.json'))
+for f in d['files']:
+  for m in f['modules']:
+    if m['module'] != 'cred_lifetime':
+      continue
+    pf = m.get('per_file', [])
+    if len(pf) != 1:
+      sys.exit('expected exactly one per_file verdict')
+    v = pf[0]
+    if v['function'] != 'nfsd_setuser':
+      sys.exit(f\"expected function=nfsd_setuser, got {v['function']}\")
+    if v['status'] != 'failed':
+      sys.exit(f\"expected status=failed, got {v['status']}\")
+    if sorted(v['hit_lines']) != [85, 86]:
+      sys.exit(f\"expected hit_lines=[85, 86], got {v['hit_lines']}\")
+    sys.exit(0)
+sys.exit('no cred_lifetime module report found')
+"
+  then
+    echo "  [ok] exit 1, cbmc_status=failed, nfsd_setuser verdict=failed covering lines 85,86"
+  else
+    echo "  [FAIL] expected rc 1 + cbmc_status=failed + per-file match" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case1.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
+echo
+echo "=== case 2: --per-file on kernel/ptrace.c (cred_lifetime) ==="
+PTRACE_C="$LINUX_TREE/kernel/ptrace.c"
+if [[ ! -f "$PTRACE_C" ]]; then
+  echo "  [skip] no $PTRACE_C"
+else
+  set +e
+  LINUX_TREE="$LINUX_TREE" UNWIND=3 \
+    "$SCAN" --per-file "$PTRACE_C" \
+    --json "$tmp/case2.json" > "$tmp/case2.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     grep -q '"cbmc_status": "failed"' "$tmp/case2.json" && \
+     python3 -c "
+import json, sys
+d = json.load(open('$tmp/case2.json'))
+for f in d['files']:
+  for m in f['modules']:
+    if m['module'] != 'cred_lifetime':
+      continue
+    pf = m.get('per_file', [])
+    match = [v for v in pf
+             if v['function'] == '__ptrace_unlink'
+             and v['status'] == 'failed'
+             and 129 in v['hit_lines']]
+    if not match:
+      sys.exit(f'expected __ptrace_unlink failed verdict with line 129; got {pf}')
+    sys.exit(0)
+sys.exit('no cred_lifetime module report found')
+"
+  then
+    echo "  [ok] exit 1, cbmc_status=failed, __ptrace_unlink verdict=failed covering line 129"
+  else
+    echo "  [FAIL] expected rc 1 + cbmc_status=failed + __ptrace_unlink failed verdict" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case2.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
+if [[ $fail -eq 0 ]]; then
+  echo
+  echo "scan.py --per-file regressions passed."
+  exit 0
+fi
+
+echo >&2
+echo "$fail case(s) did not match expectation." >&2
+exit 1

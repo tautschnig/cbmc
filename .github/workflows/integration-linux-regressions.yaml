@@ -164,6 +164,18 @@ jobs:
         run: |
           integration/linux/scan/run.sh
 
+      - name: Run per-file mode regression
+        env:
+          LINUX_TREE: $HOME/linux_5_10
+        run: |
+          # scan-per-file.sh (direct invocation): validates the
+          # M4b+LIM-013 per-function harness pipeline end-to-end.
+          integration/linux/scan/test-per-file.sh
+          # --per-file mode in scan.py: validates the integrated
+          # enclosing-function resolution + per-hit verdict
+          # aggregation.
+          integration/linux/scan/test-per-file-mode.sh
+
       - name: Run cocci prefilter on corpus + emit SARIF
         # Phase 3.2: GitHub Code Scanning integration.  Runs the
         # scan against the same curated corpus that

@@ -37,6 +37,13 @@ scan/configure.sh /path/to/linux \
 
 # Per-file or per-PR: drive scan.py.  --json emits a structured report.
 scan/scan.py /path/to/linux/crypto/algif_aead.c --json report.json
+
+# --per-file mode: synthesise a per-enclosing-function harness per
+# cocci hit instead of using the hand-written direct-call harness.
+# Verdicts are reported per-hit in `report.json.files[].modules[].per_file`.
+LINUX_TREE=/path/to/linux \
+    scan/scan.py --per-file /path/to/linux/kernel/ptrace.c \
+    --json ptrace-per-file.json
 ```
 
 ## What scan.py does
@@ -62,6 +69,49 @@ For each input file, and for each property module in
 
 The JSON report field `cbmc_status` carries one of those values
 verbatim.
+
+## --per-file mode
+
+By default `scan.py` drives a hand-written direct-call harness
+(one per property module, under `scan/adapters/`) that exercises
+one kernel API with a curated set of input shapes.  This is the
+fastest path and the verdict has the clearest signal, but it
+only verifies the API, not the specific call sites the
+Coccinelle prefilter flagged.
+
+`scan.py --per-file` flips the pipeline: for each Coccinelle
+prefilter hit, scan.py
+
+1. determines the hit's enclosing function by regex-scanning the
+   kernel source,
+2. invokes `scan/synthesise_harness.py` to generate a harness
+   that calls that enclosing function with nondet-initialised
+   arguments and bootstraps the relevant ghost-state,
+3. runs the full scan pipeline through `scan/scan-per-file.sh`
+   (compile kernel TU + compile harness + link + `goto-instrument
+   --replace-call-with-contract` + `cbmc --function
+   <func>_per_file_harness`), and
+4. records per-hit verdicts in the JSON report's
+   `files[].modules[].per_file` field.
+
+`cbmc_status` is aggregated across all per-file verdicts:
+`failed` wins over `timeout`, which wins over `error`, which
+wins over `successful`.  The regression test lives at
+[`scan/test-per-file-mode.sh`](test-per-file-mode.sh).
+
+Supported modules: `cred_lifetime`, `pipe_buffer`.  Extending to
+other modules requires a small config block in
+`scan/synthesise_harness.py` `MODULE_GHOST_BOOTSTRAP` plus a
+default `contract_targets` list (`scan.py` picks these up from
+its existing `CONTRACT_FUNCTIONS` dict automatically).
+
+Per-file mode is opt-in because it is substantially slower (a
+fresh cbmc invocation per enclosing function) and because
+synthesised harnesses are less well-shaped than hand-written
+ones — large enclosing functions frequently time out.  It is
+most useful when you want to confirm a specific prefilter hit
+reproduces the bug-class pattern inside its actual enclosing
+function.
 
 ## Status on real kernel source
 

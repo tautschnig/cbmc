@@ -263,6 +263,61 @@ def synthesise(module: str, source: Path, function: str,
             lines.append(f"struct {tag};")
             struct_tags_seen.add(tag)
 
+    # Forward-declare unknown typedef names that appear in the
+    # signature.  Kernel functions routinely take typedef'd
+    # integer types (u32, pid_t, umode_t) or typedef'd struct
+    # pointers (kernel_siginfo_t, fmode_t).  Without a definition
+    # in scope the harness won't parse.  Strategy: any bare
+    # identifier in a parameter or return type that is not a C
+    # keyword, not a known struct tag, and not listed in a fixed
+    # built-in set is treated as an opaque typedef and declared
+    # as `typedef char <name>;`.  That keeps pointer-to-<name>
+    # binary-compatible with any kernel definition (all kernel
+    # pointers have the same representation on x86_64), and for
+    # scalar <name> the harness allocates a local that is
+    # nondet-initialised by CBMC — matching the existing scalar
+    # path.
+    C_RESERVED = {
+        "char", "short", "int", "long", "signed", "unsigned",
+        "float", "double", "void", "_Bool", "const", "volatile",
+        "restrict", "static", "inline", "extern", "register",
+        "struct", "union", "enum", "typedef", "auto", "sizeof",
+        "return", "goto", "_Atomic", "__restrict", "__inline",
+        "__inline__", "__attribute__",
+    }
+    # Identifiers the forward_decls block or ghost_init_decl
+    # already declared explicitly — don't re-typedef those.
+    explicit_typedef_names: set[str] = set()
+    for decl in cfg.get("forward_decls", []):
+        for m in re.finditer(r"\btypedef\s+[^;]*?\b(\w+)\s*;", decl):
+            explicit_typedef_names.add(m.group(1))
+    typedefs_seen: set[str] = set(explicit_typedef_names)
+
+    def _collect_typedef_names(type_text: str) -> list[str]:
+        """Return identifiers in `type_text` that look like
+        typedef names (not C keywords, not struct tags)."""
+        # Strip qualifiers, pointer/array markers, and struct/
+        # union/enum + tag pairs (we handled those already).
+        text = re.sub(r"\bstruct\s+\w+", "", type_text)
+        text = re.sub(r"\bunion\s+\w+", "", text)
+        text = re.sub(r"\benum\s+\w+", "", text)
+        text = text.replace("*", " ")
+        text = re.sub(r"\[[^\]]*\]", " ", text)
+        idents = re.findall(r"\b[A-Za-z_]\w*\b", text)
+        return [i for i in idents if i not in C_RESERVED]
+
+    for p in sig.params:
+        for ident in _collect_typedef_names(p.type_text):
+            if ident in typedefs_seen:
+                continue
+            lines.append(f"typedef char {ident};")
+            typedefs_seen.add(ident)
+    for ident in _collect_typedef_names(sig.return_type):
+        if ident in typedefs_seen:
+            continue
+        lines.append(f"typedef char {ident};")
+        typedefs_seen.add(ident)
+
     # Target function declaration.
     arg_sig = ", ".join(f"{p.type_text} {p.name}" for p in sig.params) \
         or "void"
