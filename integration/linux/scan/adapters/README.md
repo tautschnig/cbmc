@@ -130,13 +130,39 @@ Validated end-to-end against Linux 5.10 `fs/coredump.c`
   the `refcount_live` precondition at the second call; the
   fixed shape passes.
 
-Validated end-to-end against Linux 5.10 `kernel/fork.c`
-(three `refcount_dec_and_test` sites flagged by the cocci
-prefilter):
-- Default: `cbmc_status: "failed"`,
-  `refcount_dec_and_test.precondition.4` fires at the second
-  call.
-- `--direction=fix`: `cbmc_status: "successful"`.
+## Mangled-contract coverage audit
+
+For each module, the CONTRACT_FUNCTIONS list in scan.py must
+cover every form of the contracted symbol that appears in
+linked kernel goto binaries.  `static inline` kernel headers
+expose a mangled `__CPROVER_file_local_<header>_<name>` form
+per TU under `goto-cc --export-file-local-symbols`; externs
+keep their single name.  Missing the mangled form means the
+contract attaches only to the direct-call harness's call
+sites and silently passes every real kernel call site.
+
+| Module | Contract target | Static-inline? | Forms in CONTRACT_FUNCTIONS |
+|--------|-----------------|----------------|-----------------------------|
+| aead | aead_request_set_crypt | yes (crypto/aead.h) | mangled + external |
+| pipe_buffer | pipe_buf_release | yes (pipe_fs_i.h) | mangled + external |
+| cred_lifetime | put_cred | yes (cred.h) | mangled + external |
+| lock_state | mutex_unlock | no (extern void) | external only |
+| refcount_lifetime | refcount_dec_and_test | yes (refcount.h) | two mangled forms + external |
+| alloc_tag | vfree | no (extern) | external only |
+
+All modules are complete with respect to this criterion.
+`lock_state` and `alloc_tag` correctly list only the external
+name because their contracted primitives are declared extern
+rather than static inline; goto-cc does not emit a
+`__CPROVER_file_local_*` form for them.
+
+Minor observation: `cred.h` also declares the extern helper
+`__put_cred` (called from put_cred's static-inline body when
+the refcount hits zero).  The scan does not currently contract
+`__put_cred` directly — real code paths call the static-inline
+`put_cred` wrapper.  If a future bug class surfaces that
+requires contracting the extern form directly, add it to
+`CONTRACT_FUNCTIONS['cred_lifetime']` and update the adapter.
 
 ## Adding a new adapter
 
