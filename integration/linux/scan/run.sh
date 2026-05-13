@@ -391,6 +391,73 @@ sys.exit('no refcount_lifetime module report')
   fi
 fi
 
+echo
+echo "=== case 9: real-kernel alloc_tag on kernel/fork.c ==="
+# Sixth property module end-to-end.  kernel/fork.c's
+# free_thread_stack calls vfree(vm_stack->addr) on a pointer
+# that, in vulnerable-shape harness, is tagged as
+# ALLOC_TAG_KMALLOC (so vfree fires the precondition).  In the
+# fix shape (-DFIXED) the pointer is tagged ALLOC_TAG_VMALLOC.
+ALLOC_KERNEL_C="$LINUX_TREE/kernel/fork.c"
+if [[ ! -f $ALLOC_KERNEL_C ]]; then
+  echo "  [skip] no $ALLOC_KERNEL_C"
+else
+  # 9a: vulnerable direction.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$ALLOC_KERNEL_C" \
+    --json "$tmp/case9a.json" > "$tmp/case9a.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     python3 -c "
+import json, sys
+d = json.load(open('$tmp/case9a.json'))
+for f in d['files']:
+    for m in f['modules']:
+        if m['module'] != 'alloc_tag':
+            continue
+        if m.get('cbmc_status') != 'failed':
+            sys.exit(f\"expected alloc_tag cbmc_status=failed, got {m.get('cbmc_status')}\")
+        fails = m.get('cbmc_failures') or []
+        if not any('vfree.precondition' in fa.get('assertion','') for fa in fails):
+            sys.exit(f'expected vfree.precondition in failures; got {fails}')
+        sys.exit(0)
+sys.exit('no alloc_tag module report')
+" >/dev/null 2>&1; then
+    echo "  [ok] 9a (vuln): exit 1, cbmc_status=failed, vfree precondition named"
+  else
+    echo "  [FAIL] 9a expected rc 1 + cbmc_status=failed + vfree precondition" >&2
+    echo "         actual rc=$rc; last 15 lines of output:" >&2
+    tail -15 "$tmp/case9a.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # 9b: fix direction.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$ALLOC_KERNEL_C" --direction=fix \
+    --json "$tmp/case9b.json" > "$tmp/case9b.out" 2>&1
+  rc=$?
+  set -e
+  if python3 -c "
+import json, sys
+d = json.load(open('$tmp/case9b.json'))
+for f in d['files']:
+    for m in f['modules']:
+        if m['module'] != 'alloc_tag': continue
+        if m.get('cbmc_status') != 'successful':
+            sys.exit(f\"expected alloc_tag successful, got {m.get('cbmc_status')}\")
+        sys.exit(0)
+sys.exit('no alloc_tag module report')
+" >/dev/null 2>&1; then
+    echo "  [ok] 9b (fix):  alloc_tag cbmc_status=successful"
+  else
+    echo "  [FAIL] 9b expected alloc_tag cbmc_status=successful" >&2
+    echo "         last 15 lines of output:" >&2
+    tail -15 "$tmp/case9b.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
   echo "scan.py regressions passed."

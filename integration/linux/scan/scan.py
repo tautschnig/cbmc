@@ -283,6 +283,11 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # external name is all we need.
         "refcount_dec_and_test",
     ],
+    "alloc_tag": [
+        # vfree is an ordinary extern in <linux/vmalloc.h>
+        # (not static inline); single external name.
+        "vfree",
+    ],
 }
 
 
@@ -445,6 +450,28 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "refcount_live",
             "refcount_lifetime_usage",
+        ],
+    },
+    "alloc_tag": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "alloc_tag_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "alloc_tag_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "alloc_tag_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "alloc_tag" / "alloc_tag.c",
+        ],
+        "slice_preserve": [
+            "alloc_tag_of", "alloc_tag_mark", "alloc_tag_clear",
+            "alloc_tag_kfree_ok", "alloc_tag_vfree_ok",
+            "alloc_tag_free_ok_null_or",
+            "alloc_tag_ghost_find", "alloc_tag_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "alloc_tag_vfree_ok",
+            "alloc_tag_of",
         ],
     },
 }

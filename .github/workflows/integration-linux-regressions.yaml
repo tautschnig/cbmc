@@ -74,6 +74,7 @@ jobs:
               integration/linux/properties/cred_lifetime \
               integration/linux/properties/lock_state \
               integration/linux/properties/refcount_lifetime \
+              integration/linux/properties/alloc_tag \
               integration/linux/cve-2026-31431 \
               integration/linux/cve-2022-0847 \
               integration/linux/cve-2026-23297 \
