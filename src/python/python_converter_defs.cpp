@@ -1314,12 +1314,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // regex preconditions interact badly with the
           // string refinement loop. Skip such bodies when
           // processing imported modules.
+          std::string unpack_td_name;
+          std::string kwargs_param_name;
           if(processing_import && !skip_body)
           {
             const jsont &margs = json_member(item, "args");
             const jsont &kwarg = json_member(margs, "kwarg");
             if(!kwarg.is_null())
             {
+              kwargs_param_name = json_string(json_member(kwarg, "arg"));
               const jsont &ann = json_member(kwarg, "annotation");
               if(is_node_type(ann, "Subscript"))
               {
@@ -1328,7 +1331,13 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 {
                   std::string an = json_string(json_member(av, "id"));
                   if(an == "Unpack")
+                  {
                     skip_body = true;
+                    // Extract TypedDict name from Unpack's slice.
+                    const jsont &slc = json_member(ann, "slice");
+                    if(is_node_type(slc, "Name"))
+                      unpack_td_name = json_string(json_member(slc, "id"));
+                  }
                 }
               }
             }
@@ -1338,6 +1347,61 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           {
             for(const auto &s : as_array(method_body_json))
               method_body.add(convert_statement(s));
+          }
+
+          // Tier 1B: selective precondition processing. When we
+          // skip the stub body due to Unpack detection, emit
+          // key-presence checks for each Required field of the
+          // TypedDict. This catches 'missing required argument'
+          // bugs without triggering the regex/length assertions
+          // that overwhelm the string refinement solver.
+          if(skip_body && !unpack_td_name.empty() && !kwargs_param_name.empty())
+          {
+            auto ri = typed_dict_required.find(unpack_td_name);
+            if(ri != typed_dict_required.end() && !ri->second.empty())
+            {
+              // Resolve the kwargs parameter symbol (already
+              // registered as python::<ClassName>::<method>::<name>).
+              std::string kwargs_sym =
+                "python::" + current_function + "::" + kwargs_param_name;
+              const symbolt *ks = symbol_table.lookup(irep_idt{kwargs_sym});
+              if(ks != nullptr && is_python_dict_type(ks->type))
+              {
+                const auto &dict_st = to_struct_type(ks->type);
+                const auto &keys_type =
+                  to_array_type(dict_st.components()[1].type());
+                member_exprt length{
+                  ks->symbol_expr(), "length", signedbv_typet{64}};
+                member_exprt keys_arr{ks->symbol_expr(), "keys", keys_type};
+                for(const auto &req_key : ri->second)
+                {
+                  // Build 'assert exists i. 0<=i<length &&
+                  // keys[i] == req_key'. Same formula shape
+                  // as the dict subscript's KeyError check.
+                  exprt typed_req_key = python_string_literal(req_key);
+                  if(typed_req_key.type() != keys_type.element_type())
+                    typed_req_key =
+                      safe_typecast(typed_req_key, keys_type.element_type());
+                  exprt found = false_exprt{};
+                  for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+                  {
+                    exprt idx = from_integer(i, signedbv_typet{64});
+                    exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+                    exprt match =
+                      equal_exprt{index_exprt{keys_arr, idx}, typed_req_key};
+                    found = or_exprt{found, and_exprt{in_range, match}};
+                  }
+                  code_assertt req_assert{found};
+                  source_locationt rloc;
+                  rloc.set_file(filename);
+                  rloc.set_property_class("required-kwarg");
+                  rloc.set_comment(
+                    "missing required keyword argument '" + req_key + "'");
+                  req_assert.add_source_location() = rloc;
+                  method_body.add(std::move(req_assert));
+                }
+              }
+            }
           }
 
           current_function = saved_func;

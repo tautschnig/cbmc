@@ -376,7 +376,79 @@ void python_convertert::process_imported_module(
     }
     else if(is_node_type(stmt, "Assign") || is_node_type(stmt, "AnnAssign"))
     {
-      // Module-level variable — register as a global symbol
+      // Module-level variable — register as a global symbol.
+      //
+      // Special case: TypedDict definitions of the functional
+      // form 'Name = TypedDict("Name", {"K": Required[T], ...})'
+      // are the PySpec stub convention. Scan for these and
+      // record the Required field names so the Unpack-method
+      // handler in convert_class_def can emit key-presence
+      // checks without processing the full stub body.
+      if(is_node_type(stmt, "Assign"))
+      {
+        const jsont &targets = json_member(stmt, "targets");
+        const jsont &value = json_member(stmt, "value");
+        if(
+          targets.is_array() && !as_array(targets).empty() &&
+          is_node_type(value, "Call"))
+        {
+          const jsont &callee = json_member(value, "func");
+          std::string cname;
+          if(is_node_type(callee, "Name"))
+            cname = json_string(json_member(callee, "id"));
+          if(cname == "TypedDict")
+          {
+            const jsont &first_target = *as_array(targets).begin();
+            if(is_node_type(first_target, "Name"))
+            {
+              std::string td_name =
+                json_string(json_member(first_target, "id"));
+              const jsont &cargs = json_member(value, "args");
+              if(cargs.is_array() && as_array(cargs).size() >= 2)
+              {
+                auto it = as_array(cargs).begin();
+                ++it;
+                const jsont &dict_ast = *it;
+                if(is_node_type(dict_ast, "Dict"))
+                {
+                  const jsont &keys = json_member(dict_ast, "keys");
+                  const jsont &values = json_member(dict_ast, "values");
+                  if(
+                    keys.is_array() && values.is_array() &&
+                    as_array(keys).size() == as_array(values).size())
+                  {
+                    std::vector<std::string> required;
+                    auto kit = as_array(keys).begin();
+                    auto vit = as_array(values).begin();
+                    for(; kit != as_array(keys).end(); ++kit, ++vit)
+                    {
+                      // Key is Constant(str). Value is
+                      // Subscript of Required[...] or
+                      // NotRequired[...].
+                      if(!is_node_type(*kit, "Constant"))
+                        continue;
+                      std::string kstr =
+                        json_string(json_member(*kit, "value"));
+                      if(kstr.empty())
+                        continue;
+                      if(!is_node_type(*vit, "Subscript"))
+                        continue;
+                      const jsont &vv = json_member(*vit, "value");
+                      if(!is_node_type(vv, "Name"))
+                        continue;
+                      std::string wrapper = json_string(json_member(vv, "id"));
+                      if(wrapper == "Required")
+                        required.push_back(kstr);
+                    }
+                    if(!required.empty())
+                      typed_dict_required[td_name] = std::move(required);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
     else if(is_node_type(stmt, "ImportFrom"))
     {
