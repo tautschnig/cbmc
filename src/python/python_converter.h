@@ -183,6 +183,11 @@ public:
     python_lazy_stubs = v;
   }
 
+  void set_python_no_exception_checks(bool v)
+  {
+    python_no_exception_checks = v;
+  }
+
 private:
   /// Lazy-stubs mode: imported modules get symbol-table entries
   /// (types, classes, function signatures) but no function
@@ -190,6 +195,12 @@ private:
   /// assertions fire. Reduces memory/time blow-up when user
   /// code imports large stub trees.
   bool python_lazy_stubs = false;
+  /// Suppress emission of "uncaught exception" property checks.
+  /// When set, module-level statements don't get the trailing
+  /// assert(!__exception_active). Useful for benchmark suites
+  /// whose bug-detection criterion is assertion-failure only,
+  /// not exception-propagation.
+  bool python_no_exception_checks = false;
   /// Emit a message about a front-end over-approximation. In the
   /// default mode the message goes to log.debug() so it is only
   /// visible at high verbosity; when --python-strict-warnings is

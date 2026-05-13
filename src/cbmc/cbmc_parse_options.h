@@ -78,6 +78,7 @@ class optionst;
   "(python-use-stdlib-source)" \
   "(python-smt-strings)" \
   "(python-lazy-stubs)" \
+  "(python-no-exception-checks)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

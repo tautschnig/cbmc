@@ -179,6 +179,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-smt-strings", true);
   if(cmdline.isset("python-lazy-stubs"))
     options.set_option("python-lazy-stubs", true);
+  if(cmdline.isset("python-no-exception-checks"))
+    options.set_option("python-no-exception-checks", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
