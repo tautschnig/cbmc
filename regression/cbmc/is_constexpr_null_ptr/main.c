@@ -15,7 +15,7 @@
 // LIMITATIONS.md.
 
 #define __is_constexpr(x)                                                      \
-  (sizeof(int) == sizeof(*(8 ? ((void *)((long)(x) * 0l)) : (int *)8)))
+  (sizeof(int) == sizeof(*(8 ? ((void *)((long)(x)*0l)) : (int *)8)))
 
 int main(int argc, char **argv)
 {

@@ -107,3 +107,16 @@
 #define __annotated(p, attr) 0
 
 #endif
+
+/* Linux 6.12's printk_ratelimited expands to a statement_expression
+ * containing `static DEFINE_RATELIMIT_STATE(...)` — a static local
+ * with a compound-literal initializer that includes a spinlock init.
+ * CBMC's front-end requires static-local initialisers to be constant
+ * expressions, but the spinlock init is not foldable.  Since printk
+ * has no semantic effect on any property we check (it's a logging
+ * side-effect), override to a no-op.  Sound for goto-cc scans. */
+#include <linux/printk.h>
+#ifdef printk_ratelimited
+#  undef printk_ratelimited
+#endif
+#define printk_ratelimited(fmt, ...) do { } while (0)
