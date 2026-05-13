@@ -120,3 +120,33 @@
 #  undef printk_ratelimited
 #endif
 #define printk_ratelimited(fmt, ...) do { } while (0)
+
+/* Linux 6.1+ added `bpf_jit_fill_hole_with_zero` as a callback
+ * parameter to `bpf_prog_pack_alloc` from kernel/bpf/dispatcher.c.
+ * It's declared in <linux/filter.h> as an extern; its definition
+ * lives in arch-specific code (e.g. arch/x86/net/bpf_jit_comp.c)
+ * that isn't on the x86 allnoconfig scan path.  Without a body,
+ * goto-cc refuses to take the function pointer: `failed to find
+ * symbol bpf_jit_fill_hole_with_zero`.  Provide a weak no-op
+ * definition so the reference resolves in every kernel TU.  Weak
+ * linkage means the kernel's real definition wins whenever the
+ * arch TU is on the link path.  Sound for goto-cc scans: the fill
+ * behaviour only affects unallocated bytes inside an image buffer
+ * and has no effect on any property we check.
+ *
+ * Declared locally rather than by `#include <linux/filter.h>`:
+ * including filter.h transitively pulls in <linux/scatterlist.h>
+ * and the rest of the kernel networking / bpf header graph, which
+ * conflicts with the aead direct-call harness's own minimal
+ * scatterlist declarations.  A bare function declaration is
+ * enough for the weak definition below to be well-typed against
+ * any call site that does #include <linux/filter.h>.
+ */
+__attribute__((weak))
+void bpf_jit_fill_hole_with_zero(void *area, unsigned int size);
+__attribute__((weak))
+void bpf_jit_fill_hole_with_zero(void *area, unsigned int size)
+{
+  (void)area;
+  (void)size;
+}

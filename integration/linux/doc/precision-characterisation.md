@@ -1,6 +1,6 @@
 # Precision characterisation
 
-Generated 2026-05-13 12:10:23 UTC
+Generated 2026-05-13 18:17:53 UTC
 
 For each (kernel × module × anchor file) triple, reports
 (a) the Coccinelle prefilter hit count, (b) the adapter-
@@ -27,9 +27,9 @@ reflects upstream having removed the vulnerable pattern.
 | 6.6 | cred_lifetime | fs/coredump.c | 1 | failed | 0/0/1/0 |
 | 6.12 | cred_lifetime | fs/coredump.c | 1 | failed | 0/0/1/0 |
 | 5.10 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
-| 6.1 | lock_state | kernel/bpf/dispatcher.c | 1 | error | 0/0/0/1 |
-| 6.6 | lock_state | kernel/bpf/dispatcher.c | 1 | error | 0/0/0/1 |
-| 6.12 | lock_state | kernel/bpf/dispatcher.c | 1 | error | 0/0/0/1 |
+| 6.1 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
+| 6.6 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
+| 6.12 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
 | 5.10 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
 | 6.1 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
 | 6.6 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
@@ -62,26 +62,19 @@ reflects upstream having removed the vulnerable pattern.
 5.10 shows 4 prefilter hits; 6.1 and later show 0.  Upstream
 removed the `copy_page_to_iter_pipe` path during the Dirty Pipe
 mitigation series, and the take-over sites that the cocci rule
-anchors on (`pipe_buffer->flags`, `pipe_buffer->ops` assignment
-adjacent to a populated buffer) disappeared with it.  This is
-the scan correctly following the upstream fix: `hits=0` is the
-honest, correct signal on a patched kernel.
+anchors on disappeared with it.  This is the scan correctly
+following the upstream fix: `hits=0` is the honest, correct
+signal on a patched kernel.
 
-### lock_state adapter-mode flips from `failed` on 5.10 to `error` on 6.1+
+### lock_state on kernel/bpf/dispatcher.c
 
-`kernel/bpf/dispatcher.c` compiles cleanly on Linux 5.10 but
-fails on 6.1+ with
-
-    failed to find symbol 'bpf_jit_fill_hole_with_zero'
-
-The symbol is a `static __always_inline` introduced in Linux 6.1
-as part of the BPF prog-pack allocator refactor.  goto-cc with
-our standard scan-compat flags doesn't resolve it, and the TU
-fails to compile.  This is a real precision-characterisation
-finding: scan coverage of BPF subsystems on 6.1+ is partial
-until we extend the scan-compat fragments.  Filed as follow-up
-in `integration/linux/CBMC_LIMITATIONS.md` as a scan-compat gap
-(not a CBMC front-end bug).
+5.10 through 6.12 all report `cbmc_status: "failed"` with a
+per-file verdict of `failed` on the enclosing
+`bpf_dispatcher_change_prog`.  A prior version of this report
+showed `error` on 6.1+ due to the missing
+`bpf_jit_fill_hole_with_zero` symbol; that scan-compat gap is
+closed by a weak stub in `integration/linux/scan/fragments/
+scan-compat.h`.  The three 6.x rows reflect the fix.
 
 ### cred_lifetime per-file on fs/coredump.c: timeouts across all kernels
 
@@ -89,42 +82,36 @@ in `integration/linux/CBMC_LIMITATIONS.md` as a scan-compat gap
 per-file harness synthesises a call to it with nondet-initialised
 arguments, and cbmc's symex exceeds the 900s per-file budget.
 Expected; the adapter-mode signal on this file remains useful.
-Targets with smaller enclosing functions (e.g. `kernel/ptrace.c`
-→ `__ptrace_unlink` in our regression) produce per-file verdicts
-reliably.
+Targets with smaller enclosing functions produce per-file
+verdicts reliably.
 
 ### refcount_lifetime per-file on kernel/fork.c: 2 failed + 1 error
 
 Of three `refcount_dec_and_test` prefilter hits, two produce
-per-file `failed` verdicts (the synthesised harness triggers the
-contract on the enclosing function's behavior) and one errors
-out — likely another large-function or symbol-resolution
-boundary case.  This is the current precision shape for refcount
-scanning in the kernel; further gains require tightening the
-harness synthesiser's typedef and signature handling.
+per-file `failed` verdicts and one errors out — likely a
+large-function or symbol-resolution boundary case.
 
 ### aead adapter-mode: `failed` everywhere (synthetic signal)
 
 aead reports `cbmc_status=failed` on all four kernels because
 the adapter mode exercises the hand-written direct-call
-harness's vulnerable-shape branch; the actual kernel code on the
-per-kernel `_aead_recvmsg` site isn't what's being verified here
-(LIM-013).  This is by design; aead precision requires
-per-file synthesis, which is not supported for aead (see the
-note in the table).
+harness's vulnerable-shape branch; the actual kernel code on
+the per-kernel `_aead_recvmsg` site isn't what's being verified
+here (LIM-013).  This is by design; aead precision requires
+per-file synthesis, which is future work (see the companion
+`alloc_tag` module for the reverse-direction path for static-
+inline API coverage).
 
 ## Summary
 
-The scan's cross-kernel behavior is consistent for the three
+The scan's cross-kernel behavior is now consistent for all
 modules with per-file support on well-shaped anchor files.
 Gaps:
 
-- aead per-file unsupported by design (scatterlist layout
-  fabrication).
-- `kernel/bpf/dispatcher.c` does not compile on 6.1+ under the
-  current scan-compat fragments.
+- aead per-file unsupported (scatterlist layout fabrication is
+  future work).
 - Large enclosing functions (e.g. `do_coredump`) time out under
   per-file synthesis.
 
-All three gaps are tractable future work; none reflect a
-fundamental soundness issue in the pipeline.
+All gaps are tractable; none reflect a fundamental soundness
+issue in the pipeline.
