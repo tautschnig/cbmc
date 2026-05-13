@@ -119,6 +119,50 @@ sys.exit('no cred_lifetime module report found')
   fi
 fi
 
+echo
+echo "=== case 3: --per-file on kernel/bpf/dispatcher.c (lock_state + refcount) ==="
+# Exercises the two additional per-file-supported modules
+# (lock_state and refcount_lifetime) on a single file that
+# fires both prefilters.  Expected: both modules produce a
+# per-file verdict of `failed` via the synthesised harness.
+DISP_C="$LINUX_TREE/kernel/bpf/dispatcher.c"
+if [[ ! -f "$DISP_C" ]]; then
+  echo "  [skip] no $DISP_C"
+else
+  set +e
+  LINUX_TREE="$LINUX_TREE" UNWIND=3 \
+    "$SCAN" --per-file "$DISP_C" \
+    --json "$tmp/case3.json" > "$tmp/case3.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     python3 -c "
+import json, sys
+d = json.load(open('$tmp/case3.json'))
+found = {}
+for f in d['files']:
+  for m in f['modules']:
+    if m['module'] not in ('lock_state', 'refcount_lifetime'):
+      continue
+    pf = m.get('per_file', [])
+    if any(v['status'] == 'failed' for v in pf):
+      found[m['module']] = True
+if 'lock_state' not in found:
+  sys.exit('no failed lock_state per-file verdict')
+if 'refcount_lifetime' not in found:
+  sys.exit('no failed refcount_lifetime per-file verdict')
+sys.exit(0)
+"
+  then
+    echo "  [ok] exit 1, lock_state + refcount_lifetime per-file verdicts both failed"
+  else
+    echo "  [FAIL] expected rc 1 + both modules verdict=failed" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case3.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
   echo "scan.py --per-file regressions passed."

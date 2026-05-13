@@ -45,11 +45,13 @@ CONTRACT_TARGETS=("$@")
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../../.." &>/dev/null && pwd)
 
 # Per-module naming: scan/adapters/<module-adapter-name>_kernel_adapter.c.
-# Most modules use their own name; cred_lifetime's adapter is named
-# 'cred_kernel_adapter.c' by history.  Resolve accordingly.
+# Most modules use their own name; cred_lifetime and refcount_lifetime
+# use shorter adapter stems by historical convention.  Resolve
+# accordingly.
 case "$MODULE" in
-  cred_lifetime) ADAPTER_STEM=cred ;;
-  *)             ADAPTER_STEM=$MODULE ;;
+  cred_lifetime)     ADAPTER_STEM=cred ;;
+  refcount_lifetime) ADAPTER_STEM=refcount ;;
+  *)                 ADAPTER_STEM=$MODULE ;;
 esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
 PROPERTY_SRC="$SCRIPT_DIR/../properties/${MODULE}/${MODULE}.c"
@@ -76,6 +78,23 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
       CONTRACT_TARGETS=(
         __CPROVER_file_local_pipe_fs_i_h_pipe_buf_release
         pipe_buf_release
+      )
+      ;;
+    lock_state)
+      # mutex_unlock is an ordinary extern (not static inline), so
+      # the external name suffices.
+      CONTRACT_TARGETS=(
+        mutex_unlock
+      )
+      ;;
+    refcount_lifetime)
+      # refcount_dec_and_test is static inline in modern kernels,
+      # exposed under the mangled form __CPROVER_file_local_refcount
+      # _h_refcount_dec_and_test.  Include both so whichever the
+      # link resolves gets the contract.
+      CONTRACT_TARGETS=(
+        __CPROVER_file_local_refcount_h_refcount_dec_and_test
+        refcount_dec_and_test
       )
       ;;
     *)

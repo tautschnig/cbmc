@@ -104,10 +104,43 @@ MODULE_GHOST_BOOTSTRAP = {
             "void pipe_buffer_mark_populated(struct pipe_buffer *buf);",
         "forward_decls": ["struct pipe_buffer;"],
     },
-    # aead doesn't have a ghost-state-bootstrap need: its predicate
-    # reads struct-field bits directly, and aead's per-file harness
-    # would rely on the nondet scatterlist content to span the
-    # vulnerable shape — out of scope for this first cut.
+    "lock_state": {
+        # Match mutex-typed parameters; per-file harness marks each
+        # as held at entry so the scan checks whether the enclosing
+        # function unlocks them zero, one, or more times.
+        "types": ["struct mutex *"],
+        "ghost_init_call": "lock_state_lock",
+        "ghost_init_args_template": "(struct mutex *){arg}",
+        "ghost_init_decl":
+            "void lock_state_lock(struct mutex *m);",
+        "forward_decls": ["struct mutex;"],
+    },
+    "refcount_lifetime": {
+        # Match refcount_t-typed parameters; per-file harness inits
+        # each with usage=1 so the first dec lands on a live counter
+        # and a double-dec pattern inside the enclosing function is
+        # detected.
+        "types": ["refcount_t *"],
+        "ghost_init_call": "refcount_lifetime_init",
+        "ghost_init_args_template": "(refcount_t *){arg}, 1",
+        "ghost_init_decl":
+            "void refcount_lifetime_init(refcount_t *r, "
+            "unsigned int usage);",
+        "forward_decls": [
+            "typedef struct refcount_struct refcount_t;",
+        ],
+    },
+    # aead doesn't have a ghost-state-bootstrap need that survives
+    # per-file synthesis today: its predicate `sgl_all_user_writable`
+    # walks a scatterlist attached to req->dst and checks each page's
+    # provenance via the page_provenance ghost table.  Without
+    # materialising a concrete SGL (kernel scatterlist layout is
+    # version-specific and not trivially fabricable from a typedef),
+    # per-file synthesis would either yield trivially-vacuous results
+    # or fail at compile time.  --per-file on an aead hit therefore
+    # falls through to the adapter-needed fallback; the aead
+    # direct-call harness under scan/adapters/ remains the supported
+    # path for aead.
 }
 
 
@@ -279,11 +312,20 @@ def synthesise(module: str, source: Path, function: str,
     # path.
     C_RESERVED = {
         "char", "short", "int", "long", "signed", "unsigned",
-        "float", "double", "void", "_Bool", "const", "volatile",
+        "float", "double", "void", "_Bool", "bool", "const", "volatile",
         "restrict", "static", "inline", "extern", "register",
         "struct", "union", "enum", "typedef", "auto", "sizeof",
         "return", "goto", "_Atomic", "__restrict", "__inline",
         "__inline__", "__attribute__",
+        # Common C99/POSIX/kernel typedefs that CBMC's bootstrap
+        # headers or the kernel TU already provide.  Without
+        # excluding them, our `typedef char <name>;` fallback
+        # would re-typedef them and trigger
+        # "type symbol '<name>' defined twice".
+        "size_t", "ssize_t", "ptrdiff_t", "intptr_t", "uintptr_t",
+        "int8_t", "int16_t", "int32_t", "int64_t",
+        "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+        "true", "false", "NULL",
     }
     # Identifiers the forward_decls block or ghost_init_decl
     # already declared explicitly — don't re-typedef those.

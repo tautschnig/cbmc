@@ -1100,6 +1100,8 @@ def find_enclosing_function(source: Path, line_number: int) -> str | None:
 _PER_FILE_SUPPORTED_MODULES = {
     "cred_lifetime",
     "pipe_buffer",
+    "lock_state",
+    "refcount_lifetime",
 }
 
 

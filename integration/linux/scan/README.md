@@ -99,11 +99,18 @@ prefilter hit, scan.py
 wins over `successful`.  The regression test lives at
 [`scan/test-per-file-mode.sh`](test-per-file-mode.sh).
 
-Supported modules: `cred_lifetime`, `pipe_buffer`.  Extending to
-other modules requires a small config block in
-`scan/synthesise_harness.py` `MODULE_GHOST_BOOTSTRAP` plus a
-default `contract_targets` list (`scan.py` picks these up from
-its existing `CONTRACT_FUNCTIONS` dict automatically).
+Supported modules: `cred_lifetime`, `pipe_buffer`, `lock_state`,
+`refcount_lifetime`.  Extending to other modules requires a small
+config block in `scan/synthesise_harness.py`
+`MODULE_GHOST_BOOTSTRAP` plus a default `contract_targets` list
+(`scan.py` picks these up from its existing `CONTRACT_FUNCTIONS`
+dict automatically).  `aead` is deliberately not included because
+its predicate (`sgl_all_user_writable`) walks a concrete
+scatterlist attached to `req->dst`, which cannot be fabricated
+from a single `aead_request *` parameter without replicating the
+kernel's version-specific scatterlist layout — the aead
+direct-call harness under `scan/adapters/` remains the supported
+path for that module.
 
 Per-file mode is opt-in because it is substantially slower (a
 fresh cbmc invocation per enclosing function) and because
