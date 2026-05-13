@@ -170,12 +170,39 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         result = if_exprt{cond, index_exprt{vals, idx}, result};
         found = or_exprt{found, cond};
       }
-      // KeyError if key not found
-      add_check(
-        found,
-        "exception",
-        "KeyError: key not found in dict",
-        get_location(expr));
+      // KeyError if key not found — unless the dict has a
+      // guaranteed-present key matching this slice (from the
+      // 'if K not in D: D[K] = ...' idiom tracked earlier).
+      bool skip_key_check = false;
+      if(value.id() == ID_symbol)
+      {
+        irep_idt dict_id = to_symbol_expr(value).get_identifier();
+        auto gki = dict_guaranteed_keys.find(dict_id);
+        if(gki != dict_guaranteed_keys.end())
+        {
+          // Build structural key of the slice AST for comparison.
+          const jsont &slice_ast = json_member(expr, "slice");
+          std::string slice_key;
+          if(is_node_type(slice_ast, "Name"))
+            slice_key = "Name:" + json_string(json_member(slice_ast, "id"));
+          else if(is_node_type(slice_ast, "Constant"))
+          {
+            const jsont &cv = json_member(slice_ast, "value");
+            if(cv.is_string())
+              slice_key = "Const:" + cv.value;
+          }
+          if(!slice_key.empty() && gki->second.count(slice_key) > 0)
+            skip_key_check = true;
+        }
+      }
+      if(!skip_key_check)
+      {
+        add_check(
+          found,
+          "exception",
+          "KeyError: key not found in dict",
+          get_location(expr));
+      }
       return result;
     }
   }

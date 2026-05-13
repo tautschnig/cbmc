@@ -329,6 +329,13 @@ private:
   /// declared return annotation — otherwise our inferred default
   /// (int) produces spurious mismatches.
   std::set<std::string> annotated_return_functions;
+  /// Path-sensitive dict-key tracking: after an 'if K not in D:
+  /// D[K] = default' idiom, K is guaranteed to be in D (either
+  /// added by the body or already present). We record the
+  /// (dict symbol, key AST string) pairs so subsequent
+  /// D[K'] subscript reads can skip the KeyError check when
+  /// K' structurally matches a guaranteed key.
+  std::map<irep_idt, std::set<std::string>> dict_guaranteed_keys;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.
