@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*assigned value's type does not match declared type of 'x'
+--
+^warning: ignoring

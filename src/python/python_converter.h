@@ -308,6 +308,12 @@ private:
   /// without triggering the regex/length assertions that
   /// overwhelm the string refinement solver.
   std::map<std::string, std::vector<std::string>> typed_dict_required;
+  /// Set of function names (qualified) whose 'returns' annotation
+  /// was explicitly provided. Used by convert_return to emit an
+  /// annotation-mismatch property only when the function HAS a
+  /// declared return annotation — otherwise our inferred default
+  /// (int) produces spurious mismatches.
+  std::set<std::string> annotated_return_functions;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.
@@ -415,6 +421,20 @@ private:
     const std::string &property_class,
     const std::string &comment,
     const source_locationt &loc);
+
+  /// PLR semantic correctness: detect cases where a value's
+  /// statically-known type is incompatible with a declared
+  /// annotation. Python doesn't enforce annotations at runtime,
+  /// but when a mismatch exists, downstream operations (e.g.
+  /// 'str_val + int_val' after 'x: int = "hello"') will raise
+  /// TypeError at runtime. Since our value-tracking trusts the
+  /// annotation, we miss those TypeErrors — adding an explicit
+  /// property at the annotation site restores soundness.
+  /// Returns true when 'actual' and 'declared' are concrete
+  /// types in mutually-exclusive categories (e.g. str vs int).
+  /// Tagged-union (Any) on either side returns false (duck-typed).
+  bool annotation_types_incompatible(const typet &declared, const typet &actual)
+    const;
 
   /// Get the qualified symbol name for a variable, respecting
   /// function scope and 'global' declarations.

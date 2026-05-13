@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*returned value's type does not match declared return annotation
+--
+^warning: ignoring
