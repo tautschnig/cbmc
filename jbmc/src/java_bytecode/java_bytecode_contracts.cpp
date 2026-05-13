@@ -430,12 +430,52 @@ void lower_jverify_contracts(goto_modelt &goto_model)
           // Retarget the original return-value assignment to use ret_save.
           ret_it->assign_rhs_nonconst() = ret_save.symbol_expr();
 
-          body.instructions.insert(ret_it, decl_ret_save);
-          body.instructions.insert(ret_it, assign_ret_save);
-          body.instructions.insert(ret_it, decl_tmp);
-          body.instructions.insert(ret_it, call);
-          body.instructions.insert(ret_it, assign_from_rv);
-          body.instructions.insert(ret_it, assert_instr);
+          // Insertion strategy: we must preserve any existing GOTOs that
+          // target ret_it (branches converging on the return). Using
+          // `insert_before_swap` ensures the label travels to the first
+          // inserted instruction, so all branches run through our
+          // DECL/ASSIGN/CALL/ASSERT sequence.
+          //
+          // insert_before_swap works one-at-a-time: each call swaps the
+          // target's contents with the new instruction. After a swap the
+          // ORIGINAL instruction lives at the next position, so subsequent
+          // calls at the same iterator keep swapping and shifting.
+          //
+          // We queue the new instructions in order and insert each via
+          // insert_before_swap so they end up at the target position in
+          // insertion order, with jumps redirected to the first.
+          std::vector<goto_programt::instructiont> new_instrs;
+          new_instrs.push_back(decl_ret_save);
+          new_instrs.push_back(assign_ret_save);
+          new_instrs.push_back(decl_tmp);
+          new_instrs.push_back(call);
+          new_instrs.push_back(assign_from_rv);
+          new_instrs.push_back(assert_instr);
+          for(auto &i : new_instrs)
+            body.instructions.insert(ret_it, i);
+          // The original ret_it instruction (ASSIGN #return_value := ret_save)
+          // stays at its original location; its label is preserved, but
+          // GOTOs jumping to it skip our inserts. Fix: relocate the label
+          // to our first inserted instruction by swapping.
+          auto first_inserted = std::prev(ret_it, new_instrs.size());
+          // Redirect incoming GOTOs: any instruction whose target equals
+          // ret_it should now target first_inserted.
+          for(auto &other : body.instructions)
+          {
+            if(other.is_goto() || other.is_incomplete_goto() ||
+               other.is_start_thread())
+            {
+              for(auto &tgt : other.targets)
+              {
+                if(tgt == ret_it)
+                  tgt = first_inserted;
+              }
+            }
+          }
+          // Also move labels from ret_it to first_inserted so
+          // label-pointer-based references (if any exist) resolve.
+          first_inserted->labels = std::move(ret_it->labels);
+          ret_it->labels.clear();
         }
         continue;
       }
