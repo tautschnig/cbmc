@@ -82,19 +82,52 @@ void lower_jverify_contracts(goto_modelt &goto_model)
 
       const auto &args = it->call_arguments();
 
-      // For calls with no boolean argument (lambda postconditions, decreases),
-      // just remove the call.
-      if(args.empty() || kind == jverify_contract_kindt::DECREASES)
+      // DECREASES without args is empty (shouldn't happen for decreases(int)
+      // but handle gracefully); just remove.
+      if(args.empty())
       {
         it->turn_into_skip();
         continue;
       }
 
-      exprt condition = args[0];
+      exprt condition;
+      source_locationt loc = it->source_location();
+
+      if(kind == jverify_contract_kindt::DECREASES)
+      {
+        // F3: `JVerify.decreases(E)` asserts the well-foundedness
+        // precondition E >= 0 at this point. Strict-decrease tracking
+        // across iterations (E_{i+1} < E_i) is not enforced here; BMC's
+        // unwinding provides an implicit bound. For explicit
+        // strict-decrease checks attach a loop invariant manually.
+        //
+        // If multiple values are passed (lexicographic ordering),
+        // assert non-negativity of each.
+        if(args.size() == 1)
+        {
+          condition = binary_relation_exprt(
+            args[0], ID_ge, from_integer(0, args[0].type()));
+        }
+        else
+        {
+          // Lexicographic: for the first iteration's correctness proof
+          // it suffices that each component is non-negative.
+          exprt::operandst conjuncts;
+          for(const auto &arg : args)
+            conjuncts.push_back(binary_relation_exprt(
+              arg, ID_ge, from_integer(0, arg.type())));
+          condition = conjunction(conjuncts);
+        }
+        loc.set_comment("JVerify decreases (non-negativity)");
+        loc.set_property_class("decreases");
+        *it = goto_programt::make_assertion(condition, loc);
+        continue;
+      }
+
+      condition = args[0];
       // Java boolean is represented as int in bytecode; cast to bool if needed
       if(condition.type().id() != ID_bool)
         condition = notequal_exprt(condition, from_integer(0, condition.type()));
-      source_locationt loc = it->source_location();
 
       switch(kind)
       {
