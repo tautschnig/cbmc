@@ -1038,11 +1038,29 @@ codet typescript_convertert::convert_statement(const jsont &node)
     // Detect Map/Set iteration
     bool is_map = false;
     bool is_set = false;
+    bool is_string = false;
     if(arr.type().id() == ID_struct)
     {
       const auto &tag = to_struct_type(arr.type()).get_tag();
       is_map = (tag == "typescript_class_Map");
       is_set = (tag == "typescript_class_Set");
+      is_string = (tag == "typescript_string");
+    }
+    // ES2024 §22.1.3.@@iterator: for-of on a string yields each
+    // UTF-16 code point as a single-character string. We don't
+    // currently model character-level iteration over our refined-
+    // string receiver; skip the loop (emit a no-op) rather than
+    // emitting a malformed body that crashes in simplify_member.
+    // Documented limitation — user code can rewrite via explicit
+    // indexing (`for(let i = 0; i < s.length; i++) s.charAt(i)`)
+    // when string iteration is needed.
+    if(is_string)
+    {
+      log.warning() << "for-of on a string receiver is not supported; "
+                    << "use indexed iteration (`for (let i = 0; i < s.length; "
+                    << "i++) s.charAt(i)`) instead. Treating as a no-op."
+                    << messaget::eom;
+      return code_skipt{};
     }
 
     // Create iterator variable
@@ -1571,6 +1589,18 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       if(!rhs.is_nil())
       {
         const symbolt &sym = symbol_table.lookup_ref(sym_id);
+        // Function → function-pointer: wrap in address_of, not
+        // typecast. `const f = foo; f()` needs f to hold the
+        // address of foo so the indirect call dispatches. A bare
+        // typecast of the code-typed symbol to code* leaves the
+        // value undefined from symex's perspective and the call
+        // reduces to a dereference-without-call.
+        if(
+          rhs.type().id() == ID_code && sym.type.id() == ID_pointer &&
+          to_pointer_type(sym.type).base_type().id() == ID_code)
+        {
+          rhs = address_of_exprt{rhs};
+        }
         if(rhs.type() != sym.type)
         {
           // If target is a union and source is a scalar, construct union struct
@@ -2297,8 +2327,25 @@ codet typescript_convertert::convert_while_statement(const jsont &node)
     pending_stmts.clear();
   }
 
+  // Body-pending: any pending_stmts produced by the body itself
+  // (e.g. bounds-check asserts from `arr[i]` inside the body) need
+  // to land INSIDE the loop so they re-run each iteration. Save
+  // the outer pending_stmts queue, swap in an empty one, convert
+  // the body, and then pull out the body's pending.
+  std::vector<codet> saved_pending;
+  saved_pending.swap(pending_stmts);
   codet body = convert_statement(json_member(node, "statement"));
-  if(cond_pending.empty())
+  std::vector<codet> body_pending;
+  if(!pending_stmts.empty())
+  {
+    for(auto &s : pending_stmts)
+      body_pending.push_back(std::move(s));
+    pending_stmts.clear();
+  }
+  // Restore outer pending so enclosing context drains them.
+  for(auto &s : saved_pending)
+    pending_stmts.push_back(std::move(s));
+  if(cond_pending.empty() && body_pending.empty())
   {
     code_whilet loop{cond, std::move(body)};
     loop.add_source_location() = get_location(node);
@@ -2308,9 +2355,14 @@ codet typescript_convertert::convert_while_statement(const jsont &node)
   code_blockt new_body;
   for(auto &s : cond_pending)
     new_body.add(std::move(s));
-  new_body.add(code_ifthenelset{not_exprt{cond}, code_breakt{}});
+  if(!cond_pending.empty())
+    new_body.add(code_ifthenelset{not_exprt{cond}, code_breakt{}});
+  for(auto &s : body_pending)
+    new_body.add(std::move(s));
   new_body.add(std::move(body));
-  code_whilet loop{true_exprt{}, std::move(new_body)};
+  code_whilet loop{
+    cond_pending.empty() ? cond : static_cast<exprt>(true_exprt{}),
+    std::move(new_body)};
   loop.add_source_location() = get_location(node);
   return std::move(loop);
 }
@@ -2344,28 +2396,140 @@ codet typescript_convertert::convert_for_statement(const jsont &node)
     }
   }
 
-  // Body + incrementor
-  code_blockt loop_body;
-  if(!cond_pending.empty())
-  {
-    // Lift cond's bounds-check stmts + an explicit `if(!cond) break`
-    // into the body so they re-run each iteration.
-    for(auto &s : cond_pending)
-      loop_body.add(std::move(s));
-    loop_body.add(code_ifthenelset{not_exprt{cond}, code_breakt{}});
-  }
-  loop_body.add(convert_statement(json_member(node, "statement")));
+  // Lower the incrementor to a side_effect_expr_assignt (or nil if
+  // there is no incrementor / the form isn't recognised). Using the
+  // side-effect form lets code_fort/goto_convert place the iter at
+  // the continue-target; that way `continue` inside the body runs
+  // the iter before rechecking the condition, matching spec. If we
+  // instead put a plain `code_expressiont(i + 1)` in the body, the
+  // update has no side effect and the loop diverges.
+  exprt iter_expr = nil_exprt{};
   const jsont &inc = json_member(node, "incrementor");
   if(inc.is_object())
   {
-    exprt inc_expr = convert_expression(inc);
-    if(!inc_expr.is_nil())
-      loop_body.add(code_expressiont{inc_expr});
+    std::string inc_kind = json_string(json_member(inc, "_kind"));
+    const source_locationt inc_loc = get_location(inc);
+    if(
+      inc_kind == "PostfixUnaryExpression" ||
+      inc_kind == "PrefixUnaryExpression")
+    {
+      std::string op = json_string(json_member(inc, "operator"));
+      if(op == "PlusPlusToken" || op == "MinusMinusToken")
+      {
+        exprt operand = convert_expression(json_member(inc, "operand"));
+        if(!operand.is_nil())
+        {
+          exprt one = from_integer(1, operand.type());
+          exprt new_val = (op == "PlusPlusToken")
+                            ? exprt{plus_exprt{operand, one}}
+                            : exprt{minus_exprt{operand, one}};
+          iter_expr = side_effect_expr_assignt{operand, new_val, inc_loc};
+        }
+      }
+    }
+    else if(inc_kind == "BinaryExpression")
+    {
+      std::string op = json_string(json_member(inc, "operator"));
+      exprt lhs = convert_expression(json_member(inc, "left"));
+      exprt rhs = convert_expression(json_member(inc, "right"));
+      if(!lhs.is_nil() && !rhs.is_nil())
+      {
+        if(rhs.type() != lhs.type())
+          rhs = typecast_exprt{rhs, lhs.type()};
+        exprt new_val = rhs;
+        if(op == "PlusEqualsToken")
+          new_val = plus_exprt{lhs, rhs};
+        else if(op == "MinusEqualsToken")
+          new_val = minus_exprt{lhs, rhs};
+        else if(op == "AsteriskEqualsToken")
+          new_val = mult_exprt{lhs, rhs};
+        else if(op == "SlashEqualsToken")
+          new_val = div_exprt{lhs, rhs};
+        if(new_val.type() != lhs.type())
+          new_val = typecast_exprt{new_val, lhs.type()};
+        iter_expr = side_effect_expr_assignt{lhs, new_val, inc_loc};
+      }
+    }
+    // Other incrementor forms (comma-expressions, general side-
+    // effecting calls) are not common; if we can't lower to a
+    // side-effect assign we fall back to a plain expression
+    // evaluation. This matches the old behaviour for those cases.
+    if(iter_expr.is_nil())
+    {
+      exprt plain = convert_expression(inc);
+      if(!plain.is_nil())
+        iter_expr = plain;
+    }
   }
 
-  code_whilet loop{
-    cond_pending.empty() ? cond : static_cast<exprt>(true_exprt{}),
-    std::move(loop_body)};
+  // Fast path: no bounds-check pending from the condition. Emit a
+  // standard code_fort(init-done-above, cond, iter, body). GOTO
+  // conversion places `iter` at the continue-target.
+  //
+  // Wrap the body so body-generated pending_stmts (e.g. array
+  // bounds-check asserts from `arr[i]` accesses inside the body)
+  // end up INSIDE the loop body. Otherwise they leak to the
+  // enclosing block and the check fires once after the loop with
+  // the post-exit value of the loop index, producing a spurious
+  // bounds violation.
+  code_blockt body_block;
+  std::vector<codet> saved_pending;
+  saved_pending.swap(pending_stmts);
+  codet body = convert_statement(json_member(node, "statement"));
+  // Drain any pending stmts the body produced into the body_block,
+  // positioned BEFORE the body statement so bounds checks run at
+  // access time within each iteration. (The ordering matches the
+  // runtime semantics: the bounds check for arr[i] precedes the
+  // read, and the read happens during body execution.)
+  // Actually CBMC's convention is to emit the ASSERT before the
+  // use; placing pending before body matches this.
+  if(!pending_stmts.empty())
+  {
+    for(auto &s : pending_stmts)
+      body_block.add(std::move(s));
+    pending_stmts.clear();
+  }
+  body_block.add(std::move(body));
+  // Restore the previously-queued pending_stmts (from before this
+  // for-loop) so they'll be drained by the enclosing context.
+  for(auto &s : saved_pending)
+    pending_stmts.push_back(std::move(s));
+  if(cond_pending.empty())
+  {
+    // code_fort's init was already done above (block.add(init)) and
+    // we pass nil_exprt for init to avoid double execution.
+    code_fort loop{nil_exprt{}, cond, iter_expr, std::move(body_block)};
+    loop.add_source_location() = get_location(node);
+    block.add(std::move(loop));
+    return std::move(block);
+  }
+
+  // Slow path: condition has bounds-check pending stmts. Rewrite as
+  //   while(true) { <pending>; if(!cond) break; <body>; <iter>; }
+  // `continue` inside <body> still skips <iter> in this form. If we
+  // need to support continue-with-iter in the pending case, we can
+  // revisit with an explicit label. For now, flag this rarely-used
+  // combination.
+  code_blockt loop_body;
+  for(auto &s : cond_pending)
+    loop_body.add(std::move(s));
+  loop_body.add(code_ifthenelset{not_exprt{cond}, code_breakt{}});
+  loop_body.add(std::move(body_block));
+  if(iter_expr.is_not_nil())
+  {
+    if(
+      iter_expr.id() == ID_side_effect &&
+      to_side_effect_expr(iter_expr).get_statement() == ID_assign)
+    {
+      loop_body.add(code_frontend_assignt{
+        iter_expr.operands()[0], iter_expr.operands()[1]});
+    }
+    else
+    {
+      loop_body.add(code_expressiont{iter_expr});
+    }
+  }
+  code_whilet loop{static_cast<exprt>(true_exprt{}), std::move(loop_body)};
   loop.add_source_location() = get_location(node);
   block.add(std::move(loop));
   return std::move(block);
@@ -2391,6 +2555,16 @@ codet typescript_convertert::convert_return_statement(const jsont &node)
         if(fsym != nullptr && fsym->type.id() == ID_code)
         {
           typet ret_type = to_code_type(fsym->type).return_type();
+          // Function → function-pointer return: wrap in address_of,
+          // not typecast. Same reasoning as the convert_variable_
+          // statement fix above: a bare typecast leaves the value
+          // undefined at symex.
+          if(
+            val.type().id() == ID_code && ret_type.id() == ID_pointer &&
+            to_pointer_type(ret_type).base_type().id() == ID_code)
+          {
+            val = address_of_exprt{val};
+          }
           if(ret_type.id() != ID_empty && val.type() != ret_type)
             val = typecast_exprt(val, ret_type);
         }

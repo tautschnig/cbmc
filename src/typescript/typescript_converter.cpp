@@ -2043,8 +2043,9 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
           else
           {
             // If the value is an integer, format without decimal point.
-            ieee_floatt rounded = v;
-            rounded.round_to_integral();
+            // ieee_floatt::round_to_integral() returns a new value —
+            // it does not modify the receiver. Assign the result.
+            ieee_floatt rounded = v.round_to_integral();
             if(rounded == v)
             {
               mp_integer i = v.to_integer();
@@ -2527,24 +2528,35 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   if(op == "GreaterThanEqualsToken")
     return binary_relation_exprt{left, ID_ge, right};
 
-  // ES2024 sec-binary-logical-operators
-  if(op == "AmpersandAmpersandToken")
+  // ES2024 sec-binary-logical-operators (§13.13).
+  // && and || are short-circuit operators that return one of the
+  // operand values (not a boolean), with the selection based on
+  // ToBoolean of the left operand. `1 && 42` returns 42, not `true`.
+  if(op == "AmpersandAmpersandToken" || op == "BarBarToken")
   {
-    exprt l =
+    exprt l_bool =
       left.type().id() == ID_bool ? left : typecast_exprt{left, bool_typet{}};
-    exprt r = right.type().id() == ID_bool
-                ? right
-                : typecast_exprt{right, bool_typet{}};
-    return and_exprt{l, r};
-  }
-  if(op == "BarBarToken")
-  {
-    exprt l =
-      left.type().id() == ID_bool ? left : typecast_exprt{left, bool_typet{}};
-    exprt r = right.type().id() == ID_bool
-                ? right
-                : typecast_exprt{right, bool_typet{}};
-    return or_exprt{l, r};
+    // If the two operands have the same type, we can emit a simple
+    // if-expression selecting between them. That covers the common
+    // number && number / string || string cases. Otherwise fall
+    // back to a boolean result (the old behaviour) — rare in typed
+    // TS code since the result type would be a union.
+    if(left.type() == right.type())
+    {
+      // && returns right when left is truthy, else left.
+      // || returns left when left is truthy, else right.
+      if(op == "AmpersandAmpersandToken")
+        return if_exprt{l_bool, right, left};
+      else
+        return if_exprt{l_bool, left, right};
+    }
+    exprt r_bool = right.type().id() == ID_bool
+                     ? right
+                     : typecast_exprt{right, bool_typet{}};
+    if(op == "AmpersandAmpersandToken")
+      return and_exprt{l_bool, r_bool};
+    else
+      return or_exprt{l_bool, r_bool};
   }
 
   // ES2024 sec-assignment-operators: simple assignment

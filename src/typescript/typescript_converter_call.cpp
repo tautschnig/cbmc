@@ -71,7 +71,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           // Negate and stringify
           v.negate();
           ieee_floatt rounded = v;
-          rounded.round_to_integral();
+          rounded = rounded.round_to_integral();
           if(rounded == v)
           {
             mp_integer i = v.to_integer();
@@ -90,7 +90,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(v.is_NaN() || v.is_infinity())
             return std::string("null");
           ieee_floatt rounded = v;
-          rounded.round_to_integral();
+          rounded = rounded.round_to_integral();
           if(rounded == v)
           {
             mp_integer i = v.to_integer();
@@ -3530,14 +3530,45 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return symbol_exprt{res_id, double_type()};
       }
     }
-    // ES2024 sec-array.prototype.includes
-    // Array.includes: check if element exists
+    // ES2024 §23.1.3.12: Array.prototype.includes(searchElement,
+    // fromIndex). Negative fromIndex adds length; result clamped to
+    // [0, length]. Uses SameValueZero (treats +0 === -0 and NaN ===
+    // NaN); we approximate with strict === since our number model
+    // doesn't distinguish these.
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
       method == "includes" && args.is_array() && !to_json_array(args).empty())
     {
-      exprt target = convert_expression(*to_json_array(args).begin());
+      const auto &arg_arr = to_json_array(args);
+      auto it = arg_arr.begin();
+      exprt target = convert_expression(*it++);
+      int from_idx_val = 0;
+      bool from_idx_specified = false;
+      if(it != arg_arr.end())
+      {
+        exprt v = convert_expression(*it);
+        from_idx_specified = true;
+        if(v.is_constant() && v.type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(v));
+          from_idx_val = static_cast<int>(std::stod(fv.to_ansi_c_string()));
+        }
+        else if(
+          v.id() == ID_unary_minus && !v.operands().empty() &&
+          v.operands()[0].is_constant() &&
+          v.operands()[0].type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(v.operands()[0]));
+          from_idx_val = -static_cast<int>(std::stod(fv.to_ansi_c_string()));
+        }
+      }
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
       {
@@ -3552,9 +3583,18 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(src.operands()[0].is_constant())
           to_integer(to_constant_expr(src.operands()[0]), len);
         const exprt &data = src.operands()[1];
-        // OR together equality checks for each element
+        int start = 0;
+        if(from_idx_specified)
+        {
+          start = from_idx_val;
+          if(start < 0)
+            start += len.to_long();
+          if(start < 0)
+            start = 0;
+        }
+        // OR together equality checks for each element from start.
         exprt result = false_exprt{};
-        for(mp_integer i = 0; i < len; ++i)
+        for(mp_integer i = start; i < len; ++i)
         {
           auto idx = i.to_ulong();
           if(idx >= data.operands().size())
@@ -3626,7 +3666,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             }
           }
         }
-        if(!result.empty())
+        // ES2024 §23.1.3.15: empty array joins to the empty string
+        // (not to the separator). Always return the constant literal
+        // when we got through the constant-folding path, even if the
+        // accumulated string is empty.
+        if(len == 0 || !result.empty())
           return convert_string_literal_from_text(result);
       }
       // Fallback for non-constant string arrays: build result by copying
@@ -4275,13 +4319,15 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return new_arr;
       }
     }
-    // Array.concat: concatenate two arrays
+    // ES2024 §23.1.3.2: Array.prototype.concat(...args).
+    // For each arg, if it is an Array (Symbol.isConcatSpreadable
+    // defaults to true for arrays), spread its elements one level.
+    // Otherwise push the arg as-is. Multiple args accepted.
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
       to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
-      method == "concat" && args.is_array() && !to_json_array(args).empty())
+      method == "concat" && args.is_array())
     {
-      exprt other = convert_expression(*to_json_array(args).begin());
       exprt src = obj_expr;
       if(src.id() == ID_symbol)
       {
@@ -4290,24 +4336,12 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         if(s && !s->value.is_nil())
           src = s->value;
       }
-      if(other.id() == ID_symbol)
+      if(src.id() == ID_struct && src.operands().size() >= 2)
       {
-        const symbolt *s =
-          symbol_table.lookup(to_symbol_expr(other).get_identifier());
-        if(s && !s->value.is_nil())
-          other = s->value;
-      }
-      if(
-        src.id() == ID_struct && other.id() == ID_struct &&
-        src.operands().size() >= 2 && other.operands().size() >= 2)
-      {
-        mp_integer len1{0}, len2{0};
+        mp_integer len1{0};
         if(src.operands()[0].is_constant())
           to_integer(to_constant_expr(src.operands()[0]), len1);
-        if(other.operands()[0].is_constant())
-          to_integer(to_constant_expr(other.operands()[0]), len2);
         const exprt &d1 = src.operands()[1];
-        const exprt &d2 = other.operands()[1];
         exprt::operandst combined;
         typet elem_type = double_type();
         for(mp_integer i = 0; i < len1; ++i)
@@ -4319,23 +4353,66 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             combined.push_back(d1.operands()[idx]);
           }
         }
-        for(mp_integer i = 0; i < len2; ++i)
+        // Iterate every argument and spread arrays one level.
+        bool concat_ok = true;
+        for(const auto &arg_node : to_json_array(args))
         {
-          auto idx = i.to_ulong();
-          if(idx < d2.operands().size())
-            combined.push_back(d2.operands()[idx]);
+          exprt arg_expr = convert_expression(arg_node);
+          if(arg_expr.id() == ID_symbol)
+          {
+            const symbolt *as =
+              symbol_table.lookup(to_symbol_expr(arg_expr).get_identifier());
+            if(as && !as->value.is_nil())
+              arg_expr = as->value;
+          }
+          if(
+            arg_expr.type().id() == ID_struct &&
+            to_struct_type(arg_expr.type()).get_tag() == "typescript_array" &&
+            arg_expr.id() == ID_struct && arg_expr.operands().size() >= 2)
+          {
+            mp_integer len2{0};
+            if(arg_expr.operands()[0].is_constant())
+              to_integer(to_constant_expr(arg_expr.operands()[0]), len2);
+            const exprt &d2 = arg_expr.operands()[1];
+            for(mp_integer i = 0; i < len2; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx < d2.operands().size())
+                combined.push_back(d2.operands()[idx]);
+            }
+          }
+          else if(
+            arg_expr.type().id() == ID_struct &&
+            to_struct_type(arg_expr.type()).get_tag() == "typescript_array")
+          {
+            // Non-literal array (symbolic). We can't spread at
+            // conversion time; bail and leave to the fallback.
+            concat_ok = false;
+            break;
+          }
+          else if(!arg_expr.is_nil())
+          {
+            // Scalar or other element type — coerce to the array's
+            // element type where possible, then push.
+            if(arg_expr.type() != elem_type)
+              arg_expr = typecast_exprt{arg_expr, elem_type};
+            combined.push_back(arg_expr);
+          }
         }
-        std::size_t actual = combined.size();
-        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
-        while(combined.size() < max_len)
-          combined.push_back(from_integer(0, elem_type));
-        array_typet arr_type{
-          elem_type, from_integer(max_len, signedbv_typet{64})};
-        struct_typet list_type = make_array_struct_type(arr_type);
-        return struct_exprt{
-          {from_integer(actual, signedbv_typet{64}),
-           array_exprt{std::move(combined), arr_type}},
-          list_type};
+        if(concat_ok)
+        {
+          std::size_t actual = combined.size();
+          std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+          while(combined.size() < max_len)
+            combined.push_back(from_integer(0, elem_type));
+          array_typet arr_type{
+            elem_type, from_integer(max_len, signedbv_typet{64})};
+          struct_typet list_type = make_array_struct_type(arr_type);
+          return struct_exprt{
+            {from_integer(actual, signedbv_typet{64}),
+             array_exprt{std::move(combined), arr_type}},
+            list_type};
+        }
       }
     }
     // ES2024 sec-array.prototype.indexof

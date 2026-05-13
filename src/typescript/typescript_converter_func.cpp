@@ -307,9 +307,28 @@ void typescript_convertert::convert_module_body(const jsont &statements)
   // Integer type inference: determine which variables can use integer types
   infer_integer_types(statements);
 
-  // Pre-scan: collect all function names that are called anywhere
-  // in the module body (to skip converting unused functions)
+  // Pre-scan: collect all function names that are called or
+  // otherwise referenced anywhere in the module body (to skip
+  // converting unused functions). A function may be referenced by
+  // name without being directly called — e.g. `const g = f; g(x)`
+  // or `arr.forEach(f)` — so we cannot limit the scan to
+  // CallExpression callees. Any Identifier whose text matches a
+  // top-level function name is treated as a reference.
   std::set<std::string> called_names;
+  // First, enumerate top-level function-declaration names. We use
+  // this as a filter: only identifiers matching one of these count
+  // as function references (so we don't falsely trigger on every
+  // variable name).
+  std::set<std::string> top_level_fn_names;
+  for(const auto &s : to_json_array(statements))
+  {
+    if(json_string(json_member(s, "_kind")) == "FunctionDeclaration")
+    {
+      std::string n = json_string(json_member(json_member(s, "name"), "text"));
+      if(!n.empty())
+        top_level_fn_names.insert(n);
+    }
+  }
   std::function<void(const jsont &)> scan_calls = [&](const jsont &node)
   {
     if(!node.is_object())
@@ -321,6 +340,16 @@ void typescript_convertert::convert_module_body(const jsont &statements)
       std::string ck = json_string(json_member(ce, "_kind"));
       if(ck == "Identifier")
         called_names.insert(json_string(json_member(ce, "text")));
+    }
+    // Also: bare Identifier references to top-level function names.
+    // These cover `const g = f`, `cb(f)`, `return f`, etc. We only
+    // count identifiers that match a known top-level function so
+    // that we don't over-expand the conversion set.
+    if(nk == "Identifier")
+    {
+      std::string text = json_string(json_member(node, "text"));
+      if(top_level_fn_names.count(text))
+        called_names.insert(text);
     }
     // Recurse into all object members
     if(node.is_object())
