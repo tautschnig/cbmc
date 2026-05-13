@@ -278,9 +278,18 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         "mutex_unlock",
     ],
     "refcount_lifetime": [
-        # refcount_dec_and_test is an ordinary `extern bool` in
-        # <linux/refcount.h> — not static inline — so the
-        # external name is all we need.
+        # refcount_dec_and_test is `static inline __must_check` in
+        # <linux/refcount.h> in modern kernels, so each kernel TU
+        # exposes it as `__CPROVER_file_local_refcount_h_refcount_
+        # dec_and_test` under goto-cc --export-file-local-symbols.
+        # The external form is still needed for the direct-call
+        # harness.  __refcount_dec_and_test (the static inline
+        # helper refcount_dec_and_test wraps) is also mangled;
+        # some kernel paths call it directly.  Apply the contract
+        # to all three so whichever form the link produces fires
+        # the precondition at the call site.
+        "__CPROVER_file_local_refcount_h_refcount_dec_and_test",
+        "__CPROVER_file_local_refcount_h___refcount_dec_and_test",
         "refcount_dec_and_test",
     ],
     "alloc_tag": [
