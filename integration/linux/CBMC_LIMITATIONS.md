@@ -817,7 +817,7 @@ commit removes).  Other scan-compat.h overrides
 `__must_be_cstr`) remain in place — they address separate
 kernel idioms that the front-end still doesn't handle.
 
-## LIM-015 — further 6.x build failures on specific files [OPEN]
+## LIM-015 — further 6.x build failures on specific files [RESOLVED]
 
 **First hit:** Phase 2 task 4 corpus check on Linux 6.6 after
 LIM-014's workarounds landed.  Two files that build on 5.10
