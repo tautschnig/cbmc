@@ -1355,7 +1355,14 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // TypedDict. This catches 'missing required argument'
           // bugs without triggering the regex/length assertions
           // that overwhelm the string refinement solver.
-          if(skip_body && !unpack_td_name.empty() && !kwargs_param_name.empty())
+          //
+          // Opt-in via --python-required-kwarg-checks: callers
+          // that use **dict spread don't currently populate
+          // kwargs reliably, which produces FPs for spread-based
+          // callers.
+          if(
+            skip_body && python_required_kwarg_checks &&
+            !unpack_td_name.empty() && !kwargs_param_name.empty())
           {
             auto ri = typed_dict_required.find(unpack_td_name);
             if(ri != typed_dict_required.end() && !ri->second.empty())
