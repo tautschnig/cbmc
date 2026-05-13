@@ -2775,6 +2775,59 @@ exprt python_convertert::convert_call(const jsont &expr)
             {
               std::string kw_name = json_string(json_member(kw, "arg"));
               exprt kw_val = convert_expression(json_member(kw, "value"));
+              // PEP 448: f(**d) — expand known dict-literal
+              // contents into individual kw entries.
+              if(kw_name.empty())
+              {
+                const exprt *lit = nullptr;
+                if(kw_val.id() == ID_struct && kw_val.operands().size() >= 3)
+                  lit = &kw_val;
+                else if(kw_val.id() == ID_symbol)
+                {
+                  auto it =
+                    dict_literals.find(to_symbol_expr(kw_val).get_identifier());
+                  if(it != dict_literals.end())
+                    lit = &it->second;
+                }
+                if(
+                  lit != nullptr && lit->operands().size() >= 3 &&
+                  lit->operands()[0].is_constant())
+                {
+                  mp_integer len_val;
+                  if(!to_integer(to_constant_expr(lit->operands()[0]), len_val))
+                  {
+                    const exprt &keys_arr = lit->operands()[1];
+                    const exprt &vals_arr = lit->operands()[2];
+                    std::size_t n = len_val.to_ulong();
+                    for(std::size_t ii = 0;
+                        ii < n && ii < keys_arr.operands().size();
+                        ii++)
+                    {
+                      auto kv = extract_string_value(keys_arr.operands()[ii]);
+                      if(!kv.has_value())
+                        continue;
+                      bool mm = false;
+                      for(std::size_t jj = 0; jj < mparams.size(); jj++)
+                      {
+                        if(id2string(mparams[jj].get_base_name()) == kv.value())
+                        {
+                          arguments[jj] = vals_arr.operands()[ii];
+                          mm = true;
+                          break;
+                        }
+                      }
+                      if(!mm)
+                        unmatched.push_back(
+                          {kv.value(), vals_arr.operands()[ii]});
+                    }
+                    continue;
+                  }
+                }
+                log_overapprox(
+                  "**dict spread of non-literal dict in method call — "
+                  "kwargs under-populated");
+                continue;
+              }
               bool matched = false;
               for(std::size_t i = 0; i < mparams.size(); i++)
               {
@@ -5562,6 +5615,62 @@ exprt python_convertert::convert_call(const jsont &expr)
     {
       std::string kw_name = json_string(json_member(kw, "arg"));
       exprt kw_val = convert_expression(json_member(kw, "value"));
+
+      // PEP 448: f(**d) — kw_name is empty. Spread the dict's
+      // known keys into individual entries. If the dict's
+      // content isn't known at conversion time, register a
+      // single nondet entry under the name '*' to signal
+      // 'kwargs may have arbitrary extra keys'.
+      if(kw_name.empty())
+      {
+        const exprt *lit = nullptr;
+        if(kw_val.id() == ID_struct && kw_val.operands().size() >= 3)
+          lit = &kw_val;
+        else if(kw_val.id() == ID_symbol)
+        {
+          auto it = dict_literals.find(to_symbol_expr(kw_val).get_identifier());
+          if(it != dict_literals.end())
+            lit = &it->second;
+        }
+        if(
+          lit != nullptr && lit->operands().size() >= 3 &&
+          lit->operands()[0].is_constant())
+        {
+          mp_integer len_val;
+          if(!to_integer(to_constant_expr(lit->operands()[0]), len_val))
+          {
+            const exprt &keys_arr = lit->operands()[1];
+            const exprt &vals_arr = lit->operands()[2];
+            std::size_t n = len_val.to_ulong();
+            for(std::size_t i = 0; i < n && i < keys_arr.operands().size(); i++)
+            {
+              auto kv = extract_string_value(keys_arr.operands()[i]);
+              if(!kv.has_value())
+                continue;
+              // Try matching against params, else add to
+              // unmatched_kw for packing.
+              bool matched = false;
+              for(std::size_t j = 0; j < params.size(); j++)
+              {
+                if(id2string(params[j].get_base_name()) == kv.value())
+                {
+                  arguments[j] = vals_arr.operands()[i];
+                  matched = true;
+                  break;
+                }
+              }
+              if(!matched)
+                unmatched_kw.push_back({kv.value(), vals_arr.operands()[i]});
+            }
+            continue;
+          }
+        }
+        // Unknown dict contents: skip (over-approx — kwargs
+        // will miss these, required-kwarg checks may FP).
+        log_overapprox(
+          "**dict spread of non-literal dict — kwargs left under-populated");
+        continue;
+      }
 
       bool matched = false;
       for(std::size_t i = 0; i < params.size(); i++)
