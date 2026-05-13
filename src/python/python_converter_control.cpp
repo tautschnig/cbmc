@@ -47,6 +47,78 @@ codet python_convertert::convert_assert(const jsont &stmt)
 // "The if statement is used for conditional execution."
 codet python_convertert::convert_if(const jsont &stmt)
 {
+  // PLR data flow: recognize the idiom
+  //     if K not in D:
+  //         D[K] = default_value
+  // After the if, K is guaranteed to be in D in both branches
+  // (body-path inserted it; else-path already had it).
+  // Record (D, structural-key-of-K) in dict_guaranteed_keys so
+  // subsequent D[K'] subscript reads with structurally-matching
+  // K' can skip the KeyError check.
+  {
+    const jsont &test_node = json_member(stmt, "test");
+    if(is_node_type(test_node, "Compare"))
+    {
+      const jsont &ops = json_member(test_node, "ops");
+      const jsont &comps = json_member(test_node, "comparators");
+      if(
+        ops.is_array() && comps.is_array() && as_array(ops).size() == 1 &&
+        as_array(comps).size() == 1 &&
+        is_node_type(*as_array(ops).begin(), "NotIn"))
+      {
+        const jsont &key_ast = json_member(test_node, "left");
+        const jsont &dict_ast = *as_array(comps).begin();
+        if(is_node_type(dict_ast, "Name"))
+        {
+          std::string dict_name = json_string(json_member(dict_ast, "id"));
+          irep_idt dict_id{qualify_name(dict_name)};
+          // Check first statement of body is
+          // 'D[same-K] = something'.
+          const jsont &body = json_member(stmt, "body");
+          if(body.is_array() && !as_array(body).empty())
+          {
+            const jsont &first = *as_array(body).begin();
+            if(is_node_type(first, "Assign"))
+            {
+              const jsont &targets = json_member(first, "targets");
+              if(targets.is_array() && !as_array(targets).empty())
+              {
+                const jsont &target0 = *as_array(targets).begin();
+                if(is_node_type(target0, "Subscript"))
+                {
+                  const jsont &tvalue = json_member(target0, "value");
+                  const jsont &tslice = json_member(target0, "slice");
+                  if(
+                    is_node_type(tvalue, "Name") &&
+                    json_string(json_member(tvalue, "id")) == dict_name)
+                  {
+                    // Compare structural key.
+                    auto ast_key = [&](const jsont &n) -> std::string
+                    {
+                      if(is_node_type(n, "Name"))
+                        return "Name:" + json_string(json_member(n, "id"));
+                      if(is_node_type(n, "Constant"))
+                      {
+                        const jsont &cv = json_member(n, "value");
+                        if(cv.is_string())
+                          return "Const:" + cv.value;
+                      }
+                      return std::string{};
+                    };
+                    std::string tk = ast_key(tslice);
+                    std::string kk = ast_key(key_ast);
+                    if(!tk.empty() && tk == kk)
+                      dict_guaranteed_keys[dict_id].insert(tk);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   exprt test = convert_expression(json_member(stmt, "test"));
   if(test.is_nil())
     return code_skipt{};
