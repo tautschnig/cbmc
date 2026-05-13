@@ -276,6 +276,14 @@ private:
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
+  /// Names whose import could not be resolved. Populated when
+  /// module_resolver returns nullptr for 'import X' or
+  /// 'from Y import ...'. Calls to these names should not
+  /// emit the no-body-for-callee property — the tool cannot
+  /// be sound about their bodies but the user typically
+  /// intends this as a benign over-approximation rather than
+  /// a bug.
+  std::set<std::string> unresolved_imports;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.

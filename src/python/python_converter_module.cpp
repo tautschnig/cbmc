@@ -509,6 +509,16 @@ bool python_convertert::convert()
               const jsont *mod_ast = module_resolver(name);
               if(mod_ast != nullptr && !mod_ast->is_null())
                 process_imported_module(name, *mod_ast);
+              else
+              {
+                // Import failed to resolve — mark the import
+                // alias (or module name) so subsequent calls
+                // to it skip the no-body property.
+                std::string alias_name =
+                  json_string(json_member(alias, "asname"));
+                unresolved_imports.insert(
+                  alias_name.empty() ? name : alias_name);
+              }
             }
           }
         }
@@ -521,6 +531,21 @@ bool python_convertert::convert()
           const jsont *mod_ast = module_resolver(module);
           if(mod_ast != nullptr && !mod_ast->is_null())
             process_imported_module(module, *mod_ast);
+          else
+          {
+            // 'from <module> import X, Y': register X and Y
+            // (or asnames) as unresolved names.
+            const jsont &names_arr = json_member(stmt, "names");
+            if(names_arr.is_array())
+            {
+              for(const auto &alias : as_array(names_arr))
+              {
+                std::string imp_name = json_string(json_member(alias, "name"));
+                std::string asn = json_string(json_member(alias, "asname"));
+                unresolved_imports.insert(asn.empty() ? imp_name : asn);
+              }
+            }
+          }
         }
       }
     }

@@ -5479,7 +5479,12 @@ exprt python_convertert::convert_call(const jsont &expr)
     log_overapprox(
       "function '" + func_name +
       "': no body known, returning nondet over-approximation");
-    if(!no_body_check)
+    // Suppress the no-body property for names that came from a
+    // failed-to-resolve import. The user can't provide a body
+    // for them and the tool can't be sound about their
+    // behaviour; treat the call as nondet (sound
+    // over-approximation) without flagging a property.
+    if(!no_body_check && unresolved_imports.count(func_name) == 0)
     {
       add_check(
         false_exprt{},
