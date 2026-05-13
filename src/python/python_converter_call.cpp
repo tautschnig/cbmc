@@ -2647,47 +2647,22 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
       if(obj_base_type.id() != ID_struct)
       {
-        // struct_tag: try missing-method detection against the
-        // tag name before falling through to nondet. The tag
-        // itself is typically "python_class_<Name>" or just
-        // "<Name>" for imported PySpec class stubs.
-        if(
-          obj_base_type.id() == ID_struct_tag && !python_lazy_stubs &&
-          method_name.substr(0, 2) != "__")
+        // struct_tag: resolve to the underlying struct type
+        // and fall through to the unified struct path below.
+        // This replaces an earlier dual-path duplication where
+        // struct_tag objects only got missing-method detection
+        // and not actual method dispatch.
+        if(obj_base_type.id() == ID_struct_tag)
         {
-          std::string stag =
-            id2string(to_struct_tag_type(obj_base_type).get_identifier());
-          if(stag.substr(0, 4) == "tag-")
-            stag = stag.substr(4);
-          std::string cls =
-            stag.substr(0, 13) == "python_class_" ? stag.substr(13) : stag;
-          if(class_types.count(cls) > 0)
-          {
-            irep_idt method_id{"python::" + cls + "::" + method_name};
-            if(symbol_table.lookup(method_id) == nullptr)
-            {
-              irep_idt exc_id{"python::__exception_active"};
-              if(symbol_table.lookup(exc_id) != nullptr)
-              {
-                code_blockt err_block;
-                err_block.add(code_frontend_assignt{
-                  symbol_table.lookup_ref(exc_id).symbol_expr(), true_exprt{}});
-                irep_idt etype_id{"python::__exception_type"};
-                if(symbol_table.lookup(etype_id) != nullptr)
-                {
-                  long h = exception_type_hash("AttributeError");
-                  err_block.add(code_frontend_assignt{
-                    symbol_table.lookup_ref(etype_id).symbol_expr(),
-                    from_integer(h, python_int_type())});
-                }
-                pending_checks.push_back(std::move(err_block));
-              }
-              log_overapprox(
-                "missing method " + cls + "::" + method_name +
-                " — raising AttributeError");
-            }
-          }
+          const auto &tagged = to_struct_tag_type(obj_base_type);
+          const symbolt *type_sym =
+            symbol_table.lookup(tagged.get_identifier());
+          if(type_sym != nullptr && type_sym->is_type)
+            obj_base_type = type_sym->type;
         }
+      }
+      if(obj_base_type.id() != ID_struct)
+      {
         return side_effect_expr_nondett{obj.type(), get_location(expr)};
       }
       const auto &st = to_struct_type(obj_base_type);
