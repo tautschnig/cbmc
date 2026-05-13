@@ -95,6 +95,7 @@ protected:
   bool python_lazy_stubs = false;
   bool python_no_exception_checks = false;
   bool python_required_kwarg_checks = false;
+  bool python_check_annotations = false;
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When

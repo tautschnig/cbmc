@@ -5873,7 +5873,7 @@ exprt python_convertert::convert_call(const jsont &expr)
           is_python_list_type(params[i].type()) &&
           !is_python_list_type(arguments[i].type());
         if(
-          !is_likely_vararg_collect &&
+          python_check_annotations && !is_likely_vararg_collect &&
           annotation_types_incompatible(params[i].type(), arguments[i].type()))
         {
           add_check(

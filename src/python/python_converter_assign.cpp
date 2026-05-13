@@ -122,7 +122,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     // PLR soundness: if the assigned value's type is obviously
     // incompatible with the declared annotation (e.g.
     // 'x: int = "hello"'), emit an annotation-mismatch property.
-    if(annotation_types_incompatible(sym2.type, rhs.type()))
+    // Gated by --python-check-annotations.
+    if(
+      python_check_annotations &&
+      annotation_types_incompatible(sym2.type, rhs.type()))
     {
       add_check(
         false_exprt{},
