@@ -22,7 +22,7 @@ the column shows `—`.
 | Feature | Status | Notes | Test(s) |
 |---------|--------|-------|---------|
 | Numeric literals | ⚠️ | BigInt not modeled | `number-methods`, `number-infinity` |
-| String literals | ✅ |  | `string-length`, `string-equality` |
+| String literals | ✅ | UTF-8 → UTF-16 decode added 2026-05-13 (BMP chars: 1 code unit, astral: 2 via surrogate pair) | `string-length`, `string-equality`, `spec3-string-utf8-bmp`, `spec3-string-utf16-astral` |
 | Boolean literals | ✅ |  | `boolean-logic`, `boolean-not` |
 | Template literals | ✅ | With interpolation | `template-literal`, `template-literal-complex` |
 | `undefined`, `null` | ✅ | Both modeled as NaN sentinel; nullish operators (`??`) work; optional chaining (`?.`) limited | `null-safety`, `null-union-function`, `nullish-coalescing` |
@@ -30,11 +30,11 @@ the column shows `—`.
 | Arithmetic operators | ✅ |  | `verify-modular-arithmetic`, `power-math` |
 | Comparison operators | ✅ | NaN handling per IEEE 754 | `number-comparison`, `nan-check-div` |
 | Logical operators | ✅ |  | `boolean-logic` |
-| Bitwise operators | ✅ | Int32 conversion semantics | `bitwise-ops` |
+| Bitwise operators | ✅ | Int32 conversion semantics; shift count masking and `>>>` uint32 fixed 2026-05-13 | `bitwise-ops`, `spec3-bitwise-shift-mask`, `spec3-unsigned-shift` |
 | Assignment operators | ✅ |  | `compound-assignment` |
 | typeof operator | ✅ | Literal-types case fixed 2026-05-07 | `typeof-number`, `typeof-function`, `typeof-literal-types` |
 | instanceof operator | ✅ |  | `instanceof-check` |
-| in operator | ✅ | Including narrowing | `in-operator` |
+| in operator | ✅ | Including narrowing; array-index check fixed 2026-05-13 | `in-operator`, `spec3-in-operator-array` |
 | Conditional operator (`? :`) | ✅ |  | `ternary`, `ternary-nested`, `ternary-number` |
 | Nullish coalescing (`??`) (ES2024 §13.13) | ✅ | Fixed 2026-05-07 via NaN sentinel | `nullish-coalescing` |
 | Optional chaining (`?.`) (ES2024 §13.3.9) | ❌ | Doesn't short-circuit | `optional-chaining` [KNOWNBUG] |
@@ -154,7 +154,7 @@ the column shows `—`.
 | `map`, `filter`, `reduce` | ✅ |  | `array-map-arrow`, `array-filter`, `array-reduce` |
 | `forEach` | ✅ | Added 2026-05-13 (per-element CALLs emitted for constant-length arrays) | `spec2-forEach` |
 | `find`, `findIndex` | ✅ |  | `array-find`, `array-findIndex` |
-| `includes`, `indexOf` | ✅ | Non-const via symbolic scan | `array-includes`, `array-indexOf` |
+| `includes`, `indexOf` | ✅ | Non-const via symbolic scan; SameValueZero on NaN fixed 2026-05-13 | `array-includes`, `array-indexOf`, `spec3-array-includes-nan` |
 | `every`, `some` | ✅ |  | `array-every`, `array-every-fail` |
 | `slice`, `splice` | ✅ |  | `array-splice` |
 | `concat` | ✅ |  | `array-concat` |
@@ -347,6 +347,15 @@ catches it.
 | `spec2-destructure-defaults-short` | Destructure defaults didn't apply when source was too short/empty | 0f86b8adeb |
 | `spec2-forEach` | Array.prototype.forEach not implemented | 0f86b8adeb |
 | `spec2-number-coerce-empty` | Number("") returned 0 only via placeholder — not actually parsed | 0f86b8adeb |
+| `spec3-bitwise-shift-mask` | Shift count not masked to low 5 bits (1<<32 produced 0 instead of 1) | 66de725c1b |
+| `spec3-unsigned-shift` | `>>>` returned signed result (-1>>>0 was -1 instead of 4294967295) | 66de725c1b |
+| `spec3-sqrt-negative-nan` | `Math.sqrt(-1)` returned nondet instead of NaN | 66de725c1b |
+| `spec3-array-includes-nan` | `[NaN].includes(NaN)` returned false (used IEEE === instead of SameValueZero) | 66de725c1b |
+| `spec3-in-operator-array` | `i in arr` returned nondet (string-keyed-only, plus type-promotion bug) | 66de725c1b |
+| `spec3-string-utf8-bmp` | Multi-byte UTF-8 characters counted as multiple length units | 66de725c1b |
+| `spec3-string-utf16-astral` | Astral characters not encoded as UTF-16 surrogate pairs | 66de725c1b |
+| `spec3-string-coerce-array` | `"" + arr` didn't call array's toString (join with ",") | 66de725c1b |
+| `spec3-string-relational` | `<`/`>`/`<=`/`>=` on strings returned undefined struct compare | 66de725c1b |
 
 ## Overall assessment
 

@@ -6,13 +6,17 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-671 programs (including 9 new tests from ES2024 spec review pass 2
-that fixed ToBoolean on strings, parseInt/Number parsing,
-Array.forEach, Math.hypot/imul/clz32/log1p/expm1, and destructuring
-defaults). Three tests are marked `KNOWNBUG`, all of them
-pre-existing design trade-offs (see the "Design trade-offs" section
-at the end of this guide). The full symbolic-string suite, precision
-probes, and closure-capture suite are CORE and green.
+680 programs (including 25 new tests from a three-pass ES2024 spec
+review that fixed bit-shift count masking, unsigned shifts,
+Math.sqrt of negatives, NaN propagation in Array.includes, the
+in-operator on arrays, UTF-8/UTF-16 string decoding for non-BMP and
+astral characters, array-to-string coercion, and string relational
+comparison — alongside earlier fixes for ToBoolean on strings,
+parseInt/Number, Array.forEach, and Math.imul/clz32/log1p/expm1).
+Three tests are marked `KNOWNBUG`, all of them pre-existing
+design trade-offs (see the "Design trade-offs" section at the end of
+this guide). The full symbolic-string suite, precision probes, and
+closure-capture suite are CORE and green.
 
 ## Contents
 
