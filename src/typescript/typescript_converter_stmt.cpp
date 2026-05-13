@@ -1328,12 +1328,23 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
           // NaN).
           const jsont &elem_init = json_member(elem, "initializer");
           bool has_source = st.has_component(source);
-          if(!has_source && !elem_init.is_object())
+          // An empty object literal (`{}` or a cast of it) may have
+          // the TYPE component but no backing value. Treat such a
+          // rhs as "no source" and fall back to the default.
+          exprt rhs_val_candidate = rhs;
+          if(
+            rhs_val_candidate.id() == ID_typecast &&
+            !rhs_val_candidate.operands().empty())
+            rhs_val_candidate = rhs_val_candidate.operands()[0];
+          bool source_actually_present =
+            has_source && !(rhs_val_candidate.id() == ID_struct &&
+                            rhs_val_candidate.operands().empty());
+          if(!source_actually_present && !elem_init.is_object())
             continue;
           typet pt =
             has_source ? st.get_component(source).type() : double_type();
           exprt rhs_val;
-          if(has_source)
+          if(source_actually_present)
           {
             exprt src_field = member_exprt{rhs, source, pt};
             if(elem_init.is_object())
@@ -1481,9 +1492,27 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
                 es.is_static_lifetime = current_function.empty();
                 symbol_table.add(es);
               }
+              // ES2024 §14.3.3: destructure defaults apply when the
+              // source is undefined. For a constant source array we
+              // know at conversion time whether the index is in
+              // range; use the default when not.
+              const jsont &def_init = json_member(elem, "initializer");
+              exprt assigned;
+              if(idx >= arr_len.to_ulong() && def_init.is_object())
+              {
+                exprt def_val = convert_expression(def_init);
+                if(def_val.is_nil() || def_val.type() != et)
+                  def_val = typecast_exprt{def_val, et};
+                assigned = def_val;
+              }
+              else
+              {
+                assigned =
+                  index_exprt{data, from_integer(idx, signedbv_typet{64})};
+              }
               block.add(code_frontend_assignt{
                 symbol_table.lookup_ref(eid).symbol_expr(),
-                index_exprt{data, from_integer(idx, signedbv_typet{64})}});
+                std::move(assigned)});
             }
             idx++;
           }
@@ -1953,7 +1982,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             if(!cond.is_nil())
             {
               if(cond.type().id() != ID_bool)
-                cond = typecast_exprt{cond, bool_typet{}};
+                cond = ts_to_boolean(cond);
               code_assertt assertion{cond};
               assertion.add_source_location() = get_location(expr_node);
               if(!pending_stmts.empty())
@@ -1998,7 +2027,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
           if(!cond.is_nil())
           {
             if(cond.type().id() != ID_bool)
-              cond = typecast_exprt{cond, bool_typet{}};
+              cond = ts_to_boolean(cond);
             // Cover goals use assert with "cover" property class
             code_assertt cover{cond};
             cover.add_source_location().set_property_class("cover");
@@ -2020,7 +2049,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             if(!cond.is_nil())
             {
               if(cond.type().id() != ID_bool)
-                cond = typecast_exprt{cond, bool_typet{}};
+                cond = ts_to_boolean(cond);
               code_assertt assertion{cond};
               assertion.add_source_location() = get_location(expr_node);
               return std::move(assertion);
@@ -2041,7 +2070,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             if(!cond.is_nil())
             {
               if(cond.type().id() != ID_bool)
-                cond = typecast_exprt{cond, bool_typet{}};
+                cond = ts_to_boolean(cond);
               return code_assumet{cond};
             }
           }
@@ -2061,7 +2090,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             if(!cond.is_nil())
             {
               if(cond.type().id() != ID_bool)
-                cond = typecast_exprt{cond, bool_typet{}};
+                cond = ts_to_boolean(cond);
               code_assertt inv{cond};
               inv.add_source_location() = get_location(expr_node);
               inv.add_source_location().set_property_class("loop-invariant");
@@ -2085,7 +2114,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             if(!cond.is_nil())
             {
               if(cond.type().id() != ID_bool)
-                cond = typecast_exprt{cond, bool_typet{}};
+                cond = ts_to_boolean(cond);
               code_assertt req{cond};
               req.add_source_location() = get_location(expr_node);
               req.add_source_location().set_property_class("precondition");
@@ -2109,7 +2138,7 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
             if(!cond.is_nil())
             {
               if(cond.type().id() != ID_bool)
-                cond = typecast_exprt{cond, bool_typet{}};
+                cond = ts_to_boolean(cond);
               code_assertt ens{cond};
               ens.add_source_location() = get_location(expr_node);
               ens.add_source_location().set_property_class("postcondition");
@@ -2230,9 +2259,9 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
           else if(op == "SlashEqualsToken")
             new_val = div_exprt{lhs, rhs};
           else if(op == "AmpersandAmpersandEqualsToken")
-            new_val = if_exprt{typecast_exprt{lhs, bool_typet{}}, rhs, lhs};
+            new_val = if_exprt{ts_to_boolean(lhs), rhs, lhs};
           else if(op == "BarBarEqualsToken")
-            new_val = if_exprt{typecast_exprt{lhs, bool_typet{}}, lhs, rhs};
+            new_val = if_exprt{ts_to_boolean(lhs), lhs, rhs};
           else if(op == "QuestionQuestionEqualsToken")
             new_val = lhs; // non-null types: just keep lhs
           else
@@ -2267,7 +2296,7 @@ codet typescript_convertert::convert_if_statement(const jsont &node)
   if(cond.is_nil())
     return code_skipt{};
   if(cond.type().id() != ID_bool)
-    cond = typecast_exprt{cond, bool_typet{}};
+    cond = ts_to_boolean(cond);
 
   // If the condition expression produced pending side-effect
   // statements (typically bounds-check asserts for indexed array
@@ -2309,7 +2338,7 @@ codet typescript_convertert::convert_while_statement(const jsont &node)
   if(cond.is_nil())
     return code_skipt{};
   if(cond.type().id() != ID_bool)
-    cond = typecast_exprt{cond, bool_typet{}};
+    cond = ts_to_boolean(cond);
 
   // Drain any pending side-effect statements the condition produced
   // (typically bounds-check asserts for indexed array reads). The
@@ -2385,7 +2414,7 @@ codet typescript_convertert::convert_for_statement(const jsont &node)
   {
     cond = convert_expression(cond_node);
     if(cond.type().id() != ID_bool)
-      cond = typecast_exprt{cond, bool_typet{}};
+      cond = ts_to_boolean(cond);
     // Drain pending stmts from the condition — same reasoning as in
     // convert_while_statement above.
     if(!pending_stmts.empty())

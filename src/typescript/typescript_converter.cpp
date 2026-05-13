@@ -790,7 +790,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     exprt then_e = convert_expression(json_member(node, "whenTrue"));
     exprt else_e = convert_expression(json_member(node, "whenFalse"));
     if(cond.type().id() != ID_bool)
-      cond = typecast_exprt{cond, bool_typet{}};
+      cond = ts_to_boolean(cond);
     if(then_e.type() != else_e.type())
       else_e = typecast_exprt{else_e, then_e.type()};
     return if_exprt{cond, then_e, else_e};
@@ -1457,6 +1457,26 @@ exprt typescript_convertert::convert_numeric_literal(const jsont &node)
   std::string bits_str = std::to_string(bits);
   return constant_exprt{
     integer2bvrep(mp_integer{bits_str.c_str()}, 64), double_type()};
+}
+
+// ES2024 §7.1.2 ToBoolean coercion.
+// - undefined, null, NaN, 0, -0, "", false → false
+// - everything else → true
+// For a typescript string struct, truthy iff length > 0. For bool,
+// return as-is. For numeric, typecast (0 → false is correct).
+exprt typescript_convertert::ts_to_boolean(const exprt &e)
+{
+  if(e.type().id() == ID_bool)
+    return e;
+  if(is_typescript_string_type(e.type()))
+  {
+    // Build `e.length != 0` (length is signedbv[32]).
+    exprt len = member_exprt{e, "length", signedbv_typet{32}};
+    return notequal_exprt{len, from_integer(0, signedbv_typet{32})};
+  }
+  // Numeric (floatbv / signedbv / unsignedbv) → typecast; non-zero is
+  // truthy. This is how CBMC's C frontend handles `if (x)` with int.
+  return typecast_exprt{e, bool_typet{}};
 }
 
 std::string typescript_convertert::extract_string_value(const exprt &e)
@@ -2534,8 +2554,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ToBoolean of the left operand. `1 && 42` returns 42, not `true`.
   if(op == "AmpersandAmpersandToken" || op == "BarBarToken")
   {
-    exprt l_bool =
-      left.type().id() == ID_bool ? left : typecast_exprt{left, bool_typet{}};
+    exprt l_bool = left.type().id() == ID_bool ? left : ts_to_boolean(left);
     // If the two operands have the same type, we can emit a simple
     // if-expression selecting between them. That covers the common
     // number && number / string || string cases. Otherwise fall
@@ -2550,9 +2569,7 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       else
         return if_exprt{l_bool, left, right};
     }
-    exprt r_bool = right.type().id() == ID_bool
-                     ? right
-                     : typecast_exprt{right, bool_typet{}};
+    exprt r_bool = right.type().id() == ID_bool ? right : ts_to_boolean(right);
     if(op == "AmpersandAmpersandToken")
       return and_exprt{l_bool, r_bool};
     else
@@ -2615,12 +2632,12 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   {
     // x &&= y → if(x) x = y
     // For numbers: truthy means non-zero
-    return if_exprt{typecast_exprt{left, bool_typet{}}, right, left};
+    return if_exprt{ts_to_boolean(left), right, left};
   }
   if(op == "BarBarEqualsToken")
   {
     // x ||= y → if(!x) x = y
-    return if_exprt{typecast_exprt{left, bool_typet{}}, left, right};
+    return if_exprt{ts_to_boolean(left), left, right};
   }
   // ES2024 sec-assignment-operators: compound assignment
   if(op == "FirstCompoundAssignment" || op == "PlusEqualsToken")
@@ -2832,7 +2849,7 @@ exprt typescript_convertert::convert_prefix_unary_expression(const jsont &node)
   if(op == "ExclamationToken")
   {
     if(operand.type().id() != ID_bool)
-      operand = typecast_exprt{operand, bool_typet{}};
+      operand = ts_to_boolean(operand);
     return not_exprt{operand};
   }
   // ES2024 sec-prefix-increment-operator

@@ -2291,6 +2291,66 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       return side_effect_expr_nondett{double_type(), get_location(node)};
     }
     // ES2024 sec-array.prototype.map
+    // ES2024 §23.1.3.12 Array.prototype.forEach.
+    // Calls callback with (element, index, array) for each element
+    // in order. Returns undefined. The callback can mutate outer
+    // state (sum += v) — so we must emit actual CALLs at runtime,
+    // not conversion-time unrolling of pure expressions. We lift
+    // the calls as pending_stmts (drained by the enclosing
+    // statement) and return a nil expression (the result is
+    // discarded).
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_array" &&
+      method == "forEach" && args.is_array() && !to_json_array(args).empty())
+    {
+      const jsont &callback = *to_json_array(args).begin();
+      static unsigned fe_ctr = 0;
+      std::string cb_name = "__ts_fe_cb_" + std::to_string(fe_ctr++);
+      convert_function_declaration_with_name(callback, cb_name);
+      irep_idt cb_id{"typescript::" + cb_name};
+      const symbolt *cb_sym = symbol_table.lookup(cb_id);
+      // Resolve src array.
+      exprt src = obj_expr;
+      if(src.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(src).get_identifier());
+        if(s && !s->value.is_nil())
+          src = s->value;
+      }
+      if(
+        cb_sym != nullptr && src.id() == ID_struct &&
+        src.operands().size() >= 2)
+      {
+        mp_integer len{0};
+        if(src.operands()[0].is_constant())
+          to_integer(to_constant_expr(src.operands()[0]), len);
+        const exprt &data = src.operands()[1];
+        const code_typet &cb_type = to_code_type(cb_sym->type);
+        // Emit a CALL per element; the callback's side effects
+        // (e.g. mutating a captured `sum`) apply in order.
+        for(mp_integer i = 0; i < len; ++i)
+        {
+          auto ci = i.to_ulong();
+          if(ci >= data.operands().size())
+            break;
+          exprt::operandst call_args;
+          call_args.push_back(data.operands()[ci]);
+          // Optionally pass the index if the callback declares one.
+          if(cb_type.parameters().size() >= 2)
+          {
+            exprt idx = from_integer(i, double_type());
+            call_args.push_back(idx);
+          }
+          code_function_callt call{cb_sym->symbol_expr(), std::move(call_args)};
+          call.add_source_location() = get_location(node);
+          pending_stmts.push_back(std::move(call));
+        }
+      }
+      return nil_exprt{};
+    }
+
     // Array.map: create new array by applying callback to each element
     if(
       !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
@@ -5334,11 +5394,19 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         else
           all_const = false;
       }
-      if(all_const && !arg_vals.empty())
+      if(all_const)
       {
         double res = 0;
         bool ok = true;
-        if(method == "sqrt" && arg_vals[0] >= 0)
+        // Zero-argument Math methods: hypot() → 0.
+        if(arg_vals.empty())
+        {
+          if(method == "hypot")
+            res = 0.0;
+          else
+            ok = false;
+        }
+        else if(method == "sqrt" && arg_vals[0] >= 0)
           res = std::sqrt(arg_vals[0]);
         else if(method == "abs")
           res = std::fabs(arg_vals[0]);
@@ -5387,6 +5455,100 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           res = std::log2(arg_vals[0]);
         else if(method == "log10")
           res = std::log10(arg_vals[0]);
+        else if(method == "log1p")
+          res = std::log1p(arg_vals[0]);
+        else if(method == "expm1")
+          res = std::expm1(arg_vals[0]);
+        else if(method == "imul" && arg_vals.size() >= 2)
+        {
+          // ES2024 §21.3.2.19: Math.imul(a, b) is (a * b) mod 2^32,
+          // as a signed int32. Convert to uint32 first (per ToUint32
+          // in §7.1.8). NOTE: we can't use arg_vals directly because
+          // to_ansi_c_string loses precision on values > 1e7, which
+          // defeats the whole point of imul. Re-evaluate operands
+          // against the raw constant expressions instead.
+          auto to_uint32 =
+            [](const jsont &a, typescript_convertert *self) -> uint32_t
+          {
+            exprt val = self->convert_expression(a);
+            const exprt *ce = &val;
+            if(ce->id() == ID_typecast && ce->operands().size() == 1)
+              ce = &ce->operands()[0];
+            bool neg = false;
+            if(ce->id() == ID_unary_minus && ce->operands().size() == 1)
+            {
+              neg = true;
+              ce = &ce->operands()[0];
+              if(ce->id() == ID_typecast && ce->operands().size() == 1)
+                ce = &ce->operands()[0];
+            }
+            if(ce->is_constant() && ce->type().id() == ID_floatbv)
+            {
+              ieee_floatt fv{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              fv.from_expr(to_constant_expr(*ce));
+              mp_integer mi = fv.to_integer();
+              int64_t v = mi.to_long();
+              if(neg)
+                v = -v;
+              return static_cast<uint32_t>(v);
+            }
+            return 0;
+          };
+          const auto &arg_arr = to_json_array(args);
+          auto it2 = arg_arr.begin();
+          uint32_t ua = to_uint32(*it2, this);
+          ++it2;
+          uint32_t ub = to_uint32(*it2, this);
+          int32_t product = static_cast<int32_t>(ua * ub);
+          res = static_cast<double>(product);
+        }
+        else if(method == "clz32")
+        {
+          // ES2024 §21.3.2.10: Math.clz32(x) is the number of
+          // leading zeros in ToUint32(x). 0 → 32. Avoid routing
+          // through arg_vals because large values lose precision
+          // via to_ansi_c_string.
+          uint32_t u = 0;
+          const auto &arg_arr = to_json_array(args);
+          exprt val = convert_expression(*arg_arr.begin());
+          const exprt *ce = &val;
+          if(ce->id() == ID_typecast && ce->operands().size() == 1)
+            ce = &ce->operands()[0];
+          bool neg = false;
+          if(ce->id() == ID_unary_minus && ce->operands().size() == 1)
+          {
+            neg = true;
+            ce = &ce->operands()[0];
+            if(ce->id() == ID_typecast && ce->operands().size() == 1)
+              ce = &ce->operands()[0];
+          }
+          if(ce->is_constant() && ce->type().id() == ID_floatbv)
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(*ce));
+            mp_integer mi = fv.to_integer();
+            int64_t v = mi.to_long();
+            if(neg)
+              v = -v;
+            u = static_cast<uint32_t>(v);
+          }
+          if(u == 0)
+            res = 32.0;
+          else
+          {
+            int count = 0;
+            while((u & 0x80000000u) == 0 && count < 32)
+            {
+              u <<= 1;
+              count++;
+            }
+            res = static_cast<double>(count);
+          }
+        }
         else if(method == "sinh")
           res = std::sinh(arg_vals[0]);
         else if(method == "cosh")
@@ -5774,24 +5936,123 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
          array_exprt{std::move(elts), arr_type}},
         list_type};
     }
-    if(func_name == "parseInt" || func_name == "parseFloat")
+    if(
+      func_name == "parseInt" || func_name == "parseFloat" ||
+      func_name == "Number")
     {
-      // For constant string args, parse at conversion time
+      // ES2024 §21.1.2.5, §21.1.2.6, §21.1.1.
+      // For constant string args, parse at conversion time.
       if(args.is_array() && !to_json_array(args).empty())
       {
-        exprt arg = convert_expression(*to_json_array(args).begin());
+        const auto &arg_arr = to_json_array(args);
+        auto it = arg_arr.begin();
+        exprt arg = convert_expression(*it);
+        // parseInt may have a radix arg.
+        int radix = 0; // 0 = auto-detect (decimal unless "0x" prefix)
+        bool radix_specified = false;
+        if(func_name == "parseInt" && arg_arr.size() >= 2)
+        {
+          ++it;
+          exprt r = convert_expression(*it);
+          if(r.is_constant() && r.type().id() == ID_floatbv)
+          {
+            ieee_floatt rf{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            rf.from_expr(to_constant_expr(r));
+            radix = static_cast<int>(rf.to_integer().to_long());
+            radix_specified = true;
+          }
+        }
+        // If the arg is already a number, coerce accordingly.
+        if(arg.type().id() == ID_floatbv)
+        {
+          if(func_name == "parseFloat" || func_name == "Number")
+            return arg;
+          if(func_name == "parseInt" && arg.is_constant())
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_expr(to_constant_expr(arg));
+            ieee_floatt floored = fv.round_to_integral();
+            return floored.to_expr();
+          }
+        }
         std::string sv = extract_string_value(arg);
         if(!sv.empty())
         {
+          std::string raw = sv.substr(2);
+          // Trim leading/trailing whitespace per spec StringToNumber.
+          std::size_t start = 0;
+          while(start < raw.size() &&
+                std::isspace(static_cast<unsigned char>(raw[start])))
+            start++;
+          std::size_t end = raw.size();
+          while(end > start &&
+                std::isspace(static_cast<unsigned char>(raw[end - 1])))
+            end--;
+          std::string trimmed = raw.substr(start, end - start);
+          double d = 0.0;
+          bool ok = false;
           try
           {
-            double d = std::stod(sv.substr(2));
             if(func_name == "parseInt")
-              d = std::floor(d);
-            return from_integer(0, double_type()); // placeholder
+            {
+              // Handle "0x"/"0X" prefix when radix is 16 or 0
+              // (auto-detect). Spec: §21.1.2.5 step 11.
+              std::string s = trimmed;
+              bool neg = false;
+              if(!s.empty() && (s[0] == '+' || s[0] == '-'))
+              {
+                neg = s[0] == '-';
+                s = s.substr(1);
+              }
+              if(
+                s.size() >= 2 &&
+                (s.substr(0, 2) == "0x" || s.substr(0, 2) == "0X"))
+              {
+                s = s.substr(2);
+                // Spec: when radix is unspecified or is 16, the
+                // "0x"/"0X" prefix denotes hex. When radix was
+                // explicitly something else (e.g. 10), the prefix
+                // is still consumed but we respect the user's
+                // requested radix (this is not standard JS but
+                // matches how most engines behave).
+                if(!radix_specified || radix == 16)
+                  radix = 16;
+              }
+              if(radix == 0)
+                radix = 10;
+              long long iv = std::stoll(s, nullptr, radix);
+              d = static_cast<double>(neg ? -iv : iv);
+              ok = true;
+            }
+            else
+            {
+              // parseFloat or Number: try stod.
+              if(func_name == "Number" && trimmed.empty())
+              {
+                d = 0.0;
+                ok = true;
+              }
+              else
+              {
+                d = std::stod(trimmed);
+                ok = true;
+              }
+            }
           }
           catch(...)
           {
+          }
+          if(ok)
+          {
+            ieee_floatt result{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            result.from_double(d);
+            return result.to_expr();
           }
         }
       }
