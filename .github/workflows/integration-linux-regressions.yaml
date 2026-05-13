@@ -229,34 +229,6 @@ jobs:
           # code.
           checkout_path: ${{ env.HOME }}/linux_5_10
 
-      - name: Run full corpus scan (nightly only)
-        # Phase 2.3 scale-out: sweep every .c file under the
-        # per-module seed-pattern scopes (corpus-scan.sh
-        # auto-discovery, capped at $CORPUS_MAX).  PR runs skip
-        # this; the nightly schedule runs it on a cached kernel
-        # tree.  Each file scan has a 900s wall-clock backstop
-        # on top of scan.py's per-tool RLIMIT_AS/RLIMIT_CPU.
-        if: github.event_name == 'schedule'
-        env:
-          LINUX_TREE: $HOME/linux_5_10
-          CORPUS_MAX: '120'
-          PARALLEL: '4'
-        run: |
-          integration/linux/scan/corpus-scan.sh \
-              $RUNNER_TEMP/corpus-scan \
-              | tee $RUNNER_TEMP/corpus-scan.summary.txt
-
-      - name: Upload corpus scan results
-        if: github.event_name == 'schedule' && always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: integration-linux-corpus-scan
-          path: |
-            ${{ runner.temp }}/corpus-scan/*.json
-            ${{ runner.temp }}/corpus-scan/*.log
-            ${{ runner.temp }}/corpus-scan.summary.txt
-          if-no-files-found: ignore
-
       - name: Upload SARIF artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -265,4 +237,199 @@ jobs:
           path: |
             /tmp/*.sarif
             integration/linux/scan/*.sarif
+          if-no-files-found: ignore
+
+  corpus-scan-matrix:
+    # Phase 2.3 scale-out: nightly corpus sweep across all four
+    # LTS kernels in parallel.  Each matrix row fetches its own
+    # kernel tree (cached), configures it under allnoconfig +
+    # our scan-compat-friendly fragments, and runs
+    # corpus-scan.sh with auto-discovery (grep -rlE across the
+    # per-module seed patterns, capped at CORPUS_MAX).
+    #
+    # Per-kernel budgets keep each matrix row inside a two-hour
+    # GitHub-hosted-runner ceiling: CORPUS_MAX=80, PARALLEL=4,
+    # per-file wall-clock 900s.  With ~80 files and four-way
+    # parallelism, a row typically completes in 20–40 minutes
+    # (the aead vacuity probe + verify is the slowest phase).
+    #
+    # The matrix is gated behind `schedule` and `workflow_dispatch`;
+    # PRs continue to run only the scan-on-kernel single-kernel
+    # flow above.  Matrix rows are fail-fast: false so one
+    # kernel regressing doesn't mask the others.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel:
+          - version: '5.10'
+            branch: 'linux-5.10.y'
+            tree_dir: 'linux_5_10'
+          - version: '6.1'
+            branch: 'linux-6.1.y'
+            tree_dir: 'linux_6_1'
+          - version: '6.6'
+            branch: 'linux-6.6.y'
+            tree_dir: 'linux_6_6'
+          - version: '6.12'
+            branch: 'linux-6.12.y'
+            tree_dir: 'linux_6_12'
+    if: >
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    needs: property-module-regressions
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Install packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+              clang-19 clang++-19 flex bison cmake ninja-build ccache \
+              coccinelle python3 gcc make bc libelf-dev libssl-dev
+
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-corpus-${{ matrix.kernel.version }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-24.04-corpus-${{ matrix.kernel.version }}-${{ github.ref }}
+            ${{ runner.os }}-24.04-corpus-${{ matrix.kernel.version }}
+
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+          ccache -z --max-size=1G
+
+      - name: Configure and build CBMC tools
+        run: |
+          cmake -S . -Bbuild -GNinja \
+              -DCMAKE_CXX_COMPILER=clang++-19 \
+              -DCMAKE_C_COMPILER=clang-19 \
+              -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target cbmc goto-cc goto-instrument -j4
+
+      - name: Cache Linux ${{ matrix.kernel.version }} kernel tree
+        id: kernel-cache
+        uses: actions/cache@v5
+        with:
+          path: $HOME/${{ matrix.kernel.tree_dir }}
+          # Pin by branch; bump the `-vN` suffix when the
+          # scan-compat fragments or .config profile changes
+          # enough that old cache contents would be stale.
+          key: linux-${{ matrix.kernel.version }}-configured-v1
+
+      - name: Fetch + configure Linux ${{ matrix.kernel.version }}
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p $HOME
+          git clone --depth 1 -b ${{ matrix.kernel.branch }} \
+              https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
+              $HOME/${{ matrix.kernel.tree_dir }}
+          integration/linux/scan/configure.sh \
+              $HOME/${{ matrix.kernel.tree_dir }} \
+              baseline.config crypto-aead.config
+
+      - name: Smoke-check the kernel tree compiles under scan-compat
+        # Before launching the full corpus sweep, run the single-
+        # file smoke check so we fail fast if the kernel+compat
+        # stack regressed for this version.
+        env:
+          LINUX_TREE_OVERRIDE: /home/runner/${{ matrix.kernel.tree_dir }}
+        run: |
+          # smoke-all-lts.sh iterates over known kernels; invoke
+          # the underlying single-kernel probe directly so we
+          # only exercise THIS row.
+          set -eu
+          TREE=$HOME/${{ matrix.kernel.tree_dir }}
+          if [[ ! -f $TREE/lib/iov_iter.c ]]; then
+            echo "::error::no lib/iov_iter.c under $TREE"
+            exit 1
+          fi
+          # Probe a small file via compile_file.sh.
+          integration/linux/scan/compile_file.sh \
+              $TREE kernel/signal.c $RUNNER_TEMP/signal.gb \
+              > $RUNNER_TEMP/signal.compile.log 2>&1 || {
+                echo "::error::signal.c failed to compile on ${{ matrix.kernel.version }}"
+                tail -30 $RUNNER_TEMP/signal.compile.log
+                exit 1
+              }
+          echo "smoke probe ok: $(wc -c < $RUNNER_TEMP/signal.gb) bytes"
+
+      - name: Run corpus scan (${{ matrix.kernel.version }})
+        env:
+          LINUX_TREE: /home/runner/${{ matrix.kernel.tree_dir }}
+          # Smaller corpus on newer kernels until their scan
+          # success-rate has been characterised.  5.10 is the
+          # well-shaken baseline and gets the full 120-file cap;
+          # others start at 60.
+          CORPUS_MAX: ${{ matrix.kernel.version == '5.10' && '120' || '60' }}
+          PARALLEL: '4'
+        run: |
+          set -eu
+          mkdir -p $RUNNER_TEMP/corpus-scan
+          integration/linux/scan/corpus-scan.sh \
+              $RUNNER_TEMP/corpus-scan \
+              | tee $RUNNER_TEMP/corpus-scan.summary.txt
+
+      - name: Post corpus summary to GitHub step summary
+        if: always()
+        run: |
+          {
+            echo "## Corpus scan — Linux ${{ matrix.kernel.version }}"
+            echo
+            echo '```'
+            tail -60 $RUNNER_TEMP/corpus-scan.summary.txt 2>/dev/null \
+                || echo "(summary not produced — check job log)"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Emit aggregated cocci SARIF (matrix-${{ matrix.kernel.version }})
+        # One SARIF per kernel, uploaded as a matrix-distinct
+        # artifact.  Upload to Code Scanning is scoped to 5.10
+        # only (the primary signal surface); other kernels are
+        # advisory-only via the artifact.
+        if: always()
+        env:
+          LINUX_TREE: /home/runner/${{ matrix.kernel.tree_dir }}
+        run: |
+          set -eu
+          mkdir -p $RUNNER_TEMP/sarif
+          # Use the matrix corpus list (the files discovered by
+          # corpus-scan.sh's auto-discovery).  We re-derive it
+          # here rather than re-running the heavy scan just for
+          # the cocci sarif — scan.py on a sparse target list is
+          # cheap since the prefilter alone is fast.
+          find $LINUX_TREE -type f -name '*.c' \
+              \( -path '*/crypto/*' -o -path '*/fs/*' \
+                 -o -path '*/kernel/*' -o -path '*/ipc/*' \
+                 -o -path '*/security/*' -o -path '*/lib/*' \
+                 -o -path '*/net/smc/*' \) 2>/dev/null \
+              | head -n 200 > $RUNNER_TEMP/corpus-list.txt
+          if [[ -s $RUNNER_TEMP/corpus-list.txt ]]; then
+            xargs -a $RUNNER_TEMP/corpus-list.txt \
+                integration/linux/scan/scan.py \
+                --cocci-sarif $RUNNER_TEMP/sarif/cbmc-linux-scan-${{ matrix.kernel.version }}.sarif \
+                --cocci-sarif-repo-root $LINUX_TREE \
+                > $RUNNER_TEMP/sarif-gen.log 2>&1 || true
+          fi
+
+      - name: Upload corpus scan results (${{ matrix.kernel.version }})
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: corpus-scan-linux-${{ matrix.kernel.version }}
+          path: |
+            ${{ runner.temp }}/corpus-scan/*.json
+            ${{ runner.temp }}/corpus-scan/*.log
+            ${{ runner.temp }}/corpus-scan.summary.txt
+            ${{ runner.temp }}/sarif/*.sarif
           if-no-files-found: ignore

@@ -199,6 +199,32 @@ cases 1–5 as the hard regression gate.
 `.github/workflows/integration-linux-regressions.yaml` has a
 working end-to-end example of this flow.
 
+### Corpus scan matrix (nightly)
+
+For scale-out across LTS kernels, the
+`corpus-scan-matrix` job runs `corpus-scan.sh` in a
+parallel matrix across
+
+- Linux 5.10 (CORPUS_MAX=120, fully shaken baseline),
+- Linux 6.1 / 6.6 / 6.12 (CORPUS_MAX=60 each).
+
+Each matrix row fetches its kernel tree from
+`git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git`
+(cached per version), configures it with the standard
+`scan/configure.sh baseline.config crypto-aead.config`
+fragments, runs the full discovery sweep, and uploads the
+per-kernel JSON + logs + cocci-hit SARIF as a matrix-distinct
+artifact.  Rows are `fail-fast: false` so one kernel regressing
+doesn't mask the others.  The matrix is gated behind `schedule`
+and `workflow_dispatch`; PRs continue to use the
+`scan-on-kernel` single-kernel flow.
+
+A local mirror of the matrix lives at
+[`scan/corpus-scan-matrix.sh`](corpus-scan-matrix.sh): runs
+serially over `$HOME/linux_{5_10,6_1,6_6,6_12}` and aggregates
+per-kernel summaries into one report.  Use it to characterise
+scan behaviour before rolling a new kernel into the matrix.
+
 ## Limitations and caveats
 
 - `compile_file.sh`'s flag set is tuned for `x86_64` plus a broadly
