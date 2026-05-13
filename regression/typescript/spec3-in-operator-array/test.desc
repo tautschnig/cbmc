@@ -1,0 +1,9 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: `i in arr` returns true iff 0 <= i < arr.length.

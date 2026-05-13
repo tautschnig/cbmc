@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: BMP characters count as one UTF-16 code unit (multi-byte
+UTF-8 input decoded correctly).

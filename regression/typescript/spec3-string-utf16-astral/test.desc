@@ -1,0 +1,9 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: astral characters encode as UTF-16 surrogate pair → length 2.
