@@ -1670,6 +1670,129 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
         for(auto &s : pending_stmts)
           block.add(std::move(s));
         pending_stmts.clear();
+
+        // Closure-binding detection: if `rhs` is a call to an outer
+        // function whose body creates (and returns) an inner arrow
+        // function that captures outer parameters, our
+        // parameter-lifting approach would have given the inner
+        // function an extra parameter per captured variable. The
+        // caller's `var_type` (the declared type of the lhs) still
+        // has the unlifted signature, so a direct assignment
+        // `lhs = rhs` fails symex's type-consistency invariant
+        // (LHS is `ptr(code(x) -> r)`, RHS is `ptr(code(x, f, g) ->
+        // r)`).
+        //
+        // Rather than force a function-pointer typecast (symex
+        // doesn't handle those), we record the mapping in
+        // `closure_bindings`: lhs → (inner function id, captured
+        // argument values). At call sites, the call dispatcher in
+        // typescript_converter_call.cpp looks up this map and
+        // rewrites `lhs(args)` into
+        // `inner_fn(args, captured_values)`. We also SKIP the
+        // regular ASSIGN so symex never sees the inconsistent
+        // types. This works because lhs is only used via call
+        // syntax in the closure-return patterns we support (see
+        // regression/typescript/higher-order-compose,
+        // verify-closure-adder).
+        bool is_closure_binding = false;
+        if(
+          rhs.id() == ID_side_effect && init.is_object() &&
+          is_kind(init, "CallExpression"))
+        {
+          const jsont &call_expr = json_member(init, "expression");
+          std::string called_fn = json_string(json_member(call_expr, "text"));
+          if(!called_fn.empty())
+          {
+            irep_idt called_id{"typescript::" + called_fn};
+            const symbolt *called_sym = symbol_table.lookup(called_id);
+            if(called_sym != nullptr)
+            {
+              // Look for an inner function (in captured_var_map) that
+              // appears to be returned from `called_fn`. Heuristic:
+              // any __anon_fn_* whose captured vars are parameters of
+              // `called_fn`. We break on the first match, which is
+              // fragile for multiple nested closures but handles the
+              // common single-return-arrow case.
+              const auto &called_params =
+                to_code_type(called_sym->type).parameters();
+              for(const auto &[fn_id, captures] : captured_var_map)
+              {
+                if(id2string(fn_id).find("__anon_fn_") == std::string::npos)
+                  continue;
+                // Check that the captures reference the outer
+                // function's parameters.
+                bool all_captured_are_caller_params = true;
+                for(const auto &[cv_name, cv_outer_id] : captures)
+                {
+                  bool found = false;
+                  for(const auto &p : called_params)
+                  {
+                    if(id2string(p.get_base_name()) == cv_name)
+                    {
+                      found = true;
+                      break;
+                    }
+                  }
+                  if(!found)
+                  {
+                    all_captured_are_caller_params = false;
+                    break;
+                  }
+                }
+                if(!all_captured_are_caller_params || captures.empty())
+                  continue;
+                // Build the bound-values list by matching capture
+                // names to the call-site argument positions in order
+                // of the caller's parameters.
+                const jsont &call_args = json_member(init, "arguments");
+                if(!call_args.is_array())
+                  break;
+                exprt::operandst bound_vals;
+                for(const auto &[cv_name, cv_outer_id] : captures)
+                {
+                  std::size_t idx = 0;
+                  bool matched = false;
+                  for(const auto &p : called_params)
+                  {
+                    if(id2string(p.get_base_name()) == cv_name)
+                    {
+                      matched = true;
+                      break;
+                    }
+                    idx++;
+                  }
+                  if(!matched)
+                  {
+                    bound_vals.clear();
+                    break;
+                  }
+                  auto arg_array = to_json_array(call_args);
+                  if(idx >= arg_array.size())
+                  {
+                    bound_vals.clear();
+                    break;
+                  }
+                  auto it = arg_array.begin();
+                  std::advance(it, idx);
+                  bound_vals.push_back(convert_expression(*it));
+                }
+                if(bound_vals.size() == captures.size())
+                {
+                  closure_bindings[sym_id] = {fn_id, bound_vals};
+                  is_closure_binding = true;
+                }
+                break;
+              }
+            }
+          }
+        }
+        if(is_closure_binding)
+        {
+          // Symbol exists in the table; no direct ASSIGN emitted.
+          // Call sites resolve via closure_bindings above.
+          continue;
+        }
+
         // Async threading: wrap Promise-returning CallExpression in
         // __CPROVER_ASYNC_N label so CBMC spawns a thread for it.
         bool wrap_async = false;
