@@ -284,6 +284,17 @@ private:
   /// intends this as a benign over-approximation rather than
   /// a bug.
   std::set<std::string> unresolved_imports;
+  /// Map from TypedDict class name to its required keys.
+  /// Populated when processing imported stubs for statements
+  /// like 'InputT = TypedDict("InputT", {"K": Required[T], ...})'
+  /// or 'class InputT(TypedDict): K: Required[T]'.
+  /// Used by convert_class_def when it skips a stub method body
+  /// (auto-detected PySpec Unpack pattern): instead of omitting
+  /// all preconditions, we emit key-presence checks for each
+  /// required kwarg, catching 'missing required argument' bugs
+  /// without triggering the regex/length assertions that
+  /// overwhelm the string refinement solver.
+  std::map<std::string, std::vector<std::string>> typed_dict_required;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.
