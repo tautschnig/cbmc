@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*argument 0's type does not match declared parameter type
+--
+^warning: ignoring

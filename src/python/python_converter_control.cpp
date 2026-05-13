@@ -959,6 +959,28 @@ codet python_convertert::convert_return(const jsont &stmt)
     {
       typet ret_type = to_code_type(func_sym->type).return_type();
 
+      // PLR soundness: if the returned value's type is obviously
+      // incompatible with the declared return annotation (e.g.
+      // 'def f() -> int: return "hello"'), emit an explicit
+      // annotation-mismatch property. Without this, our silent
+      // safe_typecast hides the mismatch and we'd miss downstream
+      // TypeErrors that Python would raise at runtime.
+      //
+      // Only check when the function has an explicit return
+      // annotation; unannotated functions with inferred types
+      // shouldn't flag their inferred type as a mismatch.
+      if(
+        annotated_return_functions.count(current_function) > 0 &&
+        annotation_types_incompatible(ret_type, ret_val.type()))
+      {
+        add_check(
+          false_exprt{},
+          "annotation-mismatch",
+          "returned value's type does not match declared return "
+          "annotation",
+          get_location(stmt));
+      }
+
       // Track functions that return lambdas (before type update)
       if(
         ret_val.id() == ID_symbol && ret_val.type().id() == ID_code &&

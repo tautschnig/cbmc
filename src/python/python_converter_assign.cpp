@@ -118,7 +118,21 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
 
   // Type cast if needed
   if(rhs.type() != sym2.type)
+  {
+    // PLR soundness: if the assigned value's type is obviously
+    // incompatible with the declared annotation (e.g.
+    // 'x: int = "hello"'), emit an annotation-mismatch property.
+    if(annotation_types_incompatible(sym2.type, rhs.type()))
+    {
+      add_check(
+        false_exprt{},
+        "annotation-mismatch",
+        "assigned value's type does not match declared type of '" + var_name +
+          "'",
+        loc);
+    }
     rhs = safe_typecast(rhs, sym2.type);
+  }
 
   code_frontend_assignt assign{sym2.symbol_expr(), rhs};
   assign.add_source_location() = loc;

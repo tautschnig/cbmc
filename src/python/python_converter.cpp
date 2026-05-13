@@ -131,6 +131,75 @@ void python_convertert::add_check(
   pending_checks.push_back(std::move(assertion));
 }
 
+/// PLR: Python type annotations are not enforced at runtime,
+/// but downstream operations on a value whose runtime type
+/// disagrees with its annotation will often raise TypeError
+/// (e.g. 'x: int = "hello"; x + 5'). Our value-tracking
+/// trusts annotations, so without this check we'd miss those
+/// TypeErrors — emitting an explicit annotation-mismatch
+/// property at the site of declaration restores soundness.
+bool python_convertert::annotation_types_incompatible(
+  const typet &declared,
+  const typet &actual) const
+{
+  // Tagged-union (Any) on either side → compatible by
+  // duck-typing. Skip.
+  if(is_python_value_type(declared) || is_python_value_type(actual))
+    return false;
+  // Equal types: compatible.
+  if(declared == actual)
+    return false;
+  // Numeric types (int/float/bool) are mutually coercible in
+  // Python (True is 1, int→float promotes).
+  auto is_numeric = [](const typet &t)
+  {
+    return t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+           t.id() == ID_floatbv || t.id() == ID_bool || t.id() == ID_integer;
+  };
+  if(is_numeric(declared) && is_numeric(actual))
+    return false;
+  // Categorize the remaining types. Different categories →
+  // obvious incompatibility (e.g. str vs int).
+  auto category = [&](const typet &t) -> int
+  {
+    if(is_python_string_type(t))
+      return 1;
+    if(is_python_list_type(t))
+      return 2;
+    if(is_python_dict_type(t))
+      return 3;
+    if(is_python_set_type(t))
+      return 4;
+    if(is_numeric(t))
+      return 5;
+    if(t.id() == ID_struct || t.id() == ID_struct_tag)
+      return 6; // class
+    if(t.id() == ID_code || t.id() == ID_pointer)
+      return 7; // callable / pointer
+    return 0;
+  };
+  int dc = category(declared);
+  int ac = category(actual);
+  // Pointer-to-struct and struct of same layout: treat as
+  // compatible (common for class method 'self' passed by
+  // pointer, and for class-by-value parameters taking a
+  // class instance). Similarly class-hierarchy polymorphism
+  // is out of scope for this simple category check.
+  if(declared.id() == ID_pointer && actual.id() == ID_struct)
+    return false;
+  if(declared.id() == ID_struct && actual.id() == ID_pointer)
+    return false;
+  if(dc == 0 || ac == 0)
+    return false; // unknown category — don't flag
+  // Same category but different exact type is usually benign
+  // (e.g. python_class_X vs python_class_Y is handled by
+  // isinstance checks, not flagged as annotation mismatch).
+  if(dc == ac)
+    return false;
+  // Different categories → incompatible.
+  return true;
+}
+
 // Helper: extract std::string from a constant string struct expression
 // Also checks string_constants map for tracked symbol values
 std::optional<double> python_convertert::try_eval_double(const exprt &e) const

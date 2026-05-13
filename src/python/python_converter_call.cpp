@@ -5861,7 +5861,31 @@ exprt python_convertert::convert_call(const jsont &expr)
         arguments[i] = address_of_exprt{arguments[i]};
       }
       else
+      {
+        // PLR soundness: emit annotation-mismatch property at
+        // the call site when the argument's type is obviously
+        // incompatible with the parameter's declared type.
+        //
+        // Skip when the parameter is list-typed and argument is
+        // not — this is almost certainly a vararg (*args)
+        // collection, not an annotation mismatch.
+        bool is_likely_vararg_collect =
+          is_python_list_type(params[i].type()) &&
+          !is_python_list_type(arguments[i].type());
+        if(
+          !is_likely_vararg_collect &&
+          annotation_types_incompatible(params[i].type(), arguments[i].type()))
+        {
+          add_check(
+            false_exprt{},
+            "annotation-mismatch",
+            "argument " + std::to_string(i) +
+              "'s type does not match declared parameter type of '" +
+              func_name + "'",
+            get_location(expr));
+        }
         arguments[i] = safe_typecast(arguments[i], params[i].type());
+      }
     }
   }
 

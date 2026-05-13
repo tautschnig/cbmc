@@ -255,6 +255,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(!returns.is_null())
   {
     return_type = convert_type_annotation(returns);
+    annotated_return_functions.insert(func_name);
   }
   else
   {
