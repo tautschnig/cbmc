@@ -2646,51 +2646,99 @@ exprt python_convertert::convert_call(const jsont &expr)
         return side_effect_expr_nondett{obj.type(), get_location(expr)};
       }
       if(obj_base_type.id() != ID_struct)
+      {
+        // struct_tag: try missing-method detection against the
+        // tag name before falling through to nondet. The tag
+        // itself is typically "python_class_<Name>" or just
+        // "<Name>" for imported PySpec class stubs.
+        if(
+          obj_base_type.id() == ID_struct_tag && !python_lazy_stubs &&
+          method_name.substr(0, 2) != "__")
+        {
+          std::string stag =
+            id2string(to_struct_tag_type(obj_base_type).get_identifier());
+          if(stag.substr(0, 4) == "tag-")
+            stag = stag.substr(4);
+          std::string cls =
+            stag.substr(0, 13) == "python_class_" ? stag.substr(13) : stag;
+          if(class_types.count(cls) > 0)
+          {
+            irep_idt method_id{"python::" + cls + "::" + method_name};
+            if(symbol_table.lookup(method_id) == nullptr)
+            {
+              irep_idt exc_id{"python::__exception_active"};
+              if(symbol_table.lookup(exc_id) != nullptr)
+              {
+                code_blockt err_block;
+                err_block.add(code_frontend_assignt{
+                  symbol_table.lookup_ref(exc_id).symbol_expr(), true_exprt{}});
+                irep_idt etype_id{"python::__exception_type"};
+                if(symbol_table.lookup(etype_id) != nullptr)
+                {
+                  long h = exception_type_hash("AttributeError");
+                  err_block.add(code_frontend_assignt{
+                    symbol_table.lookup_ref(etype_id).symbol_expr(),
+                    from_integer(h, python_int_type())});
+                }
+                pending_checks.push_back(std::move(err_block));
+              }
+              log_overapprox(
+                "missing method " + cls + "::" + method_name +
+                " — raising AttributeError");
+            }
+          }
+        }
         return side_effect_expr_nondett{obj.type(), get_location(expr)};
+      }
       const auto &st = to_struct_type(obj_base_type);
       std::string tag = id2string(st.get_tag());
+      // tag is "python_class_ClassName" OR "ClassName" for
+      // PySpec-style imported stub classes.
+      {
+        std::string class_name =
+          (tag.substr(0, 13) == "python_class_") ? tag.substr(13) : tag;
+        if(class_types.count(class_name) > 0)
+        {
+          irep_idt method_id{"python::" + class_name + "::" + method_name};
+          const symbolt *method_sym = symbol_table.lookup(method_id);
+          // Strict missing-method detection: if the class is in
+          // class_types (we know its structure) but the method
+          // isn't declared, raise AttributeError rather than
+          // silently over-approximating.
+          if(
+            method_sym == nullptr && method_name.substr(0, 2) != "__" &&
+            !python_lazy_stubs)
+          {
+            irep_idt exc_id{"python::__exception_active"};
+            if(symbol_table.lookup(exc_id) != nullptr)
+            {
+              code_blockt err_block;
+              err_block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(exc_id).symbol_expr(), true_exprt{}});
+              irep_idt etype_id{"python::__exception_type"};
+              if(symbol_table.lookup(etype_id) != nullptr)
+              {
+                long h = exception_type_hash("AttributeError");
+                err_block.add(code_frontend_assignt{
+                  symbol_table.lookup_ref(etype_id).symbol_expr(),
+                  from_integer(h, python_int_type())});
+              }
+              pending_checks.push_back(std::move(err_block));
+            }
+            log_overapprox(
+              "missing method " + class_name + "::" + method_name +
+              " — raising AttributeError");
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+        }
+      }
       // tag is "python_class_ClassName"
       if(tag.substr(0, 13) == "python_class_")
       {
         std::string class_name = tag.substr(13);
         irep_idt method_id{"python::" + class_name + "::" + method_name};
         const symbolt *method_sym = symbol_table.lookup(method_id);
-        // Strict missing-method detection: if the class is in
-        // class_types (we know its structure) but the method
-        // isn't declared, raise AttributeError rather than
-        // silently over-approximating. This converts MISS→TP
-        // for benchmarks whose 'bug' is a non-existent method
-        // call.
-        //
-        // Skipped under --python-lazy-stubs: in that mode we
-        // deliberately don't convert stub method bodies, so
-        // method existence can't be reliably checked.
-        if(
-          method_sym == nullptr && class_types.count(class_name) > 0 &&
-          method_name.substr(0, 2) != "__" && !python_lazy_stubs)
-        {
-          irep_idt exc_id{"python::__exception_active"};
-          if(symbol_table.lookup(exc_id) != nullptr)
-          {
-            code_blockt err_block;
-            err_block.add(code_frontend_assignt{
-              symbol_table.lookup_ref(exc_id).symbol_expr(), true_exprt{}});
-            irep_idt etype_id{"python::__exception_type"};
-            if(symbol_table.lookup(etype_id) != nullptr)
-            {
-              long h = exception_type_hash("AttributeError");
-              err_block.add(code_frontend_assignt{
-                symbol_table.lookup_ref(etype_id).symbol_expr(),
-                from_integer(h, python_int_type())});
-            }
-            pending_checks.push_back(std::move(err_block));
-          }
-          log_overapprox(
-            "missing method " + class_name + "::" + method_name +
-            " — raising AttributeError");
-          return side_effect_expr_nondett{
-            python_int_type(), get_location(expr)};
-        }
         if(method_sym != nullptr)
         {
           const code_typet &method_type = to_code_type(method_sym->type);
