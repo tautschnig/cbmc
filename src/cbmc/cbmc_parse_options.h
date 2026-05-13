@@ -80,6 +80,7 @@ class optionst;
   "(python-lazy-stubs)" \
   "(python-no-exception-checks)" \
   "(python-required-kwarg-checks)" \
+  "(python-check-annotations)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

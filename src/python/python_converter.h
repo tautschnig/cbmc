@@ -193,6 +193,11 @@ public:
     python_required_kwarg_checks = v;
   }
 
+  void set_python_check_annotations(bool v)
+  {
+    python_check_annotations = v;
+  }
+
 private:
   /// Lazy-stubs mode: imported modules get symbol-table entries
   /// (types, classes, function signatures) but no function
@@ -214,6 +219,16 @@ private:
   /// Enable for benchmark suites that use only explicit
   /// 'key=value' kwargs.
   bool python_required_kwarg_checks = false;
+  /// Emit 'annotation-mismatch' property checks at variable,
+  /// parameter, and return annotation boundaries when the
+  /// value's statically-known type is obviously incompatible
+  /// with the declared annotation. Catches unsoundness from
+  /// annotation-trust (PLR §3.3 — annotations aren't
+  /// runtime-enforced). Off by default because our frontend's
+  /// default nondet-int return for unresolved calls produces
+  /// mismatches with class-typed annotations — enable only
+  /// for user-code auditing, not stub-heavy code.
+  bool python_check_annotations = false;
   /// Emit a message about a front-end over-approximation. In the
   /// default mode the message goes to log.debug() so it is only
   /// visible at high verbosity; when --python-strict-warnings is

@@ -966,10 +966,16 @@ codet python_convertert::convert_return(const jsont &stmt)
       // safe_typecast hides the mismatch and we'd miss downstream
       // TypeErrors that Python would raise at runtime.
       //
+      // Gated behind --python-check-annotations: our frontend's
+      // default nondet-int return for unresolved calls produces
+      // spurious mismatches against class-typed annotations. Enable
+      // only for user-code auditing, not stub-heavy code.
+      //
       // Only check when the function has an explicit return
       // annotation; unannotated functions with inferred types
       // shouldn't flag their inferred type as a mismatch.
       if(
+        python_check_annotations &&
         annotated_return_functions.count(current_function) > 0 &&
         annotation_types_incompatible(ret_type, ret_val.type()))
       {

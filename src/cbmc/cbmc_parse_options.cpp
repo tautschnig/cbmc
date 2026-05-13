@@ -183,6 +183,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-no-exception-checks", true);
   if(cmdline.isset("python-required-kwarg-checks"))
     options.set_option("python-required-kwarg-checks", true);
+  if(cmdline.isset("python-check-annotations"))
+    options.set_option("python-check-annotations", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.

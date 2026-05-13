@@ -1,6 +1,6 @@
 CORE
 main.py
-
+--python-check-annotations
 ^EXIT=10$
 ^SIGNAL=0$
 ^VERIFICATION FAILED$
