@@ -47,6 +47,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <java_bytecode/java_multi_path_symex_checker.h>
 #include <java_bytecode/java_multi_path_symex_only_checker.h>
 #include <java_bytecode/java_single_path_symex_checker.h>
+#include <java_bytecode/java_bytecode_contracts.h>
 #include <java_bytecode/java_single_path_symex_only_checker.h>
 #include <java_bytecode/lazy_goto_model.h>
 #include <java_bytecode/remove_exceptions.h>
@@ -830,6 +831,9 @@ bool jbmc_parse_optionst::process_goto_functions(
 
   // instrument library preconditions
   instrument_preconditions(goto_model);
+
+  // Lower JVerify contract calls to GOTO assertions/assumptions
+  lower_jverify_contracts(goto_model);
 
   // ignore default/user-specified initialization
   // of variables with static lifetime
