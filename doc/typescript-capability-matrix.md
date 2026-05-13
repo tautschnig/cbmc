@@ -152,7 +152,7 @@ the column shows `—`.
 | `push` | ✅ |  | `array-empty-push`, `spread-and-push` |
 | `pop` return | ✅ | Fixed 2026-05-07 | `array-pop-return` |
 | `map`, `filter`, `reduce` | ✅ |  | `array-map-arrow`, `array-filter`, `array-reduce` |
-| `forEach` | ⚠️ | (no dedicated test) | — |
+| `forEach` | ✅ | Added 2026-05-13 (per-element CALLs emitted for constant-length arrays) | `spec2-forEach` |
 | `find`, `findIndex` | ✅ |  | `array-find`, `array-findIndex` |
 | `includes`, `indexOf` | ✅ | Non-const via symbolic scan | `array-includes`, `array-indexOf` |
 | `every`, `some` | ✅ |  | `array-every`, `array-every-fail` |
@@ -228,6 +228,10 @@ reasons, not precision.
 |--------|--------|-------|---------|
 | Basic methods (abs, floor, ceil, round, sqrt, pow) | ✅ |  | `math-builtins`, `math-functions` |
 | `max`, `min` (variadic) | ✅ | Fixed 2026-05-07 | `math-max-min-variadic`, `math-min-max` |
+| `hypot`, `cbrt` | ✅ | hypot() (zero args) fixed 2026-05-13 | `math-trunc-sign-hypot`, `spec2-math-hypot-zero` |
+| `imul`, `clz32` | ✅ | Added 2026-05-13 | `spec2-math-imul`, `spec2-math-clz32` |
+| `log`, `log2`, `log10`, `log1p` | ✅ | log1p added 2026-05-13 | `math-functions`, `spec2-math-log1p-expm1` |
+| `exp`, `expm1` | ✅ | expm1 added 2026-05-13 | `math-functions`, `spec2-math-log1p-expm1` |
 | `random` | ⚠️ | Nondet in [0, 1) | `math-random` |
 
 ### Number (ES2024 §21.1)
@@ -237,6 +241,7 @@ reasons, not precision.
 | `isInteger`, `isNaN`, `isFinite` | ✅ |  | `number-methods` |
 | `Infinity`, sign zero | ✅ |  | `number-infinity` |
 | Comparison | ✅ |  | `number-comparison` |
+| `Number()`, `parseInt(s, radix)`, `parseFloat(s)` | ✅ | Fully implemented 2026-05-13 (prior version returned 0 for every input); supports whitespace trim, 0x prefix, radix | `spec2-parseint-radix`, `spec2-number-coerce-empty` |
 
 ### Error (ES2024 §20.5)
 
@@ -333,6 +338,15 @@ catches it.
 | `spec-arrow-funcptr-live` | `const f = foo; f()` didn't dispatch (typecast instead of address_of + pre-scan miss) | e93f234c53 |
 | `spec-for-loop-increment-continue` | for-loop incrementor was a dead expression; `continue` skipped it | e93f234c53 |
 | `spec-logical-operand-value` | `&&` / `\|\|` returned boolean instead of an operand value (§13.13) | e93f234c53 |
+| `spec2-math-hypot-zero` | `Math.hypot()` with zero args returned nondet | 0f86b8adeb |
+| `spec2-math-imul` | Math.imul missing; precision bug on large args | 0f86b8adeb |
+| `spec2-math-clz32` | Math.clz32 missing | 0f86b8adeb |
+| `spec2-math-log1p-expm1` | Math.log1p and Math.expm1 missing | 0f86b8adeb |
+| `spec2-toboolean-string` | ToBoolean on strings produced nondet (no struct→bool defined) | 0f86b8adeb |
+| `spec2-parseint-radix` | parseInt had a placeholder returning 0 for every input | 0f86b8adeb |
+| `spec2-destructure-defaults-short` | Destructure defaults didn't apply when source was too short/empty | 0f86b8adeb |
+| `spec2-forEach` | Array.prototype.forEach not implemented | 0f86b8adeb |
+| `spec2-number-coerce-empty` | Number("") returned 0 only via placeholder — not actually parsed | 0f86b8adeb |
 
 ## Overall assessment
 

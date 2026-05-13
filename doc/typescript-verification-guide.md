@@ -6,11 +6,13 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-662 programs (including 7 new tests from a targeted ES2024 spec
-review). Three tests are marked `KNOWNBUG`, all of them pre-existing
-design trade-offs (see the "Design trade-offs" section at the end of
-this guide). The full symbolic-string suite, precision probes, and
-closure-capture suite are CORE and green.
+671 programs (including 9 new tests from ES2024 spec review pass 2
+that fixed ToBoolean on strings, parseInt/Number parsing,
+Array.forEach, Math.hypot/imul/clz32/log1p/expm1, and destructuring
+defaults). Three tests are marked `KNOWNBUG`, all of them
+pre-existing design trade-offs (see the "Design trade-offs" section
+at the end of this guide). The full symbolic-string suite, precision
+probes, and closure-capture suite are CORE and green.
 
 ## Contents
 
@@ -429,6 +431,9 @@ KNOWNBUGs are design trade-offs.
   because our tagged-union representation can't reliably match the
   target integer. Annotate the binding explicitly (`const b: number
   = 0 ? 10 : 20`) to bypass literal-union inference.
+- Mixed-union-type arrays (e.g. `(number | number[])[]`) crash
+  CBMC's `simplify_member` invariant during constant-fold passes.
+  Uniform nested arrays (`number[][]`) work correctly.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.
