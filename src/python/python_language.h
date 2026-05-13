@@ -93,6 +93,7 @@ protected:
   /// entry-point file's functions are unaffected.
   /// Controlled by the --python-lazy-stubs command line flag.
   bool python_lazy_stubs = false;
+  bool python_no_exception_checks = false;
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When

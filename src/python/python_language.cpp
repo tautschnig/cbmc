@@ -46,6 +46,8 @@ void python_languaget::set_language_options(
   python_use_stdlib_source =
     options.get_bool_option("python-use-stdlib-source");
   python_lazy_stubs = options.get_bool_option("python-lazy-stubs");
+  python_no_exception_checks =
+    options.get_bool_option("python-no-exception-checks");
   python_string_kind = options.get_bool_option("python-smt-strings")
                          ? python_string_kindt::smt_string
                          : python_string_kindt::refined;
@@ -184,6 +186,7 @@ bool python_languaget::typecheck(
   converter.set_no_body_check(no_body_check);
   converter.set_python_strict_warnings(python_strict_warnings);
   converter.set_python_lazy_stubs(python_lazy_stubs);
+  converter.set_python_no_exception_checks(python_no_exception_checks);
   converter.set_module_resolver(
     [this, &message_handler](const std::string &name) -> const jsont *
     { return resolve_module(name, message_handler); });

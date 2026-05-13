@@ -213,8 +213,10 @@ codet python_convertert::convert_raise(const jsont &stmt)
   }
 
   // Add a failing assertion for uncaught exceptions only at top level
-  // outside of try blocks
-  if(current_function.empty() && try_depth == 0)
+  // outside of try blocks. Skipped when --python-no-exception-checks
+  // is set: benchmark suites that judge only assertion failures
+  // shouldn't see 'raise' as a property violation.
+  if(current_function.empty() && try_depth == 0 && !python_no_exception_checks)
   {
     loc.set_property_class("exception");
     loc.set_comment("raise " + exc_type);

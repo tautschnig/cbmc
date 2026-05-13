@@ -101,9 +101,13 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
     // We deliberately check after If/While/For/Try statements too,
     // because bugs triggered inside 'if __name__ == "__main__":' blocks
     // are common and our frontend otherwise silently swallows them.
+    //
+    // Skipped when --python-no-exception-checks is set — useful for
+    // benchmark suites that consider only assertion failures as bugs.
     const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
     if(
-      exc_sym != nullptr && !is_node_type(stmt, "FunctionDef") &&
+      !python_no_exception_checks && exc_sym != nullptr &&
+      !is_node_type(stmt, "FunctionDef") &&
       !is_node_type(stmt, "AsyncFunctionDef") &&
       !is_node_type(stmt, "ClassDef") && !is_node_type(stmt, "Import") &&
       !is_node_type(stmt, "ImportFrom"))
