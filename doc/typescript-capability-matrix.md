@@ -288,21 +288,15 @@ reasons, not precision.
 | `--ts-async-threading` | ✅ | Async interleaving via CBMC threads | `async-race-detected` |
 | `--nan-check` | ✅ |  | `nan-check-div`, `nan-check-fail` |
 
-## KNOWNBUG tests (4)
+## KNOWNBUG tests (3)
 
-**Design trade-offs (3):**
+All 3 remaining KNOWNBUGs are design trade-offs:
 
 | Test | Symptom | ES2024 / TSH ref |
 |------|---------|------------------|
 | `async-race-undetected` | Sequential async misses unobserved-race bugs (opt-in fix via `--ts-async-threading`) | §27.2 |
 | `object-prototype-chain` | Our struct model has no prototype chain; `getPrototypeOf` / `isPrototypeOf` not modelled | §20.1 |
 | `strict-nan-not-equal` | `NaN === NaN` returns `true` in our null-as-NaN model (spec says `false`) | §7.2.14 |
-
-**Closure-capture signature mismatch (1):**
-
-| Test | Symptom | Notes |
-|------|---------|-------|
-| `higher-order-compose` | `(f, g) => (x) => f(g(x))` — inner arrow function captures outer parameters; our capture-lifting changes the inner signature but not the outer's declared return type, breaking symex's type-consistency check. Fix requires a closure-environment-struct refactor. | ES2024 §15.3 |
 
 ## Recently fixed bugs (CORE tests guard against regression)
 

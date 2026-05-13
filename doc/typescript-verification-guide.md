@@ -6,11 +6,10 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-657 programs. Four tests are marked `KNOWNBUG`: three pre-existing
-design trade-offs (see the "Design trade-offs" section at the end of
-this guide) and one closure-capture probe
-(`higher-order-compose`). The full symbolic-string suite is CORE and
-green.
+658 programs. Three tests are marked `KNOWNBUG`, all of them
+pre-existing design trade-offs (see the "Design trade-offs" section
+at the end of this guide). The full symbolic-string suite,
+precision probes, and closure-capture suite are CORE and green.
 
 ## Contents
 
@@ -396,19 +395,8 @@ loops, indices, and modulo arithmetic. Variables used with `%`, `&`,
 ## Known limitations
 
 Documented `KNOWNBUG` tests indicate cases where a design trade-off
-intentionally gives an unsound or imprecise answer. The current
-KNOWNBUGs fall into two groups:
-
-1. **Design trade-offs** (3 tests) — semantic choices baked into the
-   model, described below.
-2. **Closure-capture signature mismatch** (1 test:
-   `higher-order-compose`) — when a function returns an arrow
-   function that captures outer-function parameters, our current
-   closure-lifting approach changes the inner function's signature
-   (adds captured parameters) but the outer function's declared
-   return type stays unlifted, triggering symex's type-consistency
-   invariant. Fix requires a closure-environment-struct refactor
-   and is tracked separately.
+intentionally gives an unsound or imprecise answer. All 3 remaining
+KNOWNBUGs are design trade-offs.
 
 ### Design trade-offs
 
