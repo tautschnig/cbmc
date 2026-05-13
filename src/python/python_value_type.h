@@ -43,6 +43,12 @@ enum class python_type_tagt
   /// ``__class_tag`` on the pointed-to struct (maintained by
   /// the Python frontend's class-hierarchy machinery).
   CLASS = 6,
+  /// Dict container stored via __class_ptr. Separated from
+  /// CLASS so len() and similar operations can reliably
+  /// dereference as a dict struct (which has .length at
+  /// offset 0) without risking confusion with user-class
+  /// instances whose first field is __class_tag.
+  DICT = 7,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -146,6 +152,16 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                   : typecast_exprt{
                       address_of_exprt{value},
                       pointer_typet{empty_typet{}, 64}};
+    break;
+  case python_type_tagt::DICT:
+    // Dicts use the class_ptr slot to store the dict-struct
+    // address. len() and unwrap_value read back via DICT tag
+    // to distinguish from user class instances.
+    class_ptr =
+      value.type().id() == ID_pointer
+        ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+        : typecast_exprt{
+            address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
   case python_type_tagt::NONE:
     break;

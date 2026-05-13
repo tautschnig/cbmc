@@ -762,6 +762,15 @@ exprt python_convertert::wrap_value(const exprt &e)
     const auto &st = to_struct_type(e.type());
     std::string stag = id2string(st.get_tag());
     const std::string prefix = "python_class_";
+    // Dict struct: use DICT tag (not CLASS). Distinguishes
+    // dict-wrapped-in-tagged-union from a user-class instance
+    // so len() / unwrap operations can safely dereference the
+    // pointer as a dict struct.
+    if(is_python_dict_type(e.type()))
+    {
+      return make_python_value(
+        python_type_tagt::DICT, address_of_exprt{tmp_sym.symbol_expr()});
+    }
     if(stag.compare(0, prefix.size(), prefix) == 0)
     {
       std::string cls_name = stag.substr(prefix.size());

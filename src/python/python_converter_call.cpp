@@ -3472,16 +3472,15 @@ exprt python_convertert::convert_call(const jsont &expr)
             member_exprt{python_value_str(arg), "length", python_int_type()};
           exprt list_len =
             member_exprt{python_value_list(arg), "length", python_int_type()};
-          // CLASS tag: the pointed-to struct may be a dict, list,
-          // or string (when wrap_value stored one via __class_ptr),
-          // or a user-defined class. Dicts/lists/strings all have
-          // .length as the first (offset-0) field of signedbv[64].
-          // Cast the class pointer to a pointer-to-int64 and
-          // dereference to read the length directly — this works
-          // regardless of the actual element type of the stored
-          // container, unlike a full struct cast.
+          // DICT tag: the pointed-to dict struct has .length at
+          // offset 0 (signedbv[64]). CLASS tag: the pointed-to
+          // class instance has __class_tag (signedbv[32]) at
+          // offset 0 — reading 8 bytes there is garbage, so we
+          // only apply the length-read trick for DICT-tagged
+          // values. CLASS-tagged values without __len__ should
+          // raise TypeError; we over-approximate as nondet int.
           pointer_typet len_ptr_type{signedbv_typet{64}, 64};
-          exprt class_len = typecast_exprt{
+          exprt dict_len = typecast_exprt{
             dereference_exprt{
               typecast_exprt{python_value_class_ptr(arg), len_ptr_type},
               signedbv_typet{64}},
@@ -3493,9 +3492,10 @@ exprt python_convertert::convert_call(const jsont &expr)
               python_value_is(arg, python_type_tagt::LIST),
               list_len,
               if_exprt{
-                python_value_is(arg, python_type_tagt::CLASS),
-                class_len,
-                from_integer(0, python_int_type())}}};
+                python_value_is(arg, python_type_tagt::DICT),
+                dict_len,
+                side_effect_expr_nondett{
+                  python_int_type(), source_locationt{}}}}};
         }
       }
     }
