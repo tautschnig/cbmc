@@ -1447,6 +1447,55 @@ codet python_convertert::convert_assign(const jsont &stmt)
     {
       if(typed_rhs.id() == ID_struct)
         dict_literals[sym.name] = typed_rhs;
+      else if(typed_rhs.id() == ID_side_effect)
+      {
+        // Inter-procedural dict-literal propagation: if the
+        // RHS is a call to a function whose return-statement
+        // we recorded as a dict literal, synthesize a
+        // dict-struct with the known keys so the caller's
+        // subscript / 'in' / len() operations can prove the
+        // key exists.
+        const auto &se = to_side_effect_expr(typed_rhs);
+        if(
+          se.get_statement() == ID_function_call && !se.operands().empty() &&
+          se.operands()[0].id() == ID_symbol)
+        {
+          std::string callee =
+            id2string(to_symbol_expr(se.operands()[0]).get_identifier());
+          std::string p = "python::";
+          if(callee.substr(0, p.size()) == p)
+            callee = callee.substr(p.size());
+          auto ki = function_returned_dict_keys.find(callee);
+          if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+          {
+            const auto &dt = to_struct_type(typed_rhs.type());
+            const auto &keys_type = to_array_type(dt.components()[1].type());
+            const auto &vals_type = to_array_type(dt.components()[2].type());
+            exprt::operandst key_elems, val_elems;
+            for(const auto &k : ki->second)
+            {
+              key_elems.push_back(python_string_literal(k));
+              val_elems.push_back(safe_zero(vals_type.element_type()));
+            }
+            while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+            {
+              key_elems.push_back(safe_zero(keys_type.element_type()));
+              val_elems.push_back(safe_zero(vals_type.element_type()));
+            }
+            exprt length = from_integer(
+              static_cast<long long>(ki->second.size()), signedbv_typet{64});
+            dict_literals[sym.name] = struct_exprt{
+              {length,
+               array_exprt{std::move(key_elems), keys_type},
+               array_exprt{std::move(val_elems), vals_type}},
+              typed_rhs.type()};
+          }
+          else
+            dict_literals.erase(sym.name);
+        }
+        else
+          dict_literals.erase(sym.name);
+      }
       else
         dict_literals.erase(sym.name);
     }

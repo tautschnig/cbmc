@@ -1298,7 +1298,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   else if(type_name == "list" || type_name == "List")
     return python_list_type(python_int_type());
   else if(type_name == "dict" || type_name == "Dict")
-    return python_int_type(); // dict type not fully modeled
+    return python_dict_type(python_string_type(), python_value_type());
   else if(type_name == "set" || type_name == "Set")
     return python_set_type();
   else if(type_name == "tuple" || type_name == "Tuple")
