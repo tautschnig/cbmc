@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: destructuring defaults apply when source is missing the
+corresponding slot (short array, absent object property).

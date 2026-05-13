@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: Array.prototype.forEach invokes callback per element with
+(value, index) and observable side effects.

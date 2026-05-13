@@ -1,0 +1,9 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: Math.log1p and Math.expm1 return correct values.

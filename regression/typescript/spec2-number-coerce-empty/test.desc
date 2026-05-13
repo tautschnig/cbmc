@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: Number("") === 0 (not NaN); whitespace-only strings also
+coerce to 0.
