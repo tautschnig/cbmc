@@ -247,6 +247,104 @@ static const java_class_typet::methodt *try_get_unique_unimplemented_method(
   }
 }
 
+/// F6: Synthesize a \c java_class_typet::methodt representing the abstract
+/// method the invokedynamic is binding to, when the functional interface
+/// itself is a stub type (no class file on the classpath).
+///
+/// We derive the abstract method's signature from the lambda target:
+/// the target's parameter list is (captures..., abstract_method_params...)
+/// and its return type matches the abstract method's return type. Stripping
+/// the first N parameters (N = number of captures = parameter count of the
+/// invokedynamic's own signature) yields the abstract method's type.
+///
+/// The method name comes from the invokedynamic's NameAndType entry,
+/// stashed on the dynamic_method_type by the bytecode parser as
+/// \c ID_java_lambda_method_name.
+///
+/// Returns \c std::nullopt if any of the info we need is missing.
+static std::optional<java_class_typet::methodt>
+synthesize_stub_interface_method(
+  const symbol_table_baset &symbol_table,
+  const java_class_typet::java_lambda_method_handlet &lambda_handle,
+  const java_method_typet &dynamic_method_type)
+{
+  const irep_idt method_name =
+    dynamic_method_type.get(ID_java_lambda_method_name);
+  if(method_name.empty())
+    return {};
+
+  const irep_idt target_id = lambda_handle.get_lambda_method_identifier();
+  const auto *target_sym = symbol_table.lookup(target_id);
+  if(target_sym == nullptr)
+    return {};
+  const auto &target_type = to_java_method_type(target_sym->type);
+
+  const std::size_t n_captures = dynamic_method_type.parameters().size();
+  if(n_captures > target_type.parameters().size())
+    return {};
+
+  java_method_typet::parameterst abstract_params;
+  for(std::size_t i = n_captures; i < target_type.parameters().size(); ++i)
+    abstract_params.push_back(target_type.parameters()[i]);
+  java_method_typet abstract_method_type(
+    std::move(abstract_params), target_type.return_type());
+
+  // Compute a JVM descriptor for the abstract method.
+  auto descriptor_for_type = [](const typet &t) -> std::string {
+    if(t.id() == ID_bool || t.id() == ID_c_bool)
+      return "Z";
+    if(t.id() == ID_signedbv || t.id() == ID_unsignedbv)
+    {
+      const auto width = to_bitvector_type(t).get_width();
+      if(t.get(ID_C_c_type) == ID_char)
+        return "C";
+      if(width == 8)
+        return "B";
+      if(width == 16)
+        return "S";
+      if(width == 32)
+        return "I";
+      if(width == 64)
+        return "J";
+    }
+    if(t.id() == ID_floatbv)
+    {
+      const auto &fb = to_floatbv_type(t);
+      return fb.get_width() == 32 ? "F" : "D";
+    }
+    if(t.id() == ID_pointer)
+    {
+      const auto &subtype = to_pointer_type(t).base_type();
+      if(subtype.id() == ID_struct_tag)
+      {
+        std::string s = id2string(to_struct_tag_type(subtype).get_identifier());
+        if(s.substr(0, 6) == "java::")
+          s = s.substr(6);
+        for(auto &c : s)
+          if(c == '.')
+            c = '/';
+        return "L" + s + ";";
+      }
+    }
+    return "Ljava/lang/Object;";
+  };
+
+  std::string descriptor = "(";
+  for(const auto &param : abstract_method_type.parameters())
+    descriptor += descriptor_for_type(param.type());
+  descriptor += ")";
+  descriptor += descriptor_for_type(abstract_method_type.return_type());
+
+  // The class_typet::methodt's "name" field is conventionally the fully
+  // qualified symbol id. For a stub interface we don't have a symbol to
+  // point at, so use a synthesized id of the same shape.
+  const irep_idt full_name = id2string(method_name) + ":" + descriptor;
+  java_class_typet::methodt method(full_name, abstract_method_type);
+  method.set_base_name(method_name);
+  method.set_descriptor(descriptor);
+  return method;
+}
+
 symbolt synthetic_class_symbol(
   const irep_idt &synthetic_class_name,
   const java_class_typet::java_lambda_method_handlet &lambda_method_handle,
@@ -424,7 +522,31 @@ void create_invokedynamic_synthetic_classes(
       method_identifier,
       instruction.address,
       log);
-    if(!unimplemented_method)
+
+    // F6: If the functional interface is a stub type (no class file in the
+    // classpath), try_get_unique_unimplemented_method fails. Fall back to
+    // synthesizing the abstract method from the invokedynamic's own info
+    // (stored on the dynamic_method_type by the bytecode parser).
+    std::optional<java_class_typet::methodt> synthesized_method;
+    const java_class_typet::methodt *method_to_implement_ptr =
+      unimplemented_method;
+    if(method_to_implement_ptr == nullptr)
+    {
+      synthesized_method = synthesize_stub_interface_method(
+        symbol_table, *lambda_handle, dynamic_method_type);
+      if(synthesized_method)
+      {
+        method_to_implement_ptr = &*synthesized_method;
+        log.debug() << "synthesized abstract method for stub functional "
+                    << "interface " << functional_interface_tag.get_identifier()
+                    << " at " << method_identifier << " address "
+                    << instruction.address << ": "
+                    << method_to_implement_ptr->get_base_name() << ":"
+                    << method_to_implement_ptr->get_descriptor()
+                    << messaget::eom;
+      }
+    }
+    if(method_to_implement_ptr == nullptr)
       continue;
     log.debug() << "identified invokedynamic at " << method_identifier
                 << " address " << instruction.address << " for lambda: "
@@ -435,7 +557,7 @@ void create_invokedynamic_synthetic_classes(
     symbol_table.add(constructor_symbol(
       synthetic_methods, synthetic_class_name, dynamic_method_type));
     symbol_table.add(implemented_method_symbol(
-      synthetic_methods, *unimplemented_method, synthetic_class_name));
+      synthetic_methods, *method_to_implement_ptr, synthetic_class_name));
     symbol_table.add(synthetic_class_symbol(
       synthetic_class_name,
       *lambda_handle,

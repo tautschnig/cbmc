@@ -3147,6 +3147,21 @@ std::optional<exprt> java_bytecode_convert_methodt::convert_invoke_dynamic(
   {
     needed_lazy_methods->add_needed_method(constructor_symbol.name);
     needed_lazy_methods->add_needed_class(synthetic_class_name);
+
+    // F6: also keep the lambda target method (the user's
+    // `lambda$<enclosing>$<idx>`) alive. The JVerify contracts pass calls
+    // it directly at each return site to evaluate a lambda postcondition.
+    // Without this mark, ci_lazy_methods prunes it because the only call
+    // in bytecode goes through the synthetic class's implemented method,
+    // which may itself be pruned.
+    const auto &class_type = to_java_class_type(
+      ns.lookup(synthetic_class_name).type);
+    const auto &handle =
+      static_cast<const java_class_typet::java_lambda_method_handlet &>(
+        class_type.find(ID_java_lambda_method_handle));
+    const irep_idt lambda_target_id = handle.get_lambda_method_identifier();
+    if(!lambda_target_id.empty())
+      needed_lazy_methods->add_needed_method(lambda_target_id);
   }
 
   result_code = std::move(result);

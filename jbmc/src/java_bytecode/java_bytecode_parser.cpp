@@ -832,8 +832,21 @@ void java_bytecode_parsert::rconstant_pool()
       {
         entry.expr.id("invokedynamic");
         const pool_entryt &nameandtype_entry = pool_entry(entry.ref2);
+        const pool_entryt &name_entry = pool_entry(nameandtype_entry.ref1);
+        const pool_entryt &descriptor_entry =
+          pool_entry(nameandtype_entry.ref2);
         typet type=type_entry(nameandtype_entry.ref2);
         type.set(ID_java_lambda_method_handle_index, entry.ref1);
+        // F6: also stash the functional-interface method name and its raw
+        // descriptor so lambda_synthesis.cpp can synthesize an abstract
+        // method descriptor when the functional interface itself is a
+        // stub (e.g. java.util.function.IntPredicate with no classpath
+        // entry). The names on a CONSTANT_InvokeDynamic NameAndType are
+        // exactly "<method_name>" and "(<capture_types>)<iface_type>";
+        // stripping the capture prefix gives the interface method's
+        // descriptor.
+        type.set(ID_java_lambda_method_name, name_entry.s);
+        type.set(ID_java_lambda_method_raw_descriptor, descriptor_entry.s);
         entry.expr.type() = type;
       }
       break;
