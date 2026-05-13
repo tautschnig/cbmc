@@ -6,10 +6,11 @@ parsing and type-checking, then converts the typed AST to GOTO programs
 for verification.
 
 The front-end is under active development. The regression suite covers
-658 programs. Three tests are marked `KNOWNBUG`, all of them
-pre-existing design trade-offs (see the "Design trade-offs" section
-at the end of this guide). The full symbolic-string suite,
-precision probes, and closure-capture suite are CORE and green.
+662 programs (including 7 new tests from a targeted ES2024 spec
+review). Three tests are marked `KNOWNBUG`, all of them pre-existing
+design trade-offs (see the "Design trade-offs" section at the end of
+this guide). The full symbolic-string suite, precision probes, and
+closure-capture suite are CORE and green.
 
 ## Contents
 
@@ -420,6 +421,14 @@ KNOWNBUGs are design trade-offs.
 - `Object.is(+0, -0)` returns `false` per ES2024 for constant zeros,
   but only in the constant path — symbolic zero-sign tracking is not
   available.
+- `for-of` over a string (`for (const c of "abc")`) is a no-op with a
+  warning. Use indexed iteration as the workaround:
+  `for (let i = 0; i < s.length; i++) s.charAt(i)`.
+- Ternary expressions whose branches yield a literal-union type
+  (e.g. the TS-inferred `10 | 20` from `0 ? 10 : 20`) are imprecise
+  because our tagged-union representation can't reliably match the
+  target integer. Annotate the binding explicitly (`const b: number
+  = 0 ? 10 : 20`) to bypass literal-union inference.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.

@@ -326,6 +326,13 @@ catches it.
 | `string-concat-method` | String.prototype.concat not implemented | fa68297ded |
 | `string-last-index-of` | String.prototype.lastIndexOf not implemented | fa68297ded |
 | `string-pad-multichar` | Multi-char pad pattern not truncated per spec | fa68297ded |
+| `spec-string-plus-coerce` | `"pi: " + 3.14` rendered as `"pi: 3"` (round_to_integral used as statement) | e93f234c53 |
+| `spec-array-concat-variadic` | `[1,2].concat(3, 4)` produced length 1 (only first arg considered) | e93f234c53 |
+| `spec-array-includes-fromindex` | `Array.includes` ignored fromIndex | e93f234c53 |
+| `spec-array-join-empty` | `[].join(",")` fell through to symbolic fallback | e93f234c53 |
+| `spec-arrow-funcptr-live` | `const f = foo; f()` didn't dispatch (typecast instead of address_of + pre-scan miss) | e93f234c53 |
+| `spec-for-loop-increment-continue` | for-loop incrementor was a dead expression; `continue` skipped it | e93f234c53 |
+| `spec-logical-operand-value` | `&&` / `\|\|` returned boolean instead of an operand value (§13.13) | e93f234c53 |
 
 ## Overall assessment
 
