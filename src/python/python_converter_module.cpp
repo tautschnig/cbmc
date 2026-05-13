@@ -97,15 +97,16 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
     codet code = convert_statement(stmt);
     block.add(std::move(code));
 
-    // Check for uncaught exceptions after each module-level statement
+    // Check for uncaught exceptions after each module-level statement.
+    // We deliberately check after If/While/For/Try statements too,
+    // because bugs triggered inside 'if __name__ == "__main__":' blocks
+    // are common and our frontend otherwise silently swallows them.
     const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
     if(
       exc_sym != nullptr && !is_node_type(stmt, "FunctionDef") &&
       !is_node_type(stmt, "AsyncFunctionDef") &&
       !is_node_type(stmt, "ClassDef") && !is_node_type(stmt, "Import") &&
-      !is_node_type(stmt, "ImportFrom") && !is_node_type(stmt, "Try") &&
-      !is_node_type(stmt, "If") && !is_node_type(stmt, "While") &&
-      !is_node_type(stmt, "For"))
+      !is_node_type(stmt, "ImportFrom"))
     {
       source_locationt eloc = get_location(stmt);
       eloc.set_property_class("exception");
