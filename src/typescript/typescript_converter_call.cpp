@@ -3652,6 +3652,18 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(start < 0)
             start = 0;
         }
+        // ES2024 §23.1.3.12 uses SameValueZero: NaN === NaN is true.
+        // Detect the "target is NaN" case and use isNaN(element)
+        // instead of strict IEEE compare (which would give false).
+        bool target_is_nan = false;
+        if(target.is_constant() && target.type().id() == ID_floatbv)
+        {
+          ieee_floatt tv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          tv.from_expr(to_constant_expr(target));
+          target_is_nan = tv.is_NaN();
+        }
         // OR together equality checks for each element from start.
         exprt result = false_exprt{};
         for(mp_integer i = start; i < len; ++i)
@@ -3659,10 +3671,20 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           auto idx = i.to_ulong();
           if(idx >= data.operands().size())
             break;
-          exprt eq =
-            target.type().id() == ID_floatbv
-              ? exprt{ieee_float_equal_exprt{data.operands()[idx], target}}
-              : exprt{equal_exprt{data.operands()[idx], target}};
+          exprt eq;
+          if(target_is_nan && data.operands()[idx].type().id() == ID_floatbv)
+          {
+            // Element matches iff it is NaN (x != x is the IEEE NaN
+            // test).
+            eq = ieee_float_notequal_exprt{
+              data.operands()[idx], data.operands()[idx]};
+          }
+          else
+          {
+            eq = target.type().id() == ID_floatbv
+                   ? exprt{ieee_float_equal_exprt{data.operands()[idx], target}}
+                   : exprt{equal_exprt{data.operands()[idx], target}};
+          }
           result = or_exprt{result, eq};
         }
         return result;
@@ -5406,8 +5428,19 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           else
             ok = false;
         }
-        else if(method == "sqrt" && arg_vals[0] >= 0)
+        else if(method == "sqrt")
+        {
+          // ES2024 §21.3.2.32: sqrt of negative returns NaN.
+          if(arg_vals[0] < 0)
+          {
+            ieee_floatt nan{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            nan.make_NaN();
+            return nan.to_expr();
+          }
           res = std::sqrt(arg_vals[0]);
+        }
         else if(method == "abs")
           res = std::fabs(arg_vals[0]);
         else if(method == "floor")

@@ -1875,15 +1875,69 @@ exprt typescript_convertert::convert_string_literal_from_text(
   struct_typet str_type = typescript_string_type();
   const auto &data_type = to_array_type(str_type.components()[1].type());
 
+  // Decode UTF-8 input → UTF-16 code units. The raw `text` is how
+  // the TS compiler returns it (typically UTF-8). We emit one
+  // code unit per unicode BMP codepoint, or a surrogate pair for
+  // astral characters (codepoint > U+FFFF), matching the
+  // ES2024 §6.1.4 String type.
+  std::vector<uint16_t> code_units;
+  for(std::size_t i = 0; i < text.size();)
+  {
+    unsigned char c = static_cast<unsigned char>(text[i]);
+    uint32_t cp = 0;
+    std::size_t n = 1;
+    if((c & 0x80u) == 0)
+    {
+      cp = c;
+    }
+    else if((c & 0xE0u) == 0xC0u && i + 1 < text.size())
+    {
+      cp = (c & 0x1Fu);
+      cp = (cp << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3Fu);
+      n = 2;
+    }
+    else if((c & 0xF0u) == 0xE0u && i + 2 < text.size())
+    {
+      cp = (c & 0x0Fu);
+      cp = (cp << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3Fu);
+      cp = (cp << 6) | (static_cast<unsigned char>(text[i + 2]) & 0x3Fu);
+      n = 3;
+    }
+    else if((c & 0xF8u) == 0xF0u && i + 3 < text.size())
+    {
+      cp = (c & 0x07u);
+      cp = (cp << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3Fu);
+      cp = (cp << 6) | (static_cast<unsigned char>(text[i + 2]) & 0x3Fu);
+      cp = (cp << 6) | (static_cast<unsigned char>(text[i + 3]) & 0x3Fu);
+      n = 4;
+    }
+    else
+    {
+      // Malformed UTF-8 (or latin-1 byte): emit as-is.
+      cp = c;
+    }
+    if(cp > 0xFFFF)
+    {
+      // Emit surrogate pair.
+      cp -= 0x10000;
+      code_units.push_back(static_cast<uint16_t>(0xD800 | (cp >> 10)));
+      code_units.push_back(static_cast<uint16_t>(0xDC00 | (cp & 0x3FF)));
+    }
+    else
+    {
+      code_units.push_back(static_cast<uint16_t>(cp));
+    }
+    i += n;
+  }
+
   exprt::operandst chars;
-  for(char c : text)
-    chars.push_back(
-      from_integer(static_cast<unsigned char>(c), unsignedbv_typet{16}));
+  for(uint16_t u : code_units)
+    chars.push_back(from_integer(u, unsignedbv_typet{16}));
   while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
     chars.push_back(from_integer(0, unsignedbv_typet{16}));
 
   exprt length =
-    from_integer(static_cast<int>(text.size()), signedbv_typet{32});
+    from_integer(static_cast<int>(code_units.size()), signedbv_typet{32});
 
   return struct_exprt{
     {length, array_exprt{std::move(chars), data_type}}, str_type};
@@ -2017,7 +2071,8 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
                           is_typescript_string_type(right.type()));
   if(
     left.type() != right.type() && op != "EqualsEqualsEqualsToken" &&
-    op != "ExclamationEqualsEqualsToken" && !plus_with_string)
+    op != "ExclamationEqualsEqualsToken" && op != "InKeyword" &&
+    !plus_with_string)
   {
     if(left.type().id() == ID_floatbv)
       right = typecast_exprt{right, left.type()};
@@ -2082,6 +2137,55 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         {
           operand = convert_string_literal_from_text(
             operand.is_true() ? "true" : "false");
+        }
+        else if(
+          operand.type().id() == ID_struct &&
+          to_struct_type(operand.type()).get_tag() == "typescript_array")
+        {
+          // ES2024 §23.1.3.32 Array.prototype.toString → .join(",").
+          exprt resolved = operand;
+          if(resolved.id() == ID_symbol)
+          {
+            const symbolt *s =
+              symbol_table.lookup(to_symbol_expr(resolved).get_identifier());
+            if(s && !s->value.is_nil())
+              resolved = s->value;
+          }
+          if(resolved.id() == ID_struct && resolved.operands().size() >= 2)
+          {
+            mp_integer len{0};
+            if(resolved.operands()[0].is_constant())
+              to_integer(to_constant_expr(resolved.operands()[0]), len);
+            const exprt &data = resolved.operands()[1];
+            std::string joined;
+            for(mp_integer i = 0; i < len; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx >= data.operands().size())
+                break;
+              if(i > 0)
+                joined += ",";
+              const exprt &elem = data.operands()[idx];
+              std::string sv = extract_string_value(elem);
+              if(!sv.empty())
+              {
+                joined += sv.substr(2);
+              }
+              else if(elem.is_constant() && elem.type().id() == ID_floatbv)
+              {
+                ieee_floatt fv{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                fv.from_expr(to_constant_expr(elem));
+                ieee_floatt rounded = fv.round_to_integral();
+                if(rounded == fv)
+                  joined += integer2string(fv.to_integer());
+                else
+                  joined += fv.to_ansi_c_string();
+              }
+            }
+            operand = convert_string_literal_from_text(joined);
+          }
         }
       };
       coerce_to_string(left);
@@ -2538,7 +2642,38 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     return notequal_exprt{left, right};
   }
 
-  // ES2024 sec-relational-operators
+  // ES2024 sec-relational-operators.
+  // For constant strings, compare lexicographically by code unit
+  // at conversion time. For non-constant strings, return nondet
+  // (TODO: solver-side via cprover_string_compare_func).
+  if(
+    (op == "LessThanToken" || op == "FirstBinaryOperator" ||
+     op == "GreaterThanToken" || op == "LessThanEqualsToken" ||
+     op == "GreaterThanEqualsToken") &&
+    is_typescript_string_type(left.type()) &&
+    is_typescript_string_type(right.type()))
+  {
+    std::string ls_raw = extract_string_value(left);
+    std::string rs_raw = extract_string_value(right);
+    if(!ls_raw.empty() && !rs_raw.empty())
+    {
+      std::string ls = ls_raw.substr(2);
+      std::string rs = rs_raw.substr(2);
+      bool result = false;
+      int cmp = ls.compare(rs);
+      if(op == "LessThanToken" || op == "FirstBinaryOperator")
+        result = cmp < 0;
+      else if(op == "GreaterThanToken")
+        result = cmp > 0;
+      else if(op == "LessThanEqualsToken")
+        result = cmp <= 0;
+      else // GreaterThanEqualsToken
+        result = cmp >= 0;
+      return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
+    }
+    // Fall through to nondet if either operand is non-constant.
+    return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+  }
   if(op == "LessThanToken" || op == "FirstBinaryOperator")
     return binary_relation_exprt{left, ID_lt, right};
   if(op == "GreaterThanToken")
@@ -2587,6 +2722,10 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   if(op == "CommaToken")
     return right; // evaluate both, return right
   // ES2024 sec-bitwise-operators
+  // ES2024 §13.10 bitwise operators: all arg values are first
+  // converted to int32 (ToInt32), except for `>>>` which also
+  // converts the result back as uint32. Shift counts are masked to
+  // the low 5 bits (mod 32).
   if(
     op == "AmpersandToken" || op == "BarToken" || op == "CaretToken" ||
     op == "LessThanLessThanToken" || op == "GreaterThanGreaterThanToken" ||
@@ -2602,12 +2741,28 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
       result_int = bitor_exprt{l_int, r_int};
     else if(op == "CaretToken")
       result_int = bitxor_exprt{l_int, r_int};
-    else if(op == "LessThanLessThanToken")
-      result_int = shl_exprt{l_int, r_int};
-    else if(op == "GreaterThanGreaterThanToken")
-      result_int = ashr_exprt{l_int, r_int};
     else
-      result_int = lshr_exprt{l_int, r_int};
+    {
+      // Shift: mask count to low 5 bits (§13.10.1 step 5).
+      exprt masked_r =
+        bitand_exprt{r_int, from_integer(31, signedbv_typet{32})};
+      if(op == "LessThanLessThanToken")
+        result_int = shl_exprt{l_int, masked_r};
+      else if(op == "GreaterThanGreaterThanToken")
+        result_int = ashr_exprt{l_int, masked_r};
+      else
+      {
+        // >>>: zero-extending right shift. Reinterpret LHS as
+        // uint32, shift, keep result as uint32, then widen to int64
+        // before casting to double so the top bit isn't misread as
+        // a sign bit.
+        exprt l_uint = typecast_exprt{l_int, unsignedbv_typet{32}};
+        exprt masked_r_u = typecast_exprt{masked_r, unsignedbv_typet{32}};
+        exprt shifted = lshr_exprt{l_uint, masked_r_u};
+        exprt widened = typecast_exprt{shifted, signedbv_typet{64}};
+        return typecast_exprt{widened, double_type()};
+      }
+    }
     return typecast_exprt{result_int, double_type()};
   }
   // ES2024 sec-nullish-coalescing: ??
@@ -2661,6 +2816,59 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // "prop" in obj — true if obj's type has a property named prop
   if(op == "InKeyword")
   {
+    // ES2024 §13.10.2 — property / index membership.
+    // For an array receiver with a numeric left operand, the check
+    // is `0 <= i < arr.length` (our model has no holes). Handle
+    // this before the string-key path.
+    if(
+      right.type().id() == ID_struct &&
+      to_struct_type(right.type()).get_tag() == "typescript_array" &&
+      left.type().id() == ID_floatbv)
+    {
+      // Resolve the symbolic array if possible.
+      exprt arr = right;
+      if(arr.id() == ID_symbol)
+      {
+        const symbolt *s =
+          symbol_table.lookup(to_symbol_expr(arr).get_identifier());
+        if(s && !s->value.is_nil())
+          arr = s->value;
+      }
+      if(arr.id() == ID_struct && arr.operands().size() >= 2)
+      {
+        // Extract the index value, handling unary-minus of a
+        // constant (like `-1 in a`).
+        mp_integer idx;
+        bool got_idx = false;
+        const exprt *le = &left;
+        bool neg = false;
+        if(le->id() == ID_unary_minus && le->operands().size() == 1)
+        {
+          neg = true;
+          le = &le->operands()[0];
+        }
+        if(le->is_constant() && le->type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(*le));
+          idx = fv.to_integer();
+          if(neg)
+            idx = -idx;
+          got_idx = true;
+        }
+        if(got_idx)
+        {
+          mp_integer len{0};
+          if(arr.operands()[0].is_constant())
+            to_integer(to_constant_expr(arr.operands()[0]), len);
+          if(idx >= 0 && idx < len)
+            return exprt{true_exprt{}};
+          return exprt{false_exprt{}};
+        }
+      }
+    }
     std::string prop_name;
     std::string ls = extract_string_value(left);
     if(!ls.empty())
