@@ -277,6 +277,12 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # name is all we need.
         "mutex_unlock",
     ],
+    "refcount_lifetime": [
+        # refcount_dec_and_test is an ordinary `extern bool` in
+        # <linux/refcount.h> — not static inline — so the
+        # external name is all we need.
+        "refcount_dec_and_test",
+    ],
 }
 
 
@@ -417,6 +423,28 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "lock_held",
             "lock_state_held_count",
+        ],
+    },
+    "refcount_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "refcount_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "refcount_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "refcount_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "refcount_lifetime" / "refcount_lifetime.c",
+        ],
+        "slice_preserve": [
+            "refcount_live", "refcount_lifetime_usage",
+            "refcount_lifetime_init", "refcount_lifetime_inc",
+            "refcount_lifetime_dec_and_test",
+            "refcount_ghost_find", "refcount_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "refcount_live",
+            "refcount_lifetime_usage",
         ],
     },
 }

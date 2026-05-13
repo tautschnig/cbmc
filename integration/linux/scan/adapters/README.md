@@ -106,6 +106,38 @@ Validated end-to-end against Linux 5.10 `fs/coredump.c`
   fires at the harness's second `put_cred` call.
 - `--direction=fix`: `cbmc_status: "successful"`.
 
+### refcount_lifetime (refcount_t underflow / double-dec)
+
+- [`refcount_kernel_adapter.c`](refcount_kernel_adapter.c) —
+  attaches `refcount_live(r) == 1` as a contract precondition on
+  `refcount_dec_and_test` (the canonical `refcount_t`-drop API
+  in `<linux/refcount.h>`).  In modern kernels
+  `refcount_dec_and_test` is `static inline`, so under
+  `goto-cc --export-file-local-symbols` it's exposed in each
+  kernel TU under a mangled name; the contract is declared on
+  the external symbol, which is what the direct-call harness
+  uses.  Kernel-TU call sites that use the mangled name don't
+  receive the contract today, but that's fine for the
+  scan — the contract signal comes from the harness, and the
+  required-bodies check continues to guard against LIM-009-
+  style linkage errors.
+- [`refcount_kernel_adapter_probe.c`](refcount_kernel_adapter_probe.c) —
+  trivially-false-precondition variant for the vacuity probe.
+- [`refcount_kernel_direct_harness.c`](refcount_kernel_direct_harness.c) —
+  direct-call harness.  Builds a refcount_t with usage=1
+  (vulnerable) or usage=2 (`-DFIXED`), then calls
+  `refcount_dec_and_test` twice.  The vulnerable shape fires
+  the `refcount_live` precondition at the second call; the
+  fixed shape passes.
+
+Validated end-to-end against Linux 5.10 `kernel/fork.c`
+(three `refcount_dec_and_test` sites flagged by the cocci
+prefilter):
+- Default: `cbmc_status: "failed"`,
+  `refcount_dec_and_test.precondition.4` fires at the second
+  call.
+- `--direction=fix`: `cbmc_status: "successful"`.
+
 ## Adding a new adapter
 
 1. Create `scan/adapters/<module>_kernel_{adapter,stubs,harness}.c`

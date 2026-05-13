@@ -312,6 +312,85 @@ else
   fi
 fi
 
+echo
+echo "=== case 8: real-kernel refcount_lifetime on kernel/fork.c ==="
+# Fifth property module end-to-end.  kernel/fork.c matches the
+# refcount_lifetime prefilter on its `refcount_dec_and_test`
+# calls (three hits at lines 437, 722, 1526 on 5.10).
+#   - default --direction=vuln: cbmc_status=failed; the
+#     refcount_dec_and_test.precondition.4 fires at the second
+#     dec in the harness's vulnerable-shape branch.
+#   - --direction=fix: cbmc_status=successful.
+RC_KERNEL_C="$LINUX_TREE/kernel/fork.c"
+if [[ ! -f $RC_KERNEL_C ]]; then
+  echo "  [skip] no $RC_KERNEL_C"
+else
+  # 8a: vulnerable direction.  The scan may also fire cred_lifetime
+  # and lock_state on kernel/fork.c (it has put_cred and spin_unlock
+  # calls too) and any of those counts as a valid `failed` on its
+  # own module.  The refcount_lifetime-specific check below
+  # requires the module to be present in the report and to have
+  # fired its dec_and_test precondition.
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$RC_KERNEL_C" \
+    --json "$tmp/case8a.json" > "$tmp/case8a.out" 2>&1
+  rc=$?
+  set -e
+  if [[ $rc -eq 1 ]] && \
+     python3 -c "
+import json, sys
+d = json.load(open('$tmp/case8a.json'))
+for f in d['files']:
+    for m in f['modules']:
+        if m['module'] != 'refcount_lifetime':
+            continue
+        if m.get('cbmc_status') != 'failed':
+            sys.exit(f\"expected refcount_lifetime cbmc_status=failed, got {m.get('cbmc_status')}\")
+        failures = m.get('cbmc_failures') or []
+        if not any('refcount_dec_and_test.precondition' in fa.get('assertion','')
+                   for fa in failures):
+            sys.exit(f'expected refcount_dec_and_test.precondition in failures; got {failures}')
+        sys.exit(0)
+sys.exit('no refcount_lifetime module report')
+" >/dev/null 2>&1; then
+    echo "  [ok] 8a (vuln): exit 1, cbmc_status=failed, refcount_dec_and_test precondition named"
+  else
+    echo "  [FAIL] 8a expected rc 1 + cbmc_status=failed + refcount_dec_and_test precondition" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case8a.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+
+  # 8b: fix direction.  cbmc_status=successful on refcount_lifetime.
+  # We check the refcount_lifetime module specifically (other
+  # modules may still fail on the same file in fix direction
+  # if they don't ship a fix-direction harness yet).
+  set +e
+  LINUX_TREE="$LINUX_TREE" "$SCAN" "$RC_KERNEL_C" --direction=fix \
+    --json "$tmp/case8b.json" > "$tmp/case8b.out" 2>&1
+  rc=$?
+  set -e
+  if python3 -c "
+import json, sys
+d = json.load(open('$tmp/case8b.json'))
+for f in d['files']:
+    for m in f['modules']:
+        if m['module'] != 'refcount_lifetime':
+            continue
+        if m.get('cbmc_status') != 'successful':
+            sys.exit(f\"expected refcount_lifetime successful, got {m.get('cbmc_status')}\")
+        sys.exit(0)
+sys.exit('no refcount_lifetime module report')
+" >/dev/null 2>&1; then
+    echo "  [ok] 8b (fix):  refcount_lifetime cbmc_status=successful"
+  else
+    echo "  [FAIL] 8b expected refcount_lifetime cbmc_status=successful" >&2
+    echo "         last 20 lines of output:" >&2
+    tail -20 "$tmp/case8b.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
   echo "scan.py regressions passed."
