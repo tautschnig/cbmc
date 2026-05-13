@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: String + number/boolean concatenation coerces via
+Number.prototype.toString / Boolean.prototype.toString.

@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: function→function-pointer alias dispatches correctly, and
+closure captures follow live-binding semantics (mutation of the
+captured variable after the arrow is created is visible at call
+time).

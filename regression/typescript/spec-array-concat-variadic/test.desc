@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: Array.prototype.concat accepts variadic args; spreads arrays
+one level, pushes scalars as-is.

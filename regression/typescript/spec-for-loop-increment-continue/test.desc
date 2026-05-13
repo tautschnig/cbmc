@@ -1,0 +1,11 @@
+CORE
+main.ts
+--unwind 15
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: for-loop incrementor must actually advance the loop variable,
+and `continue` must re-run the iter step before re-checking the
+condition.
