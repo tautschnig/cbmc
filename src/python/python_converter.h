@@ -188,6 +188,11 @@ public:
     python_no_exception_checks = v;
   }
 
+  void set_python_required_kwarg_checks(bool v)
+  {
+    python_required_kwarg_checks = v;
+  }
+
 private:
   /// Lazy-stubs mode: imported modules get symbol-table entries
   /// (types, classes, function signatures) but no function
@@ -201,6 +206,14 @@ private:
   /// whose bug-detection criterion is assertion-failure only,
   /// not exception-propagation.
   bool python_no_exception_checks = false;
+  /// Emit key-presence assertions for Required fields of
+  /// Unpack[TypedDict] kwargs in imported stub methods.
+  /// Catches 'missing required argument' bugs at the stub-skip
+  /// point. Off by default because caller-side **dict spread
+  /// isn't fully modelled — spread-based callers produce FPs.
+  /// Enable for benchmark suites that use only explicit
+  /// 'key=value' kwargs.
+  bool python_required_kwarg_checks = false;
   /// Emit a message about a front-end over-approximation. In the
   /// default mode the message goes to log.debug() so it is only
   /// visible at high verbosity; when --python-strict-warnings is
