@@ -144,6 +144,24 @@ void c_typecheck_baset::typecheck_symbol(symbolt &symbol)
         (!old_it->second.is_static_lifetime || !symbol.is_static_lifetime) &&
         symbol.type.id() != ID_code)
       {
+        // LIM-015 fix: for __auto_type declarations, the parser
+        // builds typeof(initializer) as the type.  Both the typeof
+        // copy and the declarator's initializer copy of the same
+        // statement_expression get typechecked independently, each
+        // trying to add the same local declarations to the symbol
+        // table.  If the existing symbol has the same type AND
+        // both the existing and new symbols have a value (meaning
+        // both were fully initialised — the hallmark of the
+        // __auto_type double-typecheck pattern where the same
+        // `__auto_type x = expr;` is processed twice), this is a
+        // benign re-encounter.  A genuine `int a = 10; int a;`
+        // has the second declaration without a value.
+        if(
+          old_it->second.type == symbol.type &&
+          old_it->second.value.is_not_nil() && symbol.value.is_not_nil())
+        {
+          return;
+        }
         error().source_location = symbol.location;
         error() << "redeclaration of '" << symbol.display_name()
                 << "' with no linkage" << eom;
