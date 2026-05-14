@@ -1,154 +1,384 @@
-# Python Verification Benchmarks — Remaining Issues Analysis
+# Benchmark issues analysis (Python AWS SDK suite)
 
-Categorization of the 14 non-CLEAN/non-TP benchmarks (with
-`--python-no-exception-checks`) by root cause type.
+This document enumerates the precision gaps in the CBMC Python frontend
+discovered while running the `python-verification-benchmarks` AWS SDK
+suite (51 benchmarks). It is the canonical reference for ongoing work on
+soundness and precision.
 
-## 1. Python correctness issues (PLR precision)
+The benchmark command is:
 
-Our analysis is imprecise or semantically not-quite-right.
+```
+cd ~/python-verification-benchmarks
+ulimit -v 4000000
+./scripts/run_tool.sh -s full -t 120 -o results.csv -- \
+  $HOME/cbmc-python.git/build/bin/cbmc \
+  --no-unwinding-assertions --unwind 3 --python-no-exception-checks
+```
 
-### Path-sensitive dict-key tracking missing
-- **Benchmark**: `bedrock_model_discovery` (FP)
-- **Pattern**: `if K not in D: D[K] = []; D[K].op()`. After the
-  if, K is in D in both branches. Our flow-insensitive analysis
-  over-approximates possible KeyError.
-- **Estimated fix**: ~150 lines path-sensitive analysis, or
-  more limited pattern recognition.
+## Current bottom line
 
-### Runtime-built dict spread
-- **Pattern**: `d = {}; d['k'] = v; f(**d)`. The `**d` spread
-  only populates kwargs for compile-time-known dict literals
-  via `dict_literals` tracking. Runtime-mutated dicts
-  under-populate.
-- **Estimated fix**: extend dict_literals to track
-  incremental inserts across basic blocks (~80 lines).
+51 benchmarks. As of 2026-05-13:
 
-### Inter-procedural dict-content tracking
-- **Pattern**: `def f(): r = {}; r[K] = V; return r`.
-  Caller's `result = f()` loses key tracking — our
-  `function_returned_dict_keys` only captures direct
-  dict-literal returns, not incrementally-built ones.
-- **Estimated fix**: more general data-flow (~100 lines).
+| Result   | Count | Note                                       |
+|----------|-------|--------------------------------------------|
+| CLEAN    | 38    | clean benchmarks correctly classified      |
+| TP       | 4     | buggy benchmarks correctly classified      |
+| MISS     | 8     | buggy benchmarks classified as clean       |
+| FP       | 1     | clean benchmark classified as buggy        |
+| TOERR    | 0     | all benchmarks complete with a verdict     |
+| TIMEOUT  | 0     |                                            |
+| OOM      | 0     |                                            |
 
-### `len()` on CLASS-tagged tagged-union
-- **Issue**: We read .length at offset 0 assuming dict/list/string
-  layout. Works because those share the layout, but user classes
-  with CLASS-tagged __class_ptr have arbitrary layouts — could
-  produce garbage for edge cases.
-- **Estimated fix**: proper DICT/LIST/STRING tag instead of
-  CLASS + offset trick (~60 lines, restructures tagged-union).
+Pass rate: **(38 + 4) / 51 = 82.4 %** meaningful.
 
-### Method dispatch on struct_tag vs struct
-- **Issue**: Class instances from type annotations have
-  struct_tag_typet; direct class struct instances have struct_typet.
-  Two code paths now do similar work.
-- **Estimated fix**: unified resolution (~40 lines).
+Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
+6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
+substantially through dict-precision, idiom recognition, attribute-error
+detection, and elimination of all timeouts / OOMs / tool-errors.
 
-## 2. Stub-specific issues (PySpec completeness)
+## Outstanding cases — TL;DR
 
-No amount of frontend/solver improvement would help.
+| Benchmark                                  | Verdict | Sub-category                                          | Actionability |
+|---|---|---|---|
+| websocket_url_validator                    | FP      | Path-sensitive `len()`-bound idiom                    | Actionable    |
+| check_storage_costs                        | MISS    | Stub-level semantic gap (per-metric dimensions)       | Stub work     |
+| clear_duplicate_dynamodb_entries           | TP      | (now detected via static AttributeError mechanism)    | —             |
+| create_bedrock_inference_profile           | TP      | (now detected via static AttributeError mechanism)    | —             |
+| rds_instance_creator.1                     | TP      | (now detected via static AttributeError mechanism)    | —             |
+| create_s3_vector_index                     | MISS    | Required-kwarg detection (gated flag)                 | Flag refinement |
+| test_bedrock_guardrails                    | MISS    | Required-kwarg detection (gated flag)                 | Flag refinement |
+| rds_instance_creator.2                     | MISS    | TypedDict field-type enforcement at call sites        | Actionable    |
+| s3_backup_restore                          | MISS    | TypeError on regex applied to non-string              | Actionable    |
+| sagemaker_labeling_job                     | MISS    | `re.compile().search()` over-approximation             | Actionable    |
+| bedrock_data_automation_example            | MISS    | Type erasure at function boundary (`param: Any`)      | Hard          |
+| mediaconvert_manager                       | MISS    | Conditional required argument (spec lacks constraint) | Stub work     |
 
-### `boto3.resource()` API not modeled
-- **Benchmark**: `clear_duplicate_dynamodb_entries` (MISS)
-- **Issue**: Stubs encode only `boto3.client()`. Bug is
-  `len(Table)` — Table has no `__len__`.
-- **Estimated fix**: stub work, ~200 lines for basic resource
-  surface.
 
-### Metric-specific dimension requirements
-- **Benchmark**: `check_storage_costs` (MISS)
-- **Issue**: Generic regex preconditions can't encode
-  per-metric semantic rules.
-- **Estimated fix**: stub-format extension, large scope.
+## Detailed analysis — false positive
 
-### MediaConvert endpoint_url requirement
-- **Benchmark**: `mediaconvert_manager` (MISS)
-- **Issue**: Per-service ambient constraints aren't expressed.
+### websocket_url_validator (FP, 1 case)
 
-### Stub return type `-> None` vs runtime dict
-- **Benchmarks**: many
-- **Issue**: Boto3 stubs declare `-> None` but the runtime
-  returns a dict. Downstream `response['Items']` is nondet.
-- **Relationship to annotation trust**: IMPORTANT — see section
-  below. This is arguably a stub-completeness issue: the stubs'
-  bodies don't return anything (no `return` statement), so
-  Python semantics is consistent with the `-> None` annotation.
-  It's NOT a case of us trusting annotations over body — both
-  say None. The mismatch is stub-vs-real-API, not
-  stub-body-vs-stub-annotation.
+```python
+def extract_api_id_from_url(websocket_url):
+    parsed = urlparse(websocket_url)
+    if not parsed.hostname:
+        return None
+    hostname_parts = parsed.hostname.split('.')
+    if len(hostname_parts) >= 3 and hostname_parts[1] == 'execute-api':
+        return hostname_parts[0]
+    return None
+```
 
-### Regex preconditions as validation proxies
-- **Issue**: Stubs use `compile(pat).search(str) is not None`
-  as "string matches pattern". Semantics is lost in the form.
+CBMC reports `index-out-of-bounds` at line 20 (`hostname_parts[1]`).
+The `len(hostname_parts) >= 3` guard is the LEFT operand of an
+`and`-expression whose RIGHT operand is the subscript. Python
+short-circuits, so the subscript only executes when the length is
+≥ 3, but the frontend doesn't propagate the length-bound from the
+left operand to the index check on the right.
 
-## 3. Scalability issues (solver / CBMC internal limits)
+**Sub-category:** *Path-sensitive length-check idiom for index
+bounds.* Symmetric to the dict `if K not in D: D[K] = ...` idiom
+already implemented; needs a similar path-sensitive guard
+recognition for `len(L) >= N → L[i] safe for i < N`.
 
-### String-refinement solver on `.split()` of nondet
-- **Benchmark**: `websocket_url_validator` (FP)
-- **Issue**: 64-element nondet list × regex comparisons to
-  literals → solver UNSAT cascades.
-- **Potential mitigations**:
-  - `--python-regex-nondet-true` flag replacing `compile(...).match/search(...)` with True.
-  - Reducing PYTHON_MAX_LIST_LENGTH for nondet-split fallback.
-  - SMT theory of strings instead of refinement.
+**Actionable.** Estimated 60–100 lines in `convert_compare`
+(detect `Compare(BoolOp(And), [Compare(Call(len, L), ≥, N), …])`)
+plus a side-map consulted in `convert_subscript`.
 
-### Pre-existing (now mitigated by stub-body-skip):
-- Stub-body regex cascades
-- Unbounded unwinding on pagination loops
-- Memory pressure from 16-entry dict scans
 
-## 4. Design / misc
+## Detailed analysis — missing detections (MISS)
 
-### Broad `except Exception` absorbing detected errors
-- **Benchmarks**: `bedrock_data_automation_example`,
-  `test_bedrock_guardrails` (MISS)
-- **Issue**: Our missing-method detection correctly raises
-  AttributeError. User source has `except Exception` which
-  correctly catches it. No analysis bug — this is **benchmark
-  design**: the author classified these as "buggy" expecting
-  semantic detection beyond exception reachability.
+### 1. check_storage_costs
 
-### `--python-no-exception-checks` trade-off
-- The flag trades exception-propagation detection (4 TPs) for
-  clean CLEAN verdicts on reachable-but-intentional raises.
-  Domain-dependent.
+```python
+cloudwatch.get_metric_statistics(
+    Namespace='AWS/S3',
+    MetricName='BucketSizeBytes',
+    Dimensions=[{'Name': 'StorageType', 'Value': 'StandardStorage'}],
+    StartTime=start_time, EndTime=end_time, Period=86400,
+    Statistics=['Average'])
+```
 
-### Classification criteria
-- Benchmark `.expect.detected.todo-strata-*` suffixes encode
-  tool-specific limitations. Translating our capabilities to
-  the grader's matrix is non-trivial.
+The bug: CloudWatch's `BucketSizeBytes` metric requires a
+`BucketName` dimension; with only `StorageType` it fails. The
+DynamoDB call (also in this benchmark) needs `TableName`.
 
-## Summary by category
+The CloudWatch stub in `stubs-full-python/boto3/CloudWatch.py`
+asserts `len(Namespace) ≥ 1`, `len(MetricName) ≥ 1`, and pattern
+constraints — but does not encode the per-metric dimension
+schema (e.g. "BucketSizeBytes ⇒ Dimensions must contain
+BucketName"). That schema is service-/metric-specific.
 
-| Category | Count | Examples |
-|----------|-------|----------|
-| 1. PLR precision | 1 FP + latent | bedrock_model_discovery |
-| 2. Stub completeness | 4 MISS | check_storage_costs, mediaconvert_manager, clear_duplicate_dynamodb_entries |
-| 3. Scalability | 1 FP | websocket_url_validator |
-| 4. Design/misc | 6 MISS + 1 FP | AttributeError-swallowed cluster |
+**Sub-category:** *Stub-level semantic gap.* Detection would
+require either richer stubs or a generic "valid argument
+combinations" mechanism in the front-end. Not addressable
+without stub work.
 
-## Meta-observations
+### 2. create_s3_vector_index (and test_bedrock_guardrails)
 
-- ~29% remaining issues are genuine frontend limitations
-  (cat 1+3).
-- ~29% are stub-level (cat 2) — no frontend improvement
-  helps.
-- ~42% are design/benchmark-grading trade-offs (cat 4).
+```python
+s3vectors_client.create_index(indexName=index_name, dimension=768)
+```
 
-Further gains on this benchmark suite come mostly from
-either stub refinement or benchmark-aware configuration
-matching the grader's expectations of what counts as a bug.
+Missing `dataType` and `distanceMetric`, both declared in the
+S3Vectors stub's TypedDict as `Required[Literal[...]]`.
+test_bedrock_guardrails has the same shape — missing
+`blockedInputMessaging` and `blockedOutputsMessaging` to
+`create_guardrail`.
 
-## Key open question: annotation trust
+Detection works **with `--python-required-kwarg-checks`**, the
+existing Tier-1B opt-in flag. With the flag enabled, the suite
+gains 2 additional TPs but introduces 2 FPs and 1 TOERR
+(glue_job_runner CLEAN→FP, kms_client_manager CLEAN→FP,
+apigateway_key_manager TP→TOERR). The flag therefore stays
+off-by-default.
 
-Python doesn't enforce type annotations at runtime. Our
-frontend currently uses annotations in several places:
+**Sub-category:** *Required-kwarg detection.* Implemented but
+not safe to enable by default. Needs FP-source elimination in
+the kwarg checker before promotion.
 
-- **Variable types**: `x: int = 5` sets x to int type.
-- **Parameter types**: `def f(x: int)` constrains x's type.
-- **Return types**: `def f() -> int` declares return.
-- **Class field types**: class-level annotations shape the struct.
+### 3. rds_instance_creator.2
 
-Potential correctness issue when the body contradicts the
-annotation (legal Python but semantically divergent from
-what we model). To investigate systematically.
+```python
+'DBSubnetGroupName': None,
+```
+
+The RDS stub's TypedDict declares it as
+`'DBSubnetGroupName': NotRequired[str]`, but the stub function
+body has no `assert isinstance(...)`. So even though we can see
+the type annotation, no runtime assertion fails when `None` is
+passed.
+
+**Sub-category:** *TypedDict field-type enforcement at call
+sites.* Needs a new check that walks each TypedDict declaration
+discovered during stub import and verifies passed kwargs match
+the declared (non-`Any`) type, similar in spirit to
+`--python-required-kwarg-checks` but for types not just
+presence.
+
+
+### 4. s3_backup_restore
+
+```python
+copy_source = {'Bucket': source_bucket, 'Key': key}
+self.s3.copy_object(CopySource=copy_source, Bucket=backup_bucket, Key=key)
+```
+
+`CopySource` should be a string of the form `bucket/key`. The
+S3 stub asserts `compile("^\\/?.+\\/.+$").search(CopySource)
+is not None`. With a dict argument, Python's
+`re.Pattern.search` raises `TypeError` ("expected string or
+bytes-like object") — the bug.
+
+Our front-end's `re.Pattern.search` doesn't currently model
+non-string inputs (it returns nondet); the assert is then
+under-constrained and verification proceeds.
+
+**Sub-category:** *TypeError on `re.search`/`re.match` with
+non-string argument.* Implementable as a check at the
+`re.Pattern.search/match/fullmatch` call sites, raising
+TypeError when the argument's static type isn't string/bytes.
+
+### 5. sagemaker_labeling_job
+
+```python
+HumanTaskConfig={
+  'WorkteamArn': workteam_arn,
+  'PreHumanTaskLambdaArn': '',
+  ...
+  'AnnotationConsolidationConfig': {
+      'AnnotationConsolidationLambdaArn': '',
+  },
+}
+```
+
+The SageMaker stub asserts:
+
+```python
+compile("^arn:aws[a-z\\-]*:lambda:[a-z0-9\\-]*:[0-9]{12}:function:")
+    .search(kwargs["HumanTaskConfig"]["PreHumanTaskLambdaArn"]) is not None
+```
+
+The empty string fails this pattern; in Python, the assert
+raises `AssertionError`. Our `re.Pattern.search` is a
+nondeterministic over-approximation, so the assertion isn't
+discharged as failing.
+
+**Sub-category:** *`re.Pattern.search` precision.* A
+"non-empty pattern + empty input ⇒ search returns None"
+special case would catch this benchmark. A complete fix would
+require a (small) regex modeling layer — at minimum,
+recognising literal anchored prefixes (`^arn:`) and disproving
+search results when the input doesn't start with the literal.
+
+### 6. mediaconvert_manager
+
+```python
+'CodecSettings': {
+    'Codec': 'H_264',
+    'H264Settings': {'RateControlMode': 'QVBR', 'QvbrSettings': ...}
+},
+```
+
+The bug is missing `MaxBitrate`, which is required when
+`Codec == H_264` but is marked `NotRequired` in the TypedDict
+unconditionally. The spec lacks the conditional requirement.
+
+**Sub-category:** *Conditional required arguments
+(`Required[X]` if `Y == Z`).* Out of scope unless the stub
+language is extended; not detectable from current TypedDict
+declarations.
+
+### 7. bedrock_data_automation_example
+
+```python
+def create_bedrock_data_automation_client(region='us-east-1'):
+    client: BedrockDataAutomation = boto3.client('bedrock-data-automation', ...)
+    return client
+
+def process_document(client: Any, document_content, document_type='text'):
+    response = client.invoke_data_automation_async(...)
+```
+
+`invoke_data_automation_async` is a method of the *Runtime*
+client (`bedrock-data-automation-runtime`), not the regular
+`BedrockDataAutomation`. The static AttributeError check
+*would* fire if the receiver type were known, but
+`process_document`'s parameter is annotated `client: Any`,
+which erases the concrete type at the function boundary.
+
+**Sub-category:** *Type erasure across function boundary
+(parameter declared `Any`).* Hard. Would require
+inter-procedural type propagation (caller-to-callee
+specialisation) or a different hand-off where the AttributeError
+check is performed at the call site against the caller's
+known type.
+
+
+## Categorization (high-level)
+
+Grouping the outstanding cases by the underlying capability gap:
+
+### A. Path-sensitive guard recognition (1 case)
+
+The frontend already recognises one PLR-correctness idiom
+(`if K not in D: D[K] = ...`); the same machinery should be
+extended to length-bounded subscripts:
+
+| Case                       | Idiom                                       |
+|----------------------------|---------------------------------------------|
+| websocket_url_validator    | `if len(L) ≥ N and L[i] …` for `i < N`     |
+
+### B. TypedDict-driven argument checks (3 cases)
+
+The stubs encode constraints in `Required[…]` / `NotRequired[…]`
+TypedDict fields. Two flavours:
+
+**B1 — required-kwarg presence (`Required[…]`):** detected by
+the existing `--python-required-kwarg-checks` flag. Currently
+gated because it FPs in 2 cases and TOERRs in 1.
+
+| Case                       | Missing kwargs                              |
+|----------------------------|---------------------------------------------|
+| create_s3_vector_index     | `dataType`, `distanceMetric`               |
+| test_bedrock_guardrails    | `blockedInputMessaging`, `blockedOutputsMessaging` |
+
+**B2 — field-type enforcement (`NotRequired[str]` ≠ `None`):** not yet
+implemented.
+
+| Case                       | Field             | Passed | Declared           |
+|----------------------------|-------------------|--------|--------------------|
+| rds_instance_creator.2     | DBSubnetGroupName | None   | `NotRequired[str]` |
+
+### C. Stub-level semantic gaps (2 cases)
+
+| Case                  | Gap                                                        |
+|-----------------------|------------------------------------------------------------|
+| check_storage_costs   | per-metric required dimensions (BucketName / TableName)    |
+| mediaconvert_manager  | conditional required (`MaxBitrate` if `Codec == H_264`)    |
+
+These need stub enhancements rather than frontend changes —
+either a richer stub language or expanded service stubs. The
+`stubs-full-python` directory is intentionally off-limits in
+this project.
+
+### D. Imprecise standard-library models (2 cases)
+
+| Case                   | Operation                                                  |
+|------------------------|------------------------------------------------------------|
+| s3_backup_restore      | `re.Pattern.search(non-string)` should raise TypeError     |
+| sagemaker_labeling_job | `re.Pattern.search('')` against non-empty pattern should be None |
+
+The current `re` model is a coarse over-approximation. Two
+incremental improvements would resolve both:
+
+1. Type-check the input to `search` / `match` / `fullmatch` and
+   raise TypeError when not str/bytes.
+2. Recognise empty input vs. non-empty pattern, returning None
+   from `search`.
+
+### E. Inter-procedural type erasure (1 case)
+
+| Case                              | Pattern                                  |
+|-----------------------------------|------------------------------------------|
+| bedrock_data_automation_example   | helper takes `client: Any`, callee uses concrete-typed method |
+
+Genuinely difficult: requires either function specialization
+on the concrete caller type, or post-hoc type refinement
+inside the callee.
+
+## Recommended next steps (ordered by ROI)
+
+1. **B2 — TypedDict field-type enforcement (1 case → +1 TP).**
+   Walk each TypedDict declaration discovered during stub
+   import; at each kwarg-call site whose receiver is annotated
+   with that TypedDict, check that passed values are
+   compatible with the declared field types. Behind a flag
+   initially (`--python-check-typeddict-fields`); promote once
+   FPs are surveyed.
+
+2. **A — Path-sensitive `len(L) ≥ N` idiom (1 case → −1 FP).**
+   Mirrors the existing `if K not in D: D[K] = ...`
+   path-sensitive tracker. Estimated 60–100 lines.
+
+3. **D1 — `re.search(non-string)` TypeError (1 case → +1 TP).**
+   Narrow check at known `re.Pattern.search` / `match` /
+   `fullmatch` call sites: when the static type of the input
+   is concrete and not str/bytes, emit a TypeError property.
+
+4. **D2 — Regex empty-input vs. non-empty-pattern precision
+   (1 case → +1 TP).** When pattern is a non-empty regex
+   literal and input is the empty string, the result of
+   `search` is None.
+
+5. **B1 — Refine `--python-required-kwarg-checks` (2 cases → +2 TP).**
+   Address the 2 FPs and 1 TOERR introduced by the flag (see
+   bench-kwarg.csv: glue_job_runner, kms_client_manager,
+   apigateway_key_manager). Likely a tightening of which
+   call sites are checked: skip kwargs forwarded via
+   `**kwargs`; respect intervening reassignments.
+
+6. **C — Stub enhancements (2 cases → +2 TP).** Out of scope
+   in this repo. If the `stubs-full-python` source language
+   gains conditional / per-metric required constraints,
+   these benchmarks become detectable without frontend
+   changes.
+
+7. **E — Inter-procedural type erasure (1 case → +1 TP).**
+   Hardest. Defer until the simpler items are done.
+
+Cumulative impact if items 1–5 land: **+5 TP, −1 FP**, taking
+the suite from 38 CLEAN + 4 TP + 8 MISS + 1 FP to roughly
+39 CLEAN + 9 TP + 3 MISS + 0 FP — a pass rate of ~94 %.
+
+## History (this directory)
+
+| Date       | CLEAN | TP | MISS | FP | TOERR | TIMEOUT | OOM | Pass-rate | Note                            |
+|------------|-------|----|------|----|-------|---------|-----|-----------|---------------------------------|
+| 2026-04-?? |    27 |  1 |    9 |  3 |     6 |       3 |   2 |   54.9 %  | Pre-improvements baseline       |
+| 2026-05-12 |    37 |  1 |   11 |  2 |     0 |       0 |   0 |   74.5 %  | After 5 benchmark-driven fixes  |
+| 2026-05-13 |    38 |  1 |   11 |  1 |     0 |       0 |   0 |   76.5 %  | Cat-1 PLR-correctness fixes     |
+| 2026-05-14 |    38 |  4 |    8 |  1 |     0 |       0 |   0 |   82.4 %  | Static AttributeError detection |
+
+The 2026-05-14 entry corresponds to the present state of this
+document.
