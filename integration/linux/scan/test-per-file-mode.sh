@@ -163,6 +163,44 @@ sys.exit(0)
   fi
 fi
 
+echo
+echo "=== case 4: --per-file on crypto/echainiv.c (aead) ==="
+# aead per-file uses a custom multi-statement bootstrap to build
+# a 1-element SGL, mark its page as PAGE_USER_WRITABLE, and
+# assign req->dst.  This tests the special-case path in
+# synthesise_harness.py's MODULE_GHOST_BOOTSTRAP['aead'].
+ECHAINIV_C="$LINUX_TREE/crypto/echainiv.c"
+if [[ ! -f "$ECHAINIV_C" ]]; then
+  echo "  [skip] no $ECHAINIV_C"
+else
+  set +e
+  LINUX_TREE="$LINUX_TREE" UNWIND=3 \
+    "$SCAN" --per-file "$ECHAINIV_C" \
+    --json "$tmp/case4.json" > "$tmp/case4.out" 2>&1
+  rc=$?
+  set -e
+  if python3 -c "
+import json, sys
+d = json.load(open('$tmp/case4.json'))
+for f in d['files']:
+  for m in f['modules']:
+    if m['module'] != 'aead':
+      continue
+    pf = m.get('per_file', [])
+    if any(v['status'] == 'failed' for v in pf):
+      sys.exit(0)
+sys.exit('no failed aead per-file verdict')
+"
+  then
+    echo "  [ok] aead per-file produces a failed verdict on echainiv_encrypt"
+  else
+    echo "  [FAIL] expected at least one failed aead per-file verdict" >&2
+    echo "         actual rc=$rc; last 20 lines of output:" >&2
+    tail -20 "$tmp/case4.out" | sed 's/^/         /' >&2
+    fail=$((fail + 1))
+  fi
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
   echo "scan.py --per-file regressions passed."

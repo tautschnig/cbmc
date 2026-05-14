@@ -100,17 +100,22 @@ wins over `successful`.  The regression test lives at
 [`scan/test-per-file-mode.sh`](test-per-file-mode.sh).
 
 Supported modules: `cred_lifetime`, `pipe_buffer`, `lock_state`,
-`refcount_lifetime`.  Extending to other modules requires a small
-config block in `scan/synthesise_harness.py`
-`MODULE_GHOST_BOOTSTRAP` plus a default `contract_targets` list
-(`scan.py` picks these up from its existing `CONTRACT_FUNCTIONS`
-dict automatically).  `aead` is deliberately not included because
-its predicate (`sgl_all_user_writable`) walks a concrete
-scatterlist attached to `req->dst`, which cannot be fabricated
-from a single `aead_request *` parameter without replicating the
-kernel's version-specific scatterlist layout — the aead
-direct-call harness under `scan/adapters/` remains the supported
-path for that module.
+`refcount_lifetime`, `aead`, and `alloc_tag`.  Extending to other
+modules requires a small config block in
+`scan/synthesise_harness.py` `MODULE_GHOST_BOOTSTRAP` plus a
+default `contract_targets` list (`scan.py` picks these up from
+its existing `CONTRACT_FUNCTIONS` dict automatically).
+
+`aead` per-file uses a custom multi-statement bootstrap that
+includes `<crypto/aead.h>`, allocates a 1-element scatterlist
+on a page-aligned backing buffer, marks the page
+`PAGE_USER_WRITABLE` in the page_provenance ghost, and assigns
+`req->dst` to the SGL.  The synthesised harness then invokes
+the enclosing function with the prepared request; if the
+function reassigns `req->dst` before reaching the contracted
+`aead_request_set_crypt` call, the verdict reflects the new
+SGL's provenance.  See `MODULE_GHOST_BOOTSTRAP['aead']` in
+`scan/synthesise_harness.py` for the template.
 
 Per-file mode is opt-in because it is substantially slower (a
 fresh cbmc invocation per enclosing function) and because

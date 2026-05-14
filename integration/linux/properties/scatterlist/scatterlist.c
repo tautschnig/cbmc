@@ -75,7 +75,7 @@ struct page *sg_page(struct scatterlist *sg)
   return sg->page;
 }
 
-_Bool sgl_all_user_writable(struct scatterlist *sgl)
+int sgl_all_user_writable(struct scatterlist *sgl)
 {
   struct scatterlist *sg = sgl;
   for(unsigned int i = 0; i < SG_CHAIN_MAX_STEPS; i++)

@@ -141,7 +141,7 @@ void __CPROVER_file_local_aead_h_aead_request_set_crypt(
   struct scatterlist *src,
   struct scatterlist *dst,
   unsigned int cryptlen,
-  u8 *iv) __CPROVER_requires(req != (struct aead_request *)0)
+  unsigned char *iv) __CPROVER_requires(req != (struct aead_request *)0)
   __CPROVER_requires(dst != (struct scatterlist *)0)
     __CPROVER_requires(sgl_all_user_writable(dst) == 1) __CPROVER_assigns();
 
@@ -153,6 +153,6 @@ void aead_request_set_crypt(
   struct scatterlist *src,
   struct scatterlist *dst,
   unsigned int cryptlen,
-  u8 *iv) __CPROVER_requires(req != (struct aead_request *)0)
+  unsigned char *iv) __CPROVER_requires(req != (struct aead_request *)0)
   __CPROVER_requires(dst != (struct scatterlist *)0)
     __CPROVER_requires(sgl_all_user_writable(dst) == 1) __CPROVER_assigns();

@@ -102,6 +102,6 @@ struct page *sg_page(struct scatterlist *sg) __CPROVER_assigns();
 /// This is the predicate that turns the `page_provenance` ghost state
 /// into a usable precondition for kernel APIs that write through a
 /// destination scatterlist.
-_Bool sgl_all_user_writable(struct scatterlist *sgl) __CPROVER_assigns();
+int sgl_all_user_writable(struct scatterlist *sgl) __CPROVER_assigns();
 
 #endif // LINUX_PROPERTIES_SCATTERLIST_H

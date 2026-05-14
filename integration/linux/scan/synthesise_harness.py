@@ -130,17 +130,60 @@ MODULE_GHOST_BOOTSTRAP = {
             "typedef struct refcount_struct refcount_t;",
         ],
     },
-    # aead doesn't have a ghost-state-bootstrap need that survives
-    # per-file synthesis today: its predicate `sgl_all_user_writable`
-    # walks a scatterlist attached to req->dst and checks each page's
-    # provenance via the page_provenance ghost table.  Without
-    # materialising a concrete SGL (kernel scatterlist layout is
-    # version-specific and not trivially fabricable from a typedef),
-    # per-file synthesis would either yield trivially-vacuous results
-    # or fail at compile time.  --per-file on an aead hit therefore
-    # falls through to the adapter-needed fallback; the aead
-    # direct-call harness under scan/adapters/ remains the supported
-    # path for aead.
+    # aead per-file is supported via a custom multi-statement
+    # bootstrap: the synthesised harness includes <crypto/aead.h>
+    # for the aead_request layout, allocates a 1-element
+    # scatterlist on a page-aligned backing buffer, marks the
+    # page as PAGE_USER_WRITABLE in the page_provenance ghost,
+    # and assigns req->dst to the SGL.  This produces a request
+    # whose contract precondition (`sgl_all_user_writable(dst)`)
+    # holds at entry; if the enclosing function reassigns
+    # req->dst before calling the contracted API, the verdict
+    # depends on the new SGL's provenance.
+    #
+    # The custom_setup_template is emitted instead of the
+    # ghost_init_call when synthesise_harness encounters a
+    # parameter whose type matches `types`.  `{arg}` is the
+    # parameter local; `{i}` is the parameter index used to
+    # disambiguate static backing buffers when the harness has
+    # multiple aead_request * parameters.
+    "aead": {
+        "types": ["struct aead_request *"],
+        "custom_setup": True,
+        # Statements inserted into the harness body for each
+        # matched parameter.  Indented by 2 spaces because the
+        # synthesiser puts them inside the harness function body.
+        "custom_setup_template": (
+            "  static char arg{i}_page_backing[4096] "
+            "__attribute__((aligned(8)));\n"
+            "  static struct scatterlist arg{i}_sgl[1];\n"
+            "  set_page_prov("
+            "(struct page *)arg{i}_page_backing, PAGE_USER_WRITABLE);\n"
+            "  arg{i}_sgl[0].page_link = "
+            "(unsigned long)arg{i}_page_backing | 2u;\n"
+            "  arg{i}_sgl[0].offset = 0;\n"
+            "  arg{i}_sgl[0].length = sizeof(arg{i}_page_backing);\n"
+            "  {arg}->dst = &arg{i}_sgl[0];\n"
+            "  {arg}->src = &arg{i}_sgl[0];"
+        ),
+        "ghost_init_decl": "",
+        # Force the harness preamble to include kernel headers
+        # rather than emitting forward decls — we need the real
+        # struct aead_request and struct scatterlist layouts so
+        # the field assignment compiles and matches the linked
+        # kernel TU's view.
+        "forward_decls": [
+            "#include <crypto/aead.h>",
+            "#include <linux/scatterlist.h>",
+            "typedef enum {",
+            "  PAGE_PROV_UNSET = 0,",
+            "  PAGE_USER_WRITABLE,",
+            "  PAGE_CACHE_RO,",
+            "  PAGE_KERNEL_ONLY,",
+            "} page_provenance_t;",
+            "void set_page_prov(struct page *p, page_provenance_t prov);",
+        ],
+    },
 }
 
 
@@ -282,7 +325,8 @@ def synthesise(module: str, source: Path, function: str,
     for decl in cfg.get("forward_decls", []):
         lines.append(decl)
     # Ghost-init API.
-    lines.append(cfg["ghost_init_decl"])
+    if cfg.get("ghost_init_decl"):
+        lines.append(cfg["ghost_init_decl"])
 
     # Also forward-declare any struct types appearing in params
     # that aren't already declared.  Kernel-TU definitions unify
@@ -392,8 +436,22 @@ def synthesise(module: str, source: Path, function: str,
             lines.append(f"  {p.type_text} {local} = "
                          f"({p.type_text}){local}_backing;")
             if is_ghost_tracked(module, p.type_text):
-                ghost_args = cfg["ghost_init_args_template"].format(arg=local)
-                lines.append(f"  {cfg['ghost_init_call']}({ghost_args});")
+                if cfg.get("custom_setup"):
+                    # Multi-statement setup block (e.g. aead's
+                    # SGL fabrication).  The template is emitted
+                    # verbatim with {i} and {arg} substituted.
+                    setup = cfg["custom_setup_template"].format(
+                        i=i, arg=local,
+                    )
+                    for setup_line in setup.splitlines():
+                        lines.append(setup_line)
+                else:
+                    ghost_args = cfg["ghost_init_args_template"].format(
+                        arg=local,
+                    )
+                    lines.append(
+                        f"  {cfg['ghost_init_call']}({ghost_args});"
+                    )
             call_args.append(local)
         else:
             # Scalar: declared-uninitialised ≡ nondet under CBMC.

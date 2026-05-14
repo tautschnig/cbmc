@@ -61,11 +61,31 @@ esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
 PROPERTY_SRC="$SCRIPT_DIR/../properties/${MODULE}/${MODULE}.c"
 
+# aead is special: the property module's aead.c provides
+# implementations of aead_request_set_crypt and friends with
+# their own contract attached (via aead.h), and the contract
+# disagrees with the kernel adapter on the assigns clause
+# (the property module spells out req->src, req->dst, etc.;
+# the adapter forward-declares struct aead_request as opaque
+# and uses an empty assigns).  Linking both produces
+# "conflict on code contract".  For per-file mode we only
+# need the adapter's contract — the property module's
+# implementation is unused on the kernel-call path — so
+# clear PROPERTY_SRC for aead.  The aead adapter and harness
+# also need page_provenance.c at link time for the
+# `page_prov_of` and `set_page_prov` ghost-state backend; add
+# it to the EXTRA_LINK_SRCS list.
+EXTRA_LINK_SRCS=()
+if [[ "$MODULE" == "aead" ]]; then
+  PROPERTY_SRC=""
+  EXTRA_LINK_SRCS+=("$SCRIPT_DIR/../properties/page_provenance/page_provenance.c")
+fi
+
 if [[ ! -f "$ADAPTER" ]]; then
   echo "no adapter for module '$MODULE' at $ADAPTER" >&2
   exit 2
 fi
-if [[ ! -f "$PROPERTY_SRC" ]]; then
+if [[ -n "$PROPERTY_SRC" && ! -f "$PROPERTY_SRC" ]]; then
   echo "no property source for module '$MODULE' at $PROPERTY_SRC" >&2
   exit 2
 fi
@@ -100,6 +120,16 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
       CONTRACT_TARGETS=(
         __CPROVER_file_local_refcount_h_refcount_dec_and_test
         refcount_dec_and_test
+      )
+      ;;
+    aead)
+      # aead_request_set_crypt is static inline in
+      # <crypto/aead.h>.  The mangled form is the primary one
+      # at kernel call sites; the external is for direct-call
+      # harness links.
+      CONTRACT_TARGETS=(
+        __CPROVER_file_local_aead_h_aead_request_set_crypt
+        aead_request_set_crypt
       )
       ;;
     *)
@@ -159,7 +189,12 @@ trap 'rm -rf "$tmp"; rm -f "$HARNESS_IN_TREE"' EXIT
 
 echo "[4/7] linking kernel TU + harness + adapter + property module..."
 GOTOCC=${GOTOCC:-$REPO_ROOT/build/bin/goto-cc}
-"$GOTOCC" "$KERNEL_GB" "$HARNESS_GB" "$ADAPTER" "$PROPERTY_SRC" \
+link_inputs=("$KERNEL_GB" "$HARNESS_GB" "$ADAPTER")
+if [[ -n "$PROPERTY_SRC" ]]; then
+  link_inputs+=("$PROPERTY_SRC")
+fi
+link_inputs+=("${EXTRA_LINK_SRCS[@]}")
+"$GOTOCC" "${link_inputs[@]}" \
   -o "$LINKED_GB" >"$tmp/link.log" 2>&1 || {
     echo "  FAIL: goto-cc link returned $?" >&2
     tail -10 "$tmp/link.log" >&2

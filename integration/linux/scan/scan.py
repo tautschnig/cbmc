@@ -1138,6 +1138,7 @@ _PER_FILE_SUPPORTED_MODULES = {
     "pipe_buffer",
     "lock_state",
     "refcount_lifetime",
+    "aead",
 }
 
 
