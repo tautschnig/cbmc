@@ -343,6 +343,16 @@ private:
   /// D[K'] subscript reads can skip the KeyError check when
   /// K' structurally matches a guaranteed key.
   std::map<irep_idt, std::set<std::string>> dict_guaranteed_keys;
+
+  /// Path-sensitive lower bounds on list lengths active in the
+  /// current expression scope. Populated by the short-circuiting
+  /// 'and' idiom recogniser in convert_bool_op when the first
+  /// operand is `len(L) >= N` or `len(L) > N` (and similar
+  /// reversed forms). Consulted in convert_subscript on a list
+  /// to discharge the IndexError property when the index is a
+  /// non-negative constant smaller than the recorded bound.
+  /// Stored as (qualified-symbol-id) -> minimum-known-length.
+  std::map<irep_idt, mp_integer> list_min_lengths;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.
