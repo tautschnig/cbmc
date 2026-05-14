@@ -1,6 +1,6 @@
 # Precision characterisation
 
-Generated 2026-05-13 18:17:53 UTC
+Generated 2026-05-13 22:52:41 UTC
 
 For each (kernel × module × anchor file) triple, reports
 (a) the Coccinelle prefilter hit count, (b) the adapter-
@@ -18,7 +18,7 @@ reflects upstream having removed the vulnerable pattern.
 | 6.1 | aead | crypto/algif_aead.c | 1 | failed | n/a |
 | 6.6 | aead | crypto/algif_aead.c | 1 | failed | n/a |
 | 6.12 | aead | crypto/algif_aead.c | 1 | failed | n/a |
-| 5.10 | pipe_buffer | lib/iov_iter.c | 4 | failed | 1/0/0/1 |
+| 5.10 | pipe_buffer | lib/iov_iter.c | 4 | failed | 2/0/0/0 |
 | 6.1 | pipe_buffer | lib/iov_iter.c | 0 | not-run | 0/0/0/0 |
 | 6.6 | pipe_buffer | lib/iov_iter.c | 0 | not-run | 0/0/0/0 |
 | 6.12 | pipe_buffer | lib/iov_iter.c | 0 | not-run | 0/0/0/0 |
@@ -30,10 +30,10 @@ reflects upstream having removed the vulnerable pattern.
 | 6.1 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
 | 6.6 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
 | 6.12 | lock_state | kernel/bpf/dispatcher.c | 1 | failed | 1/0/0/0 |
-| 5.10 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
-| 6.1 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
-| 6.6 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
-| 6.12 | refcount_lifetime | kernel/fork.c | 3 | failed | 2/0/0/1 |
+| 5.10 | refcount_lifetime | kernel/fork.c | 3 | failed | 3/0/0/0 |
+| 6.1 | refcount_lifetime | kernel/fork.c | 3 | failed | 3/0/0/0 |
+| 6.6 | refcount_lifetime | kernel/fork.c | 3 | failed | 3/0/0/0 |
+| 6.12 | refcount_lifetime | kernel/fork.c | 3 | failed | 3/0/0/0 |
 
 ## Notes
 
@@ -59,59 +59,44 @@ reflects upstream having removed the vulnerable pattern.
 
 ### pipe_buffer on lib/iov_iter.c: cocci hits collapse on 6.1+
 
-5.10 shows 4 prefilter hits; 6.1 and later show 0.  Upstream
-removed the `copy_page_to_iter_pipe` path during the Dirty Pipe
-mitigation series, and the take-over sites that the cocci rule
-anchors on disappeared with it.  This is the scan correctly
-following the upstream fix: `hits=0` is the honest, correct
-signal on a patched kernel.
+5.10 shows 4 prefilter hits; 6.1+ shows 0.  Upstream removed
+`copy_page_to_iter_pipe` during the Dirty Pipe mitigation series.
 
-### lock_state on kernel/bpf/dispatcher.c
+### lock_state on kernel/bpf/dispatcher.c: failed across all 4 kernels
 
-5.10 through 6.12 all report `cbmc_status: "failed"` with a
-per-file verdict of `failed` on the enclosing
-`bpf_dispatcher_change_prog`.  A prior version of this report
-showed `error` on 6.1+ due to the missing
-`bpf_jit_fill_hole_with_zero` symbol; that scan-compat gap is
-closed by a weak stub in `integration/linux/scan/fragments/
-scan-compat.h`.  The three 6.x rows reflect the fix.
+The earlier scan-compat gap on 6.1+ (missing
+`bpf_jit_fill_hole_with_zero`) is closed by a weak stub in
+`scan-compat.h`.  All four kernels now report
+`cbmc_status=failed` with a per-file verdict of failed.
 
-### cred_lifetime per-file on fs/coredump.c: timeouts across all kernels
+### cred_lifetime per-file on fs/coredump.c: timeouts persist
 
-`fs/coredump.c`'s `do_coredump` is a >1000-line function; the
-per-file harness synthesises a call to it with nondet-initialised
-arguments, and cbmc's symex exceeds the 900s per-file budget.
-Expected; the adapter-mode signal on this file remains useful.
-Targets with smaller enclosing functions produce per-file
-verdicts reliably.
+`do_coredump` is too large (>1000 lines) for the per-file
+budget even with `goto-instrument --drop-unused-functions`
+applied.  Genuine symex-scale issue, not an infrastructure bug.
 
-### refcount_lifetime per-file on kernel/fork.c: 2 failed + 1 error
+### refcount_lifetime per-file on kernel/fork.c: 3/0/0/0 across all kernels
 
-Of three `refcount_dec_and_test` prefilter hits, two produce
-per-file `failed` verdicts and one errors out — likely a
-large-function or symbol-resolution boundary case.
+Previously this row was 2/0/0/1 — one hit erroring out due to
+a synthesise_harness.py bug where `#ifdef CONFIG_<name>` lines
+in the kernel source bled into the typedef-fallback (the
+synthesised harness emitted `typedef char CONFIG_<name>;` and
+failed to parse).  The strip-preprocessor-directives fix lands
+all three hits as decisive `failed` verdicts.
 
 ### aead adapter-mode: `failed` everywhere (synthetic signal)
 
-aead reports `cbmc_status=failed` on all four kernels because
-the adapter mode exercises the hand-written direct-call
-harness's vulnerable-shape branch; the actual kernel code on
-the per-kernel `_aead_recvmsg` site isn't what's being verified
-here (LIM-013).  This is by design; aead precision requires
-per-file synthesis, which is future work (see the companion
-`alloc_tag` module for the reverse-direction path for static-
-inline API coverage).
+By design — aead per-file is unsupported (SGL fabrication is
+future work).  The adapter-mode `failed` is the direct-call
+harness's synthetic vulnerable-shape signal.
 
 ## Summary
 
-The scan's cross-kernel behavior is now consistent for all
-modules with per-file support on well-shaped anchor files.
-Gaps:
+The scan's cross-kernel behavior is now consistent for every
+module on its anchor file.  Two known-tractable gaps remain:
 
-- aead per-file unsupported (scatterlist layout fabrication is
-  future work).
-- Large enclosing functions (e.g. `do_coredump`) time out under
-  per-file synthesis.
+- aead per-file unsupported (SGL fabrication).
+- Very-large-function per-file timeouts (do_coredump-scale).
 
-All gaps are tractable; none reflect a fundamental soundness
-issue in the pipeline.
+Neither reflects a soundness issue; both are bounded
+engineering follow-ups.

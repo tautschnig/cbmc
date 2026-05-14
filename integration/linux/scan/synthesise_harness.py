@@ -164,6 +164,15 @@ def _strip_comments(text: str) -> str:
     # parsing kernel function signatures in headers / .c files.
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
     text = re.sub(r"//[^\n]*", " ", text)
+    # Remove preprocessor directives (#ifdef, #define, #include,
+    # #if, #else, #endif, etc.).  Without this, a function guarded
+    # by `#ifdef CONFIG_FOO` would have the CONFIG_FOO identifier
+    # visible to the regex-based typedef-fallback, which would then
+    # emit `typedef char CONFIG_FOO;` in the synthesised harness —
+    # a syntax error because CONFIG_FOO is typically `#define`d to
+    # a numeric constant, not a type name.  Preserve newlines so
+    # line numbers stay accurate.
+    text = re.sub(r"(?m)^\s*#[^\n]*", "", text)
     return text
 
 
@@ -401,6 +410,23 @@ def synthesise(module: str, source: Path, function: str,
         lines.append("  (void)_ret;")
     lines.append("")
     lines.append("  return 0;")
+    lines.append("}")
+    lines.append("")
+
+    # Emit a trivial main() that dispatches to the per-file
+    # harness entry.  goto-instrument's --aggressive-slice
+    # (applied after the contract replacement in
+    # scan/scan-per-file.sh) anchors on the linked binary's
+    # `main` symbol to identify reachable code.  Without this
+    # wrapper, the slice step reports `entry point not found`
+    # and is silently skipped — which leaves the scan exposed
+    # to large-function timeouts on the per-file budget.
+    # cbmc itself invokes the `<function>_per_file_harness`
+    # symbol directly via --function and doesn't care which
+    # wrapper is the "main" in the binary.
+    lines.append("int main(void)")
+    lines.append("{")
+    lines.append(f"  return {harness_name}();")
     lines.append("}")
     lines.append("")
 

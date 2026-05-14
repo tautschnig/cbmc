@@ -11,7 +11,12 @@
 #   4. Link TU + harness + adapter + property module.
 #   5. Apply `goto-instrument --replace-call-with-contract` on
 #      the module's contract targets.
-#   6. Run cbmc on the harness entry function.
+#   6. Apply `goto-instrument --drop-unused-functions` to drop
+#      bodies of kernel functions trivially unreachable from
+#      the synthesised main wrapper.  Essential for large
+#      enclosing functions (e.g. do_coredump >1000 lines) so
+#      cbmc's symex doesn't have to process unrelated siblings.
+#   7. Run cbmc on the harness entry function.
 #
 # Exits 0 when cbmc reports VERIFICATION SUCCESSFUL, 10 when it
 # reports VERIFICATION FAILED, other exit codes on infrastructure
@@ -122,7 +127,7 @@ INSTR_GB="$tmp/${stem}.instr.gb"
 
 echo "[per-file] module=$MODULE file=$KERNEL_FILE function=$TARGET_FUNC"
 
-echo "[1/6] compiling kernel TU..."
+echo "[1/7] compiling kernel TU..."
 "$SCRIPT_DIR/compile_file.sh" "$LINUX_TREE" "$KERNEL_FILE" "$KERNEL_GB" \
   >"$tmp/compile.log" 2>&1 || {
     echo "  FAIL: compile_file.sh returned $? on $KERNEL_FILE" >&2
@@ -130,14 +135,14 @@ echo "[1/6] compiling kernel TU..."
     exit 3
   }
 
-echo "[2/6] synthesising per-file harness..."
+echo "[2/7] synthesising per-file harness..."
 python3 "$SCRIPT_DIR/synthesise_harness.py" \
   "$MODULE" "$FULL_KERNEL_FILE" "$TARGET_FUNC" "$HARNESS_C" || {
     echo "  FAIL: synthesise_harness.py could not generate harness" >&2
     exit 3
   }
 
-echo "[3/6] compiling harness TU..."
+echo "[3/7] compiling harness TU..."
 # compile_file.sh expects a path relative to LINUX_TREE; drop the
 # synthesised C file inside the tree temporarily so its kernel-
 # header soup is on the -I path.
@@ -152,7 +157,7 @@ trap 'rm -rf "$tmp"; rm -f "$HARNESS_IN_TREE"' EXIT
     exit 3
   }
 
-echo "[4/6] linking kernel TU + harness + adapter + property module..."
+echo "[4/7] linking kernel TU + harness + adapter + property module..."
 GOTOCC=${GOTOCC:-$REPO_ROOT/build/bin/goto-cc}
 "$GOTOCC" "$KERNEL_GB" "$HARNESS_GB" "$ADAPTER" "$PROPERTY_SRC" \
   -o "$LINKED_GB" >"$tmp/link.log" 2>&1 || {
@@ -161,7 +166,7 @@ GOTOCC=${GOTOCC:-$REPO_ROOT/build/bin/goto-cc}
     exit 3
   }
 
-echo "[5/6] applying contracts..."
+echo "[5/7] applying contracts..."
 GOTOINSTR=${GOTOINSTR:-$REPO_ROOT/build/bin/goto-instrument}
 cur="$LINKED_GB"
 for target in "${CONTRACT_TARGETS[@]}"; do
@@ -175,9 +180,38 @@ for target in "${CONTRACT_TARGETS[@]}"; do
     echo "  (contract '$target' not applied — symbol absent or mismatch)"
   fi
 done
+
+echo "[6/7] dropping unreachable functions..."
+# Drop function bodies that are trivially unreachable from main.
+# Essential for large enclosing functions: e.g.
+# fs/coredump.c:do_coredump pulls in hundreds of sibling
+# kernel functions that the harness never calls.  Without
+# this step, CBMC's symex has to process all of them before
+# even starting on the path to the contract site, and the
+# per-file budget is exhausted.
+#
+# We use --drop-unused-functions rather than the more
+# aggressive --aggressive-slice because the latter can
+# segfault inside goto-instrument on very large inputs (it
+# does a full reachability + dead-store analysis); the
+# lighter --drop-unused-functions is stable and delivers most
+# of the value on per-file harnesses whose main calls the
+# one synthesised entry point.
+#
+# Reachable-from-main preserves the property module's ghost
+# helpers naturally because the main → harness → ghost-init
+# call chain keeps them in the reachable set.
+dropped="$tmp/${stem}.dropped.gb"
+if "$GOTOINSTR" --drop-unused-functions "$cur" "$dropped" \
+     >"$tmp/drop.log" 2>&1
+then
+  cur="$dropped"
+else
+  echo "  (drop-unused-functions failed or no-op; using full binary)"
+fi
 cp "$cur" "$INSTR_GB"
 
-echo "[6/6] running cbmc on ${TARGET_FUNC}_per_file_harness..."
+echo "[7/7] running cbmc on ${TARGET_FUNC}_per_file_harness..."
 CBMC=${CBMC:-$REPO_ROOT/build/bin/cbmc}
 entry="${TARGET_FUNC}_per_file_harness"
 set +e
