@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: lexicographic <, >, <=, >= on constant strings; symbolic
+operands route through cprover_string_compare_to_func.

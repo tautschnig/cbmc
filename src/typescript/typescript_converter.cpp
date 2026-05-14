@@ -2671,8 +2671,57 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         result = cmp >= 0;
       return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
     }
-    // Fall through to nondet if either operand is non-constant.
-    return side_effect_expr_nondett{bool_typet{}, get_location(node)};
+    // Fall through to solver-side for non-constant operands.
+    // cprover_string_compare_to_func(s1, s2) returns a signed int:
+    //   = 0 if s1 == s2 lexicographically
+    //   < 0 if s1 < s2
+    //   > 0 if s1 > s2
+    // Map our operator to a relation on that result. The function
+    // application must be ASSIGNED to a fresh symbol — otherwise
+    // the boolbv layer sees the application as an operand of the
+    // relational operator and falls through to "ignoring", since
+    // string-refinement only intercepts function_application that
+    // the solver can resolve to a known result type.
+    exprt refined_left = ts_string_to_refined(left);
+    exprt refined_right = ts_string_to_refined(right);
+    irep_idt cmp_id = ID_cprover_string_compare_to_func;
+    if(symbol_table.lookup(cmp_id) == nullptr)
+    {
+      refined_string_typet refined_ty =
+        to_refined_string_type(refined_left.type());
+      std::vector<typet> arg_types = {refined_ty, refined_ty};
+      mathematical_function_typet ft(std::move(arg_types), signedbv_typet{32});
+      symbolt fs{cmp_id, ft, "typescript"};
+      fs.base_name = id2string(cmp_id);
+      symbol_table.add(fs);
+    }
+    function_application_exprt::argumentst call_args = {
+      refined_left, refined_right};
+    function_application_exprt app(
+      symbol_exprt{cmp_id, symbol_table.lookup_ref(cmp_id).type},
+      std::move(call_args));
+    app.type() = signedbv_typet{32};
+    // Allocate a fresh int32 symbol to hold the comparison result;
+    // emit it as a pending assignment so the boolbv/string-refine
+    // layers see a normal symbol read in the relational expression.
+    static unsigned cmp_ctr = 0;
+    std::string cmp_name = "__ts_strcmp_" + std::to_string(cmp_ctr++);
+    irep_idt cmp_sym_id{"typescript::" + cmp_name};
+    symbolt cs{cmp_sym_id, signedbv_typet{32}, "typescript"};
+    cs.base_name = cmp_name;
+    cs.is_lvalue = true;
+    cs.is_state_var = true;
+    symbol_table.add(cs);
+    exprt cmp_sym = symbol_table.lookup_ref(cmp_sym_id).symbol_expr();
+    pending_stmts.push_back(code_frontend_assignt{cmp_sym, std::move(app)});
+    exprt zero = from_integer(0, signedbv_typet{32});
+    if(op == "LessThanToken" || op == "FirstBinaryOperator")
+      return binary_relation_exprt{cmp_sym, ID_lt, zero};
+    if(op == "GreaterThanToken")
+      return binary_relation_exprt{cmp_sym, ID_gt, zero};
+    if(op == "LessThanEqualsToken")
+      return binary_relation_exprt{cmp_sym, ID_le, zero};
+    return binary_relation_exprt{cmp_sym, ID_ge, zero};
   }
   if(op == "LessThanToken" || op == "FirstBinaryOperator")
     return binary_relation_exprt{left, ID_lt, right};
