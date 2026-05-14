@@ -288,6 +288,57 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
   return std::nullopt;
 }
 
+std::string python_convertert::ast_value_category(const jsont &node) const
+{
+  if(is_node_type(node, "Constant"))
+  {
+    const jsont &v = json_member(node, "value");
+    if(v.is_null())
+      return "none";
+    if(v.is_string())
+      return "str";
+    if(v.is_number())
+    {
+      // Distinguish int vs float by presence of '.' or 'e'.
+      if(
+        v.value.find('.') != std::string::npos ||
+        v.value.find('e') != std::string::npos ||
+        v.value.find('E') != std::string::npos)
+        return "float";
+      return "int";
+    }
+    if(v.is_true() || v.is_false())
+      return "bool";
+    return std::string{};
+  }
+  if(is_node_type(node, "List"))
+    return "list";
+  if(is_node_type(node, "Dict"))
+    return "dict";
+  if(is_node_type(node, "Set"))
+    return "set";
+  if(is_node_type(node, "Tuple"))
+    return "tuple";
+  if(is_node_type(node, "JoinedStr") || is_node_type(node, "FormattedValue"))
+    return "str"; // f-strings are strings
+  if(is_node_type(node, "Bytes"))
+    return "bytes";
+  if(is_node_type(node, "NameConstant"))
+  {
+    const jsont &v = json_member(node, "value");
+    if(v.is_null())
+      return "none";
+    if(v.is_true() || v.is_false())
+      return "bool";
+  }
+  if(is_node_type(node, "UnaryOp"))
+  {
+    // Unary minus on a numeric literal preserves int/float.
+    const jsont &operand = json_member(node, "operand");
+    return ast_value_category(operand);
+  }
+  return std::string{};
+}
 std::optional<std::string>
 python_convertert::extract_string_value(const exprt &e) const
 {

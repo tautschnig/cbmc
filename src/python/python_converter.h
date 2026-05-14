@@ -193,6 +193,11 @@ public:
     python_required_kwarg_checks = v;
   }
 
+  void set_python_check_typeddict_fields(bool v)
+  {
+    python_check_typeddict_fields = v;
+  }
+
   void set_python_check_annotations(bool v)
   {
     python_check_annotations = v;
@@ -219,6 +224,12 @@ private:
   /// Enable for benchmark suites that use only explicit
   /// 'key=value' kwargs.
   bool python_required_kwarg_checks = false;
+  /// Emit 'type-error' property checks at PEP 448 dict-spread
+  /// call sites when the spread dict's literal value for a key
+  /// has a static type that's incompatible with the
+  /// corresponding TypedDict field's declared type. Off by
+  /// default; opt-in via --python-check-typeddict-fields.
+  bool python_check_typeddict_fields = false;
   /// Emit 'annotation-mismatch' property checks at variable,
   /// parameter, and return annotation boundaries when the
   /// value's statically-known type is obviously incompatible
@@ -307,6 +318,18 @@ private:
   std::map<irep_idt, exprt> list_literals; // track list literal values
   std::map<irep_idt, double> float_constants; // track float/int constant values
   std::optional<std::string> extract_string_value(const exprt &e) const;
+
+  /// Best-effort static category of an expression node directly
+  /// from the Python AST (i.e. before any safe_typecast erases
+  /// its original type). Returns one of {"str","int","float",
+  /// "bool","list","dict","set","tuple","none","bytes"} when
+  /// determinable from a Constant, Dict, List, Set, or Tuple
+  /// AST node, or an empty string otherwise. Used by
+  /// --python-check-typeddict-fields to decide whether a
+  /// kwarg passed via **dict_spread has a static category that
+  /// disagrees with the corresponding TypedDict field's
+  /// declared category.
+  std::string ast_value_category(const jsont &node) const;
   std::optional<double> try_eval_double(const exprt &e) const;
 
   /// Known imported module names (for `import math` style)
@@ -330,6 +353,51 @@ private:
   /// without triggering the regex/length assertions that
   /// overwhelm the string refinement solver.
   std::map<std::string, std::vector<std::string>> typed_dict_required;
+
+  /// Map from TypedDict name to a per-field declared type. Each
+  /// field is recorded as one of {"str", "int", "float", "bool",
+  /// "list", "dict", "set", "bytes"} — the underlying Python
+  /// scalar/collection categories we can statically test against
+  /// at call sites. Fields whose declared type isn't one of
+  /// these (e.g. another TypedDict, Union, Literal, ...) are
+  /// omitted, since we can't soundly enforce them with a single
+  /// category check.
+  ///
+  /// Used by the --python-check-typeddict-fields opt-in: at each
+  /// kwarg passed to a stub method whose **kwargs is annotated
+  /// Unpack[TypedDictName], the corresponding entry here is
+  /// consulted. When the passed value is a constant whose static
+  /// category disagrees with the declared one (e.g. None passed
+  /// where 'str' is expected), a 'type-error' property is
+  /// emitted at the call site.
+  std::map<std::string, std::map<std::string, std::string>>
+    typed_dict_field_types;
+
+  /// Map from fully-qualified method symbol id (e.g.
+  /// "python::S3::copy_object") to the TypedDict name that
+  /// annotates its **kwargs parameter via Unpack[...].
+  /// Populated in convert_class_def alongside the existing
+  /// Tier 1B Unpack detection. Used by call sites to look up
+  /// the per-field expected types for type-checking values
+  /// passed via PEP 448 dict spread.
+  std::map<irep_idt, std::string> method_kwargs_unpack;
+
+  /// Per-dict per-key static value category derived from the
+  /// Python AST at assignment time (before any typecast in the
+  /// converted exprt). Populated when a `Dict(...)` literal is
+  /// assigned to a Name. Used by --python-check-typeddict-fields
+  /// at PEP 448 spread call sites: looking at the converted
+  /// dict's value array isn't reliable because heterogeneous
+  /// values are unified via safe_typecast (which falls through
+  /// to a nondet of the target type for incompatible source
+  /// types, erasing the original category). The AST is the
+  /// only place the original types survive verbatim.
+  ///
+  /// Categories are the same set used by typed_dict_field_types
+  /// ("str", "int", "float", "bool", "list", "dict", "set",
+  /// "tuple", "none").
+  std::map<irep_idt, std::map<std::string, std::string>>
+    dict_literal_value_categories;
   /// Set of function names (qualified) whose 'returns' annotation
   /// was explicitly provided. Used by convert_return to emit an
   /// annotation-mismatch property only when the function HAS a

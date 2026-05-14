@@ -2890,6 +2890,66 @@ exprt python_convertert::convert_call(const jsont &expr)
                       auto kv = extract_string_value(keys_arr.operands()[ii]);
                       if(!kv.has_value())
                         continue;
+                      // --python-check-typeddict-fields: when
+                      // the callee is annotated with
+                      // **kwargs: Unpack[TypedDict] and the
+                      // TypedDict declares a category for this
+                      // field, verify the spread value's
+                      // static category matches. The category
+                      // comes from dict_literal_value_categories
+                      // (populated at assignment time from the
+                      // original Dict AST), not from the
+                      // converted struct, because the struct's
+                      // values have been unified via
+                      // safe_typecast and lost their original
+                      // type identity.
+                      if(python_check_typeddict_fields)
+                      {
+                        auto mu = method_kwargs_unpack.find(method_id);
+                        if(
+                          mu != method_kwargs_unpack.end() &&
+                          kw_val.id() == ID_symbol)
+                        {
+                          auto tf = typed_dict_field_types.find(mu->second);
+                          auto dc = dict_literal_value_categories.find(
+                            to_symbol_expr(kw_val).get_identifier());
+                          if(
+                            tf != typed_dict_field_types.end() &&
+                            dc != dict_literal_value_categories.end())
+                          {
+                            auto fi = tf->second.find(kv.value());
+                            auto vci = dc->second.find(kv.value());
+                            if(
+                              fi != tf->second.end() && vci != dc->second.end())
+                            {
+                              const std::string &expected = fi->second;
+                              const std::string &vc = vci->second;
+                              if(
+                                expected != "tuple" && vc != expected &&
+                                // bool is acceptable where int
+                                // is expected (Python: bool ⊆
+                                // int).
+                                !(expected == "int" && vc == "bool") &&
+                                // int implicitly convertible to
+                                // float.
+                                !(expected == "float" &&
+                                  (vc == "int" || vc == "bool")))
+                              {
+                                source_locationt tloc = get_location(expr);
+                                tloc.set_property_class("type-error");
+                                tloc.set_comment(
+                                  "TypedDict field '" + kv.value() +
+                                  "' expects " + expected + ", got " + vc);
+                                code_assertt te{false_exprt{}};
+                                te.add_source_location() = tloc;
+                                code_blockt te_block;
+                                te_block.add(std::move(te));
+                                pending_checks.push_back(std::move(te_block));
+                              }
+                            }
+                          }
+                        }
+                      }
                       bool mm = false;
                       for(std::size_t jj = 0; jj < mparams.size(); jj++)
                       {
