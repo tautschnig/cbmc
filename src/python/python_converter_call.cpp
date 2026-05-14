@@ -2955,7 +2955,20 @@ exprt python_convertert::convert_call(const jsont &expr)
                       {
                         if(id2string(mparams[jj].get_base_name()) == kv.value())
                         {
-                          arguments[jj] = vals_arr.operands()[ii];
+                          // Typecast the spread value to the
+                          // matched parameter's declared type.
+                          // Without this, the dict's value-array
+                          // element type (commonly python_value
+                          // for dict[str, object]) leaks into
+                          // an argument slot typed differently
+                          // (e.g. python_string), which trips
+                          // CBMC's equal_exprt invariant when
+                          // it builds eq(arg, symex::args::N)
+                          // during convert_function_calls.
+                          exprt v = vals_arr.operands()[ii];
+                          if(v.type() != mparams[jj].type())
+                            v = safe_typecast(v, mparams[jj].type());
+                          arguments[jj] = std::move(v);
                           mm = true;
                           break;
                         }
@@ -2977,7 +2990,10 @@ exprt python_convertert::convert_call(const jsont &expr)
               {
                 if(id2string(mparams[i].get_base_name()) == kw_name)
                 {
-                  arguments[i] = kw_val;
+                  exprt v = kw_val;
+                  if(v.type() != mparams[i].type())
+                    v = safe_typecast(v, mparams[i].type());
+                  arguments[i] = std::move(v);
                   matched = true;
                   break;
                 }
@@ -3023,6 +3039,28 @@ exprt python_convertert::convert_call(const jsont &expr)
                 arguments[i] = safe_zero(mparams[i].type());
               else if(arguments[i].type() != mparams[i].type())
                 arguments[i] = safe_typecast(arguments[i], mparams[i].type());
+            }
+          }
+
+          // Type-consistency fixup for arguments. This runs
+          // unconditionally (whether or not the call had
+          // keyword arguments) because positional arguments
+          // can also be NIL when convert_expression on a
+          // sub-expression — e.g. convert_subscript falling
+          // through on an unsupported operand — returns
+          // nil_exprt{}. Without this fixup, a NIL argument
+          // sneaks into the goto's FUNCTION_CALL and trips
+          // CBMC's equal_exprt invariant during SSA-step
+          // function-argument introduction (see
+          // symex_target_equation::convert_function_calls).
+          {
+            const auto &fp = method_type.parameters();
+            for(std::size_t i = 0; i < arguments.size() && i < fp.size(); i++)
+            {
+              if(arguments[i].is_nil())
+                arguments[i] = safe_zero(fp[i].type());
+              else if(arguments[i].type() != fp[i].type())
+                arguments[i] = safe_typecast(arguments[i], fp[i].type());
             }
           }
 
@@ -5798,7 +5836,12 @@ exprt python_convertert::convert_call(const jsont &expr)
               {
                 if(id2string(params[j].get_base_name()) == kv.value())
                 {
-                  arguments[j] = vals_arr.operands()[i];
+                  // Typecast spread value to declared param type
+                  // (see comment in the method-call branch above).
+                  exprt v = vals_arr.operands()[i];
+                  if(v.type() != params[j].type())
+                    v = safe_typecast(v, params[j].type());
+                  arguments[j] = std::move(v);
                   matched = true;
                   break;
                 }
@@ -5821,7 +5864,10 @@ exprt python_convertert::convert_call(const jsont &expr)
       {
         if(id2string(params[i].get_base_name()) == kw_name)
         {
-          arguments[i] = kw_val;
+          exprt v = kw_val;
+          if(v.type() != params[i].type())
+            v = safe_typecast(v, params[i].type());
+          arguments[i] = std::move(v);
           matched = true;
           break;
         }
