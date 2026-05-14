@@ -18,13 +18,13 @@ ulimit -v 4000000
 ## Current bottom line
 
 51 benchmarks. As of 2026-05-14 (after items A, D1, B2, B1
-refinement; defaults unchanged):
+refinement, and the spread-typecast / nil-arg fixup):
 
 | Result   | Count | Note                                       |
 |----------|-------|--------------------------------------------|
 | CLEAN    | 39    | clean benchmarks correctly classified      |
 | TP       | 4     | buggy benchmarks correctly classified      |
-| MISS     | 7     | buggy benchmarks classified as clean       |
+| MISS     | 8     | buggy benchmarks classified as clean       |
 | FP       | 0     | clean benchmarks misclassified             |
 | TOERR    | 0     | all benchmarks complete with a verdict     |
 | TIMEOUT  | 0     |                                            |
@@ -38,17 +38,16 @@ Pass rate: **(39 + 4) / 51 = 84.3 %** with default flags.
 | Result   | Count |
 |----------|-------|
 | CLEAN    | 39    |
-| TP       | 6     |
+| TP       | 7     |
 | MISS     | 5     |
 | FP       | 0     |
-| TOERR    | 1     |
+| TOERR    | 0     |
 | TIMEOUT  | 0     |
 | OOM      | 0     |
 
-Pass rate: **(39 + 6) / 51 = 88.2 %** with the opt-in flags.
-The 1 TOERR (apigateway_key_manager) is a CBMC SSA `equal_exprt`
-invariant exposed by the flag, not introduced by these changes;
-without the flag the benchmark is correctly classified TP.
+Pass rate: **(39 + 7) / 51 = 90.2 %** with the opt-in flags.
+All benchmarks now produce a definite verdict — no
+TOERR/TIMEOUT/OOM with either configuration.
 
 Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
 6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
@@ -400,6 +399,7 @@ the suite from 38 CLEAN + 4 TP + 8 MISS + 1 FP to roughly
 | 2026-05-14 |    38 |  4 |    8 |  1 |     0 |       0 |   0 |   82.4 %  | Static AttributeError detection |
 | 2026-05-14 |    39 |  4 |    7 |  0 |     0 |       0 |   0 |   84.3 %  | Items A, D1 default-on          |
 | 2026-05-14 |    39 |  6 |    5 |  0 |     1 |       0 |   0 |   88.2 %  | Items B2, B1 (with opt-in flags) |
+| 2026-05-14 |    39 |  7 |    5 |  0 |     0 |       0 |   0 |   90.2 %  | Spread-typecast + nil-arg fixup  |
 
 The 2026-05-14 entry corresponds to the present state of this
 document.
