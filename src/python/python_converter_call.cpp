@@ -2769,7 +2769,20 @@ exprt python_convertert::convert_call(const jsont &expr)
                 declared_on_class = true;
             }
             irep_idt exc_id{"python::__exception_active"};
-            if(symbol_table.lookup(exc_id) != nullptr)
+            // For genuinely missing methods (not boto3-base
+            // inherited and not forward-referenced), set
+            // __exception_active so any enclosing try/except
+            // handler can observe it. For boto3-base methods
+            // (which DO exist on every client) and for
+            // forward-references (which DO exist on the class,
+            // we just haven't seen the body yet), do NOT set
+            // the exception flag — otherwise the call is
+            // treated as if it raised AttributeError and the
+            // rest of the surrounding statement gets guarded
+            // out, hiding subsequent calls and their checks.
+            if(
+              !is_boto3_base && !declared_on_class &&
+              symbol_table.lookup(exc_id) != nullptr)
             {
               code_blockt err_block;
               err_block.add(code_frontend_assignt{
@@ -2793,9 +2806,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               // the class but body not yet processed) and for
               // boto3 BaseClient inherited methods, since both are
               // false-positive sources for the static check.
-              if(
-                !declared_on_class && !is_boto3_base &&
-                !exception_is_caught("AttributeError"))
+              if(!exception_is_caught("AttributeError"))
               {
                 source_locationt aloc = get_location(expr);
                 aloc.set_property_class("attribute-error");
@@ -2999,7 +3010,81 @@ exprt python_convertert::convert_call(const jsont &expr)
                 }
               }
               if(!matched)
+              {
+                // --python-check-typeddict-fields: when this
+                // kwarg goes to **kwargs of a stub method
+                // annotated with Unpack[TypedDict] and the
+                // TypedDict declares a category for this
+                // field, verify the value's static category
+                // matches. Only fires for genuine kw=val
+                // (non-spread) arguments — values from PEP
+                // 448 spread are checked at the spread
+                // expansion site against the per-key AST
+                // category (the value-array element type
+                // would be the dict's homogenized val_type
+                // and unreliable here).
+                if(python_check_typeddict_fields)
+                {
+                  auto mu = method_kwargs_unpack.find(method_id);
+                  if(mu != method_kwargs_unpack.end())
+                  {
+                    auto tf = typed_dict_field_types.find(mu->second);
+                    if(tf != typed_dict_field_types.end())
+                    {
+                      auto fi = tf->second.find(kw_name);
+                      if(fi != tf->second.end())
+                      {
+                        auto exprt_category = [&](const exprt &e_in)
+                        {
+                          exprt e = e_in;
+                          while(e.id() == ID_typecast &&
+                                e.operands().size() == 1)
+                            e = e.operands()[0];
+                          if(is_python_string_type(e.type()))
+                            return std::string{"str"};
+                          if(is_python_list_type(e.type()))
+                            return std::string{"list"};
+                          if(is_python_dict_type(e.type()))
+                            return std::string{"dict"};
+                          if(is_python_set_type(e.type()))
+                            return std::string{"set"};
+                          if(e.type().id() == ID_bool)
+                            return std::string{"bool"};
+                          if(
+                            e.type().id() == ID_signedbv ||
+                            e.type().id() == ID_unsignedbv ||
+                            e.type().id() == ID_integer)
+                            return std::string{"int"};
+                          if(e.type().id() == ID_floatbv)
+                            return std::string{"float"};
+                          return std::string{};
+                        };
+                        const std::string &expected = fi->second;
+                        std::string vc = exprt_category(kw_val);
+                        if(
+                          !vc.empty() && expected != "tuple" &&
+                          vc != expected &&
+                          !(expected == "int" && vc == "bool") &&
+                          !(expected == "float" &&
+                            (vc == "int" || vc == "bool")))
+                        {
+                          source_locationt tloc = get_location(expr);
+                          tloc.set_property_class("type-error");
+                          tloc.set_comment(
+                            "TypedDict field '" + kw_name + "' expects " +
+                            expected + ", got " + vc);
+                          code_assertt te{false_exprt{}};
+                          te.add_source_location() = tloc;
+                          code_blockt te_block;
+                          te_block.add(std::move(te));
+                          pending_checks.push_back(std::move(te_block));
+                        }
+                      }
+                    }
+                  }
+                }
                 unmatched.push_back({kw_name, kw_val});
+              }
             }
             if(
               !unmatched.empty() && !mparams.empty() &&
