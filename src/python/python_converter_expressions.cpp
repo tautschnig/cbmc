@@ -338,6 +338,32 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // String indexing: s[i] → s.data[i] as a single-char string struct
   if(is_python_string_type(value.type()))
   {
+    // slice should be an integer index. If it isn't, the user
+    // wrote something like `s["x"]` (a runtime TypeError in
+    // Python) or our type tracking lost precision elsewhere.
+    // Either way we should not produce a malformed if_exprt
+    // here: nondet a sound python_string and emit a TypeError
+    // property if the slice's static type is concretely not
+    // an integer.
+    bool slice_is_int = slice.type().id() == ID_signedbv ||
+                        slice.type().id() == ID_unsignedbv ||
+                        slice.type().id() == ID_integer ||
+                        slice.type().id() == ID_bool;
+    if(!slice_is_int)
+    {
+      log_overapprox(
+        "string subscript with non-integer index — emitting type-error "
+        "property and returning nondet python_string");
+      source_locationt tloc = get_location(expr);
+      tloc.set_property_class("type-error");
+      tloc.set_comment("string indices must be integers");
+      code_assertt te{false_exprt{}};
+      te.add_source_location() = tloc;
+      code_blockt te_block;
+      te_block.add(std::move(te));
+      pending_checks.push_back(std::move(te_block));
+      return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+    }
     member_exprt length{value, "length", python_int_type()};
     // PLR §6.3.3: negative indices count from the end
     exprt adjusted_idx = if_exprt{
@@ -506,7 +532,15 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
     }
     log.error() << "Tuple indexing requires a constant index" << messaget::eom;
-    return nil_exprt{};
+    // PLR §6.3.2: with a non-constant index, we can't pick a
+    // specific tuple element statically. Returning nil_exprt
+    // would propagate as a malformed argument into downstream
+    // calls (CBMC SSA's equal_exprt, if_exprt invariants). Use
+    // a sound over-approximation: nondet of python_value.
+    log_overapprox(
+      "tuple subscript with non-constant index — returning nondet "
+      "python_value");
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
   // Tagged union subscript: unwrap to list and index
@@ -523,7 +557,11 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   }
 
   log_overapprox("Subscript: unsupported operand type, using nondet");
-  return nil_exprt{};
+  // Returning nil_exprt would propagate as a malformed argument
+  // into downstream function calls (CBMC SSA's equal_exprt,
+  // if_exprt invariants). Sound over-approximation: nondet of
+  // python_value (the most general Python type).
+  return side_effect_expr_nondett{python_value_type(), get_location(expr)};
 }
 
 // PLR §6.2.5: List, set and tuple displays

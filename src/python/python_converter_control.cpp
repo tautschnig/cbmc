@@ -694,8 +694,89 @@ codet python_convertert::convert_for(const jsont &stmt)
     }
 
     log_overapprox(
-      "for-in iteration: unsupported iterable type, skipping body");
-    return finalize_for(code_skipt{});
+      "for-in iteration: unsupported iterable type, body executed once "
+      "with loop variable nondet (so contained call sites are still "
+      "type-checked)");
+    {
+      // Flush any pending checks that the iter-expression
+      // conversion accumulated (e.g. attribute-error
+      // properties from .items() on a class without that
+      // method). These belong BEFORE the loop, not inside
+      // the conditionally-executed body.
+      code_blockt pre_loop_unsup;
+      for(auto &pc : pending_checks)
+        pre_loop_unsup.add(std::move(pc));
+      pending_checks.clear();
+      // Make the loop variable a nondet value of an Any-shaped
+      // type so the body still type-checks.
+      irep_idt symbol_id{qualified_name};
+      if(symbol_table.lookup(symbol_id) == nullptr)
+      {
+        symbolt new_symbol{symbol_id, python_value_type(), "python"};
+        new_symbol.base_name = var_name;
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        symbol_table.add(new_symbol);
+      }
+      symbol_exprt loop_sym =
+        symbol_table.lookup_ref(symbol_id).symbol_expr();
+      // Use a one-shot while loop so any 'continue' or 'break'
+      // inside the body has a valid target. We wrap the body
+      // in: while(__once && __skip) { body; __once = false; }
+      // The condition is nondet only on the first iteration;
+      // subsequent iterations exit via the __once flag. This
+      // ensures the body is processed exactly once (when the
+      // verifier non-deterministically chooses 'loop ran') or
+      // not at all (when 'loop did not run').
+      static unsigned for_skip_ctr = 0;
+      std::string skip_name =
+        "__for_skip_" + std::to_string(for_skip_ctr);
+      std::string once_name = "__for_once_" + std::to_string(for_skip_ctr++);
+      irep_idt skip_id{qualify_name(skip_name)};
+      irep_idt once_id{qualify_name(once_name)};
+      if(symbol_table.lookup(skip_id) == nullptr)
+      {
+        symbolt ss{skip_id, bool_typet{}, "python"};
+        ss.base_name = skip_name;
+        ss.is_lvalue = true;
+        ss.is_state_var = true;
+        ss.is_static_lifetime = current_function.empty();
+        symbol_table.add(ss);
+      }
+      if(symbol_table.lookup(once_id) == nullptr)
+      {
+        symbolt os{once_id, bool_typet{}, "python"};
+        os.base_name = once_name;
+        os.is_lvalue = true;
+        os.is_state_var = true;
+        os.is_static_lifetime = current_function.empty();
+        symbol_table.add(os);
+      }
+      symbol_exprt skip_sym = symbol_table.lookup_ref(skip_id).symbol_expr();
+      symbol_exprt once_sym = symbol_table.lookup_ref(once_id).symbol_expr();
+      code_blockt body_once;
+      body_once.add(code_frontend_assignt{
+        loop_sym, side_effect_expr_nondett{loop_sym.type(), loc}});
+      const jsont &body = json_member(stmt, "body");
+      if(body.is_array())
+      {
+        for(const auto &s : as_array(body))
+          body_once.add(convert_statement(s));
+      }
+      // After body runs once, set once=false so the next
+      // iteration exits.
+      body_once.add(code_frontend_assignt{once_sym, false_exprt{}});
+      code_blockt result;
+      for(auto &s : pre_loop_unsup.statements())
+        result.add(s);
+      result.add(code_frontend_assignt{
+        skip_sym, side_effect_expr_nondett{bool_typet{}, loc}});
+      result.add(code_frontend_assignt{once_sym, true_exprt{}});
+      code_whilet wh{and_exprt{once_sym, skip_sym}, std::move(body_once)};
+      result.add(std::move(wh));
+      return finalize_for(std::move(result));
+    }
   }
 
   // Determine element type
