@@ -166,11 +166,28 @@ echo "[1/7] compiling kernel TU..."
   }
 
 echo "[2/7] synthesising per-file harness..."
+set +e
 python3 "$SCRIPT_DIR/synthesise_harness.py" \
-  "$MODULE" "$FULL_KERNEL_FILE" "$TARGET_FUNC" "$HARNESS_C" || {
-    echo "  FAIL: synthesise_harness.py could not generate harness" >&2
-    exit 3
-  }
+  "$MODULE" "$FULL_KERNEL_FILE" "$TARGET_FUNC" "$HARNESS_C" \
+  2> "$tmp/synth.err"
+synth_rc=$?
+set -e
+cat "$tmp/synth.err" >&2
+if [[ $synth_rc -ne 0 ]]; then
+  echo "  FAIL: synthesise_harness.py could not generate harness" >&2
+  exit 3
+fi
+# Detect "empty ghost" condition (synthesise_harness emitted a
+# warning to stderr).  We don't reclassify the verdict — some
+# real bug-class patterns still get caught when the ghost is
+# empty (e.g. back-to-back put_cred where neither parameter is
+# a cred *).  But we do propagate the marker into the cbmc log
+# so the per-file rollup can segment high- vs low-confidence
+# candidates downstream if needed.
+EMPTY_GHOST=0
+if grep -q "harness ghost is empty" "$tmp/synth.err"; then
+  EMPTY_GHOST=1
+fi
 
 echo "[3/7] compiling harness TU..."
 # compile_file.sh expects a path relative to LINUX_TREE; drop the
@@ -283,27 +300,39 @@ grep -E "precondition\.[0-9]+\]" "$tmp/cbmc.log" | sed 's/^/  /' || true
 #   2  usage error (set elsewhere in this script)
 #   3  infrastructure error (compile/link, set elsewhere)
 contract_pat='Check (requires|ensures) clause'
+# Confidence suffix: distinguish FAILED-with-bootstrap (contract
+# is firing on a synthesised ghost state — high-confidence
+# candidate) from FAILED-empty-bootstrap (the harness's ghost
+# was empty, so the contract fires by default whenever the
+# ghost is consulted — lower-confidence: still useful when the
+# function body has a real bug-class pattern, but more likely
+# to be uniform noise at corpus scale).
+if (( EMPTY_GHOST == 1 )); then
+  conf=" [empty-ghost-confidence: low]"
+else
+  conf=""
+fi
 if grep -qE "$contract_pat.*FAILURE" "$tmp/cbmc.log"; then
-  echo "  verdict: CONTRACT VIOLATION (real candidate)"
+  echo "  verdict: CONTRACT VIOLATION (real candidate)$conf"
   exit 10
 elif grep -q "^VERIFICATION SUCCESSFUL\$" "$tmp/cbmc.log"; then
   if grep -qE "$contract_pat" "$tmp/cbmc.log"; then
-    echo "  verdict: VERIFICATION SUCCESSFUL (contract holds)"
+    echo "  verdict: VERIFICATION SUCCESSFUL (contract holds)$conf"
     exit 0
   else
-    echo "  verdict: VACUOUS (no contract clauses checked)"
+    echo "  verdict: VACUOUS (no contract clauses checked)$conf"
     exit 12
   fi
 elif grep -q "^VERIFICATION FAILED\$" "$tmp/cbmc.log"; then
   if grep -qE "$contract_pat" "$tmp/cbmc.log"; then
-    echo "  verdict: NOISE (built-in checks fired; no contract violation)"
+    echo "  verdict: NOISE (built-in checks fired; no contract violation)$conf"
     exit 11
   else
-    echo "  verdict: VACUOUS (no contract clauses checked; built-in failures only)"
+    echo "  verdict: VACUOUS (no contract clauses checked; built-in failures only)$conf"
     exit 12
   fi
 else
-  echo "  verdict: (cbmc did not terminate with a verdict, rc=$rc)"
+  echo "  verdict: (cbmc did not terminate with a verdict, rc=$rc)$conf"
   tail -5 "$tmp/cbmc.log" | sed 's/^/    /'
   exit $((rc == 0 ? 4 : rc))
 fi

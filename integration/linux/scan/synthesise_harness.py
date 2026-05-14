@@ -454,6 +454,7 @@ def synthesise(module: str, source: Path, function: str,
     # tracked, bootstrap the ghost to "live".
     call_args: list[str] = []
     warnings: list[str] = []
+    bootstrapped_any = False
     for i, p in enumerate(sig.params):
         local = f"arg{i}"
         if "*" in p.type_text:
@@ -461,6 +462,7 @@ def synthesise(module: str, source: Path, function: str,
             lines.append(f"  {p.type_text} {local} = "
                          f"({p.type_text}){local}_backing;")
             if is_ghost_tracked(module, p.type_text):
+                bootstrapped_any = True
                 if cfg.get("custom_setup"):
                     # Multi-statement setup block (e.g. aead's
                     # SGL fabrication).  The template is emitted
@@ -520,6 +522,25 @@ def synthesise(module: str, source: Path, function: str,
     if warnings:
         for w in warnings:
             print(f"  warning: {w}", file=sys.stderr)
+    if not bootstrapped_any:
+        # Surface the empty-ghost case to the caller via a
+        # marker in the print stream.  scan-per-file.sh
+        # propagates this into the verdict notes so corpus-scan
+        # can segment "FAILED-with-bootstrap" (high-confidence
+        # candidate) from "FAILED-empty-bootstrap" (lower
+        # confidence — the contract precondition fires by
+        # default on empty-ghost lookups).  Genuine bug-class
+        # patterns can still be caught when no parameter type
+        # matches: e.g. nfsd_setuser(struct svc_rqst *) has no
+        # cred parameter but its body's back-to-back put_cred
+        # pattern is real signal.  We do NOT reclassify the
+        # verdict.
+        print(
+            f"  no parameter matched {module}'s ghost-bootstrap "
+            "config; harness ghost is empty (lower-confidence "
+            "verdict)",
+            file=sys.stderr,
+        )
     return 0
 
 
