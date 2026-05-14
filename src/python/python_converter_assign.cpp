@@ -1095,9 +1095,21 @@ codet python_convertert::convert_assign(const jsont &stmt)
                     if(idx < PYTHON_MAX_DICT_SIZE)
                     {
                       // Check if the key already exists — if so,
-                      // just update the value in place, otherwise
-                      // append. Only track when value is constant;
-                      // nondet values invalidate the entry.
+                      // update the value in place, otherwise
+                      // append. The dict_literals entry tracks
+                      // BOTH keys and values; for the
+                      // required-kwarg check (which cares only
+                      // about key presence), losing the value
+                      // tracking on a non-constant assignment is
+                      // fine, but losing the KEY tracking would
+                      // be incorrect — we KNOW the key exists.
+                      // For non-constant values we therefore
+                      // record the key and leave the value
+                      // entry at whatever placeholder the dict
+                      // literal already had (typically a
+                      // safe_zero of the value-array element
+                      // type from the original Dict literal
+                      // construction in convert_dict).
                       bool have_key = false;
                       for(std::size_t j = 0; j < idx; j++)
                       {
@@ -1108,24 +1120,34 @@ codet python_convertert::convert_assign(const jsont &stmt)
                           have_key = true;
                           if(typed_val.is_constant())
                             dlit.operands()[2].operands()[j] = typed_val;
-                          else
-                            dict_literals.erase(obj_id);
+                          // else: leave existing value entry
+                          // alone; key tracking is preserved.
                           break;
                         }
                       }
                       if(!have_key)
                       {
-                        dlit.operands()[1].operands()[idx] =
-                          python_string_literal(key_str.value());
+                        // Typecast the key literal to match
+                        // the keys-array element type (the
+                        // original convert_dict pass already
+                        // typecast all keys to a uniform type
+                        // — typically python_string but
+                        // possibly tagged-union for
+                        // dict[object, ...]).
+                        const auto &keys_arr_type =
+                          to_array_type(dlit.operands()[1].type());
+                        exprt key_lit = python_string_literal(key_str.value());
+                        if(key_lit.type() != keys_arr_type.element_type())
+                          key_lit = safe_typecast(
+                            key_lit, keys_arr_type.element_type());
+                        dlit.operands()[1].operands()[idx] = key_lit;
                         if(typed_val.is_constant())
                           dlit.operands()[2].operands()[idx] = typed_val;
-                        else
-                        {
-                          // Value nondet: drop tracking (can't prove
-                          // specific read values later).
-                          dict_literals.erase(obj_id);
-                          continue;
-                        }
+                        // else: leave value-array's existing
+                        // entry (a safe_zero from the dict's
+                        // construction) at this index; key
+                        // tracking is preserved for the
+                        // required-kwarg check.
                         dlit.operands()[0] =
                           from_integer(cur_len + 1, signedbv_typet{64});
                       }
