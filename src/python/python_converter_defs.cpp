@@ -1384,7 +1384,14 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                     // Extract TypedDict name from Unpack's slice.
                     const jsont &slc = json_member(ann, "slice");
                     if(is_node_type(slc, "Name"))
+                    {
                       unpack_td_name = json_string(json_member(slc, "id"));
+                      // Persist the Unpack[TypedDict] mapping
+                      // for the call site to consult when
+                      // emitting field-type checks on values
+                      // spread via PEP 448 **kwargs.
+                      method_kwargs_unpack[func_id] = unpack_td_name;
+                    }
                   }
                 }
               }

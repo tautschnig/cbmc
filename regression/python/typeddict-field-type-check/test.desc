@@ -1,0 +1,9 @@
+CORE
+main.py
+--python-no-exception-checks --python-check-typeddict-fields
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+type-error.*TypedDict field 'Description' expects str, got none.*FAILURE
+--

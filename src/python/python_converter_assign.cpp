@@ -157,7 +157,39 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(is_python_dict_type(rhs.type()))
   {
     if(rhs.id() == ID_struct)
+    {
       dict_literals[symbol_id] = rhs;
+      // Populate per-key static category from the original
+      // AST. The struct exprt's value array has had all
+      // values typecast to a single uniform type via
+      // safe_typecast, which loses the original category.
+      // The AST is the source of truth.
+      if(is_node_type(value, "Dict"))
+      {
+        const jsont &dkeys = json_member(value, "keys");
+        const jsont &dvals = json_member(value, "values");
+        if(dkeys.is_array() && dvals.is_array())
+        {
+          std::map<std::string, std::string> cats;
+          auto kit = as_array(dkeys).begin();
+          auto vit = as_array(dvals).begin();
+          for(; kit != as_array(dkeys).end() && vit != as_array(dvals).end();
+              ++kit, ++vit)
+          {
+            if(!is_node_type(*kit, "Constant"))
+              continue;
+            const jsont &kv = json_member(*kit, "value");
+            if(!kv.is_string())
+              continue;
+            std::string cat = ast_value_category(*vit);
+            if(!cat.empty())
+              cats[kv.value] = cat;
+          }
+          if(!cats.empty())
+            dict_literal_value_categories[symbol_id] = std::move(cats);
+        }
+      }
+    }
     else if(rhs.id() == ID_side_effect)
     {
       // Inter-procedural dict-literal propagation: if the
@@ -1446,7 +1478,39 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(is_python_dict_type(typed_rhs.type()))
     {
       if(typed_rhs.id() == ID_struct)
+      {
         dict_literals[sym.name] = typed_rhs;
+        // Populate per-key static category from the original
+        // AST. The struct exprt's value array has had all
+        // values typecast to a single uniform type via
+        // safe_typecast, which loses the original category.
+        // The AST is the source of truth.
+        if(is_node_type(value, "Dict"))
+        {
+          const jsont &keys = json_member(value, "keys");
+          const jsont &vals = json_member(value, "values");
+          if(keys.is_array() && vals.is_array())
+          {
+            std::map<std::string, std::string> cats;
+            auto kit = as_array(keys).begin();
+            auto vit = as_array(vals).begin();
+            for(; kit != as_array(keys).end() && vit != as_array(vals).end();
+                ++kit, ++vit)
+            {
+              if(!is_node_type(*kit, "Constant"))
+                continue;
+              const jsont &kv = json_member(*kit, "value");
+              if(!kv.is_string())
+                continue;
+              std::string cat = ast_value_category(*vit);
+              if(!cat.empty())
+                cats[kv.value] = cat;
+            }
+            if(!cats.empty())
+              dict_literal_value_categories[sym.name] = std::move(cats);
+          }
+        }
+      }
       else if(typed_rhs.id() == ID_side_effect)
       {
         // Inter-procedural dict-literal propagation: if the

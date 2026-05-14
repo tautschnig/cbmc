@@ -50,6 +50,8 @@ void python_languaget::set_language_options(
     options.get_bool_option("python-no-exception-checks");
   python_required_kwarg_checks =
     options.get_bool_option("python-required-kwarg-checks");
+  python_check_typeddict_fields =
+    options.get_bool_option("python-check-typeddict-fields");
   python_check_annotations =
     options.get_bool_option("python-check-annotations");
   python_string_kind = options.get_bool_option("python-smt-strings")
@@ -192,6 +194,7 @@ bool python_languaget::typecheck(
   converter.set_python_lazy_stubs(python_lazy_stubs);
   converter.set_python_no_exception_checks(python_no_exception_checks);
   converter.set_python_required_kwarg_checks(python_required_kwarg_checks);
+  converter.set_python_check_typeddict_fields(python_check_typeddict_fields);
   converter.set_python_check_annotations(python_check_annotations);
   converter.set_module_resolver(
     [this, &message_handler](const std::string &name) -> const jsont *

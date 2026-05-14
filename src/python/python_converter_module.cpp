@@ -418,6 +418,7 @@ void python_convertert::process_imported_module(
                     as_array(keys).size() == as_array(values).size())
                   {
                     std::vector<std::string> required;
+                    std::map<std::string, std::string> field_types;
                     auto kit = as_array(keys).begin();
                     auto vit = as_array(values).begin();
                     for(; kit != as_array(keys).end(); ++kit, ++vit)
@@ -439,9 +440,76 @@ void python_convertert::process_imported_module(
                       std::string wrapper = json_string(json_member(vv, "id"));
                       if(wrapper == "Required")
                         required.push_back(kstr);
+                      // Record the field's underlying type
+                      // category. The slice of Required[T] /
+                      // NotRequired[T] is T, which can be:
+                      //   * Name(id="str"|"int"|"float"|"bool"|
+                      //                "bytes"|"list"|"dict"|
+                      //                "set")  — recorded as is
+                      //   * Subscript(Name("List"|...), [...])
+                      //                       — strip to outer
+                      //   * anything else     — skipped
+                      const jsont &slice = json_member(*vit, "slice");
+                      auto category = [&](const jsont &n) -> std::string
+                      {
+                        if(is_node_type(n, "Name"))
+                        {
+                          std::string id = json_string(json_member(n, "id"));
+                          static const std::set<std::string> known{
+                            "str",
+                            "int",
+                            "float",
+                            "bool",
+                            "bytes",
+                            "list",
+                            "dict",
+                            "set",
+                            "List",
+                            "Dict",
+                            "Set",
+                            "Tuple",
+                            "FrozenSet"};
+                          if(known.count(id) > 0)
+                          {
+                            // Map capital aliases to lower-case
+                            // categories.
+                            if(id == "List")
+                              return "list";
+                            if(id == "Dict")
+                              return "dict";
+                            if(id == "Set" || id == "FrozenSet")
+                              return "set";
+                            if(id == "Tuple")
+                              return "tuple";
+                            return id;
+                          }
+                        }
+                        if(is_node_type(n, "Subscript"))
+                        {
+                          const jsont &sv = json_member(n, "value");
+                          if(is_node_type(sv, "Name"))
+                          {
+                            std::string id = json_string(json_member(sv, "id"));
+                            if(id == "List")
+                              return "list";
+                            if(id == "Dict")
+                              return "dict";
+                            if(id == "Set")
+                              return "set";
+                            if(id == "Tuple")
+                              return "tuple";
+                          }
+                        }
+                        return std::string{};
+                      };
+                      std::string cat = category(slice);
+                      if(!cat.empty())
+                        field_types[kstr] = cat;
                     }
                     if(!required.empty())
                       typed_dict_required[td_name] = std::move(required);
+                    if(!field_types.empty())
+                      typed_dict_field_types[td_name] = std::move(field_types);
                   }
                 }
               }
