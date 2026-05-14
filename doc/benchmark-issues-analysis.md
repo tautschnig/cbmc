@@ -17,19 +17,38 @@ ulimit -v 4000000
 
 ## Current bottom line
 
-51 benchmarks. As of 2026-05-13:
+51 benchmarks. As of 2026-05-14 (after items A, D1, B2, B1
+refinement; defaults unchanged):
 
 | Result   | Count | Note                                       |
 |----------|-------|--------------------------------------------|
-| CLEAN    | 38    | clean benchmarks correctly classified      |
+| CLEAN    | 39    | clean benchmarks correctly classified      |
 | TP       | 4     | buggy benchmarks correctly classified      |
-| MISS     | 8     | buggy benchmarks classified as clean       |
-| FP       | 1     | clean benchmark classified as buggy        |
+| MISS     | 7     | buggy benchmarks classified as clean       |
+| FP       | 0     | clean benchmarks misclassified             |
 | TOERR    | 0     | all benchmarks complete with a verdict     |
 | TIMEOUT  | 0     |                                            |
 | OOM      | 0     |                                            |
 
-Pass rate: **(38 + 4) / 51 = 82.4 %** meaningful.
+Pass rate: **(39 + 4) / 51 = 84.3 %** with default flags.
+
+**Under both opt-in flags** (`--python-required-kwarg-checks
+--python-check-typeddict-fields`):
+
+| Result   | Count |
+|----------|-------|
+| CLEAN    | 39    |
+| TP       | 6     |
+| MISS     | 5     |
+| FP       | 0     |
+| TOERR    | 1     |
+| TIMEOUT  | 0     |
+| OOM      | 0     |
+
+Pass rate: **(39 + 6) / 51 = 88.2 %** with the opt-in flags.
+The 1 TOERR (apigateway_key_manager) is a CBMC SSA `equal_exprt`
+invariant exposed by the flag, not introduced by these changes;
+without the flag the benchmark is correctly classified TP.
 
 Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
 6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
@@ -379,6 +398,8 @@ the suite from 38 CLEAN + 4 TP + 8 MISS + 1 FP to roughly
 | 2026-05-12 |    37 |  1 |   11 |  2 |     0 |       0 |   0 |   74.5 %  | After 5 benchmark-driven fixes  |
 | 2026-05-13 |    38 |  1 |   11 |  1 |     0 |       0 |   0 |   76.5 %  | Cat-1 PLR-correctness fixes     |
 | 2026-05-14 |    38 |  4 |    8 |  1 |     0 |       0 |   0 |   82.4 %  | Static AttributeError detection |
+| 2026-05-14 |    39 |  4 |    7 |  0 |     0 |       0 |   0 |   84.3 %  | Items A, D1 default-on          |
+| 2026-05-14 |    39 |  6 |    5 |  0 |     1 |       0 |   0 |   88.2 %  | Items B2, B1 (with opt-in flags) |
 
 The 2026-05-14 entry corresponds to the present state of this
 document.
