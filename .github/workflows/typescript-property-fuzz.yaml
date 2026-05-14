@@ -1,0 +1,71 @@
+name: TypeScript property fuzzer
+
+# Run the property-based fuzzer
+# (scripts/property_fuzz_typescript.py) on every PR or push that
+# touches the TypeScript frontend, the regression suite, or the
+# fuzzer itself. The fuzzer encodes ~60 ES2024 invariants
+# (commutativity, length identities, NaN propagation, bit-math
+# semantics, UTF-16, in-operator, ToBoolean, etc.). A property
+# violation indicates a frontend soundness regression.
+#
+# Configuration:
+# - 200 iterations per run (each picks a random property + seed).
+#   Enough to exercise all properties multiple times without
+#   blowing the CI budget.
+# - Two distinct seeds (1 from $GITHUB_RUN_NUMBER, 1 fixed) so
+#   re-runs of the same PR explore additional inputs but still
+#   cover the same baseline.
+# - 30s per-test timeout, 4 GB memory cap.
+
+on:
+  pull_request:
+    branches: [ develop ]
+    paths:
+      - 'src/typescript/**'
+      - 'src/solvers/strings/**'
+      - 'regression/typescript/**'
+      - 'scripts/property_fuzz_typescript.py'
+      - '.github/workflows/typescript-property-fuzz.yaml'
+  push:
+    branches: [ develop ]
+    paths:
+      - 'src/typescript/**'
+      - 'src/solvers/strings/**'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -yq \
+            cmake bison flex g++ git make
+      - name: Install Node.js (TypeScript frontend uses tsc via node)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install TypeScript
+        run: npm install -g typescript@5.4.5
+      - name: Configure CMake
+        run: cmake -S . -Bbuild -DCMAKE_BUILD_TYPE=Release -DWITH_JBMC=OFF
+      - name: Build cbmc
+        run: cmake --build build --target cbmc -j$(nproc)
+      - name: Property fuzzer (run-number seed)
+        run: |
+          # Spread iterations across the registered properties.
+          # GITHUB_RUN_NUMBER is a small int; combine with a
+          # large prime so consecutive runs explore different
+          # inputs.
+          SEED=$(( GITHUB_RUN_NUMBER * 524287 ))
+          python3 scripts/property_fuzz_typescript.py \
+            --iterations 200 --seed "$SEED"
+      - name: Property fuzzer (fixed seed)
+        run: |
+          python3 scripts/property_fuzz_typescript.py \
+            --iterations 200 --seed 31337
