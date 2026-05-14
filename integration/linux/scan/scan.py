@@ -1267,22 +1267,35 @@ def run_cbmc_per_file(
         #   3  infrastructure error (compile/link/etc)
         #   2  usage error
         #   other: cbmc non-verdict exit
+        # Detect the empty-ghost-confidence marker that
+        # scan-per-file.sh emits on its verdict line for
+        # harnesses where no parameter type matched the
+        # module's ghost-bootstrap.  The marker is appended to
+        # the verdict line; we capture it for downstream
+        # triage so the per_file rollup can segment
+        # high-confidence vs low-confidence candidates.
+        empty_ghost = "empty-ghost-confidence: low" in combined
+        confidence_note = (
+            " [empty-ghost: low-confidence]" if empty_ghost else ""
+        )
         if rc == 0:
             status = "successful"
-            notes = ""
+            notes = "" + confidence_note.lstrip()
         elif rc == 10:
             status = "failed"
-            notes = ""
+            notes = "" + confidence_note.lstrip()
         elif rc == 11:
             status = "noise"
             notes = (
                 "VERIFICATION FAILED but no contract clause "
                 "violated; only CBMC built-in checks fired."
+                + confidence_note
             )
         elif rc == 12:
             status = "vacuous"
             notes = (
                 "no contract clause checked at this call site"
+                + confidence_note
             )
         elif rc in (2, 3):
             status = "error"
