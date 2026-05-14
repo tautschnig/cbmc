@@ -113,6 +113,7 @@ function n2j(node) {
       break;
     case ts.SyntaxKind.StringLiteral:
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.FirstTemplateToken:
       r.text = node.text;
       break;
     case ts.SyntaxKind.TrueKeyword: r.value = true; break;

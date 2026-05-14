@@ -113,6 +113,7 @@ function makeN2j(sourceFile, checker) {
         break;
       case ts.SyntaxKind.StringLiteral:
       case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+      case ts.SyntaxKind.FirstTemplateToken:
         r.text = node.text;
         break;
       case ts.SyntaxKind.TrueKeyword:
@@ -295,6 +296,10 @@ function makeN2j(sourceFile, checker) {
       case ts.SyntaxKind.TemplateExpression:
         r.head = n2j(node.head);
         r.templateSpans = node.templateSpans.map(n2j);
+        break;
+      case ts.SyntaxKind.TaggedTemplateExpression:
+        r.tag = n2j(node.tag);
+        r.template = n2j(node.template);
         break;
       case ts.SyntaxKind.TemplateHead:
       case ts.SyntaxKind.TemplateMiddle:

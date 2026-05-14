@@ -960,7 +960,9 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     std::vector<std::string> strings;
     std::vector<exprt> values;
     std::string tmpl_kind = json_string(json_member(tmpl, "_kind"));
-    if(tmpl_kind == "NoSubstitutionTemplateLiteral")
+    if(
+      tmpl_kind == "NoSubstitutionTemplateLiteral" ||
+      tmpl_kind == "FirstTemplateToken")
     {
       strings.push_back(json_string(json_member(tmpl, "text")));
     }
