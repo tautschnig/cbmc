@@ -260,6 +260,10 @@ function n2j(node) {
       r.head = n2j(node.head);
       r.templateSpans = node.templateSpans.map(n2j);
       break;
+    case ts.SyntaxKind.TaggedTemplateExpression:
+      r.tag = n2j(node.tag);
+      r.template = n2j(node.template);
+      break;
     case ts.SyntaxKind.TemplateHead:
     case ts.SyntaxKind.TemplateMiddle:
     case ts.SyntaxKind.TemplateTail:

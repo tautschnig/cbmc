@@ -950,6 +950,77 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     return nil_exprt{};
   }
   // ES2024 sec-template-literals
+  // ES2024 §13.3.11: Tagged template expression.
+  // tag`head${expr}tail` ≡ tag(["head","tail"], expr). For constant
+  // interpolations we fold at conversion time (matching the existing
+  // TemplateExpression path). Non-constant values fall back to nondet.
+  if(kind == "TaggedTemplateExpression")
+  {
+    const jsont &tmpl = json_member(node, "template");
+    std::vector<std::string> strings;
+    std::vector<exprt> values;
+    std::string tmpl_kind = json_string(json_member(tmpl, "_kind"));
+    if(tmpl_kind == "NoSubstitutionTemplateLiteral")
+    {
+      strings.push_back(json_string(json_member(tmpl, "text")));
+    }
+    else
+    {
+      strings.push_back(
+        json_string(json_member(json_member(tmpl, "head"), "text")));
+      const jsont &spans = json_member(tmpl, "templateSpans");
+      if(spans.is_array())
+        for(const auto &span : to_json_array(spans))
+        {
+          values.push_back(convert_expression(json_member(span, "expression")));
+          strings.push_back(
+            json_string(json_member(json_member(span, "literal"), "text")));
+        }
+    }
+    bool all_const = true;
+    std::string concatenated;
+    for(std::size_t i = 0; i < strings.size(); ++i)
+    {
+      concatenated += strings[i];
+      if(i < values.size())
+      {
+        exprt val = values[i];
+        if(val.id() == ID_symbol)
+        {
+          const symbolt *vs =
+            symbol_table.lookup(to_symbol_expr(val).get_identifier());
+          if(vs && !vs->value.is_nil())
+            val = vs->value;
+        }
+        if(val.is_constant() && val.type().id() == ID_floatbv)
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(val));
+          ieee_floatt rounded = fv.round_to_integral();
+          if(rounded == fv)
+            concatenated += integer2string(fv.to_integer());
+          else
+            concatenated += fv.to_ansi_c_string();
+        }
+        else if(is_typescript_string_type(val.type()))
+        {
+          std::string sv = extract_string_value(val);
+          if(!sv.empty())
+            concatenated += sv.substr(2);
+          else
+            all_const = false;
+        }
+        else
+          all_const = false;
+      }
+    }
+    if(all_const)
+      return convert_string_literal_from_text(concatenated);
+    return side_effect_expr_nondett{
+      typescript_string_type(), get_location(node)};
+  }
   // TSH: Everyday Types > Template Literal Types
   if(kind == "TemplateExpression")
   {
