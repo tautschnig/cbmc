@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #endif
 
 #include "java_bytecode_convert_method_class.h"
+#include <goto-programs/class_identifier.h>
 
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
@@ -1353,6 +1354,68 @@ java_bytecode_convert_methodt::convert_instructions(const methodt &method)
 
       convert_invoke(
         i_it->source_location, statement, *class_method_descriptor, c, results);
+
+      // F9: if the call returns a `java.lang.Object*` (the erased shape of
+      // a generic method's return type, common for `List<T>.get`,
+      // `Map<K,V>.get`, etc.) and the very next bytecode is a CHECKCAST,
+      // refine the returned object's @class_identifier to the cast's
+      // target type. JBMC's stub for an unmodelled generic method
+      // hardcodes the class identifier to the erased return type
+      // (java.lang.Object), so the post-call CHECKCAST always fails on
+      // the non-null branch even though the caller is using generics
+      // correctly. Rewriting the class identifier here lets the cast
+      // assertion become vacuously true while leaving real
+      // type-mismatch failures (e.g. on non-stub returns) untouched.
+      if(
+        !results.empty() && results[0].type().id() == ID_pointer &&
+        to_pointer_type(results[0].type()).base_type().id() == ID_struct_tag &&
+        to_struct_tag_type(to_pointer_type(results[0].type()).base_type())
+            .get_identifier() == "java::java.lang.Object")
+      {
+        auto next_it = std::next(i_it);
+        if(next_it != instructions.end() && next_it->bytecode == BC_checkcast)
+        {
+          const exprt &checkcast_arg =
+            next_it->args.empty() ? nil_exprt{} : next_it->args[0];
+          if(checkcast_arg.type().id() == ID_struct_tag)
+          {
+            const struct_tag_typet &target_tag =
+              to_struct_tag_type(checkcast_arg.type());
+            // Build:
+            //   if (result != NULL)
+            //     *result->...->@class_identifier := target_class_id_str;
+            const exprt result_ptr = results[0];
+            const reference_typet target_ref =
+              java_reference_type(target_tag);
+            // Cast the result pointer to the target struct's pointer type
+            // so the dereference & member access give the right field.
+            const exprt typed_ptr =
+              typecast_exprt::conditional_cast(result_ptr, target_ref);
+            namespacet ns_local(symbol_table);
+            const exprt class_id_field =
+              get_class_identifier_field(typed_ptr, target_tag, ns_local);
+            const exprt target_id_str =
+              constant_exprt(target_tag.get_identifier(), class_id_field.type());
+            code_blockt then_block;
+            then_block.add(code_assignt(class_id_field, target_id_str));
+            code_ifthenelset refine_if(
+              notequal_exprt(
+                result_ptr,
+                null_pointer_exprt(to_pointer_type(result_ptr.type()))),
+              then_block);
+            // Append the refinement after the call instructions in `c`.
+            if(c.get_statement() == ID_block)
+              to_code_block(c).add(refine_if);
+            else
+            {
+              code_blockt new_block;
+              new_block.add(c);
+              new_block.add(refine_if);
+              c = new_block;
+            }
+          }
+        }
+      }
     }
     else if(bytecode == BC_return)
     {
