@@ -1,0 +1,9 @@
+CORE
+main.py
+--python-no-exception-checks
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+type-error.*re.search.*argument must be string or bytes.*FAILURE
+--
