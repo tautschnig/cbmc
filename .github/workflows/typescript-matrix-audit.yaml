@@ -1,0 +1,34 @@
+name: TypeScript matrix audit
+
+# Detect drift between the TypeScript frontend's capability matrix
+# (doc/typescript-capability-matrix.md) and the regression tests it
+# cites. A row that names a test which doesn't exist, or whose
+# status emoji disagrees with the test's CORE / KNOWNBUG label, will
+# fail this check.
+#
+# Triggered only when the matrix or the tests it references are
+# touched, so unrelated PRs don't pay the cost.
+
+on:
+  pull_request:
+    branches: [ develop ]
+    paths:
+      - 'doc/typescript-capability-matrix.md'
+      - 'regression/typescript/**/test.desc'
+      - 'scripts/audit_matrix.py'
+      - '.github/workflows/typescript-matrix-audit.yaml'
+  push:
+    branches: [ develop ]
+    paths:
+      - 'doc/typescript-capability-matrix.md'
+      - 'regression/typescript/**/test.desc'
+      - 'scripts/audit_matrix.py'
+      - '.github/workflows/typescript-matrix-audit.yaml'
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run capability-matrix audit
+        run: python3 scripts/audit_matrix.py --strict

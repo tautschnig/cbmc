@@ -197,7 +197,7 @@ reasons, not precision.
 | `includes` on symbolic strings | ✅ | Character-precise (multi-assertion too) | `string-includes-content-precise`, `string-includes-symbolic` |
 | `startsWith` / `endsWith` on symbolic strings | ✅ | Character-precise (multi-assertion too) | `string-startswith-content-precise`, `string-startswith-symbolic` |
 | `toUpperCase` / `toLowerCase` on symbolic strings | ✅ | Character-precise | `string-toupper-content-precise`, `string-case-symbolic` |
-| `trim` on symbolic strings | ⚠️ | Length-precise; content compare can OOM on complex chains | `string-trim-symbolic` [KNOWNBUG] |
+| `trim` on symbolic strings | ✅ | Length-precise + content-precise after the 2026-05-12 axiom-set-empty counter-example fix; previously KNOWNBUG for memory reasons | `string-trim-symbolic` |
 | `padStart` / `padEnd` (short-circuit) | ✅ | Fixed 2026-05-07 | `string-pad-short-circuit` |
 | `padStart` / `padEnd` (multi-char pad) | ✅ | Fixed 2026-05-07 | `string-pad-multichar` |
 | `trim` (constant) | ✅ |  | (covered in `string-methods`) |
