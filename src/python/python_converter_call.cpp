@@ -54,6 +54,60 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     std::string method_name = json_string(json_member(func, "attr"));
 
+    // PLR §6.4.6 / Python re module semantics:
+    //   re.Pattern.{search,match,fullmatch} require the subject
+    //   argument to be a string (or bytes-like). When the static
+    //   type of the first positional argument is concretely not
+    //   a string (e.g. a dict, list, set, or class instance),
+    //   Python raises TypeError. We emit a dedicated ASSERT
+    //   false at the call site so the bug is reported even when
+    //   the subsequent regex-result modeling is a sound nondet
+    //   over-approximation that would otherwise hide it.
+    //
+    //   The check runs BEFORE the regular method-dispatch
+    //   machinery so it covers Pattern.search invoked on any
+    //   receiver — both library Pattern instances and the
+    //   stub-context fallback further below. Property class
+    //   'type-error' is not suppressed by
+    //   --python-no-exception-checks (which is for runtime
+    //   exception-property suppression; this is a statically
+    //   provable bug).
+    if(
+      method_name == "search" || method_name == "match" ||
+      method_name == "fullmatch")
+    {
+      const jsont &args_n = json_member(expr, "args");
+      if(args_n.is_array() && !as_array(args_n).empty())
+      {
+        // The subject is the first positional argument of the
+        // call expr (the JSON args list of attribute calls
+        // doesn't include the receiver).
+        exprt subj = convert_expression(*as_array(args_n).begin());
+        auto looks_like_string = [&](const typet &t)
+        {
+          if(is_python_string_type(t))
+            return true;
+          if(is_python_value_type(t))
+            return true; // tagged union — could carry a string
+          if(t.id() == ID_pointer)
+            return true; // bytes / char pointer surrogate
+          return false;
+        };
+        if(!subj.is_nil() && !looks_like_string(subj.type()))
+        {
+          source_locationt tloc = get_location(expr);
+          tloc.set_property_class("type-error");
+          tloc.set_comment(
+            "re." + method_name + "() argument must be string or bytes");
+          code_assertt te{false_exprt{}};
+          te.add_source_location() = tloc;
+          code_blockt te_block;
+          te_block.add(std::move(te));
+          pending_checks.push_back(std::move(te_block));
+        }
+      }
+    }
+
     // PLR §6.3.4: super() — resolve to parent class
     const jsont &obj_node = json_member(func, "value");
     if(
