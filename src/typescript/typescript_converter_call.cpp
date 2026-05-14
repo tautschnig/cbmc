@@ -2227,6 +2227,28 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return struct_exprt{
           {new_len, array_exprt{std::move(chars), data_type}}, str_type};
       }
+      // ES2024 §22.1.3.3: charCodeAt on a non-constant receiver.
+      // Access obj_expr.data[idx] and cast to float. This is the
+      // path that fires when the receiver is symbolic (e.g. after
+      // __CPROVER_assume(s === "literal") — the assume constrains
+      // the data at the SAT level, so reading data[idx] gives the
+      // correct character code).
+      if(
+        method == "charCodeAt" && args.is_array() &&
+        !to_json_array(args).empty())
+      {
+        exprt idx_expr = convert_expression(*to_json_array(args).begin());
+        if(idx_expr.type().id() == ID_floatbv)
+          idx_expr = typecast_exprt{idx_expr, signedbv_typet{64}};
+        else if(idx_expr.type() != signedbv_typet{64})
+          idx_expr = typecast_exprt{idx_expr, signedbv_typet{64}};
+        struct_typet str_type = typescript_string_type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        exprt data = member_exprt{obj_expr, "data", data_type};
+        exprt char_val = index_exprt{data, idx_expr};
+        // Cast unsignedbv[16] → floatbv[64]
+        return typecast_exprt{char_val, double_type()};
+      }
       // ES2024 sec-string.prototype.charat
       // charAt with non-constant index: access data[idx], build 1-char string
       if(method == "charAt" && args.is_array() && !to_json_array(args).empty())

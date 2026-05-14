@@ -1533,6 +1533,7 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
       if(data.id() == ID_array)
       {
         std::string s;
+        bool all_const = true;
         for(mp_integer i = 0; i < len; ++i)
         {
           auto idx = i.to_ulong();
@@ -1542,8 +1543,14 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
             if(!to_integer(to_constant_expr(data.operands()[idx]), ch))
               s += static_cast<char>(ch.to_ulong());
           }
+          else
+          {
+            all_const = false;
+            break;
+          }
         }
-        return "S:" + s;
+        if(all_const)
+          return "S:" + s;
       }
     }
   }
@@ -2619,6 +2626,65 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         return false_exprt{};
       // For other type mismatches, fall through to equal_exprt
       // (which may produce bottom but matches prior behaviour).
+    }
+    // For string structs where at least one side has symbolic data
+    // (e.g. charAt result containing s.data[i]), a plain
+    // equal_exprt on the two struct expressions gets constant-
+    // folded to false by the simplifier (it sees non-identical
+    // sub-expressions and concludes inequality). Route through
+    // per-element comparison: length == length AND data[0] ==
+    // data[0] AND ... up to the shorter constant length.
+    if(
+      is_typescript_string_type(left.type()) &&
+      is_typescript_string_type(right.type()))
+    {
+      // Check if either side is a constant literal (all data slots
+      // are constant). If both are constant, equal_exprt is fine
+      // (the simplifier handles it). If at least one has symbolic
+      // sub-expressions (or is a symbol whose value may be
+      // symbolic), use per-element comparison.
+      auto is_fully_constant = [](const exprt &e) -> bool
+      {
+        // A symbol is never fully constant at conversion time —
+        // its runtime value depends on the execution path. Only
+        // struct literals with all-constant sub-expressions are
+        // fully constant (and can be compared via equal_exprt
+        // without the simplifier misfolding).
+        if(e.id() != ID_struct)
+          return false;
+        if(e.operands().size() < 2)
+          return false;
+        bool all_const = true;
+        e.visit_post(
+          [&](const exprt &sub)
+          {
+            if(
+              sub.id() == ID_symbol || sub.id() == ID_index ||
+              sub.id() == ID_member || sub.id() == ID_side_effect ||
+              sub.id() == ID_if)
+              all_const = false;
+          });
+        return all_const;
+      };
+      if(!is_fully_constant(left) || !is_fully_constant(right))
+      {
+        // Per-field comparison that the solver can handle.
+        struct_typet str_type = typescript_string_type();
+        typet len_type = str_type.components()[0].type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        exprt l_len = member_exprt{left, "length", len_type};
+        exprt r_len = member_exprt{right, "length", len_type};
+        exprt l_data = member_exprt{left, "data", data_type};
+        exprt r_data = member_exprt{right, "data", data_type};
+        exprt result = equal_exprt{l_len, r_len};
+        for(std::size_t i = 0; i < TYPESCRIPT_MAX_STRING_LENGTH; ++i)
+        {
+          exprt li = index_exprt{l_data, from_integer(i, signedbv_typet{64})};
+          exprt ri = index_exprt{r_data, from_integer(i, signedbv_typet{64})};
+          result = and_exprt{result, equal_exprt{li, ri}};
+        }
+        return result;
+      }
     }
     return equal_exprt{left, right};
   }

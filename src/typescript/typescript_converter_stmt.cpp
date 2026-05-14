@@ -239,13 +239,32 @@ codet typescript_convertert::convert_statement(const jsont &node)
             if(!sv.empty())
               string_constants[sym_id] = sv.substr(2);
           }
-          // Set symbol value for constants (enables spread, template literals)
+          // Set symbol value for constants (enables spread, template literals).
+          // Only store if the value is fully constant — storing a
+          // struct with symbolic sub-expressions (e.g. s.data[0]
+          // from charAt on a nondet receiver) causes the simplifier
+          // to fold subsequent comparisons against the stored value
+          // rather than the runtime value.
           {
             const exprt &val =
               rhs.id() == ID_typecast ? to_typecast_expr(rhs).op() : rhs;
-            if(
-              val.id() == ID_struct || val.is_constant() ||
-              (val.id() == ID_symbol && val.type().id() == ID_struct))
+            bool is_const_val = false;
+            if(val.is_constant())
+              is_const_val = true;
+            else if(val.id() == ID_struct)
+            {
+              is_const_val = true;
+              val.visit_post(
+                [&](const exprt &sub)
+                {
+                  if(
+                    sub.id() == ID_symbol || sub.id() == ID_index ||
+                    sub.id() == ID_member || sub.id() == ID_side_effect ||
+                    sub.id() == ID_if || sub.id() == ID_function_application)
+                    is_const_val = false;
+                });
+            }
+            if(is_const_val)
             {
               symbolt *ws = symbol_table.get_writeable(sym_id);
               if(ws != nullptr)
