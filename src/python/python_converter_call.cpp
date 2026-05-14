@@ -2684,6 +2684,36 @@ exprt python_convertert::convert_call(const jsont &expr)
             method_sym == nullptr && method_name.substr(0, 2) != "__" &&
             !python_lazy_stubs)
           {
+            // boto3 BaseClient inherited methods — these aren't
+            // declared in service-specific stubs but every
+            // boto3.client(...) instance has them. Suppress the
+            // missing-method check to avoid stub-completeness FPs.
+            static const std::set<std::string> boto3_base_methods{
+              "get_paginator",
+              "can_paginate",
+              "get_waiter",
+              "meta",
+              "exceptions",
+              "close",
+              "generate_presigned_url",
+              "generate_presigned_post"};
+            const bool is_boto3_base =
+              boto3_base_methods.count(method_name) > 0;
+            // Forward-reference suppression: when a method calls
+            // another method on the same class (or a known
+            // sibling/base class), the callee may not yet have
+            // been registered in the symbol table at conversion
+            // time. We collected the full set of declared names
+            // in class_declared_methods during convert_class_def's
+            // pre-pass, so consult that before flagging.
+            bool declared_on_class = false;
+            {
+              auto cdm = class_declared_methods.find(class_name);
+              if(
+                cdm != class_declared_methods.end() &&
+                cdm->second.count(method_name) > 0)
+                declared_on_class = true;
+            }
             irep_idt exc_id{"python::__exception_active"};
             if(symbol_table.lookup(exc_id) != nullptr)
             {
@@ -2697,6 +2727,31 @@ exprt python_convertert::convert_call(const jsont &expr)
                 err_block.add(code_frontend_assignt{
                   symbol_table.lookup_ref(etype_id).symbol_expr(),
                   from_integer(h, python_int_type())});
+              }
+              // Definitively-unhandled-AttributeError detection.
+              // If no enclosing except catches AttributeError (nor a
+              // catch-all), emit a dedicated ASSERT false that is
+              // NOT suppressed by --python-no-exception-checks —
+              // this is a statically-provable bug, not a dynamic
+              // exception property.
+              //
+              // Skipped for forward-references (method declared on
+              // the class but body not yet processed) and for
+              // boto3 BaseClient inherited methods, since both are
+              // false-positive sources for the static check.
+              if(
+                !declared_on_class && !is_boto3_base &&
+                !exception_is_caught("AttributeError"))
+              {
+                source_locationt aloc = get_location(expr);
+                aloc.set_property_class("attribute-error");
+                aloc.set_comment(
+                  "missing method " + class_name + "::" + method_name);
+                code_assertt ae{false_exprt{}};
+                ae.add_source_location() = aloc;
+                code_blockt assert_block;
+                assert_block.add(std::move(ae));
+                pending_checks.push_back(std::move(assert_block));
               }
               pending_checks.push_back(std::move(err_block));
             }
