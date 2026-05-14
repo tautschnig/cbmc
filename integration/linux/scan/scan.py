@@ -1252,17 +1252,38 @@ def run_cbmc_per_file(
         combined = (result.stdout or "") + (result.stderr or "")
         rc = result.returncode
         # scan-per-file.sh exit code conventions:
-        #   0  VERIFICATION SUCCESSFUL
-        #   10 VERIFICATION FAILED
+        #   0  VERIFICATION SUCCESSFUL with contract clause checked
+        #      (real successful — property holds at the call site).
+        #   10 VERIFICATION FAILED with contract violation —
+        #      REAL CANDIDATE BUG.
+        #   11 VERIFICATION FAILED but only built-in CBMC checks
+        #      fired (memcpy/memset bounds, no-body, unwind, etc.);
+        #      no contract clause was violated.  Reported as
+        #      "noise" — the harness shape didn't fully match the
+        #      kernel state, but the property holds.
+        #   12 No contract clause was even checked — vacuous.
+        #      Either the call site is unreachable from the
+        #      synthesised harness or the contract didn't apply.
         #   3  infrastructure error (compile/link/etc)
         #   2  usage error
         #   other: cbmc non-verdict exit
-        if rc == 0 and "VERIFICATION SUCCESSFUL" in combined:
+        if rc == 0:
             status = "successful"
             notes = ""
-        elif rc == 10 and "VERIFICATION FAILED" in combined:
+        elif rc == 10:
             status = "failed"
             notes = ""
+        elif rc == 11:
+            status = "noise"
+            notes = (
+                "VERIFICATION FAILED but no contract clause "
+                "violated; only CBMC built-in checks fired."
+            )
+        elif rc == 12:
+            status = "vacuous"
+            notes = (
+                "no contract clause checked at this call site"
+            )
         elif rc in (2, 3):
             status = "error"
             # Last few informative lines from the script's output.

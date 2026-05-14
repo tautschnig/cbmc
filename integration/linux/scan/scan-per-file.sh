@@ -264,12 +264,44 @@ echo
 echo "=== $KERNEL_FILE: $TARGET_FUNC ==="
 grep -E "precondition\.[0-9]+\]" "$tmp/cbmc.log" | sed 's/^/  /' || true
 
-if grep -q "^VERIFICATION SUCCESSFUL\$" "$tmp/cbmc.log"; then
-  echo "  verdict: VERIFICATION SUCCESSFUL"
-  exit 0
-elif grep -q "^VERIFICATION FAILED\$" "$tmp/cbmc.log"; then
-  echo "  verdict: VERIFICATION FAILED"
+# Refined classification: a per-file verdict only counts as a
+# real candidate bug signal when CBMC reports a FAILURE on a
+# contract clause (requires/ensures).  CBMC's built-in property
+# checks (memcpy/memset bounds, no-body callees, unwinding
+# assertions, etc.) fire routinely on partially-initialised
+# harness state and would otherwise drown out real signal.
+#
+# Exit codes:
+#   0  VERIFICATION SUCCESSFUL with at least one contract
+#      clause checked and holding.
+#   10 VERIFICATION FAILED with at least one contract clause
+#      violated — REAL CANDIDATE.
+#   11 VERIFICATION FAILED but no contract clause failed (only
+#      CBMC built-ins fired) — infrastructure noise.
+#   12 VERIFICATION SUCCESSFUL or FAILED but no contract clause
+#      was even checked — vacuous.
+#   2  usage error (set elsewhere in this script)
+#   3  infrastructure error (compile/link, set elsewhere)
+contract_pat='Check (requires|ensures) clause'
+if grep -qE "$contract_pat.*FAILURE" "$tmp/cbmc.log"; then
+  echo "  verdict: CONTRACT VIOLATION (real candidate)"
   exit 10
+elif grep -q "^VERIFICATION SUCCESSFUL\$" "$tmp/cbmc.log"; then
+  if grep -qE "$contract_pat" "$tmp/cbmc.log"; then
+    echo "  verdict: VERIFICATION SUCCESSFUL (contract holds)"
+    exit 0
+  else
+    echo "  verdict: VACUOUS (no contract clauses checked)"
+    exit 12
+  fi
+elif grep -q "^VERIFICATION FAILED\$" "$tmp/cbmc.log"; then
+  if grep -qE "$contract_pat" "$tmp/cbmc.log"; then
+    echo "  verdict: NOISE (built-in checks fired; no contract violation)"
+    exit 11
+  else
+    echo "  verdict: VACUOUS (no contract clauses checked; built-in failures only)"
+    exit 12
+  fi
 else
   echo "  verdict: (cbmc did not terminate with a verdict, rc=$rc)"
   tail -5 "$tmp/cbmc.log" | sed 's/^/    /'

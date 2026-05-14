@@ -200,6 +200,7 @@ class Signature:
     """Parsed signature of the target function."""
     return_type: str
     params: list[Parameter]
+    is_static: bool = False
 
 
 def _strip_comments(text: str) -> str:
@@ -240,6 +241,8 @@ def find_function_signature(source: Path, name: str) -> Signature | None:
         return None
 
     return_type = m.group(1).strip()
+    # Detect storage class before cleaning the leading keywords.
+    is_static = bool(re.search(r"\bstatic\b", return_type))
     # Clean leading keywords.
     for kw in ["static", "inline", "extern", "__always_inline",
                "noinline", "__init", "__exit"]:
@@ -248,7 +251,9 @@ def find_function_signature(source: Path, name: str) -> Signature | None:
 
     params_text = m.group(2).strip()
     if not params_text or params_text == "void":
-        return Signature(return_type=return_type, params=[])
+        return Signature(
+            return_type=return_type, params=[], is_static=is_static,
+        )
 
     params: list[Parameter] = []
     for i, raw in enumerate(_split_params(params_text)):
@@ -269,7 +274,9 @@ def find_function_signature(source: Path, name: str) -> Signature | None:
         type_text = " ".join(type_text.split())
         params.append(Parameter(type_text=type_text, name=pname))
 
-    return Signature(return_type=return_type, params=params)
+    return Signature(
+        return_type=return_type, params=params, is_static=is_static,
+    )
 
 
 def _split_params(text: str) -> list[str]:
@@ -312,6 +319,23 @@ def synthesise(module: str, source: Path, function: str,
         print(f"synthesise_harness: could not find function "
               f"{function!r} in {source}", file=sys.stderr)
         return 2
+
+    # If the target is static in its TU, goto-cc's
+    # --export-file-local-symbols pass mangles its symbol to
+    # __CPROVER_file_local_<stem>_c_<name> at link time.  The
+    # harness lives in a separate TU, so a call to the
+    # unmangled name resolves to a body-less external symbol
+    # and CBMC reports "no body for callee" — a spurious
+    # FAILURE that would pollute every per-file scan over
+    # static kernel helpers.  Use the mangled name in the
+    # harness's forward declaration and call site so the link
+    # resolves to the real body.
+    if sig.is_static:
+        callee = (
+            f"__CPROVER_file_local_{source.stem}_c_{function}"
+        )
+    else:
+        callee = function
 
     # Build the harness source.
     lines: list[str] = []
@@ -413,10 +437,11 @@ def synthesise(module: str, source: Path, function: str,
         lines.append(f"typedef char {ident};")
         typedefs_seen.add(ident)
 
-    # Target function declaration.
+    # Target function declaration.  Use the mangled name when
+    # the target is static (see comment in `synthesise` above).
     arg_sig = ", ".join(f"{p.type_text} {p.name}" for p in sig.params) \
         or "void"
-    lines.append(f"{sig.return_type} {function}({arg_sig});")
+    lines.append(f"{sig.return_type} {callee}({arg_sig});")
     lines.append("")
 
     # Harness body.
@@ -460,10 +485,10 @@ def synthesise(module: str, source: Path, function: str,
 
     lines.append("")
     if sig.return_type == "void":
-        lines.append(f"  {function}({', '.join(call_args)});")
+        lines.append(f"  {callee}({', '.join(call_args)});")
     else:
         lines.append(
-            f"  {sig.return_type} _ret = {function}({', '.join(call_args)});"
+            f"  {sig.return_type} _ret = {callee}({', '.join(call_args)});"
         )
         lines.append("  (void)_ret;")
     lines.append("")

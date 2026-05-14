@@ -156,15 +156,30 @@ scan_one() {
   # The scan wraps its own tool invocations in
   # _rlimit_preexec (RLIMIT_AS + RLIMIT_CPU); we just need a
   # wall-clock outer backstop so a dead subprocess cannot
-  # hang the corpus run.  Budget 900s per file — the aead
-  # scan under vacuity probe + verify is the slowest at
-  # ~200s, giving headroom.
-  timeout 900 "$SCRIPT_DIR/scan.py" "$src" \
-    --json "$json" > "$log" 2>&1 || true
+  # hang the corpus run.  Budget defaults to 900s per file —
+  # the aead scan under vacuity probe + verify is the slowest
+  # at ~200s in default mode, giving headroom.  Per-file mode
+  # synthesises a harness per cocci hit so the total per-file
+  # wall-clock can be much higher; SCAN_FILE_TIMEOUT lets the
+  # caller raise the cap (default 900s for default-mode runs,
+  # 7200s when EXTRA_SCAN_ARGS contains --per-file).
+  local file_to=${SCAN_FILE_TIMEOUT:-}
+  if [[ -z $file_to ]]; then
+    if [[ ${EXTRA_SCAN_ARGS:-} == *--per-file* ]]; then
+      file_to=7200
+    else
+      file_to=900
+    fi
+  fi
+  # shellcheck disable=SC2086
+  timeout "$file_to" "$SCRIPT_DIR/scan.py" "$src" \
+    --json "$json" \
+    ${EXTRA_SCAN_ARGS:-} \
+    > "$log" 2>&1 || true
 }
 
 export -f scan_one
-export SCRIPT_DIR LINUX_TREE OUTDIR
+export SCRIPT_DIR LINUX_TREE OUTDIR EXTRA_SCAN_ARGS SCAN_FILE_TIMEOUT
 
 # Fan-out.  xargs -P keeps the machine loaded without needing GNU
 # parallel.  `bash -c` wrapper needed because xargs can't call
@@ -185,8 +200,18 @@ import sys
 
 outdir = sys.argv[1]
 
-# (file, module, cocci_hits, cbmc_status, assertion, notes)
-rows = []
+# Two parallel row tables:
+#   default-mode rows      — one per (file, module) with the
+#                            module's overall cbmc_status.
+#   per-file-mode rows     — one per (file, module, function)
+#                            with the per-call-site verdict.
+#
+# A run can produce either or both: --per-file scans still set
+# the module's cbmc_status to a roll-up of the per-call-site
+# verdicts, but the per-call-site list is what we want to triage.
+default_rows = []   # (file, module, hits, status, assertion, notes)
+perfile_rows = []   # (file, module, function, hit_lines, status, notes)
+
 for name in sorted(os.listdir(outdir)):
     if not name.endswith(".json"):
         continue
@@ -201,14 +226,27 @@ for name in sorted(os.listdir(outdir)):
         for m in file["modules"]:
             hits = len(m.get("cocci_hits") or [])
             status = m.get("cbmc_status")
-            if hits == 0 and status in ("not-run", None):
+            per_file = m.get("per_file") or []
+            if hits == 0 and status in ("not-run", None) and not per_file:
                 continue
             assertion = ""
             if m.get("cbmc_failures"):
                 assertion = m["cbmc_failures"][0].get("assertion", "")
             notes = m.get("cbmc_notes", "") or ""
-            rows.append((path, m["module"], hits, status, assertion, notes))
+            default_rows.append(
+                (path, m["module"], hits, status, assertion, notes)
+            )
+            for pf in per_file:
+                perfile_rows.append((
+                    path,
+                    m["module"],
+                    pf.get("function", "?"),
+                    pf.get("hit_lines") or [],
+                    pf.get("status", "?"),
+                    pf.get("notes", "") or "",
+                ))
 
+# === default-mode summary (file-level cbmc_status) =====================
 groups = {
     "pipeline-ok": [],   # cbmc_status=failed (contract fires as expected)
     "compile-fail": [],
@@ -216,7 +254,7 @@ groups = {
     "vacuity-risk": [],
     "other": [],
 }
-for r in rows:
+for r in default_rows:
     status = r[3]
     if status == "failed":
         groups["pipeline-ok"].append(r)
@@ -229,14 +267,14 @@ for r in rows:
     else:
         groups["other"].append(r)
 
-def _width(rs):
-    return max((len(r[0]) for r in rs), default=1) + 2
+def _width(rs, idx=0):
+    return max((len(str(r[idx])) for r in rs), default=1) + 2
 
 if groups["pipeline-ok"]:
     rs = groups["pipeline-ok"]
     print(f"\n--- pipeline-ok: {len(rs)} row(s) — "
-          f"compile + link + contract fires (LIM-013: not a per-file"
-          f" signal) ---")
+          f"compile + link + contract fires (LIM-013: in default mode "
+          f"this is a self-check, NOT a per-file bug signal) ---")
     w = _width(rs)
     for path, module, hits, _, assertion, _ in rs:
         print(f"  {path:<{w}} {module:<14}  hits={hits:<3}  "
@@ -263,14 +301,89 @@ if groups["other"]:
         print(f"  {path}  {module}  hits={hits}  status={status}  "
               f"{assertion}")
 
-total_hits = sum(r[2] for r in rows)
+# === per-file-mode summary (one row per call site) ====================
+if perfile_rows:
+    pf_groups = {
+        "failed": [],         # candidate bugs — needs triage
+        "successful": [],     # contract holds at this site
+        "noise": [],          # only CBMC built-in checks fired
+        "vacuous": [],        # no contract clause was checked
+        "timeout": [],
+        "error": [],          # synthesis / link / compile error
+        "no-function-found": [],
+        "other": [],
+    }
+    for r in perfile_rows:
+        s = r[4]
+        if s in pf_groups:
+            pf_groups[s].append(r)
+        else:
+            pf_groups["other"].append(r)
+
+    print()
+    print("=" * 70)
+    print(f"PER-FILE MODE: {len(perfile_rows)} per-call-site verdict(s) "
+          f"across {len({(r[0], r[1]) for r in perfile_rows})} "
+          f"(file, module) pair(s)")
+    print("=" * 70)
+
+    if pf_groups["failed"]:
+        rs = pf_groups["failed"]
+        print(f"\n--- per-file FAILED (candidate bug sites): "
+              f"{len(rs)} row(s) ---")
+        w_path = _width(rs, 0)
+        w_func = _width(rs, 2)
+        for path, module, func, hit_lines, _, _ in rs:
+            lines = ",".join(str(L) for L in hit_lines)
+            print(f"  {path:<{w_path}} {module:<14}  "
+                  f"{func:<{w_func}}  hits@L:{lines}")
+
+    for cat in ("timeout", "error", "no-function-found", "other"):
+        rs = pf_groups[cat]
+        if not rs:
+            continue
+        print(f"\n--- per-file {cat}: {len(rs)} row(s) ---")
+        w_path = _width(rs, 0)
+        w_func = _width(rs, 2)
+        for path, module, func, hit_lines, _, notes in rs:
+            lines = ",".join(str(L) for L in hit_lines)
+            first_err = ""
+            for line in (notes or "").splitlines():
+                if "error:" in line or "exit 1" in line:
+                    first_err = line.strip()
+                    break
+            print(f"  {path:<{w_path}} {module:<14}  "
+                  f"{func:<{w_func}}  hits@L:{lines}  "
+                  f"{first_err[:60]}")
+
+    if pf_groups["successful"]:
+        # Don't print the full list — it's noise.  Just count.
+        print(f"\n--- per-file successful (contract holds): "
+              f"{len(pf_groups['successful'])} row(s) ---")
+    if pf_groups["noise"]:
+        print(f"\n--- per-file noise (CBMC built-ins fired, "
+              f"no contract violation): "
+              f"{len(pf_groups['noise'])} row(s) ---")
+    if pf_groups["vacuous"]:
+        print(f"\n--- per-file vacuous (no contract clauses "
+              f"checked): {len(pf_groups['vacuous'])} row(s) ---")
+
+# === counts ===========================================================
+total_hits = sum(r[2] for r in default_rows)
 print()
 print("counts:")
-print(f"  rows (module x file)  : {len(rows)}")
-print(f"  distinct files        : {len({r[0] for r in rows})}")
+print(f"  default-mode rows     : {len(default_rows)}")
+print(f"  distinct files        : "
+      f"{len({r[0] for r in default_rows})}")
 for cat in ("pipeline-ok", "compile-fail", "timeout",
             "vacuity-risk", "other"):
     if groups[cat]:
         print(f"  {cat:<22}: {len(groups[cat])}")
 print(f"  total cocci hits      : {total_hits}")
+if perfile_rows:
+    print(f"  per-file rows         : {len(perfile_rows)}")
+    for cat in ("failed", "successful", "noise", "vacuous",
+                "timeout", "error", "no-function-found", "other"):
+        if pf_groups.get(cat):
+            print(f"  per-file {cat:<14}: {len(pf_groups[cat])}")
 PY
