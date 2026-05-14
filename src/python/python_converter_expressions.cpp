@@ -452,14 +452,38 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         slice};
     }
 
-    add_check(
-      and_exprt{
-        binary_relation_exprt{
-          effective_idx, ID_ge, safe_zero(effective_idx.type())},
-        binary_relation_exprt{effective_idx, ID_lt, length}},
-      "index-out-of-bounds",
-      "list index out of range",
-      get_location(expr));
+    // Path-sensitive list-length idiom: when we're inside a
+    // short-circuiting 'and' whose first operand asserts
+    // len(L) >= N (or one of the equivalent forms recognised
+    // in convert_bool_op), and the subscript index is a
+    // non-negative constant < N, the IndexError check is
+    // trivially safe and we elide it. Without this, the check
+    // would fire unconditionally at conversion time, before
+    // the and-test's path constraint reaches the solver.
+    bool elide_idx_check = false;
+    if(
+      slice.is_constant() && value.id() == ID_symbol &&
+      list_min_lengths.count(to_symbol_expr(value).get_identifier()) > 0)
+    {
+      mp_integer idx_val;
+      if(!to_integer(to_constant_expr(slice), idx_val) && idx_val >= 0)
+      {
+        const mp_integer &min_len =
+          list_min_lengths.at(to_symbol_expr(value).get_identifier());
+        if(idx_val < min_len)
+          elide_idx_check = true;
+      }
+    }
+
+    if(!elide_idx_check)
+      add_check(
+        and_exprt{
+          binary_relation_exprt{
+            effective_idx, ID_ge, safe_zero(effective_idx.type())},
+          binary_relation_exprt{effective_idx, ID_lt, length}},
+        "index-out-of-bounds",
+        "list index out of range",
+        get_location(expr));
 
     const auto &st = to_struct_type(value.type());
     const auto &data_type = to_array_type(st.components()[1].type());

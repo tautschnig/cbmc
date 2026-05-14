@@ -1173,12 +1173,118 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
   }
 
   exprt result = convert_expression(*as_array(values).begin());
+
+  // Path-sensitive list-length idiom: when the first operand of
+  // a short-circuiting 'and' is `len(L) >= N` or `len(L) > N`
+  // (or the reversed `N <= len(L)` / `N < len(L)` / `len(L) ==
+  // const N`), every subsequent operand can assume that `L` has
+  // at least the corresponding number of elements. Record those
+  // lower bounds in list_min_lengths for the duration of the
+  // remaining operand conversions, then restore on exit.
+  std::vector<irep_idt> length_bounds_added;
+  auto record_length_bound = [&](const irep_idt &id, const mp_integer &n)
+  {
+    auto it = list_min_lengths.find(id);
+    if(it == list_min_lengths.end() || it->second < n)
+    {
+      list_min_lengths[id] = n;
+      length_bounds_added.push_back(id);
+    }
+  };
+  auto extract_len_lower_bound = [&](const jsont &node)
+  {
+    if(!is_node_type(node, "Compare"))
+      return;
+    const jsont &ops_n = json_member(node, "ops");
+    const jsont &cmps_n = json_member(node, "comparators");
+    if(!ops_n.is_array() || !cmps_n.is_array())
+      return;
+    if(as_array(ops_n).size() != 1 || as_array(cmps_n).size() != 1)
+      return;
+    std::string op_name =
+      json_string(json_member(*as_array(ops_n).begin(), "_type"));
+    const jsont &left = json_member(node, "left");
+    const jsont &right = *as_array(cmps_n).begin();
+
+    auto is_len_call = [&](const jsont &n) -> std::string
+    {
+      if(!is_node_type(n, "Call"))
+        return std::string{};
+      const jsont &fn = json_member(n, "func");
+      if(!is_node_type(fn, "Name"))
+        return std::string{};
+      if(json_string(json_member(fn, "id")) != "len")
+        return std::string{};
+      const jsont &args = json_member(n, "args");
+      if(!args.is_array() || as_array(args).size() != 1)
+        return std::string{};
+      const jsont &a0 = *as_array(args).begin();
+      if(!is_node_type(a0, "Name"))
+        return std::string{};
+      return json_string(json_member(a0, "id"));
+    };
+    auto extract_const_int = [&](const jsont &n) -> std::optional<mp_integer>
+    {
+      if(!is_node_type(n, "Constant"))
+        return std::nullopt;
+      const jsont &v = json_member(n, "value");
+      if(!v.is_number())
+        return std::nullopt;
+      return mp_integer{std::stoll(v.value)};
+    };
+
+    // Forms:
+    //   len(L) >= N  ⇒ len(L) ≥ N
+    //   len(L) >  N  ⇒ len(L) ≥ N+1
+    //   len(L) == N  ⇒ len(L) ≥ N
+    //   N <= len(L)  ⇒ len(L) ≥ N
+    //   N <  len(L)  ⇒ len(L) ≥ N+1
+    std::string ln = is_len_call(left);
+    if(!ln.empty())
+    {
+      auto cv = extract_const_int(right);
+      if(!cv)
+        return;
+      mp_integer bound = *cv;
+      if(op_name == "Gt")
+        bound += 1;
+      else if(op_name != "GtE" && op_name != "Eq")
+        return;
+      record_length_bound(irep_idt{qualify_name(ln)}, bound);
+      return;
+    }
+    std::string rn = is_len_call(right);
+    if(!rn.empty())
+    {
+      auto cv = extract_const_int(left);
+      if(!cv)
+        return;
+      mp_integer bound = *cv;
+      if(op_name == "Lt")
+        bound += 1;
+      else if(op_name != "LtE" && op_name != "Eq")
+        return;
+      record_length_bound(irep_idt{qualify_name(rn)}, bound);
+    }
+  };
+  if(op == "And")
+    extract_len_lower_bound(*as_array(values).begin());
+
   auto it = std::next(as_array(values).begin());
   for(; it != as_array(values).end(); ++it)
   {
     exprt next = convert_expression(*it);
+    // Each successive AND-operand can also enrich the bounds
+    // for the operands that follow. (e.g. `len(L) >= 3 and
+    // len(M) >= 2 and L[2] == M[1]`.)
+    if(op == "And" && std::next(it) != as_array(values).end())
+      extract_len_lower_bound(*it);
     if(result.is_nil() || next.is_nil())
+    {
+      for(const auto &id : length_bounds_added)
+        list_min_lengths.erase(id);
       return nil_exprt{};
+    }
 
     // PLR §6.11: "x or y" returns x if x is truthy, else y
     // "x and y" returns x if x is falsy, else y
@@ -1203,9 +1309,13 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
     else
     {
       log.warning() << "Unsupported bool operator: " << op << messaget::eom;
+      for(const auto &id : length_bounds_added)
+        list_min_lengths.erase(id);
       return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
     }
   }
 
+  for(const auto &id : length_bounds_added)
+    list_min_lengths.erase(id);
   return result;
 }
