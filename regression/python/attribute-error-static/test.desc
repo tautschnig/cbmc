@@ -1,0 +1,9 @@
+CORE
+main.py
+--python-no-exception-checks
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+attribute-error.*missing method MyClient::does_not_exist.*FAILURE
+--

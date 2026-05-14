@@ -268,6 +268,13 @@ private:
   /// @property. Attribute reads of these names call the method
   /// with self as the single argument (PLR §3.3.2).
   std::map<std::string, std::set<std::string>> class_property_methods;
+  /// All method names declared on a class (regardless of whether
+  /// they have been converted yet). Populated in convert_class_def
+  /// before any method body is converted, so forward-reference
+  /// calls (`self.foo()` inside `__init__` where `foo` appears
+  /// later in the class body) can be distinguished from genuinely
+  /// missing methods.
+  std::map<std::string, std::set<std::string>> class_declared_methods;
   /// The class whose method call initiated the current super()
   /// dispatch. Set by the call site (e.g. when D() is called,
   /// set to "D"); nested super() inlining preserves it. Empty
@@ -348,6 +355,32 @@ private:
   /// Depth of if/else nesting (>0 means we're inside a branch).
   unsigned if_else_depth = 0;
   unsigned try_depth = 0;
+
+  /// Stack of active exception handlers. Each frame is the set of
+  /// exception class names caught by one enclosing try/except. An
+  /// exception class X is considered caught if X or a catch-all
+  /// ("Exception", "BaseException", "") is present in any frame.
+  /// Used for definitively-unhandled-exception detection (e.g.
+  /// missing method calls).
+  std::vector<std::set<std::string>> active_exception_handlers;
+
+  /// Return true if `exc_class` would be caught by an active
+  /// enclosing except handler. Only EXACT class-name matches
+  /// suppress the missing-method assertion; generic catch-alls
+  /// like 'except Exception:' or bare 'except:' do NOT suppress
+  /// it because those handlers are typically used for last-resort
+  /// recovery, not to mask statically-known wrong method names.
+  /// (PLR semantics: such a call IS an AttributeError; the catch
+  /// just hides the symptom while the bug remains.)
+  bool exception_is_caught(const std::string &exc_class) const
+  {
+    for(const auto &frame : active_exception_handlers)
+    {
+      if(frame.count(exc_class) > 0)
+        return true;
+    }
+    return false;
+  }
 
   // --- AST node converters ---
 

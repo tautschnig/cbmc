@@ -1117,6 +1117,53 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     // needs to run at module load time
   }
 
+  // Pre-pass: register the names of every method declared in
+  // the class body, so that during method-body conversion a
+  // forward-reference call (e.g. self.helper() inside __init__,
+  // where helper appears later in the class body) is recognised
+  // as a real method rather than a missing-method bug.
+  if(body.is_array())
+  {
+    for(const auto &item : as_array(body))
+    {
+      if(
+        is_node_type(item, "FunctionDef") ||
+        is_node_type(item, "AsyncFunctionDef"))
+      {
+        class_declared_methods[class_name].insert(
+          json_string(json_member(item, "name")));
+      }
+      // Inner classes also act as 'attributes' callable from
+      // self.<Inner>(...). Stubs commonly have
+      //   self.exceptions = self._Exceptions()
+      // where _Exceptions is a nested ClassDef. Without this
+      // entry, the constructor-call falls into the missing-
+      // method path and emits a spurious attribute-error.
+      else if(is_node_type(item, "ClassDef"))
+      {
+        class_declared_methods[class_name].insert(
+          json_string(json_member(item, "name")));
+      }
+    }
+    // Also include methods inherited from base classes —
+    // a subclass calling self.parent_method() shouldn't
+    // trip the missing-method detector when the method is
+    // defined on a base.
+    auto mro_it = class_mro.find(class_name);
+    if(mro_it != class_mro.end())
+    {
+      for(const auto &base : mro_it->second)
+      {
+        if(base == class_name)
+          continue;
+        auto bi = class_declared_methods.find(base);
+        if(bi != class_declared_methods.end())
+          for(const auto &m : bi->second)
+            class_declared_methods[class_name].insert(m);
+      }
+    }
+  }
+
   // Now convert all methods
   if(body.is_array())
   {

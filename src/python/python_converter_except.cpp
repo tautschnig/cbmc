@@ -391,6 +391,45 @@ codet python_convertert::convert_try(const jsont &stmt)
   // statements (they are guarded by !__exception_active).
   const jsont &body = json_member(stmt, "body");
   try_depth++;
+  // Record this try's handler types for definitively-unhandled-
+  // exception detection during conversion of the body. Each
+  // handler's 'type' field can be:
+  //   - a single Name (e.g. except ClientError:)
+  //   - a Tuple of Names (e.g. except (A, B):)
+  //   - missing / null (bare 'except:' → catch-all).
+  {
+    std::set<std::string> caught;
+    const jsont &hs = json_member(stmt, "handlers");
+    if(hs.is_array())
+    {
+      for(const auto &h : as_array(hs))
+      {
+        const jsont &ht = json_member(h, "type");
+        if(ht.is_null())
+        {
+          caught.insert(""); // bare except:
+          continue;
+        }
+        auto add_name = [&](const jsont &n)
+        {
+          if(is_node_type(n, "Name"))
+            caught.insert(json_string(json_member(n, "id")));
+          else if(is_node_type(n, "Attribute"))
+            caught.insert(json_string(json_member(n, "attr")));
+        };
+        if(is_node_type(ht, "Tuple"))
+        {
+          const jsont &elts = json_member(ht, "elts");
+          if(elts.is_array())
+            for(const auto &e : as_array(elts))
+              add_name(e);
+        }
+        else
+          add_name(ht);
+      }
+    }
+    active_exception_handlers.push_back(std::move(caught));
+  }
   if(body.is_array())
   {
     bool first = true;
@@ -411,6 +450,7 @@ codet python_convertert::convert_try(const jsont &stmt)
     }
   }
   try_depth--;
+  active_exception_handlers.pop_back();
 
   // Check for except handlers
   const jsont &handlers = json_member(stmt, "handlers");
