@@ -2,23 +2,19 @@
 //   SmPL rule: refcount_lifetime.cocci
 //
 //   Coccinelle prefilter for the refcount_lifetime property
-//   module.  Flags every call site of
-//   `refcount_dec_and_test(r)` — any such site is a candidate
-//   for refcount-lifetime review, because the underflow-class
-//   bug surface lives at "was the refcount still live at this
-//   dec?".
+//   module.  Two complementary levels:
 //
-//   Precision is CBMC's job: when spatch reports a hit, running
-//   scan.py's refcount_lifetime kernel adapter pins the
-//   `refcount_live(r)` precondition on
-//   `refcount_dec_and_test` and the direct-call harness
-//   exercises the double-dec shape.
+//   1. CALL-SITE rule: flags every call to
+//      `refcount_dec_and_test`.  High recall, low precision.
+//      Tagged "candidate" in the report message.
 //
-//   One rule variant matches the canonical
-//   `refcount_dec_and_test` API.  `refcount_sub_and_test`
-//   and `refcount_inc_not_zero` have analogous bug classes
-//   and may be added later as additional rules.
+//   2. BUG-SHAPE rule: flags only the actual underflow shape —
+//      `refcount_dec_and_test(r); ... refcount_dec_and_test(r)`
+//      with no intervening `refcount_inc(r)` or
+//      `refcount_inc_not_zero(r)`.  Tagged "BUG-SHAPE:".
 // @@
+
+// ---------- level 1: call sites (high recall) ----------
 
 @ refcount_dec_and_test_call @
 expression ref;
@@ -35,3 +31,25 @@ coccilib.report.print_report(p[0],
     "refcount_lifetime: refcount_dec_and_test call site — "
     "candidate for CBMC property scan (refcount underflow / "
     "double-dec bug class)")
+
+// ---------- level 2: bug shapes (high precision) ----------
+
+@ double_dec @
+expression r;
+position p;
+@@
+
+refcount_dec_and_test(r);
+... when != refcount_inc(r)
+    when != refcount_inc_not_zero(r)
+    when != refcount_set(r, ...)
+refcount_dec_and_test@p(r);
+
+@ script:python double_dec_report @
+p << double_dec.p;
+@@
+
+coccilib.report.print_report(p[0],
+    "refcount_lifetime: BUG-SHAPE: double refcount_dec_and_test(r) "
+    "without intervening refcount_inc / refcount_set "
+    "(refcount underflow class)")

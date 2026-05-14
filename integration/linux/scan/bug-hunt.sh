@@ -116,7 +116,7 @@ CMD=(
     "SCAN_CPU_LIMIT=${PER_FILE_TIMEOUT_S}"
     "PARALLEL=${PARALLEL}"
     "CORPUS_MAX=${CORPUS_MAX_ARG}"
-    "EXTRA_SCAN_ARGS=--per-file"
+    "EXTRA_SCAN_ARGS=--per-file --bug-shape-only"
     "SCAN_FILE_TIMEOUT=${PER_FILE_TIMEOUT_S}"
   "$SCRIPT_DIR/corpus-scan.sh" "$SCAN_OUTDIR"
 )

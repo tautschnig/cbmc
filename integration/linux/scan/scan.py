@@ -1341,6 +1341,7 @@ def scan_file(
     tmp: Path,
     direction: str = "vuln",
     per_file: bool = False,
+    bug_shape_only: bool = False,
 ) -> tuple[FileReport, list[Path]]:
     """Run every registered property module against one file.  Returns
     a FileReport plus any SARIF files cbmc produced for that file.
@@ -1357,12 +1358,20 @@ def scan_file(
     through ``scan/scan-per-file.sh``.  Verdicts are reported
     per-hit in ``ModuleReport.per_file`` and aggregated into
     ``cbmc_status``.  ``direction`` is ignored in per-file mode.
+
+    ``bug_shape_only`` filters cocci hits to only those tagged
+    ``BUG-SHAPE:`` — see scan/properties/*/.cocci for the
+    pattern-aware rules that emit this tag.  Drops generic
+    call-site hits.  Useful for corpus-scale bug hunts where the
+    noise floor of call-site-only hits drowns the real signal.
     """
     report = FileReport(file=str(target))
     sarifs: list[Path] = []
     modules = discover_modules()
     for module, cocci in modules:
         hits = run_cocci(module, cocci, target)
+        if bug_shape_only:
+            hits = [h for h in hits if "BUG-SHAPE:" in h.message]
         mr = ModuleReport(module=module, cocci_hits=hits)
         if hits:
             if per_file and not file_uses_property_modules(target):
@@ -1648,6 +1657,18 @@ def main() -> int:
             "one direction)."
         ),
     )
+    ap.add_argument(
+        "--bug-shape-only", action="store_true",
+        help=(
+            "Filter cocci hits to only those tagged 'BUG-SHAPE:' "
+            "in the report message.  These come from cocci rules "
+            "that match actual bug-class shapes (e.g. back-to-back "
+            "put_cred without intervening get_cred) rather than "
+            "generic call sites.  Reduces the noise floor for "
+            "corpus-scale bug hunts: every retained hit is a "
+            "plausible candidate, not just a call site."
+        ),
+    )
     args = ap.parse_args()
 
     reports: list[FileReport] = []
@@ -1660,6 +1681,7 @@ def main() -> int:
                 continue
             r, sarifs = scan_file(
                 f, tmp, direction=args.direction, per_file=args.per_file,
+                bug_shape_only=args.bug_shape_only,
             )
             reports.append(r)
             sarif_files.extend(sarifs)
