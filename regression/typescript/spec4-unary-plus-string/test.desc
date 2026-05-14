@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Spec: unary `+` on a string parses via ToNumber: numeric strings
+yield their value; empty string → 0; non-numeric → NaN.

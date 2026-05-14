@@ -37,8 +37,8 @@ the column shows `—`.
 | in operator | ✅ | Including narrowing; array-index check fixed 2026-05-13 | `in-operator`, `spec3-in-operator-array` |
 | Conditional operator (`? :`) | ✅ |  | `ternary`, `ternary-nested`, `ternary-number` |
 | Nullish coalescing (`??`) (ES2024 §13.13) | ✅ | Fixed 2026-05-07 via NaN sentinel | `nullish-coalescing` |
-| Optional chaining (`?.`) (ES2024 §13.3.9) | ❌ | Doesn't short-circuit | `optional-chaining` [KNOWNBUG] |
-| String-to-number coercion (`+s`) | ❌ | `+"42"` doesn't parse | — |
+| Optional chaining (`?.`) (ES2024 §13.3.9) | ⚠️ | Property access works (`o?.x?.y`); method calls on union types like `obj?.f()` need union-type method dispatch which isn't supported | `optional-chaining` |
+| String-to-number coercion (`+s`) | ✅ | Parses constant strings (whitespace trim, `+`/`-` sign, decimals); non-numeric → NaN; verified 2026-05-14 | `spec4-unary-plus-string` |
 | Number-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07 | `string-concat-number-coerce` |
 | Boolean-to-string coercion (in `+`) | ✅ | Fixed 2026-05-07 | `string-concat-number-coerce` |
 
@@ -92,7 +92,7 @@ the column shows `—`.
 | Generic functions | ✅ | Monomorphization | `generic-identity`, `generic-function`, `generic-first` |
 | Generic classes | ✅ | Monomorphization | `generic-class-single`, `generic-class-multi` |
 | Constraints (`T extends X`) | ✅ |  | `generic-constraint`, `generic-constraint-name` |
-| Heterogeneous tuples | ❌ | Type unification fails | `generic-heterogeneous-tuple` [KNOWNBUG] |
+| Heterogeneous tuples | ✅ | Non-generic and generic forms work; destructuring fixed 2026-05-14 | `heterogeneous-tuple`, `spec4-tuple-destructure` |
 | Utility types | ✅ | Via TS compiler | `utility-pick`, `utility-omit`, `utility-readonly` |
 
 ## Type system
