@@ -270,17 +270,35 @@ synthesize_stub_interface_method(
 {
   const irep_idt method_name =
     dynamic_method_type.get(ID_java_lambda_method_name);
-  if(method_name.empty())
+  const irep_idt raw_descriptor =
+    dynamic_method_type.get(ID_java_lambda_method_raw_descriptor);
+  // The bytecode parser only stashes these for invokedynamic instructions
+  // it processes itself. If they're missing, the dynamic_method_type
+  // came from another path (e.g., a class loaded eagerly from a model
+  // jar) and we shouldn't synthesize.
+  if(method_name.empty() || raw_descriptor.empty())
     return {};
 
   const irep_idt target_id = lambda_handle.get_lambda_method_identifier();
   const auto *target_sym = symbol_table.lookup(target_id);
   if(target_sym == nullptr)
     return {};
+  if(target_sym->type.id() != ID_code)
+    return {};
   const auto &target_type = to_java_method_type(target_sym->type);
 
   const std::size_t n_captures = dynamic_method_type.parameters().size();
   if(n_captures > target_type.parameters().size())
+    return {};
+  // F6 was originally written assuming the lambda target's parameter
+  // list begins with the captures and ends with the abstract method's
+  // own parameters. A few JDK invokedynamic patterns (notably
+  // CharSequence's stream-supplier construction) violate this, and
+  // the irep manipulation that follows then segfaults. Bail out if the
+  // structure looks unusual: we only synthesize for the simple case
+  // where the target has at least the right number of parameters and
+  // the dynamic method type is a plain functional-interface return.
+  if(dynamic_method_type.return_type().id() != ID_pointer)
     return {};
 
   java_method_typet::parameterst abstract_params;
