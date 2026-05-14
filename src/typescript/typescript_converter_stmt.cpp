@@ -1401,6 +1401,53 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
       if(rhs.is_nil())
         continue;
       const jsont &elements = json_member(name_node, "elements");
+
+      // Heterogeneous tuple destructuring: source is a typescript_
+      // tuple struct with `_0`, `_1`, ... components rather than
+      // a `data` array. Read each component by name into the
+      // corresponding binding.
+      if(
+        elements.is_array() && rhs.type().id() == ID_struct &&
+        to_struct_type(rhs.type()).get_tag() == "typescript_tuple")
+      {
+        const auto &tst = to_struct_type(rhs.type());
+        std::size_t idx = 0;
+        for(const auto &elem : to_json_array(elements))
+        {
+          std::string ename =
+            json_string(json_member(json_member(elem, "name"), "text"));
+          if(ename.empty())
+          {
+            idx++;
+            continue;
+          }
+          std::string comp_name = "_" + std::to_string(idx);
+          if(!tst.has_component(comp_name))
+          {
+            idx++;
+            continue;
+          }
+          typet et = tst.get_component(comp_name).type();
+          std::string qn =
+            "typescript::" +
+            (current_function.empty() ? "" : current_function + "::") + ename;
+          irep_idt eid{qn};
+          if(symbol_table.lookup(eid) == nullptr)
+          {
+            symbolt es{eid, et, "typescript"};
+            es.base_name = ename;
+            es.is_lvalue = true;
+            es.is_state_var = true;
+            es.is_static_lifetime = current_function.empty();
+            symbol_table.add(es);
+          }
+          block.add(code_frontend_assignt{
+            symbol_table.lookup_ref(eid).symbol_expr(),
+            member_exprt{rhs, comp_name, et}});
+          idx++;
+        }
+        continue;
+      }
       if(elements.is_array() && rhs.type().id() == ID_struct)
       {
         const auto &st = to_struct_type(rhs.type());
