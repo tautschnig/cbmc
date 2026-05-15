@@ -73,6 +73,8 @@ jverify_contract_kindt classify_jverify_call(const irep_idt &method_id)
     return jverify_contract_kindt::CHECK;
   if(method_name == "decreases")
     return jverify_contract_kindt::DECREASES;
+  if(method_name == "assigns")
+    return jverify_contract_kindt::ASSIGNS;
 
   return jverify_contract_kindt::NOT_A_CONTRACT;
 }
@@ -233,6 +235,320 @@ std::vector<goto_programt::targett> find_return_value_assignments(
   return returns;
 }
 
+/// F12 trace-back, AND-chain pattern recognizer.
+///
+/// javac compiles `precondition(c1 && c2 && ... && cN)` to:
+///
+///   IF !c1 GOTO L_F
+///   IF !c2 GOTO L_F
+///   ...
+///   IF !cN GOTO L_F
+///   ASSIGN $stack_tmp := 1
+///   GOTO L_D
+///   L_F: ASSIGN $stack_tmp := 0
+///   L_D: CALL precondition($stack_tmp)
+///
+/// where each `IF !ci` is a goto whose condition is the negation of
+/// `ci`. The predicate at the call site is `c1 && c2 && ... && cN`.
+/// Match this shape and return the conjunction. Returns `nullopt`
+/// when the shape doesn't match.
+///
+/// We also recognize the dual OR-chain pattern: same shape but the
+/// "true" assignment sits behind the GOTO target and the "false"
+/// assignment is the fallthrough.
+static std::optional<exprt> reconstruct_and_chain(
+  goto_programt &body,
+  goto_programt::const_targett call_it,
+  const irep_idt &temp_id)
+{
+  // Walk backwards from `call_it`. Skip irrelevant instructions.
+  // Recognize:
+  //   T (target of last GOTO):
+  //     ASSIGN temp := 0_or_1   (we'll call it `assign_at_target`)
+  //     [we are RIGHT after this label]
+  //   ...
+  //   GOTO T
+  //   ASSIGN temp := 1_or_0     (`assign_fallthrough`)
+  //   IF !cN GOTO L_F
+  //   ...
+  //   IF !c1 GOTO L_F           (may be 1 or many)
+  //
+  // where `L_F` == the target of `assign_at_target`'s preceding
+  // label (if any).
+  if(call_it == body.instructions.begin())
+    return {};
+
+  auto cursor = std::prev(call_it);
+  // Skip past leading no-ops (skips, decls, deads) — these are
+  // common between the merge assign and the JVerify call when
+  // javac/JBMC interleave variable declarations.
+  auto is_no_op = [](const goto_programt::const_targett &c)
+  {
+    return c->is_skip() || c->is_decl() || c->is_dead() || c->is_location() ||
+           c->is_other();
+  };
+  while(is_no_op(cursor) && cursor != body.instructions.begin())
+    --cursor;
+
+  if(!cursor->is_assign())
+    return {};
+  const exprt &final_lhs = cursor->assign_lhs();
+  if(final_lhs.id() != ID_symbol)
+    return {};
+  if(to_symbol_expr(final_lhs).get_identifier() != temp_id)
+    return {};
+  // The "merge" branch's label-target is the final assign. Note its
+  // value (0 or 1) — this tells us which logical operator we have.
+  const exprt &merge_value = cursor->assign_rhs();
+  if(merge_value.id() != ID_constant)
+    return {};
+  const auto merge_int_opt =
+    numeric_cast<mp_integer>(to_constant_expr(merge_value));
+  if(!merge_int_opt.has_value())
+    return {};
+  const bool merge_is_one = (*merge_int_opt) == 1;
+  // The IFs that compute the predicate jump to THIS instruction
+  // (the false-path assignment that falls through to the call).
+  const auto target_of_ifs = cursor;
+
+  // The merge-assign is a labeled instruction. Walk further back.
+  if(cursor == body.instructions.begin())
+    return {};
+  --cursor;
+
+  // We now expect a GOTO to bypass us to a fallthrough block that
+  // assigns the OTHER value (the one whose path we DIDN'T take to
+  // get here).
+  if(!cursor->is_goto() || !cursor->condition().is_true())
+  {
+    // Not the simple `goto + fallthrough` pattern. Bail.
+    return {};
+  }
+  if(cursor == body.instructions.begin())
+    return {};
+  --cursor;
+
+  // The next instruction back should be the OTHER assignment.
+  if(!cursor->is_assign())
+    return {};
+  const exprt &other_lhs = cursor->assign_lhs();
+  if(
+    other_lhs.id() != ID_symbol ||
+    to_symbol_expr(other_lhs).get_identifier() != temp_id)
+    return {};
+  const exprt &other_value = cursor->assign_rhs();
+  if(other_value.id() != ID_constant)
+    return {};
+  const auto other_int_opt =
+    numeric_cast<mp_integer>(to_constant_expr(other_value));
+  if(!other_int_opt.has_value())
+    return {};
+  // The two values must be 0 and 1 in some order.
+  if(merge_int_opt.value() == other_int_opt.value())
+    return {};
+  // For the AND-chain pattern, taking the IF guard goes to the false
+  // branch (assign 0). The fallthrough writes 1. So:
+  //   if `merge_is_one` is true, then the assignment after the
+  //   guard's GOTO target is `:= 1` — meaning the LAST assignment
+  //   we see (immediately before the call) is `:= 1` and the IFs'
+  //   condition is the negation of the predicate. That's the
+  //   AND-chain shape.
+  //   If `merge_is_one` is false, it's the OR-chain shape (dual).
+  // We collect the IF conditions and combine accordingly.
+
+  // Walk back through a sequence of IFs that branch to the same
+  // target — the target is the label of the merge assignment we
+  // saved above.
+  if(cursor == body.instructions.begin())
+    return {};
+  --cursor;
+
+  exprt::operandst guards;
+  // Walk up to a reasonable cap.
+  for(int i = 0; i < 32; ++i)
+  {
+    // Skip no-ops (skip, decl, dead, location, other).
+    while(is_no_op(cursor) && cursor != body.instructions.begin())
+      --cursor;
+    if(!cursor->is_goto())
+      break;
+    if(cursor->condition().is_true()) // an unconditional goto isn't a guard
+      break;
+    // Confirm the goto target is the merge assignment.
+    bool targets_match = false;
+    for(const auto &t : cursor->targets)
+    {
+      if(t == target_of_ifs)
+        targets_match = true;
+    }
+    if(!targets_match)
+      break;
+    guards.push_back(cursor->condition());
+    if(cursor == body.instructions.begin())
+      break;
+    --cursor;
+  }
+
+  if(guards.empty())
+    return {};
+
+  // Reconstruct the predicate from the IF guards.
+  //
+  // Case A — merge_is_one (the instruction immediately before the
+  // CALL assigns `1`): the IF guards target the "true" block (the
+  // pre-merge assign). Each IF firing routes us through that block
+  // and tmp ends up at 1 → predicate true. Predicate is the OR of
+  // the guards as-is. This is the dual `||` shape.
+  //
+  // Case B — merge_is_one false (assign `0` immediately before the
+  // CALL): the IF guards target the "false" block. Each IF firing
+  // routes us to assign 0 → predicate false. tmp = 1 happens only
+  // when NONE of the guards fire, so predicate = AND of (NOT guard).
+  // This is the `&&` shape javac emits for our typical
+  // `precondition(c1 && c2 && ...)`.
+  //
+  // Reverse `guards` so the first IF (textually) is first in the
+  // resulting AND/OR.
+  std::reverse(guards.begin(), guards.end());
+
+  if(merge_is_one)
+  {
+    // OR-chain: predicate = guard1 || guard2 || ... || guardN
+    return disjunction(guards);
+  }
+  else
+  {
+    // AND-chain: predicate = !guard1 && !guard2 && ... && !guardN
+    exprt::operandst components;
+    for(const auto &g : guards)
+      components.push_back(not_exprt(g));
+    return conjunction(components);
+  }
+}
+
+/// F12 trace-back: walk the GOTO body backwards from `call_it` to
+/// resolve a stack-temp argument to its defining expression.
+///
+/// `expr` is the argument we observed at the JVerify.precondition /
+/// .postcondition call site. javac frequently lowers a boolean
+/// expression like `n >= 0 && n <= 1000` to:
+///
+///   ASSIGN $stack_tmp_a := n >= 0
+///   ASSIGN $stack_tmp_b := n <= 1000
+///   ASSIGN $stack_tmp_c := $stack_tmp_a && $stack_tmp_b
+///   CALL JVerify.precondition($stack_tmp_c)
+///
+/// For F12 we want the c_requires / c_ensures clause to reference
+/// the function's formal parameters, not callee-internal stack
+/// temps. This helper unfolds chains of `ASSIGN tmp := <rhs>`
+/// instructions until the expression no longer contains any
+/// reference to stack-local symbols of `function_id`. Returns the
+/// rewritten expression.
+///
+/// We bound the unfolding by:
+///   - depth 32 (the deepest chain we'd realistically expect from
+///     javac);
+///   - a per-call cache so the same temp isn't re-resolved.
+///
+/// On failure (e.g. the temp is read before it's first written, or
+/// it's assigned from another function's #return_value), we return
+/// the original expression and let downstream code do its best.
+static exprt resolve_stack_temps(
+  const exprt &expr,
+  goto_programt &body,
+  goto_programt::const_targett call_it,
+  const irep_idt &function_id)
+{
+  const std::string func_prefix = id2string(function_id) + "::";
+
+  std::map<irep_idt, exprt> resolved_cache;
+
+  // Walk back from `call_it` to find the most recent ASSIGN to
+  // `target_id`, but bail out if the value is branch-dependent.
+  // Specifically: if we cross any GOTO target (label) or any
+  // conditional/unconditional branch between the call site and the
+  // assignment, the value at the call site might come from a
+  // different path. Returning the wrong assignment would silently
+  // corrupt the captured predicate.
+  auto find_definition = [&](const irep_idt &target_id) -> std::optional<exprt>
+  {
+    if(call_it == body.instructions.begin())
+      return {};
+    auto it = std::prev(call_it);
+    bool crossed_branch = false;
+    while(true)
+    {
+      // Any incoming or outgoing branch on the path back means the
+      // ASSIGN we'd find isn't the unique definition reaching the
+      // call site.
+      if(it->is_goto() || it->is_target())
+        crossed_branch = true;
+      if(it->is_assign())
+      {
+        const exprt &lhs = it->assign_lhs();
+        if(
+          lhs.id() == ID_symbol &&
+          to_symbol_expr(lhs).get_identifier() == target_id)
+        {
+          if(crossed_branch)
+            return {};
+          return it->assign_rhs();
+        }
+      }
+      if(it == body.instructions.begin())
+        return {};
+      --it;
+    }
+  };
+
+  std::function<exprt(const exprt &, int)> rewrite =
+    [&](const exprt &e, int depth) -> exprt
+  {
+    if(depth > 32)
+      return e;
+    // Only chase symbols that look like stack locals of this function.
+    if(e.id() == ID_symbol)
+    {
+      const irep_idt &id = to_symbol_expr(e).get_identifier();
+      const std::string s = id2string(id);
+      const bool is_stack_temp = has_prefix(s, func_prefix) &&
+                                 (s.find("$stack_tmp") != std::string::npos ||
+                                  s.find("$tmp") != std::string::npos ||
+                                  s.find("::tmp") != std::string::npos);
+      if(!is_stack_temp)
+        return e;
+      auto cached = resolved_cache.find(id);
+      if(cached != resolved_cache.end())
+        return cached->second;
+      // First try the AND/OR-chain pattern; this is what javac emits
+      // for boolean expressions involving `&&` or `||`. The chain is
+      // short-circuit-evaluated via control flow, so simple
+      // immediate-predecessor lookup of `ASSIGN tmp := <rhs>` finds
+      // the WRONG branch's value.
+      auto chain_rec = reconstruct_and_chain(body, call_it, id);
+      if(chain_rec.has_value())
+      {
+        exprt unfolded = rewrite(*chain_rec, depth + 1);
+        resolved_cache[id] = unfolded;
+        return unfolded;
+      }
+      const auto def = find_definition(id);
+      if(!def.has_value())
+        return e;
+      exprt unfolded = rewrite(*def, depth + 1);
+      resolved_cache[id] = unfolded;
+      return unfolded;
+    }
+    // Recurse into operands.
+    exprt result = e;
+    for(auto &op : result.operands())
+      op = rewrite(op, depth + 1);
+    return result;
+  };
+
+  return rewrite(expr, 0);
+}
+
 }  // namespace
 
 std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
@@ -243,6 +559,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
   // symbol's type after the in-body lowering has run.
   std::map<irep_idt, exprt::operandst> requires_per_function;
   std::map<irep_idt, exprt::operandst> ensures_per_function;
+  std::map<irep_idt, exprt::operandst> assigns_per_function;
   const namespacet ns{goto_model.symbol_table};
 
   for(auto &func_entry : goto_model.goto_functions.function_map)
@@ -273,6 +590,32 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       }
 
       source_locationt loc = it->source_location();
+
+      if(kind == jverify_contract_kindt::ASSIGNS)
+      {
+        for(const auto &arg : args)
+        {
+          if(arg.type().id() == ID_pointer)
+          {
+            const typet &base = to_pointer_type(arg.type()).base_type();
+            if(base.id() == ID_struct_tag)
+            {
+              const irep_idt id = to_struct_tag_type(base).get_identifier();
+              const std::string s = id2string(id);
+              if(
+                s.find("array[") == 0 ||
+                s.find("java::array[") != std::string::npos)
+              {
+                continue; // varargs Object[]
+              }
+            }
+          }
+          assigns_per_function[func_entry.first].push_back(arg);
+        }
+        annotated_functions.insert(func_entry.first);
+        it->turn_into_skip();
+        continue;
+      }
 
       if(kind == jverify_contract_kindt::DECREASES)
       {
@@ -341,25 +684,114 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           goto_model.symbol_table.lookup_ref(info.target_method_id);
         const auto &target_type = to_code_type(target_sym.type);
 
-        // F12 (lambda-form ensures): TODO. The lambda postcondition's
-        // predicate is `target_method(captures..., __CPROVER_return_value)`.
-        // Capturing this as a c_ensures lambda crashed downstream goto
-        // passes that inspect the clause expression — function_application
-        // inside a lambda body is something the contract pipeline doesn't
-        // expect from the C front-end. Until we either teach the
-        // pipeline or rewrite the predicate as an inlined boolean
-        // expression, modular mode silently misses lambda-form
-        // postconditions. Boolean-form `postcondition(boolean)` calls
-        // are still captured below and substitution works for those.
+        // F12 (lambda-form ensures): inline the lambda target's body
+        // into a c_ensures predicate. The lambda target is a small
+        // synthetic method whose signature is
+        //   (capture_0, ..., capture_{M-1}, return_value) -> bool
+        // and whose body is `return <predicate>` for the user-written
+        // postcondition lambda. By extracting the predicate and
+        // substituting:
+        //   target_param_i → info.captures[i]   (for i < M)
+        //   target_param_M → __CPROVER_return_value placeholder
+        // we recover an expression that references the enclosing
+        // function's parameters and __CPROVER_return_value, exactly
+        // what CBMC's c_ensures lambda expects.
         //
-        // We deliberately do NOT add this function to
-        // `annotated_functions` here: without an ensures clause, modular
-        // substitution at call sites would replace the call with
-        // `assert(req); havoc; assume(true)` — losing all return-value
-        // information and breaking caller proofs. The function still
-        // gets verified end-to-end via inlining (the existing F1/F6
-        // path); only the modular speedup is missed for lambda-only
-        // contracts.
+        // If we can't find a unique return-value assignment in the
+        // lambda body, fall back to the existing inline-only path
+        // (don't add to annotated_functions).
+        {
+          const auto target_fn_it =
+            goto_model.goto_functions.function_map.find(info.target_method_id);
+          if(target_fn_it != goto_model.goto_functions.function_map.end())
+          {
+            goto_programt &target_body =
+              const_cast<goto_programt &>(target_fn_it->second.body);
+            const auto target_returns =
+              find_return_value_assignments(target_body, info.target_method_id);
+            // Resolve the predicate the lambda body returns. Each
+            // return path may return a different expression; we only
+            // capture if there's exactly one.
+            std::optional<exprt> predicate;
+            if(target_returns.size() == 1)
+            {
+              const exprt rhs = target_returns[0]->assign_rhs();
+              // The lambda body's expression may itself reference
+              // the lambda target's own stack temps. Apply the
+              // trace-back so the final expression references only
+              // parameters of the lambda target.
+              predicate = resolve_stack_temps(
+                rhs, target_body, target_returns[0], info.target_method_id);
+            }
+            if(predicate.has_value())
+            {
+              // Substitute lambda-target parameters with the user's
+              // captures + __CPROVER_return_value. Walk the predicate
+              // recursively, replacing every symbol_exprt whose
+              // identifier matches a lambda-target parameter with
+              // the corresponding new expression.
+              const auto &target_params = target_type.parameters();
+              const auto &enclosing_type = to_code_type(
+                goto_model.symbol_table.lookup_ref(func_entry.first).type);
+              const typet &enclosing_ret_type = enclosing_type.return_type();
+              if(enclosing_ret_type.id() != ID_empty && !target_params.empty())
+              {
+                const symbol_exprt return_value_sym(
+                  CPROVER_PREFIX "return_value", enclosing_ret_type);
+                std::map<irep_idt, exprt> subst;
+                for(std::size_t i = 0; i < target_params.size(); ++i)
+                {
+                  const irep_idt &pid = target_params[i].get_identifier();
+                  if(pid.empty())
+                    continue;
+                  exprt replacement;
+                  if(i + 1 == target_params.size())
+                  {
+                    replacement = return_value_sym;
+                    if(return_value_sym.type() != target_params[i].type())
+                      replacement =
+                        typecast_exprt(replacement, target_params[i].type());
+                  }
+                  else if(i < info.captures.size())
+                  {
+                    replacement = info.captures[i];
+                    if(replacement.type() != target_params[i].type())
+                      replacement =
+                        typecast_exprt(replacement, target_params[i].type());
+                  }
+                  else
+                  {
+                    continue;
+                  }
+                  subst[pid] = replacement;
+                }
+                std::function<exprt(const exprt &)> apply_subst =
+                  [&](const exprt &e) -> exprt
+                {
+                  if(e.id() == ID_symbol)
+                  {
+                    const irep_idt id = to_symbol_expr(e).get_identifier();
+                    auto it_subst = subst.find(id);
+                    if(it_subst != subst.end())
+                      return it_subst->second;
+                    return e;
+                  }
+                  exprt result = e;
+                  for(auto &op : result.operands())
+                    op = apply_subst(op);
+                  return result;
+                };
+                exprt substituted = apply_subst(*predicate);
+                // Coerce to bool.
+                if(substituted.type().id() != ID_bool)
+                  substituted = notequal_exprt(
+                    substituted, from_integer(0, substituted.type()));
+                ensures_per_function[func_entry.first].push_back(substituted);
+                annotated_functions.insert(func_entry.first);
+              }
+            }
+          }
+        }
 
         // For each return-value assignment, insert:
         //   DECL ret_save : <return type>
@@ -528,20 +960,34 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       // body-local. Capturing the predicate here, before it's lowered
       // below, lets us populate code_with_contract_typet without
       // re-walking the body afterwards.
+      //
+      // javac frequently lowers a non-trivial boolean expression to a
+      // chain of stack-temp assignments before the JVerify call:
+      //   ASSIGN $tmp_a := n >= 0
+      //   ASSIGN $tmp_b := n <= 1000
+      //   ASSIGN $tmp_c := $tmp_a && $tmp_b
+      //   CALL precondition($tmp_c)
+      // For modular substitution we want the predicate to reference
+      // the function's formal parameters, not those callee-internal
+      // temps. resolve_stack_temps walks the assignment chain back
+      // and unfolds the temps in place.
+      const exprt resolved_condition =
+        resolve_stack_temps(condition, body, it, func_entry.first);
       switch(kind)
       {
       case jverify_contract_kindt::PRECONDITION:
-        requires_per_function[func_entry.first].push_back(condition);
+        requires_per_function[func_entry.first].push_back(resolved_condition);
         annotated_functions.insert(func_entry.first);
         break;
       case jverify_contract_kindt::POSTCONDITION:
-        ensures_per_function[func_entry.first].push_back(condition);
+        ensures_per_function[func_entry.first].push_back(resolved_condition);
         annotated_functions.insert(func_entry.first);
         break;
       case jverify_contract_kindt::INVARIANT:
       case jverify_contract_kindt::ASSUME:
       case jverify_contract_kindt::CHECK:
       case jverify_contract_kindt::DECREASES:
+      case jverify_contract_kindt::ASSIGNS:
       case jverify_contract_kindt::NOT_A_CONTRACT:
         break;
       }
@@ -579,6 +1025,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         break;
       }
       case jverify_contract_kindt::DECREASES:
+      case jverify_contract_kindt::ASSIGNS:
       case jverify_contract_kindt::NOT_A_CONTRACT:
         UNREACHABLE;
       }
@@ -650,6 +1097,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       .set(ID_C_class, existing_type.get(ID_C_class));
     auto &c_req = contract_type.c_requires();
     auto &c_ens = contract_type.c_ensures();
+    auto &c_asg = contract_type.c_assigns();
     auto req_it = requires_per_function.find(fid);
     if(req_it != requires_per_function.end())
       for(const auto &e : req_it->second)
@@ -658,6 +1106,20 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
     if(ens_it != ensures_per_function.end())
       for(const auto &e : ens_it->second)
         c_ens.push_back(wrap_lambda(e));
+    auto asg_it = assigns_per_function.find(fid);
+    if(asg_it != assigns_per_function.end())
+    {
+      // Only populate c_assigns when we have actual targets. An
+      // empty c_assigns is interpreted by CBMC as "no writes
+      // allowed", which fails on any body that creates a temp
+      // (e.g., the Object[] javac generates for varargs). Until we
+      // can recover the user's listed targets from the implicit
+      // varargs Object[], leaving c_assigns empty preserves the
+      // default "havoc everything" semantics — sound but
+      // imprecise.
+      for(const auto &t : asg_it->second)
+        c_asg.push_back(wrap_lambda(t));
+    }
     sym_it->type = contract_type;
 
     // Insert the parallel contract:: symbol if not already present.
@@ -668,7 +1130,11 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       contract.name = contract_id;
       contract.base_name = sym_it->base_name;
       contract.pretty_name = sym_it->pretty_name;
-      contract.is_property = true;
+      // Deliberately NOT setting is_property=true. With it set,
+      // CBMC's contracts machinery enforces the function (wraps
+      // the body to assume requires + assert ensures) which can
+      // collide with our existing in-body lowering.
+      contract.is_property = false;
       contract.type = contract_type;
       contract.mode = sym_it->mode;
       contract.module = sym_it->module;

@@ -41,6 +41,7 @@ enum class jverify_contract_kindt
   ASSUME,
   CHECK,
   DECREASES,
+  ASSIGNS,
   NOT_A_CONTRACT
 };
 
