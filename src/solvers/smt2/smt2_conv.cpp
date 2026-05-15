@@ -1,4 +1,5 @@
 /*******************************************************************\
+#include <functional>
 #include <map>
 
 Module: SMT Backend
@@ -5719,11 +5720,12 @@ void smt2_convt::flatten2bv(const exprt &expr)
     if(use_FPA_theory)
     {
       // A floatbv constant's IEEE-754 interchange bit pattern is exactly its
-      // bit-vector representation, so it is emitted as a literal bit-vector.
-      // This is the only shape that reaches flatten2bv under FPA: a
-      // non-constant float whose bits are read is lowered by
-      // lower_byte_operators into a float typecast, which is handled by the
-      // bvfromfloat round-trip in find_symbols and never reaches here.
+      // bit-vector representation, so it is emitted as a literal bit-vector
+      // (upstream 201c968f5b2). A non-constant float whose bits are read
+      // (typically a member access into a struct that contains a float
+      // field, in the Python front-end) is lowered by the bvfromfloat
+      // round-trip pre-registered in find_symbols for the enclosing
+      // struct->bv typecast; look that up.
       if(expr.is_constant())
       {
         const ieee_float_spect spec(to_floatbv_type(type));
@@ -5733,8 +5735,14 @@ void smt2_convt::flatten2bv(const exprt &expr)
       }
       else
       {
-        UNEXPECTEDCASE(
-          "flatten2bv of a non-constant FPA-encoded float is unsupported");
+        const auto &fbv = to_floatbv_type(type);
+        const std::size_t w = fbv.get_e() + fbv.get_f() + 1;
+        typecast_exprt synth{expr, bv_typet{w}};
+        auto it = defined_expressions.find(synth);
+        INVARIANT(
+          it != defined_expressions.end(),
+          "floatbv->bv lowering should have been pre-registered for FPA");
+        out << it->second;
       }
     }
     else
@@ -6515,6 +6523,58 @@ void smt2_convt::find_symbols(const exprt &expr)
 
       defined_expressions[expr] = id;
     }
+  }
+  else if(
+    use_FPA_theory && expr.id() == ID_typecast &&
+    (to_typecast_expr(expr).op().type().id() == ID_struct ||
+     to_typecast_expr(expr).op().type().id() == ID_struct_tag) &&
+    (expr.type().id() == ID_bv || expr.type().id() == ID_unsignedbv ||
+     expr.type().id() == ID_signedbv))
+  {
+    // A struct -> bitvector typecast is lowered via flatten2bv, which
+    // recurses into struct components and emits each via flatten2bv.
+    // For floatbv components under FPA theory, flatten2bv-on-float
+    // would otherwise hit `INVARIANT(!use_FPA_theory)`. Pre-register
+    // a synthetic typecast(<float member>, bv) for each floatbv
+    // component (recursing into nested structs) so the existing
+    // bvfromfloat machinery applies and flatten2bv has a
+    // defined_expressions entry to look up.
+    std::function<void(const exprt &)> register_floats = [&](const exprt &sub)
+    {
+      const typet &t = sub.type();
+      if(t.id() == ID_floatbv)
+      {
+        const auto &fbv = to_floatbv_type(t);
+        const std::size_t w = fbv.get_e() + fbv.get_f() + 1;
+        typecast_exprt synth{sub, bv_typet{w}};
+        find_symbols(synth);
+        return;
+      }
+      if(t.id() == ID_struct || t.id() == ID_struct_tag)
+      {
+        const struct_typet &st = t.id() == ID_struct_tag
+                                   ? ns.follow_tag(to_struct_tag_type(t))
+                                   : to_struct_type(t);
+        for(const auto &component : st.components())
+        {
+          if(is_zero_width(component.type(), ns))
+            continue;
+          register_floats(member_exprt{sub, component});
+        }
+      }
+      else if(t.id() == ID_array)
+      {
+        const array_typet &at = to_array_type(t);
+        const auto size_opt = numeric_cast<mp_integer>(at.size());
+        if(!size_opt.has_value())
+          return;
+        for(mp_integer i = 0; i < *size_opt; ++i)
+        {
+          register_floats(index_exprt{sub, from_integer(i, at.index_type())});
+        }
+      }
+    };
+    register_floats(to_typecast_expr(expr).op());
   }
   else if(expr.id() == ID_initial_state)
   {
