@@ -38,14 +38,14 @@ Pass rate: **(39 + 4) / 51 = 84.3 %** with default flags.
 | Result   | Count |
 |----------|-------|
 | CLEAN    | 39    |
-| TP       | 7     |
-| MISS     | 5     |
+| TP       | 8     |
+| MISS     | 4     |
 | FP       | 0     |
 | TOERR    | 0     |
 | TIMEOUT  | 0     |
 | OOM      | 0     |
 
-Pass rate: **(39 + 7) / 51 = 90.2 %** with the opt-in flags.
+Pass rate: **(39 + 8) / 51 = 92.2 %** with the opt-in flags.
 All benchmarks now produce a definite verdict — no
 TOERR/TIMEOUT/OOM with either configuration.
 
@@ -66,7 +66,7 @@ detection, and elimination of all timeouts / OOMs / tool-errors.
 | create_s3_vector_index                     | MISS    | Required-kwarg detection (gated flag)                 | Flag refinement |
 | test_bedrock_guardrails                    | MISS    | Required-kwarg detection (gated flag)                 | Flag refinement |
 | rds_instance_creator.2                     | MISS    | TypedDict field-type enforcement at call sites        | Actionable    |
-| s3_backup_restore                          | MISS    | TypeError on regex applied to non-string              | Actionable    |
+| s3_backup_restore                          | TP      | (now detected via TypedDict B2 + for-loop body conversion) | —             |
 | sagemaker_labeling_job                     | MISS    | `re.compile().search()` over-approximation             | Actionable    |
 | bedrock_data_automation_example            | MISS    | Type erasure at function boundary (`param: Any`)      | Hard          |
 | mediaconvert_manager                       | MISS    | Conditional required argument (spec lacks constraint) | Stub work     |
@@ -400,6 +400,7 @@ the suite from 38 CLEAN + 4 TP + 8 MISS + 1 FP to roughly
 | 2026-05-14 |    39 |  4 |    7 |  0 |     0 |       0 |   0 |   84.3 %  | Items A, D1 default-on          |
 | 2026-05-14 |    39 |  6 |    5 |  0 |     1 |       0 |   0 |   88.2 %  | Items B2, B1 (with opt-in flags) |
 | 2026-05-14 |    39 |  7 |    5 |  0 |     0 |       0 |   0 |   90.2 %  | Spread-typecast + nil-arg fixup  |
+| 2026-05-14 |    39 |  8 |    4 |  0 |     0 |       0 |   0 |   92.2 %  | For-loop body conversion + nil_exprt cleanups |
 
 The 2026-05-14 entry corresponds to the present state of this
 document.
