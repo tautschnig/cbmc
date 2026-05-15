@@ -411,6 +411,75 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
       type_cache[ts_type] = convert_type(real_members[0]);
       return type_cache[ts_type];
     }
+    // If all members are numeric literals (or "number"), collapse to
+    // double_type(). This handles TS's literal-union inference for
+    // ternary expressions like `0 ? 10 : 20` which infers `10 | 20`.
+    {
+      bool all_numeric = !real_members.empty();
+      for(const auto &m : real_members)
+      {
+        if(m == "number")
+          continue;
+        // Check if it's a numeric literal (digits, optional minus/dot)
+        bool is_num = !m.empty();
+        for(char c : m)
+        {
+          if(
+            !std::isdigit(static_cast<unsigned char>(c)) && c != '-' &&
+            c != '.' && c != 'e' && c != 'E' && c != '+')
+          {
+            is_num = false;
+            break;
+          }
+        }
+        if(!is_num)
+        {
+          all_numeric = false;
+          break;
+        }
+      }
+      if(all_numeric)
+      {
+        type_cache[ts_type] = double_type();
+        return double_type();
+      }
+    }
+    // If all members are string literals (or "string"), collapse to
+    // typescript_string_type().
+    {
+      bool all_string = !real_members.empty();
+      for(const auto &m : real_members)
+      {
+        if(m == "string")
+          continue;
+        if(m.size() >= 2 && m.front() == '"' && m.back() == '"')
+          continue;
+        all_string = false;
+        break;
+      }
+      if(all_string)
+      {
+        type_cache[ts_type] = typescript_string_type();
+        return typescript_string_type();
+      }
+    }
+    // If all members are boolean literals, collapse to bool.
+    {
+      bool all_bool = !real_members.empty();
+      for(const auto &m : real_members)
+      {
+        if(m != "true" && m != "false" && m != "boolean")
+        {
+          all_bool = false;
+          break;
+        }
+      }
+      if(all_bool)
+      {
+        type_cache[ts_type] = bool_typet{};
+        return bool_typet{};
+      }
+    }
     // Check if all members are object types (discriminated union)
     bool all_objects = !real_members.empty();
     for(const auto &m : real_members)
