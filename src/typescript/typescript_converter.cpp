@@ -108,6 +108,9 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   if(ts_type == "bigint")
     return bigint_mathematical ? typet{integer_typet{}}
                                : typescript_bigint_type();
+  // ES2024 §21.4: Date type
+  if(ts_type == "Date")
+    return typescript_date_type();
   // ES2024 sec-ecmascript-language-types-boolean-type
   if(ts_type == "boolean")
     return bool_typet{};
@@ -820,6 +823,48 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   {
     std::string cls_name =
       json_string(json_member(json_member(node, "expression"), "text"));
+    // ES2024 §21.4.2: new Date(...) — construct a Date object.
+    if(cls_name == "Date")
+    {
+      const jsont &call_args = json_member(node, "arguments");
+      exprt time_val;
+      if(!call_args.is_array() || to_json_array(call_args).empty())
+      {
+        // new Date() — current time, modelled as nondet >= 0.
+        // Allocate a fresh symbol so the assume constraint binds.
+        static unsigned date_ctr = 0;
+        std::string name = "__ts_date_now_" + std::to_string(date_ctr++);
+        std::string qname =
+          "typescript::" +
+          (current_function.empty() ? "" : current_function + "::") + name;
+        irep_idt id{qname};
+        if(symbol_table.lookup(id) == nullptr)
+        {
+          symbolt s{id, double_type(), "typescript"};
+          s.base_name = name;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+        pending_stmts.push_back(code_frontend_assignt{
+          sym, side_effect_expr_nondett{double_type(), source_locationt{}}});
+        pending_stmts.push_back(code_assumet{binary_relation_exprt{
+          sym,
+          ID_ge,
+          ieee_floatt::zero(ieee_float_spect::double_precision()).to_expr()}});
+        time_val = sym;
+      }
+      else
+      {
+        // new Date(ms) — single numeric argument is the timestamp.
+        exprt arg = convert_expression(*to_json_array(call_args).begin());
+        if(arg.type().id() != ID_floatbv)
+          arg = typecast_exprt{arg, double_type()};
+        time_val = arg;
+      }
+      return struct_exprt{{time_val}, typescript_date_type()};
+    }
     // Generic class monomorphization
     auto gen_it = generic_classes.find(cls_name);
     if(gen_it != generic_classes.end())
@@ -2159,6 +2204,15 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
 
   if(left.is_nil() || right.is_nil())
     return nil_exprt{};
+
+  // ES2024 §21.4.4.45: Date objects coerce to their time value
+  // (ToPrimitive → valueOf → getTime) in arithmetic and comparison
+  // contexts. Extract the time field when a Date struct appears as
+  // an operand of -, <, >, <=, >=.
+  if(is_typescript_date_type(left.type()))
+    left = member_exprt{left, "time", double_type()};
+  if(is_typescript_date_type(right.type()))
+    right = member_exprt{right, "time", double_type()};
 
   // Type promotion: ensure both sides have the same type
   // (skip for === and !== which handle type mismatches themselves)

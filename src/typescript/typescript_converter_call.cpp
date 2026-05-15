@@ -5395,6 +5395,72 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
       }
     }
+    // ES2024 §21.4.3.1: Date.now() — returns current time in ms.
+    // Modelled as nondet >= 0.
+    if(obj_name == "Date" && method == "now")
+    {
+      static unsigned datenow_ctr = 0;
+      std::string name = "__ts_date_now_s_" + std::to_string(datenow_ctr++);
+      std::string qname =
+        "typescript::" +
+        (current_function.empty() ? "" : current_function + "::") + name;
+      irep_idt id{qname};
+      if(symbol_table.lookup(id) == nullptr)
+      {
+        symbolt s{id, double_type(), "typescript"};
+        s.base_name = name;
+        s.is_lvalue = true;
+        s.is_state_var = true;
+        symbol_table.add(s);
+      }
+      symbol_exprt sym = symbol_table.lookup_ref(id).symbol_expr();
+      pending_stmts.push_back(code_frontend_assignt{
+        sym, side_effect_expr_nondett{double_type(), source_locationt{}}});
+      pending_stmts.push_back(code_assumet{binary_relation_exprt{
+        sym,
+        ID_ge,
+        ieee_floatt::zero(ieee_float_spect::double_precision()).to_expr()}});
+      return sym;
+    }
+
+    // ES2024 §21.4.4: Date instance methods.
+    // The receiver is a Date struct; extract the time field.
+    if(!obj_expr.is_nil() && is_typescript_date_type(obj_expr.type()))
+    {
+      exprt time_field = member_exprt{obj_expr, "time", double_type()};
+      // getTime() / valueOf() — return the raw timestamp.
+      if(method == "getTime" || method == "valueOf")
+        return time_field;
+      // getFullYear(), getMonth(), getDate(), getDay(),
+      // getHours(), getMinutes(), getSeconds(), getMilliseconds()
+      // — these require epoch-to-calendar conversion which is
+      // complex. Return nondet bounded to valid ranges.
+      if(method == "getFullYear")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getMonth")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getDate")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getDay")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getHours")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getMinutes")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getSeconds")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      if(method == "getMilliseconds")
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      // toISOString(), toString(), toLocaleDateString() — nondet string.
+      if(
+        method == "toISOString" || method == "toString" ||
+        method == "toLocaleDateString" || method == "toLocaleString" ||
+        method == "toLocaleTimeString" || method == "toDateString" ||
+        method == "toTimeString" || method == "toUTCString")
+        return side_effect_expr_nondett{
+          typescript_string_type(), get_location(node)};
+    }
+
     // Handle Math.* built-in functions
     if(obj_name == "Math" && args.is_array())
     {

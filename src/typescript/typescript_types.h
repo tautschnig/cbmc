@@ -67,6 +67,25 @@ inline bool is_typescript_string_type(const typet &type)
          to_struct_type(type).get_tag() == "typescript_string";
 }
 
+/// ES2024 §21.4: Date type.
+/// Modelled as a struct wrapping a single floatbv[64] field (the
+/// "time value" — milliseconds since the Unix epoch, 1970-01-01T00:00:00Z).
+/// Invalid Date is represented by NaN in the time field.
+inline struct_typet typescript_date_type()
+{
+  struct_typet::componentst components;
+  components.push_back(struct_typet::componentt{"time", double_type()});
+  struct_typet result{components};
+  result.set_tag("typescript_date");
+  return result;
+}
+
+inline bool is_typescript_date_type(const typet &type)
+{
+  return type.id() == ID_struct &&
+         to_struct_type(type).get_tag() == "typescript_date";
+}
+
 /// ES2024 §6.1.6.2: BigInt type.
 /// Default model: signedbv[128] (bounded, works with SAT backend).
 /// With --ts-bigint-mathematical: mathematical_int_typet (unbounded,
