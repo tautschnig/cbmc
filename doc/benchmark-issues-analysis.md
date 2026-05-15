@@ -58,59 +58,97 @@ string-refinement loop). For comparison, the same suite under
 | Backend          | CLEAN | TP | MISS | FP | TOERR | OOM | Pass-rate |
 |------------------|-------|----|------|----|-------|-----|-----------|
 | default          |    39 |  9 |    3 |  0 |     0 |   0 | **94.1 %** |
-| `--smt2 --cvc5`  |    33 |  7 |    2 |  0 |     8 |   1 |   78.4 %  |
+| `--smt2 --cvc5`  |    35 |  7 |    3 |  0 |     5 |   1 |   82.4 %  |
 
-Under `--cvc5`, 8 benchmarks ERROR (down from 15 before the
-cvc5-IR-compatibility work) plus one OOM. The 7 benchmarks
-fixed in this round of work moved from TOERR to one of:
-* CLEAN — `athena_example`, `create_api_gateway`,
-  `s3_bucket_utils`, `websocket_url_validator`.
-* TP — `clear_duplicate_dynamodb_entries`,
-  `sagemaker_labeling_job`.
-* OOM — `s3_backup_restore` (cvc5 ran out of memory while
-  solving; a separate scaling concern).
+Under `--cvc5`, 5 benchmarks ERROR (down from 15 before
+this round of cvc5-IR-compatibility work) plus 1 OOM.
+Five rounds of fixes contributed:
 
-Two fixes contributed:
-
-1. **Class struct components deduplication.** Class struct
-   construction was assembling fields from four sources
-   (class-level AnnAssign, class-level Assign, __init__
-   AnnAssign, __init__ self.attr =) without dedup. A
-   class with both `s3: S3` (class-level) and
-   `self.s3 = boto3.client(...)` (in __init__) yielded a
-   struct with two components named `s3`. The default
-   back-end tolerated this; cvc5 rejected the resulting
-   SMT-LIB datatype with
-   `Parse Error: struct.5.s3 already declared in this datatype`.
-   `python_converter_defs.cpp` now tracks a `declared_fields`
-   set across all four sources.
+1. **Class struct components deduplication** —
+   `python_converter_defs.cpp` now tracks a
+   `declared_fields` set across all four field sources
+   (class-level AnnAssign / Assign, __init__ AnnAssign,
+   __init__ self.attr =) and skips duplicate names.
+   Fixed: `Parse Error: struct.X.field already declared
+   in this datatype`. Benchmarks moved out of TOERR:
+   `apigateway_key_manager` family, `s3_backup_restore`,
+   `sagemaker_labeling_job`, `clear_duplicate_dynamodb_entries`,
+   `s3_bucket_utils`, `kms_client_manager`,
+   `websocket_url_validator`.
 
 2. **`cprover_string_concat_func` in `smt2_conv` no longer
-   emits a malformed struct constructor.** The Python
-   front-end's `emit_string_function` helper declares this
-   intrinsic's return type as `signedbv 32` (a sentinel) and
-   communicates the actual result via the SEPARATE
-   `__string_len_X` / `__string_ptr_X` symbols passed as the
-   first two args. The smt2_conv interception was emitting
-   `(mk-(_ BitVec 32) <len> <ptr>)` — invalid SMT-LIB. Now
-   emits a sound `(_ bv0 W)` placeholder; the actual string
-   content is enforced via the separately-assigned symbols.
+   emits a malformed struct constructor.** The intrinsic's
+   sentinel return type was being misinterpreted by the
+   smt2_conv interception, which output
+   `(mk-(_ BitVec 32) ...)` — invalid SMT-LIB. Now emits
+   `(_ bv0 W)`; the actual string content is enforced via
+   the separately-assigned `__string_len_X` /
+   `__string_ptr_X` symbols at the front-end level.
 
-Remaining 8 TOERR + 1 OOM under cvc5 split into:
-* 3 CBMC internal invariant violations (Python IR producing
-  shapes that CBMC's smt2_conv can't lower).
-* 2 bit-extract on struct datatypes (CBMC's cross-struct
-  typecast lowering uses `((_ extract H L) struct_value)`,
-  which cvc5 rejects when `use_datatypes=true`).
-* 1 "bad type for constructor argument" parse error
-  (similar struct-shape issue).
-* 2 cvc5 OOM-style failures on large formulas (apigateway,
-  kms_client_manager).
+3. **`List[X]` / `Set[X]` annotation recognition** —
+   convert_type_annotation now handles capitalised
+   `typing` aliases (List, Set, FrozenSet) the same way
+   as their lowercase counterparts. Fixed:
+   `aws_resource_tagger` — caller's `list[str]` no longer
+   typecasts to `list[int]` via struct-narrowing
+   bit-extract.
 
-These are deeper CBMC bugs (not Python-front-end bugs) and
-each requires its own focused investigation. They're tracked
-as future work; the default back-end remains the production
-target.
+4. **Front-end guards for opaque-struct arithmetic** —
+   `Add` / `Sub` / `Mult` on opaque struct/struct_tag
+   types (e.g. `datetime - timedelta` in
+   `check_storage_costs`) now return a sound nondet of
+   the left operand's type rather than emitting a
+   `minus_exprt` that smt2_conv UNEXPECTEDCASEs on.
+   Fixed: `check_storage_costs`.
+
+5. **`float()` on a python_value** — extracts the
+   `__float_val` field directly via `python_value_float`
+   instead of emitting a `typecast_exprt` that
+   smt2_conv's `Unknown typecast struct_tag -> float` UNEXPECTEDCASEs.
+   For non-tagged-union opaque structs, returns a nondet
+   float over-approximation. Fixed: `s3_to_dynamodb`.
+
+The earlier draft's heterogeneous-dict-value promotion to
+`python_value_type` was reverted: it materialised a fresh
+struct value per dict entry, and benchmarks that build many
+heterogeneous dicts (`cloudwatch_metrics_example`) hit
+CBMC's 256-object pointer-model limit. That's a real
+issue but its fix is a different feature (e.g.
+`--object-bits`). Net effect: `ses_email_example` keeps
+ERRORing on cvc5 in the meantime.
+
+Remaining 5 TOERR + 1 OOM under cvc5 split into:
+
+* **2 bit-extract on struct datatypes** (`ses_email_example`
+  via dict-of-dict typecast through bit-flatten;
+  `execute_stepfunction` via list-of-tagged-union-element
+  vs flat-bit-vector mismatch). Root cause: CBMC's
+  smt2_conv falls back to `(_ BitVec N)` when a struct's
+  component is an unregistered struct type; later
+  references to the same struct via a different IR path
+  see it as a datatype, producing the type mismatch. The
+  fix would be a pre-pass through CBMC's smt2_conv to
+  ensure all struct types reachable from an emitted
+  expression are pre-registered before any expression
+  emission begins. Deferred.
+
+* **1 `flatten2bv` invariant under FPA theory**
+  (`ecs_utils`). CBMC's smt2_conv emits `concat` over a
+  float operand when FPA theory is enabled, but the
+  invariant says floats should be already flattened
+  upstream when FPA is on. Deeper CBMC core bug requiring
+  upstream caller analysis.
+
+* **2 cvc5 OOM-style failures** (`apigateway_key_manager`,
+  `kms_client_manager`). Formula sizes are 3-4 MB / 70k+
+  lines of SMT-LIB; cvc5 ran out of memory while solving.
+  Mitigation would require cutting formula size at the
+  CBMC level (e.g. simplifying string-refinement axioms
+  or using smaller list/dict bounds). Outside this
+  round's scope.
+
+These are tracked as future work; the default back-end
+remains the production target.
 
 Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
 6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
