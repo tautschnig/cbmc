@@ -3247,6 +3247,98 @@ std::optional<exprt> java_bytecode_convert_methodt::convert_invoke_dynamic(
             result_code = std::move(block);
             return result_var;
           }
+          if(handle.is_enumswitch_handle())
+          {
+            // F11 follow-on: SwitchBootstraps.enumSwitch site. The
+            // bootstrap arguments are enum-constant simple names; the
+            // enum class itself is the static type of the call's first
+            // parameter as declared in the InvokeDynamic descriptor —
+            // the actual stack value is cast to `empty *` before
+            // reaching us, so we read the type from method_type's
+            // parameter list rather than from the popped argument.
+            const auto case_names = handle.get_enumswitch_case_names();
+            INVARIANT(
+              arguments.size() == 2,
+              "SwitchBootstraps.enumSwitch takes (target, startIndex)");
+            const exprt target = arguments[0];
+            const exprt start_index = arguments[1];
+
+            irep_idt enum_class_id;
+            if(parameters.size() >= 1)
+            {
+              const typet &decl_type = parameters[0].type();
+              if(decl_type.id() == ID_pointer)
+              {
+                const typet &base = to_pointer_type(decl_type).base_type();
+                if(base.id() == ID_struct_tag)
+                  enum_class_id = to_struct_tag_type(base).get_identifier();
+              }
+            }
+
+            if(!enum_class_id.empty())
+            {
+              const symbol_exprt result_var =
+                tmp_variable("enumswitch_result", java_int_type());
+              code_blockt block;
+              block.add(
+                code_assignt(
+                  result_var,
+                  from_integer((mp_integer)case_names.size(), java_int_type())),
+                location);
+
+              // Mark the enum class as needed so the lazy-method loader
+              // will pull in its <clinit>, which populates the static
+              // constant fields the dispatch references below.
+              if(needed_lazy_methods)
+              {
+                needed_lazy_methods->add_needed_class(enum_class_id);
+              }
+
+              // Dispatch by reference equality against each static
+              // enum-constant field. Enum instances are singletons, so
+              // `target == ClassName.NAME` is the right semantics.
+              // The target was cast to `empty *` by the bytecode's
+              // popping of the invokedynamic operands; cast the field
+              // reference to the same pointer type so the equality
+              // compares apples to apples.
+              codet chain = code_skipt();
+              for(size_t rev = case_names.size(); rev-- > 0;)
+              {
+                const irep_idt &case_name = case_names[rev];
+                const irep_idt field_id =
+                  id2string(enum_class_id) + "." + id2string(case_name);
+                const reference_typet enum_ref =
+                  java_reference_type(struct_tag_typet(enum_class_id));
+                const symbol_exprt field_expr(field_id, enum_ref);
+                const exprt field_as_target_type =
+                  typecast_exprt::conditional_cast(field_expr, target.type());
+                const equal_exprt is_match(target, field_as_target_type);
+                const binary_relation_exprt index_in_range(
+                  start_index,
+                  ID_le,
+                  from_integer((mp_integer)rev, java_int_type()));
+                const and_exprt guard(index_in_range, is_match);
+                code_blockt then_block;
+                then_block.add(code_assignt(
+                  result_var, from_integer((mp_integer)rev, java_int_type())));
+                chain = code_ifthenelset(guard, then_block, chain);
+              }
+              code_blockt non_null_then;
+              non_null_then.add(chain);
+              code_ifthenelset null_check(
+                notequal_exprt(
+                  target, null_pointer_exprt(to_pointer_type(target.type()))),
+                non_null_then);
+              block.add(null_check);
+              block.add_source_location() = location;
+              result_code = std::move(block);
+              return result_var;
+            }
+            log.warning() << "F11 follow-on: skipping enumSwitch lowering "
+                          << "at instruction " << instruction_address
+                          << " because the enum class could not be inferred"
+                          << messaget::eom;
+          }
         }
       }
     }

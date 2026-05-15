@@ -557,6 +557,44 @@ public:
         result.push_back(entry.id());
       return result;
     }
+
+    /// F11 follow-on: Construct a handle representing a
+    /// SwitchBootstraps.enumSwitch invokedynamic site. Carries the
+    /// enum-constant simple names; the enum class itself is
+    /// recovered from the dynamic invocation's first parameter type
+    /// at lowering time.
+    static java_lambda_method_handlet
+    make_enumswitch_handle(const std::vector<irep_idt> &case_names)
+    {
+      java_lambda_method_handlet result;
+      result.set("enumswitch", true);
+      irept &names_sub = result.add("enumswitch_case_names");
+      for(const auto &case_name : case_names)
+      {
+        irept entry;
+        entry.id(case_name);
+        names_sub.get_sub().push_back(entry);
+      }
+      return result;
+    }
+
+    /// F11 follow-on: True iff this handle came from a
+    /// SwitchBootstraps.enumSwitch bootstrap.
+    bool is_enumswitch_handle() const
+    {
+      return get_bool("enumswitch");
+    }
+
+    /// F11 follow-on: Enum-constant simple names (e.g. `RED`) in
+    /// source order, for enumSwitch handles only.
+    std::vector<irep_idt> get_enumswitch_case_names() const
+    {
+      std::vector<irep_idt> result;
+      const irept &names_sub = find("enumswitch_case_names");
+      for(const auto &entry : names_sub.get_sub())
+        result.push_back(entry.id());
+      return result;
+    }
   };
 
   using java_lambda_method_handlest = std::vector<java_lambda_method_handlet>;
@@ -596,6 +634,15 @@ public:
   {
     lambda_method_handles().push_back(
       java_lambda_method_handlet::make_typeswitch_handle(case_classes));
+  }
+
+  /// F11 follow-on: Append a SwitchBootstraps.enumSwitch handle that
+  /// records the enum-constant simple names in source order.
+  void
+  add_enumswitch_lambda_method_handle(const std::vector<irep_idt> &case_names)
+  {
+    lambda_method_handles().push_back(
+      java_lambda_method_handlet::make_enumswitch_handle(case_names));
   }
 
   const std::vector<java_annotationt> &get_annotations() const

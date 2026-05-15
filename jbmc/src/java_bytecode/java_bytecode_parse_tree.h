@@ -243,6 +243,16 @@ struct java_bytecode_parse_treet
       /// pipeline does not own this dispatch.
       bool is_typeswitch_handle{false};
 
+      /// F11 follow-on: Bootstrap arguments captured for a
+      /// `java.lang.runtime.SwitchBootstraps.enumSwitch` invokedynamic
+      /// call site (enum-with-null and enum pattern-match). Each entry
+      /// is the enum constant's simple name (e.g. `RED`), in source
+      /// order. Empty for non-enumSwitch handles.
+      std::vector<irep_idt> enumswitch_case_names;
+
+      /// True if this handle is a SwitchBootstraps.enumSwitch site.
+      bool is_enumswitch_handle{false};
+
       /// Construct a lambda method handle with parameters \p params.
       lambda_method_handlet(
         const class_method_descriptor_exprt &method_descriptor,
@@ -273,6 +283,19 @@ struct java_bytecode_parse_treet
         lambda_method_handlet result;
         result.is_typeswitch_handle = true;
         result.typeswitch_case_classes = std::move(case_classes);
+        return result;
+      }
+
+      /// F11 follow-on: Build a handle representing a
+      /// SwitchBootstraps.enumSwitch site. Carries the enum-constant
+      /// label names; the enum class is recovered from the dynamic
+      /// invocation type at lowering time.
+      static lambda_method_handlet
+      get_enumswitch_handle(std::vector<irep_idt> case_names)
+      {
+        lambda_method_handlet result;
+        result.is_enumswitch_handle = true;
+        result.enumswitch_case_names = std::move(case_names);
         return result;
       }
 

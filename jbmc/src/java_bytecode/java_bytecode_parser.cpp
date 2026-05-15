@@ -2038,39 +2038,74 @@ void java_bytecode_parsert::read_bootstrapmethods_entry()
 
       if(
         bootstrap_class_name == "java/lang/runtime/SwitchBootstraps" &&
-        bootstrap_method_name == "typeSwitch")
+        (bootstrap_method_name == "typeSwitch" ||
+         bootstrap_method_name == "enumSwitch"))
       {
-        std::vector<irep_idt> case_classes;
-        bool all_class_labels = true;
+        const bool is_enum_switch = bootstrap_method_name == "enumSwitch";
+        std::vector<irep_idt> case_classes;    // typeSwitch labels
+        std::vector<irep_idt> case_enum_names; // enumSwitch labels
+        bool all_supported_labels = true;
         for(u2 arg_index : u2_values)
         {
           const pool_entryt &arg = pool_entry(arg_index);
-          if(arg.tag != CONSTANT_Class)
+          if(is_enum_switch)
           {
-            // typeSwitch may also carry constant labels (Integer/String
-            // for `case Integer i when ...`/`case "literal" ->`). We
-            // only support the all-class form today.
-            all_class_labels = false;
-            break;
+            // enumSwitch labels are CONSTANT_String entries holding
+            // the enum-constant name (e.g. "RED").
+            if(arg.tag != CONSTANT_String)
+            {
+              all_supported_labels = false;
+              break;
+            }
+            // CONSTANT_String references a CONSTANT_Utf8 by ref1.
+            const pool_entryt &name_entry = pool_entry(arg.ref1);
+            INVARIANT(
+              name_entry.tag == CONSTANT_Utf8,
+              "CONSTANT_String must reference a CONSTANT_Utf8");
+            case_enum_names.emplace_back(name_entry.s);
           }
-          const class_infot label_class{arg};
-          // Convert e.g. "F11Repro$A" or "com/foo/Bar$A" to JBMC's
-          // canonical "java::com.foo.Bar$A" symbol name.
-          std::string slashed = label_class.get_name(pool_entry_lambda);
-          std::string dotted = slashed;
-          for(auto &ch : dotted)
-            if(ch == '/')
-              ch = '.';
-          case_classes.emplace_back("java::" + dotted);
+          else
+          {
+            // typeSwitch labels are CONSTANT_Class entries (today;
+            // SwitchBootstraps' API also permits Integer/String/Long/
+            // Float/Double constant labels but javac does not emit
+            // those for currently-supported language features).
+            if(arg.tag != CONSTANT_Class)
+            {
+              all_supported_labels = false;
+              break;
+            }
+            const class_infot label_class{arg};
+            std::string slashed = label_class.get_name(pool_entry_lambda);
+            std::string dotted = slashed;
+            for(auto &ch : dotted)
+              if(ch == '/')
+                ch = '.';
+            case_classes.emplace_back("java::" + dotted);
+          }
         }
-        if(all_class_labels && !case_classes.empty())
+        if(all_supported_labels && !u2_values.empty())
         {
-          parse_tree.parsed_class.add_method_handle(
-            bootstrap_method_index,
-            lambda_method_handlet::get_typeswitch_handle(
-              std::move(case_classes)));
-          log.debug() << "INFO: parsed SwitchBootstraps.typeSwitch with "
-                      << u2_values.size() << " case label(s)" << messaget::eom;
+          if(is_enum_switch)
+          {
+            parse_tree.parsed_class.add_method_handle(
+              bootstrap_method_index,
+              lambda_method_handlet::get_enumswitch_handle(
+                std::move(case_enum_names)));
+            log.debug() << "INFO: parsed SwitchBootstraps.enumSwitch with "
+                        << u2_values.size() << " case label(s)"
+                        << messaget::eom;
+          }
+          else
+          {
+            parse_tree.parsed_class.add_method_handle(
+              bootstrap_method_index,
+              lambda_method_handlet::get_typeswitch_handle(
+                std::move(case_classes)));
+            log.debug() << "INFO: parsed SwitchBootstraps.typeSwitch with "
+                        << u2_values.size() << " case label(s)"
+                        << messaget::eom;
+          }
           continue;
         }
       }

@@ -435,6 +435,14 @@ void java_bytecode_convert_classt::convert(
         lambda_entry.second.typeswitch_case_classes);
       continue;
     }
+    // F11 follow-on: SwitchBootstraps.enumSwitch handles carry
+    // enum-constant names and likewise have no method_descriptor.
+    if(lambda_entry.second.is_enumswitch_handle)
+    {
+      class_type.add_enumswitch_lambda_method_handle(
+        lambda_entry.second.enumswitch_case_names);
+      continue;
+    }
     // if the handle is of unknown type, we still need to store it to preserve
     // the correct indexing (invokedynamic instructions will retrieve
     // method handles by index)
