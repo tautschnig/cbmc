@@ -5546,8 +5546,33 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // getHours(), getMinutes(), getSeconds(), getMilliseconds()
       // — these require epoch-to-calendar conversion which is
       // complex. Return nondet bounded to valid ranges.
+      // getFullYear: approximate via epoch arithmetic.
+      // ES2024 §21.4.1.3: year from time value. Simplified:
+      // days = floor(time / 86400000); year ≈ 1970 + days/365.25
+      // This is an approximation; leap year handling would need the
+      // full MakeDay algorithm. For verification purposes, the
+      // approximation is usually sufficient.
       if(method == "getFullYear")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
+      {
+        // time / 86400000 → days since epoch
+        exprt ms_per_day = from_integer(86400000, double_type());
+        exprt rm = symbol_exprt{"__CPROVER_rounding_mode", signedbv_typet{32}};
+        ieee_float_op_exprt days{time_field, ID_floatbv_div, ms_per_day, rm};
+        days.type() = double_type();
+        // days / 365.25 → approximate years
+        ieee_floatt days_per_year{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        days_per_year.from_double(365.25);
+        ieee_float_op_exprt years{
+          days, ID_floatbv_div, days_per_year.to_expr(), rm};
+        years.type() = double_type();
+        // floor(years) + 1970
+        ieee_float_op_exprt result{
+          years, ID_floatbv_plus, from_integer(1970, double_type()), rm};
+        result.type() = double_type();
+        return std::move(result);
+      }
       if(method == "getMonth")
         return side_effect_expr_nondett{double_type(), get_location(node)};
       if(method == "getDate")

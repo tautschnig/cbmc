@@ -1062,20 +1062,90 @@ codet typescript_convertert::convert_statement(const jsont &node)
       is_string = (tag == "typescript_string");
     }
     // ES2024 §22.1.3.@@iterator: for-of on a string yields each
-    // UTF-16 code point as a single-character string. We don't
-    // currently model character-level iteration over our refined-
-    // string receiver; skip the loop (emit a no-op) rather than
-    // emitting a malformed body that crashes in simplify_member.
-    // Documented limitation — user code can rewrite via explicit
-    // indexing (`for(let i = 0; i < s.length; i++) s.charAt(i)`)
-    // when string iteration is needed.
+    // character as a single-character string. Rewrite to:
+    //   for (let __i = 0; __i < s.length; __i++) {
+    //       const <var> = s.charAt(__i);  // 1-char string
+    //       <body>
+    //   }
     if(is_string)
     {
-      log.warning() << "for-of on a string receiver is not supported; "
-                    << "use indexed iteration (`for (let i = 0; i < s.length; "
-                    << "i++) s.charAt(i)`) instead. Treating as a no-op."
-                    << messaget::eom;
-      return code_skipt{};
+      code_blockt block;
+      // Iterator variable
+      static unsigned strit_ctr = 0;
+      std::string it_name = "__strit_" + std::to_string(strit_ctr++);
+      std::string it_qname =
+        "typescript::" +
+        (current_function.empty() ? "" : current_function + "::") + it_name;
+      irep_idt it_id{it_qname};
+      if(symbol_table.lookup(it_id) == nullptr)
+      {
+        symbolt it_sym{it_id, signedbv_typet{64}, "typescript"};
+        it_sym.base_name = it_name;
+        it_sym.is_lvalue = true;
+        it_sym.is_state_var = true;
+        symbol_table.add(it_sym);
+      }
+      symbol_exprt it_var = symbol_table.lookup_ref(it_id).symbol_expr();
+      block.add(
+        code_frontend_assignt{it_var, from_integer(0, signedbv_typet{64})});
+      // Loop variable name
+      const jsont &init_node = json_member(node, "initializer");
+      std::string loop_var;
+      if(is_kind(init_node, "VariableDeclarationList"))
+      {
+        const jsont &decls = json_member(init_node, "declarations");
+        if(decls.is_array() && !to_json_array(decls).empty())
+          loop_var = json_string(json_member(
+            json_member(*to_json_array(decls).begin(), "name"), "text"));
+      }
+      // Create loop variable symbol (type: string)
+      irep_idt lv_id{""};
+      if(!loop_var.empty())
+      {
+        std::string qn =
+          "typescript::" +
+          (current_function.empty() ? "" : current_function + "::") + loop_var;
+        lv_id = irep_idt{qn};
+        if(symbol_table.lookup(lv_id) == nullptr)
+        {
+          symbolt lv_sym{lv_id, typescript_string_type(), "typescript"};
+          lv_sym.base_name = loop_var;
+          lv_sym.is_lvalue = true;
+          lv_sym.is_state_var = true;
+          symbol_table.add(lv_sym);
+        }
+      }
+      // Build while loop: while(__i < s.length) { var = charAt(__i); body; __i++; }
+      exprt str_len = typecast_exprt{
+        member_exprt{arr, "length", signedbv_typet{32}}, signedbv_typet{64}};
+      exprt cond = binary_relation_exprt{it_var, ID_lt, str_len};
+      code_blockt loop_body;
+      // Assign loop var = charAt(__i)
+      if(!loop_var.empty())
+      {
+        struct_typet str_type = typescript_string_type();
+        const auto &data_type = to_array_type(str_type.components()[1].type());
+        exprt data = member_exprt{arr, "data", data_type};
+        exprt char_val = index_exprt{data, it_var};
+        exprt::operandst chars;
+        chars.push_back(char_val);
+        while(chars.size() < TYPESCRIPT_MAX_STRING_LENGTH)
+          chars.push_back(from_integer(0, unsignedbv_typet{16}));
+        exprt one_char = struct_exprt{
+          {from_integer(1, signedbv_typet{32}),
+           array_exprt{std::move(chars), data_type}},
+          str_type};
+        loop_body.add(code_frontend_assignt{
+          symbol_table.lookup_ref(lv_id).symbol_expr(), one_char});
+      }
+      loop_body.add(convert_statement(json_member(node, "statement")));
+      // Increment
+      loop_body.add(code_frontend_assignt{
+        it_var, plus_exprt{it_var, from_integer(1, signedbv_typet{64})}});
+      code_whilet loop{cond, std::move(loop_body)};
+      loop.add_source_location() = get_location(node);
+      block.add(std::move(loop));
+      return std::move(block);
     }
 
     // Create iterator variable

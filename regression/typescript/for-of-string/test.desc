@@ -1,0 +1,9 @@
+CORE
+main.ts
+--unwind 10
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+for-of on strings: syntactic rewrite to indexed charAt loop.

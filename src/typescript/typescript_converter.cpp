@@ -825,7 +825,20 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     if(cond.type().id() != ID_bool)
       cond = ts_to_boolean(cond);
     if(then_e.type() != else_e.type())
-      else_e = typecast_exprt{else_e, then_e.type()};
+    {
+      // When both branches are the same primitive type underneath
+      // (e.g. both floatbv from numeric literals), cast to match.
+      // This handles the literal-union case where TS infers `10|20`
+      // but both values are just numbers.
+      if(then_e.type().id() == ID_floatbv && else_e.type().id() == ID_floatbv)
+        ; // already same type
+      else if(then_e.type().id() == ID_floatbv)
+        else_e = typecast_exprt{else_e, then_e.type()};
+      else if(else_e.type().id() == ID_floatbv)
+        then_e = typecast_exprt{then_e, else_e.type()};
+      else
+        else_e = typecast_exprt{else_e, then_e.type()};
+    }
     return if_exprt{cond, then_e, else_e};
   }
   // ES2024 sec-new-operator
@@ -835,6 +848,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   {
     std::string cls_name =
       json_string(json_member(json_member(node, "expression"), "text"));
+    // ES2024 §28.2.1: new Proxy(target, handler) — pragmatic model:
+    // return target unchanged (ignoring the handler). Sound for
+    // programs that don't rely on trap side effects.
+    if(cls_name == "Proxy")
+    {
+      const jsont &call_args = json_member(node, "arguments");
+      if(call_args.is_array() && !to_json_array(call_args).empty())
+        return convert_expression(*to_json_array(call_args).begin());
+      return nil_exprt{};
+    }
     // ES2024 §21.4.2: new Date(...) — construct a Date object.
     if(cls_name == "Date")
     {
@@ -3072,8 +3095,17 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         return bitxor_exprt{left, right};
       if(op == "LessThanLessThanToken")
         return shl_exprt{left, right};
-      // >> and >>> both do arithmetic shift for bigint
-      return ashr_exprt{left, right};
+      if(op == "GreaterThanGreaterThanToken")
+        return ashr_exprt{left, right};
+      // >>> on BigInt is a TypeError per ES2024 §6.1.6.2.9.
+      // Emit an assertion failure to flag this at verification time.
+      code_assertt type_err{false_exprt{}};
+      type_err.add_source_location() = get_location(node);
+      type_err.add_source_location().set_property_class("type-error");
+      type_err.add_source_location().set_comment(
+        "TypeError: Cannot use >>> on BigInt values");
+      pending_stmts.push_back(std::move(type_err));
+      return ashr_exprt{left, right}; // fallback value
     }
     // Convert floats to 32-bit integers, apply op, convert back
     exprt l_int = typecast_exprt{left, signedbv_typet{32}};
