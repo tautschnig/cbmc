@@ -578,6 +578,19 @@ bool python_convertert::convert()
       symbol_table.add(type_sym);
     }
   }
+  // Register python_set_type as a named type in the symbol table.
+  // This makes is_python_set_type and downstream emission work
+  // through a single struct_tag_typet rather than a fresh
+  // struct_typet at every call site.
+  {
+    irep_idt tag_id{PYTHON_SET_TAG};
+    if(symbol_table.lookup(tag_id) == nullptr)
+    {
+      type_symbolt type_sym{tag_id, python_set_struct_def(), "python"};
+      type_sym.base_name = "python_set";
+      symbol_table.add(type_sym);
+    }
+  }
 
   // Create __python_exception_active flag early (needed during function
   // body conversion for raise statements)
