@@ -3327,12 +3327,39 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     std::size_t dest_width = boolbv_width(dest_type);
     if(src_width == dest_width && src_width > 0)
     {
+      // Under use_datatypes the SMT-level types may be different
+      // datatypes (different smt_typename) even when the boolbv
+      // widths happen to match. Emitting `convert_expr(src)`
+      // would yield a value of the wrong sort. Look up the
+      // pre-registered struct->struct nondet from
+      // `defined_expressions` (populated in find_symbols).
+      if(use_datatypes && src_type != dest_type)
+      {
+        auto it = defined_expressions.find(expr);
+        if(it != defined_expressions.end())
+        {
+          out << it->second;
+          return;
+        }
+      }
       convert_expr(src);
       return;
     }
     // Different widths — zero-extend or truncate
     if(src_width > 0 && dest_width > 0)
     {
+      if(use_datatypes)
+      {
+        // Bit-extract / zero-extend on a datatype value is invalid
+        // SMT-LIB. Emit the pre-registered nondet of dest_type
+        // (sound over-approximation) instead.
+        auto it = defined_expressions.find(expr);
+        if(it != defined_expressions.end())
+        {
+          out << it->second;
+          return;
+        }
+      }
       if(src_width < dest_width)
       {
         out << "((_ zero_extend " << (dest_width - src_width) << ") ";
@@ -3642,6 +3669,21 @@ void smt2_convt::convert_typecast(const typecast_exprt &expr)
     // Struct-to-struct cast (Python dynamic typing)
     std::size_t src_width = boolbv_width(src_type);
     std::size_t dest_width = boolbv_width(dest_type);
+    if(use_datatypes && src_type != dest_type)
+    {
+      // Under use_datatypes the SMT-level types may be different
+      // datatypes (different smt_typename). `convert_expr(src)`
+      // would emit a value of the wrong sort, and bit-extract /
+      // zero-extend on a datatype value is not valid SMT-LIB.
+      // Look up the pre-registered struct->struct nondet
+      // (populated in find_symbols).
+      auto it = defined_expressions.find(expr);
+      if(it != defined_expressions.end())
+      {
+        out << it->second;
+        return;
+      }
+    }
     if(src_width == dest_width && src_width > 0)
       convert_expr(src);
     else if(src_width > 0 && dest_width > 0)
@@ -6098,6 +6140,30 @@ void smt2_convt::find_symbols(const exprt &expr)
       }
     };
     register_floats(to_typecast_expr(expr).op());
+  }
+  else if(
+    use_datatypes && expr.id() == ID_typecast &&
+    (to_typecast_expr(expr).op().type().id() == ID_struct ||
+     to_typecast_expr(expr).op().type().id() == ID_struct_tag) &&
+    (expr.type().id() == ID_struct || expr.type().id() == ID_struct_tag) &&
+    to_typecast_expr(expr).op().type() != expr.type())
+  {
+    // A struct -> struct typecast where the source and destination
+    // are different SMT datatypes cannot be lowered via convert_expr
+    // alone (it produces a value of the wrong sort) and bit-extract
+    // / zero-extend on a datatype value is not valid SMT-LIB. Allocate
+    // a fresh nondet symbol of the destination type to use as a sound
+    // over-approximation; convert_typecast looks this up in
+    // defined_expressions.
+    if(defined_expressions.find(expr) == defined_expressions.end())
+    {
+      const irep_idt id =
+        "struct_cast." + std::to_string(defined_expressions.size());
+      out << "(declare-fun " << id << " () ";
+      convert_type(expr.type());
+      out << ")\n";
+      defined_expressions[expr] = id;
+    }
   }
   else if(expr.id() == ID_initial_state)
   {
