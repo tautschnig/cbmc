@@ -2755,17 +2755,31 @@ void smt2_convt::convert_expr(const exprt &expr)
         return;
       }
       // cprover_string_concat_func(res_len, res_ptr, s1, s2)
-      // The result is already assigned separately; just emit the result struct
+      //
+      // The Python front-end's emit_string_function helper
+      // declares this intrinsic's return type as signedbv 32
+      // (a token / "ceremonial" sentinel value), and assigns
+      // the actual result string via the SEPARATE
+      // __string_len_X / __string_ptr_X symbols passed as the
+      // first two args. The previous interception emitted a
+      // struct constructor `(mk-<typename> args[0] args[1])`
+      // using `expr.type()`, but expr.type() here is the
+      // sentinel signedbv 32 and convert_type would print
+      // `(_ BitVec 32)`, producing the invalid SMT-LIB
+      // constructor name `(mk-(_ BitVec 32) ...)` that CVC5
+      // rejected with `Parse Error: Unknown indexed literal
+      // BitVec`.
+      //
+      // Sound replacement: emit a bv0 of expr.type()'s width.
+      // The string-content equality is enforced via the
+      // already-assigned __string_len_X / __string_ptr_X
+      // symbols at the front-end level; the call's "return"
+      // value isn't actually consumed by anything that needs
+      // the struct shape (the front-end caches result.operands
+      // ()[0] and result.operands()[1] separately).
       if(fn_id == ID_cprover_string_concat_func && args.size() >= 4)
       {
-        // Emit the result as {res_len, res_ptr} (first two args)
-        out << "(mk-";
-        convert_type(expr.type());
-        out << " ";
-        convert_expr(args[0]);
-        out << " ";
-        convert_expr(args[1]);
-        out << ")";
+        out << "(_ bv0 " << boolbv_width(expr.type()) << ")";
         return;
       }
       // cprover_string_contains_func(s1, s2) → true/false (overapprox: nondet)
