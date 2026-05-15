@@ -1,0 +1,9 @@
+CORE
+main.py
+--python-no-exception-checks
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+regex-no-match.*regex .* cannot match empty string
+--

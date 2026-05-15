@@ -398,6 +398,39 @@ private:
   /// "tuple", "none").
   std::map<irep_idt, std::map<std::string, std::string>>
     dict_literal_value_categories;
+
+  /// Sibling of dict_literal_value_categories tracking per-key
+  /// constant string VALUES from the original Python AST. Only
+  /// populated for keys whose AST value is a Constant(str). Used
+  /// by the call-site regex-no-match check (stage 1 of the re
+  /// precision plan): when a Pattern.search subject is read out
+  /// via dict_literal["key"] and we know it's the empty string
+  /// (or any constant the regex can't match), we can emit a
+  /// regex-no-match property at the call site without depending
+  /// on solver-level reasoning.
+  std::map<irep_idt, std::map<std::string, std::string>>
+    dict_literal_value_string_consts;
+
+  /// Stage 1 of the re-precision plan, second part: recorded
+  /// regex assertions found inside class method bodies of the
+  /// shape
+  ///     assert compile("...").search(kwargs[K1][K2]...) is not None
+  /// (and search/match/fullmatch / re.<method> variants).
+  ///
+  /// Keyed by the qualified method symbol id. Each entry is the
+  /// list of (kwarg_path, pattern) pairs recovered from the
+  /// method body. At each user call site, when a kwarg value is
+  /// a Dict literal that nests deep enough to resolve the
+  /// kwarg_path to a constant string subject, we can emit a
+  /// regex-no-match property at the call site without having to
+  /// propagate the dict contents through the function-call
+  /// boundary at goto time.
+  struct stub_regex_assertt
+  {
+    std::vector<std::string> kwarg_path;
+    std::string pattern;
+  };
+  std::map<irep_idt, std::vector<stub_regex_assertt>> method_regex_asserts;
   /// Set of function names (qualified) whose 'returns' annotation
   /// was explicitly provided. Used by convert_return to emit an
   /// annotation-mismatch property only when the function HAS a

@@ -1398,6 +1398,128 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             }
           }
           const jsont &method_body_json = json_member(item, "body");
+
+          // Stage 1 of the re-precision plan: walk the method
+          // body looking for regex-assertion patterns of the
+          // shape
+          //     assert compile("...").search(kwargs[K1][K2]...) is not None
+          // and record the (kwarg_path, pattern) so user call
+          // sites can emit a regex-no-match property when their
+          // nested-Dict kwarg value resolves to an empty string.
+          if(!kwargs_param_name.empty() && method_body_json.is_array())
+          {
+            std::function<void(const jsont &)> scan;
+            scan = [&](const jsont &node)
+            {
+              if(!node.is_object() && !node.is_array())
+                return;
+              if(node.is_array())
+              {
+                for(const auto &c : as_array(node))
+                  scan(c);
+                return;
+              }
+              // Identify a Subscript chain rooted at
+              // Name(kwargs_param_name).
+              auto extract_kwarg_path =
+                [&](const jsont &n) -> std::optional<std::vector<std::string>>
+              {
+                std::vector<std::string> path;
+                const jsont *cur = &n;
+                while(is_node_type(*cur, "Subscript"))
+                {
+                  const jsont &s_node = json_member(*cur, "slice");
+                  if(!is_node_type(s_node, "Constant"))
+                    return std::nullopt;
+                  const jsont &k = json_member(s_node, "value");
+                  if(!k.is_string())
+                    return std::nullopt;
+                  path.insert(path.begin(), k.value);
+                  cur = &json_member(*cur, "value");
+                }
+                if(
+                  is_node_type(*cur, "Name") &&
+                  json_string(json_member(*cur, "id")) == kwargs_param_name &&
+                  !path.empty())
+                  return path;
+                return std::nullopt;
+              };
+              // Look for Call(Attribute(value=<Compile>, attr=
+              //   {search,match,fullmatch}), args=[<subj>])
+              if(is_node_type(node, "Call"))
+              {
+                const jsont &fn = json_member(node, "func");
+                const jsont &cargs = json_member(node, "args");
+                if(
+                  is_node_type(fn, "Attribute") && cargs.is_array() &&
+                  !as_array(cargs).empty())
+                {
+                  std::string attr = json_string(json_member(fn, "attr"));
+                  if(attr == "search" || attr == "match" || attr == "fullmatch")
+                  {
+                    const jsont &recv = json_member(fn, "value");
+                    // Pattern recovery: receiver is Call to
+                    // compile(LITERAL) [optionally re.compile].
+                    std::optional<std::string> pat;
+                    if(is_node_type(recv, "Call"))
+                    {
+                      const jsont &cf = json_member(recv, "func");
+                      bool is_compile = false;
+                      if(
+                        is_node_type(cf, "Name") &&
+                        json_string(json_member(cf, "id")) == "compile")
+                        is_compile = true;
+                      else if(
+                        is_node_type(cf, "Attribute") &&
+                        json_string(json_member(cf, "attr")) == "compile")
+                      {
+                        const jsont &cv = json_member(cf, "value");
+                        if(
+                          is_node_type(cv, "Name") &&
+                          json_string(json_member(cv, "id")) == "re")
+                          is_compile = true;
+                      }
+                      if(is_compile)
+                      {
+                        const jsont &cca = json_member(recv, "args");
+                        if(cca.is_array() && !as_array(cca).empty())
+                        {
+                          const jsont &p0 = *as_array(cca).begin();
+                          if(is_node_type(p0, "Constant"))
+                          {
+                            const jsont &v = json_member(p0, "value");
+                            if(v.is_string())
+                              pat = v.value;
+                          }
+                        }
+                      }
+                    }
+                    if(pat.has_value())
+                    {
+                      const jsont &subj = *as_array(cargs).begin();
+                      auto path = extract_kwarg_path(subj);
+                      if(path.has_value())
+                      {
+                        method_regex_asserts[func_id].push_back(
+                          stub_regex_assertt{
+                            std::move(*path), std::move(*pat)});
+                      }
+                    }
+                  }
+                }
+              }
+              // Recurse into all sub-objects.
+              if(node.is_object())
+              {
+                const auto &obj = static_cast<const json_objectt &>(node);
+                for(const auto &kv : obj)
+                  scan(kv.second);
+              }
+            };
+            for(const auto &s : as_array(method_body_json))
+              scan(s);
+          }
+
           if(!skip_body && method_body_json.is_array())
           {
             for(const auto &s : as_array(method_body_json))
