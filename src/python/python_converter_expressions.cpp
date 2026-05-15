@@ -890,31 +890,6 @@ exprt python_convertert::convert_dict(const jsont &expr)
   typet key_type = pairs.empty() ? python_string_type() : pairs[0].first.type();
   typet val_type = pairs.empty() ? python_int_type() : pairs[0].second.type();
 
-  // Heterogeneous-value detection: if any later value's type
-  // disagrees with val_type, promote val_type to the tagged
-  // union (python_value_type) so each value can be wrapped via
-  // wrap_value rather than typecast through a smaller struct.
-  // The latter triggers CBMC's struct-narrowing typecast that
-  // emits `((_ extract H L) <struct-value>)` — invalid SMT-LIB
-  // under cvc5's use_datatypes.
-  for(std::size_t i = 1; i < pairs.size(); i++)
-  {
-    if(pairs[i].second.type() != val_type)
-    {
-      val_type = python_value_type();
-      break;
-    }
-  }
-  // Same for keys.
-  for(std::size_t i = 1; i < pairs.size(); i++)
-  {
-    if(pairs[i].first.type() != key_type)
-    {
-      key_type = python_value_type();
-      break;
-    }
-  }
-
   struct_typet dict_type = python_dict_type(key_type, val_type);
   const auto &keys_arr_type = to_array_type(dict_type.components()[1].type());
   const auto &vals_arr_type = to_array_type(dict_type.components()[2].type());
@@ -925,8 +900,7 @@ exprt python_convertert::convert_dict(const jsont &expr)
   {
     exprt k = p.first;
     if(k.type() != key_type)
-      k = is_python_value_type(key_type) ? wrap_value(k)
-                                         : safe_typecast(k, key_type);
+      k = safe_typecast(k, key_type);
     key_elems.push_back(k);
   }
   while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
@@ -938,8 +912,7 @@ exprt python_convertert::convert_dict(const jsont &expr)
   {
     exprt v = p.second;
     if(v.type() != val_type)
-      v = is_python_value_type(val_type) ? wrap_value(v)
-                                         : safe_typecast(v, val_type);
+      v = safe_typecast(v, val_type);
     val_elems.push_back(v);
   }
   while(val_elems.size() < PYTHON_MAX_DICT_SIZE)
