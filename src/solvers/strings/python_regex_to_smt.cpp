@@ -463,6 +463,266 @@ private:
   }
 };
 
+/// Parallel parser that determines whether a Python regex
+/// pattern's language contains the empty string. Mirrors the
+/// SMT translator's grammar; returns std::nullopt for the same
+/// unsupported features (back-references, lookaround, named
+/// captures), which the caller treats as "don't know".
+///
+/// The implementation walks the same surface syntax but
+/// computes a bool per node instead of an SMT term:
+///
+///   alt(a, b, ...)  : OR over children
+///   concat(a, b, ...): AND over children
+///   a*, a?          : true
+///   a+              : a accepts ε
+///   a{m,n}, a{m,}   : m == 0 || a accepts ε
+///   group(a)        : a accepts ε
+///   literal char    : false
+///   '.'             : false (matches exactly one char)
+///   char class      : false (matches exactly one char)
+///   ^, $            : true (anchors don't consume input)
+class empty_acceptance_checker
+{
+public:
+  empty_acceptance_checker(const std::string &p) : pattern(p)
+  {
+  }
+
+  std::optional<bool> parse_top()
+  {
+    auto alt = parse_alternation();
+    if(!alt.has_value())
+      return std::nullopt;
+    if(pos != pattern.size())
+      return std::nullopt;
+    return alt;
+  }
+
+private:
+  const std::string &pattern;
+  std::size_t pos = 0;
+
+  bool eof() const
+  {
+    return pos >= pattern.size();
+  }
+  char peek() const
+  {
+    return pattern[pos];
+  }
+  bool accept(char c)
+  {
+    if(!eof() && peek() == c)
+    {
+      ++pos;
+      return true;
+    }
+    return false;
+  }
+
+  /// alternation := concat ('|' concat)*  →  OR
+  std::optional<bool> parse_alternation()
+  {
+    auto first = parse_concat();
+    if(!first.has_value())
+      return std::nullopt;
+    bool acc = *first;
+    while(accept('|'))
+    {
+      auto next = parse_concat();
+      if(!next.has_value())
+        return std::nullopt;
+      acc = acc || *next;
+    }
+    return acc;
+  }
+
+  /// concat := quantified+   →  AND (empty concat → true)
+  std::optional<bool> parse_concat()
+  {
+    bool acc = true;
+    bool any = false;
+    while(!eof() && peek() != '|' && peek() != ')')
+    {
+      auto q = parse_quantified();
+      if(!q.has_value())
+        return std::nullopt;
+      acc = acc && *q;
+      any = true;
+    }
+    (void)any; // empty concat is fine; acc stays true
+    return acc;
+  }
+
+  /// quantified := atom (* | + | ? | {m,n})?
+  std::optional<bool> parse_quantified()
+  {
+    auto atom = parse_atom();
+    if(!atom.has_value())
+      return std::nullopt;
+    if(eof())
+      return atom;
+    char q = peek();
+    if(q == '*' || q == '?')
+    {
+      ++pos;
+      if(!eof() && peek() == '?')
+        ++pos; // non-greedy
+      return true;
+    }
+    if(q == '+')
+    {
+      ++pos;
+      if(!eof() && peek() == '?')
+        ++pos;
+      // a+ accepts ε iff a does (at least one repetition required).
+      return atom;
+    }
+    if(q == '{')
+    {
+      std::size_t save = pos;
+      ++pos;
+      std::string num;
+      while(!eof() && std::isdigit(static_cast<unsigned char>(peek())))
+      {
+        num += peek();
+        ++pos;
+      }
+      if(num.empty())
+      {
+        pos = save;
+        return atom;
+      }
+      int m = std::stoi(num);
+      int n = m;
+      (void)n;
+      if(accept(','))
+      {
+        std::string num2;
+        while(!eof() && std::isdigit(static_cast<unsigned char>(peek())))
+        {
+          num2 += peek();
+          ++pos;
+        }
+        if(!num2.empty())
+          n = std::stoi(num2);
+      }
+      if(!accept('}'))
+      {
+        pos = save;
+        return atom;
+      }
+      if(!eof() && peek() == '?')
+        ++pos; // non-greedy
+      // a{m,n} accepts ε iff m == 0 || a accepts ε.
+      // (m == 0 makes 0 repetitions a valid choice. has_upper or
+      // not doesn't matter for ε-acceptance.)
+      if(m == 0)
+        return true;
+      return atom;
+    }
+    return atom;
+  }
+
+  /// atom := group | class | escape | '.' | anchor | literal
+  std::optional<bool> parse_atom()
+  {
+    if(eof())
+      return std::nullopt;
+    char c = peek();
+    if(c == '(')
+    {
+      ++pos;
+      if(!eof() && peek() == '?')
+      {
+        ++pos;
+        if(!eof() && peek() == ':')
+          ++pos; // non-capturing group
+        else
+          return std::nullopt; // (?=... lookaround etc.
+      }
+      auto inner = parse_alternation();
+      if(!inner.has_value())
+        return std::nullopt;
+      if(!accept(')'))
+        return std::nullopt;
+      return inner;
+    }
+    if(c == '[')
+    {
+      ++pos;
+      // Skip past the class — content doesn't matter for
+      // ε-acceptance (a single class always consumes one char).
+      bool negated = false;
+      if(!eof() && peek() == '^')
+      {
+        negated = true;
+        ++pos;
+      }
+      (void)negated;
+      // First ']' immediately after '[' or '[^' is treated as
+      // a literal ']' character per Python regex rules. Match
+      // the existing translator's handling: just scan to ']'.
+      bool first = true;
+      while(!eof() && (first || peek() != ']'))
+      {
+        if(peek() == '\\' && pos + 1 < pattern.size())
+          pos += 2;
+        else
+          ++pos;
+        first = false;
+      }
+      if(!accept(']'))
+        return std::nullopt;
+      return false; // single class consumes a char
+    }
+    if(c == '.')
+    {
+      ++pos;
+      return false;
+    }
+    if(c == '^' || c == '$')
+    {
+      // The wrappers (search/match/fullmatch) strip leading ^ and
+      // trailing $ before calling. If we still see one inside the
+      // body, it's a position constraint we can't handle.
+      return std::nullopt;
+    }
+    if(c == '\\')
+    {
+      ++pos;
+      if(eof())
+        return std::nullopt;
+      char e = peek();
+      ++pos;
+      // Most escapes consume one character; reject unsupported
+      // ones that appear in the existing translator's reject list.
+      // Back-references (\1..\9, \g<name>) → unsupported.
+      if(std::isdigit(static_cast<unsigned char>(e)))
+        return std::nullopt;
+      if(e == 'g')
+        return std::nullopt;
+      if(e == 'b' || e == 'B' || e == 'A' || e == 'Z')
+      {
+        // Word/string boundaries don't consume a character but
+        // are position constraints we don't otherwise model.
+        // Conservatively treat as ε-accepting for the purposes
+        // of this check (don't fire the no-match assertion when
+        // a boundary is present). This is sound: we'd rather
+        // miss a bug than report a false positive.
+        return true;
+      }
+      // Everything else is a single-character match: \d, \D, \s,
+      // \S, \w, \W, \n, \t, \r, \f, \v, and literal escapes.
+      return false;
+    }
+    // Literal character.
+    ++pos;
+    return false;
+  }
+};
+
 } // namespace
 
 std::optional<std::string>
@@ -499,4 +759,20 @@ python_regex_to_smt_search(const std::string &pattern)
   // search(pattern, s): match anywhere.
   return std::string{"(re.++ (re.* re.allchar) "} + *body +
          " (re.* re.allchar))";
+}
+
+std::optional<bool> python_regex_can_match_empty(const std::string &pattern)
+{
+  // Strip leading ^ and trailing $ — the wrappers do this for
+  // SMT translation. For ε-acceptance, anchors don't change the
+  // answer: search/match/fullmatch all reduce to "is the empty
+  // string in the language?", and with no input there's no
+  // distinction between anchored and unanchored positions.
+  std::string core = pattern;
+  if(!core.empty() && core.front() == '^')
+    core.erase(core.begin());
+  if(!core.empty() && core.back() == '$')
+    core.pop_back();
+  empty_acceptance_checker chk{core};
+  return chk.parse_top();
 }

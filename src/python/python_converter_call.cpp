@@ -27,6 +27,8 @@
 #include <util/string_expr.h>
 #include <util/symbol.h>
 
+#include <solvers/strings/python_regex_to_smt.h>
+
 #include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
@@ -46,6 +48,141 @@ exprt python_convertert::convert_call(const jsont &expr)
 {
   const jsont &func = json_member(expr, "func");
   const jsont &args = json_member(expr, "args");
+
+  // Stage 1 of the re-precision plan: detect user-visible
+  // regex call patterns whose pattern is a constant non-ε
+  // accepting regex AND whose subject is statically the empty
+  // string. Emit a 'regex-no-match' property at the call site
+  // independently of the subsequent dispatch.
+  //
+  // Patterns recognised:
+  //   re.search(p, s) / re.match / re.fullmatch
+  //   compile(p).search(s) / .match / .fullmatch
+  //   re.compile(p).search(s) / .match / .fullmatch
+  // where p is a constant string and s is a constant string,
+  // a Name with a recorded string constant, or a one-level
+  // dict subscript dict_lit['K'] with a recorded string value.
+  {
+    auto literal_string_from_ast =
+      [&](const jsont &n) -> std::optional<std::string>
+    {
+      if(is_node_type(n, "Constant"))
+      {
+        const jsont &v = json_member(n, "value");
+        if(v.is_string())
+          return v.value;
+      }
+      if(is_node_type(n, "Name"))
+      {
+        std::string nm = json_string(json_member(n, "id"));
+        irep_idt sid{qualify_name(nm)};
+        auto si = string_constants.find(sid);
+        if(si != string_constants.end())
+          return si->second;
+      }
+      if(is_node_type(n, "Subscript"))
+      {
+        const jsont &v_node = json_member(n, "value");
+        const jsont &s_node = json_member(n, "slice");
+        if(!is_node_type(s_node, "Constant"))
+          return std::nullopt;
+        const jsont &k = json_member(s_node, "value");
+        if(!k.is_string())
+          return std::nullopt;
+        if(is_node_type(v_node, "Name"))
+        {
+          std::string nm = json_string(json_member(v_node, "id"));
+          irep_idt did{qualify_name(nm)};
+          auto si = dict_literal_value_string_consts.find(did);
+          if(si == dict_literal_value_string_consts.end())
+            return std::nullopt;
+          auto ki = si->second.find(k.value);
+          if(ki == si->second.end())
+            return std::nullopt;
+          return ki->second;
+        }
+      }
+      return std::nullopt;
+    };
+
+    auto detect_regex_method = [&](const jsont &n) -> const char *
+    {
+      if(!is_node_type(n, "Attribute"))
+        return nullptr;
+      std::string at = json_string(json_member(n, "attr"));
+      if(at == "search" || at == "match" || at == "fullmatch")
+        return "search-like";
+      return nullptr;
+    };
+
+    std::optional<std::string> pat_lit;
+    std::optional<std::string> subj_lit;
+    bool is_regex_call = false;
+
+    if(is_node_type(func, "Attribute") && detect_regex_method(func))
+    {
+      const jsont &recv = json_member(func, "value");
+      // Form A: re.<method>(p, s).
+      if(
+        is_node_type(recv, "Name") &&
+        json_string(json_member(recv, "id")) == "re" && args.is_array() &&
+        as_array(args).size() >= 2)
+      {
+        auto ai = as_array(args).begin();
+        pat_lit = literal_string_from_ast(*ai);
+        ++ai;
+        subj_lit = literal_string_from_ast(*ai);
+        is_regex_call = true;
+      }
+      // Form B: compile(p).<method>(s) or re.compile(p).<method>(s).
+      else if(is_node_type(recv, "Call"))
+      {
+        const jsont &cf = json_member(recv, "func");
+        bool is_compile = false;
+        if(
+          is_node_type(cf, "Name") &&
+          json_string(json_member(cf, "id")) == "compile")
+          is_compile = true;
+        else if(
+          is_node_type(cf, "Attribute") &&
+          json_string(json_member(cf, "attr")) == "compile")
+        {
+          const jsont &cv = json_member(cf, "value");
+          if(
+            is_node_type(cv, "Name") &&
+            json_string(json_member(cv, "id")) == "re")
+            is_compile = true;
+        }
+        if(is_compile)
+        {
+          const jsont &cargs = json_member(recv, "args");
+          if(cargs.is_array() && !as_array(cargs).empty())
+            pat_lit = literal_string_from_ast(*as_array(cargs).begin());
+          if(args.is_array() && !as_array(args).empty())
+            subj_lit = literal_string_from_ast(*as_array(args).begin());
+          is_regex_call = true;
+        }
+      }
+    }
+
+    if(
+      is_regex_call && pat_lit.has_value() && subj_lit.has_value() &&
+      subj_lit->empty())
+    {
+      auto can_match_empty = python_regex_can_match_empty(*pat_lit);
+      if(can_match_empty.has_value() && !*can_match_empty)
+      {
+        source_locationt rloc = get_location(expr);
+        rloc.set_property_class("regex-no-match");
+        rloc.set_comment("regex '" + *pat_lit + "' cannot match empty string");
+        code_assertt rne{false_exprt{}};
+        rne.add_source_location() = rloc;
+        code_blockt rne_block;
+        rne_block.add(std::move(rne));
+        pending_checks.push_back(std::move(rne_block));
+      }
+    }
+  }
 
   std::string func_name;
   if(is_node_type(func, "Name"))
@@ -2869,7 +3006,99 @@ exprt python_convertert::convert_call(const jsont &expr)
             for(const auto &kw : as_array(method_keywords))
             {
               std::string kw_name = json_string(json_member(kw, "arg"));
-              exprt kw_val = convert_expression(json_member(kw, "value"));
+              const jsont &kw_value_ast = json_member(kw, "value");
+              exprt kw_val = convert_expression(kw_value_ast);
+
+              // Stage 1 of the re-precision plan: regex-no-match
+              // check against stub-recorded assertions. For each
+              // recorded (kwarg_path, pattern) on the called
+              // method, walk the user's kw value AST as a nested
+              // Dict descent following kwarg_path[1..]; if it
+              // reaches a Constant(""), check pattern's
+              // ε-acceptance and emit regex-no-match at the
+              // call site if the regex can't accept ε.
+              if(!kw_name.empty())
+              {
+                auto mri = method_regex_asserts.find(method_id);
+                if(mri != method_regex_asserts.end())
+                {
+                  auto descend_dict =
+                    [&](
+                      const jsont &start,
+                      const std::vector<std::string> &path,
+                      std::size_t start_idx) -> std::optional<std::string>
+                  {
+                    const jsont *cur = &start;
+                    for(std::size_t i = start_idx; i < path.size(); ++i)
+                    {
+                      if(!is_node_type(*cur, "Dict"))
+                        return std::nullopt;
+                      const jsont &dks = json_member(*cur, "keys");
+                      const jsont &dvs = json_member(*cur, "values");
+                      if(!dks.is_array() || !dvs.is_array())
+                        return std::nullopt;
+                      auto kit = as_array(dks).begin();
+                      auto vit = as_array(dvs).begin();
+                      bool found = false;
+                      for(; kit != as_array(dks).end() &&
+                            vit != as_array(dvs).end();
+                          ++kit, ++vit)
+                      {
+                        if(!is_node_type(*kit, "Constant"))
+                          continue;
+                        const jsont &kv = json_member(*kit, "value");
+                        if(!kv.is_string())
+                          continue;
+                        if(kv.value == path[i])
+                        {
+                          cur = &(*vit);
+                          found = true;
+                          break;
+                        }
+                      }
+                      if(!found)
+                        return std::nullopt;
+                    }
+                    if(is_node_type(*cur, "Constant"))
+                    {
+                      const jsont &cv = json_member(*cur, "value");
+                      if(cv.is_string())
+                        return cv.value;
+                    }
+                    return std::nullopt;
+                  };
+                  for(const auto &asrt : mri->second)
+                  {
+                    if(asrt.kwarg_path.empty())
+                      continue;
+                    if(asrt.kwarg_path.front() != kw_name)
+                      continue;
+                    auto resolved =
+                      descend_dict(kw_value_ast, asrt.kwarg_path, 1);
+                    if(resolved.has_value() && resolved->empty())
+                    {
+                      auto can_eps = python_regex_can_match_empty(asrt.pattern);
+                      if(can_eps.has_value() && !*can_eps)
+                      {
+                        source_locationt rloc = get_location(expr);
+                        rloc.set_property_class("regex-no-match");
+                        std::string path_str;
+                        for(std::size_t i = 1; i < asrt.kwarg_path.size(); ++i)
+                          path_str += "[" + asrt.kwarg_path[i] + "]";
+                        rloc.set_comment(
+                          "regex '" + asrt.pattern +
+                          "' cannot match empty string passed via " + kw_name +
+                          path_str);
+                        code_assertt rne{false_exprt{}};
+                        rne.add_source_location() = rloc;
+                        code_blockt rne_block;
+                        rne_block.add(std::move(rne));
+                        pending_checks.push_back(std::move(rne_block));
+                      }
+                    }
+                  }
+                }
+              }
               // PEP 448: f(**d) — expand known dict-literal
               // contents into individual kw entries.
               if(kw_name.empty())

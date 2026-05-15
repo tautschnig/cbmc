@@ -171,6 +171,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         if(dkeys.is_array() && dvals.is_array())
         {
           std::map<std::string, std::string> cats;
+          std::map<std::string, std::string> str_consts;
           auto kit = as_array(dkeys).begin();
           auto vit = as_array(dvals).begin();
           for(; kit != as_array(dkeys).end() && vit != as_array(dvals).end();
@@ -184,9 +185,20 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
             std::string cat = ast_value_category(*vit);
             if(!cat.empty())
               cats[kv.value] = cat;
+            // If the value AST is itself a Constant(str), record
+            // the constant string for downstream regex-precision
+            // checks (Stage 1 of the re-precision plan).
+            if(is_node_type(*vit, "Constant"))
+            {
+              const jsont &cval = json_member(*vit, "value");
+              if(cval.is_string())
+                str_consts[kv.value] = cval.value;
+            }
           }
           if(!cats.empty())
             dict_literal_value_categories[symbol_id] = std::move(cats);
+          if(!str_consts.empty())
+            dict_literal_value_string_consts[symbol_id] = std::move(str_consts);
         }
       }
     }
@@ -1514,6 +1526,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(keys.is_array() && vals.is_array())
           {
             std::map<std::string, std::string> cats;
+            std::map<std::string, std::string> str_consts;
             auto kit = as_array(keys).begin();
             auto vit = as_array(vals).begin();
             for(; kit != as_array(keys).end() && vit != as_array(vals).end();
@@ -1527,9 +1540,18 @@ codet python_convertert::convert_assign(const jsont &stmt)
               std::string cat = ast_value_category(*vit);
               if(!cat.empty())
                 cats[kv.value] = cat;
+              if(is_node_type(*vit, "Constant"))
+              {
+                const jsont &cval = json_member(*vit, "value");
+                if(cval.is_string())
+                  str_consts[kv.value] = cval.value;
+              }
             }
             if(!cats.empty())
               dict_literal_value_categories[sym.name] = std::move(cats);
+            if(!str_consts.empty())
+              dict_literal_value_string_consts[sym.name] =
+                std::move(str_consts);
           }
         }
       }

@@ -51,4 +51,24 @@ python_regex_to_smt_match(const std::string &pattern);
 std::optional<std::string>
 python_regex_to_smt_search(const std::string &pattern);
 
+/// Return ``true`` iff ``pattern`` can match the empty string,
+/// ``false`` if it definitely cannot, ``std::nullopt`` for
+/// unsupported patterns (back-references, lookaround, etc.) where
+/// the answer can't be determined statically.
+///
+/// This is the ε-acceptance test for the regex's underlying
+/// language. For anchored / unanchored variants it doesn't
+/// matter: ``re.search(r, "")`` succeeds iff the pattern's
+/// language contains the empty string, and so does
+/// ``re.match`` / ``re.fullmatch``.
+///
+/// Examples:
+///   "^foo$"           → false
+///   "^a*$"            → true
+///   "^(a|b*)$"        → true   (b* accepts empty)
+///   "^a+(b)?$"        → false  (a+ requires at least one a)
+///   "^"               → true
+///   "^arn:.*"         → false  (literal arn: prefix is required)
+std::optional<bool> python_regex_can_match_empty(const std::string &pattern);
+
 #endif // CPROVER_SOLVERS_STRINGS_PYTHON_REGEX_TO_SMT_H
