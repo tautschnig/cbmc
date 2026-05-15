@@ -1758,22 +1758,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         if(method == "slice")
         {
-          int start_idx = 0, end_idx = static_cast<int>(sv.size());
+          // Only constant-fold if we have at least one constant arg.
+          // If num_args is empty (args are computed expressions like
+          // indexOf() + 1), fall through to the solver path below.
           if(!num_args.empty())
-            start_idx = num_args[0];
-          if(num_args.size() >= 2)
-            end_idx = num_args[1];
-          // Handle negative indices
-          if(start_idx < 0)
-            start_idx = std::max(0, static_cast<int>(sv.size()) + start_idx);
-          if(end_idx < 0)
-            end_idx = std::max(0, static_cast<int>(sv.size()) + end_idx);
-          if(end_idx > static_cast<int>(sv.size()))
-            end_idx = sv.size();
-          if(start_idx >= end_idx)
-            return convert_string_literal_from_text("");
-          return convert_string_literal_from_text(
-            sv.substr(start_idx, end_idx - start_idx));
+          {
+            int start_idx = num_args[0];
+            int end_idx = static_cast<int>(sv.size());
+            if(num_args.size() >= 2)
+              end_idx = num_args[1];
+            // Handle negative indices
+            if(start_idx < 0)
+              start_idx = std::max(0, static_cast<int>(sv.size()) + start_idx);
+            if(end_idx < 0)
+              end_idx = std::max(0, static_cast<int>(sv.size()) + end_idx);
+            if(end_idx > static_cast<int>(sv.size()))
+              end_idx = sv.size();
+            if(start_idx >= end_idx)
+              return convert_string_literal_from_text("");
+            return convert_string_literal_from_text(
+              sv.substr(start_idx, end_idx - start_idx));
+          }
         }
         if(method == "padStart" && !num_args.empty())
         {
@@ -2272,6 +2277,31 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           str_type};
       }
       // ES2024 sec-string.prototype.split
+      // ES2024 §22.1.3.22: String.prototype.slice on a non-constant
+      // receiver or with non-constant indices. Route through the
+      // refined-string solver's cprover_string_substring_func.
+      if(method == "slice" && args.is_array() && !to_json_array(args).empty())
+      {
+        const auto &arg_arr = to_json_array(args);
+        auto ait = arg_arr.begin();
+        exprt start_expr = convert_expression(*ait);
+        ++ait;
+        // End defaults to length.
+        exprt end_expr =
+          ait != arg_arr.end()
+            ? convert_expression(*ait)
+            : exprt{member_exprt{obj_expr, "length", signedbv_typet{32}}};
+        // Convert to the solver's index type (signedbv[64]).
+        if(start_expr.type().id() == ID_floatbv)
+          start_expr = typecast_exprt{start_expr, signedbv_typet{64}};
+        if(end_expr.type().id() == ID_floatbv)
+          end_expr = typecast_exprt{end_expr, signedbv_typet{64}};
+        else if(end_expr.type() != signedbv_typet{64})
+          end_expr = typecast_exprt{end_expr, signedbv_typet{64}};
+        exprt refined = ts_string_to_refined(obj_expr);
+        return ts_call_string_returning_function(
+          ID_cprover_string_substring_func, {refined, start_expr, end_expr});
+      }
       // split("") on non-constant string: build array of single-char strings
       if(method == "split" && args.is_array() && !to_json_array(args).empty())
       {
@@ -6196,6 +6226,34 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             result.from_double(d);
             return result.to_expr();
           }
+        }
+      }
+      // Non-constant string arg: route through the solver's
+      // cprover_string_parse_int_func for parseInt/Number.
+      if(args.is_array() && !to_json_array(args).empty())
+      {
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        if(is_typescript_string_type(arg.type()))
+        {
+          exprt refined = ts_string_to_refined(arg);
+          refined_string_typet refined_ty =
+            to_refined_string_type(refined.type());
+          if(symbol_table.lookup(ID_cprover_string_parse_int_func) == nullptr)
+          {
+            std::vector<typet> arg_types = {refined_ty};
+            mathematical_function_typet ft(
+              std::move(arg_types), signedbv_typet{32});
+            symbolt fs{ID_cprover_string_parse_int_func, ft, "typescript"};
+            fs.base_name = id2string(ID_cprover_string_parse_int_func);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app(
+            symbol_exprt{
+              ID_cprover_string_parse_int_func,
+              symbol_table.lookup_ref(ID_cprover_string_parse_int_func).type},
+            {refined});
+          app.type() = signedbv_typet{32};
+          return typecast_exprt{app, double_type()};
         }
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};

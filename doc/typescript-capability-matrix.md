@@ -21,7 +21,7 @@ the column shows `—`.
 
 | Feature | Status | Notes | Test(s) |
 |---------|--------|-------|---------|
-| Numeric literals | ⚠️ | BigInt not modeled | `number-methods`, `number-infinity` |
+| Numeric literals | ✅ | BigInt supported (signedbv[128] default, ID_integer with --ts-bigint-mathematical) | `number-methods`, `number-infinity`, `bigint-arithmetic` |
 | String literals | ✅ | UTF-8 → UTF-16 decode added 2026-05-13 (BMP chars: 1 code unit, astral: 2 via surrogate pair) | `string-length`, `string-equality`, `spec3-string-utf8-bmp`, `spec3-string-utf16-astral` |
 | Boolean literals | ✅ |  | `boolean-logic`, `boolean-not` |
 | Template literals | ✅ | With interpolation | `template-literal`, `template-literal-complex` |

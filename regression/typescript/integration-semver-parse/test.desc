@@ -1,0 +1,11 @@
+CORE
+main.ts
+--object-bits 10
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Real-world harness: semver major-version parsing via indexOf + slice
++ parseInt. Exercises solver-side string operations (substring,
+parse_int) with computed indices.

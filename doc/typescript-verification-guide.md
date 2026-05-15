@@ -441,8 +441,12 @@ KNOWNBUGs are design trade-offs.
 - Modules beyond `./relative` imports (e.g. `node_modules`) are not
   supported.
 - RegExp is not modelled.
-- BigInt is not modelled.
-- Date is not modelled.
+- BigInt is supported (default: signedbv[128], bounded to ±2^127;
+  opt-in `--ts-bigint-mathematical` uses unbounded integers via SMT).
+- Date is supported as a timestamp wrapper. `new Date()`, `Date.now()`,
+  `getTime()`/`valueOf()` work precisely. Calendar getters
+  (`getFullYear` etc.) return nondet (epoch-to-calendar conversion
+  not implemented).
 - Decorators are not modelled.
 
 ## References
