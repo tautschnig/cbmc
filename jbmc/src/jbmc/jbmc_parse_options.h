@@ -52,6 +52,7 @@ class optionst;
   "(main-class):" \
   OPT_JAVA_GOTO_BINARY \
   "(no-assertions)(no-assumptions)" \
+  "(modular)" /* F12: replace calls to JVerify-annotated methods with their contracts */ \
   OPT_XML_INTERFACE \
   OPT_JSON_INTERFACE \
   "(smt1)" /* rejected, will eventually disappear */ \

@@ -833,7 +833,18 @@ bool jbmc_parse_optionst::process_goto_functions(
   instrument_preconditions(goto_model);
 
   // Lower JVerify contract calls to GOTO assertions/assumptions
-  lower_jverify_contracts(goto_model);
+  std::set<irep_idt> annotated_functions = lower_jverify_contracts(goto_model);
+
+  // F12: in modular mode, additionally substitute calls to annotated
+  // functions with their contracts so the callee body is never
+  // inlined at the caller's symex.
+  if(cmdline.isset("modular"))
+  {
+    log.status() << "F12: applying modular contract substitution to "
+                 << annotated_functions.size() << " annotated function(s)"
+                 << messaget::eom;
+    apply_modular_contract_substitution(goto_model, annotated_functions);
+  }
 
   // ignore default/user-specified initialization
   // of variables with static lifetime

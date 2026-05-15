@@ -13,19 +13,29 @@ Date: May 2026
 
 #include "java_bytecode_contracts.h"
 
-#include "java_types.h"
-
 #include <util/arith_tools.h>
+#include <util/c_types.h>
+#include <util/cout_message.h>
 #include <util/fresh_symbol.h>
+#include <util/invariant.h>
+#include <util/mathematical_expr.h>
 #include <util/namespace.h>
-#include <util/prefix.h>
 #include <util/pointer_expr.h>
+#include <util/prefix.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 
+#include "java_types.h"
+
 #include <iostream>
 
+// `goto-instrument-lib` defines code_contractst whose constructor
+// takes a `loop_contract_configt`. Bring in both the library header
+// and the loop-contract config type.
 #include <goto-programs/goto_model.h>
+
+#include <goto-instrument/contracts/contracts.h>
+#include <goto-instrument/contracts/loop_contract_config.h>
 
 static const std::string jverify_prefix =
   "java::org.strata.jverify.JVerify.";
@@ -224,8 +234,14 @@ std::vector<goto_programt::targett> find_return_value_assignments(
 
 }  // namespace
 
-void lower_jverify_contracts(goto_modelt &goto_model)
+std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 {
+  std::set<irep_idt> annotated_functions;
+  // Per-function accumulators; used to build the contract clauses
+  // (`c_requires`, `c_ensures`) populated on each annotated function
+  // symbol's type after the in-body lowering has run.
+  std::map<irep_idt, exprt::operandst> requires_per_function;
+  std::map<irep_idt, exprt::operandst> ensures_per_function;
   const namespacet ns{goto_model.symbol_table};
 
   for(auto &func_entry : goto_model.goto_functions.function_map)
@@ -485,6 +501,30 @@ void lower_jverify_contracts(goto_modelt &goto_model)
       if(condition.type().id() != ID_bool)
         condition = notequal_exprt(condition, from_integer(0, condition.type()));
 
+      // F12: collect this clause as a contract attribute on the
+      // enclosing function. PRECONDITION → c_requires; POSTCONDITION
+      // → c_ensures. CHECK / INVARIANT / ASSUME / DECREASES stay
+      // body-local. Capturing the predicate here, before it's lowered
+      // below, lets us populate code_with_contract_typet without
+      // re-walking the body afterwards.
+      switch(kind)
+      {
+      case jverify_contract_kindt::PRECONDITION:
+        requires_per_function[func_entry.first].push_back(condition);
+        annotated_functions.insert(func_entry.first);
+        break;
+      case jverify_contract_kindt::POSTCONDITION:
+        ensures_per_function[func_entry.first].push_back(condition);
+        annotated_functions.insert(func_entry.first);
+        break;
+      case jverify_contract_kindt::INVARIANT:
+      case jverify_contract_kindt::ASSUME:
+      case jverify_contract_kindt::CHECK:
+      case jverify_contract_kindt::DECREASES:
+      case jverify_contract_kindt::NOT_A_CONTRACT:
+        break;
+      }
+
       switch(kind)
       {
       case jverify_contract_kindt::PRECONDITION:
@@ -522,5 +562,111 @@ void lower_jverify_contracts(goto_modelt &goto_model)
         UNREACHABLE;
       }
     }
+  }
+
+  // F12: populate `code_with_contract_typet` clauses on every
+  // annotated function symbol AND emit a parallel `contract::<fid>`
+  // symbol that CBMC's `code_contractst::replace_calls` looks up
+  // first. The clauses must be wrapped in `lambda_exprt` over the
+  // function's parameter symbols — that's the shape CBMC's
+  // contracts machinery expects (see c_typecheck_base.cpp:929).
+  for(const auto &fid : annotated_functions)
+  {
+    auto sym_it = goto_model.symbol_table.get_writeable(fid);
+    if(sym_it == nullptr)
+      continue;
+    const code_typet &existing_type = to_code_type(sym_it->type);
+
+    // Build the parameter-symbol vector for the lambda binding.
+    std::vector<symbol_exprt> parameter_syms;
+    for(const auto &p : existing_type.parameters())
+    {
+      const irep_idt &pid = p.get_identifier();
+      if(!pid.empty())
+        parameter_syms.emplace_back(pid, p.type());
+    }
+
+    auto wrap_lambda = [&](const exprt &e) -> exprt
+    {
+      lambda_exprt lambda(parameter_syms, e);
+      lambda.add_source_location() = e.source_location();
+      return std::move(lambda);
+    };
+
+    code_with_contract_typet contract_type(
+      existing_type.parameters(), existing_type.return_type());
+    static_cast<typet &>(contract_type)
+      .set(ID_C_class, existing_type.get(ID_C_class));
+    auto &c_req = contract_type.c_requires();
+    auto &c_ens = contract_type.c_ensures();
+    auto req_it = requires_per_function.find(fid);
+    if(req_it != requires_per_function.end())
+      for(const auto &e : req_it->second)
+        c_req.push_back(wrap_lambda(e));
+    auto ens_it = ensures_per_function.find(fid);
+    if(ens_it != ensures_per_function.end())
+      for(const auto &e : ens_it->second)
+        c_ens.push_back(wrap_lambda(e));
+    sym_it->type = contract_type;
+
+    // Insert the parallel contract:: symbol if not already present.
+    const irep_idt contract_id = "contract::" + id2string(fid);
+    if(!goto_model.symbol_table.has_symbol(contract_id))
+    {
+      symbolt contract;
+      contract.name = contract_id;
+      contract.base_name = sym_it->base_name;
+      contract.pretty_name = sym_it->pretty_name;
+      contract.is_property = true;
+      contract.type = contract_type;
+      contract.mode = sym_it->mode;
+      contract.module = sym_it->module;
+      contract.location = sym_it->location;
+      goto_model.symbol_table.insert(std::move(contract));
+    }
+  }
+
+  return annotated_functions;
+}
+
+void apply_modular_contract_substitution(
+  goto_modelt &goto_model,
+  const std::set<irep_idt> &annotated)
+{
+  if(annotated.empty())
+    return;
+
+  // Translate function ids from JBMC's `java::Foo.bar:(IL...)V` form
+  // into the plain string form `code_contractst::replace_calls`
+  // expects.
+  std::set<std::string> id_strings;
+  for(const auto &fid : annotated)
+    id_strings.insert(id2string(fid));
+
+  console_message_handlert mh;
+  mh.set_verbosity(messaget::M_ERROR);
+  messaget log{mh};
+
+  loop_contract_configt no_loop_contracts;
+  code_contractst contracts(goto_model, log, no_loop_contracts);
+
+  // F12 status: see commentary above. We use the RAII helper to
+  // route CBMC's invariant violations through C++ exceptions so we
+  // can catch them and degrade gracefully into the inline pathway,
+  // rather than aborting the entire JBMC process.
+  cbmc_invariants_should_throwt invariants_throw;
+  try
+  {
+    contracts.replace_calls(id_strings);
+  }
+  catch(const invariant_failedt &e)
+  {
+    log.warning() << "F12: modular substitution hit CBMC invariant ("
+                  << e.what() << "); falling back to inlining" << messaget::eom;
+  }
+  catch(const std::exception &e)
+  {
+    log.warning() << "F12: modular substitution failed (" << e.what()
+                  << "); falling back to inlining" << messaget::eom;
   }
 }
