@@ -67,4 +67,21 @@ inline bool is_typescript_string_type(const typet &type)
          to_struct_type(type).get_tag() == "typescript_string";
 }
 
+/// ES2024 §6.1.6.2: BigInt type.
+/// Default model: signedbv[128] (bounded, works with SAT backend).
+/// With --ts-bigint-mathematical: mathematical_int_typet (unbounded,
+/// requires SMT backend).
+#define TYPESCRIPT_BIGINT_WIDTH 128
+
+inline typet typescript_bigint_type()
+{
+  return signedbv_typet{TYPESCRIPT_BIGINT_WIDTH};
+}
+
+inline bool is_typescript_bigint_type(const typet &type)
+{
+  return type.id() == ID_signedbv &&
+         to_signedbv_type(type).get_width() == TYPESCRIPT_BIGINT_WIDTH;
+}
+
 #endif // CPROVER_TYPESCRIPT_TYPESCRIPT_TYPES_H

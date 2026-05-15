@@ -76,6 +76,7 @@ class optionst;
   "(python-no-body-check)" \
   "(ts-integer-mode)" \
   "(ts-async-threading)" \
+  "(ts-bigint-mathematical)" \
   "(ts-max-array-size):" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on

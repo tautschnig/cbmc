@@ -111,6 +111,9 @@ function n2j(node) {
       r.text = node.text;
       r.value = parseFloat(node.text);
       break;
+    case ts.SyntaxKind.BigIntLiteral:
+      r.text = node.text;
+      break;
     case ts.SyntaxKind.StringLiteral:
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
     case ts.SyntaxKind.FirstTemplateToken:
@@ -620,6 +623,8 @@ bool typescript_languaget::typecheck(
     converter.nan_check = options->get_bool_option("nan-check");
     converter.integer_inference = options->get_bool_option("ts-integer-mode");
     converter.async_threading = options->get_bool_option("ts-async-threading");
+    converter.bigint_mathematical =
+      options->get_bool_option("ts-bigint-mathematical");
     if(options->is_set("ts-max-array-size"))
       converter.TYPESCRIPT_MAX_ARRAY_LENGTH =
         options->get_unsigned_int_option("ts-max-array-size");

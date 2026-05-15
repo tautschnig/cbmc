@@ -5991,6 +5991,27 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
          array_exprt{std::move(elts), arr_type}},
         list_type};
     }
+    // ES2024 §21.2.1.1: BigInt(value) — convert a number or string
+    // to bigint. For constant numeric args, cast at conversion time.
+    if(func_name == "BigInt")
+    {
+      if(args.is_array() && !to_json_array(args).empty())
+      {
+        exprt arg = convert_expression(*to_json_array(args).begin());
+        if(arg.type().id() == ID_floatbv && arg.is_constant())
+        {
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          fv.from_expr(to_constant_expr(arg));
+          mp_integer val = fv.to_integer();
+          return from_integer(val, typescript_bigint_type());
+        }
+        // Non-constant: typecast
+        return typecast_exprt{arg, typescript_bigint_type()};
+      }
+      return from_integer(0, typescript_bigint_type());
+    }
     if(
       func_name == "parseInt" || func_name == "parseFloat" ||
       func_name == "Number")

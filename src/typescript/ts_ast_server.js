@@ -111,6 +111,9 @@ function makeN2j(sourceFile, checker) {
         r.text = node.text;
         r.value = parseFloat(node.text);
         break;
+      case ts.SyntaxKind.BigIntLiteral:
+        r.text = node.text;
+        break;
       case ts.SyntaxKind.StringLiteral:
       case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
       case ts.SyntaxKind.FirstTemplateToken:

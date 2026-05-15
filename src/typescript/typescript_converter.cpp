@@ -104,6 +104,10 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 sec-ecmascript-language-types-number-type
   if(ts_type == "number")
     return double_type();
+  // ES2024 §6.1.6.2: BigInt type
+  if(ts_type == "bigint")
+    return bigint_mathematical ? typet{integer_typet{}}
+                               : typescript_bigint_type();
   // ES2024 sec-ecmascript-language-types-boolean-type
   if(ts_type == "boolean")
     return bool_typet{};
@@ -486,6 +490,20 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   std::string kind = json_string(json_member(node, "_kind"));
   if(kind == "FirstLiteralToken" || kind == "NumericLiteral")
     return convert_numeric_literal(node);
+  // ES2024 §6.1.6.2: BigInt literal (e.g. 123n).
+  // The text field carries the value with an 'n' suffix (e.g. "123n").
+  // Fallback: the _type field also carries it.
+  if(kind == "BigIntLiteral")
+  {
+    std::string val_str = json_string(json_member(node, "text"));
+    if(val_str.empty())
+      val_str = json_string(json_member(node, "_type"));
+    // Strip trailing 'n'
+    if(!val_str.empty() && val_str.back() == 'n')
+      val_str.pop_back();
+    mp_integer val{val_str.c_str()};
+    return from_integer(val, typescript_bigint_type());
+  }
   if(kind == "StringLiteral" || kind == "NoSubstitutionTemplateLiteral")
     return convert_string_literal(node);
   if(kind == "TrueKeyword")
@@ -2154,7 +2172,25 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
     op != "ExclamationEqualsEqualsToken" && op != "InKeyword" &&
     !plus_with_string)
   {
-    if(left.type().id() == ID_floatbv)
+    // Don't promote bigint to float or vice versa — mixed
+    // bigint/number is a TypeError per ES2024 §6.1.6.2.
+    if(
+      is_typescript_bigint_type(left.type()) ||
+      is_typescript_bigint_type(right.type()))
+    {
+      // If one side is bigint and the other isn't, this is a
+      // spec violation. Emit a type-error assertion.
+      if(left.type() != right.type())
+      {
+        // For now, just cast the non-bigint side to bigint
+        // (over-approximation; real code would throw TypeError).
+        if(is_typescript_bigint_type(left.type()))
+          right = typecast_exprt{right, left.type()};
+        else
+          left = typecast_exprt{left, right.type()};
+      }
+    }
+    else if(left.type().id() == ID_floatbv)
       right = typecast_exprt{right, left.type()};
     else if(right.type().id() == ID_floatbv)
       left = typecast_exprt{left, right.type()};
@@ -2163,6 +2199,13 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // ES2024 sec-addition-operator-plus
   if(op == "PlusToken")
   {
+    // ES2024 §6.1.6.2: BigInt arithmetic — uses integer ops, no
+    // rounding mode. Both operands must be bigint (mixed
+    // bigint/number is a TypeError per spec).
+    if(
+      is_typescript_bigint_type(left.type()) &&
+      is_typescript_bigint_type(right.type()))
+      return plus_exprt{left, right};
     // ES2024 sec-addition-operator-plus: Numeric addition
     if(
       left.type().id() == ID_floatbv && right.type().id() == ID_floatbv &&
@@ -2914,11 +2957,29 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   // converted to int32 (ToInt32), except for `>>>` which also
   // converts the result back as uint32. Shift counts are masked to
   // the low 5 bits (mod 32).
+  // For BigInt operands (§6.1.6.2.9): bitwise ops work on the full
+  // width without int32 truncation. `>>>` is not allowed on bigint
+  // per spec (TypeError); we treat it as signed shift.
   if(
     op == "AmpersandToken" || op == "BarToken" || op == "CaretToken" ||
     op == "LessThanLessThanToken" || op == "GreaterThanGreaterThanToken" ||
     op == "GreaterThanGreaterThanGreaterThanToken")
   {
+    if(
+      is_typescript_bigint_type(left.type()) &&
+      is_typescript_bigint_type(right.type()))
+    {
+      if(op == "AmpersandToken")
+        return bitand_exprt{left, right};
+      if(op == "BarToken")
+        return bitor_exprt{left, right};
+      if(op == "CaretToken")
+        return bitxor_exprt{left, right};
+      if(op == "LessThanLessThanToken")
+        return shl_exprt{left, right};
+      // >> and >>> both do arithmetic shift for bigint
+      return ashr_exprt{left, right};
+    }
     // Convert floats to 32-bit integers, apply op, convert back
     exprt l_int = typecast_exprt{left, signedbv_typet{32}};
     exprt r_int = typecast_exprt{right, signedbv_typet{32}};

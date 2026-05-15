@@ -34,6 +34,8 @@ public:
     false; // off by default; enable via --ts-integer-mode
   bool async_threading =
     false; // off by default; enable via --ts-async-threading
+  bool bigint_mathematical =
+    false; // off by default; enable via --ts-bigint-mathematical
   std::size_t TYPESCRIPT_MAX_ARRAY_LENGTH = TYPESCRIPT_DEFAULT_MAX_ARRAY_LENGTH;
 
   typescript_convertert(
