@@ -10,6 +10,7 @@ Date: August 2022
 #include "dfcc_utils.h"
 
 #include <util/arith_tools.h>
+#include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/format_expr.h>
 #include <util/fresh_symbol.h>
@@ -410,7 +411,39 @@ const exprt dfcc_utilst::make_null_check_expr(const exprt &ptr)
 
 exprt dfcc_utilst::make_sizeof_expr(const exprt &expr, const namespacet &ns)
 {
-  const auto &size = size_of_expr(expr.type(), ns);
+  auto size = size_of_expr(expr.type(), ns);
+
+  // F12: extend size_of_expr's verdict for types that CBMC declines
+  // to size but languages other than C give a definite size to. The
+  // motivating case is JBMC's Java boolean — represented internally
+  // as `__CPROVER_bool` (id ID_bool, "mathematical, no memory
+  // layout"), but the JVM stores it in a 1-byte field at runtime.
+  // Without this fallback, any DFCC contract whose assigns clause
+  // mentions a Java boolean static (or whose body writes one — e.g.
+  // JBMC's synthetic `clinit_already_run` flag) trips the
+  // "no definite size" error and the proof aborts.
+  //
+  // We also handle bitvector types whose width isn't a byte
+  // multiple by rounding up: 1-bit, 2-bit, 24-bit, etc., have a
+  // well-defined byte size in any sane memory model. C-mode size_of
+  // already handles byte-multiple bitvector sizes.
+  if(!size.has_value())
+  {
+    if(expr.type().id() == ID_bool)
+    {
+      size = from_integer(1, size_type());
+    }
+    else if(
+      expr.type().id() == ID_signedbv || expr.type().id() == ID_unsignedbv)
+    {
+      const auto bits = to_bitvector_type(expr.type()).get_width();
+      if(bits > 0)
+      {
+        const std::size_t bytes = (bits + 7) / 8;
+        size = from_integer(bytes, size_type());
+      }
+    }
+  }
 
   if(!size.has_value())
   {

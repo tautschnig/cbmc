@@ -8,6 +8,8 @@ Date: February 2023
 \*******************************************************************/
 #include "dfcc_contract_clauses_codegen.h"
 
+#include <util/arith_tools.h>
+#include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/expr_util.h>
 #include <util/fresh_symbol.h>
@@ -144,8 +146,42 @@ void dfcc_contract_clauses_codegent::encode_assignable_target(
   {
     // An lvalue `target` becomes
     //` CALL __CPROVER_assignable(&target, sizeof(target), is_ptr_to_ptr);`
-    const auto &size =
+    auto size =
       size_of_expr(target.type(), namespacet(goto_model.symbol_table));
+
+    // Java-mode fallback for types CBMC's size_of_expr treats as
+    // having no memory layout. The JVM spec says these have a
+    // well-defined byte size at runtime; JBMC's GOTO model encodes
+    // them as bitvector / boolean types whose pointer-offset size
+    // CBMC declines to compute. Rather than bail out, supply the
+    // JVM-specified size.
+    //
+    //   __CPROVER_bool / ID_bool ............. 1 byte (Java boolean)
+    //   signedbv[N] / unsignedbv[N] without
+    //     a fixed byte size  ................. ceil(N / 8) bytes
+    //
+    // size_of_expr already handles signedbv/unsignedbv for sizes
+    // that are byte-multiples (the common case for Java byte/short/
+    // char/int/long/float/double), so the fallback only fires for
+    // bool / non-byte-multiple bitvectors.
+    if(!size.has_value() && language_mode == ID_java)
+    {
+      if(target.type().id() == ID_bool)
+      {
+        size = from_integer(1, size_type());
+      }
+      else if(
+        target.type().id() == ID_signedbv ||
+        target.type().id() == ID_unsignedbv)
+      {
+        const auto bits = to_bitvector_type(target.type()).get_width();
+        if(bits > 0)
+        {
+          const std::size_t bytes = (bits + 7) / 8;
+          size = from_integer(bytes, size_type());
+        }
+      }
+    }
 
     if(!size.has_value())
     {

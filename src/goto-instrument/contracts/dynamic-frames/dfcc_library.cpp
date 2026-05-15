@@ -509,8 +509,16 @@ void dfcc_libraryt::inhibit_front_end_builtins()
     const auto &function_id = it.first;
     if(goto_model.symbol_table.has_symbol(function_id))
     {
-      auto &goto_function =
-        goto_model.goto_functions.function_map.at(function_id);
+      // F12 / Java mode: the symbol may exist (added by the library
+      // load step) without a corresponding goto_function entry —
+      // happens when the model's primary language isn't C and the
+      // C library's builtin definitions weren't goto-converted.
+      // Skip silently in that case rather than throwing
+      // std::out_of_range.
+      auto fn_it = goto_model.goto_functions.function_map.find(function_id);
+      if(fn_it == goto_model.goto_functions.function_map.end())
+        continue;
+      auto &goto_function = fn_it->second;
 
       generate_function_bodies->generate_function_body(
         goto_function, goto_model.symbol_table, function_id);

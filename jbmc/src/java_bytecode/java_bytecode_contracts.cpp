@@ -33,9 +33,13 @@ Date: May 2026
 // `goto-instrument-lib` defines code_contractst whose constructor
 // takes a `loop_contract_configt`. Bring in both the library header
 // and the loop-contract config type.
+#include <util/exception_utils.h>
+#include <util/options.h>
+
 #include <goto-programs/goto_model.h>
 
 #include <goto-instrument/contracts/contracts.h>
+#include <goto-instrument/contracts/dynamic-frames/dfcc.h>
 #include <goto-instrument/contracts/loop_contract_config.h>
 
 static const std::string jverify_prefix =
@@ -626,8 +630,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
             const typet &base = to_pointer_type(arg.type()).base_type();
             if(base.id() == ID_struct_tag)
             {
-              const irep_idt id =
-                to_struct_tag_type(base).get_identifier();
+              const irep_idt id = to_struct_tag_type(base).get_identifier();
               const std::string s = id2string(id);
               if(
                 s.find("array[") == 0 ||
@@ -767,14 +770,14 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
               // pattern recognition).
               const exprt rhs0 = target_returns[0]->assign_rhs();
               const exprt rhs1 = target_returns[1]->assign_rhs();
-              auto unwrap_const = [](const exprt &e) -> std::optional<int> {
+              auto unwrap_const = [](const exprt &e) -> std::optional<int>
+              {
                 exprt v = e;
                 while(v.id() == ID_typecast && v.operands().size() == 1)
                   v = v.operands()[0];
                 if(v.id() != ID_constant)
                   return {};
-                const auto i =
-                  numeric_cast<mp_integer>(to_constant_expr(v));
+                const auto i = numeric_cast<mp_integer>(to_constant_expr(v));
                 if(!i.has_value())
                   return {};
                 if(*i == 0)
@@ -798,7 +801,8 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
                 std::optional<exprt> guard;
                 bool guard_targets_truth = false;
                 for(auto it_l = target_body.instructions.cbegin();
-                    it_l != target_body.instructions.cend(); ++it_l)
+                    it_l != target_body.instructions.cend();
+                    ++it_l)
                 {
                   if(!it_l->is_goto() || it_l->condition().is_true())
                     continue;
@@ -820,9 +824,8 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
                 }
                 if(guard.has_value())
                 {
-                  predicate = guard_targets_truth
-                                ? *guard
-                                : exprt(not_exprt(*guard));
+                  predicate =
+                    guard_targets_truth ? *guard : exprt(not_exprt(*guard));
                 }
               }
             }
@@ -1256,37 +1259,94 @@ void apply_modular_contract_substitution(
   if(annotated.empty())
     return;
 
-  // Translate function ids from JBMC's `java::Foo.bar:(IL...)V` form
-  // into the plain string form `code_contractst::replace_calls`
-  // expects.
-  std::set<std::string> id_strings;
-  for(const auto &fid : annotated)
-    id_strings.insert(id2string(fid));
-
   console_message_handlert mh;
   mh.set_verbosity(messaget::M_STATUS);
   messaget log{mh};
 
-  loop_contract_configt no_loop_contracts;
-  code_contractst contracts(goto_model, log, no_loop_contracts);
+  // F12: use DFCC (dynamic frame condition checking) instead of the
+  // legacy code_contractst::replace_calls. DFCC's assignable-target
+  // codegen at dfcc_contract_clauses_codegen.cpp:143 raises a
+  // recoverable invalid_source_file_exceptiont on unsupported lvalue
+  // shapes, in contrast to the legacy
+  // instrument_spec_assigns.cpp:615 path's UNREACHABLE invariant.
+  // DFCC is also the actively-developed contracts implementation.
+  //
+  // Inputs:
+  //   - harness_id: JBMC's standard harness function name.
+  //   - to_check: optional. We don't pass one because our F12 flow
+  //     doesn't enforce any particular function — we just substitute
+  //     calls.
+  //   - to_replace: the substitutable functions.
+  //   - to_exclude_from_nondet_static: empty by default.
 
-  // F12 status: see commentary above. We use the RAII helper to
-  // route CBMC's invariant violations through C++ exceptions so we
-  // can catch them and degrade gracefully into the inline pathway,
-  // rather than aborting the entire JBMC process.
+  optionst options;
+  // DFCC reads a few options to redefine the entry point. JBMC's
+  // entry is __CPROVER__start, which DFCC defaults to when these
+  // are absent.
+
+  loop_contract_configt no_loop_contracts;
+  std::set<std::string> nondet_static_exclude;
+  const irep_idt harness_id{"__CPROVER__start"};
+
   cbmc_invariants_should_throwt invariants_throw;
+  // DFCC mutates goto_model destructively. If it fails partway
+  // through (typically because of a Java-mode integration gap with
+  // C-builtin helpers it expects), the model is left corrupted and
+  // downstream symex hits invariants. Snapshot the model and
+  // restore on any failure so the legacy inline path can take over
+  // cleanly.
+  goto_modelt model_snapshot;
+  model_snapshot.symbol_table = goto_model.symbol_table;
+  model_snapshot.goto_functions.copy_from(goto_model.goto_functions);
+
+  bool dfcc_succeeded = false;
   try
   {
-    contracts.replace_calls(id_strings);
+    dfcc(
+      options,
+      goto_model,
+      harness_id,
+      std::optional<irep_idt>{}, // no enforce-contract function
+      false,                     // no recursive
+      annotated,
+      no_loop_contracts,
+      nondet_static_exclude,
+      mh);
+    dfcc_succeeded = true;
+  }
+  catch(const invalid_source_file_exceptiont &e)
+  {
+    log.warning() << "F12: DFCC rejected an unsupported lvalue (" << e.what()
+                  << "); falling back to inlining" << messaget::eom;
   }
   catch(const invariant_failedt &e)
   {
-    log.warning() << "F12: modular substitution hit CBMC invariant ("
-                  << e.what() << "); falling back to inlining" << messaget::eom;
+    log.warning() << "F12: DFCC hit CBMC invariant (" << e.what()
+                  << "); falling back to inlining" << messaget::eom;
+  }
+  catch(const std::out_of_range &e)
+  {
+    log.warning() << "F12: DFCC failed (out_of_range: " << e.what()
+                  << "); falling back to inlining. This typically indicates a "
+                  << "missing C-builtin helper symbol (`malloc`, "
+                  << "`__CPROVER_assignable`, etc.) — Java-mode integration of "
+                  << "those helpers is future work." << messaget::eom;
   }
   catch(const std::exception &e)
   {
-    log.warning() << "F12: modular substitution failed (" << e.what()
-                  << "); falling back to inlining" << messaget::eom;
+    log.warning() << "F12: DFCC failed (" << typeid(e).name() << ": "
+                  << e.what() << "); falling back to inlining" << messaget::eom;
+  }
+
+  if(!dfcc_succeeded)
+  {
+    // Restore the pre-DFCC model. Any partial mutation DFCC did is
+    // discarded; the existing in-body assume/assert lowering still
+    // produces a sound (if non-modular) verification.
+    goto_model.symbol_table.clear();
+    for(const auto &p : model_snapshot.symbol_table.symbols)
+      goto_model.symbol_table.insert(p.second);
+    goto_model.goto_functions.clear();
+    goto_model.goto_functions.copy_from(model_snapshot.goto_functions);
   }
 }
