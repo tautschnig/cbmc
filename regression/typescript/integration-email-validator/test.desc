@@ -1,0 +1,10 @@
+CORE
+main.ts
+--object-bits 10
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Real-world harness: email validation via indexOf + slice +
+charCodeAt + length checks. Tests valid and invalid patterns.

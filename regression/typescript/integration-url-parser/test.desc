@@ -1,7 +1,10 @@
 CORE
 main.ts
-
+--object-bits 10
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
+--
+Real-world harness: URL parsing via indexOf + slice + parseInt.
+Exercises protocol/host/port/path extraction from a URL string.
