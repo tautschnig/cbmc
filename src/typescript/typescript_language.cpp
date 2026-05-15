@@ -114,6 +114,9 @@ function n2j(node) {
     case ts.SyntaxKind.BigIntLiteral:
       r.text = node.text;
       break;
+    case ts.SyntaxKind.RegularExpressionLiteral:
+      r.text = node.text;
+      break;
     case ts.SyntaxKind.StringLiteral:
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
     case ts.SyntaxKind.FirstTemplateToken:

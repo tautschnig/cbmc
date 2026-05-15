@@ -111,6 +111,9 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 §21.4: Date type
   if(ts_type == "Date")
     return typescript_date_type();
+  // ES2024 §22.2: RegExp — modelled as a string (the pattern).
+  if(ts_type == "RegExp")
+    return typescript_string_type();
   // ES2024 sec-ecmascript-language-types-boolean-type
   if(ts_type == "boolean")
     return bool_typet{};
@@ -509,6 +512,23 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   }
   if(kind == "StringLiteral" || kind == "NoSubstitutionTemplateLiteral")
     return convert_string_literal(node);
+  // ES2024 §22.2: RegExp literal. Store the pattern as a string
+  // for use by .test() dispatch. The text field is "/pattern/flags".
+  if(kind == "RegularExpressionLiteral")
+  {
+    std::string text = json_string(json_member(node, "text"));
+    // Extract pattern between first and last '/'
+    if(text.size() >= 2 && text[0] == '/')
+    {
+      auto last_slash = text.rfind('/');
+      if(last_slash > 0)
+      {
+        std::string pattern = text.substr(1, last_slash - 1);
+        return convert_string_literal_from_text(pattern);
+      }
+    }
+    return convert_string_literal_from_text("");
+  }
   if(kind == "TrueKeyword")
     return true_exprt{};
   if(kind == "FalseKeyword")

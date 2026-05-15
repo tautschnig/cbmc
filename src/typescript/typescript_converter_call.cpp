@@ -1575,36 +1575,37 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           if(!needle_is_symbolic)
           {
-            // fromIndex defaults to 0 and is clamped to [0, length].
-            // Find the first string arg (skipping empty placeholders for
-            // numeric args).
-            std::string needle;
-            for(const auto &s : str_args)
-              if(!s.empty() || needle.empty())
-                needle = s;
-            // Actually: the first arg is the string; if we have num_args[0]
-            // it's the fromIndex. Use a simpler heuristic — str_args[0] is
-            // the needle (it's the first arg; if numeric, no indexOf).
-            needle = str_args[0];
-            size_t from = 0;
-            if(!num_args.empty())
+            // If there's a second argument (fromIndex) and it's NOT
+            // in num_args (i.e. it's non-constant), fall through to
+            // the solver path. We detect this by checking if the
+            // call has 2+ args but num_args is empty.
+            bool has_nonconst_from = false;
+            if(args.is_array() && to_json_array(args).size() >= 2 &&
+               num_args.empty())
+              has_nonconst_from = true;
+            if(!has_nonconst_from)
             {
-              int fi = num_args[0];
-              if(fi < 0)
-                fi = 0;
-              if(fi > static_cast<int>(sv.size()))
-                fi = sv.size();
-              from = static_cast<size_t>(fi);
+              std::string needle = str_args.empty() ? "" : str_args[0];
+              size_t from = 0;
+              if(!num_args.empty())
+              {
+                int fi = num_args[0];
+                if(fi < 0)
+                  fi = 0;
+                if(fi > static_cast<int>(sv.size()))
+                  fi = sv.size();
+                from = static_cast<size_t>(fi);
+              }
+              auto pos = sv.find(needle, from);
+              int result =
+                (pos == std::string::npos) ? -1 : static_cast<int>(pos);
+              uint64_t bits;
+              double dv = static_cast<double>(result);
+              std::memcpy(&bits, &dv, sizeof(bits));
+              return constant_exprt{
+                integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
+                double_type()};
             }
-            auto pos = sv.find(needle, from);
-            int result =
-              (pos == std::string::npos) ? -1 : static_cast<int>(pos);
-            uint64_t bits;
-            double dv = static_cast<double>(result);
-            std::memcpy(&bits, &dv, sizeof(bits));
-            return constant_exprt{
-              integer2bvrep(mp_integer{std::to_string(bits).c_str()}, 64),
-              double_type()};
           }
         }
         if(method == "includes" && !str_args.empty())
@@ -2010,8 +2011,51 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // scan data array for matching substring
       if(method == "indexOf" && args.is_array() && !to_json_array(args).empty())
       {
-        exprt arg = convert_expression(*to_json_array(args).begin());
+        const auto &arg_arr = to_json_array(args);
+        auto ait = arg_arr.begin();
+        exprt arg = convert_expression(*ait);
+        ++ait;
+        // Check for fromIndex (second argument).
+        exprt from_index_expr = nil_exprt{};
+        if(ait != arg_arr.end())
+          from_index_expr = convert_expression(*ait);
+        // If fromIndex is non-constant OR needle is non-constant,
+        // route through the solver's cprover_string_index_of_func.
+        bool has_nonconst_from =
+          from_index_expr.is_not_nil() && !from_index_expr.is_constant();
         std::string search_sv = extract_string_value(arg);
+        if(has_nonconst_from || search_sv.empty())
+        {
+          // Solver path: cprover_string_index_of_func(str, needle, from)
+          exprt refined_str = ts_string_to_refined(obj_expr);
+          refined_string_typet refined_ty =
+            to_refined_string_type(refined_str.type());
+          typet idx_type = signedbv_typet{64};
+          irep_idt func_id = ID_cprover_string_index_of_func;
+          if(symbol_table.lookup(func_id) == nullptr)
+          {
+            std::vector<typet> arg_types = {refined_ty, refined_ty, idx_type};
+            mathematical_function_typet ft(std::move(arg_types), idx_type);
+            symbolt fs{func_id, ft, "typescript"};
+            fs.base_name = id2string(func_id);
+            symbol_table.add(fs);
+          }
+          exprt refined_needle = is_typescript_string_type(arg.type())
+                                   ? ts_string_to_refined(arg)
+                                   : arg;
+          exprt from_idx = from_index_expr.is_not_nil()
+                             ? (from_index_expr.type().id() == ID_floatbv
+                                  ? typecast_exprt{from_index_expr, idx_type}
+                                  : from_index_expr)
+                             : from_integer(0, idx_type);
+          if(from_idx.type() != idx_type)
+            from_idx = typecast_exprt{from_idx, idx_type};
+          function_application_exprt app(
+            symbol_exprt{func_id, symbol_table.lookup_ref(func_id).type},
+            {refined_str, refined_needle, from_idx});
+          app.type() = idx_type;
+          return typecast_exprt{app, double_type()};
+        }
         if(!search_sv.empty())
         {
           std::string needle = search_sv.substr(2);
@@ -2103,6 +2147,55 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
       }
       // ES2024 §22.1.3.7: String.prototype.includes — symbolic path.
+      // ES2024 §22.2.5.13: RegExp.prototype.test(string).
+      // Phase 1: for literal patterns (no metacharacters), .test(s)
+      // is equivalent to s.includes(pattern). The receiver is our
+      // string-modelled RegExp (the pattern text); the argument is
+      // the string to search.
+      if(
+        method == "test" && args.is_array() &&
+        !to_json_array(args).empty() && !obj_expr.is_nil() &&
+        is_typescript_string_type(obj_expr.type()))
+      {
+        exprt str_arg = convert_expression(*to_json_array(args).begin());
+        if(is_typescript_string_type(str_arg.type()))
+        {
+          // For constant pattern and constant string: check at
+          // conversion time.
+          std::string pattern_sv = extract_string_value(obj_expr);
+          std::string str_sv = extract_string_value(str_arg);
+          if(!pattern_sv.empty() && !str_sv.empty())
+          {
+            std::string pattern = pattern_sv.substr(2);
+            std::string str = str_sv.substr(2);
+            return str.find(pattern) != std::string::npos
+                     ? exprt{true_exprt{}}
+                     : exprt{false_exprt{}};
+          }
+          // Solver path: route through cprover_string_contains_func.
+          // Note: contains(haystack, needle) — the string arg is the
+          // haystack, the pattern (obj_expr) is the needle.
+          exprt refined_str = ts_string_to_refined(str_arg);
+          exprt refined_pattern = ts_string_to_refined(obj_expr);
+          refined_string_typet refined_ty =
+            to_refined_string_type(refined_str.type());
+          irep_idt func_id = ID_cprover_string_contains_func;
+          if(symbol_table.lookup(func_id) == nullptr)
+          {
+            std::vector<typet> arg_types = {refined_ty, refined_ty};
+            mathematical_function_typet ft(
+              std::move(arg_types), bool_typet{});
+            symbolt fs{func_id, ft, "typescript"};
+            fs.base_name = id2string(func_id);
+            symbol_table.add(fs);
+          }
+          function_application_exprt app(
+            symbol_exprt{func_id, symbol_table.lookup_ref(func_id).type},
+            {refined_str, refined_pattern});
+          app.type() = bool_typet{};
+          return std::move(app);
+        }
+      }
       // When either the receiver or the needle is symbolic we route
       // through the refined string solver via
       // cprover_string_contains_func. Receiver and needle both get
