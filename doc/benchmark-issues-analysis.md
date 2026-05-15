@@ -55,28 +55,62 @@ The numbers above are with the **default** back-end (boolbv +
 string-refinement loop). For comparison, the same suite under
 `--cvc5` (SMT-LIB output to CVC5 with the `String` theory):
 
-| Backend          | CLEAN | TP | MISS | FP | TOERR | Pass-rate |
-|------------------|-------|----|------|----|-------|-----------|
-| default          |    39 |  9 |    3 |  0 |     0 | **94.1 %** |
-| `--smt2 --cvc5`  |    29 |  5 |    2 |  0 |    15 |   66.7 %  |
+| Backend          | CLEAN | TP | MISS | FP | TOERR | OOM | Pass-rate |
+|------------------|-------|----|------|----|-------|-----|-----------|
+| default          |    39 |  9 |    3 |  0 |     0 |   0 | **94.1 %** |
+| `--smt2 --cvc5`  |    33 |  7 |    2 |  0 |     8 |   1 |   78.4 %  |
 
-Under `--cvc5`, 15 benchmarks ERROR with SMT-LIB parse / model
-errors that are pre-existing problems with our IR's
-compatibility with the SMT2 back-end (struct-redeclaration
-issues on Python `class` types, refined-string struct
-encoding edge cases). These ERRORs are NOT caused by the
-re-precision work — they reproduce on commits before stage 3
-was added.
+Under `--cvc5`, 8 benchmarks ERROR (down from 15 before the
+cvc5-IR-compatibility work) plus one OOM. The 7 benchmarks
+fixed in this round of work moved from TOERR to one of:
+* CLEAN — `athena_example`, `create_api_gateway`,
+  `s3_bucket_utils`, `websocket_url_validator`.
+* TP — `clear_duplicate_dynamodb_entries`,
+  `sagemaker_labeling_job`.
+* OOM — `s3_backup_restore` (cvc5 ran out of memory while
+  solving; a separate scaling concern).
 
-The current cvc5 picture is therefore: **default back-end is
-the production target**; the cvc5 path is plumbed end-to-end
-(Wave 2 SMT regex translation, stage 3 back-end-side bridge
-from refined-string to SMT String for symbolic subjects) but
-gated behind a separate body of cvc5-specific work to fix the
-ERROR-class issues. Stage 4 (broader Python-string ↔
-SMT-`String` integration) and the cvc5 ERROR triage are
-parallel tracks, neither of which moves the default-back-end
-suite.
+Two fixes contributed:
+
+1. **Class struct components deduplication.** Class struct
+   construction was assembling fields from four sources
+   (class-level AnnAssign, class-level Assign, __init__
+   AnnAssign, __init__ self.attr =) without dedup. A
+   class with both `s3: S3` (class-level) and
+   `self.s3 = boto3.client(...)` (in __init__) yielded a
+   struct with two components named `s3`. The default
+   back-end tolerated this; cvc5 rejected the resulting
+   SMT-LIB datatype with
+   `Parse Error: struct.5.s3 already declared in this datatype`.
+   `python_converter_defs.cpp` now tracks a `declared_fields`
+   set across all four sources.
+
+2. **`cprover_string_concat_func` in `smt2_conv` no longer
+   emits a malformed struct constructor.** The Python
+   front-end's `emit_string_function` helper declares this
+   intrinsic's return type as `signedbv 32` (a sentinel) and
+   communicates the actual result via the SEPARATE
+   `__string_len_X` / `__string_ptr_X` symbols passed as the
+   first two args. The smt2_conv interception was emitting
+   `(mk-(_ BitVec 32) <len> <ptr>)` — invalid SMT-LIB. Now
+   emits a sound `(_ bv0 W)` placeholder; the actual string
+   content is enforced via the separately-assigned symbols.
+
+Remaining 8 TOERR + 1 OOM under cvc5 split into:
+* 3 CBMC internal invariant violations (Python IR producing
+  shapes that CBMC's smt2_conv can't lower).
+* 2 bit-extract on struct datatypes (CBMC's cross-struct
+  typecast lowering uses `((_ extract H L) struct_value)`,
+  which cvc5 rejects when `use_datatypes=true`).
+* 1 "bad type for constructor argument" parse error
+  (similar struct-shape issue).
+* 2 cvc5 OOM-style failures on large formulas (apigateway,
+  kms_client_manager).
+
+These are deeper CBMC bugs (not Python-front-end bugs) and
+each requires its own focused investigation. They're tracked
+as future work; the default back-end remains the production
+target.
 
 Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
 6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
