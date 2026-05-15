@@ -528,15 +528,29 @@ void dfcct::reinitialize_model()
 
   // Define harness as the entry point, overriding any preexisting one.
   log.status() << "Setting entry point to " << harness_id << messaget::eom;
-  // remove the CPROVER start function
-  goto_model.symbol_table.erase(
-    goto_model.symbol_table.symbols.find(goto_functionst::entry_point()));
-  // regenerate the CPROVER start function
-  generate_ansi_c_start_function(
-    dfcc_utilst::get_function_symbol(goto_model.symbol_table, harness_id),
-    goto_model.symbol_table,
-    message_handler,
-    c_object_factory_parameterst(options));
+  // F12 / Java mode: when the harness is already the goto-model's
+  // entry point (typical for JBMC, which builds __CPROVER__start
+  // itself with all the Java initialization scaffolding — clinit
+  // calls, nondet object factories, dispatch into the user's
+  // --function), there is no separate C-style start function to
+  // regenerate. The harness instrumentation we just performed has
+  // already augmented the entry point in place. Erasing it here
+  // (and then trying to regenerate it as an ANSI-C start function
+  // that calls the harness) would both lose JBMC's Java init code
+  // and trip an out_of_range lookup on the harness symbol we just
+  // erased.
+  if(harness_id != goto_functionst::entry_point())
+  {
+    // remove the CPROVER start function
+    goto_model.symbol_table.erase(
+      goto_model.symbol_table.symbols.find(goto_functionst::entry_point()));
+    // regenerate the CPROVER start function
+    generate_ansi_c_start_function(
+      dfcc_utilst::get_function_symbol(goto_model.symbol_table, harness_id),
+      goto_model.symbol_table,
+      message_handler,
+      c_object_factory_parameterst(options));
+  }
 
   goto_model.goto_functions.update();
 }
