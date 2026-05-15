@@ -101,10 +101,24 @@ inline bool is_python_dict_type(const typet &type)
   return id2string(st.get_tag()).substr(0, 11) == "python_dict";
 }
 
-/// Return the CBMC type for a Python set (bitmap representation).
+/// Tag name for the python_set type in the symbol table.
+#define PYTHON_SET_TAG "tag-python_set"
+
+/// Return the canonical type reference for Python set values (bitmap
+/// representation). Returns a struct_tag_typet that refers to the
+/// actual struct definition in the symbol table (registered by
+/// python_convertert::convert()). Using struct_tag_typet ensures
+/// CBMC sees a single named type rather than fresh struct_typet
+/// instances at every call site.
+inline struct_tag_typet python_set_type()
+{
+  return struct_tag_typet{PYTHON_SET_TAG};
+}
+
+/// Actual struct definition for Python set: bitmap representation.
 /// struct { uint64 bitmap; int64 offset; }
 /// Bit i set ↔ element (offset + i) is in the set.
-inline struct_typet python_set_type()
+inline struct_typet python_set_struct_def()
 {
   struct_typet::componentst components;
   components.push_back(
@@ -118,6 +132,8 @@ inline struct_typet python_set_type()
 /// Check if a type is a Python set (bitmap).
 inline bool is_python_set_type(const typet &type)
 {
+  if(type.id() == ID_struct_tag)
+    return to_struct_tag_type(type).get_identifier() == PYTHON_SET_TAG;
   if(type.id() != ID_struct)
     return false;
   return to_struct_type(type).get_tag() == "python_set";
