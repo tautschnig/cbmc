@@ -95,6 +95,30 @@ MODULE_GHOST_BOOTSTRAP = {
         "ghost_init_decl":
             "void cred_lifetime_init(struct cred *c, unsigned int usage);",
         "forward_decls": ["struct cred;"],
+        # Wrapper-struct pointer chains.  Each entry maps a
+        # parameter type that the function might receive (a
+        # wrapper struct) to the field path that contains a
+        # cred *.  When matched, the synthesiser also bootstraps
+        # the field pointer.
+        #
+        # Practical limitation: emitting `arg0->field` access in
+        # the harness requires a complete struct definition,
+        # which means including the kernel header that defines
+        # the wrapper struct.  Many such headers transitively
+        # pull in <linux/sched.h> / <linux/security.h>; CBMC's
+        # linker then surfaces parameter-name mismatches between
+        # the harness TU and the kernel TU's view of the same
+        # static-inline functions ('conflicting function
+        # declarations' on e.g. security_netlink_send).  This is
+        # a LIM-009-class issue that needs further investigation
+        # to resolve.
+        #
+        # Until that's solved, the wrapper_paths list is
+        # intentionally empty.  The infrastructure (config
+        # lookup + synthesiser code path) is in place; once the
+        # linker issue is closed, populate this list with the
+        # wrapper structs identified in the May hunt write-up.
+        "wrapper_paths": [],
     },
     "pipe_buffer": {
         "types": ["struct pipe_buffer *"],
@@ -103,6 +127,7 @@ MODULE_GHOST_BOOTSTRAP = {
         "ghost_init_decl":
             "void pipe_buffer_mark_populated(struct pipe_buffer *buf);",
         "forward_decls": ["struct pipe_buffer;"],
+        "wrapper_paths": [],
     },
     "lock_state": {
         # Match mutex-typed parameters; per-file harness marks each
@@ -114,6 +139,10 @@ MODULE_GHOST_BOOTSTRAP = {
         "ghost_init_decl":
             "void lock_state_lock(struct mutex *m);",
         "forward_decls": ["struct mutex;"],
+        # See the cred_lifetime note above: kernel-header
+        # inclusion needed for wrapper-path access creates
+        # link-time conflicts.  Empty until that's resolved.
+        "wrapper_paths": [],
     },
     "refcount_lifetime": {
         # Match refcount_t-typed parameters; per-file harness inits
@@ -129,6 +158,7 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": [
             "typedef struct refcount_struct refcount_t;",
         ],
+        "wrapper_paths": [],
     },
     # aead per-file is supported via a custom multi-statement
     # bootstrap: the synthesised harness includes <crypto/aead.h>
@@ -455,6 +485,11 @@ def synthesise(module: str, source: Path, function: str,
     call_args: list[str] = []
     warnings: list[str] = []
     bootstrapped_any = False
+    # Track which kernel includes the wrapper-paths logic
+    # introduces; we'll insert them into the harness preamble
+    # ahead of the harness body so they appear before any code
+    # that uses the wrapper struct's layout.
+    wrapper_includes: list[str] = []
     for i, p in enumerate(sig.params):
         local = f"arg{i}"
         if "*" in p.type_text:
@@ -479,11 +514,74 @@ def synthesise(module: str, source: Path, function: str,
                     lines.append(
                         f"  {cfg['ghost_init_call']}({ghost_args});"
                     )
+            else:
+                # Wrapper-path bootstrap: even if the parameter
+                # type doesn't directly match the bug-class
+                # primitive (e.g. nlmclnt_release_host takes
+                # `struct nlm_host *`, not `struct cred *`), we
+                # may know that the wrapper struct contains a
+                # field of the bug-class type.  Bootstrap that
+                # field if so.  See cfg['wrapper_paths'] for
+                # the (param_type, field_path) pairs.
+                for wp in cfg.get("wrapper_paths", []):
+                    if wp["param_type"] in p.type_text:
+                        for inc in wp.get("kernel_includes", []):
+                            if inc not in wrapper_includes:
+                                wrapper_includes.append(inc)
+                        # field_path is either a bare field
+                        # name like "h_cred" (cred_lifetime
+                        # picks up `arg->h_cred`) or an
+                        # explicit format string with {arg}
+                        # placeholder for non-cred paths
+                        # (e.g. lock_state's "&{arg}->mutex").
+                        path = wp["field_path"]
+                        if "{arg}" in path:
+                            field_expr = path.format(arg=local)
+                        else:
+                            field_expr = f"{local}->{path}"
+                        bootstrapped_any = True
+                        if cfg.get("custom_setup"):
+                            # Custom setup with wrapper path:
+                            # treat field_expr as the {arg}
+                            # substitution.
+                            setup = cfg["custom_setup_template"].format(
+                                i=i, arg=field_expr,
+                            )
+                            for setup_line in setup.splitlines():
+                                lines.append(setup_line)
+                        else:
+                            ghost_args = cfg[
+                                "ghost_init_args_template"
+                            ].format(arg=field_expr)
+                            lines.append(
+                                f"  {cfg['ghost_init_call']}({ghost_args});"
+                            )
+                        break  # one wrapper path per parameter
             call_args.append(local)
         else:
             # Scalar: declared-uninitialised ≡ nondet under CBMC.
             lines.append(f"  {p.type_text} {local};")
             call_args.append(local)
+
+    # Insert wrapper-path kernel includes into the harness
+    # preamble.  We placed everything after the typedef-fallback
+    # block, so insert before the int main() declaration.  Find
+    # the first line that begins the entry function and insert
+    # the includes immediately before it.
+    if wrapper_includes:
+        insert_at = None
+        for idx, line in enumerate(lines):
+            if line.startswith(f"int {harness_name}("):
+                insert_at = idx
+                break
+        if insert_at is not None:
+            include_lines = [
+                f"#include {inc}" for inc in wrapper_includes
+            ] + [""]
+            lines = lines[:insert_at] + include_lines + lines[insert_at:]
+        else:
+            for inc in wrapper_includes:
+                lines.insert(0, f"#include {inc}")
 
     lines.append("")
     if sig.return_type == "void":
