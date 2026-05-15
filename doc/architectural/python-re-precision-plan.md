@@ -186,19 +186,56 @@ This is the architectural refactor referenced in
 interception can emit `(str.in_re subject <regex>)` for symbolic
 subjects too.
 
-Two paths:
-* C1. Teach `smt2_conv` a parallel type-mapping that treats
-  `python_string_type` as `String` whenever it appears in a
-  position where the SMT `String` theory makes sense
-  (regex-membership, `len()` to `str.len`, `+` to `str.++`, etc.).
-* C2. Materialise the subject into an SMT `String` at the
-  intrinsic-call site in the front-end, by emitting a fresh
-  `String`-typed symbol bound to the python_string's contents.
-  The interception then sees a String-typed argument directly.
+The cleanest version of this work places the bridging in the
+SMT back-end, NOT in the front-end. The front-end keeps
+emitting refined-string-typed arguments to
+`cprover_string_match_func` exactly as it does today; the
+back-end's interception in `smt2_conv.cpp` is the layer that
+knows about SMT-LIB's `String` theory and is therefore the
+right place to translate refined-string struct values into
+String-typed SMT terms.
 
-C2 is more localised and can be incremental. C1 is a deeper
-refactor with a bigger payoff (also enables string-bool stuff
-like `s == "constant"`, `len(s) == 5`).
+Layered options:
+
+* C1. Teach `smt2_conv` a generic refined-string → SMT-`String`
+  bridge that fires whenever a refined-string struct value
+  (constant or symbolic) appears in a position where the SMT
+  `String` theory makes sense (regex-membership today; `len()`
+  → `str.len`, `+` → `str.++`, slicing → `str.substr` later).
+  Big lift; opens the door to broad `--cvc5` precision.
+
+* C2. Specialise the bridge to the regex-intrinsic interception
+  only. When `cprover_string_match_func` /
+  `cprover_string_search_func` /
+  `cprover_string_fullmatch_func` is intercepted in
+  `smt2_conv.cpp`, do the refined-string → `String` translation
+  inline:
+    1. Allocate a fresh SMT `String` symbol.
+    2. Emit `(assert (= (str.len smt_str) struct.length))`
+       constraint binding its length to the struct's length
+       field.
+    3. For each `i` in `0 .. PYTHON_MAX_STRING_LENGTH-1`, emit
+       conditional constraints binding the i-th character of
+       the SMT `String` to the i-th byte of the
+       struct's data array (when `i < struct.length`).
+    4. Use the SMT `String` symbol in the
+       `(str.in_re ... <regex>)` clause.
+  This is contained to one site in `smt2_conv.cpp`. No
+  front-end changes. No new types.
+
+* C3. Introduce a dedicated `compiled_regex_typet` for
+  pre-compiled regexes (analogous to `refined_string_typet`).
+  The intrinsic's first argument changes from a refined-string
+  carrying the literal pattern to a `compiled_regex_typet` that
+  embeds the pattern. Cleaner type signature, but doesn't help
+  the symbolic-subject problem on its own; the subject is
+  still a refined-string and still needs C1 or C2 to be
+  exposed to the SMT backend.
+
+(The earlier draft of this document proposed materialising the
+SMT String value in the front-end; that breaks the
+front-end / back-end separation we maintain elsewhere and is
+discarded.)
 
 Pros:
 * Generalises beyond `re`: any string operation gets stronger
@@ -267,11 +304,15 @@ Cost: ~30 lines + 2 regression tests.
 
 ### Stage 3 — Approach C
 
-Pursue C2 (front-end materialisation of subject as SMT `String`)
-as a follow-on once the regex-translator infrastructure has more
-benchmark exposure. Defer C1 to a separate plan.
+Pursue C2 (back-end-side refined-string → `String` bridge,
+contained to the regex-intrinsic interception in
+`smt2_conv.cpp`). Strict architectural rule: NO front-end
+emission of SMT-String-typed values. The front-end emits
+refined-string arguments exactly as today; the back-end alone
+knows about SMT-LIB `String` semantics.
 
-Cost: ~300 lines for C2.
+Cost: ~250 lines in `smt2_conv.cpp`. Defer C1 (broader
+refined-string-as-SMT-String integration) to a separate plan.
 
 ### Wave 3 — Defer
 
@@ -441,13 +482,31 @@ days.
 
 Concrete recommendation:
 
-| Stage | Approach | Scope                     | Cost  | Win                                     |
-|-------|----------|---------------------------|-------|-----------------------------------------|
-| 1     | B        | sagemaker, similar        | ~250L | Targeted call-site assertions           |
-| 2     | A        | strict mode               | ~30L  | Optional: True/Match propagation        |
-| 3     | C2       | symbolic subjects + cvc5  | ~300L | Wave 2 finishes; precise re for cvc5    |
-| 4     | C1       | broader String integration| ~1500L| Length, equality, slicing under cvc5    |
-| 5     | D / W3   | native regex axioms       | research-grade | Backend-agnostic precision         |
+| Stage | Approach | Scope                          | Cost           | Win                                  |
+|-------|----------|--------------------------------|----------------|--------------------------------------|
+| 1     | B        | sagemaker, similar             | ~250L          | Targeted call-site assertions        |
+| 2     | A        | strict mode                    | ~30L           | Optional: True/Match propagation     |
+| 3     | C2       | symbolic subjects + cvc5       | ~250L (smt2_conv only) | Wave 2 finishes; precise re for cvc5 |
+| 4     | C1       | broader String integration     | ~1500L         | Length, equality, slicing under cvc5 |
+| 5     | D / W3   | native regex axioms (refine-strings) | research-grade | Backend-agnostic precision           |
+
+Architecture invariants throughout:
+
+* The front-end emits `cprover_string_match_func` /
+  `cprover_string_search_func` /
+  `cprover_string_fullmatch_func` with refined-string arguments
+  for both the pattern and the subject. No SMT-LIB or
+  back-end-specific types ever cross the front-end / back-end
+  boundary.
+* Per-back-end interception (`smt2_conv.cpp` for SMT-LIB,
+  `string_constraint_generator_main.cpp` for the
+  string-refinement loop) handles the bridge to that back-end's
+  native string representation.
+* If finer types prove valuable (e.g. distinguishing pre-
+  compiled regexes from raw patterns), they are introduced in
+  `src/util/` as new `…_typet` classes alongside
+  `refined_string_typet` — never as one-off front-end
+  materialisations.
 
 Land Stage 1 next; sequence 2 → 3 as the suite demands; Stage 4
 is the standalone "Python-strings-as-SMT-Strings" plan that
