@@ -706,6 +706,14 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // PLR §8.9: Inherit fields from base classes (supports multiple inheritance)
   const jsont &bases = json_member(stmt, "bases");
   std::set<std::string> inherited_fields;
+  // All field names already added to `components` (regardless of
+  // origin). Used by the class-level / __init__ scanners below to
+  // avoid emitting duplicate field declarations — the SMT-LIB
+  // back-end (smt2_conv) lowers each component as a datatype
+  // selector, and CVC5 rejects datatypes whose constructor has
+  // two selectors with the same name. Pre-populated with the
+  // names already inherited so subclass scans skip them too.
+  std::set<std::string> declared_fields;
   if(bases.is_array())
   {
     for(const auto &base : as_array(bases))
@@ -723,6 +731,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             if(fname == "__class_tag" || inherited_fields.count(fname))
               continue;
             inherited_fields.insert(fname);
+            declared_fields.insert(fname);
             components.push_back(comp);
           }
         }
@@ -741,9 +750,13 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(is_node_type(target, "Name"))
         {
           std::string attr_name = json_string(json_member(target, "id"));
-          typet attr_type =
-            convert_type_annotation(json_member(item, "annotation"));
-          components.push_back(struct_typet::componentt{attr_name, attr_type});
+          if(declared_fields.insert(attr_name).second)
+          {
+            typet attr_type =
+              convert_type_annotation(json_member(item, "annotation"));
+            components.push_back(
+              struct_typet::componentt{attr_name, attr_type});
+          }
         }
       }
       else if(is_node_type(item, "Assign"))
@@ -756,6 +769,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             if(is_node_type(t, "Name"))
             {
               std::string attr_name = json_string(json_member(t, "id"));
+              if(!declared_fields.insert(attr_name).second)
+                continue;
               // Infer type from value
               const jsont &val = json_member(item, "value");
               typet attr_type = python_int_type();
@@ -801,7 +816,9 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           typet attr_type = annotation.is_null()
                               ? python_value_type()
                               : convert_type_annotation(annotation);
-          components.push_back(struct_typet::componentt{attr_name, attr_type});
+          if(declared_fields.insert(attr_name).second)
+            components.push_back(
+              struct_typet::componentt{attr_name, attr_type});
           continue;
         }
 
@@ -861,7 +878,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           }
         }
 
-        components.push_back(struct_typet::componentt{attr_name, attr_type});
+        if(declared_fields.insert(attr_name).second)
+          components.push_back(struct_typet::componentt{attr_name, attr_type});
       }
     }
   }
