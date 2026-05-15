@@ -612,14 +612,42 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
 
   if(op == "Add")
   {
+    if(
+      (left.type().id() == ID_struct || left.type().id() == ID_struct_tag) &&
+      !is_python_string_type(left.type()) && !is_python_list_type(left.type()))
+    {
+      // Opaque struct + struct (e.g., datetime arithmetic). The
+      // SMT2 back-end with use_datatypes can't lower this to a
+      // primitive operation. Sound over-approximation: nondet
+      // result of the left's type.
+      log_overapprox(
+        "binary '+' on opaque struct types — returning nondet result");
+      return side_effect_expr_nondett{left.type(), source_locationt{}};
+    }
     return plus_exprt{left, right};
   }
   else if(op == "Sub")
   {
+    if(
+      (left.type().id() == ID_struct || left.type().id() == ID_struct_tag) &&
+      !is_python_string_type(left.type()) && !is_python_list_type(left.type()))
+    {
+      log_overapprox(
+        "binary '-' on opaque struct types — returning nondet result");
+      return side_effect_expr_nondett{left.type(), source_locationt{}};
+    }
     return minus_exprt{left, right};
   }
   else if(op == "Mult")
   {
+    if(
+      (left.type().id() == ID_struct || left.type().id() == ID_struct_tag) &&
+      !is_python_string_type(left.type()) && !is_python_list_type(left.type()))
+    {
+      log_overapprox(
+        "binary '*' on opaque struct types — returning nondet result");
+      return side_effect_expr_nondett{left.type(), source_locationt{}};
+    }
     return mult_exprt{left, right};
   }
   else if(op == "FloorDiv")
