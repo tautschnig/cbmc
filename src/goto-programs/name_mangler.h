@@ -83,9 +83,72 @@ public:
       log.debug() << "Mangling: " << sym.name << " -> " << mangled << log.eom;
     }
 
+    // Second pass: rename scoped child symbols of renamed
+    // functions.  Parameter symbols and function-local
+    // variables are stored in the symbol table under names of
+    // the form `<function_name>::<base_name>` (and longer
+    // scope chains for nested locals).  Without renaming
+    // these, two translation units that include the same
+    // kernel header end up with identically-named parameter
+    // symbols (e.g. `security_netlink_send::sk` from both
+    // TUs); the linker then either accepts them with a
+    // `$link1` suffix on one (unifying the function symbol
+    // under its external name) or rejects them as
+    // 'conflicting function declarations' depending on
+    // whether the parameter types match exactly.  The fix is
+    // to rename child symbols in lockstep with the parent
+    // function so the per-TU mangling is complete.
+    std::vector<symbolt> new_child_syms;
+    std::vector<symbol_tablet::symbolst::const_iterator> old_child_syms;
+    for(auto sym_it = model.symbol_table.symbols.begin();
+        sym_it != model.symbol_table.symbols.end();
+        ++sym_it)
+    {
+      const std::string sym_name = id2string(sym_it->first);
+      // Skip the function symbols themselves; they were
+      // handled above and any name match here would already be
+      // in `renamed_funs`.
+      if(renamed_funs.find(sym_it->first) != renamed_funs.end())
+        continue;
+
+      for(const auto &pair : renamed_funs)
+      {
+        const std::string old_prefix = id2string(pair.first) + "::";
+        if(sym_name.compare(0, old_prefix.size(), old_prefix) != 0)
+          continue;
+
+        const irep_idt new_name =
+          id2string(pair.second) + "::" +
+          sym_name.substr(old_prefix.size());
+        symbolt new_child = sym_it->second;
+        new_child.name = new_name;
+        // Clear file_local on the child symbols too: the parent
+        // function has just transitioned from file-local to
+        // globally-mangled and unifiable, and the linker's
+        // file-local renaming rule (RENAME_NEW for any
+        // file_local symbol it sees on the new side of a link)
+        // would otherwise force `$link1` suffixes on each
+        // duplicate child symbol — defeating the unification we
+        // just set up.  The new mangled name is unique across
+        // TUs that share the header but should unify cleanly
+        // when two TUs include the SAME header (because both
+        // ends of the link produce identical mangled names).
+        new_child.is_file_local = false;
+        new_child_syms.push_back(new_child);
+        old_child_syms.push_back(sym_it);
+        rename.insert(
+          sym_it->second.symbol_expr(), new_child.symbol_expr());
+        break;
+      }
+    }
+
     for(const auto &sym : new_syms)
       model.symbol_table.insert(sym);
     for(const auto &sym : old_syms)
+      model.symbol_table.erase(sym);
+    for(const auto &sym : new_child_syms)
+      model.symbol_table.insert(sym);
+    for(const auto &sym : old_child_syms)
       model.symbol_table.erase(sym);
 
     for(auto it = model.symbol_table.begin(); it != model.symbol_table.end();
