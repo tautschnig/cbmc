@@ -136,6 +136,51 @@ codet python_convertert::convert_if(const jsont &stmt)
   auto saved_versions = variable_versions;
   if_else_depth++;
 
+  // Path-sensitive truthiness: when the test is a bare Name
+  // referring to a list-typed variable, the body executes only
+  // when the list is non-empty (Python truthiness for lists is
+  // `len > 0`). Record min-length 1 for the body conversion to
+  // match the `len(L) >= N and L[i]` short-circuit idiom and
+  // suppress spurious IndexError checks on `L[0]` etc. inside
+  // `if L: L[0] / L[i]` patterns.
+  std::vector<irep_idt> body_length_bounds_added;
+  std::map<irep_idt, mp_integer> body_length_bounds_overwritten;
+  bool then_branch_inverted = false;
+  {
+    const jsont &test_node = json_member(stmt, "test");
+    const jsont *target_node = &test_node;
+    // Handle `if not x: ... else: <body uses x>`: the else-branch
+    // gets the non-empty fact, not the body. We don't yet specially
+    // handle this — only the direct `if x:` form below.
+    if(
+      is_node_type(test_node, "UnaryOp") &&
+      json_string(json_member(json_member(test_node, "op"), "_type")) == "Not")
+    {
+      then_branch_inverted = true;
+      target_node = &json_member(test_node, "operand");
+    }
+    if(!then_branch_inverted && is_node_type(*target_node, "Name"))
+    {
+      std::string vname = json_string(json_member(*target_node, "id"));
+      irep_idt vid{qualify_name(vname)};
+      const symbolt *sym = symbol_table.lookup(vid);
+      if(sym != nullptr && is_python_list_type(sym->type))
+      {
+        auto it = list_min_lengths.find(vid);
+        if(it == list_min_lengths.end())
+        {
+          list_min_lengths[vid] = mp_integer{1};
+          body_length_bounds_added.push_back(vid);
+        }
+        else if(it->second < 1)
+        {
+          body_length_bounds_overwritten[vid] = it->second;
+          it->second = mp_integer{1};
+        }
+      }
+    }
+  }
+
   // Convert body
   code_blockt then_block;
   const jsont &body = json_member(stmt, "body");
@@ -144,6 +189,12 @@ codet python_convertert::convert_if(const jsont &stmt)
     for(const auto &s : as_array(body))
       then_block.add(convert_statement(s));
   }
+
+  // Restore list_min_lengths to pre-body state.
+  for(const auto &id : body_length_bounds_added)
+    list_min_lengths.erase(id);
+  for(const auto &kv : body_length_bounds_overwritten)
+    list_min_lengths[kv.first] = kv.second;
 
   // Save then-branch versions, restore for else branch
   auto then_versions = variable_versions;
