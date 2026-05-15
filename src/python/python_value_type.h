@@ -77,9 +77,15 @@ inline struct_typet python_value_struct_def()
     struct_typet::componentt{"__bool_val", signedbv_typet{32}});
   components.push_back(struct_typet::componentt{
     "__str_ptr", pointer_typet{python_string_type(), 64}});
-  // list[python_value_type] — self-referential via struct_tag_typet
-  components.push_back(struct_typet::componentt{
-    "__list_ptr", pointer_typet{python_list_type(python_value_type()), 64}});
+  // List values use an opaque pointer (like __class_ptr) — typed
+  // pointer would create a recursive type definition
+  // (python_value -> pointer to python_list[python_value]) which
+  // CBMC's smt2_conv emits as separate one-by-one declare-datatypes
+  // statements, leading to forward-reference errors under cvc5.
+  // Callers cast to the concrete list pointer type at use site
+  // (see python_value_list).
+  components.push_back(
+    struct_typet::componentt{"__list_ptr", pointer_typet{empty_typet{}, 64}});
   // Opaque class-instance pointer. Used when CLASS tag is set;
   // the concrete struct type is not carried here — callers must
   // cast back to the specific class type at use site.
@@ -116,8 +122,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
   exprt bool_val = from_integer(0, signedbv_typet{32});
   exprt str_ptr = null_pointer_exprt{
     pointer_typet{python_string_type(), 64}};
-  exprt list_ptr = null_pointer_exprt{
-    pointer_typet{python_list_type(python_value_type()), 64}};
+  exprt list_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
   exprt class_ptr = null_pointer_exprt{
     pointer_typet{empty_typet{}, 64}};
 
@@ -143,8 +148,9 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     break;
   case python_type_tagt::LIST:
     list_ptr = value.type().id() == ID_pointer
-                 ? value
-                 : address_of_exprt{value};
+                 ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+                 : typecast_exprt{
+                     address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
   case python_type_tagt::CLASS:
     class_ptr = value.type().id() == ID_pointer
@@ -207,11 +213,13 @@ inline dereference_exprt python_value_str(const exprt &value)
 }
 
 /// Extract the list pointer from a tagged-union value.
+/// Returns a dereference of the typed list pointer; the underlying
+/// `__list_ptr` field is opaque (`pointer_typet{empty_typet}`) to
+/// avoid a recursive type definition, so we typecast at the use site.
 inline dereference_exprt python_value_list(const exprt &value)
 {
-  return dereference_exprt{member_exprt{
-    value,
-    "__list_ptr",
+  return dereference_exprt{typecast_exprt{
+    member_exprt{value, "__list_ptr", pointer_typet{empty_typet{}, 64}},
     pointer_typet{python_list_type(python_value_type()), 64}}};
 }
 
