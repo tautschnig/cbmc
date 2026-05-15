@@ -4110,6 +4110,23 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
           }
         }
+        // float(<python_value>) — extract the tagged-union's
+        // float slot. Avoids CBMC's smt2_conv struct_tag→float
+        // typecast fallback (which UNEXPECTEDCASEs on cvc5).
+        if(is_python_value_type(arg.type()))
+          return python_value_float(arg);
+        // float(<other struct>): return a nondet float over-
+        // approximation rather than letting smt2_conv's
+        // typecast handler abort.
+        if(
+          arg.type().id() == ID_struct ||
+          arg.type().id() == ID_struct_tag)
+        {
+          log_overapprox(
+            "float() on opaque struct — returning nondet float");
+          return side_effect_expr_nondett{
+            double_type(), source_locationt{}};
+        }
         return typecast_exprt{arg, double_type()};
       }
     }
