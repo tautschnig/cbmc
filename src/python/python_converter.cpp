@@ -1206,7 +1206,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   {
     std::string base =
       json_string(json_member(json_member(annotation, "value"), "id"));
-    if(base == "list")
+    if(base == "list" || base == "List")
     {
       // Extract element type from the slice
       typet elem_type =
@@ -1217,6 +1217,15 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     {
       // Optional[T] — for now, treat as T (None handling is future work)
       return convert_type_annotation(json_member(annotation, "slice"));
+    }
+    else if(base == "Set" || base == "FrozenSet" || base == "set" ||
+            base == "frozenset")
+    {
+      // The set element type isn't currently used by our set
+      // model (sets are backed by python_set_type), but
+      // recognising the parameterised form prevents the
+      // fall-through to int.
+      return python_set_type();
     }
     // dict[K, V] / Dict[K, V] — extract key and value types.
     // Restricted to primitive value types (int/float/bool/str);
