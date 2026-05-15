@@ -15,6 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/exit_codes.h>
 #include <util/help_formatter.h>
 #include <util/invariant.h>
+#include <util/prefix.h>
 #include <util/version.h>
 #include <util/xml.h>
 
@@ -43,11 +44,11 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-instrument/reachability_slicer.h>
 #include <goto-symex/path_storage.h>
 #include <java_bytecode/convert_java_nondet.h>
+#include <java_bytecode/java_bytecode_contracts.h>
 #include <java_bytecode/java_bytecode_language.h>
 #include <java_bytecode/java_multi_path_symex_checker.h>
 #include <java_bytecode/java_multi_path_symex_only_checker.h>
 #include <java_bytecode/java_single_path_symex_checker.h>
-#include <java_bytecode/java_bytecode_contracts.h>
 #include <java_bytecode/java_single_path_symex_only_checker.h>
 #include <java_bytecode/lazy_goto_model.h>
 #include <java_bytecode/remove_exceptions.h>
@@ -837,13 +838,30 @@ bool jbmc_parse_optionst::process_goto_functions(
 
   // F12: in modular mode, additionally substitute calls to annotated
   // functions with their contracts so the callee body is never
-  // inlined at the caller's symex.
+  // inlined at the caller's symex. Exclude the entry function
+  // (passed via --function) from the replacement set: that's the
+  // function we are actually verifying end-to-end against its body.
   if(cmdline.isset("modular"))
   {
+    std::set<irep_idt> to_substitute = annotated_functions;
+    if(cmdline.isset("function"))
+    {
+      const std::string entry_fn = cmdline.get_value("function");
+      // The user-facing form is `Class.method`; the symbol id is
+      // `java::Class.method:(...)...`. Match by prefix.
+      const std::string prefix = "java::" + entry_fn + ":";
+      for(auto it = to_substitute.begin(); it != to_substitute.end();)
+      {
+        if(has_prefix(id2string(*it), prefix))
+          it = to_substitute.erase(it);
+        else
+          ++it;
+      }
+    }
     log.status() << "F12: applying modular contract substitution to "
-                 << annotated_functions.size() << " annotated function(s)"
+                 << to_substitute.size() << " annotated callee(s)"
                  << messaget::eom;
-    apply_modular_contract_substitution(goto_model, annotated_functions);
+    apply_modular_contract_substitution(goto_model, to_substitute);
   }
 
   // ignore default/user-specified initialization

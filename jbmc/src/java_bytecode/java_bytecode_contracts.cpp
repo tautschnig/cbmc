@@ -16,6 +16,7 @@ Date: May 2026
 #include <util/arith_tools.h>
 #include <util/c_types.h>
 #include <util/cout_message.h>
+#include <util/cprover_prefix.h>
 #include <util/fresh_symbol.h>
 #include <util/invariant.h>
 #include <util/mathematical_expr.h>
@@ -340,6 +341,26 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           goto_model.symbol_table.lookup_ref(info.target_method_id);
         const auto &target_type = to_code_type(target_sym.type);
 
+        // F12 (lambda-form ensures): TODO. The lambda postcondition's
+        // predicate is `target_method(captures..., __CPROVER_return_value)`.
+        // Capturing this as a c_ensures lambda crashed downstream goto
+        // passes that inspect the clause expression — function_application
+        // inside a lambda body is something the contract pipeline doesn't
+        // expect from the C front-end. Until we either teach the
+        // pipeline or rewrite the predicate as an inlined boolean
+        // expression, modular mode silently misses lambda-form
+        // postconditions. Boolean-form `postcondition(boolean)` calls
+        // are still captured below and substitution works for those.
+        //
+        // We deliberately do NOT add this function to
+        // `annotated_functions` here: without an ensures clause, modular
+        // substitution at call sites would replace the call with
+        // `assert(req); havoc; assume(true)` — losing all return-value
+        // information and breaking caller proofs. The function still
+        // gets verified end-to-end via inlining (the existing F1/F6
+        // path); only the modular speedup is missed for lambda-only
+        // contracts.
+
         // For each return-value assignment, insert:
         //   DECL ret_save : <return type>
         //   ASSIGN ret_save := <return expression>
@@ -564,13 +585,33 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
     }
   }
 
+  // F12: only functions with BOTH captured requires AND captured
+  // ensures are sound candidates for call-site substitution. A
+  // function with requires but no captured ensures (e.g., one whose
+  // postcondition is only in lambda form, which we don't yet capture
+  // as a c_ensures) would substitute as `assert(req); havoc;
+  // assume(true)` — sound, but strictly less informative than
+  // inlining, so the caller's proof regresses. Filter such functions
+  // out of the substitution set; they still get verified end-to-end
+  // via inlining.
+  std::set<irep_idt> substitutable_functions;
+  for(const auto &fid : annotated_functions)
+  {
+    bool has_requires = requires_per_function.count(fid) > 0 &&
+                        !requires_per_function.at(fid).empty();
+    bool has_ensures = ensures_per_function.count(fid) > 0 &&
+                       !ensures_per_function.at(fid).empty();
+    if(has_requires && has_ensures)
+      substitutable_functions.insert(fid);
+  }
+
   // F12: populate `code_with_contract_typet` clauses on every
   // annotated function symbol AND emit a parallel `contract::<fid>`
   // symbol that CBMC's `code_contractst::replace_calls` looks up
   // first. The clauses must be wrapped in `lambda_exprt` over the
   // function's parameter symbols — that's the shape CBMC's
   // contracts machinery expects (see c_typecheck_base.cpp:929).
-  for(const auto &fid : annotated_functions)
+  for(const auto &fid : substitutable_functions)
   {
     auto sym_it = goto_model.symbol_table.get_writeable(fid);
     if(sym_it == nullptr)
@@ -578,7 +619,17 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
     const code_typet &existing_type = to_code_type(sym_it->type);
 
     // Build the parameter-symbol vector for the lambda binding.
+    // CBMC's contract substitution prepends `__CPROVER_return_value`
+    // to the call-site's value list when the function has a
+    // non-empty return type, so the lambda must bind that variable
+    // before the actual parameters. See ansi-c/c_typecheck_base.cpp
+    // around line 893 for the C front-end's parallel logic.
     std::vector<symbol_exprt> parameter_syms;
+    const typet &return_type = existing_type.return_type();
+    if(return_type.id() != ID_empty)
+    {
+      parameter_syms.emplace_back(CPROVER_PREFIX "return_value", return_type);
+    }
     for(const auto &p : existing_type.parameters())
     {
       const irep_idt &pid = p.get_identifier();
@@ -626,7 +677,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
     }
   }
 
-  return annotated_functions;
+  return substitutable_functions;
 }
 
 void apply_modular_contract_substitution(
@@ -644,7 +695,7 @@ void apply_modular_contract_substitution(
     id_strings.insert(id2string(fid));
 
   console_message_handlert mh;
-  mh.set_verbosity(messaget::M_ERROR);
+  mh.set_verbosity(messaget::M_STATUS);
   messaget log{mh};
 
   loop_contract_configt no_loop_contracts;
