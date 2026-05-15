@@ -259,16 +259,31 @@ def find_function_signature(source: Path, name: str) -> Signature | None:
     text = _strip_comments(source.read_text(errors="replace"))
 
     # Match 'TYPE NAME(...)' where TYPE is one or more tokens and
-    # NAME is the requested function name.  Look for an opening '{'
-    # or ';' after the ')' to anchor on a definition (or declaration).
+    # NAME is the requested function name.  Anchor on either the
+    # start of text, end of line, or a `;` / `}` token so we only
+    # match function-definition contexts and not call sites or
+    # declarations buried inside expressions.  Require a `{` after
+    # the parameter list so we match the definition, not a forward
+    # declaration.
     pat = re.compile(
-        r"([\w\s\*\(\)]+?)\b" + re.escape(name) +
-        r"\s*\(\s*([^{};]*?)\s*\)\s*[{;]",
+        r"(?:^|[;}\n])"
+        r"\s*([\w\s\*\(\)]+?)\b" + re.escape(name) +
+        r"\s*\(\s*([^{};]*?)\s*\)\s*\{",
         re.MULTILINE | re.DOTALL,
     )
     m = pat.search(text)
     if not m:
-        return None
+        # Fall back to the looser anchor (no `{` requirement) so
+        # we can still find functions whose bodies are
+        # unbracketed in the relevant compilation unit (rare).
+        pat_loose = re.compile(
+            r"([\w\s\*\(\)]+?)\b" + re.escape(name) +
+            r"\s*\(\s*([^{};]*?)\s*\)\s*[{;]",
+            re.MULTILINE | re.DOTALL,
+        )
+        m = pat_loose.search(text)
+        if not m:
+            return None
 
     return_type = m.group(1).strip()
     # Detect storage class before cleaning the leading keywords.
@@ -433,6 +448,28 @@ def synthesise(module: str, source: Path, function: str,
         "int8_t", "int16_t", "int32_t", "int64_t",
         "uint8_t", "uint16_t", "uint32_t", "uint64_t",
         "true", "false", "NULL",
+        # Kernel-specific typedefs from <linux/types.h> /
+        # <linux/posix_types.h> / <asm/posix_types_*.h> that
+        # appear pervasively in kernel function signatures.
+        # Listing them here keeps the harness from emitting
+        # `typedef char loff_t;` (and similar), which conflicts
+        # with the kernel TU's existing definition.
+        "loff_t", "off_t", "fmode_t", "umode_t", "blkcnt_t",
+        "sector_t", "dev_t", "ino_t", "uid_t", "gid_t",
+        "pid_t", "time_t", "time64_t", "ktime_t",
+        "u8", "u16", "u32", "u64",
+        "s8", "s16", "s32", "s64",
+        "__u8", "__u16", "__u32", "__u64",
+        "__s8", "__s16", "__s32", "__s64",
+        "__be16", "__be32", "__be64",
+        "__le16", "__le32", "__le64",
+        "phys_addr_t", "resource_size_t", "dma_addr_t",
+        "gfp_t", "fl_owner_t", "vm_fault_t",
+        "atomic_t", "atomic64_t", "atomic_long_t",
+        "irqreturn_t", "cycles_t", "clockid_t",
+        "qid_t", "key_t", "key_serial_t", "kuid_t", "kgid_t",
+        "mode_t", "rwf_t", "spinlock_t", "rwlock_t",
+        "seqlock_t", "seqcount_t",
     }
     # Identifiers the forward_decls block or ghost_init_decl
     # already declared explicitly — don't re-typedef those.
