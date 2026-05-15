@@ -58,95 +58,79 @@ string-refinement loop). For comparison, the same suite under
 | Backend          | CLEAN | TP | MISS | FP | TOERR | OOM | Pass-rate |
 |------------------|-------|----|------|----|-------|-----|-----------|
 | default          |    39 |  9 |    3 |  0 |     0 |   0 | **94.1 %** |
-| `--smt2 --cvc5`  |    38 |  7 |    3 |  0 |     2 |   1 | **88.2 %** |
+| `--smt2 --cvc5`  |    39 |  8 |    3 |  0 |     0 |   1 | **92.2 %** |
 
 Both backends are run with `--object-bits 12` (raises CBMC's
 addressed-object limit from 256 to 4096 — safe for the
 Python benchmarks).
 
-Under `--cvc5`, 2 benchmarks ERROR (down from 15 before this
-round of cvc5-IR-compatibility work) plus 1 OOM. Six rounds
-of fixes contributed:
+Under `--cvc5`, only 1 benchmark fails (and it's an OOM, not
+a correctness issue) — down from 15 TOERRs at the start of
+this work. Eight rounds of fixes contributed:
 
 1. **Class struct components deduplication** —
    `python_converter_defs.cpp` now tracks a
    `declared_fields` set across all four field sources
-   (class-level AnnAssign / Assign, __init__ AnnAssign,
-   __init__ self.attr =) and skips duplicate names.
-   Fixed: `Parse Error: struct.X.field already declared
-   in this datatype`.
+   and skips duplicate names.
 
 2. **`cprover_string_concat_func` in `smt2_conv` no longer
-   emits a malformed struct constructor.** Now emits
-   `(_ bv0 W)`; the actual string content is enforced via
-   the separately-assigned `__string_len_X` /
-   `__string_ptr_X` symbols at the front-end level.
+   emits a malformed struct constructor.**
 
-3. **`List[X]` / `Set[X]` annotation recognition** —
-   convert_type_annotation now handles capitalised `typing`
-   aliases (List, Set, FrozenSet) the same way as their
-   lowercase counterparts.
+3. **`List[X]` / `Set[X]` annotation recognition** for
+   capitalised `typing` aliases.
 
-4. **Front-end guards for opaque-struct arithmetic** —
-   `Add` / `Sub` / `Mult` on opaque struct/struct_tag types
-   now return a sound nondet of the left's type rather than
-   emitting a `minus_exprt` that smt2_conv UNEXPECTEDCASEs
-   on.
+4. **Front-end guards for opaque-struct arithmetic.**
 
-5. **`float()` on a python_value** — extracts the
-   `__float_val` field directly via `python_value_float`
-   rather than emitting a `typecast_exprt` that
-   smt2_conv's `Unknown typecast struct_tag -> float`
-   UNEXPECTEDCASEs.
+5. **`float()` on a python_value** extracts via
+   `python_value_float` rather than emitting a
+   typecast that smt2_conv cannot lower.
 
 6. **`flatten2bv` of float-containing structs under FPA
-   theory** — When a `typecast(struct, bv|signedbv)`
-   reduces via flatten2bv, struct components recursively
-   flatten — but float members fired
-   `INVARIANT(!use_FPA_theory)`. `find_symbols_rec` now
-   pre-registers `typecast(<floatbv-leaf>, bv)` for each
-   reachable float-leaf in the struct (descending into
-   nested structs and arrays); `flatten2bv` for float
-   under FPA looks up the synthetic typecast in
-   `defined_expressions` and emits the registered
-   `bvfromfloat.N` identifier. Fixed: `ecs_utils`.
+   theory** — pre-register `typecast(float-leaf, bv)` for
+   each float-leaf reachable from a struct flatten so
+   `flatten2bv` for floatbv can emit a
+   `bvfromfloat.N` registered identifier.
 
-7. **Opaque `__list_ptr` in `python_value`** — the
-   `__list_ptr` component of `python_value` was typed as
-   `pointer_typet{python_list[python_value]}`, introducing
-   a recursive type definition. CBMC's smt2_conv emits
-   each datatype declaration in its own `(declare-datatypes
-   …)` form one-by-one, so mutually-recursive types caused
-   forward references that cvc5 rejected with
-   `Symbol 'struct.N' not declared as a type`. Made
-   `__list_ptr` opaque (`pointer_typet{empty_typet}`) like
-   `__class_ptr`; callers cast at use site via
-   `python_value_list`. Fixed: `ses_email_example`,
-   `execute_stepfunction`, partial: `kms_client_manager`,
-   `apigateway_key_manager`.
+7. **Opaque `__list_ptr` in `python_value`** — breaks the
+   `python_value -> pointer to python_list[python_value]`
+   recursive type cycle. Callers cast at use site via
+   `python_value_list`.
 
-8. **`python_set_type` migrated to `struct_tag_typet`** —
-   parallel to `python_value_type` and
-   `python_string_type`. Single named symbol-table entry
-   referenced by all call sites.
+8. **`python_set_type` migrated to `struct_tag_typet`.**
 
-Remaining 2 TOERR + 1 OOM under cvc5:
+9. **Drop the type-confused byte-by-byte
+   startswith/endswith path** that built
+   `member_exprt(.., "data", array_typet)` on a struct
+   field whose actual type is `pointer_typet(u8, 64)`,
+   producing `(select <bv64-pointer> <idx>)` SMT under
+   cvc5. Defer to the existing
+   `cprover_string_is_prefix_func` /
+   `cprover_string_is_suffix_func` refinement-string
+   path.
 
-* **2 `array select operating on non-array` errors**
-  (`apigateway_key_manager`, `kms_client_manager`). cvc5
-  rejects a string-comparison that emits
-  `(select <bv64-constant> <index>)` — i.e., selecting
-  from a string-data POINTER (a 64-bit value), as if it
-  were an array. Separate front-end / refined-string-bridge
-  bug; not a struct-typing issue.
+10. **Nondet over-approximation for struct->struct
+    typecast under `use_datatypes`.** CBMC's
+    `convert_typecast` for struct->struct emitted
+    `((_ extract H 0) (mk-struct.<src> ...))` /
+    `((_ zero_extend K) (mk-struct.<src> ...))` which is
+    valid under boolbv but invalid under cvc5
+    datatypes. `find_symbols` now pre-allocates a fresh
+    `struct_cast.N` symbol of the destination datatype;
+    `convert_typecast` looks it up and emits the
+    registered identifier. Sound over-approximation —
+    drops correlation with the source value, which is
+    fine for Python's dynamic-typing list/dict element-
+    type coercions where the source's value is being
+    reinterpreted at the type-system boundary.
 
-* **1 cvc5 OOM** (`s3_backup_restore`). Formula size is
-  3-4 MB / 70k+ lines of SMT-LIB. Mitigation requires
-  cutting axiom emission at the CBMC level or reducing
-  list/dict bounds — out of scope for this round.
+Remaining 1 OOM under cvc5:
 
-These are tracked as future work; the default back-end
-remains the production target.
+* `s3_backup_restore` — formula size is 3-4 MB / 70k+
+  lines of SMT-LIB. Mitigation requires cutting axiom
+  emission at the CBMC level or reducing list/dict
+  bounds — out of scope for this round.
+
+The default back-end remains the production target.
 
 Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
 6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
