@@ -49,6 +49,35 @@ Pass rate: **(39 + 9) / 51 = 94.1 %** with the opt-in flags.
 All benchmarks now produce a definite verdict — no
 TOERR/TIMEOUT/OOM with either configuration.
 
+## Cross-backend (default vs `--cvc5`)
+
+The numbers above are with the **default** back-end (boolbv +
+string-refinement loop). For comparison, the same suite under
+`--cvc5` (SMT-LIB output to CVC5 with the `String` theory):
+
+| Backend          | CLEAN | TP | MISS | FP | TOERR | Pass-rate |
+|------------------|-------|----|------|----|-------|-----------|
+| default          |    39 |  9 |    3 |  0 |     0 | **94.1 %** |
+| `--smt2 --cvc5`  |    29 |  5 |    2 |  0 |    15 |   66.7 %  |
+
+Under `--cvc5`, 15 benchmarks ERROR with SMT-LIB parse / model
+errors that are pre-existing problems with our IR's
+compatibility with the SMT2 back-end (struct-redeclaration
+issues on Python `class` types, refined-string struct
+encoding edge cases). These ERRORs are NOT caused by the
+re-precision work — they reproduce on commits before stage 3
+was added.
+
+The current cvc5 picture is therefore: **default back-end is
+the production target**; the cvc5 path is plumbed end-to-end
+(Wave 2 SMT regex translation, stage 3 back-end-side bridge
+from refined-string to SMT String for symbolic subjects) but
+gated behind a separate body of cvc5-specific work to fix the
+ERROR-class issues. Stage 4 (broader Python-string ↔
+SMT-`String` integration) and the cvc5 ERROR triage are
+parallel tracks, neither of which moves the default-back-end
+suite.
+
 Compared to the 2026-04 baseline (27 CLEAN + 1 TP + 9 MISS + 3 FP +
 6 TOERR + 3 TIMEOUT + 2 OOM = 54.9 %), the rate has improved
 substantially through dict-precision, idiom recognition, attribute-error
