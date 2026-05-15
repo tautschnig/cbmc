@@ -54,6 +54,8 @@ void python_languaget::set_language_options(
     options.get_bool_option("python-check-typeddict-fields");
   python_check_annotations =
     options.get_bool_option("python-check-annotations");
+  python_check_any_arg_attrs =
+    options.get_bool_option("python-check-any-arg-attrs");
   python_string_kind = options.get_bool_option("python-smt-strings")
                          ? python_string_kindt::smt_string
                          : python_string_kindt::refined;
@@ -196,6 +198,7 @@ bool python_languaget::typecheck(
   converter.set_python_required_kwarg_checks(python_required_kwarg_checks);
   converter.set_python_check_typeddict_fields(python_check_typeddict_fields);
   converter.set_python_check_annotations(python_check_annotations);
+  converter.set_python_check_any_arg_attrs(python_check_any_arg_attrs);
   converter.set_module_resolver(
     [this, &message_handler](const std::string &name) -> const jsont *
     { return resolve_module(name, message_handler); });

@@ -97,6 +97,14 @@ protected:
   bool python_required_kwarg_checks = false;
   bool python_check_typeddict_fields = false;
   bool python_check_annotations = false;
+  /// When true, at each call site `f(args)` where `f`'s parameter
+  /// is annotated `Any` (or `python_value_type`) and the caller's
+  /// argument has a known concrete class type, emit
+  /// attribute-error properties for `param.X(...)` references in
+  /// `f`'s body where `X` is not a method on the argument's class.
+  /// Catches the `bedrock_data_automation_example` Any-erasure
+  /// pattern. Off-by-default (opt-in via --python-check-any-arg-attrs).
+  bool python_check_any_arg_attrs = false;
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When

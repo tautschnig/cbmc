@@ -203,6 +203,11 @@ public:
     python_check_annotations = v;
   }
 
+  void set_python_check_any_arg_attrs(bool v)
+  {
+    python_check_any_arg_attrs = v;
+  }
+
 private:
   /// Lazy-stubs mode: imported modules get symbol-table entries
   /// (types, classes, function signatures) but no function
@@ -240,6 +245,21 @@ private:
   /// mismatches with class-typed annotations — enable only
   /// for user-code auditing, not stub-heavy code.
   bool python_check_annotations = false;
+  /// When true, emit attribute-error properties at call sites
+  /// where the callee's parameter is `Any`-typed and the
+  /// caller's argument has a known concrete class type that
+  /// doesn't have an attribute referenced via `param.X` in the
+  /// callee's body. Detects the cross-function Any-erasure
+  /// pattern (e.g. `bedrock_data_automation_example`).
+  /// Off-by-default (opt-in via --python-check-any-arg-attrs).
+  bool python_check_any_arg_attrs = false;
+  /// Map from `python::<func-id>::<param-name>` → set of
+  /// attribute names referenced via `param.<name>` (or
+  /// `param.<name>(...)`) in the function body. Populated by
+  /// `collect_param_attribute_uses` during `convert_function_def`
+  /// and consulted at call sites when
+  /// `python_check_any_arg_attrs` is on.
+  std::map<irep_idt, std::set<std::string>> function_param_attr_uses;
   /// Emit a message about a front-end over-approximation. In the
   /// default mode the message goes to log.debug() so it is only
   /// visible at high verbosity; when --python-strict-warnings is

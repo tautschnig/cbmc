@@ -155,6 +155,55 @@ collect_param_names(const jsont &func_def)
   return params;
 }
 
+/// Recursively walk a Python AST node and collect every attribute
+/// access of the form `Attribute(value=Name(id=p), attr=X)` where
+/// `p` is in `param_names`. For each match, add `X` to `out[p]`.
+///
+/// Nested FunctionDef / AsyncFunctionDef / Lambda bodies are
+/// skipped — they bind parameter names fresh, so `param.X`
+/// inside a nested function does not refer to our parameter.
+[[maybe_unused]] static inline void collect_param_attribute_uses(
+  const jsont &node,
+  const std::set<std::string> &param_names,
+  std::map<std::string, std::set<std::string>> &out)
+{
+  if(node.is_null())
+    return;
+
+  if(node.is_object())
+  {
+    const std::string &type = node["_type"].value;
+    if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
+       type == "Lambda")
+      return;
+
+    if(type == "Attribute")
+    {
+      const jsont &value = node["value"];
+      if(value.is_object() && value["_type"].value == "Name")
+      {
+        const std::string &name = value["id"].value;
+        if(param_names.count(name) > 0)
+        {
+          const std::string &attr = node["attr"].value;
+          if(!attr.empty())
+            out[name].insert(attr);
+        }
+      }
+    }
+
+    for(const auto &kv : to_json_object(node))
+      collect_param_attribute_uses(kv.second, param_names, out);
+    return;
+  }
+
+  if(node.is_array())
+  {
+    for(const auto &item : to_json_array(node))
+      collect_param_attribute_uses(item, param_names, out);
+  }
+}
+
 /// Convert a double to a 64-bit floatbv constant expression.
 /// Used for math intrinsics with floating-point constant folding.
 [[maybe_unused]] static inline constant_exprt double_to_floatbv(double d)

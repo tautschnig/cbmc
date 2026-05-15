@@ -6387,6 +6387,77 @@ exprt python_convertert::convert_call(const jsont &expr)
               func_name + "'",
             get_location(expr));
         }
+        // Any-erasure detection: when the parameter is Any-typed
+        // (python_value_type) and the caller's argument has a
+        // known concrete class type, look up the function's
+        // collected `param.X` references in
+        // `function_param_attr_uses`. For each X that is NOT a
+        // method on the argument's class, emit an
+        // attribute-error property anchored at the call site.
+        if(
+          python_check_any_arg_attrs &&
+          is_python_value_type(params[i].type()) &&
+          (arguments[i].type().id() == ID_struct ||
+           arguments[i].type().id() == ID_struct_tag))
+        {
+          // Resolve the class tag.
+          std::string arg_class_tag;
+          if(arguments[i].type().id() == ID_struct_tag)
+          {
+            const auto &tag = to_struct_tag_type(arguments[i].type());
+            const symbolt *sym = symbol_table.lookup(tag.get_identifier());
+            if(sym != nullptr && sym->type.id() == ID_struct)
+              arg_class_tag = id2string(to_struct_type(sym->type).get_tag());
+          }
+          else
+            arg_class_tag =
+              id2string(to_struct_type(arguments[i].type()).get_tag());
+          // Look up the function's parameter name. params[i] has
+          // identifier "python::<func>::<param_name>".
+          irep_idt param_id = params[i].get_identifier();
+          auto it = function_param_attr_uses.find(param_id);
+          if(it != function_param_attr_uses.end() && !arg_class_tag.empty())
+          {
+            // Strip "python_class_" prefix if present.
+            std::string class_name = arg_class_tag;
+            if(class_name.rfind("python_class_", 0) == 0)
+              class_name = class_name.substr(13);
+            auto cdm = class_declared_methods.find(class_name);
+            // Boto3 base methods (inherited helpers) — do not
+            // flag these even if absent from the class's own
+            // declared methods.
+            static const std::set<std::string> boto3_base_methods{
+              "get_paginator",
+              "can_paginate",
+              "get_waiter",
+              "close",
+              "exceptions",
+              "meta",
+              "generate_presigned_url",
+              "generate_presigned_post"};
+            for(const auto &attr_name : it->second)
+            {
+              if(boto3_base_methods.count(attr_name) > 0)
+                continue;
+              bool found = false;
+              if(cdm != class_declared_methods.end() &&
+                 cdm->second.count(attr_name) > 0)
+                found = true;
+              if(!found)
+              {
+                add_check(
+                  false_exprt{},
+                  "attribute-error",
+                  "argument " + std::to_string(i) + " of class '" +
+                    class_name + "' missing method '" + attr_name +
+                    "' referenced via Any-typed parameter '" +
+                    id2string(params[i].get_base_name()) + "' in '" +
+                    func_name + "'",
+                  get_location(expr));
+              }
+            }
+          }
+        }
         arguments[i] = safe_typecast(arguments[i], params[i].type());
       }
     }

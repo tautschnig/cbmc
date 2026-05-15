@@ -187,6 +187,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-check-typeddict-fields", true);
   if(cmdline.isset("python-check-annotations"))
     options.set_option("python-check-annotations", true);
+  if(cmdline.isset("python-check-any-arg-attrs"))
+    options.set_option("python-check-any-arg-attrs", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.

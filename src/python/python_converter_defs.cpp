@@ -466,6 +466,34 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   global_names.clear();
   nonlocal_names.clear();
 
+  // Pre-scan the body to collect parameter attribute uses.
+  // Used by --python-check-any-arg-attrs at call sites to detect
+  // Any-erasure bugs (cross-function flow where the caller has a
+  // concrete class type for an arg whose corresponding parameter
+  // is `Any`-typed).
+  if(python_check_any_arg_attrs)
+  {
+    std::set<std::string> param_names;
+    for(const auto &p : parameters)
+    {
+      // Only Any-typed parameters benefit from this analysis;
+      // typed parameters already get dispatched correctly.
+      if(is_python_value_type(p.type()))
+        param_names.insert(std::string{id2string(p.get_base_name())});
+    }
+    if(!param_names.empty())
+    {
+      std::map<std::string, std::set<std::string>> per_param;
+      const jsont &body_for_scan = json_member(stmt, "body");
+      collect_param_attribute_uses(body_for_scan, param_names, per_param);
+      for(const auto &kv : per_param)
+      {
+        irep_idt key{"python::" + func_name + "::" + kv.first};
+        function_param_attr_uses[key] = kv.second;
+      }
+    }
+  }
+
   // For generator functions, create __gen_result list
   bool is_generator = generator_functions.count(func_name) > 0;
   irep_idt gen_result_id;
