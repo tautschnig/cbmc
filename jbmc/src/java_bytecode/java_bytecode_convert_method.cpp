@@ -3163,6 +3163,95 @@ std::optional<exprt> java_bytecode_convert_methodt::convert_invoke_dynamic(
   // method or not
   code_function_callt::argumentst arguments = pop(parameters.size());
 
+  // F11: Detect java.lang.runtime.SwitchBootstraps.typeSwitch invokedynamic
+  // sites (Java 21 sealed pattern-match dispatch) and lower them to inline
+  // `instanceof` dispatch. The bytecode shape is
+  //   invokedynamic typeSwitch:(LObj;I)I  // bootstrap args = {C0, C1, ...}
+  // semantically returning the index `i >= startIdx` of the first case
+  // class such that `target instanceof Ci`, or `Ci.length` if no match.
+  // Without this lowering JBMC zero-initializes the return value and the
+  // lookupswitch always lands on case 0, producing spurious bad-dynamic-cast
+  // failures when the target is in fact a different case.
+  {
+    auto handle_index = method_type.get_int(ID_java_lambda_method_handle_index);
+    if(handle_index >= 0)
+    {
+      const symbolt *declaring_symbol = nullptr;
+      if(
+        const auto declaring =
+          declaring_class(symbol_table.lookup_ref(method_id)))
+      {
+        declaring_symbol = symbol_table.lookup(*declaring);
+      }
+      if(declaring_symbol != nullptr)
+      {
+        const auto &class_type = to_java_class_type(declaring_symbol->type);
+        const auto &handles = class_type.lambda_method_handles();
+        if(static_cast<size_t>(handle_index) < handles.size())
+        {
+          const auto &handle = handles[handle_index];
+          if(handle.is_typeswitch_handle())
+          {
+            const auto case_classes = handle.get_typeswitch_case_classes();
+            INVARIANT(
+              arguments.size() == 2,
+              "SwitchBootstraps.typeSwitch takes (target, startIndex)");
+            const exprt target = arguments[0];
+            const exprt start_index = arguments[1];
+
+            // Allocate result slot and seed it with the "no match" sentinel
+            // (case_classes.size()) — corresponds to Java's behaviour of
+            // returning labels.length when no case matches.
+            const symbol_exprt result_var =
+              tmp_variable("typeswitch_result", java_int_type());
+            code_blockt block;
+            block.add(
+              code_assignt(
+                result_var,
+                from_integer((mp_integer)case_classes.size(), java_int_type())),
+              location);
+
+            // Build the dispatch as a chain of nested if-then-else:
+            //   if (target == NULL) result = N;
+            //   else if (start_index <= 0 && target instanceof C0) result = 0;
+            //   else if (start_index <= 1 && target instanceof C1) result = 1;
+            //   ...
+            // We construct it from the back so the innermost "else" sets
+            // the sentinel (already done by the seed assignment, so the
+            // final else is empty).
+            codet chain = code_skipt();
+            for(size_t rev = case_classes.size(); rev-- > 0;)
+            {
+              const struct_tag_typet case_tag(case_classes[rev]);
+              const java_instanceof_exprt is_case(target, case_tag);
+              const binary_relation_exprt index_in_range(
+                start_index,
+                ID_le,
+                from_integer((mp_integer)rev, java_int_type()));
+              const and_exprt guard(index_in_range, is_case);
+              code_blockt then_block;
+              then_block.add(code_assignt(
+                result_var, from_integer((mp_integer)rev, java_int_type())));
+              chain = code_ifthenelset(guard, then_block, chain);
+            }
+            // Outer null guard: target == NULL → result stays at sentinel,
+            // otherwise descend into the chain.
+            code_blockt non_null_then;
+            non_null_then.add(chain);
+            code_ifthenelset null_check(
+              notequal_exprt(
+                target, null_pointer_exprt(to_pointer_type(target.type()))),
+              non_null_then);
+            block.add(null_check);
+            block.add_source_location() = location;
+            result_code = std::move(block);
+            return result_var;
+          }
+        }
+      }
+    }
+  }
+
   irep_idt synthetic_class_name =
     lambda_synthetic_class_name(method_id, instruction_address);
 

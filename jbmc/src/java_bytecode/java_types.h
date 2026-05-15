@@ -477,6 +477,15 @@ public:
   /// uses to translate virtual method calls to denote the method targeted, and
   /// use method_handle_kindt above to indicate what kind of dispatch should be
   /// used.
+  ///
+  /// F11: This irept also models
+  /// `java.lang.runtime.SwitchBootstraps.typeSwitch` invokedynamic call
+  /// sites (Java 21 sealed pattern-match dispatch). For those entries
+  /// `is_typeswitch_handle()` returns true and
+  /// `get_typeswitch_case_classes()` returns the case class names in
+  /// source order. The lambda pipeline does not synthesize a class for
+  /// these handles; `convert_invoke_dynamic` instead lowers the call to
+  /// inline dispatch.
   class java_lambda_method_handlet : public irept
   {
   public:
@@ -509,6 +518,45 @@ public:
     {
       return (method_handle_kindt)get_int(ID_handle_type);
     }
+
+    /// F11: Construct a handle representing a
+    /// SwitchBootstraps.typeSwitch invokedynamic site whose static
+    /// arguments are the supplied class-tag case labels (in source
+    /// order). The handle's `handle_kind` remains `UNKNOWN_HANDLE`
+    /// because the JBMC lambda-synthesis pipeline does not own this
+    /// dispatch.
+    static java_lambda_method_handlet
+    make_typeswitch_handle(const std::vector<irep_idt> &case_classes)
+    {
+      java_lambda_method_handlet result;
+      result.set("typeswitch", true);
+      irept &classes_sub = result.add("typeswitch_case_classes");
+      for(const auto &case_class : case_classes)
+      {
+        irept entry;
+        entry.id(case_class);
+        classes_sub.get_sub().push_back(entry);
+      }
+      return result;
+    }
+
+    /// F11: True iff this handle came from a
+    /// SwitchBootstraps.typeSwitch bootstrap.
+    bool is_typeswitch_handle() const
+    {
+      return get_bool("typeswitch");
+    }
+
+    /// F11: Case class tags (e.g. `java::pkg.Outer$Case`) in source
+    /// order, for typeSwitch handles only.
+    std::vector<irep_idt> get_typeswitch_case_classes() const
+    {
+      std::vector<irep_idt> result;
+      const irept &classes_sub = find("typeswitch_case_classes");
+      for(const auto &entry : classes_sub.get_sub())
+        result.push_back(entry.id());
+      return result;
+    }
   };
 
   using java_lambda_method_handlest = std::vector<java_lambda_method_handlet>;
@@ -537,6 +585,17 @@ public:
   {
     // creates empty symbol_exprt and pushes it in the vector
     lambda_method_handles().emplace_back();
+  }
+
+  /// F11: Append a SwitchBootstraps.typeSwitch handle that records the
+  /// case class tags in source order. Stored in the same vector as
+  /// lambda handles to preserve the bootstrap-method-index → handle
+  /// mapping that `convert_invoke_dynamic` relies on.
+  void
+  add_typeswitch_lambda_method_handle(const std::vector<irep_idt> &case_classes)
+  {
+    lambda_method_handles().push_back(
+      java_lambda_method_handlet::make_typeswitch_handle(case_classes));
   }
 
   const std::vector<java_annotationt> &get_annotations() const

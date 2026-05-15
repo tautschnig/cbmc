@@ -2014,6 +2014,68 @@ void java_bytecode_parsert::read_bootstrapmethods_entry()
     for(size_t i = 0; i < num_bootstrap_arguments; i++)
       u2_values[i] = read<u2>();
 
+    // F11: Detect java.lang.runtime.SwitchBootstraps.typeSwitch (Java 21
+    // sealed pattern-match dispatch) before falling through to the
+    // LambdaMetafactory-shaped parsing below. typeSwitch's bootstrap
+    // arguments are the case-label class refs in source order; we
+    // capture them as a typeswitch handle so convert_invoke_dynamic can
+    // lower the call to inline `instanceof` dispatch instead of
+    // returning a zero-initialized index (which would force every
+    // input down case 0).
+    {
+      const std::function<pool_entryt &(u2)> pool_entry_lambda =
+        [this](u2 index) -> pool_entryt & { return pool_entry(index); };
+      const base_ref_infot bootstrap_ref =
+        method_handle.get_reference(pool_entry_lambda);
+      const class_infot bootstrap_class =
+        bootstrap_ref.get_class(pool_entry_lambda);
+      const name_and_type_infot bootstrap_nat =
+        bootstrap_ref.get_name_and_type(pool_entry_lambda);
+      const std::string bootstrap_class_name =
+        bootstrap_class.get_name(pool_entry_lambda);
+      const std::string bootstrap_method_name =
+        bootstrap_nat.get_name(pool_entry_lambda);
+
+      if(
+        bootstrap_class_name == "java/lang/runtime/SwitchBootstraps" &&
+        bootstrap_method_name == "typeSwitch")
+      {
+        std::vector<irep_idt> case_classes;
+        bool all_class_labels = true;
+        for(u2 arg_index : u2_values)
+        {
+          const pool_entryt &arg = pool_entry(arg_index);
+          if(arg.tag != CONSTANT_Class)
+          {
+            // typeSwitch may also carry constant labels (Integer/String
+            // for `case Integer i when ...`/`case "literal" ->`). We
+            // only support the all-class form today.
+            all_class_labels = false;
+            break;
+          }
+          const class_infot label_class{arg};
+          // Convert e.g. "F11Repro$A" or "com/foo/Bar$A" to JBMC's
+          // canonical "java::com.foo.Bar$A" symbol name.
+          std::string slashed = label_class.get_name(pool_entry_lambda);
+          std::string dotted = slashed;
+          for(auto &ch : dotted)
+            if(ch == '/')
+              ch = '.';
+          case_classes.emplace_back("java::" + dotted);
+        }
+        if(all_class_labels && !case_classes.empty())
+        {
+          parse_tree.parsed_class.add_method_handle(
+            bootstrap_method_index,
+            lambda_method_handlet::get_typeswitch_handle(
+              std::move(case_classes)));
+          log.debug() << "INFO: parsed SwitchBootstraps.typeSwitch with "
+                      << u2_values.size() << " case label(s)" << messaget::eom;
+          continue;
+        }
+      }
+    }
+
     // try parsing bootstrap method handle
     // each entry contains a MethodHandle structure
     // u2 tag

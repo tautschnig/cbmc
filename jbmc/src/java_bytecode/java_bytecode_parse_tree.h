@@ -230,6 +230,19 @@ struct java_bytecode_parse_treet
       java_class_typet::method_handle_kindt handle_type;
       std::optional<class_method_descriptor_exprt> method_descriptor;
 
+      /// F11: Bootstrap arguments captured for a
+      /// `java.lang.runtime.SwitchBootstraps.typeSwitch` invokedynamic
+      /// call site (Java 21 sealed pattern-match). Each entry is the
+      /// fully-qualified class name (e.g. `java::F11Repro$A`) of one
+      /// case label, in source order. Empty for non-typeSwitch handles.
+      std::vector<irep_idt> typeswitch_case_classes;
+
+      /// True if this handle is a SwitchBootstraps.typeSwitch site.
+      /// Set independently of `handle_type`; for typeSwitch we still
+      /// store handle_type=UNKNOWN_HANDLE because the JBMC lambda
+      /// pipeline does not own this dispatch.
+      bool is_typeswitch_handle{false};
+
       /// Construct a lambda method handle with parameters \p params.
       lambda_method_handlet(
         const class_method_descriptor_exprt &method_descriptor,
@@ -249,6 +262,18 @@ struct java_bytecode_parse_treet
       static lambda_method_handlet get_unknown_handle()
       {
         return lambda_method_handlet{};
+      }
+
+      /// F11: Build a handle representing a SwitchBootstraps.typeSwitch
+      /// site. Carries the case class names but is otherwise treated
+      /// as an unknown handle by the lambda pipeline.
+      static lambda_method_handlet
+      get_typeswitch_handle(std::vector<irep_idt> case_classes)
+      {
+        lambda_method_handlet result;
+        result.is_typeswitch_handle = true;
+        result.typeswitch_case_classes = std::move(case_classes);
+        return result;
       }
 
       bool is_unknown_handle() const

@@ -426,6 +426,15 @@ void java_bytecode_convert_classt::convert(
   // now do lambda method handles (bootstrap methods)
   for(const auto &lambda_entry : c.lambda_method_handle_map)
   {
+    // F11: SwitchBootstraps.typeSwitch handles carry case-class tags
+    // and have no method_descriptor; flow them through with a
+    // dedicated entry so convert_invoke_dynamic can lower the call.
+    if(lambda_entry.second.is_typeswitch_handle)
+    {
+      class_type.add_typeswitch_lambda_method_handle(
+        lambda_entry.second.typeswitch_case_classes);
+      continue;
+    }
     // if the handle is of unknown type, we still need to store it to preserve
     // the correct indexing (invokedynamic instructions will retrieve
     // method handles by index)
