@@ -593,6 +593,32 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 
       if(kind == jverify_contract_kindt::ASSIGNS)
       {
+        // F12: capture user-supplied frame targets. javac wraps the
+        // varargs `Object...` into an implicit `Object[]`. We
+        // recognise both the direct-argument form (single non-array
+        // arg) AND the varargs form: walk back from the CALL,
+        // collect slot-stores `*(*(<array>, ...).data + i) := ...`
+        // and capture each RHS (with casts stripped).
+        //
+        // Status: the walk-back pattern matches javac's output
+        // shape, but the captured targets — typically Java static
+        // fields like `MyClass.someField` — don't satisfy CBMC's
+        // `instrument_spec_assigns::create_car_expr` expectations
+        // (which want C-style lvalues with a definite size). The
+        // contracts substitution invariant fires and we fall
+        // through to inlining via the cbmc_invariants_should_throw
+        // guard. Until we either (a) wrap the captured target in
+        // CBMC's expected lvalue shape or (b) extend
+        // instrument_spec_assigns to handle Java static-field
+        // pointers natively, leaving c_assigns empty preserves the
+        // sound default `havoc nothing constrained by ensures`
+        // behaviour.
+        //
+        // We DO still capture the direct-argument form into
+        // assigns_per_function — but the user has to write
+        // single-target assigns calls bypassing varargs (e.g., by
+        // declaring overloads). The varargs form gracefully
+        // degrades.
         for(const auto &arg : args)
         {
           if(arg.type().id() == ID_pointer)
@@ -600,13 +626,14 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
             const typet &base = to_pointer_type(arg.type()).base_type();
             if(base.id() == ID_struct_tag)
             {
-              const irep_idt id = to_struct_tag_type(base).get_identifier();
+              const irep_idt id =
+                to_struct_tag_type(base).get_identifier();
               const std::string s = id2string(id);
               if(
                 s.find("array[") == 0 ||
                 s.find("java::array[") != std::string::npos)
               {
-                continue; // varargs Object[]
+                continue; // varargs Object[], skip
               }
             }
           }
@@ -722,6 +749,82 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
               // parameters of the lambda target.
               predicate = resolve_stack_temps(
                 rhs, target_body, target_returns[0], info.target_method_id);
+            }
+            else if(target_returns.size() == 2)
+            {
+              // Block-bodied lambda compiled to dual IRETURNs:
+              //   IF cond GOTO L1
+              //   ASSIGN #return_value := <const A>   // fallthrough
+              //   GOTO END
+              //   L1: ASSIGN #return_value := <const B>
+              //   END: END_FUNCTION
+              // The function returns const_B iff cond is true. If
+              // both consts are 0/1 and there's exactly one IF
+              // guarding them, the predicate is `cond` (when
+              // const_B == 1) or `!cond` (when const_B == 0).
+              // We accept either order (which return is first in
+              // body iteration order doesn't matter for our
+              // pattern recognition).
+              const exprt rhs0 = target_returns[0]->assign_rhs();
+              const exprt rhs1 = target_returns[1]->assign_rhs();
+              auto unwrap_const = [](const exprt &e) -> std::optional<int> {
+                exprt v = e;
+                while(v.id() == ID_typecast && v.operands().size() == 1)
+                  v = v.operands()[0];
+                if(v.id() != ID_constant)
+                  return {};
+                const auto i =
+                  numeric_cast<mp_integer>(to_constant_expr(v));
+                if(!i.has_value())
+                  return {};
+                if(*i == 0)
+                  return 0;
+                if(*i == 1)
+                  return 1;
+                return {};
+              };
+              const auto v0 = unwrap_const(rhs0);
+              const auto v1 = unwrap_const(rhs1);
+              if(v0.has_value() && v1.has_value() && *v0 != *v1)
+              {
+                // Find the IF whose target is the target_return
+                // assignment that produces 1.
+                const auto truth_target =
+                  (*v0 == 1) ? target_returns[0] : target_returns[1];
+                const auto false_target =
+                  (*v0 == 0) ? target_returns[0] : target_returns[1];
+                // Walk the body looking for an IF whose targets
+                // include either truth_target or false_target.
+                std::optional<exprt> guard;
+                bool guard_targets_truth = false;
+                for(auto it_l = target_body.instructions.cbegin();
+                    it_l != target_body.instructions.cend(); ++it_l)
+                {
+                  if(!it_l->is_goto() || it_l->condition().is_true())
+                    continue;
+                  for(const auto &t : it_l->targets)
+                  {
+                    if(t == truth_target)
+                    {
+                      guard = it_l->condition();
+                      guard_targets_truth = true;
+                    }
+                    else if(t == false_target)
+                    {
+                      guard = it_l->condition();
+                      guard_targets_truth = false;
+                    }
+                  }
+                  if(guard.has_value())
+                    break;
+                }
+                if(guard.has_value())
+                {
+                  predicate = guard_targets_truth
+                                ? *guard
+                                : exprt(not_exprt(*guard));
+                }
+              }
             }
             if(predicate.has_value())
             {
