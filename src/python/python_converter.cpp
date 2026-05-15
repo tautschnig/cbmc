@@ -189,6 +189,19 @@ bool python_convertert::annotation_types_incompatible(
     return false;
   if(declared.id() == ID_struct && actual.id() == ID_pointer)
     return false;
+  // Function calls whose declared return type couldn't be resolved
+  // by the front-end (e.g., boto3.client's Union[ClassA, ClassB,
+  // ...] overload-fallback) become signedbv at the IR level. We
+  // can't reliably tell them apart from genuine integer values, so
+  // when the declared annotation is a class/struct, accept a
+  // signedbv RHS as compatible. This trades a small amount of
+  // precision (e.g., 'x: SomeClass = 42' won't be flagged) for
+  // suppressing the systematic FP on `cloudwatch: CloudWatch =
+  // boto3.client('cloudwatch')`-shaped patterns.
+  if(
+    (dc == 6 || dc == 4 || dc == 2 || dc == 3 || dc == 1) &&
+    actual.id() == ID_signedbv)
+    return false;
   if(dc == 0 || ac == 0)
     return false; // unknown category — don't flag
   // Same category but different exact type is usually benign
@@ -1204,8 +1217,15 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
   // These appear as Subscript nodes: annotation.value.id is the base type
   if(is_node_type(annotation, "Subscript"))
   {
-    std::string base =
-      json_string(json_member(json_member(annotation, "value"), "id"));
+    // The base may be a `Name` (`Dict`, `list`, ...) or an `Attribute`
+    // such as `typing.Dict` / `typing.List`. For Attribute nodes we
+    // use the attr (e.g., "Dict"); for Name nodes we use the id.
+    const jsont &val_node = json_member(annotation, "value");
+    std::string base;
+    if(is_node_type(val_node, "Attribute"))
+      base = json_string(json_member(val_node, "attr"));
+    else
+      base = json_string(json_member(val_node, "id"));
     if(base == "list" || base == "List")
     {
       // Extract element type from the slice
@@ -1335,15 +1355,14 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       return python_value_type();
   }
 
-  // Handle Attribute annotations (e.g., typing.List)
+  // Handle Attribute annotations (e.g., typing.List, boto3.Kinesis.Kinesis).
+  // We use the rightmost `attr` as the simple type name and dispatch as
+  // if the user had written that name directly.
+  std::string type_name;
   if(is_node_type(annotation, "Attribute"))
-  {
-    std::string attr = json_string(json_member(annotation, "attr"));
-    return convert_type_annotation(
-      json_member(annotation, "value")); // recurse on the attribute name
-  }
-
-  std::string type_name = json_string(json_member(annotation, "id"));
+    type_name = json_string(json_member(annotation, "attr"));
+  else
+    type_name = json_string(json_member(annotation, "id"));
 
   if(type_name == "int")
     return python_int_type();
@@ -1369,7 +1388,7 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     type_name == "TextIO" || type_name == "Iterator" ||
     type_name == "Iterable" || type_name == "Sequence" ||
     type_name == "Mapping" || type_name == "Type" || type_name == "ClassVar" ||
-    type_name == "Final")
+    type_name == "Final" || type_name == "object")
     return python_value_type();
   else if(class_types.count(type_name))
     return class_types[type_name];
