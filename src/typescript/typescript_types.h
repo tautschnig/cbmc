@@ -67,6 +67,78 @@ inline bool is_typescript_string_type(const typet &type)
          to_struct_type(type).get_tag() == "typescript_string";
 }
 
+/// ES2024 §6.1.1 / §6.1.2: null and undefined sentinels.
+/// We model null, undefined, and NaN as distinct IEEE-754 quiet NaN
+/// values with different payloads so that:
+///   NaN === NaN  → false (spec-correct)
+///   null === null → true
+///   undefined === undefined → true
+///   null === undefined → false (strict equality)
+/// Bit patterns (IEEE-754 double, big-endian):
+///   Real NaN:   0x7FF8000000000000 (canonical quiet NaN, payload 0)
+///   null:       0x7FF8000000000001 (payload 1)
+///   undefined:  0x7FF8000000000002 (payload 2)
+#define TS_NAN_PAYLOAD_REAL 0
+#define TS_NAN_PAYLOAD_NULL 1
+#define TS_NAN_PAYLOAD_UNDEFINED 2
+
+/// Create a NaN constant with a specific payload.
+inline constant_exprt ts_nan_with_payload(unsigned payload)
+{
+  ieee_floatt nan{
+    ieee_float_spect::double_precision(),
+    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+  nan.make_NaN();
+  constant_exprt result = nan.to_expr();
+  if(payload != 0)
+  {
+    // Modify the bit pattern to include the payload in the low bits.
+    mp_integer bits = bvrep2integer(result.get_value(), 64, false);
+    bits += payload;
+    result.set_value(integer2bvrep(bits, 64));
+  }
+  return result;
+}
+
+/// Check if an expression is a specific NaN sentinel (constant only).
+inline bool ts_is_nan_payload(const exprt &e, unsigned payload)
+{
+  if(!e.is_constant() || e.type().id() != ID_floatbv)
+    return false;
+  constant_exprt expected = ts_nan_with_payload(payload);
+  return to_constant_expr(e).get_value() == expected.get_value();
+}
+
+/// Check if an expression is any NaN (real NaN, null, or undefined).
+inline bool ts_is_any_nan(const exprt &e)
+{
+  if(!e.is_constant() || e.type().id() != ID_floatbv)
+    return false;
+  ieee_floatt v{
+    ieee_float_spect::double_precision(),
+    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+  v.from_expr(to_constant_expr(e));
+  return v.is_NaN();
+}
+
+/// Check if an expression is the null sentinel specifically.
+inline bool ts_is_null_sentinel(const exprt &e)
+{
+  return ts_is_nan_payload(e, TS_NAN_PAYLOAD_NULL);
+}
+
+/// Check if an expression is the undefined sentinel specifically.
+inline bool ts_is_undefined_sentinel(const exprt &e)
+{
+  return ts_is_nan_payload(e, TS_NAN_PAYLOAD_UNDEFINED);
+}
+
+/// Check if an expression is a null or undefined sentinel.
+inline bool ts_is_nullish_sentinel(const exprt &e)
+{
+  return ts_is_null_sentinel(e) || ts_is_undefined_sentinel(e);
+}
+
 /// ES2024 §21.4: Date type.
 /// Modelled as a struct wrapping a single floatbv[64] field (the
 /// "time value" — milliseconds since the Unix epoch, 1970-01-01T00:00:00Z).

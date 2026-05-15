@@ -159,11 +159,7 @@ codet typescript_convertert::convert_statement(const jsont &node)
                 }
                 if(t.id() == ID_floatbv)
                 {
-                  ieee_floatt nan_val{
-                    ieee_float_spect::double_precision(),
-                    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-                  nan_val.make_NaN();
-                  return nan_val.to_expr();
+                  return ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED);
                 }
                 if(t.id() == ID_bool)
                   return false_exprt{};
@@ -1751,11 +1747,7 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
                 }
                 if(t.id() == ID_floatbv)
                 {
-                  ieee_floatt nan_val{
-                    ieee_float_spect::double_precision(),
-                    ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-                  nan_val.make_NaN();
-                  return nan_val.to_expr();
+                  return ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED);
                 }
                 if(t.id() == ID_bool)
                   return false_exprt{};

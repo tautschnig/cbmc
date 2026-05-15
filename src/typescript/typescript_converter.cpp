@@ -542,11 +542,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
     // (sound for programs that don't distinguish them, which is
     // the common case in TypeScript where the union type
     // T | null | undefined is common).
-    ieee_floatt nan_val{
-      ieee_float_spect::double_precision(),
-      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-    nan_val.make_NaN();
-    return nan_val.to_expr();
+    return ts_nan_with_payload(TS_NAN_PAYLOAD_NULL);
   }
   if(kind == "Identifier")
     return convert_identifier(node);
@@ -735,11 +731,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         }
         if(prop == "NaN")
         {
-          ieee_floatt nan_val{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          nan_val.make_NaN();
-          return nan_val.to_expr();
+          return ts_nan_with_payload(TS_NAN_PAYLOAD_REAL);
         }
       }
     }
@@ -1308,11 +1300,7 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       {
         if(t.id() == ID_floatbv)
         {
-          ieee_floatt nan_val{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          nan_val.make_NaN();
-          return nan_val.to_expr();
+          return ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED);
         }
         if(t.id() == ID_bool)
           return false_exprt{};
@@ -2132,19 +2120,11 @@ exprt typescript_convertert::convert_identifier(const jsont &node)
   // preserve it through ??, so this is an acceptable approximation.
   if(name == "undefined")
   {
-    ieee_floatt nan_val{
-      ieee_float_spect::double_precision(),
-      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-    nan_val.make_NaN();
-    return nan_val.to_expr();
+    return ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED);
   }
   if(name == "NaN")
   {
-    ieee_floatt nan{
-      ieee_float_spect::double_precision(),
-      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-    nan.make_NaN();
-    return nan.to_expr();
+    return ts_nan_with_payload(TS_NAN_PAYLOAD_REAL);
   }
   if(name == "Infinity")
   {
@@ -2683,7 +2663,18 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         return v.is_NaN();
       };
       if(is_nan_const(left) && is_nan_const(right))
-        return true_exprt{};
+      {
+        // Both are NaN constants. With distinct payloads:
+        // - Same nullish sentinel (null===null, undef===undef) → true
+        // - Real NaN === Real NaN → false (spec)
+        // - null === undefined → false (different payloads)
+        if(
+          ts_is_nan_payload(left, TS_NAN_PAYLOAD_REAL) ||
+          ts_is_nan_payload(right, TS_NAN_PAYLOAD_REAL))
+          return false_exprt{};
+        // Both are nullish sentinels: true iff same payload.
+        return left == right ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      }
       // x === null where x is a non-nullable concrete type: false.
       if(is_typescript_string_type(left.type()) && is_nan_const(right))
         return false_exprt{};
@@ -2715,10 +2706,40 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
         return v.is_NaN();
       };
       if(is_nan_const(right))
-        return ieee_float_notequal_exprt{left, left}; // isNaN(left)
+      {
+        // x === NaN/null/undefined: compare bit patterns.
+        // Real NaN (payload 0): spec says always false.
+        if(ts_is_nan_payload(right, TS_NAN_PAYLOAD_REAL))
+          return false_exprt{};
+        // null or undefined sentinel: true iff left has the same bits.
+        return equal_exprt{left, right};
+      }
       if(is_nan_const(left))
-        return ieee_float_notequal_exprt{right, right}; // isNaN(right)
-      return ieee_float_equal_exprt{left, right};
+      {
+        if(ts_is_nan_payload(left, TS_NAN_PAYLOAD_REAL))
+          return false_exprt{};
+        return equal_exprt{left, right};
+      }
+      // Neither side is a constant NaN. Per ES2024 §7.2.14:
+      // - NaN === NaN → false (for real NaN, payload 0)
+      // - +0 === -0 → true
+      // - null === null → true (same payload)
+      // - undefined === undefined → true (same payload)
+      // Use ieee_float_equal (handles +0/-0 correctly, returns false
+      // for NaN===NaN) OR bit-equal for nullish sentinels.
+      // Combined: (ieee_float_equal(l, r) || (l == r && l != realNaN))
+      // This gives:
+      //   normal numbers: ieee_float_equal handles correctly
+      //   +0/-0: ieee_float_equal returns true
+      //   NaN===NaN: ieee_float_equal returns false, bit-eq is true
+      //     but l==realNaN so the second branch is false → overall false
+      //   null===null: ieee_float_equal returns false (it's NaN),
+      //     bit-eq is true, l!=realNaN → overall true ✓
+      exprt ieee_eq = ieee_float_equal_exprt{left, right};
+      exprt bit_eq = equal_exprt{left, right};
+      exprt not_real_nan =
+        notequal_exprt{left, ts_nan_with_payload(TS_NAN_PAYLOAD_REAL)};
+      return or_exprt{ieee_eq, and_exprt{bit_eq, not_real_nan}};
     }
     // Constant string equality
     if(is_typescript_string_type(left.type()))
@@ -3092,16 +3113,21 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   if(op == "QuestionQuestionToken")
   {
     // x ?? y → (x is null or undefined) ? y : x
-    // We model `undefined` as IEEE-754 NaN (see convert_identifier).
-    // So the predicate is `isNaN(x)`. For non-numeric LHS, return x.
+    // With distinct NaN payloads: null is payload 1, undefined is
+    // payload 2. Check if x has either of those bit patterns.
+    // Real NaN (payload 0) is NOT nullish per spec — `NaN ?? y`
+    // returns NaN.
     if(left.type().id() == ID_floatbv)
     {
-      exprt is_nan = ieee_float_notequal_exprt{left, left};
-      // Ensure right has compatible type.
+      exprt is_null =
+        equal_exprt{left, ts_nan_with_payload(TS_NAN_PAYLOAD_NULL)};
+      exprt is_undef =
+        equal_exprt{left, ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED)};
+      exprt is_nullish = or_exprt{is_null, is_undef};
       exprt right_conv = right;
       if(right.type() != left.type())
         right_conv = typecast_exprt{right, left.type()};
-      return if_exprt{is_nan, right_conv, left};
+      return if_exprt{is_nullish, right_conv, left};
     }
     return left;
   }
@@ -3263,12 +3289,7 @@ exprt typescript_convertert::convert_prefix_unary_expression(const jsont &node)
         catch(...)
         {
         }
-        // Non-numeric: return NaN
-        ieee_floatt v{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        v.make_NaN();
-        return v.to_expr();
+        return ts_nan_with_payload(TS_NAN_PAYLOAD_REAL);
       }
       // Symbolic string: route through the refined-string solver via
       // cprover_string_parse_int_func. We build a refined_string_exprt

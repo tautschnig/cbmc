@@ -284,11 +284,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           // null → NaN
           if(json_str == "null")
           {
-            ieee_floatt nan_val{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            nan_val.make_NaN();
-            return nan_val.to_expr();
+            return ts_nan_with_payload(TS_NAN_PAYLOAD_NULL);
           }
           // String:
           if(
@@ -422,11 +418,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
                 return false_exprt{};
               if(v == "null")
               {
-                ieee_floatt nv{
-                  ieee_float_spect::double_precision(),
-                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-                nv.make_NaN();
-                return nv.to_expr();
+                return ts_nan_with_payload(TS_NAN_PAYLOAD_NULL);
               }
               if(v.size() >= 2 && v.front() == '"' && v.back() == '"')
               {
@@ -1197,11 +1189,15 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       }
       if(method == "isNaN" && !call_args.empty())
       {
-        // ES2024 §21.1.2.4: Number.isNaN differs from global isNaN —
-        // it returns false for NON-NUMBER values (no coercion).
+        // ES2024 §21.1.2.4: Number.isNaN returns true only for the
+        // real NaN value (not for null/undefined sentinels which are
+        // also NaN at the IEEE level but have distinct payloads).
         if(call_args[0].type().id() != ID_floatbv)
           return false_exprt{};
-        return isnan_exprt{call_args[0]};
+        // Check: x is NaN AND x is not a null/undefined sentinel.
+        // Simplest: x == canonical_NaN (bit-equal to payload 0).
+        return equal_exprt{
+          call_args[0], ts_nan_with_payload(TS_NAN_PAYLOAD_REAL)};
       }
       if(method == "isFinite" && !call_args.empty())
       {
@@ -1240,11 +1236,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           }
           catch(...)
           {
-            ieee_floatt nan_val{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            nan_val.make_NaN();
-            return nan_val.to_expr();
+            return ts_nan_with_payload(TS_NAN_PAYLOAD_REAL);
           }
         }
         return side_effect_expr_nondett{double_type(), get_location(node)};
@@ -1701,11 +1693,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             return fv.to_expr();
           }
           // Out of range: NaN
-          ieee_floatt nan_val{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          nan_val.make_NaN();
-          return nan_val.to_expr();
+          return ts_nan_with_payload(TS_NAN_PAYLOAD_REAL);
         }
         if(method == "startsWith" && !str_args.empty())
         {
@@ -5644,11 +5632,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           // ES2024 §21.3.2.32: sqrt of negative returns NaN.
           if(arg_vals[0] < 0)
           {
-            ieee_floatt nan{
-              ieee_float_spect::double_precision(),
-              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-            nan.make_NaN();
-            return nan.to_expr();
+            return ts_nan_with_payload(TS_NAN_PAYLOAD_REAL);
           }
           res = std::sqrt(arg_vals[0]);
         }
