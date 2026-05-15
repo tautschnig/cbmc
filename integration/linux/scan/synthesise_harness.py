@@ -101,24 +101,22 @@ MODULE_GHOST_BOOTSTRAP = {
         # cred *.  When matched, the synthesiser also bootstraps
         # the field pointer.
         #
-        # Practical limitation: emitting `arg0->field` access in
-        # the harness requires a complete struct definition,
-        # which means including the kernel header that defines
-        # the wrapper struct.  Many such headers transitively
-        # pull in <linux/sched.h> / <linux/security.h>; CBMC's
-        # linker then surfaces parameter-name mismatches between
-        # the harness TU and the kernel TU's view of the same
-        # static-inline functions ('conflicting function
-        # declarations' on e.g. security_netlink_send).  This is
-        # a LIM-009-class issue that needs further investigation
-        # to resolve.
-        #
-        # Until that's solved, the wrapper_paths list is
-        # intentionally empty.  The infrastructure (config
-        # lookup + synthesiser code path) is in place; once the
-        # linker issue is closed, populate this list with the
-        # wrapper structs identified in the May hunt write-up.
-        "wrapper_paths": [],
+        # The kernel_includes list pulls in the header that
+        # defines the wrapper struct so the harness can resolve
+        # the field access.  The structural-equivalence-aware
+        # linker (see commit 0414b43bf2) and the matched-
+        # KBUILD_MODNAME harness compile (see scan-per-file.sh)
+        # make these wrapper paths link cleanly even with the
+        # broad header chains they pull in.
+        "wrapper_paths": [
+            {
+                # nlmclnt_release_host(struct nlm_host *) and
+                # friends carry the client's cred via h_cred.
+                "param_type": "struct nlm_host *",
+                "field_path": "h_cred",
+                "kernel_includes": ["<linux/lockd/lockd.h>"],
+            },
+        ],
     },
     "pipe_buffer": {
         "types": ["struct pipe_buffer *"],
@@ -139,10 +137,31 @@ MODULE_GHOST_BOOTSTRAP = {
         "ghost_init_decl":
             "void lock_state_lock(struct mutex *m);",
         "forward_decls": ["struct mutex;"],
-        # See the cred_lifetime note above: kernel-header
-        # inclusion needed for wrapper-path access creates
-        # link-time conflicts.  Empty until that's resolved.
-        "wrapper_paths": [],
+        "wrapper_paths": [
+            {
+                # __pipe_unlock(struct pipe_inode_info *) and
+                # related pipe-locking helpers operate on the
+                # embedded mutex via &pipe->mutex.  pipe_fs_i.h
+                # uses wait_queue_head_t but does not pull in
+                # <linux/wait.h> itself, and embeds `struct
+                # mutex` so <linux/mutex.h> must precede it.
+                "param_type": "struct pipe_inode_info *",
+                "field_path": "&{arg}->mutex",
+                "kernel_includes": [
+                    "<linux/mutex.h>",
+                    "<linux/wait.h>",
+                    "<linux/pipe_fs_i.h>",
+                ],
+            },
+            {
+                # nlm_host_rebooted, nlm_destroy_host_locked etc.
+                # operate on the embedded h_mutex via
+                # &host->h_mutex.
+                "param_type": "struct nlm_host *",
+                "field_path": "&{arg}->h_mutex",
+                "kernel_includes": ["<linux/lockd/lockd.h>"],
+            },
+        ],
     },
     "refcount_lifetime": {
         # Match refcount_t-typed parameters; per-file harness inits
@@ -158,7 +177,15 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": [
             "typedef struct refcount_struct refcount_t;",
         ],
-        "wrapper_paths": [],
+        "wrapper_paths": [
+            {
+                # nlm_release_host etc. take the wrapper and
+                # operate on its h_count refcount.
+                "param_type": "struct nlm_host *",
+                "field_path": "&{arg}->h_count",
+                "kernel_includes": ["<linux/lockd/lockd.h>"],
+            },
+        ],
     },
     # aead per-file is supported via a custom multi-statement
     # bootstrap: the synthesised harness includes <crypto/aead.h>
