@@ -196,6 +196,14 @@ echo "[3/7] compiling harness TU..."
 HARNESS_IN_TREE="$LINUX_TREE/_scan_per_file_harness_${stem}.c"
 cp "$HARNESS_C" "$HARNESS_IN_TREE"
 trap 'rm -rf "$tmp"; rm -f "$HARNESS_IN_TREE"' EXIT
+# Pin KBUILD_MODNAME to the kernel TU's basename so any inline
+# header macros that bake the module name into static const char
+# arrays (e.g. NL_SET_ERR_MSG_MOD via KBUILD_MODNAME ": " msg)
+# expand identically across the host and the harness.  Without this
+# pin, the per-TU file-local strings differ in length and the linker
+# rejects them as conflicting variables, even when the surrounding
+# inline function is otherwise structurally identical.
+KBUILD_MODNAME_OVERRIDE="$stem" \
 "$SCRIPT_DIR/compile_file.sh" "$LINUX_TREE" \
   "_scan_per_file_harness_${stem}.c" "$HARNESS_GB" \
   >"$tmp/harness-compile.log" 2>&1 || {

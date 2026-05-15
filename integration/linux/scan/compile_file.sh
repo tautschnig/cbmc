@@ -53,8 +53,16 @@ if [[ ! -f $KTREE/$SOURCE && ! -f $SOURCE ]]; then
   exit 2
 fi
 
-# Derive a reasonable basename for KBUILD_* defines.
+# Derive a reasonable basename for KBUILD_* defines.  An optional
+# environment override KBUILD_MODNAME_OVERRIDE allows the caller to
+# pin the module name to that of a different translation unit.  This
+# matters when several .c files are linked together and macros such
+# as NL_SET_ERR_MSG_MOD bake KBUILD_MODNAME into static-const-char
+# arrays inside inline header functions: without a matching MODNAME
+# those arrays end up with mismatched lengths across TUs and the
+# linker reports them as conflicting variables.
 base=$(basename -- "$SOURCE" .c)
+modname=${KBUILD_MODNAME_OVERRIDE:-$base}
 
 # Accept either a kernel-tree-relative path or an absolute path
 # outside the kernel tree.  External files still compile against the
@@ -95,6 +103,6 @@ fi
   -O2 \
   -DKBUILD_MODFILE="\"$modfile\"" \
   -DKBUILD_BASENAME="\"$base\"" \
-  -DKBUILD_MODNAME="\"$base\"" \
+  -DKBUILD_MODNAME="\"$modname\"" \
   "${EXTRA_ARGS[@]}" \
   -c -o "$OUT" "$source_for_gotocc"
