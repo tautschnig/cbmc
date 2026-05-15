@@ -1518,13 +1518,22 @@ exprt python_convertert::convert_call(const jsont &expr)
           return side_effect_expr_nondett{
             python_string_type(), get_location(expr)};
         }
-        // PLib stdtypes: startswith/endswith — exact byte comparison
+        // PLib stdtypes: startswith/endswith — constant fast path.
+        // For non-constant string operands the byte-by-byte
+        // comparison via member_exprt(.., "data", array_typet)
+        // type-confused the field (the actual struct field is a
+        // pointer, not an inline array), producing
+        // `(select <pointer-bv> <idx>)` SMT — rejected by cvc5
+        // with "array select operating on non-array". The
+        // semantically-correct refinement-string path is taken
+        // by the second startswith/endswith handler below
+        // (line ~1693), which emits
+        // cprover_string_is_prefix_func / is_suffix_func.
         if(
           (method_name == "startswith" || method_name == "endswith") &&
           args.is_array() && !as_array(args).empty())
         {
           exprt prefix = convert_expression(*as_array(args).begin());
-          // Constant-string optimization
           auto obj_sv = extract_string_value(obj);
           auto pre_sv = extract_string_value(prefix);
           if(obj_sv.has_value() && pre_sv.has_value())
@@ -1540,34 +1549,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                          pre_sv.value();
             return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
           }
-          if(is_python_string_type(prefix.type()))
-          {
-            const auto &data_type = array_typet(
-              unsignedbv_typet{8},
-              from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-            member_exprt obj_data{obj, "data", data_type};
-            member_exprt obj_len{obj, "length", signedbv_typet{64}};
-            member_exprt pre_data{prefix, "data", data_type};
-            member_exprt pre_len{prefix, "length", signedbv_typet{64}};
-
-            // Build conjunction: all prefix bytes match
-            exprt result = binary_relation_exprt{pre_len, ID_le, obj_len};
-            for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
-            {
-              exprt idx = from_integer(i, signedbv_typet{64});
-              exprt in_prefix = binary_relation_exprt{idx, ID_lt, pre_len};
-              exprt obj_idx =
-                (method_name == "endswith")
-                  ? minus_exprt{minus_exprt{obj_len, pre_len}, from_integer(-static_cast<long long>(i), signedbv_typet{64})}
-                  : idx;
-              if(method_name == "endswith")
-                obj_idx = plus_exprt{minus_exprt{obj_len, pre_len}, idx};
-              exprt match = equal_exprt{
-                index_exprt{obj_data, obj_idx}, index_exprt{pre_data, idx}};
-              result = and_exprt{result, or_exprt{not_exprt{in_prefix}, match}};
-            }
-            return result;
-          }
+          // Non-constant case: fall through to refinement-string path.
         }
         // PLib stdtypes: exact string predicates
         if(
