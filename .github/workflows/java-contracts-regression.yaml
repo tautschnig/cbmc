@@ -1,0 +1,179 @@
+name: java-contracts JBMC regression
+
+# Re-validate the F1/F3/F4/F6/F7/F9/F10/F11 changes on every push to
+# feature/java-contracts and on PRs targeting that branch.
+#
+# Mirrors the local development invocation:
+#   cmake -DCMAKE_BUILD_TYPE=Release -B build
+#   cmake --build build --target jbmc janalyzer jdiff -j$(nproc)
+#   ( cd jbmc/regression && mvn --quiet clean package -T1C -DskipTests )
+#   for suite in $(suites); do
+#     ( cd jbmc/regression/$suite && \
+#       ../../../regression/test.pl -c "$JBMC --validate-goto-model --validate-ssa-equation" \
+#         -e -p -t 60 -j 4 -C )
+#   done
+#
+# Uses Ubuntu 24.04 with Java 17 for both Maven (regression poms +
+# java-models-library) and the CI step itself. The cmake build picks
+# up the same JDK via JAVA_HOME (Maven's default) and JBMC's
+# select-pointer-type / class-loader paths exercise the JDK17 runtime
+# library stubs. Java 25 is not used in CI; the production toolchain
+# uses 25 only for the ad-hoc nfa2sat-verify samples that hit Java 21
+# features (records, sealed). The regression suites do not depend on
+# those features (they pre-date them).
+
+on:
+  push:
+    branches:
+      - feature/java-contracts
+  pull_request:
+    branches:
+      - feature/java-contracts
+
+env:
+  jbmc-bin: ${{ github.workspace }}/build/bin/jbmc
+  janalyzer-bin: ${{ github.workspace }}/build/bin/janalyzer
+  jdiff-bin: ${{ github.workspace }}/build/bin/jdiff
+
+jobs:
+  jbmc-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            cmake ninja-build flex bison maven \
+            libxml2-utils jq ccache \
+            openjdk-17-jdk-headless
+
+      - name: Set JAVA_HOME (Java 17)
+        run: |
+          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+          echo "/usr/lib/jvm/java-17-openjdk-amd64/bin" >> $GITHUB_PATH
+
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-cmake-java-contracts-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-24.04-cmake-java-contracts-
+
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$PWD/.ccache" >> $GITHUB_ENV
+          ccache -z --max-size=500M
+
+      - name: Configure (cmake, Release, ccache wrapper)
+        run: |
+          cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -B build
+
+      - name: Build jbmc / janalyzer / jdiff
+        run: |
+          cmake --build build --target jbmc janalyzer jdiff -j$(nproc)
+
+      - name: Print ccache stats
+        run: ccache -s
+
+      - name: Build java-models-library jars (core-models, cprover-api)
+        run: |
+          # Built once, used by every JBMC invocation via the sidecar's
+          # auto-load path; the regression poms also link against them.
+          mvn --quiet --batch-mode -f jbmc/lib/java-models-library/pom.xml \
+            clean package -DskipTests
+
+      - name: Build regression poms
+        run: |
+          # Each regression sub-directory has a tiny Maven pom that
+          # compiles the .java fixture into a target/classes dir; test.pl
+          # runs JBMC against those classes. The poms are independent so
+          # parallelism (-T1C) is safe.
+          mvn --quiet --batch-mode -f jbmc/regression/pom.xml \
+            clean package -T1C -DskipTests
+
+      - name: jbmc suite
+        run: |
+          cd jbmc/regression/jbmc
+          ../../../regression/test.pl \
+            -c "${{ env.jbmc-bin }} --validate-goto-model --validate-ssa-equation" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: jbmc-strings suite
+        run: |
+          cd jbmc/regression/jbmc-strings
+          ../../../regression/test.pl \
+            -c "${{ env.jbmc-bin }} --validate-goto-model --validate-ssa-equation" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: jbmc-inheritance suite
+        run: |
+          cd jbmc/regression/jbmc-inheritance
+          ../../../regression/test.pl \
+            -c "${{ env.jbmc-bin }} --validate-goto-model --validate-ssa-equation" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: jbmc-generics suite
+        run: |
+          cd jbmc/regression/jbmc-generics
+          ../../../regression/test.pl \
+            -c "${{ env.jbmc-bin }} --validate-goto-model --validate-ssa-equation" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: jbmc-concurrency suite
+        run: |
+          cd jbmc/regression/jbmc-concurrency
+          ../../../regression/test.pl \
+            -c "${{ env.jbmc-bin }} --validate-goto-model --validate-ssa-equation" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: strings-smoke-tests suite
+        run: |
+          cd jbmc/regression/strings-smoke-tests
+          ../../../regression/test.pl \
+            -c "${{ env.jbmc-bin }} --validate-goto-model --validate-ssa-equation" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: janalyzer suite
+        run: |
+          cd jbmc/regression/janalyzer
+          ../../../regression/test.pl \
+            -c "${{ env.janalyzer-bin }}" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: janalyzer-taint suite
+        run: |
+          cd jbmc/regression/janalyzer-taint
+          ../../../regression/test.pl \
+            -c "${{ env.janalyzer-bin }}" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: jdiff suite
+        run: |
+          cd jbmc/regression/jdiff
+          ../../../regression/test.pl \
+            -c "${{ env.jdiff-bin }}" \
+            -e -p -t 60 -j $(nproc) -C
+
+      - name: Upload regression artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-failure-logs
+          path: |
+            jbmc/regression/**/*.log
+            jbmc/regression/**/*.out
+            jbmc/regression/**/output.txt
