@@ -302,6 +302,19 @@ synthesize_stub_interface_method(
     return {};
 
   java_method_typet::parameterst abstract_params;
+  // The abstract method, like every Java instance method, takes `this`
+  // as parameter 0. The functional-interface receiver type is the
+  // synthetic class itself, but we cannot construct a struct_tag for it
+  // here (its name is computed by the caller). Use the
+  // functional_interface_tag from dynamic_method_type's return type as
+  // a placeholder; downstream `implemented_method_symbol` retypes
+  // parameters()[0] to the real synthetic-class tag.
+  const auto &fi_tag = to_struct_tag_type(
+    to_java_reference_type(dynamic_method_type.return_type()).subtype());
+  java_method_typet::parametert this_param(java_reference_type(fi_tag));
+  this_param.set_this();
+  this_param.set_base_name("this");
+  abstract_params.push_back(this_param);
   for(std::size_t i = n_captures; i < target_type.parameters().size(); ++i)
     abstract_params.push_back(target_type.parameters()[i]);
   java_method_typet abstract_method_type(
@@ -348,8 +361,11 @@ synthesize_stub_interface_method(
   };
 
   std::string descriptor = "(";
-  for(const auto &param : abstract_method_type.parameters())
-    descriptor += descriptor_for_type(param.type());
+  // Skip parameters()[0] (`this`) — JVM descriptors describe instance
+  // methods using only the explicit parameters.
+  for(std::size_t i = 1; i < abstract_method_type.parameters().size(); ++i)
+    descriptor += descriptor_for_type(
+      abstract_method_type.parameters()[i].type());
   descriptor += ")";
   descriptor += descriptor_for_type(abstract_method_type.return_type());
 
