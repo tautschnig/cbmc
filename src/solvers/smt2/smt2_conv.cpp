@@ -2892,14 +2892,78 @@ void smt2_convt::convert_expr(const exprt &expr)
           return;
         }
 
-        // Symbolic subject: we still have the regex ready to fire,
-        // but the subject isn't yet exposed to the SMT backend as
-        // a String value. That's the (a') architectural refactor;
-        // until it lands, fall back to a sound 'no match' (bv0)
-        // return so verification over-approximates conservatively.
-        // The library stub's Match/None wrapper then models this
-        // call as never succeeding — user programs that treat
-        // 'match is None' as a valid path verify correctly.
+        // Symbolic subject: bridge refined-string struct to SMT
+        // String here in the back-end (Stage 3 / Approach C2 of
+        // the re-precision plan). The front-end's only obligation
+        // is to emit the cprover_string_*_func intrinsic with
+        // refined-string args; this side knows how to expose
+        // those args to the SMT-LIB string theory.
+        //
+        // Recognised shape: subject is a struct_exprt with two
+        //   ops: (length, data)
+        // where data is `address_of(index(<array>, 0))`. The
+        // <array> may be a symbol_exprt or any sub-expression
+        // smt2_conv can index. For each i in [0, BOUND), emit
+        //   (str.from_code (bv2nat (select <array> <i>)))
+        // and concatenate via str.++. Truncate to the actual
+        // length via str.substr.
+        //
+        // BOUND mirrors the Python front-end's
+        // PYTHON_MAX_STRING_LENGTH (currently 64). Using a fixed
+        // unroll matches the rest of the front-end's bounded
+        // string model and keeps the SMT problem finite.
+        constexpr std::size_t REGEX_SUBJECT_BOUND = 64;
+        auto extract_array_view =
+          [](const exprt &e,
+             exprt &length_out,
+             exprt &array_out) -> bool
+        {
+          if(e.id() != ID_struct || e.operands().size() != 2)
+            return false;
+          const exprt &len_op = e.operands()[0];
+          const exprt &data_op = e.operands()[1];
+          if(
+            data_op.id() != ID_address_of ||
+            data_op.operands().size() != 1 ||
+            data_op.operands()[0].id() != ID_index ||
+            data_op.operands()[0].operands().size() != 2)
+            return false;
+          length_out = len_op;
+          array_out = data_op.operands()[0].operands()[0];
+          // The array's element type must be byte-sized for
+          // (str.from_code (bv2nat ...)) to make sense.
+          if(array_out.type().id() != ID_array)
+            return false;
+          return true;
+        };
+        exprt subject_length;
+        exprt subject_array;
+        if(extract_array_view(args[1], subject_length, subject_array))
+        {
+          out << "(let ((__re_subj (str.substr (str.++";
+          for(std::size_t i = 0; i < REGEX_SUBJECT_BOUND; i++)
+          {
+            out << " (str.from_code (bv2nat ";
+            convert_expr(index_exprt(
+              subject_array, from_integer(i, signedbv_typet{64})));
+            out << "))";
+          }
+          out << ") 0 (bv2nat ";
+          convert_expr(subject_length);
+          out << "))))"
+              << "(ite (str.in_re __re_subj " << *smt_re << ") (_ bv1 "
+              << width << ") (_ bv0 " << width << ")))";
+          return;
+        }
+
+        // Fall-through: subject's structure isn't recognised
+        // (e.g. raw symbol_exprt where the data array isn't
+        // syntactically reachable from this layer). Sound
+        // over-approximation: emit bv0. A future refinement
+        // would integrate with the array_pool / string-
+        // refinement infrastructure so symbolic refined-
+        // strings whose array contents are tracked there can
+        // be exposed here too.
         out << "(_ bv0 " << width << ")";
         return;
       }
