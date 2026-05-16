@@ -1070,6 +1070,16 @@ exprt typescript_convertert::convert_expression(const jsont &node)
       }
     }
     auto cls_it = class_types.find(cls_name);
+    // For parameterized built-in classes (Set<string>, etc.), the
+    // Identifier text is just "Set" but the _type field carries the
+    // full parameterized name. Check that first.
+    if(cls_it == class_types.end() || cls_name == "Set" || cls_name == "Map")
+    {
+      std::string node_type = json_string(json_member(node, "_type"));
+      auto param_it = class_types.find(node_type);
+      if(param_it != class_types.end())
+        cls_it = param_it;
+    }
     if(cls_it != class_types.end())
     {
       // Create temp object
@@ -1089,28 +1099,54 @@ exprt typescript_convertert::convert_expression(const jsont &node)
         symbol_table.add(ts);
       }
       symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
-      // Call constructor
+      // Call constructor (or initialize directly if type mismatch)
       irep_idt ctor_id{"typescript::" + cls_name + "::__init__"};
       const symbolt *ctor = symbol_table.lookup(ctor_id);
       if(ctor != nullptr)
       {
-        exprt::operandst args;
-        args.push_back(address_of_exprt{tmp});
-        const jsont &call_args = json_member(node, "arguments");
-        if(call_args.is_array())
-          for(const auto &a : to_json_array(call_args))
-            args.push_back(convert_expression(a));
-        // Type-match args to params
-        const auto &params = to_code_type(ctor->type).parameters();
-        for(std::size_t i = 0; i < args.size() && i < params.size(); i++)
-          if(args[i].type() != params[i].type())
-            args[i] = typecast_exprt(args[i], params[i].type());
-        pending_stmts.push_back(
-          code_expressiont{side_effect_expr_function_callt{
-            ctor->symbol_expr(),
-            std::move(args),
-            empty_typet{},
-            get_location(node)}});
+        // Check if the constructor's this-pointer type matches our
+        // object type. For parameterized classes (Set<string> vs
+        // Set<number>), the constructor was registered for the
+        // default type and won't match. In that case, initialize
+        // the size field directly.
+        const auto &ctor_params = to_code_type(ctor->type).parameters();
+        bool type_matches = true;
+        if(!ctor_params.empty())
+        {
+          typet expected_this = ctor_params[0].type();
+          typet actual_this = pointer_typet{cls_it->second, 64};
+          if(expected_this != actual_this)
+            type_matches = false;
+        }
+        if(!type_matches)
+        {
+          // Direct initialization: set size/length to 0.
+          const auto &st = to_struct_type(cls_it->second);
+          if(st.has_component("size"))
+            pending_stmts.push_back(code_frontend_assignt{
+              member_exprt{tmp, "size", signedbv_typet{64}},
+              from_integer(0, signedbv_typet{64})});
+        }
+        else
+        {
+          exprt::operandst args;
+          args.push_back(address_of_exprt{tmp});
+          const jsont &call_args = json_member(node, "arguments");
+          if(call_args.is_array())
+            for(const auto &a : to_json_array(call_args))
+              args.push_back(convert_expression(a));
+          // Type-match args to params
+          const auto &params = to_code_type(ctor->type).parameters();
+          for(std::size_t i = 0; i < args.size() && i < params.size(); i++)
+            if(args[i].type() != params[i].type())
+              args[i] = typecast_exprt(args[i], params[i].type());
+          pending_stmts.push_back(
+            code_expressiont{side_effect_expr_function_callt{
+              ctor->symbol_expr(),
+              std::move(args),
+              empty_typet{},
+              get_location(node)}});
+        }
       }
       return tmp;
     }

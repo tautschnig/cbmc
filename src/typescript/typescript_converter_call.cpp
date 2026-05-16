@@ -5337,12 +5337,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           member_exprt{obj_expr, "data", mst.get_component("data").type()};
         if(method == "add" && args.is_array() && !to_json_array(args).empty())
         {
-          // ES2024 §24.2.3.1: add returns the Set. Per spec, Set
-          // enforces uniqueness — re-adding an existing element does
-          // not add a new entry.
           exprt val = convert_expression(*to_json_array(args).begin());
-          if(val.type() != double_type())
-            val = typecast_exprt{val, double_type()};
+          const auto &data_arr_type =
+            to_array_type(mst.get_component("data").type());
+          if(val.type() != data_arr_type.element_type())
+            val = typecast_exprt{val, data_arr_type.element_type()};
           // exists = ∃ i. i < size && data[i] == val
           exprt exists = false_exprt{};
           for(int i = 7; i >= 0; i--)
@@ -6697,6 +6696,9 @@ bool typescript_convertert::convert()
       struct_typet::componentt{"values", vals_type});
     map_type.set_tag("typescript_class_Map");
     class_types["Map"] = map_type;
+    // WeakMap is semantically identical to Map for verification
+    // (no GC in bounded model checking).
+    class_types["WeakMap"] = map_type;
     std::string ctor_name = "Map::__init__";
     irep_idt ctor_id{"typescript::" + ctor_name};
     if(symbol_table.lookup(ctor_id) == nullptr)
@@ -6724,6 +6726,38 @@ bool typescript_convertert::convert()
         from_integer(0, signedbv_typet{64})};
       symbol_table.add(ctor_sym);
     }
+    // WeakMap constructor: same as Map (just initializes size=0).
+    {
+      std::string wm_ctor = "WeakMap::__init__";
+      irep_idt wm_id{"typescript::" + wm_ctor};
+      if(symbol_table.lookup(wm_id) == nullptr)
+      {
+        code_typet::parameterst wm_params;
+        code_typet::parametert wm_this{pointer_typet{map_type, 64}};
+        wm_this.set_identifier("typescript::" + wm_ctor + "::this");
+        wm_this.set_base_name("this");
+        wm_params.push_back(wm_this);
+        code_typet wm_ft{wm_params, empty_typet{}};
+        symbolt wm_sym{wm_id, wm_ft, "typescript"};
+        wm_sym.base_name = wm_ctor;
+        irep_idt wm_this_id{"typescript::" + wm_ctor + "::this"};
+        symbolt wm_this_sym{
+          wm_this_id, pointer_typet{map_type, 64}, "typescript"};
+        wm_this_sym.base_name = "this";
+        wm_this_sym.is_parameter = true;
+        wm_this_sym.is_lvalue = true;
+        if(symbol_table.lookup(wm_this_id) == nullptr)
+          symbol_table.add(wm_this_sym);
+        wm_sym.value = code_frontend_assignt{
+          member_exprt{
+            dereference_exprt{
+              symbol_exprt{wm_this_id, pointer_typet{map_type, 64}}},
+            "size",
+            signedbv_typet{64}},
+          from_integer(0, signedbv_typet{64})};
+        symbol_table.add(wm_sym);
+      }
+    }
   }
   // Set class: { size: signedbv[64], data: double[8] }
   {
@@ -6737,6 +6771,18 @@ bool typescript_convertert::convert()
       struct_typet::componentt{"data", data_type});
     set_type.set_tag("typescript_class_Set");
     class_types["Set"] = set_type;
+    // Also register Set<string> with string-typed data.
+    {
+      array_typet str_data{
+        typescript_string_type(), from_integer(max_set, signedbv_typet{64})};
+      struct_typet str_set;
+      str_set.components().push_back(
+        struct_typet::componentt{"size", signedbv_typet{64}});
+      str_set.components().push_back(
+        struct_typet::componentt{"data", str_data});
+      str_set.set_tag("typescript_class_Set");
+      class_types["Set<string>"] = str_set;
+    }
     std::string ctor_name = "Set::__init__";
     irep_idt ctor_id{"typescript::" + ctor_name};
     if(symbol_table.lookup(ctor_id) == nullptr)
