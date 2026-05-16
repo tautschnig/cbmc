@@ -291,6 +291,26 @@ MODULE_GHOST_BOOTSTRAP = {
             "void set_page_prov(struct page *p, page_provenance_t prov);",
         ],
     },
+    "kobject_lifetime": {
+        # Match struct kobject *-typed parameters; per-file
+        # harness inits each with usage=1 so the first put lands
+        # on a live kobject and a double-put / unbalanced-put
+        # pattern inside the enclosing function fires the
+        # contract precondition.
+        "types": ["struct kobject *"],
+        "ghost_init_call": "kobject_lifetime_init",
+        "ghost_init_args_template": "(struct kobject *){arg}, 1",
+        "ghost_init_decl":
+            "void kobject_lifetime_init(struct kobject *k, "
+            "unsigned int usage);",
+        "forward_decls": ["struct kobject;"],
+        # Wrapper-paths can be added here once cross-version
+        # corpus runs surface concrete wrapper struct → kobject
+        # patterns (e.g. struct device, struct net_device).
+        # Empty for now; the kobject types hit applies to bare
+        # struct kobject * params first.
+        "wrapper_paths": [],
+    },
 }
 
 

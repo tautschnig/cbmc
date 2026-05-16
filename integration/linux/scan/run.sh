@@ -458,6 +458,55 @@ sys.exit('no alloc_tag module report')
   fi
 fi
 
+echo
+echo "=== case 10: kobject_lifetime direct-call harness ==="
+# Seventh property module end-to-end.  The synthetic
+# kobject_kernel_direct_harness.c puts the same kobject twice
+# in the vulnerable shape (kobject_lifetime_init usage=1 →
+# put → put fires precondition); in -DFIXED shape both puts
+# land on a still-live kobject and the precondition holds.
+set +e
+"$GOTOCC" \
+  "$REPO_ROOT/integration/linux/properties/kobject_lifetime/kobject_lifetime.c" \
+  "$REPO_ROOT/integration/linux/scan/adapters/kobject_kernel_adapter.c" \
+  "$REPO_ROOT/integration/linux/scan/adapters/kobject_kernel_direct_harness.c" \
+  -o "$tmp/case10a.gb" 2>"$tmp/case10a.cc"
+"$GI" --replace-call-with-contract kobject_put \
+  "$tmp/case10a.gb" "$tmp/case10a.inst" 2>"$tmp/case10a.gi"
+"$CBMC" "$tmp/case10a.inst" > "$tmp/case10a.out" 2>&1
+rc=$?
+set -e
+if [[ $rc -eq 10 ]] && \
+   grep -q "kobject_put.precondition.*FAILURE" "$tmp/case10a.out" && \
+   grep -q "VERIFICATION FAILED" "$tmp/case10a.out"; then
+  echo "  [ok] 10a (vuln): exit 10, kobject_put precondition fired, VERIFICATION FAILED"
+else
+  echo "  [FAIL] 10a expected rc 10 + precondition FAILURE + VERIFICATION FAILED" >&2
+  echo "         actual rc=$rc; last 15 lines of output:" >&2
+  tail -15 "$tmp/case10a.out" | sed 's/^/         /' >&2
+  fail=$((fail + 1))
+fi
+
+set +e
+"$GOTOCC" -DFIXED \
+  "$REPO_ROOT/integration/linux/properties/kobject_lifetime/kobject_lifetime.c" \
+  "$REPO_ROOT/integration/linux/scan/adapters/kobject_kernel_adapter.c" \
+  "$REPO_ROOT/integration/linux/scan/adapters/kobject_kernel_direct_harness.c" \
+  -o "$tmp/case10b.gb" 2>"$tmp/case10b.cc"
+"$GI" --replace-call-with-contract kobject_put \
+  "$tmp/case10b.gb" "$tmp/case10b.inst" 2>"$tmp/case10b.gi"
+"$CBMC" "$tmp/case10b.inst" > "$tmp/case10b.out" 2>&1
+rc=$?
+set -e
+if [[ $rc -eq 0 ]] && grep -q "VERIFICATION SUCCESSFUL" "$tmp/case10b.out"; then
+  echo "  [ok] 10b (fix):  exit 0, VERIFICATION SUCCESSFUL"
+else
+  echo "  [FAIL] 10b expected rc 0 + VERIFICATION SUCCESSFUL" >&2
+  echo "         actual rc=$rc; last 15 lines of output:" >&2
+  tail -15 "$tmp/case10b.out" | sed 's/^/         /' >&2
+  fail=$((fail + 1))
+fi
+
 if [[ $fail -eq 0 ]]; then
   echo
   echo "scan.py regressions passed."

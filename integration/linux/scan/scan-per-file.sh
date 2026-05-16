@@ -56,6 +56,7 @@ REPO_ROOT=$(cd -- "$SCRIPT_DIR/../../.." &>/dev/null && pwd)
 case "$MODULE" in
   cred_lifetime)     ADAPTER_STEM=cred ;;
   refcount_lifetime) ADAPTER_STEM=refcount ;;
+  kobject_lifetime)  ADAPTER_STEM=kobject ;;
   *)                 ADAPTER_STEM=$MODULE ;;
 esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
@@ -130,6 +131,14 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
       CONTRACT_TARGETS=(
         __CPROVER_file_local_aead_h_aead_request_set_crypt
         aead_request_set_crypt
+      )
+      ;;
+    kobject_lifetime)
+      # kobject_put is an ordinary extern in <linux/kobject.h>
+      # (lib/kobject.c provides the EXPORT_SYMBOL'd body); the
+      # external name is sufficient.
+      CONTRACT_TARGETS=(
+        kobject_put
       )
       ;;
     *)

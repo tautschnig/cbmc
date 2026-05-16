@@ -58,6 +58,7 @@ TARGETS=(
   "crypto/algif_aead.c"          # Copy Fail (CVE-2026-31431) candidate
   "fs/splice.c"                  # Dirty Pipe (CVE-2022-0847) candidate
   "lib/iov_iter.c"               # copy_page_to_iter_pipe lives here
+  "kernel/params.c"              # kobject_lifetime candidate (small, stable)
 )
 
 tmp=$(mktemp -d)

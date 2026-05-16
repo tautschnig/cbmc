@@ -297,6 +297,12 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # (not static inline); single external name.
         "vfree",
     ],
+    "kobject_lifetime": [
+        # kobject_put is an ordinary extern in <linux/kobject.h>
+        # (lib/kobject.c provides the body and EXPORT_SYMBOLs
+        # it); single external name.
+        "kobject_put",
+    ],
 }
 
 
@@ -481,6 +487,28 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "alloc_tag_vfree_ok",
             "alloc_tag_of",
+        ],
+    },
+    "kobject_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "kobject_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "kobject_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "kobject_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "kobject_lifetime" / "kobject_lifetime.c",
+        ],
+        "slice_preserve": [
+            "kobject_live", "kobject_lifetime_usage",
+            "kobject_lifetime_init", "kobject_lifetime_get",
+            "kobject_lifetime_put",
+            "kobject_ghost_find", "kobject_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "kobject_live",
+            "kobject_lifetime_usage",
         ],
     },
 }
@@ -1139,6 +1167,7 @@ _PER_FILE_SUPPORTED_MODULES = {
     "lock_state",
     "refcount_lifetime",
     "aead",
+    "kobject_lifetime",
 }
 
 
