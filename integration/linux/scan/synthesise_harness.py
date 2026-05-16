@@ -311,6 +311,40 @@ MODULE_GHOST_BOOTSTRAP = {
         # struct kobject * params first.
         "wrapper_paths": [],
     },
+    # === Phase-1 balance modules generated via
+    #     scan/balance_module_factory.py.  Each follows the
+    #     cred/refcount/kobject pattern: ghost-init at usage=1,
+    #     contract on the kernel's put-API.
+    "device_lifetime": {
+        "types": ["struct device *"],
+        "ghost_init_call": "device_lifetime_init",
+        "ghost_init_args_template": "(struct device *){arg}, 1",
+        "ghost_init_decl":
+            "void device_lifetime_init(struct device *dev, "
+            "unsigned int usage);",
+        "forward_decls": ["struct device;"],
+        "wrapper_paths": [],
+    },
+    "of_node_lifetime": {
+        "types": ["struct device_node *"],
+        "ghost_init_call": "of_node_lifetime_init",
+        "ghost_init_args_template": "(struct device_node *){arg}, 1",
+        "ghost_init_decl":
+            "void of_node_lifetime_init(struct device_node *node, "
+            "unsigned int usage);",
+        "forward_decls": ["struct device_node;"],
+        "wrapper_paths": [],
+    },
+    "inode_lifetime": {
+        "types": ["struct inode *"],
+        "ghost_init_call": "inode_lifetime_init",
+        "ghost_init_args_template": "(struct inode *){arg}, 1",
+        "ghost_init_decl":
+            "void inode_lifetime_init(struct inode *inode, "
+            "unsigned int usage);",
+        "forward_decls": ["struct inode;"],
+        "wrapper_paths": [],
+    },
 }
 
 

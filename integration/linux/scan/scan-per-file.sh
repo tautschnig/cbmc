@@ -57,6 +57,9 @@ case "$MODULE" in
   cred_lifetime)     ADAPTER_STEM=cred ;;
   refcount_lifetime) ADAPTER_STEM=refcount ;;
   kobject_lifetime)  ADAPTER_STEM=kobject ;;
+  device_lifetime)   ADAPTER_STEM=device ;;
+  of_node_lifetime)  ADAPTER_STEM=of_node ;;
+  inode_lifetime)    ADAPTER_STEM=inode ;;
   *)                 ADAPTER_STEM=$MODULE ;;
 esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
@@ -139,6 +142,21 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
       # external name is sufficient.
       CONTRACT_TARGETS=(
         kobject_put
+      )
+      ;;
+    device_lifetime)
+      CONTRACT_TARGETS=(
+        put_device
+      )
+      ;;
+    of_node_lifetime)
+      CONTRACT_TARGETS=(
+        of_node_put
+      )
+      ;;
+    inode_lifetime)
+      CONTRACT_TARGETS=(
+        iput
       )
       ;;
     *)

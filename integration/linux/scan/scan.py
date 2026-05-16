@@ -303,6 +303,16 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # it); single external name.
         "kobject_put",
     ],
+    # Phase-1 balance modules.
+    "device_lifetime": [
+        "put_device",
+    ],
+    "of_node_lifetime": [
+        "of_node_put",
+    ],
+    "inode_lifetime": [
+        "iput",
+    ],
 }
 
 
@@ -509,6 +519,74 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "kobject_live",
             "kobject_lifetime_usage",
+        ],
+    },
+    # Phase-1 balance modules generated via
+    # scan/balance_module_factory.py.
+    "device_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "device_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "device_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "device_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "device_lifetime" / "device_lifetime.c",
+        ],
+        "slice_preserve": [
+            "device_live", "device_lifetime_usage",
+            "device_lifetime_init", "device_lifetime_get",
+            "device_lifetime_put",
+            "device_ghost_find", "device_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "device_live",
+            "device_lifetime_usage",
+        ],
+    },
+    "of_node_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "of_node_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "of_node_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "of_node_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "of_node_lifetime" / "of_node_lifetime.c",
+        ],
+        "slice_preserve": [
+            "of_node_live", "of_node_lifetime_usage",
+            "of_node_lifetime_init", "of_node_lifetime_get",
+            "of_node_lifetime_put",
+            "of_node_ghost_find", "of_node_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "of_node_live",
+            "of_node_lifetime_usage",
+        ],
+    },
+    "inode_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "inode_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "inode_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "inode_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "inode_lifetime" / "inode_lifetime.c",
+        ],
+        "slice_preserve": [
+            "inode_live", "inode_lifetime_usage",
+            "inode_lifetime_init", "inode_lifetime_get",
+            "inode_lifetime_put",
+            "inode_ghost_find", "inode_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "inode_live",
+            "inode_lifetime_usage",
         ],
     },
 }
@@ -1168,6 +1246,10 @@ _PER_FILE_SUPPORTED_MODULES = {
     "refcount_lifetime",
     "aead",
     "kobject_lifetime",
+    # Phase-1 balance modules.
+    "device_lifetime",
+    "of_node_lifetime",
+    "inode_lifetime",
 }
 
 
