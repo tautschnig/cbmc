@@ -1,249 +1,141 @@
-# TypeScript Frontend — Remaining Work Plan
+# TypeScript Frontend — Remaining Work Plan (2026-05-16)
 
-## Current state (2026-05-15)
+## Current state
 
-- 692 CORE tests, 2 KNOWNBUGs (async-race-undetected, object-prototype-chain)
-- strict-nan-not-equal: CLOSED (distinct NaN payloads)
-- 4 real-world harnesses passing (semver, URL, email, config)
-
----
-
-## 1. object-prototype-chain (KNOWNBUG)
-
-**What's broken**: `Object.getPrototypeOf(x)`, `x instanceof Y` via prototype
-chain, method resolution through `__proto__` links. Our struct model has no
-prototype chain — each class is a flat struct with its own methods inlined.
-
-**Plan**:
-
-Phase 1 — Prototype link field (~2 days):
-- Add a `__proto__` field (pointer to parent struct type) to every class struct.
-- `Object.getPrototypeOf(x)` returns `x.__proto__`.
-- `x instanceof Y` checks if Y.prototype appears anywhere in x's chain.
-- Limit chain depth to 5 (configurable) to bound verification.
-
-Phase 2 — Method resolution through chain (~1-2 days):
-- When a method call `x.foo()` fails to find `foo` in x's own struct,
-  walk `x.__proto__` looking for the method.
-- This enables inherited methods that aren't explicitly copied into subclass
-  structs (currently we copy them during class conversion, which works for
-  direct inheritance but not for runtime prototype manipulation).
-
-Phase 3 — `Object.create`, `Object.setPrototypeOf` (~1 day):
-- `Object.create(proto)` creates a new object with `__proto__ = proto`.
-- `Object.setPrototypeOf(obj, proto)` mutates the link.
-
-**Estimate**: 4-5 days total.
-**Risk**: Medium-high. Prototype chains interact with every method call site;
-the fallback-to-parent lookup adds complexity to the call dispatcher.
-**Dependencies**: None.
+- 700 CORE tests, 1 KNOWNBUG (async-race-undetected, opt-in design choice)
+- All Track A/B/C items from the previous plan addressed
 
 ---
 
-## 2. Documented gaps
+## Documented gaps
 
-### 2.1 for-of on strings
+### 1. RegExp metacharacters (Phase 2)
 
-**What's broken**: `for (const c of "abc")` is a no-op with a warning.
-
-**Plan**: Rewrite at the frontend level to:
-```
-for (let __i = 0; __i < s.length; __i++) {
-    const c = s.charAt(__i);  // 1-char string
-    <body>
-}
-```
-This is a syntactic transform — no solver implications.
-
-**Estimate**: 2-3 hours.
-**Risk**: Low.
-**Dependencies**: None (charAt on non-constant receivers already works after A2).
-
-### 2.2 Ternary with literal-union inference
-
-**What's broken**: `0 ? 10 : 20` has TS-inferred type `10 | 20` (a literal
-union). Our tagged-union representation can't reliably match the target integer.
-
-**Plan**: When the ternary's inferred type is a numeric literal union AND both
-branches are constant numbers, bypass the union and emit a plain `if_exprt`
-with `double_type()` result. Detect via the `_type` field containing `|` with
-all-numeric alternatives.
-
-**Estimate**: 1-2 hours.
-**Risk**: Low.
-**Dependencies**: None.
-
-### 2.3 Mixed-union-type arrays
-
-**What's broken**: `(number | number[])[]` crashes `simplify_member`.
-
-**Plan**: This is a CBMC-core simplifier issue — it doesn't handle member
-access on a union-typed array element. Two options:
-1. Frontend workaround: detect the pattern and emit a nondet value with a
-   warning (like for-of on strings). Quick but unsatisfying.
-2. Core fix: teach `simplify_expr_struct.cpp` to handle the case. Requires
-   understanding the simplifier's invariant at line 122.
-
-**Estimate**: Option 1: 1 hour. Option 2: 1-2 days (core change, needs
-careful testing across all frontends).
-**Risk**: Option 1 low, option 2 medium.
-**Dependencies**: None.
-
-### 2.4 RegExp metacharacters (Phase 2)
-
-**What's broken**: `/a.b/.test(s)` treats `.` as a literal dot, not "any char".
+**What**: `/a.b/.test(s)` treats `.` as literal; `*`, `+`, `?`, `[]`, `^`, `$`, `\d`, `\w`, `\s`, `|` not supported.
 
 **Plan**:
-- Build a small NFA from the regex pattern at conversion time.
+- Build a small NFA from the regex pattern at conversion time (standard Thompson construction).
 - For constant input strings: simulate the NFA and return true/false.
-- For symbolic input: return nondet (Phase 3 with SMT-string theory would
-  handle this via `str.in_re`).
-- Supported metacharacters: `.`, `*`, `+`, `?`, `[abc]`, `[^abc]`, `^`, `$`,
-  `\d`, `\w`, `\s`, `|`, `()` (grouping only, no captures).
+- For symbolic input: return nondet (Phase 3 with SMT `str.in_re` would handle this).
+- Supported metacharacters: `.` (any char), `*` (zero+), `+` (one+), `?` (optional), `[abc]` / `[^abc]` (char class), `^` / `$` (anchors), `\d` / `\w` / `\s` (shorthand classes), `|` (alternation), `()` (grouping, no captures).
+- Unsupported (defer): backreferences, lookahead/lookbehind, named groups, Unicode property escapes.
 
 **Estimate**: 2-3 days.
-**Risk**: Medium (NFA construction is well-understood but regex edge cases
-are numerous).
+**Risk**: Medium (NFA construction is well-understood; regex edge cases are numerous but bounded by the supported subset).
 **Dependencies**: None for Phase 2. Phase 3 depends on SMT-string integration.
 
-### 2.5 indexOf with computed fromIndex requires --object-bits 10
+### 2. indexOf with computed fromIndex requires --object-bits 10
 
-**What's broken**: The solver-side path allocates many string objects, exceeding
-the default 256-object limit.
+**What**: The solver-side path allocates many string objects, exceeding the default 256-object limit.
 
-**Plan**: This is a scalability issue, not a correctness issue. Options:
-1. Auto-detect when string-heavy code needs more object bits and emit a
-   warning suggesting `--object-bits 10`.
-2. Reduce allocations by reusing solver-side string buffers across calls
-   (requires changes to `ts_string_to_refined`).
-3. Accept as a documented limitation (users pass `--object-bits 10`).
+**Plan**: Two options:
+1. **Auto-detect** (recommended): when the frontend emits solver-side string operations (ts_string_to_refined), count the allocations. If > 200, emit a warning at the end of type-checking suggesting `--object-bits 10`. ~1 hour.
+2. **Reduce allocations**: reuse solver-side string buffers across calls in `ts_string_to_refined` by caching the refined view per source symbol. ~1-2 days, higher impact but more complex.
 
-**Estimate**: Option 1: 1 hour. Option 2: 1-2 days. Option 3: 0.
+**Estimate**: Option 1: 1 hour. Option 2: 1-2 days.
 **Risk**: Low.
-**Dependencies**: None.
 
-### 2.6 Set<string>
+### 3. Mixed-union-type arrays
 
-**What's broken**: `new Set<string>()` uses the numeric Set type (double[8]).
+**What**: `(number | number[])[]` crashes `simplify_member` in CBMC core.
 
-**Plan**: Parameterize the Set type infrastructure:
-- Register `Set<string>` with `typescript_string[8]` data at startup.
-- Register a separate `Set<string>::__init__` constructor.
-- The `add`/`has`/`delete` methods already use `data_arr_type.element_type()`
-  for comparison — they just need the correct type to be selected.
-- Key issue from earlier attempt: the constructor is shared. Fix: dispatch
-  constructor by the variable's declared type, not by `cls_name`.
+**Plan**: Frontend workaround — detect the pattern (array element type is a union containing an array type) and emit a warning + nondet value instead of crashing. The core fix (teaching `simplify_expr_struct.cpp` to handle member access on union-typed array elements) is a separate CBMC-core task.
 
-**Estimate**: Half day.
-**Risk**: Low (diagnosis is clear from the earlier attempt).
-**Dependencies**: None.
+**Estimate**: Workaround: 1 hour. Core fix: 1-2 days (needs careful testing across all frontends).
+**Risk**: Workaround: low. Core fix: medium.
 
-### 2.7 Calendar getters on Date
+### 4. Date calendar getters (getMonth, getDate, etc.)
 
-**What's broken**: `getFullYear()`, `getMonth()`, etc. return nondet.
+**What**: Only getFullYear is implemented via epoch arithmetic; other calendar getters return nondet.
 
-**Plan**: Implement epoch-to-calendar conversion:
-- `getFullYear`: `Math.floor(time / 31557600000) + 1970` (approximate; real
-  algorithm needs leap year handling).
-- Full implementation: port the ES2024 §21.4.1.3 MakeDay / MakeDate / TimeClip
-  algorithms. These are pure arithmetic on the timestamp.
-- Alternatively: implement only `getFullYear` precisely (most commonly
-  verified) and leave others as nondet.
+**Plan**: Implement the ES2024 §21.4.1 algorithms:
+- `getMonth`: extract month from days-since-epoch (needs leap year table).
+- `getDate`: day-of-month from days-since-epoch.
+- `getDay`: `(days + 4) % 7` (Jan 1 1970 was Thursday = 4).
+- `getHours/Minutes/Seconds/Milliseconds`: modular arithmetic on the time value.
 
-**Estimate**: 1 day for getFullYear only; 2-3 days for full calendar.
+The hours/minutes/seconds/milliseconds are simple: `Math.floor(time / 3600000) % 24`, etc. Month and day-of-month need the cumulative-days-per-month table with leap year handling.
+
+**Estimate**: 1 day (hours/min/sec/ms are trivial; month/date need the table).
 **Risk**: Low (pure arithmetic, well-specified).
-**Dependencies**: None.
 
-### 2.8 >>> on BigInt
+### 5. Generator parameters (next(value))
 
-**What's broken**: `>>>` on BigInt is treated as signed shift; spec says TypeError.
+**What**: `gen.next(42)` should send `42` as the result of the `yield` expression inside the generator. Currently ignored.
 
-**Plan**: Emit a verification-error assertion (`ASSERT false` with property
-class "type-error") when `>>>` is applied to bigint operands. This matches
-the spec's runtime TypeError semantics.
+**Plan**: Extend the generator state machine:
+- Each yield point becomes a "receive slot" in addition to a "send slot".
+- `next(value)` stores `value` into the receive slot for the current state.
+- The yield expression evaluates to the received value.
+- Requires modelling the generator struct with both `__values` (outgoing) and `__inputs` (incoming) arrays.
 
-**Estimate**: 30 minutes.
-**Risk**: None.
-**Dependencies**: None.
+**Estimate**: 1-2 days.
+**Risk**: Medium (interaction with the state counter and pending_stmts ordering needs care).
+
+### 6. yield* delegation
+
+**What**: `yield* otherGenerator()` delegates to another generator, yielding all its values.
+
+**Plan**: At conversion time, inline the delegated generator's yields into the parent's yield array. This is a syntactic transform: `yield* g()` becomes `yield g_val_0; yield g_val_1; ...` when the delegated generator has constant yields.
+
+**Estimate**: Half day (for constant-yield delegates). Non-constant delegates would need runtime dispatch (much harder).
+**Risk**: Low for constant case.
+
+### 7. Symbol-keyed properties
+
+**What**: `obj[Symbol.iterator]` and computed symbol keys can't be used as property accessors because our struct model uses named fields.
+
+**Plan**: This is a fundamental model limitation. Two approaches:
+1. **Well-known symbols only** (pragmatic): hardcode `Symbol.iterator`, `Symbol.toPrimitive`, etc. as special property names that the converter recognizes. ~1 day.
+2. **Map-based property model** (full): replace struct fields with a Map-like key→value store. Multi-week refactor affecting every property access site. Not recommended.
+
+**Estimate**: Pragmatic: 1 day. Full: 2+ weeks.
+**Risk**: Pragmatic: low. Full: very high.
 
 ---
 
-## 3. Not modelled
+## Not modelled
 
-### 3.1 Generators (function*)
+### 8. Dynamic import()
 
-**What's broken**: Generator functions and `yield` are not parsed or converted.
+**What**: `import("./module")` returns nondet (doesn't crash, but doesn't resolve the module).
 
-**Plan**:
-- Parse `FunctionDeclaration` with `asteriskToken` and `YieldExpression`.
-- Model as a state machine: each `yield` point becomes a state; `next()`
-  advances to the next state and returns `{ value, done }`.
-- For bounded verification: unroll the generator up to `--unwind` iterations.
-- The `for-of` on a generator would use the same indexed-iteration rewrite.
-
-**Estimate**: 3-4 days.
-**Risk**: Medium (state-machine encoding is non-trivial; interaction with
-closures needs care).
-**Dependencies**: None.
-
-### 3.2 Dynamic import()
-
-**What's broken**: `import("./module")` is not handled.
-
-**Plan**: Model as a synchronous import (same as static `import`). The
-dynamic nature (Promise-returning) is irrelevant for verification — we
-already model async as sequential. The module resolution path already
-handles `./relative` imports.
+**Plan**: Model as synchronous import — resolve the module path using the existing multi-file import infrastructure, load and convert it, return the module's exports object. The Promise wrapper is irrelevant (we model async as sequential).
 
 **Estimate**: Half day.
-**Risk**: Low.
-**Dependencies**: None.
+**Risk**: Low (reuses existing module resolution).
 
-### 3.3 WeakMap / WeakRef
+### 9. WeakRef.deref()
 
-**What's broken**: Not modelled at all.
+**What**: `WeakRef` not modelled; `deref()` should return the referent or undefined.
 
-**Plan**: Model WeakMap identically to Map (our model doesn't have GC, so
-"weak" has no semantic difference for verification). WeakRef.deref() returns
-the referent or undefined (model as: always returns the referent, since GC
-doesn't run during bounded verification).
+**Plan**: Model `new WeakRef(target)` as storing `target`. `deref()` always returns the target (no GC in BMC). This is sound — if the program works with the referent always alive, it works in all executions.
 
-**Estimate**: Half day (reuse Map infrastructure).
-**Risk**: Low.
-**Dependencies**: None.
+**Estimate**: 1-2 hours.
+**Risk**: None.
 
-### 3.4 Proxy / Reflect
+### 10. Proxy handler traps
 
-**What's broken**: Not modelled.
+**What**: `new Proxy(target, handler)` returns target unchanged; handler traps are ignored.
 
-**Plan**: This is the hardest item. Proxy intercepts ALL property access,
-method calls, and operators on an object. Full support would require:
-- A dispatch layer that checks for a Proxy wrapper before every property
-  access and method call.
-- Handler trap functions (get, set, apply, construct, etc.).
+**Plan**: For full support, intercept every property access/method call on a Proxy-typed variable and dispatch through the handler's trap functions. This is a substantial refactor:
+- Add a `__handler` field to the Proxy struct.
+- On every `obj.prop` access, check if `obj` is a Proxy; if so, call `handler.get(target, "prop", receiver)`.
+- Similarly for set, apply, construct, etc.
 
-Pragmatic approach: model `new Proxy(target, handler)` as returning `target`
-unchanged (ignoring the handler). This is sound for programs that don't
-rely on trap side effects, which covers most verification use cases.
+**Estimate**: Full: 5-7 days. Not recommended unless a specific user need arises.
+**Risk**: High (touches every property access path).
 
-**Estimate**: Pragmatic: 1 hour. Full: 5-7 days.
-**Risk**: Pragmatic: low. Full: high.
-**Dependencies**: object-prototype-chain (for full Reflect.getPrototypeOf).
+### 11. Object.create / Object.setPrototypeOf
 
-### 3.5 Symbol
+**What**: Static prototype chain only (resolved at conversion time from class declarations). Runtime prototype manipulation not supported.
 
-**What's broken**: `Symbol()`, `Symbol.iterator`, well-known symbols.
+**Plan**: 
+- `Object.create(proto)`: create a new object whose type includes all of proto's fields. At conversion time, this is equivalent to `new` on a class that extends proto's type.
+- `Object.setPrototypeOf(obj, proto)`: would require runtime prototype links (pointer to parent struct). This is the "Phase 2/3" from the original prototype-chain plan.
 
-**Plan**:
-- Model `Symbol()` as a unique integer (fresh nondet, constrained to be
-  different from all other symbols via assume).
-- `Symbol.iterator` and other well-known symbols: fixed constants.
-- Property access via computed symbol keys: not supported (would need a
-  map-based property model instead of struct fields).
-
-**Estimate**: 1-2 days for basic Symbol(); well-known symbols add 1 day.
-**Risk**: Medium (symbol-keyed properties are a fundamental model change).
-**Dependencies**: None for basic; prototype chain for Symbol.iterator usage.
+**Estimate**: Object.create: 1 day. setPrototypeOf: 2-3 days (needs runtime pointer-based chain walking).
+**Risk**: Object.create: medium. setPrototypeOf: high.
 
 ---
 
@@ -253,35 +145,29 @@ Ordered by: (user-facing impact × feasibility) / risk.
 
 | Priority | Item | Estimate | Impact | Risk |
 |----------|------|----------|--------|------|
-| **1** | 2.1 for-of on strings | 2-3 hours | High (common pattern) | Low |
-| **2** | 2.2 Ternary literal-union | 1-2 hours | Medium (common annoyance) | Low |
-| **3** | 2.8 >>> on BigInt TypeError | 30 min | Low (correctness) | None |
-| **4** | 2.6 Set<string> | Half day | Medium (closes matrix gap) | Low |
-| **5** | 2.4 RegExp Phase 2 (metacharacters) | 2-3 days | High (common pattern) | Medium |
-| **6** | 2.7 Calendar getters (getFullYear) | 1 day | Medium | Low |
-| **7** | 3.2 Dynamic import() | Half day | Low (niche) | Low |
-| **8** | 3.3 WeakMap/WeakRef | Half day | Low (niche) | Low |
-| **9** | 2.3 Mixed-union arrays (workaround) | 1 hour | Low (rare pattern) | Low |
-| **10** | 1. object-prototype-chain | 4-5 days | Medium (closes KNOWNBUG) | Medium-high |
-| **11** | 3.1 Generators | 3-4 days | Medium (growing usage) | Medium |
-| **12** | 3.5 Symbol (basic) | 1-2 days | Low (niche) | Medium |
-| **13** | 2.5 object-bits auto-detect | 1 hour | Low (UX) | Low |
-| **14** | 3.4 Proxy/Reflect (pragmatic) | 1 hour | Low (niche) | Low |
-| **15** | 3.4 Proxy/Reflect (full) | 5-7 days | Low | High |
+| **1** | RegExp Phase 2 (metacharacters) | 2-3 days | High (common pattern) | Medium |
+| **2** | Date calendar getters (month, day, hours, etc.) | 1 day | Medium | Low |
+| **3** | indexOf object-bits auto-detect warning | 1 hour | Low (UX) | Low |
+| **4** | WeakRef.deref() | 1-2 hours | Low | None |
+| **5** | Dynamic import() (resolve module) | Half day | Low (niche) | Low |
+| **6** | Mixed-union arrays workaround | 1 hour | Low (rare) | Low |
+| **7** | yield* delegation (constant case) | Half day | Low | Low |
+| **8** | Generator next(value) parameters | 1-2 days | Medium | Medium |
+| **9** | Symbol well-known symbols | 1 day | Low (niche) | Low |
+| **10** | Object.create | 1 day | Low | Medium |
+| **11** | Object.setPrototypeOf (runtime chain) | 2-3 days | Low | High |
+| **12** | Proxy handler traps (full) | 5-7 days | Low | High |
 
-### Recommended execution tracks
+### Recommended execution
 
-**Track A — Quick wins (1-2 days total)**:
-Items 1, 2, 3, 9, 13, 14. All under 2 hours each. Clears 6 documented gaps.
+**Quick wins (1 day total)**: Items 3, 4, 6 — three items under 2 hours each.
 
-**Track B — Medium features (1 week)**:
-Items 4, 5, 6, 7, 8. Each is half-day to 3 days. Adds Set<string>, RegExp
-metacharacters, Date calendar, dynamic import, WeakMap.
+**High-impact feature**: Item 1 (RegExp Phase 2) — the single highest-impact remaining item. Opens verification of code using basic regex patterns.
 
-**Track C — Substantial (2 weeks)**:
-Items 10, 11, 12. Prototype chain, generators, Symbol. These are the
-remaining "hard" items that require model-level changes.
+**Medium features (1 week)**: Items 2, 5, 7, 8, 9 — each half-day to 2 days.
 
-**Suggested order**: Track A first (quick wins), then Track B (medium
-features), then Track C (substantial) — unless a specific user need
-prioritizes something from Track C.
+**Defer**: Items 10, 11, 12 — high risk, low user-facing impact. Address only when a specific user need arises.
+
+### Infrastructure dependency
+
+**SMT-string integration** (from tautschnig/py branch): enables RegExp Phase 3 (symbolic regex matching via `str.in_re`), improves symbolic string reasoning generally, and would make the indexOf object-bits issue disappear (SMT solvers handle strings natively without object-bit limits). This is the single most impactful infrastructure change but is a separate task from the frontend work listed above.
