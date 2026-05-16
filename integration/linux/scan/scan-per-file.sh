@@ -173,6 +173,17 @@ python3 "$SCRIPT_DIR/synthesise_harness.py" \
 synth_rc=$?
 set -e
 cat "$tmp/synth.err" >&2
+if [[ $synth_rc -eq 4 ]]; then
+  # Synthesiser detected a known-unverifiable shape (currently
+  # the aead transform-wrapper).  Emit a clean cbmc-skipped
+  # verdict so the corpus rollup categorises this as a known
+  # limitation rather than a failure.  Exit 13 signals the
+  # 'skipped' status to scan.py's run_cbmc_per_file aggregator.
+  echo
+  echo "=== $KERNEL_FILE: $TARGET_FUNC ==="
+  echo "  verdict: SKIPPED (known wrapper pattern; harness cannot validate)"
+  exit 13
+fi
 if [[ $synth_rc -ne 0 ]]; then
   echo "  FAIL: synthesise_harness.py could not generate harness" >&2
   exit 3

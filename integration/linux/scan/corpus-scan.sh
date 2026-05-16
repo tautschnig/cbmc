@@ -367,6 +367,10 @@ if perfile_rows:
     if pf_groups["vacuous"]:
         print(f"\n--- per-file vacuous (no contract clauses "
               f"checked): {len(pf_groups['vacuous'])} row(s) ---")
+    if pf_groups.get("skipped"):
+        print(f"\n--- per-file skipped (known-unverifiable "
+              f"shape, e.g. aead transform-wrapper): "
+              f"{len(pf_groups['skipped'])} row(s) ---")
 
 # === counts ===========================================================
 total_hits = sum(r[2] for r in default_rows)
@@ -383,6 +387,7 @@ print(f"  total cocci hits      : {total_hits}")
 if perfile_rows:
     print(f"  per-file rows         : {len(perfile_rows)}")
     for cat in ("failed", "successful", "noise", "vacuous",
+                "skipped",
                 "timeout", "error", "no-function-found", "other"):
         if pf_groups.get(cat):
             print(f"  per-file {cat:<14}: {len(pf_groups[cat])}")

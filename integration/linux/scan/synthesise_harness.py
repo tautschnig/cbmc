@@ -116,6 +116,16 @@ MODULE_GHOST_BOOTSTRAP = {
                 "field_path": "h_cred",
                 "kernel_includes": ["<linux/lockd/lockd.h>"],
             },
+            {
+                # copy_creds(struct task_struct *) and similar
+                # task-lifecycle helpers take the wrapper and
+                # operate on its cred / real_cred pointers.
+                # task->cred is itself a (const struct cred *),
+                # so field_path is just "cred" (no leading &).
+                "param_type": "struct task_struct *",
+                "field_path": "cred",
+                "kernel_includes": ["<linux/sched.h>"],
+            },
         ],
     },
     "pipe_buffer": {
@@ -184,6 +194,15 @@ MODULE_GHOST_BOOTSTRAP = {
                 "param_type": "struct nlm_host *",
                 "field_path": "&{arg}->h_count",
                 "kernel_includes": ["<linux/lockd/lockd.h>"],
+            },
+            {
+                # put_task_struct, put_task_stack etc. take the
+                # task wrapper and operate on its embedded
+                # refcounts.  Use task->usage as the canonical
+                # task refcount.
+                "param_type": "struct task_struct *",
+                "field_path": "&{arg}->usage",
+                "kernel_includes": ["<linux/sched.h>"],
             },
         ],
     },
@@ -377,6 +396,75 @@ def is_ghost_tracked(module: str, param_type: str) -> bool:
     return any(t in param_type for t in cfg["types"])
 
 
+def _is_aead_transform_wrapper(source: Path, function: str) -> bool:
+    """Return True if ``function`` follows the aead transform-wrapper
+    shape that the per-file synthesis fundamentally cannot validate:
+    the function takes ``struct aead_request *`` and its body calls
+    ``aead_request_set_crypt(X, ...)`` where ``X`` is NOT the
+    function's primary parameter name (i.e. it is a freshly
+    allocated subrequest carrying its own SGL).
+
+    Functions matching this shape -- e.g. ``crypto_rfc4309_crypt``,
+    ``crypto_rfc4106_crypt``, ``crypto_rfc4543_crypt`` -- always
+    showed up as 'failed' in the May 2026 hunt, but the failures
+    were artefacts: the harness sets ``req->dst`` to a SGL it
+    controls, then the function ignores that SGL by switching
+    to ``subreq``'s SGL via ``aead_request_set_crypt(subreq, ...)``,
+    and the property module's ``sgl_all_user_writable(dst)``
+    precondition fires against the unmodelled subreq SGL.
+    """
+    text = _strip_comments(source.read_text(errors="replace"))
+    sig = find_function_signature(source, function)
+    if sig is None:
+        return False
+
+    # Primary parameter must be a (non-const) pointer to
+    # aead_request.  We accept both 'struct aead_request *' and
+    # 'aead_request_t *' just in case.
+    if not sig.params:
+        return False
+    p0 = sig.params[0]
+    if "aead_request" not in p0.type_text:
+        return False
+    primary = p0.name
+
+    # Find the function body.  find_function_signature returns the
+    # signature; we re-use a tighter regex to extract the body
+    # block.
+    pat = re.compile(
+        r"(?:^|[;}\n])\s*[\w\s\*\(\)]+?\b" + re.escape(function) +
+        r"\s*\(\s*[^{};]*?\s*\)\s*\{",
+        re.MULTILINE | re.DOTALL,
+    )
+    m = pat.search(text)
+    if not m:
+        return False
+
+    # Walk braces to find the end of the function body.
+    body_start = m.end()
+    depth = 1
+    i = body_start
+    while i < len(text) and depth > 0:
+        c = text[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+        i += 1
+    body = text[body_start:i - 1] if depth == 0 else text[body_start:]
+
+    # Look for aead_request_set_crypt(X, ...) where X != primary.
+    for call_m in re.finditer(
+        r"aead_request_set_crypt\s*\(\s*([A-Za-z_]\w*)",
+        body,
+    ):
+        first_arg = call_m.group(1)
+        if first_arg != primary:
+            return True
+
+    return False
+
+
 def synthesise(module: str, source: Path, function: str,
                out: Path) -> int:
     cfg = MODULE_GHOST_BOOTSTRAP.get(module)
@@ -391,6 +479,22 @@ def synthesise(module: str, source: Path, function: str,
         print(f"synthesise_harness: could not find function "
               f"{function!r} in {source}", file=sys.stderr)
         return 2
+
+    # Skip the aead transform-wrapper shape: per-file synthesis
+    # has no way to model the freshly-allocated subreq's SGL
+    # so it always produces a spurious 'failed' verdict.  Signal
+    # the caller via exit code 4 (defined in scan-per-file.sh as
+    # 'skip-known-wrapper-pattern').
+    if module == "aead" and _is_aead_transform_wrapper(source, function):
+        print(
+            f"synthesise_harness: {function} matches the aead "
+            "transform-wrapper shape (allocates a fresh subreq and "
+            "calls aead_request_set_crypt(subreq, ...)); per-file "
+            "synthesis cannot validate this without modelling the "
+            "subreq's SGL.  Skipping.",
+            file=sys.stderr,
+        )
+        return 4
 
     # If the target is static in its TU, goto-cc's
     # --export-file-local-symbols pass mangles its symbol to

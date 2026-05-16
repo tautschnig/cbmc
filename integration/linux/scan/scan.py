@@ -1264,6 +1264,10 @@ def run_cbmc_per_file(
         #   12 No contract clause was even checked — vacuous.
         #      Either the call site is unreachable from the
         #      synthesised harness or the contract didn't apply.
+        #   13 Synthesiser detected a known-unverifiable shape
+        #      (currently the aead transform-wrapper) and skipped.
+        #      Reported as "skipped" — not a bug signal but also
+        #      not a noise/failure.
         #   3  infrastructure error (compile/link/etc)
         #   2  usage error
         #   other: cbmc non-verdict exit
@@ -1296,6 +1300,12 @@ def run_cbmc_per_file(
             notes = (
                 "no contract clause checked at this call site"
                 + confidence_note
+            )
+        elif rc == 13:
+            status = "skipped"
+            notes = (
+                "known-unverifiable shape (e.g. aead transform-"
+                "wrapper); harness synthesis intentionally skipped"
             )
         elif rc in (2, 3):
             status = "error"

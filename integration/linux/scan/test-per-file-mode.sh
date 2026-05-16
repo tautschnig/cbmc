@@ -213,10 +213,16 @@ for f in d['files']:
       continue
     pf = m.get('per_file', [])
     statuses = [v.get('status') for v in pf]
-    # Either noise (contract held, only built-ins fired) or
-    # failed (contract violated) is acceptable shape; we want
-    # to confirm the bootstrap reached the call site.
-    if any(s in ('noise', 'failed', 'successful') for s in statuses):
+    # Either noise (contract held, only built-ins fired),
+    # failed (contract violated), successful (contract held
+    # without any check firing), or skipped (synthesiser
+    # detected the aead transform-wrapper pattern and emitted
+    # a clean SKIPPED verdict) is acceptable shape; we want
+    # to confirm the per-file pipeline produced a verdict at
+    # all (i.e. infrastructure reached the synthesis decision
+    # point), not that the verdict is any specific value.
+    if any(s in ('noise', 'failed', 'successful', 'skipped')
+           for s in statuses):
       sys.exit(0)
 sys.exit('no aead per-file verdict produced')
 "
