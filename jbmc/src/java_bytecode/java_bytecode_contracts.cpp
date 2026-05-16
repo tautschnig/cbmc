@@ -239,7 +239,267 @@ std::vector<goto_programt::targett> find_return_value_assignments(
   return returns;
 }
 
-/// F12 trace-back, AND-chain pattern recognizer.
+/// F12 trace-back, mixed-predicate reconstructor for compound
+/// boolean lambda bodies.
+///
+/// Handles the general case `A && (B || C)`, `(A || B) && (C || D)`,
+/// and other mixed shapes that javac compiles to a single linear
+/// block of guards each targeting either an L_TRUE or an L_FALSE
+/// label. The flat AND-chain and OR-chain cases handled by
+/// `reconstruct_and_chain` are special cases of this.
+///
+/// CFG layout we recognize, immediately before the call site:
+///
+///   IF g1 GOTO L_T_or_F_1
+///   IF g2 GOTO L_T_or_F_2
+///   ...
+///   IF gN GOTO L_T_or_F_N
+///   ASSIGN tmp := <C_FT>           (fall-through value, 0 or 1)
+///   GOTO L_MERGE                   (optional)
+///   L_FALSE: ASSIGN tmp := 0
+///                                  (or L_TRUE: ASSIGN tmp := 1)
+///   L_MERGE: <here>
+///
+/// Algorithm: walk the guards in source order, tracking the
+/// cumulative "path condition" that must hold for execution to
+/// reach the current point without already having committed to
+/// TRUE or FALSE. Each guard is classified by the value of `tmp`
+/// at its jump target (L_TRUE or L_FALSE). A guard targeting
+/// L_TRUE contributes a disjunct `path AND guard.condition` to the
+/// final predicate; a guard targeting L_FALSE merely refines `path`
+/// to `path AND NOT(guard.condition)`. If fall-through reaches
+/// L_TRUE, the final `path` is also a disjunct; if fall-through
+/// reaches L_FALSE, no fall-through disjunct is added.
+///
+/// Worked example for `A && (B || C)`:
+///
+///   IF !A GOTO L_FALSE       (negative, refines path to A)
+///   IF B  GOTO L_TRUE        (positive, emits A AND B)
+///   IF !C GOTO L_FALSE       (negative, refines path to A AND !B AND C)
+///   ASSIGN tmp := 1          (fall-through TRUE; emits A AND !B AND C)
+///   GOTO MERGE
+///   L_FALSE: ASSIGN tmp := 0
+///   MERGE:
+///
+///   predicate = (A AND B) OR (A AND !B AND C) ≡ A AND (B OR C).
+///
+/// Returns `nullopt` if the CFG doesn't match this shape (e.g. a
+/// guard jumps to a label that isn't either of {L_TRUE, L_FALSE},
+/// or the merge layout doesn't match), so the caller can fall back
+/// to the simpler reconstructor or to the safer "drop the predicate"
+/// path.
+static std::optional<exprt> reconstruct_mixed_predicate(
+  goto_programt &body,
+  goto_programt::const_targett call_it,
+  const irep_idt &temp_id)
+{
+  if(call_it == body.instructions.begin())
+    return {};
+
+  auto is_no_op = [](const goto_programt::const_targett &c)
+  {
+    return c->is_skip() || c->is_decl() || c->is_dead() || c->is_location() ||
+           c->is_other();
+  };
+
+  // 1. Walk forward from the body start through the guard sequence
+  //    (a run of conditional GOTOs interleaved with no-ops) to
+  //    find the first assign of `temp_id`. That assign is the
+  //    GUARDS' fall-through — the value `temp_id` takes when none
+  //    of the guards' jumps fire.
+  //
+  //    Note: do NOT identify the fall-through by walking BACK from
+  //    `call_it` and taking the linearly-preceding assign. In the
+  //    mixed-shape layout javac emits, the linear predecessor of
+  //    the merge point is the OTHER (jumped-to) assign, not the
+  //    fall-through:
+  //
+  //      IF g1 GOTO L_FALSE
+  //      IF g2 GOTO L_TRUE          ← jumps to the assign:=1 below
+  //      IF g3 GOTO L_FALSE
+  //      L_TRUE: ASSIGN tmp := 1    ← this is the guards' fall-through
+  //      GOTO L_MERGE
+  //      L_FALSE: ASSIGN tmp := 0   ← linear predecessor of L_MERGE
+  //      L_MERGE: ...
+  goto_programt::const_targett fallthrough_assign = body.instructions.cend();
+  for(auto it = body.instructions.cbegin(); it != body.instructions.cend();
+      ++it)
+  {
+    if(is_no_op(it))
+      continue;
+    if(it->is_goto())
+    {
+      if(it->condition().is_true())
+      {
+        // An unconditional GOTO mid-guard sequence indicates a
+        // shape we don't recognize.
+        return {};
+      }
+      continue;
+    }
+    if(it->is_assign())
+    {
+      const exprt &lhs = it->assign_lhs();
+      if(
+        lhs.id() == ID_symbol &&
+        to_symbol_expr(lhs).get_identifier() == temp_id)
+      {
+        fallthrough_assign = it;
+        break;
+      }
+      // Other assigns mid-guards (e.g. to a different temp) mean
+      // the shape isn't what we expect.
+      return {};
+    }
+    return {}; // any other instruction kind: bail.
+  }
+  if(fallthrough_assign == body.instructions.cend())
+    return {};
+
+  const exprt &ft_rhs = fallthrough_assign->assign_rhs();
+  if(ft_rhs.id() != ID_constant)
+    return {};
+  const auto ft_int_opt = numeric_cast<mp_integer>(to_constant_expr(ft_rhs));
+  if(!ft_int_opt.has_value())
+    return {};
+  const bool fallthrough_is_true = (*ft_int_opt) == 1;
+  if(!fallthrough_is_true && (*ft_int_opt) != 0)
+    return {};
+
+  // 2. Find the OTHER branch's assign — `tmp := !C_FT`. There
+  //    should be exactly one, reached via the guards' jumps. We
+  //    scan forward from after fallthrough_assign for a unique
+  //    constant-rhs assign of `temp_id`.
+  goto_programt::const_targett other_assign = body.instructions.cend();
+  for(auto it = body.instructions.cbegin(); it != body.instructions.cend();
+      ++it)
+  {
+    if(it == fallthrough_assign)
+      continue;
+    if(!it->is_assign())
+      continue;
+    const exprt &lhs = it->assign_lhs();
+    if(
+      lhs.id() != ID_symbol ||
+      to_symbol_expr(lhs).get_identifier() != temp_id)
+      continue;
+    const exprt &rhs = it->assign_rhs();
+    if(rhs.id() != ID_constant)
+      continue;
+    const auto v = numeric_cast<mp_integer>(to_constant_expr(rhs));
+    if(!v.has_value())
+      continue;
+    if(*v == (fallthrough_is_true ? 0 : 1))
+    {
+      if(other_assign == body.instructions.cend())
+      {
+        other_assign = it;
+      }
+      else
+      {
+        // Multiple assigns of the OTHER value — not the simple
+        // shape we recognize.
+        return {};
+      }
+    }
+  }
+  if(other_assign == body.instructions.cend())
+    return {};
+
+  // 3. Walk guards in source order from the body start up to (but
+  //    not including) `fallthrough_assign`. Each guard is an IF
+  //    whose target is either fallthrough_assign (refines path) or
+  //    other_assign (emits/refines depending on direction). Bail if
+  //    we encounter any other shape.
+  exprt::operandst disjuncts;
+  exprt path = true_exprt();
+
+  for(auto it = body.instructions.cbegin(); it != fallthrough_assign; ++it)
+  {
+    if(is_no_op(it))
+      continue;
+    if(!it->is_goto())
+    {
+      // Anything other than a no-op or a guard before the
+      // fall-through means this isn't a clean guard sequence.
+      return {};
+    }
+    if(it->condition().is_true())
+      return {}; // unconditional GOTO mid-guards: bail
+    if(it->targets.size() != 1)
+      return {};
+    const auto target = it->targets.front();
+    const bool targets_other = (target == other_assign);
+    bool targets_fallthrough = false;
+    if(target == fallthrough_assign)
+    {
+      targets_fallthrough = true;
+    }
+    else
+    {
+      // Some javac-emitted layouts route the guard to a label that
+      // immediately precedes `other_assign` (a no-op like a goto
+      // location). Walk forward from `target` skipping no-ops to
+      // see whether we land on `other_assign` or `fallthrough_assign`.
+      auto t = target;
+      while(t != body.instructions.cend() &&
+            (t->is_skip() || t->is_decl() || t->is_location()) &&
+            t != other_assign && t != fallthrough_assign)
+        ++t;
+      if(t == other_assign)
+      {
+        // Treat as targets_other.
+      }
+      else if(t == fallthrough_assign)
+      {
+        targets_fallthrough = true;
+      }
+      else
+      {
+        // Guard jumps to somewhere else — give up.
+        return {};
+      }
+    }
+
+    const exprt &cond = it->condition();
+    // "Firing this guard sets tmp to value-at-target."
+    bool fired_yields_true;
+    if(targets_other)
+      fired_yields_true = !fallthrough_is_true;
+    else
+      fired_yields_true = fallthrough_is_true;
+    (void)targets_fallthrough; // currently subsumed by !targets_other
+
+    if(fired_yields_true)
+    {
+      // Firing → predicate true. Emit `path AND cond`. Refine path
+      // by `NOT cond` (continue with the not-fired case).
+      disjuncts.push_back(and_exprt(path, cond));
+      path = and_exprt(path, not_exprt(cond));
+    }
+    else
+    {
+      // Firing → predicate false. Refine path by NOT cond.
+      path = and_exprt(path, not_exprt(cond));
+    }
+  }
+
+  // 4. Fall-through contribution.
+  if(fallthrough_is_true)
+    disjuncts.push_back(path);
+
+  if(disjuncts.empty())
+    return {};
+
+  // Combine and simplify just enough that the resulting expression
+  // is readable in dump output. CBMC's downstream simplification
+  // will collapse the (true AND x) etc.
+  exprt result =
+    disjuncts.size() == 1 ? disjuncts.front() : disjunction(disjuncts);
+  return result;
+}
+
+
 ///
 /// javac compiles `precondition(c1 && c2 && ... && cN)` to:
 ///
@@ -260,6 +520,15 @@ std::vector<goto_programt::targett> find_return_value_assignments(
 /// We also recognize the dual OR-chain pattern: same shape but the
 /// "true" assignment sits behind the GOTO target and the "false"
 /// assignment is the fallthrough.
+///
+/// MIXED shapes (e.g. `A && (B || C)`) are recognized too: see
+/// `reconstruct_mixed_predicate` below for the general path-condition
+/// algorithm. `reconstruct_and_chain` covers only the flat AND-chain
+/// case where every guard targets the SAME label; the mixed
+/// reconstructor covers the general case at the cost of a slightly
+/// more involved CFG analysis. Both functions return `nullopt` on
+/// shapes they don't recognize so the caller can fall back to a
+/// safer (but less informative) capture.
 static std::optional<exprt> reconstruct_and_chain(
   goto_programt &body,
   goto_programt::const_targett call_it,
@@ -524,11 +793,17 @@ static exprt resolve_stack_temps(
       auto cached = resolved_cache.find(id);
       if(cached != resolved_cache.end())
         return cached->second;
-      // First try the AND/OR-chain pattern; this is what javac emits
-      // for boolean expressions involving `&&` or `||`. The chain is
-      // short-circuit-evaluated via control flow, so simple
-      // immediate-predecessor lookup of `ASSIGN tmp := <rhs>` finds
-      // the WRONG branch's value.
+      // First try the mixed-predicate reconstructor (handles
+      // compound shapes like `A && (B || C)`). Fall back to the
+      // flat AND-chain / OR-chain recognizer if the mixed
+      // reconstructor doesn't match.
+      auto mixed_rec = reconstruct_mixed_predicate(body, call_it, id);
+      if(mixed_rec.has_value())
+      {
+        exprt unfolded = rewrite(*mixed_rec, depth + 1);
+        resolved_cache[id] = unfolded;
+        return unfolded;
+      }
       auto chain_rec = reconstruct_and_chain(body, call_it, id);
       if(chain_rec.has_value())
       {
