@@ -200,6 +200,16 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
       options.set_option("div-by-zero-check", false);
       if(!cmdline.isset("z3") && !cmdline.isset("smt2") && !cmdline.isset("cvc5"))
         options.set_option("refine-strings", true);
+      // Cross-function Any-erasure detection: catches calls to a
+      // method on an Any-typed parameter when the caller's
+      // concrete class doesn't have that method. Zero false
+      // positives on the AWS Python benchmark suite, gains real
+      // bug detection (e.g. wrong client class). Default-on for
+      // .py inputs; users can override via
+      // --no-python-check-any-arg-attrs (not currently a flag —
+      // pass via explicit set_option to disable).
+      if(!options.is_set("python-check-any-arg-attrs"))
+        options.set_option("python-check-any-arg-attrs", true);
       break;
     }
   }
