@@ -137,14 +137,18 @@ codet python_convertert::convert_if(const jsont &stmt)
   if_else_depth++;
 
   // Path-sensitive truthiness: when the test is a bare Name
-  // referring to a list-typed variable, the body executes only
-  // when the list is non-empty (Python truthiness for lists is
-  // `len > 0`). Record min-length 1 for the body conversion to
-  // match the `len(L) >= N and L[i]` short-circuit idiom and
-  // suppress spurious IndexError checks on `L[0]` etc. inside
-  // `if L: L[0] / L[i]` patterns.
-  std::vector<irep_idt> body_length_bounds_added;
-  std::map<irep_idt, mp_integer> body_length_bounds_overwritten;
+  // referring to a list-typed or string-typed variable, the
+  // body executes only when the value is non-empty (Python
+  // truthiness for lists/strings is `len > 0`). Record
+  // min-length 1 for the body conversion to suppress spurious
+  // IndexError checks on `L[0]` / `s[0]` etc. inside
+  // `if L: L[0]` / `if s: s[0]` patterns. Restored on body
+  // exit so it doesn't leak into the else branch or the
+  // post-if continuation.
+  std::vector<irep_idt> body_list_bounds_added;
+  std::map<irep_idt, mp_integer> body_list_bounds_overwritten;
+  std::vector<irep_idt> body_string_bounds_added;
+  std::map<irep_idt, mp_integer> body_string_bounds_overwritten;
   bool then_branch_inverted = false;
   {
     const jsont &test_node = json_member(stmt, "test");
@@ -170,11 +174,25 @@ codet python_convertert::convert_if(const jsont &stmt)
         if(it == list_min_lengths.end())
         {
           list_min_lengths[vid] = mp_integer{1};
-          body_length_bounds_added.push_back(vid);
+          body_list_bounds_added.push_back(vid);
         }
         else if(it->second < 1)
         {
-          body_length_bounds_overwritten[vid] = it->second;
+          body_list_bounds_overwritten[vid] = it->second;
+          it->second = mp_integer{1};
+        }
+      }
+      else if(sym != nullptr && is_python_string_type(sym->type))
+      {
+        auto it = string_min_lengths.find(vid);
+        if(it == string_min_lengths.end())
+        {
+          string_min_lengths[vid] = mp_integer{1};
+          body_string_bounds_added.push_back(vid);
+        }
+        else if(it->second < 1)
+        {
+          body_string_bounds_overwritten[vid] = it->second;
           it->second = mp_integer{1};
         }
       }
@@ -191,10 +209,15 @@ codet python_convertert::convert_if(const jsont &stmt)
   }
 
   // Restore list_min_lengths to pre-body state.
-  for(const auto &id : body_length_bounds_added)
+  // Restore list_min_lengths and string_min_lengths to pre-body state.
+  for(const auto &id : body_list_bounds_added)
     list_min_lengths.erase(id);
-  for(const auto &kv : body_length_bounds_overwritten)
+  for(const auto &kv : body_list_bounds_overwritten)
     list_min_lengths[kv.first] = kv.second;
+  for(const auto &id : body_string_bounds_added)
+    string_min_lengths.erase(id);
+  for(const auto &kv : body_string_bounds_overwritten)
+    string_min_lengths[kv.first] = kv.second;
 
   // Save then-branch versions, restore for else branch
   auto then_versions = variable_versions;

@@ -370,13 +370,32 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       binary_relation_exprt{slice, ID_lt, from_integer(0, slice.type())},
       plus_exprt{length, slice},
       slice};
-    add_check(
-      and_exprt{
-        binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(slice.type())},
-        binary_relation_exprt{adjusted_idx, ID_lt, length}},
-      "index-out-of-bounds",
-      "string index out of range",
-      get_location(expr));
+    // Path-sensitive elision: if we're inside an `if s:` body
+    // (string_min_lengths records `s` has at least 1 char) and
+    // the index is a non-negative constant smaller than that
+    // bound, the IndexError check is trivially safe.
+    bool elide_str_idx_check = false;
+    if(
+      slice.is_constant() && value.id() == ID_symbol &&
+      string_min_lengths.count(to_symbol_expr(value).get_identifier()) > 0)
+    {
+      mp_integer idx_val;
+      if(!to_integer(to_constant_expr(slice), idx_val) && idx_val >= 0)
+      {
+        const mp_integer &min_len =
+          string_min_lengths.at(to_symbol_expr(value).get_identifier());
+        if(idx_val < min_len)
+          elide_str_idx_check = true;
+      }
+    }
+    if(!elide_str_idx_check)
+      add_check(
+        and_exprt{
+          binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(slice.type())},
+          binary_relation_exprt{adjusted_idx, ID_lt, length}},
+        "index-out-of-bounds",
+        "string index out of range",
+        get_location(expr));
     // Constant-string optimization for indexing
     {
       auto sv = extract_string_value(value);
