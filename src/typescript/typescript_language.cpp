@@ -117,6 +117,9 @@ function n2j(node) {
     case ts.SyntaxKind.RegularExpressionLiteral:
       r.text = node.text;
       break;
+    case ts.SyntaxKind.YieldExpression:
+      if(node.expression) r.expression = n2j(node.expression);
+      break;
     case ts.SyntaxKind.StringLiteral:
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
     case ts.SyntaxKind.FirstTemplateToken:
@@ -129,6 +132,7 @@ function n2j(node) {
     case ts.SyntaxKind.ArrowFunction:
     case ts.SyntaxKind.FunctionExpression:
       if(node.name) r.name = n2j(node.name);
+      if(node.asteriskToken) r.isGenerator = true;
       r.parameters = node.parameters.map(n2j);
       if(node.type) r.returnType = n2j(node.type);
       if(node.typeParameters) r.typeParameters = node.typeParameters.map(n2j);
