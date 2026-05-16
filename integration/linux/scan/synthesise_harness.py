@@ -126,6 +126,23 @@ MODULE_GHOST_BOOTSTRAP = {
                 "field_path": "cred",
                 "kernel_includes": ["<linux/sched.h>"],
             },
+            {
+                # exit_creds(struct task_struct *) calls put_cred
+                # on BOTH task->real_cred (line ~169) and
+                # task->cred (line ~175).  task->cred is bootstrapped
+                # by the entry above; bootstrap real_cred too so
+                # the L169 hit gets a live ghost.
+                "param_type": "struct task_struct *",
+                "field_path": "real_cred",
+                "kernel_includes": ["<linux/sched.h>"],
+            },
+            {
+                # put_fs_context(struct fs_context *) calls
+                # put_cred(fc->cred); bootstrap fc->cred.
+                "param_type": "struct fs_context *",
+                "field_path": "cred",
+                "kernel_includes": ["<linux/fs_context.h>"],
+            },
         ],
     },
     "pipe_buffer": {
@@ -203,6 +220,20 @@ MODULE_GHOST_BOOTSTRAP = {
                 "param_type": "struct task_struct *",
                 "field_path": "&{arg}->usage",
                 "kernel_includes": ["<linux/sched.h>"],
+            },
+            {
+                # __cleanup_sighand(struct sighand_struct *)
+                # decrements sighand->count.  Bootstrap it.
+                "param_type": "struct sighand_struct *",
+                "field_path": "&{arg}->count",
+                "kernel_includes": ["<linux/sched/signal.h>"],
+            },
+            {
+                # put_signal_struct(struct signal_struct *)
+                # decrements signal->sigcnt.  Bootstrap it.
+                "param_type": "struct signal_struct *",
+                "field_path": "&{arg}->sigcnt",
+                "kernel_includes": ["<linux/sched/signal.h>"],
             },
         ],
     },
