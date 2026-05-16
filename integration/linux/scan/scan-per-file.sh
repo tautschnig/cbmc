@@ -174,14 +174,15 @@ synth_rc=$?
 set -e
 cat "$tmp/synth.err" >&2
 if [[ $synth_rc -eq 4 ]]; then
-  # Synthesiser detected a known-unverifiable shape (currently
-  # the aead transform-wrapper).  Emit a clean cbmc-skipped
-  # verdict so the corpus rollup categorises this as a known
-  # limitation rather than a failure.  Exit 13 signals the
-  # 'skipped' status to scan.py's run_cbmc_per_file aggregator.
+  # Synthesiser detected a known-unverifiable shape (e.g. the
+  # aead transform-wrapper, or a function that reads `current`).
+  # Emit a clean cbmc-skipped verdict so the corpus rollup
+  # categorises this as a known limitation rather than a failure.
+  # Exit 13 signals the 'skipped' status to scan.py's
+  # run_cbmc_per_file aggregator.
   echo
   echo "=== $KERNEL_FILE: $TARGET_FUNC ==="
-  echo "  verdict: SKIPPED (known wrapper pattern; harness cannot validate)"
+  echo "  verdict: SKIPPED (known unverifiable shape; harness cannot validate)"
   exit 13
 fi
 if [[ $synth_rc -ne 0 ]]; then

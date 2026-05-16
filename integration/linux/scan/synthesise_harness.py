@@ -496,6 +496,69 @@ def _is_aead_transform_wrapper(source: Path, function: str) -> bool:
     return False
 
 
+def _uses_current_macro(source: Path, function: str) -> bool:
+    """Return True if ``function``'s body reads ``current->...`` —
+    i.e. dereferences the per-CPU "currently running task" pointer.
+
+    The kernel's ``current`` macro expands via ``<asm/current.h>``
+    to ``get_current()``, which reads the per-CPU variable
+    ``current_task``.  CBMC has no model for per-CPU storage:
+    symbolic execution sees an unconstrained pointer (typically
+    NULL after zero-initialisation), so any contract precondition
+    on a value derived from ``current`` (e.g. ``current->cred``
+    in ``revert_creds``) fires spuriously.
+
+    Modelling ``current`` properly would require either
+    overriding ``<asm/current.h>`` on every TU's compile (which
+    creates struct-completeness link conflicts between the
+    harness and the kernel TU) or a goto-binary post-processing
+    pass on ``get_current``'s body.  Both are non-trivial.
+
+    A conservative middle path: if the function's body textually
+    references ``current->`` or passes ``current`` directly to
+    another function, mark it as a known-unverifiable shape and
+    skip with ``status=skipped``.  This removes a known class of
+    false positive (the second-followup triage's "fundamental
+    limitation" bucket) from the per-file rollup.
+    """
+    text = _strip_comments(source.read_text(errors="replace"))
+    sig = find_function_signature(source, function)
+    if sig is None:
+        return False
+
+    # Find function body start: '{' after the signature.
+    pat = re.compile(
+        r"\b" + re.escape(function) + r"\s*\([^)]*\)\s*\{",
+        re.DOTALL,
+    )
+    m = pat.search(text)
+    if not m:
+        return False
+    body_start = m.end()
+    depth = 1
+    i = body_start
+    while i < len(text) and depth > 0:
+        c = text[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+        i += 1
+    body = text[body_start:i - 1] if depth == 0 else text[body_start:]
+
+    # `current->` (field access) or `current,` / `current)`
+    # (passed to another function) are the high-precision
+    # signals.  Avoid matching e.g. `current_task` or
+    # `current_cred` (those don't go through the macro).
+    if re.search(r"\bcurrent\s*->", body):
+        return True
+    if re.search(r"\bcurrent\s*,", body):
+        return True
+    if re.search(r"\bcurrent\s*\)", body):
+        return True
+    return False
+
+
 def synthesise(module: str, source: Path, function: str,
                out: Path) -> int:
     cfg = MODULE_GHOST_BOOTSTRAP.get(module)
@@ -523,6 +586,24 @@ def synthesise(module: str, source: Path, function: str,
             "calls aead_request_set_crypt(subreq, ...)); per-file "
             "synthesis cannot validate this without modelling the "
             "subreq's SGL.  Skipping.",
+            file=sys.stderr,
+        )
+        return 4
+
+    # Skip functions whose body reads `current` (the per-CPU
+    # current-task pointer).  CBMC has no model for per-CPU
+    # storage so values derived from `current` are unconstrained;
+    # any contract precondition on `current->cred` /
+    # `current->mm` fires spuriously.  See _uses_current_macro for
+    # rationale.  Same exit code 4 routing as the aead detector.
+    if module in ("cred_lifetime", "lock_state", "refcount_lifetime") \
+            and _uses_current_macro(source, function):
+        print(
+            f"synthesise_harness: {function} reads `current` "
+            "(per-CPU current-task pointer); CBMC has no model "
+            "for per-CPU storage so any contract precondition on "
+            "values derived from `current` fires spuriously.  "
+            "Skipping.",
             file=sys.stderr,
         )
         return 4
