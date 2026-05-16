@@ -96,7 +96,22 @@ symbol_exprt dfcc_utilst::create_symbol(
     source_location,
     function_symbol.mode,
     symbol_table);
-  symbol.module = function_symbol.module;
+  // Re-insert with the correct module set so that the
+  // symbol_module_map captures the right entry. Direct field
+  // mutation post-insertion leaves the map stale and trips the
+  // strict --validate-goto-model invariant
+  // `module_map_matches_symbol`. See the parallel comment in
+  // create_static_symbol below.
+  if(symbol.module != function_symbol.module)
+  {
+    const irep_idt sym_name = symbol.name;
+    symbolt fresh = symbol;
+    fresh.module = function_symbol.module;
+    symbol_table.remove(sym_name);
+    auto res = symbol_table.insert(std::move(fresh));
+    INVARIANT(res.second, "DFCC fresh symbol re-insertion must succeed");
+    return res.first.symbol_expr();
+  }
 
   return symbol.symbol_expr();
 }
@@ -114,12 +129,27 @@ const symbolt &dfcc_utilst::create_static_symbol(
 {
   symbolt &symbol = get_fresh_aux_symbol(
     type, prefix, base_name, source_location, mode, symbol_table);
-  symbol.module = module;
-  symbol.is_static_lifetime = true;
-  symbol.value = initial_value;
-  symbol.value.set(ID_C_no_nondet_initialization, no_nondet_initialization);
-  symbol.is_parameter = false;
-  return symbol;
+  // Re-insert via remove + insert so that the symbol_table's
+  // internal symbol_module_map is rebuilt with the correct module
+  // entry. `get_fresh_aux_symbol` inserts the symbol with its
+  // default-constructed (empty) module, then we set the module
+  // field below — but symbol_module_map captures module names at
+  // insertion time and isn't refreshed by direct field mutation.
+  // The strict `--validate-goto-model` invariant
+  // (`module_map_matches_symbol`) catches this and aborts.
+  // Work around by removing the just-inserted entry and
+  // re-inserting after setting the module field properly.
+  const irep_idt sym_name = symbol.name;
+  symbolt fresh = symbol; // copy
+  fresh.module = module;
+  fresh.is_static_lifetime = true;
+  fresh.value = initial_value;
+  fresh.value.set(ID_C_no_nondet_initialization, no_nondet_initialization);
+  fresh.is_parameter = false;
+  symbol_table.remove(sym_name);
+  auto res = symbol_table.insert(std::move(fresh));
+  INVARIANT(res.second, "DFCC fresh symbol re-insertion must succeed");
+  return res.first;
 }
 
 const symbolt &dfcc_utilst::create_new_parameter_symbol(
@@ -139,7 +169,19 @@ const symbolt &dfcc_utilst::create_new_parameter_symbol(
     function_symbol.mode,
     symbol_table);
   symbol.is_parameter = true;
-  symbol.module = function_symbol.module;
+  // Re-insert with the correct module set so that the
+  // symbol_module_map captures the right entry (see comments on
+  // create_symbol / create_static_symbol above).
+  if(symbol.module != function_symbol.module)
+  {
+    const irep_idt sym_name = symbol.name;
+    symbolt fresh = symbol;
+    fresh.module = function_symbol.module;
+    symbol_table.remove(sym_name);
+    auto res = symbol_table.insert(std::move(fresh));
+    INVARIANT(res.second, "DFCC parameter symbol re-insertion must succeed");
+    return res.first;
+  }
   return symbol;
 }
 

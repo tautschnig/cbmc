@@ -879,25 +879,49 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         // collect slot-stores `*(*(<array>, ...).data + i) := ...`
         // and capture each RHS (with casts stripped).
         //
-        // Status: the walk-back pattern matches javac's output
-        // shape, but the captured targets — typically Java static
-        // fields like `MyClass.someField` — don't satisfy CBMC's
-        // `instrument_spec_assigns::create_car_expr` expectations
-        // (which want C-style lvalues with a definite size). The
-        // contracts substitution invariant fires and we fall
-        // through to inlining via the cbmc_invariants_should_throw
-        // guard. Until we either (a) wrap the captured target in
-        // CBMC's expected lvalue shape or (b) extend
-        // instrument_spec_assigns to handle Java static-field
-        // pointers natively, leaving c_assigns empty preserves the
-        // sound default `havoc nothing constrained by ensures`
-        // behaviour.
+        // Status (post-DFCC switch, post-bridge fix):
         //
-        // We DO still capture the direct-argument form into
-        // assigns_per_function — but the user has to write
-        // single-target assigns calls bypassing varargs (e.g., by
-        // declaring overloads). The varargs form gracefully
-        // degrades.
+        //   - The slot-store walk-back has been prototyped (see git
+        //     history) and successfully recovers static-field
+        //     lvalues like `java::F12RefAssigns.label` from the
+        //     varargs form, including through `Integer.valueOf`
+        //     autoboxing for primitive statics.
+        //
+        //   - However DFCC's `__CPROVER_contracts_car_set_insert`
+        //     guards each captured target with
+        //     `ptr == NULL OR __CPROVER_rw_ok(ptr, size)`, and
+        //     `__CPROVER_rw_ok(&java::SomeClass.someStatic, 8)`
+        //     fails for Java statics under JBMC's memory model —
+        //     the global isn't recognized as a writable region in
+        //     the way DFCC expects. Shipping the walk-back without
+        //     resolving the writability check produces a
+        //     user-visible verification failure on the corpus
+        //     tests (F12RefAssigns, F12MultiAssigns) that
+        //     previously passed via empty-c_assigns + DFCC's
+        //     default `havoc nothing constrained by ensures`
+        //     fallback.
+        //
+        //   - Until the writability check is resolved (either by
+        //     marking Java statics as `rw_ok` in JBMC's symbol
+        //     setup, or by routing assigns-set insertion through a
+        //     DFCC API that doesn't assert writability), we
+        //     conservatively skip the varargs Object[] argument and
+        //     leave c_assigns empty. The default DFCC semantics
+        //     ("callee writes nothing the contract doesn't
+        //     mention") is more restrictive than the user wrote
+        //     (`assigns(x, y)` should mean "callee may write x and
+        //     y") but at least gives correct verification verdicts
+        //     on the corpus.
+        //
+        //   - The direct-argument form (single, non-array arg —
+        //     happens only when the compiler picks the
+        //     non-varargs path) is captured as-is. This path is
+        //     rarely taken because JVerify.assigns is declared
+        //     `Object...`.
+        //
+        // Tracked in the comprehensive loose-ends inventory at
+        // `~/moog/LOOSE-ENDS.txt` (item: F12 assigns-target
+        // recovery + DFCC writability for Java statics).
         for(const auto &arg : args)
         {
           if(arg.type().id() == ID_pointer)
