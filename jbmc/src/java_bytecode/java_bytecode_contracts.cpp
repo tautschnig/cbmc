@@ -1348,5 +1348,69 @@ void apply_modular_contract_substitution(
       goto_model.symbol_table.insert(p.second);
     goto_model.goto_functions.clear();
     goto_model.goto_functions.copy_from(model_snapshot.goto_functions);
+    return;
   }
+
+  // F12: bridge DFCC's C-style return convention to JBMC's
+  // Java-style one.
+  //
+  // DFCC's wrapper for a function with a non-void return type emits
+  //
+  //   ASSIGN __contract_return_value := nondet
+  //   ASSUME post(__contract_return_value)
+  //   SET_RETURN_VALUE __contract_return_value
+  //
+  // CBMC's symex implements SET_RETURN_VALUE by assigning to the
+  // caller frame's `return_value_symbol`, which is only set up when
+  // the CALL has an `lhs`. JBMC's bytecode→GOTO lowering follows
+  // Java's calling convention instead: the callee assigns its
+  // return value into a per-function GLOBAL named
+  // `<function_id>#return_value`, the caller does a *bare* CALL
+  // (no lhs) followed by an explicit `ASSIGN tmp :=
+  // <function_id>#return_value` to read it. With this convention
+  // SET_RETURN_VALUE is a no-op (no caller-side return_value_symbol),
+  // so the wrapper's post-assumed return value never makes it back
+  // to the caller — substitution silently produces a sound but
+  // useless contract (any value, including INT_MIN, can flow
+  // through the call).
+  //
+  // Fix: walk each annotated callee's wrapped body and, immediately
+  // before every SET_RETURN_VALUE, inject
+  //   ASSIGN <function_id>#return_value := <return_value_expr>
+  // so the JVerify-style read on the caller side picks up the
+  // post-constrained value.
+  for(const auto &fid : annotated)
+  {
+    auto fn_it = goto_model.goto_functions.function_map.find(fid);
+    if(fn_it == goto_model.goto_functions.function_map.end())
+      continue;
+
+    // The Java-side return_value symbol pattern: <fid>#return_value.
+    // It exists for every Java method with a non-void return type.
+    const irep_idt return_value_id =
+      id2string(fid) + "#return_value";
+    const auto *rv_sym = goto_model.symbol_table.lookup(return_value_id);
+    if(rv_sym == nullptr)
+      continue;  // void-returning method; nothing to bridge.
+    const symbol_exprt rv_expr = rv_sym->symbol_expr();
+
+    auto &body = fn_it->second.body;
+    for(auto inst_it = body.instructions.begin();
+        inst_it != body.instructions.end();
+        ++inst_it)
+    {
+      if(inst_it->type() != SET_RETURN_VALUE)
+        continue;
+      const exprt rv = inst_it->return_value();
+      // Inject ASSIGN <fid>#return_value := rv right before the
+      // SET_RETURN_VALUE so JBMC's caller-side read picks up the
+      // post-constrained value.
+      body.insert_before(
+        inst_it,
+        goto_programt::make_assignment(
+          rv_expr, rv, inst_it->source_location()));
+    }
+    body.update();
+  }
+  goto_model.goto_functions.update();
 }
