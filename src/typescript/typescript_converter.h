@@ -36,6 +36,7 @@ public:
     false; // off by default; enable via --ts-async-threading
   bool bigint_mathematical =
     false; // off by default; enable via --ts-bigint-mathematical
+  unsigned solver_string_alloc_count = 0;
   std::size_t TYPESCRIPT_MAX_ARRAY_LENGTH = TYPESCRIPT_DEFAULT_MAX_ARRAY_LENGTH;
 
   typescript_convertert(

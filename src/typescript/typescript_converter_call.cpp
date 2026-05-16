@@ -5558,6 +5558,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
       }
     }
+    // ES2024 §26.1.3.2: WeakRef.prototype.deref() — always returns
+    // the referent (no GC in bounded model checking).
+    if(method == "deref" && !obj_expr.is_nil())
+      return obj_expr;
+
     // ES2024 §27.5.3.2: Generator.prototype.next().
     // When the receiver has a generator struct type (tagged
     // "typescript_generator"), next() reads __values[__state],
@@ -6918,5 +6923,15 @@ bool typescript_convertert::convert()
 
   const jsont &statements = json_member(ast_json, "statements");
   convert_module_body(statements);
+  // Emit a warning if many solver-side string allocations were made,
+  // suggesting --object-bits 10 to avoid the default 256-object limit.
+  if(solver_string_alloc_count > 150)
+  {
+    log.warning()
+      << "This program uses " << solver_string_alloc_count
+      << " solver-side string allocations. Consider using "
+      << "--object-bits 10 to avoid 'too many addressed objects' errors."
+      << messaget::eom;
+  }
   return false; // success
 }

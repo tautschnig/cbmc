@@ -355,6 +355,13 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
           ts_type.substr(angle + 1, ts_type.size() - angle - 2);
         return convert_type(inner);
       }
+      // WeakRef<T> → T (no GC; deref always returns referent)
+      if(base == "WeakRef")
+      {
+        std::string inner =
+          ts_type.substr(angle + 1, ts_type.size() - angle - 2);
+        return convert_type(inner);
+      }
       // Try specialized class: Box<number> → Box__number
       {
         std::string inner =
@@ -942,6 +949,15 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   {
     std::string cls_name =
       json_string(json_member(json_member(node, "expression"), "text"));
+    // ES2024 §26.1.1: new WeakRef(target) — store target.
+    // deref() always returns the target (no GC in BMC).
+    if(cls_name == "WeakRef")
+    {
+      const jsont &call_args = json_member(node, "arguments");
+      if(call_args.is_array() && !to_json_array(call_args).empty())
+        return convert_expression(*to_json_array(call_args).begin());
+      return nil_exprt{};
+    }
     // ES2024 §28.2.1: new Proxy(target, handler) — pragmatic model:
     // return target unchanged (ignoring the handler). Sound for
     // programs that don't rely on trap side effects.
@@ -1502,6 +1518,34 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   // ES2024 sec-array-initializer
   if(kind == "ArrayLiteralExpression")
   {
+    // Workaround: mixed-union-type arrays like (number | number[])[]
+    // crash the simplifier. Detect and emit nondet with a warning.
+    std::string arr_type_ann = json_string(json_member(node, "_type"));
+    if(
+      arr_type_ann.find("| ") != std::string::npos &&
+      arr_type_ann.find("[]") != std::string::npos &&
+      arr_type_ann.find("(") != std::string::npos)
+    {
+      log.warning() << "Mixed-union-type array (" << arr_type_ann
+                    << ") is not fully supported; using nondet. "
+                    << "Consider using a uniform element type."
+                    << messaget::eom;
+      // Return a nondet array with the correct length.
+      const jsont &elts = json_member(node, "elements");
+      std::size_t len = elts.is_array() ? to_json_array(elts).size() : 0;
+      std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+      typet elem_type = double_type();
+      array_typet arr_type{
+        elem_type, from_integer(max_len, signedbv_typet{64})};
+      struct_typet list_type = make_array_struct_type(arr_type);
+      exprt::operandst data;
+      while(data.size() < max_len)
+        data.push_back(side_effect_expr_nondett{elem_type, source_locationt{}});
+      return struct_exprt{
+        {from_integer(len, signedbv_typet{64}),
+         array_exprt{std::move(data), arr_type}},
+        list_type};
+    }
     const jsont &elts = json_member(node, "elements");
     if(!elts.is_array())
       return nil_exprt{};
@@ -1856,6 +1900,7 @@ std::string typescript_convertert::extract_string_value(const exprt &e)
 
 exprt typescript_convertert::ts_string_to_refined(const exprt &ts_string)
 {
+  solver_string_alloc_count++;
   // Boundary conversion from our inline-array string struct to a
   // refined_string_exprt the solver can consume.
   //
