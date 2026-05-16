@@ -111,6 +111,28 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 §6.1.5: Symbol type — modelled as signedbv[64]
   if(ts_type == "symbol")
     return signedbv_typet{64};
+  // ES2024 §27.5: Generator<T> — return the generator struct if
+  // we've seen the function, otherwise use a generic placeholder.
+  if(ts_type.find("Generator<") == 0 || ts_type.find("Generator") == 0)
+  {
+    // Try to find a registered generator type.
+    for(const auto &[key, val] : class_types)
+    {
+      if(key.find("__gen_") == 0)
+        return val;
+    }
+    // Fallback: generic generator struct with double values.
+    struct_typet gen_type;
+    gen_type.components().push_back(
+      struct_typet::componentt{"__state", signedbv_typet{32}});
+    gen_type.components().push_back(
+      struct_typet::componentt{"__count", signedbv_typet{32}});
+    gen_type.components().push_back(struct_typet::componentt{
+      "__values",
+      array_typet{double_type(), from_integer(16, signedbv_typet{64})}});
+    gen_type.set_tag("typescript_generator");
+    return gen_type;
+  }
   // ES2024 §21.4: Date type
   if(ts_type == "Date")
     return typescript_date_type();

@@ -51,6 +51,91 @@ void typescript_convertert::convert_function_declaration_with_name(
 
   // Get return type
   std::string ret_type_str = json_string(json_member(node, "_returnType"));
+
+  // ES2024 §27.5: Generator functions. When isGenerator is true,
+  // scan the body for YieldExpression nodes, collect their values,
+  // and model the function as returning a generator struct:
+  //   { __state: signedbv[32], __count: signedbv[32], __values: T[N] }
+  // The caller's gen.next() reads __values[__state++].
+  const jsont &is_gen = json_member(node, "isGenerator");
+  if(is_gen.is_true())
+  {
+    // Collect yield values from the body.
+    std::vector<exprt> yield_values;
+    std::function<void(const jsont &)> scan_yields = [&](const jsont &n)
+    {
+      if(!n.is_object())
+        return;
+      std::string nk = json_string(json_member(n, "_kind"));
+      if(nk == "YieldExpression")
+      {
+        const jsont &expr = json_member(n, "expression");
+        if(expr.is_object())
+          yield_values.push_back(convert_expression(expr));
+        else
+          yield_values.push_back(ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED));
+        return; // don't recurse into yield's own expression
+      }
+      for(const auto &kv : to_json_object(n))
+      {
+        if(kv.second.is_object())
+          scan_yields(kv.second);
+        else if(kv.second.is_array())
+          for(const auto &elem : to_json_array(kv.second))
+            scan_yields(elem);
+      }
+    };
+    const jsont &body = json_member(node, "body");
+    if(body.is_object())
+      scan_yields(body);
+
+    std::size_t count = yield_values.size();
+    // Build the generator struct type.
+    typet elem_type = count > 0 ? yield_values[0].type() : double_type();
+    std::size_t max_yields = std::max<std::size_t>(count, 1);
+    array_typet vals_type{
+      elem_type, from_integer(max_yields, signedbv_typet{64})};
+    struct_typet gen_type;
+    gen_type.components().push_back(
+      struct_typet::componentt{"__state", signedbv_typet{32}});
+    gen_type.components().push_back(
+      struct_typet::componentt{"__count", signedbv_typet{32}});
+    gen_type.components().push_back(
+      struct_typet::componentt{"__values", vals_type});
+    gen_type.set_tag("typescript_generator");
+
+    // Build the function body: return the generator struct with
+    // state=0, count=N, values=[v0, v1, ...].
+    exprt::operandst val_elts;
+    for(auto &v : yield_values)
+    {
+      if(v.type() != elem_type)
+        v = typecast_exprt{v, elem_type};
+      val_elts.push_back(v);
+    }
+    while(val_elts.size() < max_yields)
+      val_elts.push_back(from_integer(0, elem_type));
+    exprt gen_val = struct_exprt{
+      {from_integer(0, signedbv_typet{32}),
+       from_integer(count, signedbv_typet{32}),
+       array_exprt{std::move(val_elts), vals_type}},
+      gen_type};
+
+    // Register the function symbol.
+    irep_idt func_id{"typescript::" + func_name};
+    code_typet func_type{code_typet::parameterst{}, gen_type};
+    if(symbol_table.lookup(func_id) == nullptr)
+    {
+      symbolt fs{func_id, func_type, "typescript"};
+      fs.base_name = func_name;
+      fs.value = code_frontend_returnt{gen_val};
+      symbol_table.add(fs);
+    }
+    // Store the generator type for next() dispatch.
+    class_types["__gen_" + func_name] = gen_type;
+    return;
+  }
+
   typet ret_type =
     ret_type_str.empty() ? empty_typet{} : convert_type(ret_type_str);
   // If all parameters are integer, return type likely is too

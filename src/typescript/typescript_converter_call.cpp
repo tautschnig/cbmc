@@ -5558,6 +5558,49 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
       }
     }
+    // ES2024 §27.5.3.2: Generator.prototype.next().
+    // When the receiver has a generator struct type (tagged
+    // "typescript_generator"), next() reads __values[__state],
+    // increments __state, and returns { value, done }.
+    if(
+      !obj_expr.is_nil() && obj_expr.type().id() == ID_struct &&
+      to_struct_type(obj_expr.type()).get_tag() == "typescript_generator" &&
+      method == "next")
+    {
+      const auto &gst = to_struct_type(obj_expr.type());
+      exprt state = member_exprt{obj_expr, "__state", signedbv_typet{32}};
+      exprt count = member_exprt{obj_expr, "__count", signedbv_typet{32}};
+      exprt values = member_exprt{
+        obj_expr, "__values", gst.get_component("__values").type()};
+      // value = __values[__state] (read BEFORE increment)
+      // Since pending_stmts (which contain the increment) are
+      // drained before the enclosing statement, we increment first
+      // and read at __state - 1.
+      typet elem_type =
+        to_array_type(gst.get_component("__values").type()).element_type();
+      // Increment state first (via pending_stmts).
+      if(obj_expr.id() == ID_symbol)
+      {
+        pending_stmts.push_back(code_frontend_assignt{
+          member_exprt{obj_expr, "__state", signedbv_typet{32}},
+          plus_exprt{state, from_integer(1, signedbv_typet{32})}});
+      }
+      // Read at __state - 1 (the pre-increment value).
+      exprt read_idx = minus_exprt{state, from_integer(1, signedbv_typet{32})};
+      exprt value =
+        index_exprt{values, typecast_exprt{read_idx, signedbv_typet{64}}};
+      // done = (__state - 1) >= __count (i.e. we've exhausted all yields)
+      exprt done = binary_relation_exprt{read_idx, ID_ge, count};
+      // Return { value, done } struct.
+      struct_typet result_type;
+      result_type.components().push_back(
+        struct_typet::componentt{"value", elem_type});
+      result_type.components().push_back(
+        struct_typet::componentt{"done", bool_typet{}});
+      result_type.set_tag("typescript_iterator_result");
+      return struct_exprt{{value, done}, result_type};
+    }
+
     // ES2024 §21.4.3.1: Date.now() — returns current time in ms.
     // Modelled as nondet >= 0.
     if(obj_name == "Date" && method == "now")
