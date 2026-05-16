@@ -24,6 +24,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/instrument_preconditions.h>
 #include <goto-programs/loop_ids.h>
 #include <goto-programs/remove_returns.h>
+#include <goto-programs/rewrite_rw_ok.h>
 #include <goto-programs/remove_skip.h>
 #include <goto-programs/remove_unused_functions.h>
 #include <goto-programs/remove_virtual_functions.h>
@@ -101,6 +102,20 @@ void jbmc_parse_optionst::set_default_options(optionst &options)
   options.set_option("simple-slice", true);
   options.set_option("simplify", true);
   options.set_option("show-goto-symex-steps", false);
+  // F12 / DFCC modular contracts: process_goto_program checks for
+  // these flags before lowering r_ok / w_ok / rw_ok and union
+  // accesses to forms the SAT/SMT flattener can consume. CBMC's
+  // parse_options already sets them; JBMC was missing them, which
+  // caused DFCC's `__CPROVER_contracts_car_set_insert` writability
+  // assertion (`ptr == NULL OR rw_ok(ptr, size)`) to evaluate as
+  // unconverted ID_rw_ok and trigger the boolbv flattener's
+  // "warning: ignoring rw_ok" fallback — which defaults to nondet
+  // and makes the assertion spuriously fail on every Java static.
+  // Setting these flags here aligns JBMC's lowering with CBMC's
+  // and unblocks the F12 `JVerify.assigns(...)` capture path for
+  // Java statics.
+  options.set_option("rewrite-rw-ok", true);
+  options.set_option("rewrite-union", true);
 
   // Other default
   options.set_option("arrays-uf", "auto");
@@ -863,6 +878,22 @@ bool jbmc_parse_optionst::process_goto_functions(
                  << messaget::eom;
     apply_modular_contract_substitution(goto_model, to_substitute);
   }
+
+  // F12 / DFCC follow-on: lower r_ok / w_ok / rw_ok expressions
+  // injected by DFCC's writability checks
+  // (`__CPROVER_contracts_car_set_insert`,
+  // `__CPROVER_contracts_write_set_check_assignment`, ...) into
+  // their prophecy-variable form. Without this, the boolbv
+  // flattener emits "warning: ignoring rw_ok" and treats the
+  // assertion as nondet — every captured Java static spuriously
+  // fails the writability guard.
+  //
+  // CBMC's parse_options does this in process_goto_program. JBMC
+  // doesn't call process_goto_program, so we run the rewrite here
+  // explicitly when the option is set (see set_default_options for
+  // the flag).
+  if(options.get_bool_option("rewrite-rw-ok"))
+    rewrite_rw_ok(goto_model);
 
   // ignore default/user-specified initialization
   // of variables with static lifetime
