@@ -308,6 +308,7 @@ if perfile_rows:
         "successful": [],     # contract holds at this site
         "noise": [],          # only CBMC built-in checks fired
         "vacuous": [],        # no contract clause was checked
+        "skipped": [],        # known-unverifiable shape
         "timeout": [],
         "error": [],          # synthesis / link / compile error
         "no-function-found": [],
