@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -157,7 +158,17 @@ collect_param_names(const jsont &func_def)
 
 /// Recursively walk a Python AST node and collect every attribute
 /// access of the form `Attribute(value=Name(id=p), attr=X)` where
-/// `p` is in `param_names`. For each match, add `X` to `out[p]`.
+/// `p` is in `param_names`. For each match, add `X` to
+/// `out[<canonical-param-name>]`.
+///
+/// One-hop aliasing: in a first pass we collect simple
+/// `Assign(targets=[Name(id=alias)], value=Name(id=p))` and
+/// `AnnAssign(target=Name(alias), value=Name(p))` patterns where
+/// `p` is one of our parameters. Aliases are then folded into the
+/// "name set" for the second pass, with attribute uses recorded
+/// against the canonical parameter name. This catches the
+/// `tmp = arg; tmp.method()` pattern that direct attribute-use
+/// scanning misses.
 ///
 /// Nested FunctionDef / AsyncFunctionDef / Lambda bodies are
 /// skipped — they bind parameter names fresh, so `param.X`
@@ -170,38 +181,109 @@ collect_param_names(const jsont &func_def)
   if(node.is_null())
     return;
 
-  if(node.is_object())
+  // First pass: collect one-hop aliases.
+  // alias_to_param[alias_name] = canonical parameter name.
+  std::map<std::string, std::string> alias_to_param;
+  std::function<void(const jsont &)> alias_pass = [&](const jsont &n)
   {
-    const std::string &type = node["_type"].value;
-    if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
-       type == "Lambda")
+    if(n.is_null())
       return;
-
-    if(type == "Attribute")
+    if(n.is_object())
     {
-      const jsont &value = node["value"];
-      if(value.is_object() && value["_type"].value == "Name")
+      const std::string &type = n["_type"].value;
+      if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
+         type == "Lambda")
+        return;
+      // Recognise direct alias assignments.
+      if(type == "Assign")
       {
-        const std::string &name = value["id"].value;
-        if(param_names.count(name) > 0)
+        const jsont &tgts = n["targets"];
+        const jsont &val = n["value"];
+        if(
+          tgts.is_array() && val.is_object() &&
+          val["_type"].value == "Name" &&
+          param_names.count(val["id"].value) > 0)
         {
-          const std::string &attr = node["attr"].value;
-          if(!attr.empty())
-            out[name].insert(attr);
+          for(const auto &t : to_json_array(tgts))
+          {
+            if(t.is_object() && t["_type"].value == "Name")
+              alias_to_param[t["id"].value] = val["id"].value;
+          }
         }
       }
+      else if(type == "AnnAssign")
+      {
+        const jsont &target = n["target"];
+        const jsont &val = n["value"];
+        if(
+          target.is_object() && target["_type"].value == "Name" &&
+          val.is_object() && val["_type"].value == "Name" &&
+          param_names.count(val["id"].value) > 0)
+          alias_to_param[target["id"].value] = val["id"].value;
+      }
+      for(const auto &kv : to_json_object(n))
+        alias_pass(kv.second);
+      return;
     }
+    if(n.is_array())
+    {
+      for(const auto &item : to_json_array(n))
+        alias_pass(item);
+    }
+  };
+  alias_pass(node);
 
-    for(const auto &kv : to_json_object(node))
-      collect_param_attribute_uses(kv.second, param_names, out);
-    return;
-  }
-
-  if(node.is_array())
+  // Second pass: walk and record attribute uses for both the
+  // original parameters and any aliases we discovered.
+  std::function<void(const jsont &)> attr_pass = [&](const jsont &n)
   {
-    for(const auto &item : to_json_array(node))
-      collect_param_attribute_uses(item, param_names, out);
-  }
+    if(n.is_null())
+      return;
+    if(n.is_object())
+    {
+      const std::string &type = n["_type"].value;
+      if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
+         type == "Lambda")
+        return;
+
+      if(type == "Attribute")
+      {
+        const jsont &value = n["value"];
+        if(value.is_object() && value["_type"].value == "Name")
+        {
+          const std::string &name = value["id"].value;
+          // Resolve through alias chain (currently only one hop;
+          // alias_to_param values are guaranteed to be in
+          // `param_names`).
+          std::string canonical;
+          if(param_names.count(name) > 0)
+            canonical = name;
+          else
+          {
+            auto it = alias_to_param.find(name);
+            if(it != alias_to_param.end())
+              canonical = it->second;
+          }
+          if(!canonical.empty())
+          {
+            const std::string &attr = n["attr"].value;
+            if(!attr.empty())
+              out[canonical].insert(attr);
+          }
+        }
+      }
+
+      for(const auto &kv : to_json_object(n))
+        attr_pass(kv.second);
+      return;
+    }
+    if(n.is_array())
+    {
+      for(const auto &item : to_json_array(n))
+        attr_pass(item);
+    }
+  };
+  attr_pass(node);
 }
 
 /// Convert a double to a 64-bit floatbv constant expression.
