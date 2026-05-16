@@ -29,6 +29,84 @@ CBMC automatically checks for:
   being caught by `try`/`except`
 - **Missing function bodies**: calls to undefined functions
 
+## Recommended Verification Flag Suite
+
+For real-world Python code (especially boto3-heavy AWS scripts), the
+recommended invocation is:
+
+```bash
+ulimit -v 8000000  # 8 GB; raises memory ceiling for symex
+cbmc \
+    --object-bits 12 \
+    --no-unwinding-assertions --unwind 3 \
+    --python-no-exception-checks \
+    --python-required-kwarg-checks \
+    --python-check-typeddict-fields \
+    program.py
+```
+
+Each flag's role:
+
+- `--object-bits 12`: raises CBMC's pointer-model addressed-object
+  ceiling from `2^8 = 256` to `2^12 = 4096`. Necessary for benchmarks
+  that materialise many heterogeneous dict entries (the front-end
+  promotes those to per-entry `python_value_type` structs, each its
+  own addressed object). Negligible overhead; should be the default
+  for Python source.
+
+- `--no-unwinding-assertions --unwind 3`: bound loops to 3 iterations
+  without asserting that the bound is sufficient. Most boto3 idioms
+  are linear in kwarg-key count; 3 is enough to cover typical
+  per-method validation paths without blowing up symex.
+
+- `--python-no-exception-checks`: skip the
+  uncaught-exception-propagation property. Production Python code
+  routinely uses `except Exception` for diagnostic wrapping; the
+  default check fires on every `raise` not statically caught by a
+  matching `except T`. For static API-misuse verification it is
+  noise.
+
+- `--python-required-kwarg-checks` (Tier 1B): emit a
+  `required-kwarg` property at each call site whose stub-recorded
+  TypedDict / `Unpack[Args]` schema declares a `Required[X]` kwarg
+  the user didn't pass. Catches the typical "missing CreateApiKey
+  parameter" class of bug.
+
+- `--python-check-typeddict-fields`: emit a `type-error` property
+  when a TypedDict field's value type doesn't match its declared
+  type (e.g. passing `None` where the schema says `str`).
+
+The following flag is **on by default** for `.py` source files —
+listed here for visibility:
+
+- `--python-check-any-arg-attrs`: at each call site where the
+  callee's parameter is annotated `Any` and the caller's argument
+  has a known concrete class type, emit `attribute-error`
+  properties for `param.X(...)` references in the callee's body
+  where `X` is not a method on the argument's class. Catches
+  cross-function Any-erasure bugs (e.g. wrong boto3 client class
+  flowing through an `Any`-typed parameter).
+
+Optional flags worth considering:
+
+- `--python-check-annotations`: emit `annotation-mismatch`
+  properties at variable / parameter / return assignments where
+  the annotation and assigned-value types are incompatible. Off
+  by default — exposes 2 pre-existing CBMC core invariant
+  violations (`boolbv_map.cpp:68`) on a couple of benchmarks. Use
+  for individual files if the bench-level CBMC core blockers are
+  not in your way.
+
+- `--python-unbounded-ints --z3`: arbitrary-precision integers
+  via SMT. Required for soundness on Python's `int` (which has no
+  upper bound), but Z3-only.
+
+- `--smt2 --cvc5`: route the back-end through CVC5 instead of
+  CBMC's bit-blaster + MiniSat. Useful for cross-checking. The
+  CVC5 path matches the default backend on the AWS Python
+  benchmark suite (94.1 % pass rate) but is ~50 % slower and uses
+  ~2× memory; the 8 GB ulimit above is sized for this case.
+
 ## Supported Python Features
 
 ### Types
