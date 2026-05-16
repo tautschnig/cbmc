@@ -29,6 +29,59 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
   const jsont &callee = json_member(node, "expression");
   const jsont &args = json_member(node, "arguments");
 
+  // ES2024 §20.1.3.3: X.prototype.isPrototypeOf(y).
+  // Resolve statically by checking if y's class has X in its
+  // parent chain (known at conversion time from parent_class map).
+  if(is_kind(callee, "PropertyAccessExpression"))
+  {
+    std::string method =
+      json_string(json_member(json_member(callee, "name"), "text"));
+    if(
+      method == "isPrototypeOf" && args.is_array() &&
+      !to_json_array(args).empty())
+    {
+      // The receiver is X.prototype — extract X from the chain.
+      const jsont &recv = json_member(callee, "expression");
+      if(is_kind(recv, "PropertyAccessExpression"))
+      {
+        std::string proto_prop =
+          json_string(json_member(json_member(recv, "name"), "text"));
+        if(proto_prop == "prototype")
+        {
+          std::string parent_cls =
+            json_string(json_member(json_member(recv, "expression"), "text"));
+          // Get the argument's type to determine its class.
+          exprt arg_expr = convert_expression(*to_json_array(args).begin());
+          if(arg_expr.type().id() == ID_struct)
+          {
+            std::string arg_tag =
+              id2string(to_struct_type(arg_expr.type()).get_tag());
+            // Strip "typescript_class_" prefix.
+            if(arg_tag.find("typescript_class_") == 0)
+              arg_tag = arg_tag.substr(17);
+            // Walk the parent chain.
+            std::string cur = arg_tag;
+            bool found = false;
+            for(int depth = 0; depth < 10 && !cur.empty(); depth++)
+            {
+              if(cur == parent_cls)
+              {
+                found = true;
+                break;
+              }
+              auto pit = parent_class.find(cur);
+              if(pit != parent_class.end())
+                cur = pit->second;
+              else
+                break;
+            }
+            return found ? exprt{true_exprt{}} : exprt{false_exprt{}};
+          }
+        }
+      }
+    }
+  }
+
   // Handle console.assert → CBMC assertion
   if(is_kind(callee, "PropertyAccessExpression"))
   {

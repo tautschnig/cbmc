@@ -790,6 +790,32 @@ codet typescript_convertert::convert_statement(const jsont &node)
         }
       }
       ctor_sym.value = std::move(body);
+      // If this class has a parent, prepend a call to the parent's
+      // constructor to initialize inherited fields.
+      if(!parent_name.empty())
+      {
+        irep_idt parent_ctor_id{"typescript::" + parent_name + "::__init__"};
+        const symbolt *parent_ctor = symbol_table.lookup(parent_ctor_id);
+        if(parent_ctor != nullptr)
+        {
+          code_blockt full_body;
+          full_body.add(code_expressiont{side_effect_expr_function_callt{
+            parent_ctor->symbol_expr(),
+            {this_sym},
+            empty_typet{},
+            source_locationt{}}});
+          if(ctor_sym.value.id() == ID_block)
+          {
+            for(auto &s : to_code_block(to_code(ctor_sym.value)).statements())
+              full_body.add(s);
+          }
+          else
+          {
+            full_body.add(to_code(ctor_sym.value));
+          }
+          ctor_sym.value = std::move(full_body);
+        }
+      }
       if(symbol_table.lookup(ctor_id) == nullptr)
         symbol_table.add(ctor_sym);
     }
