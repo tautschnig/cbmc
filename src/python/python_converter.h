@@ -474,6 +474,14 @@ private:
   /// non-negative constant smaller than the recorded bound.
   /// Stored as (qualified-symbol-id) -> minimum-known-length.
   std::map<irep_idt, mp_integer> list_min_lengths;
+  /// Path-sensitive lower bounds on string lengths. Same shape
+  /// as `list_min_lengths`, populated by the `if s:` truthiness
+  /// recogniser in `convert_if` (a non-empty string is truthy in
+  /// Python, so the body sees `len(s) >= 1`). Consulted in
+  /// `convert_subscript` for `python_string_type` values to
+  /// discharge the IndexError property when the index is a
+  /// non-negative constant smaller than the recorded bound.
+  std::map<irep_idt, mp_integer> string_min_lengths;
   std::set<std::string> generator_functions;
 
   /// Map from variable name (qualified) to its current versioned symbol.
