@@ -6243,6 +6243,14 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     }
     // ES2024 §21.2.1.1: BigInt(value) — convert a number or string
     // to bigint. For constant numeric args, cast at conversion time.
+    // ES2024 §20.4.1: Symbol() — returns a unique value.
+    // Modelled as a unique integer constant (each call site gets a
+    // different value). Symbol values are only equal to themselves.
+    if(func_name == "Symbol")
+    {
+      static unsigned symbol_ctr = 1;
+      return from_integer(symbol_ctr++, signedbv_typet{64});
+    }
     if(func_name == "BigInt")
     {
       if(args.is_array() && !to_json_array(args).empty())

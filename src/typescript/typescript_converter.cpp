@@ -108,6 +108,9 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   if(ts_type == "bigint")
     return bigint_mathematical ? typet{integer_typet{}}
                                : typescript_bigint_type();
+  // ES2024 §6.1.5: Symbol type — modelled as signedbv[64]
+  if(ts_type == "symbol")
+    return signedbv_typet{64};
   // ES2024 §21.4: Date type
   if(ts_type == "Date")
     return typescript_date_type();
