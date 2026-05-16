@@ -313,6 +313,23 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     "inode_lifetime": [
         "iput",
     ],
+    "dentry_lifetime": [
+        "dput",
+    ],
+    "fput_lifetime": [
+        "fput",
+    ],
+    "sock_lifetime": [
+        # sock_put is static inline in <net/sock.h>; both forms.
+        "__CPROVER_file_local_sock_h_sock_put",
+        "sock_put",
+    ],
+    "skb_lifetime": [
+        "kfree_skb",
+    ],
+    "module_lifetime": [
+        "module_put",
+    ],
 }
 
 
@@ -587,6 +604,116 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "inode_live",
             "inode_lifetime_usage",
+        ],
+    },
+    "dentry_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "dentry_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "dentry_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "dentry_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "dentry_lifetime" / "dentry_lifetime.c",
+        ],
+        "slice_preserve": [
+            "dentry_live", "dentry_lifetime_usage",
+            "dentry_lifetime_init", "dentry_lifetime_get",
+            "dentry_lifetime_put",
+            "dentry_ghost_find", "dentry_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "dentry_live",
+            "dentry_lifetime_usage",
+        ],
+    },
+    "fput_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "fput_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "fput_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "fput_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "fput_lifetime" / "fput_lifetime.c",
+        ],
+        "slice_preserve": [
+            "fput_live", "fput_lifetime_usage",
+            "fput_lifetime_init", "fput_lifetime_get",
+            "fput_lifetime_put",
+            "fput_ghost_find", "fput_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "fput_live",
+            "fput_lifetime_usage",
+        ],
+    },
+    "sock_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "sock_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "sock_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "sock_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "sock_lifetime" / "sock_lifetime.c",
+        ],
+        "slice_preserve": [
+            "sock_live", "sock_lifetime_usage",
+            "sock_lifetime_init", "sock_lifetime_get",
+            "sock_lifetime_put",
+            "sock_ghost_find", "sock_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "sock_live",
+            "sock_lifetime_usage",
+        ],
+    },
+    "skb_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "skb_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "skb_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "skb_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "skb_lifetime" / "skb_lifetime.c",
+        ],
+        "slice_preserve": [
+            "skb_live", "skb_lifetime_usage",
+            "skb_lifetime_init", "skb_lifetime_get",
+            "skb_lifetime_put",
+            "skb_ghost_find", "skb_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "skb_live",
+            "skb_lifetime_usage",
+        ],
+    },
+    "module_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "module_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "module_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "module_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "module_lifetime" / "module_lifetime.c",
+        ],
+        "slice_preserve": [
+            "module_live", "module_lifetime_usage",
+            "module_lifetime_init", "module_lifetime_get",
+            "module_lifetime_put",
+            "module_ghost_find", "module_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "module_live",
+            "module_lifetime_usage",
         ],
     },
 }
@@ -1250,6 +1377,11 @@ _PER_FILE_SUPPORTED_MODULES = {
     "device_lifetime",
     "of_node_lifetime",
     "inode_lifetime",
+    "dentry_lifetime",
+    "fput_lifetime",
+    "sock_lifetime",
+    "skb_lifetime",
+    "module_lifetime",
 }
 
 

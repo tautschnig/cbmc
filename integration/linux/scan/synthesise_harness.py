@@ -345,6 +345,56 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": ["struct inode;"],
         "wrapper_paths": [],
     },
+    "dentry_lifetime": {
+        "types": ["struct dentry *"],
+        "ghost_init_call": "dentry_lifetime_init",
+        "ghost_init_args_template": "(struct dentry *){arg}, 1",
+        "ghost_init_decl":
+            "void dentry_lifetime_init(struct dentry *dentry, "
+            "unsigned int usage);",
+        "forward_decls": ["struct dentry;"],
+        "wrapper_paths": [],
+    },
+    "fput_lifetime": {
+        "types": ["struct file *"],
+        "ghost_init_call": "fput_lifetime_init",
+        "ghost_init_args_template": "(struct file *){arg}, 1",
+        "ghost_init_decl":
+            "void fput_lifetime_init(struct file *file, "
+            "unsigned int usage);",
+        "forward_decls": ["struct file;"],
+        "wrapper_paths": [],
+    },
+    "sock_lifetime": {
+        "types": ["struct sock *"],
+        "ghost_init_call": "sock_lifetime_init",
+        "ghost_init_args_template": "(struct sock *){arg}, 1",
+        "ghost_init_decl":
+            "void sock_lifetime_init(struct sock *sk, "
+            "unsigned int usage);",
+        "forward_decls": ["struct sock;"],
+        "wrapper_paths": [],
+    },
+    "skb_lifetime": {
+        "types": ["struct sk_buff *"],
+        "ghost_init_call": "skb_lifetime_init",
+        "ghost_init_args_template": "(struct sk_buff *){arg}, 1",
+        "ghost_init_decl":
+            "void skb_lifetime_init(struct sk_buff *skb, "
+            "unsigned int usage);",
+        "forward_decls": ["struct sk_buff;"],
+        "wrapper_paths": [],
+    },
+    "module_lifetime": {
+        "types": ["struct module *"],
+        "ghost_init_call": "module_lifetime_init",
+        "ghost_init_args_template": "(struct module *){arg}, 1",
+        "ghost_init_decl":
+            "void module_lifetime_init(struct module *module, "
+            "unsigned int usage);",
+        "forward_decls": ["struct module;"],
+        "wrapper_paths": [],
+    },
 }
 
 

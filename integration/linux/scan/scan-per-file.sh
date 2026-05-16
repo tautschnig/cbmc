@@ -60,6 +60,11 @@ case "$MODULE" in
   device_lifetime)   ADAPTER_STEM=device ;;
   of_node_lifetime)  ADAPTER_STEM=of_node ;;
   inode_lifetime)    ADAPTER_STEM=inode ;;
+  dentry_lifetime)   ADAPTER_STEM=dentry ;;
+  fput_lifetime)     ADAPTER_STEM=fput ;;
+  sock_lifetime)     ADAPTER_STEM=sock ;;
+  skb_lifetime)      ADAPTER_STEM=skb ;;
+  module_lifetime)   ADAPTER_STEM=module ;;
   *)                 ADAPTER_STEM=$MODULE ;;
 esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
@@ -157,6 +162,33 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
     inode_lifetime)
       CONTRACT_TARGETS=(
         iput
+      )
+      ;;
+    dentry_lifetime)
+      CONTRACT_TARGETS=(
+        dput
+      )
+      ;;
+    fput_lifetime)
+      CONTRACT_TARGETS=(
+        fput
+      )
+      ;;
+    sock_lifetime)
+      # sock_put is static inline in <net/sock.h>.
+      CONTRACT_TARGETS=(
+        __CPROVER_file_local_sock_h_sock_put
+        sock_put
+      )
+      ;;
+    skb_lifetime)
+      CONTRACT_TARGETS=(
+        kfree_skb
+      )
+      ;;
+    module_lifetime)
+      CONTRACT_TARGETS=(
+        module_put
       )
       ;;
     *)
