@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+attribute-error.*Manager.*missing method 'frobnicate'.*FAILURE
+--
+^warning: ignoring
