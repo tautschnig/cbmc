@@ -330,6 +330,30 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     "module_lifetime": [
         "module_put",
     ],
+    "kref_lifetime": [
+        # kref_put is static inline in <linux/kref.h>; both forms.
+        "__CPROVER_file_local_kref_h_kref_put",
+        "kref_put",
+    ],
+    "rcu_critical_section": [
+        # Static-inline mangled forms of rcu_read_(un)lock from
+        # <linux/rcupdate.h>.
+        "__CPROVER_file_local_rcupdate_h_rcu_read_lock",
+        "__CPROVER_file_local_rcupdate_h_rcu_read_unlock",
+        # External-name forms (also used by direct-call harness).
+        "rcu_read_lock",
+        "rcu_read_unlock",
+        # synchronize_rcu is extern in kernel/rcu/tree.c.
+        "synchronize_rcu",
+    ],
+    "cancel_work_before_free": [
+        # The contract is on the synthetic checkpoint, not on a
+        # real kernel API.  Real-kernel surfacing is handled by
+        # the Coccinelle prefilter; this entry exists so the
+        # adapter / probe / harness paths resolve in
+        # KERNEL_ADAPTERS.
+        "__assert_no_pending_work",
+    ],
 }
 
 
@@ -714,6 +738,77 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "module_live",
             "module_lifetime_usage",
+        ],
+    },
+    "kref_lifetime": {
+        "adapter":
+            SCRIPT_DIR / "adapters" / "kref_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" / "kref_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" / "kref_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "kref_lifetime" / "kref_lifetime.c",
+        ],
+        "slice_preserve": [
+            "kref_live", "kref_lifetime_usage",
+            "kref_lifetime_init", "kref_lifetime_get",
+            "kref_lifetime_put",
+            "kref_ghost_find", "kref_ghost_find_or_add",
+        ],
+        "required_bodies": [
+            "kref_live",
+            "kref_lifetime_usage",
+        ],
+    },
+    "rcu_critical_section": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "rcu_critical_section_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "rcu_critical_section_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "rcu_critical_section_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "rcu_critical_section" /
+            "rcu_critical_section.c",
+        ],
+        "slice_preserve": [
+            "rcu_csection_enter", "rcu_csection_leave",
+            "rcu_csection_depth",
+            "rcu_in_csection", "rcu_outside_csection",
+        ],
+        "required_bodies": [
+            "rcu_in_csection",
+            "rcu_outside_csection",
+        ],
+    },
+    "cancel_work_before_free": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "cancel_work_before_free_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "cancel_work_before_free_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "cancel_work_before_free_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "cancel_work_before_free" /
+            "cancel_work_before_free.c",
+        ],
+        "slice_preserve": [
+            "cancel_work_set_pending",
+            "cancel_work_clear_pending",
+            "cancel_work_pending",
+        ],
+        "required_bodies": [
+            "cancel_work_pending",
         ],
     },
 }
@@ -1382,6 +1477,8 @@ _PER_FILE_SUPPORTED_MODULES = {
     "sock_lifetime",
     "skb_lifetime",
     "module_lifetime",
+    # Phase-2.
+    "kref_lifetime",
 }
 
 

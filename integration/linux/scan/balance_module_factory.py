@@ -91,6 +91,15 @@ class ModuleConfig:
     cve_motivation: str
     subsystem_focus: str
     smoke_target: str
+    # Optional: additional parameters on the put-API beyond the
+    # primary `<type> *<param_name>` argument.  E.g. kref_put has a
+    # `void (*release)(struct kref *kref)` second argument.  Each
+    # tuple is (type_text, param_name).  Empty for plain
+    # balance modules.
+    extra_params: list[tuple[str, str]] = field(default_factory=list)
+    # Optional: return type of put_fn.  Default "void".  E.g.
+    # kref_put returns int (1 if usage went to 0, 0 otherwise).
+    return_type: str = "void"
 
     @property
     def type_param_text(self) -> str:
@@ -126,6 +135,74 @@ class ModuleConfig:
         if not self.is_static_inline:
             return self.put_fn
         return f"__CPROVER_file_local_{self.static_inline_in}_h_{self.put_fn}"
+
+    @property
+    def put_fn_full_params(self) -> str:
+        """Full parameter list for put_fn declarations:
+        primary param + any extras, comma-separated.
+
+        Function-pointer types like
+        `void (*release)(struct kref *kref)` already contain the
+        parameter name inside the inner parens, so we don't add a
+        separate name suffix for them — that would produce
+        `void (*release)(...) release` which is a syntax error."""
+        primary = f"{self.type_param_text}{self.param_name}"
+        if not self.extra_params:
+            return primary
+        extras: list[str] = []
+        for t, n in self.extra_params:
+            if "(*" in t and ")" in t:
+                # Function-pointer type — name is already in t.
+                extras.append(t)
+            else:
+                extras.append(f"{t} {n}")
+        return primary + ", " + ", ".join(extras)
+
+    @property
+    def put_fn_extra_args(self) -> str:
+        """Comma-prefixed list of placeholder arg values for the
+        extra params, used in the harness's call to put_fn.  For
+        function-pointer params we synthesise a dummy stub.  For
+        plain pointers we pass NULL.  For integers we pass 0."""
+        if not self.extra_params:
+            return ""
+        out = []
+        for t, n in self.extra_params:
+            if "(*" in t and ")" in t:
+                # function pointer — supply the harness stub
+                out.append("__harness_release_stub")
+            elif "*" in t:
+                out.append(f"({t.strip()})0")
+            else:
+                out.append("0")
+        return ", " + ", ".join(out)
+
+    @property
+    def harness_extra_decls(self) -> str:
+        """Any auxiliary declarations the harness needs because of
+        extra params — currently just a release stub for kref-
+        style function-pointer args."""
+        for t, n in self.extra_params:
+            if "(*" in t and ")" in t:
+                # function-pointer arg: emit a no-op stub.
+                # The pointer signature is the type with the inner
+                # name replaced.
+                return (
+                    "static void __harness_release_stub("
+                    f"{self.type_param_text}{self.param_name})\n"
+                    f"{{\n"
+                    f"  (void){self.param_name};\n"
+                    f"}}\n"
+                )
+        return ""
+
+    @property
+    def harness_call_lhs(self) -> str:
+        """LHS prefix for put_fn call when return type is non-void.
+        Empty for void."""
+        if self.return_type == "void":
+            return ""
+        return f"({self.return_type})"
 
 
 # ---------------------------------------------------------------------
@@ -524,7 +601,7 @@ int <{ cfg.live_predicate }>(<{ cfg.type_param_text }><{ cfg.param_name }>);
 // `<{ cfg.kernel_header }>` declaration; mismatch triggers an
 // invariant violation in goto-instrument
 // --replace-call-with-contract at contract-installation time.
-void <{ cfg.mangled_put }>(<{ cfg.type_param_text }><{ cfg.param_name }>)
+<{ cfg.return_type }> <{ cfg.mangled_put }>(<{ cfg.put_fn_full_params }>)
   __CPROVER_requires(<{ cfg.param_name }> != (<{ cfg.type_param_text }>)0)
   __CPROVER_requires(<{ cfg.live_predicate }>(<{ cfg.param_name }>) == 1)
   __CPROVER_assigns();
@@ -532,7 +609,7 @@ void <{ cfg.mangled_put }>(<{ cfg.type_param_text }><{ cfg.param_name }>)
 <% endif %>
 // External-name contract for direct-call harness links and any
 // kernel TU that resolves the call to the external symbol.
-void <{ cfg.put_fn }>(<{ cfg.type_param_text }><{ cfg.param_name }>)
+<{ cfg.return_type }> <{ cfg.put_fn }>(<{ cfg.put_fn_full_params }>)
   __CPROVER_requires(<{ cfg.param_name }> != (<{ cfg.type_param_text }>)0)
   __CPROVER_requires(<{ cfg.live_predicate }>(<{ cfg.param_name }>) == 1)
   __CPROVER_assigns();
@@ -550,11 +627,11 @@ ADAPTER_PROBE_T = ENV.from_string(r"""
 
 <{ cfg.type_text }>;
 <% if cfg.is_static_inline %>
-void <{ cfg.mangled_put }>(<{ cfg.type_param_text }><{ cfg.param_name }>)
+<{ cfg.return_type }> <{ cfg.mangled_put }>(<{ cfg.put_fn_full_params }>)
   __CPROVER_requires(0 == 1) __CPROVER_assigns();
 
 <% endif %>
-void <{ cfg.put_fn }>(<{ cfg.type_param_text }><{ cfg.param_name }>)
+<{ cfg.return_type }> <{ cfg.put_fn }>(<{ cfg.put_fn_full_params }>)
   __CPROVER_requires(0 == 1) __CPROVER_assigns();
 """)
 
@@ -579,8 +656,9 @@ void <{ cfg.ghost_init_fn }>(<{ cfg.type_param_text }><{ cfg.param_name }>,
 void <{ cfg.ghost_get_fn }>(<{ cfg.type_param_text }><{ cfg.param_name }>);
 void <{ cfg.ghost_put_fn }>(<{ cfg.type_param_text }><{ cfg.param_name }>);
 
-void <{ cfg.put_fn }>(<{ cfg.type_param_text }><{ cfg.param_name }>);
+<{ cfg.return_type }> <{ cfg.put_fn }>(<{ cfg.put_fn_full_params }>);
 
+<{ cfg.harness_extra_decls }>
 int main(void)
 {
   static char <{ cfg.ghost_short }>_sentinel[1024];
@@ -593,10 +671,10 @@ int main(void)
   <{ cfg.ghost_init_fn }>(<{ cfg.param_name }>, 2);
 #endif
 
-  <{ cfg.put_fn }>(<{ cfg.param_name }>);
+  (void)<{ cfg.put_fn }>(<{ cfg.param_name }><{ cfg.put_fn_extra_args }>);
   <{ cfg.ghost_put_fn }>(<{ cfg.param_name }>);
 
-  <{ cfg.put_fn }>(<{ cfg.param_name }>);
+  (void)<{ cfg.put_fn }>(<{ cfg.param_name }><{ cfg.put_fn_extra_args }>);
   <{ cfg.ghost_put_fn }>(<{ cfg.param_name }>);
 
   return 0;
@@ -836,6 +914,31 @@ BUILTIN_CONFIGS: dict[str, ModuleConfig] = {
         ),
         subsystem_focus="kernel/, drivers/*",
         smoke_target="kernel/module.c",
+    ),
+    "kref_lifetime": ModuleConfig(
+        module="kref_lifetime",
+        type_text="struct kref",
+        param_name="kref",
+        get_fn="kref_get",
+        put_fn="kref_put",
+        kernel_header="<linux/kref.h>",
+        # kref_put is `static inline int` in <linux/kref.h>.
+        is_static_inline=True,
+        static_inline_in="kref",
+        adapter_short="kref",
+        ghost_short="kref",
+        cve_motivation=(
+            "generic kref UAFs (30+ CVE descriptions mention "
+            "kref_put; kref is the foundational primitive that "
+            "many type-specific lifetime modules wrap)"
+        ),
+        subsystem_focus="kernel/, drivers/*, fs/*",
+        smoke_target="lib/kobject.c",
+        # kref_put takes a release callback as second arg.
+        extra_params=[
+            ("void (*release)(struct kref *kref)", "release"),
+        ],
+        return_type="int",
     ),
 }
 

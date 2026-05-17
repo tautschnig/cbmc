@@ -65,6 +65,7 @@ case "$MODULE" in
   sock_lifetime)     ADAPTER_STEM=sock ;;
   skb_lifetime)      ADAPTER_STEM=skb ;;
   module_lifetime)   ADAPTER_STEM=module ;;
+  kref_lifetime)     ADAPTER_STEM=kref ;;
   *)                 ADAPTER_STEM=$MODULE ;;
 esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
@@ -189,6 +190,13 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
     module_lifetime)
       CONTRACT_TARGETS=(
         module_put
+      )
+      ;;
+    kref_lifetime)
+      # kref_put is static inline in <linux/kref.h>; both forms.
+      CONTRACT_TARGETS=(
+        __CPROVER_file_local_kref_h_kref_put
+        kref_put
       )
       ;;
     *)

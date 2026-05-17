@@ -395,6 +395,16 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": ["struct module;"],
         "wrapper_paths": [],
     },
+    "kref_lifetime": {
+        "types": ["struct kref *"],
+        "ghost_init_call": "kref_lifetime_init",
+        "ghost_init_args_template": "(struct kref *){arg}, 1",
+        "ghost_init_decl":
+            "void kref_lifetime_init(struct kref *kref, "
+            "unsigned int usage);",
+        "forward_decls": ["struct kref;"],
+        "wrapper_paths": [],
+    },
 }
 
 
