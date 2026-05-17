@@ -225,6 +225,19 @@ protected:
   void wrap_discovered_function_pointer_contracts();
   void instrument_other_functions();
 
+  /// \brief Refresh the type of every CALL instruction's
+  ///   `call_function` operand from the symbol table.
+  ///
+  /// dfcc_utilst::add_parameter mutates a function symbol's type
+  /// to splice in the write_set parameter but does not refresh the
+  /// symbol_exprt operands cached at every CALL instruction. Run
+  /// this once after instrument_other_functions to keep the
+  /// goto-program in sync with the symbol table — required for
+  /// --validate-goto-model under JBMC modular runs (where every
+  /// method body opens with an auto-injected
+  /// `<clinit_wrapper>` call).
+  void refresh_call_function_types();
+
   /// \brief Re-initialise the GOTO model.
   ///
   /// \details

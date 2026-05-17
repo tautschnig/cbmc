@@ -447,6 +447,47 @@ void dfcct::instrument_other_functions()
   }
 
   goto_model.goto_functions.update();
+
+  // dfcc_utilst::add_parameter mutates the callee's symbol-table type
+  // to splice in the __write_set_to_check parameter, but it does NOT
+  // refresh symbol_exprt operands cached at every CALL instruction
+  // throughout the goto-program. Iteration order over `other_symbols`
+  // is implementation-defined (irep_idt's `<` ordering follows the
+  // global dstring table, not the lexicographic order of the
+  // identifiers), so a per-call-site refresh in instrument_call_
+  // instruction would only catch the cases where the callee happens
+  // to be processed before the caller. Instead, walk every CALL
+  // operand once at the end and refresh the call_function operand's
+  // type from the symbol table. Without this, --validate-goto-model
+  // fires `<callee> type inconsistency` when the cached operand type
+  // disagrees with the now-mutated symbol-table entry. Particularly
+  // relevant for JBMC, where every Java method body opens with an
+  // auto-injected `<clinit_wrapper>` call.
+  refresh_call_function_types();
+}
+
+void dfcct::refresh_call_function_types()
+{
+  for(auto &gf_pair : goto_model.goto_functions.function_map)
+  {
+    for(auto &ins : gf_pair.second.body.instructions)
+    {
+      if(!ins.is_function_call())
+        continue;
+      if(ins.call_function().id() != ID_symbol)
+        continue;
+
+      auto &fun_symbol_expr = to_symbol_expr(ins.call_function());
+      const symbolt *callee_symbol =
+        goto_model.symbol_table.lookup(fun_symbol_expr.identifier());
+      if(
+        callee_symbol != nullptr && callee_symbol->type.id() == ID_code &&
+        fun_symbol_expr.type() != callee_symbol->type)
+      {
+        fun_symbol_expr.type() = callee_symbol->type;
+      }
+    }
+  }
 }
 
 void dfcct::transform_goto_model()
@@ -477,15 +518,6 @@ void dfcct::transform_goto_model()
   remove_skip(goto_model);
   goto_model.goto_functions.update();
 
-  log.status() << "Removing unused functions" << messaget::eom;
-
-  // This can prune too many functions if function pointers have not been
-  // yet been removed or if the entry point is not defined.
-  // TODO: add a command line flag to tell the instrumentation to not prune
-  // a function.
-  remove_unused_functions(goto_model, message_handler);
-  goto_model.goto_functions.update();
-
   // generate assert(0); assume(0); function bodies for all functions missing an
   // implementation (other than ones containing __CPROVER in their name)
   auto generate_implementation = generate_function_bodies_factory(
@@ -502,6 +534,22 @@ void dfcct::transform_goto_model()
   goto_model.goto_functions.update();
 
   reinitialize_model();
+  goto_model.goto_functions.update();
+
+  // F12 / Java mode: prune unused functions LAST. reinitialize_model
+  // populates `__dfcc_instrumented_functions[pointer_object(
+  // address_of(<helper>))] := 1` for every instrumented function
+  // (free, malloc, the user's wrapped callees, ...). The pruning
+  // pass must run AFTER those address-of references exist so
+  // find_used_functions's address-of handling pins them. Running
+  // remove_unused_functions BEFORE reinitialize_model drops the
+  // helpers, the validator's "every function whose address is
+  // taken must be in the function map" check fires under
+  // --validate-goto-model, and DFCC instrumentation is no longer
+  // suite-runnable.
+  log.status() << "Removing unused functions" << messaget::eom;
+  remove_unused_functions(goto_model, message_handler);
+  goto_model.goto_functions.update();
 }
 
 void dfcct::reinitialize_model()
