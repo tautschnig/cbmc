@@ -69,6 +69,24 @@ CORPUS_PATTERNS=(
   $'pipe_buffer\tstruct pipe_buffer\tfs lib net/smc'
   # cred_lifetime: put_cred or __put_cred call sites.
   $'cred_lifetime\t(^|[^a-zA-Z0-9_])(__)?put_cred\\(\tfs kernel net ipc security'
+  # Phase-1 balance modules.
+  $'device_lifetime\t(^|[^a-zA-Z0-9_])put_device\\(\tdrivers/base drivers/of fs net'
+  $'of_node_lifetime\tof_node_put\\(\tdrivers/of drivers/base'
+  $'inode_lifetime\t(^|[^a-zA-Z0-9_])iput\\(\tfs'
+  $'dentry_lifetime\t(^|[^a-zA-Z0-9_])dput\\(\tfs'
+  $'fput_lifetime\t(^|[^a-zA-Z0-9_])fput\\(\tfs ipc kernel'
+  $'sock_lifetime\t(^|[^a-zA-Z0-9_])sock_put\\(\tnet ipc'
+  $'skb_lifetime\tkfree_skb\\(\tnet drivers/net'
+  $'module_lifetime\tmodule_put\\(\tkernel fs net drivers/base'
+  # Phase-2 modules.
+  $'kobject_lifetime\tkobject_put\\(\tlib drivers/base block'
+  $'kref_lifetime\tkref_put\\(\tfs net drivers/base kernel'
+  $'rcu_critical_section\tsynchronize_rcu\\(\\)\tnet kernel fs ipc'
+  $'cancel_work_before_free\tINIT_WORK\\(\tdrivers/base fs net kernel'
+  # Existing modules without patterns yet.
+  $'lock_state\tmutex_unlock\\(\tkernel fs net ipc'
+  $'refcount_lifetime\trefcount_dec_and_test\\(\tkernel fs net'
+  $'alloc_tag\tvfree\\(\tkernel fs mm'
 )
 
 # Hand-curated fallback, used when CORPUS_DISCOVERY=0.  Matches the
