@@ -1,0 +1,25 @@
+CORE
+F12ModularTest
+--function F12ModularTest.caller --modular -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+type inconsistency
+--
+This regression covers the DFCC-validator integration: under
+--modular + --validate-goto-model + --validate-ssa-equation,
+JBMC must NOT trip
+  - "every function whose address is taken must be in the
+     function map" (fixed by ordering remove_unused_functions
+     to run after reinitialize_model in dfcc.cpp), nor
+  - "<callee> type inconsistency" on JBMC's auto-injected
+     <clinit_wrapper> CALL (fixed by
+     dfcct::refresh_call_function_types() in dfcc.cpp).
+
+The Java sources reuse the standard org.strata.jverify.JVerify
+shape: `precondition`, `postcondition`, `assigns` are no-op
+helper functions JBMC's java_bytecode_contracts pass converts
+into JVerify contract clauses.

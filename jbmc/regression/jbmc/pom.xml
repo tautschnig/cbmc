@@ -146,6 +146,7 @@
         <module>exceptions8</module>
         <module>exceptions9</module>
         <module>external_getstatic1</module>
+        <module>f12-modular</module>
         <module>fake_stubs</module>
         <module>farith1</module>
         <module>fcmpx_dcmpx1</module>
