@@ -354,6 +354,18 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # KERNEL_ADAPTERS.
         "__assert_no_pending_work",
     ],
+    "netlink_attr_validation": [
+        # All four are static inline in <net/netlink.h>; both
+        # forms are needed.
+        "__CPROVER_file_local_netlink_h_nla_get_u8",
+        "__CPROVER_file_local_netlink_h_nla_get_u16",
+        "__CPROVER_file_local_netlink_h_nla_get_u32",
+        "__CPROVER_file_local_netlink_h_nla_get_u64",
+        "nla_get_u8",
+        "nla_get_u16",
+        "nla_get_u32",
+        "nla_get_u64",
+    ],
 }
 
 
@@ -809,6 +821,32 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         ],
         "required_bodies": [
             "cancel_work_pending",
+        ],
+    },
+    "netlink_attr_validation": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "netlink_attr_validation_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "netlink_attr_validation_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "netlink_attr_validation_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "netlink_attr_validation" /
+            "netlink_attr_validation.c",
+        ],
+        "slice_preserve": [
+            "nla_validate_min_size",
+            "nla_validate_clear",
+            "nla_validated_size",
+            "nla_size_at_least",
+        ],
+        "required_bodies": [
+            "nla_size_at_least",
+            "nla_validated_size",
         ],
     },
 }
@@ -1479,6 +1517,8 @@ _PER_FILE_SUPPORTED_MODULES = {
     "module_lifetime",
     # Phase-2.
     "kref_lifetime",
+    # Phase-3a.
+    "netlink_attr_validation",
 }
 
 

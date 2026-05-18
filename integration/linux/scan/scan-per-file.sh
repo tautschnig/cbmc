@@ -66,6 +66,7 @@ case "$MODULE" in
   skb_lifetime)      ADAPTER_STEM=skb ;;
   module_lifetime)   ADAPTER_STEM=module ;;
   kref_lifetime)     ADAPTER_STEM=kref ;;
+  netlink_attr_validation) ADAPTER_STEM=netlink_attr_validation ;;
   *)                 ADAPTER_STEM=$MODULE ;;
 esac
 ADAPTER="$SCRIPT_DIR/adapters/${ADAPTER_STEM}_kernel_adapter.c"
@@ -197,6 +198,19 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
       CONTRACT_TARGETS=(
         __CPROVER_file_local_kref_h_kref_put
         kref_put
+      )
+      ;;
+    netlink_attr_validation)
+      # nla_get_uX are static inline in <net/netlink.h>; include
+      # both forms for u16/u32/u64 (we don't contract u8 — see
+      # cocci comments for why).
+      CONTRACT_TARGETS=(
+        __CPROVER_file_local_netlink_h_nla_get_u16
+        __CPROVER_file_local_netlink_h_nla_get_u32
+        __CPROVER_file_local_netlink_h_nla_get_u64
+        nla_get_u16
+        nla_get_u32
+        nla_get_u64
       )
       ;;
     *)

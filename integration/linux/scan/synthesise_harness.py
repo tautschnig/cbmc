@@ -435,6 +435,23 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": ["struct kref;"],
         "wrapper_paths": [],
     },
+    "netlink_attr_validation": {
+        # Per-file harness inits each struct nlattr * parameter
+        # with validated_min_size=0 (unvalidated).  Functions
+        # that call nla_get_uX without first calling
+        # nla_validate_min_size will fire the contract.
+        "types": ["struct nlattr *"],
+        "ghost_init_call": "nla_validate_min_size",
+        # min_size=0 means "not yet validated".  Functions
+        # under test must explicitly raise the bound.
+        "ghost_init_args_template":
+            "(struct nlattr *){arg}, 0",
+        "ghost_init_decl":
+            "void nla_validate_min_size(struct nlattr *attr, "
+            "unsigned int min_size);",
+        "forward_decls": ["struct nlattr;"],
+        "wrapper_paths": [],
+    },
 }
 
 
