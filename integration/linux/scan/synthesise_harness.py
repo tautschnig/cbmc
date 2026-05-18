@@ -323,7 +323,19 @@ MODULE_GHOST_BOOTSTRAP = {
             "void device_lifetime_init(struct device *dev, "
             "unsigned int usage);",
         "forward_decls": ["struct device;"],
-        "wrapper_paths": [],
+        "wrapper_paths": [
+            {
+                # attribute_container_release(struct device *classdev)
+                # and similar driver-core release paths put the
+                # parent device.  classdev->parent is a
+                # `struct device *` reachable via wrapper_paths.
+                # Bootstrapping it lifts the corresponding
+                # corpus row out of low-confidence.
+                "param_type": "struct device *",
+                "field_path": "parent",
+                "kernel_includes": ["<linux/device.h>"],
+            },
+        ],
     },
     "of_node_lifetime": {
         "types": ["struct device_node *"],
@@ -343,7 +355,17 @@ MODULE_GHOST_BOOTSTRAP = {
             "void inode_lifetime_init(struct inode *inode, "
             "unsigned int usage);",
         "forward_decls": ["struct inode;"],
-        "wrapper_paths": [],
+        "wrapper_paths": [
+            {
+                # ext2_link, vfs_link, and many fs/ helpers extract
+                # an inode via d_inode(old_dentry) and call iput.
+                # Bootstrapping dentry->d_inode resolves the
+                # corresponding low-confidence rows.
+                "param_type": "struct dentry *",
+                "field_path": "d_inode",
+                "kernel_includes": ["<linux/dcache.h>"],
+            },
+        ],
     },
     "dentry_lifetime": {
         "types": ["struct dentry *"],
@@ -353,7 +375,15 @@ MODULE_GHOST_BOOTSTRAP = {
             "void dentry_lifetime_init(struct dentry *dentry, "
             "unsigned int usage);",
         "forward_decls": ["struct dentry;"],
-        "wrapper_paths": [],
+        "wrapper_paths": [
+            {
+                # generic_shutdown_super and similar superblock-
+                # teardown helpers put sb->s_root.
+                "param_type": "struct super_block *",
+                "field_path": "s_root",
+                "kernel_includes": ["<linux/fs.h>"],
+            },
+        ],
     },
     "fput_lifetime": {
         "types": ["struct file *"],
@@ -908,49 +938,74 @@ def synthesise(module: str, source: Path, function: str,
                     lines.append(
                         f"  {cfg['ghost_init_call']}({ghost_args});"
                     )
-            else:
-                # Wrapper-path bootstrap: even if the parameter
-                # type doesn't directly match the bug-class
-                # primitive (e.g. nlmclnt_release_host takes
-                # `struct nlm_host *`, not `struct cred *`), we
-                # may know that the wrapper struct contains a
-                # field of the bug-class type.  Bootstrap that
-                # field if so.  See cfg['wrapper_paths'] for
-                # the (param_type, field_path) pairs.
-                for wp in cfg.get("wrapper_paths", []):
-                    if wp["param_type"] in p.type_text:
-                        for inc in wp.get("kernel_includes", []):
-                            if inc not in wrapper_includes:
-                                wrapper_includes.append(inc)
-                        # field_path is either a bare field
-                        # name like "h_cred" (cred_lifetime
-                        # picks up `arg->h_cred`) or an
-                        # explicit format string with {arg}
-                        # placeholder for non-cred paths
-                        # (e.g. lock_state's "&{arg}->mutex").
-                        path = wp["field_path"]
-                        if "{arg}" in path:
-                            field_expr = path.format(arg=local)
-                        else:
-                            field_expr = f"{local}->{path}"
-                        bootstrapped_any = True
-                        if cfg.get("custom_setup"):
-                            # Custom setup with wrapper path:
-                            # treat field_expr as the {arg}
-                            # substitution.
-                            setup = cfg["custom_setup_template"].format(
-                                i=i, arg=field_expr,
-                            )
-                            for setup_line in setup.splitlines():
-                                lines.append(setup_line)
-                        else:
-                            ghost_args = cfg[
-                                "ghost_init_args_template"
-                            ].format(arg=field_expr)
-                            lines.append(
-                                f"  {cfg['ghost_init_call']}({ghost_args});"
-                            )
-                        break  # one wrapper path per parameter
+
+            # Wrapper-path bootstrap.  Apply EVEN IF the param
+            # type already matched the bug-class type — many
+            # functions on `struct device *classdev` also
+            # dereference `classdev->parent`, etc.  Each matching
+            # wrapper_path adds an additional ghost-init.
+            #
+            # For pointer fields (bare-name paths that don't
+            # already start with `&`), zero-init makes the field
+            # read NULL — which fails the `!= NULL` precondition
+            # before our ghost lookup runs.  Auto-assign a fresh
+            # static backing buffer so the field is non-NULL and
+            # the contract precondition can succeed when the
+            # ghost is live.
+            for wp_idx, wp in enumerate(cfg.get("wrapper_paths", [])):
+                if wp["param_type"] not in p.type_text:
+                    continue
+                for inc in wp.get("kernel_includes", []):
+                    if inc not in wrapper_includes:
+                        wrapper_includes.append(inc)
+                path = wp["field_path"]
+                # Detect "address of embedded field" vs
+                # "pointer to other struct" via the path string.
+                # `&{arg}->...` or `&...` paths mean we're
+                # taking the address of an embedded field;
+                # bare names like "parent" or "d_inode" mean
+                # we're reading a pointer field whose value
+                # was zero-init'd to NULL.
+                takes_address = path.startswith("&") or (
+                    "{arg}" in path and path.lstrip().startswith("&")
+                )
+                if "{arg}" in path:
+                    field_expr = path.format(arg=local)
+                else:
+                    field_expr = f"{local}->{path}"
+
+                if not takes_address:
+                    # Pointer-field path: assign a backing
+                    # buffer so the field is non-NULL.  Use a
+                    # per-(param, wp_idx) backing to avoid name
+                    # collisions when a param has multiple
+                    # wrapper paths.
+                    backing_name = f"{local}_wp{wp_idx}_backing"
+                    lines.append(
+                        f"  static char {backing_name}[1024];"
+                    )
+                    # Cast through `void *` to avoid
+                    # const-violation warnings when the field is
+                    # `const struct X *`.
+                    lines.append(
+                        f"  *(void **)&{field_expr} = "
+                        f"(void *){backing_name};"
+                    )
+
+                bootstrapped_any = True
+                if cfg.get("custom_setup"):
+                    setup = cfg["custom_setup_template"].format(
+                        i=i, arg=field_expr,
+                    )
+                    for setup_line in setup.splitlines():
+                        lines.append(setup_line)
+                else:
+                    ghost_args = cfg[
+                        "ghost_init_args_template"
+                    ].format(arg=field_expr)
+                    lines.append(
+                        f"  {cfg['ghost_init_call']}({ghost_args});"
+                    )
             call_args.append(local)
         else:
             # Scalar: declared-uninitialised ≡ nondet under CBMC.
