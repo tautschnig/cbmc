@@ -366,6 +366,11 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         "nla_get_u32",
         "nla_get_u64",
     ],
+    "concurrent_pointer_publish": [
+        # The contract is on the synthetic checkpoint; cocci
+        # surfaces real kernel publish-before-init shapes.
+        "__cpp_assert_safe_to_read",
+    ],
 }
 
 
@@ -847,6 +852,33 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "nla_size_at_least",
             "nla_validated_size",
+        ],
+    },
+    "concurrent_pointer_publish": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "concurrent_pointer_publish_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "concurrent_pointer_publish_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "concurrent_pointer_publish_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "concurrent_pointer_publish" /
+            "concurrent_pointer_publish.c",
+        ],
+        "slice_preserve": [
+            "cpp_publish",
+            "cpp_initialise",
+            "cpp_clear",
+            "cpp_is_published",
+            "cpp_is_initialised",
+            "cpp_safe_to_read",
+        ],
+        "required_bodies": [
+            "cpp_safe_to_read",
         ],
     },
 }
