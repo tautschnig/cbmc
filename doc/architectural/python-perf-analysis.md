@@ -322,6 +322,37 @@ side channels (declare any `cprover_string_*_func` call's
 companion length/content symbols as transitively relevant).
 That would make the flag default-safe for Python.
 
+## Combined: parse daemon + `--slice-formula`
+
+The Python parse daemon
+(`doc/architectural/python-parse-daemon-design.md`) and
+`--slice-formula` are independent — daemon attacks the
+fork/exec-and-Python-startup cost, slice attacks the SMT
+solver cost. They compose cleanly.
+
+Suite-wide on `--smt2 --cvc5 --object-bits 12` (8 GB ulimit,
+51 benchmarks):
+
+| Configuration                     | Wall (sum) | Wall (median) | Wall (max) | RSS (max) |
+|----------------------------------:|-----------:|--------------:|-----------:|----------:|
+| baseline cvc5                     |     338 s  |        3.0 s  |    64.5 s  |   4.3 GB  |
+| + parse daemon                    |     273 s  |        1.7 s  |    62.9 s  |   4.2 GB  |
+| + `--slice-formula`               |     223 s  |        2.8 s  |    34.8 s  |   1.7 GB  |
+| **+ daemon + `--slice-formula`**  | **157 s**  |    **1.5 s**  | **32.4 s** |  1.7 GB   |
+
+For reference, the **default backend** (boolbv + MiniSat) on
+the same 51-benchmark suite takes 215 s. With both
+optimisations on, **cvc5 is now slightly faster than the
+default backend** suite-wide, while preserving the same
+94.1 % pass-rate.
+
+The four string-format regression tests still fail under
+`--slice-formula`, so the combined configuration is opt-in
+in the same way `--slice-formula` alone is. Users who want
+maximum cvc5 throughput AND don't rely on
+`assert len(str(int_value)) == K`-style invariants get the
+big win.
+
 ## What the layered view tells us
 
 - **The "irept hot symbols" view in isolation was misleading.**
