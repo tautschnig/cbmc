@@ -104,8 +104,24 @@ Optional flags worth considering:
 - `--smt2 --cvc5`: route the back-end through CVC5 instead of
   CBMC's bit-blaster + MiniSat. Useful for cross-checking. The
   CVC5 path matches the default backend on the AWS Python
-  benchmark suite (94.1 % pass rate) but is ~50 % slower and uses
-  ~2× memory; the 8 GB ulimit above is sized for this case.
+  benchmark suite (94.1 % pass rate). With `--slice-formula`
+  also enabled, CVC5's wall time on the AWS suite is within
+  6 % of the default backend and the `s3_backup_restore`
+  outlier completes in 3 s (vs 64 s without slicing).
+
+- `--slice-formula`: drop SMT assertions unrelated to a
+  property's reachability before solving. Big win on cvc5
+  outliers (`s3_backup_restore` 64 s → 3 s; full-suite cvc5
+  total 338 s → 223 s). Smaller win on default (~2 % wall).
+  **Caveat**: unsound for code that relies on the
+  refinement-string solver's side-channel constraints —
+  specifically `assert len(str(int_value)) == K` and the
+  `f"{x}"` family of format intrinsics. Four regression
+  tests fail when this is on (`str-format-int-precision`,
+  `fstring-int-precision`, `fstring-multi-arg`,
+  `fstring-pad-spec`), which is why it remains opt-in. Use
+  if you hit cvc5 OOM and don't rely on precise format-length
+  reasoning.
 
 ## Supported Python Features
 

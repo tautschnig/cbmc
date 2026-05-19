@@ -249,6 +249,79 @@ This is the headline finding for short benchmarks across the
 suite: stub-parse time is now a non-trivial fixed cost. See
 `python-parse-daemon-design.md` for the proposed mitigation.
 
+## `--slice-formula` measurement
+
+Hypothesis: slicing the SMT formula to retain only the
+transitive support of each property would mainly help the
+solver-bound benchmarks. Verified empirically — the win is
+larger than expected on cvc5 outliers but caveated by a
+soundness gap on string-format intrinsics.
+
+| | wall (sum) | wall (max) | RSS (sum) | RSS (max) |
+|---|---:|---:|---:|---:|
+| default, `--slice-formula` off | 215 s | 34.2 s |  9.1 GB | 1.7 GB |
+| default, `--slice-formula` on  | 211 s | 34.8 s |  8.3 GB | 1.7 GB |
+| cvc5,    `--slice-formula` off | 338 s | 64.5 s | 14.4 GB | 4.3 GB |
+| cvc5,    `--slice-formula` on  | 223 s | 34.8 s |  8.5 GB | 1.7 GB |
+
+The cvc5 backend gains 34 % wall time, 41 % RSS-sum, and 60 %
+RSS-max. The default backend gains ~2 % wall time and ~9 %
+RSS-sum (modest — the boolbv lowering is less sensitive to
+unused assertions). Pass rate is unchanged at 94.1 % on both
+backends.
+
+### Per-benchmark cvc5 winners
+
+| Benchmark | Wall before | Wall after | Speedup | RSS before | RSS after |
+|---|---:|---:|---:|---:|---:|
+| `s3_backup_restore`              | 64.5 s |  3.2 s | **20.2×** | 4271 MB | **60 MB** |
+| `clear_duplicate_dynamodb_entries` |  9.5 s |  1.6 s |  6.0× | 1146 MB |  36 MB |
+| `test_bedrock_guardrails`        | 51.4 s | 17.9 s |  2.9× | 1479 MB | 928 MB |
+| `sagemaker_labeling_job`         | 14.6 s | 10.7 s |  1.4× |  495 MB | 495 MB |
+| `cloudwatch_metrics_example`     | 11.6 s |  9.2 s |  1.3× |  355 MB | 313 MB |
+
+`s3_backup_restore` is the standout: the cvc5 OOM that
+required raising `ulimit` to 8 GB now runs in 60 MB.
+
+### Why we are not enabling `--slice-formula` by default for `.py` source
+
+The flag is unsound for **string-format intrinsics** that
+rely on the refinement-string solver's side-channel
+constraints (e.g. `cprover_string_of_int_func`'s
+length/content link to a `_PROVER_string_array_X` symbol).
+The slicer doesn't see those constraints as relevant to the
+property under consideration, so it slices them away — and
+then `len(str(42)) == 2` becomes solvable as `0`.
+
+Concretely, four regression tests fail with `--slice-formula`
+turned on by default:
+
+* `regression/python/str-format-int-precision`
+* `regression/python/fstring-int-precision`
+* `regression/python/fstring-multi-arg`
+* `regression/python/fstring-pad-spec`
+
+None of the AWS-Python benchmarks exercise those idioms (no
+`assert len(f"{x}") == K` patterns), which is why the
+suite-level pass rate is unchanged. But default-on would
+silently break user code that relies on precise string-length
+semantics, and the regression tests catch the issue.
+
+### Recommendation
+
+Keep `--slice-formula` opt-in. Document it in the verification
+guide as the recommended flag for users who:
+
+* hit cvc5 OOM (the s3_backup_restore-shaped case),
+* care about wall-time on the heaviest cvc5 outliers,
+* and do not rely on precise string-format-length
+  reasoning over their formulas.
+
+A future fix should make the slicer aware of refinement-string
+side channels (declare any `cprover_string_*_func` call's
+companion length/content symbols as transitively relevant).
+That would make the flag default-safe for Python.
+
 ## What the layered view tells us
 
 - **The "irept hot symbols" view in isolation was misleading.**
