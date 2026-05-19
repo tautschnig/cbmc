@@ -210,6 +210,20 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
       // pass via explicit set_option to disable).
       if(!options.is_set("python-check-any-arg-attrs"))
         options.set_option("python-check-any-arg-attrs", true);
+      // Slice the SMT formula to retain only assertions relevant
+      // to a property's reachability. Massive win on cvc5
+      // outliers (s3_backup_restore: 64 s -> 3 s; full-suite cvc5
+      // wall total 338 s -> ~157 s when combined with the parse
+      // daemon). Default backend gains ~2 % too.
+      //
+      // Until commit 3c2a693177 the slicer dropped CPROVER
+      // string-refinement intrinsic calls (cprover_string_*_func,
+      // cprover_associate_*_func) because their SSA-level return
+      // code was unused. Now those calls are preserved and the
+      // flag is safe for Python source. See
+      // doc/architectural/python-perf-analysis.md.
+      if(!cmdline.isset("no-slice-formula"))
+        options.set_option("slice-formula", true);
       break;
     }
   }
