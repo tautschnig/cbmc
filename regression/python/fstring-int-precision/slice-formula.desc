@@ -1,0 +1,8 @@
+CORE
+main.py
+--slice-formula
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
