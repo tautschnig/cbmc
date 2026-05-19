@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# Lifecycle wrapper for the CBMC Python parse daemon.
+# Modeled on scripts/cbmc_ts_server (the TypeScript front-end's
+# equivalent). The protocol and command-line interface are
+# intentionally aligned.
+#
+# Usage: cbmc_python_server {start|stop|status|socket-path}
+#
+# - `start`:    launches python3 with python_ast_server.py, waits
+#               for READY, prints the socket path on stdout.
+# - `stop`:     sends SIGTERM to the server PID from the PID file.
+# - `status`:   prints running/stopped + the socket path.
+# - `socket-path`: prints the socket path without starting.
+#
+# When the server is running, downstream CBMC invocations should
+# set CBMC_PYTHON_SERVER_SOCKET=<path> (the `start` subcommand's
+# stdout is the path; useful for `eval $(cbmc_python_server
+# start)` patterns).
+
+set -eu
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SERVER_PY="$SCRIPT_DIR/../src/python/python_ast_server.py"
+
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+USER_ID="${USER:-$(id -un)}"
+SOCKET_PATH="$RUN_DIR/cbmc-python-$USER_ID.sock"
+PID_FILE="$RUN_DIR/cbmc-python-$USER_ID.pid"
+LOG_FILE="$RUN_DIR/cbmc-python-$USER_ID.log"
+
+cmd="${1:-}"
+
+case "$cmd" in
+  start)
+    if [ -f "$PID_FILE" ]; then
+      old_pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+      if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        echo "$SOCKET_PATH"
+        exit 0
+      fi
+      rm -f "$PID_FILE"
+    fi
+    if [ ! -f "$SERVER_PY" ]; then
+      echo "error: server script not found at $SERVER_PY" >&2
+      exit 2
+    fi
+    rm -f "$SOCKET_PATH"
+    nohup python3 "$SERVER_PY" "$SOCKET_PATH" >"$LOG_FILE" 2>&1 &
+    server_pid=$!
+    echo "$server_pid" >"$PID_FILE"
+    for _ in $(seq 1 100); do
+      if grep -q "^READY" "$LOG_FILE" 2>/dev/null; then
+        break
+      fi
+      sleep 0.05
+    done
+    if ! grep -q "^READY" "$LOG_FILE" 2>/dev/null; then
+      echo "error: server did not become ready within 5s" >&2
+      echo "--- server log ---" >&2
+      cat "$LOG_FILE" >&2 || true
+      kill -TERM "$server_pid" 2>/dev/null || true
+      rm -f "$PID_FILE"
+      exit 3
+    fi
+    echo "$SOCKET_PATH"
+    ;;
+  stop)
+    if [ ! -f "$PID_FILE" ]; then
+      exit 0
+    fi
+    pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null || true
+      # wait briefly
+      for _ in $(seq 1 30); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+          break
+        fi
+        sleep 0.1
+      done
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE" "$SOCKET_PATH"
+    ;;
+  status)
+    if [ -f "$PID_FILE" ]; then
+      pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "running pid=$pid socket=$SOCKET_PATH"
+        exit 0
+      fi
+    fi
+    echo "stopped"
+    exit 1
+    ;;
+  socket-path)
+    echo "$SOCKET_PATH"
+    ;;
+  *)
+    echo "usage: $0 {start|stop|status|socket-path}" >&2
+    exit 2
+    ;;
+esac
