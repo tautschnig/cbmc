@@ -1,0 +1,250 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 54K of event 'cycles:u'
+# Event count (approx.): 165768988031
+#
+# Overhead  Command  Shared Object                          Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+# ........  .......  .....................................  ........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+     4.16%  cbmc     cbmc                                   [.] irept::operator==(irept const&) const
+            |
+            ---irept::operator==(irept const&) const
+               |          
+                --4.00%--irept::operator==(irept const&) const
+                          |          
+                           --3.84%--irept::operator==(irept const&) const
+                                     |          
+                                      --3.68%--irept::operator==(irept const&) const
+                                                |          
+                                                 --3.50%--irept::operator==(irept const&) const
+                                                           |          
+                                                            --3.32%--irept::operator==(irept const&) const
+                                                                      |          
+                                                                       --3.11%--irept::operator==(irept const&) const
+                                                                                 |          
+                                                                                  --2.86%--irept::operator==(irept const&) const
+                                                                                            |          
+                                                                                             --2.57%--irept::operator==(irept const&) const
+                                                                                                       |          
+                                                                                                        --2.30%--irept::operator==(irept const&) const
+                                                                                                                  |          
+                                                                                                                   --1.99%--irept::operator==(irept const&) const
+                                                                                                                             |          
+                                                                                                                              --1.72%--irept::operator==(irept const&) const
+                                                                                                                                        |          
+                                                                                                                                         --1.45%--irept::operator==(irept const&) const
+                                                                                                                                                   |          
+                                                                                                                                                    --1.22%--irept::operator==(irept const&) const
+                                                                                                                                                              |          
+                                                                                                                                                               --0.96%--irept::operator==(irept const&) const
+                                                                                                                                                                         |          
+                                                                                                                                                                          --0.78%--irept::operator==(irept const&) const
+                                                                                                                                                                                    |          
+                                                                                                                                                                                     --0.57%--irept::operator==(irept const&) const
+
+     3.88%  cbmc     cbmc                                   [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          
+            |--2.94%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          |          
+            |           --1.59%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+            |                     irept::~irept() (inlined)
+            |                     |          
+            |                      --0.77%--std::pair<dstringt, irept>::~pair() (inlined)
+            |                                |          
+            |                                 --0.73%--void std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::destroy<std::pair<dstringt, irept> >(std::pair<dstringt, irept>*) (inlined)
+            |                                           void std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::destroy<std::pair<dstringt, irept> >(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, std::pair<dstringt, irept>*) (inlined)
+            |                                           std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_erase_after(std::_Fwd_list_node_base*, std::_Fwd_list_node_base*) (inlined)
+            |                                           std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~_Fwd_list_base() (inlined)
+            |                                           std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~forward_list() (inlined)
+            |                                           forward_list_as_mapt<dstringt, irept>::~forward_list_as_mapt() (inlined)
+            |                                           |          
+            |                                            --0.68%--tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::~tree_nodet() (inlined)
+            |                                                      sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          
+             --0.56%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+                       irept::~irept() (inlined)
+                       |          
+                        --0.55%--std::pair<dstringt, irept>::~pair() (inlined)
+                                  void std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::destroy<std::pair<dstringt, irept> >(std::pair<dstringt, irept>*) (inlined)
+                                  void std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::destroy<std::pair<dstringt, irept> >(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, std::pair<dstringt, irept>*) (inlined)
+                                  std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_erase_after(std::_Fwd_list_node_base*, std::_Fwd_list_node_base*) (inlined)
+                                  std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~_Fwd_list_base() (inlined)
+                                  std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~forward_list() (inlined)
+                                  forward_list_as_mapt<dstringt, irept>::~forward_list_as_mapt() (inlined)
+                                  tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::~tree_nodet() (inlined)
+                                  sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+
+     1.99%  cbmc     libc.so.6                              [.] malloc
+            |
+            ---malloc
+               operator new(unsigned long)
+
+     1.95%  python3  python3.12                             [.] _PyEval_EvalFrameDefault
+            |
+            ---_PyEval_EvalFrameDefault
+               |          
+                --1.93%--PyEval_EvalCode
+                          |          
+                           --1.93%--PyRun_StringFlags
+                                     PyRun_SimpleStringFlags
+                                     Py_RunMain
+                                     Py_BytesMain
+                                     |          
+                                      --1.53%--0x7fc70182a1c9
+                                                __libc_start_main
+                                                _start
+
+     1.70%  cbmc     cbmc                                   [.] irept::find(dstringt const&) const
+            |
+            ---irept::find(dstringt const&) const
+
+     1.37%  cbmc     libc.so.6                              [.] cfree
+            |
+            ---cfree
+
+     1.26%  cbmc     libc.so.6                              [.] 0x00000000000a9c61
+            |
+            ---0x7ea50a6a9c61
+               |          
+                --0.77%--0x7ea50a6aada4
+                          cfree
+
+     1.01%  cbmc     cbmc                                   [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<true, false, true> >::_M_find_before_node(unsigned long, string_ptrt const&, unsigned long) const
+            |
+            ---std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<true, false, true> >::_M_find_before_node(unsigned long, string_ptrt const&, unsigned long) const
+               |          
+                --1.00%--std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<true, false, true> >::find(string_ptrt const&)
+                          string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+
+     0.91%  cbmc     cbmc                                   [.] simplify_exprt::simplify_node_preorder(exprt const&)
+            |
+            ---simplify_exprt::simplify_node_preorder(exprt const&)
+               simplify_exprt::simplify_rec(exprt const&)
+               |          
+                --0.80%--simplify_exprt::simplify_node_preorder(exprt const&)
+                          simplify_exprt::simplify_rec(exprt const&)
+                          |          
+                           --0.63%--simplify_exprt::simplify_node_preorder(exprt const&)
+                                     simplify_exprt::simplify_rec(exprt const&)
+                                     |          
+                                      --0.55%--simplify_exprt::simplify_node_preorder(exprt const&)
+                                                simplify_exprt::simplify_rec(exprt const&)
+
+     0.89%  cbmc     libc.so.6                              [.] 0x00000000000a9c06
+            |
+            ---0x7ea50a6a9c06
+               |          
+                --0.52%--0x7ea50a6aada4
+                          cfree
+
+     0.87%  cbmc     libc.so.6                              [.] 0x00000000000a9afd
+            |
+            ---0x7ea50a6a9afd
+
+     0.80%  cbmc     cbmc                                   [.] merge_irept::merged(irept const&)
+            |
+            ---merge_irept::merged(irept const&)
+
+     0.80%  cvc5     cvc5                                   [.] 0x0000000001496eda
+            |
+            ---0x1896eda
+               0x187679e
+               0x18776b9
+               0x1870fa5
+               0x1861f4f
+               0x1418ad0
+               0xfdcee4
+               0x9e6908
+               0x9e9a13
+               0xdf9d74
+               0x170341d
+               0x170432e
+               0x1704587
+               0x1442ad7
+               0x142e05b
+               0xde8862
+               0x744258
+               0x740484
+               0x740ef2
+               0x733bf9
+               0x733e21
+               0x656621
+               0x17def04
+               0x17d64f7
+               0x60c878
+               0x60cba4
+               0x6132fe
+               0x61af5d
+               0x60b27b
+               0x5c62b7
+               0x1a2c3bf
+               0x6097fd
+
+     0.66%  cbmc     cbmc                                   [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::detach()
+     0.63%  cvc5     cvc5                                   [.] 0x0000000001497457
+            |
+            ---0x1897457
+               0x187679e
+               0x18776b9
+               0x1870fa5
+               0x1861f4f
+               0x1418ad0
+               0xfdcee4
+               0x9e6908
+               0x9e9a13
+               0xdf9d74
+               0x170341d
+               0x170432e
+               0x1704587
+               0x1442ad7
+               0x142e05b
+               0xde8862
+               0x744258
+               0x740484
+               0x740ef2
+               0x733bf9
+               0x733e21
+               0x656621
+               0x17def04
+               0x17d64f7
+               0x60c878
+               0x60cba4
+               0x6132fe
+               0x61af5d
+               0x60b27b
+               0x5c62b7
+               0x1a2c3bf
+               0x6097fd
+
+     0.62%  cvc5     cvc5                                   [.] 0x0000000001676f91
+            |
+            ---0x1a76f91
+
+     0.59%  cbmc     libstdc++.so.6.0.33                    [.] operator new(unsigned long)
+            |
+            ---operator new(unsigned long)
+
+     0.56%  cbmc     libstdc++.so.6.0.33                    [.] std::istream::get(char&)
+            |
+            ---std::istream::get(char&)
+
+     0.56%  cbmc     cbmc                                   [.] irept::get(dstringt const&) const
+            |
+            ---irept::get(dstringt const&) const
+
+     0.55%  cbmc     libc.so.6                              [.] 0x00000000000a9c95
+            |
+            ---0x7ea50a6a9c95
+
+     0.51%  cvc5     cvc5                                   [.] 0x0000000000684b3d
+            |
+            ---0xa84b3d
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

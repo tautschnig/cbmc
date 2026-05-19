@@ -1,0 +1,320 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 67K of event 'cycles:u'
+# Event count (approx.): 200142690850
+#
+# Children      Self  Command  Shared Object                          Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+# ........  ........  .......  .....................................  ..................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    89.22%     0.00%  cvc5     cvc5                                   [.] 0x0000000000740ef2
+    89.16%     0.00%  cvc5     cvc5                                   [.] 0x0000000000733bf9
+    89.06%     0.00%  cvc5     cvc5                                   [.] 0x0000000000733e21
+    89.04%     0.00%  cvc5     cvc5                                   [.] 0x0000000000656621
+    89.01%     0.00%  cvc5     cvc5                                   [.] 0x000000000060c878
+    88.96%     0.00%  cvc5     cvc5                                   [.] 0x00000000017d64f7
+    88.63%     0.00%  cvc5     cvc5                                   [.] 0x000000000060cba4
+    88.04%     0.00%  cvc5     cvc5                                   [.] 0x000000000061af5d
+    87.75%     0.00%  cvc5     cvc5                                   [.] 0x00000000006132fe
+    87.54%     0.00%  cvc5     cvc5                                   [.] 0x000000000060b27b
+    87.52%     0.00%  cvc5     cvc5                                   [.] 0x0000000001442ad7
+    87.52%     0.00%  cvc5     cvc5                                   [.] 0x0000000001704587
+    87.52%     0.00%  cvc5     cvc5                                   [.] 0x000000000142e05b
+    87.52%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de8862
+    87.38%     0.00%  cvc5     cvc5                                   [.] 0x0000000000744258
+    87.37%     0.00%  cvc5     cvc5                                   [.] 0x0000000000740484
+    86.13%     0.00%  cvc5     cvc5                                   [.] 0x0000000000df9d74
+    85.37%     0.00%  cvc5     cvc5                                   [.] 0x000000000170432e
+    85.36%     0.00%  cvc5     cvc5                                   [.] 0x000000000170341d
+    85.05%     0.00%  cvc5     cvc5                                   [.] 0x00000000017def04
+    84.64%     0.00%  cvc5     cvc5                                   [.] 0x00000000005c62b7
+    83.93%     0.00%  cvc5     cvc5                                   [.] 0x0000000001a2c3bf
+    82.90%     0.00%  cvc5     cvc5                                   [.] 0x00000000006097fd
+    70.61%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e9a13
+    70.11%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e6908
+    35.12%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fdd051
+    34.66%     0.00%  cvc5     cvc5                                   [.] 0x00000000014232f5
+    29.43%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fdd014
+    24.53%     0.00%  cvc5     cvc5                                   [.] 0x0000000000e0e52e
+    24.31%     0.00%  cvc5     cvc5                                   [.] 0x000000000090c6d9
+    24.10%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422b9b
+    20.13%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fcafbb
+    15.37%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a83cc0
+    15.28%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e9e3c
+    13.93%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fe868e
+    13.11%     0.00%  cvc5     cvc5                                   [.] 0x00000000014217d1
+    13.11%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422e7f
+    13.06%     0.00%  cvc5     cvc5                                   [.] 0x0000000001424fcd
+    12.84%     0.00%  cvc5     cvc5                                   [.] 0x000000000141ee41
+    12.60%     0.00%  cvc5     cvc5                                   [.] 0x00000000014214f0
+    12.59%     0.00%  cvc5     cvc5                                   [.] 0x0000000000df89fd
+    12.57%     0.00%  cvc5     cvc5                                   [.] 0x000000000145a1e1
+    12.57%     0.00%  cvc5     cvc5                                   [.] 0x00000000009efec4
+    12.47%     0.00%  cvc5     cvc5                                   [.] 0x000000000120d229
+    12.31%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a0357f
+    12.31%     0.00%  cvc5     cvc5                                   [.] 0x000000000086c27f
+    12.30%     0.00%  cvc5     cvc5                                   [.] 0x00000000009ec62b
+    11.70%     0.00%  cvc5     cvc5                                   [.] 0x000000000120d4cc
+    11.15%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a83911
+    10.96%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de70e5
+    10.89%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de6a36
+    10.88%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de5e0b
+    10.88%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de6296
+    10.85%     0.00%  cvc5     cvc5                                   [.] 0x000000000133f04b
+    10.82%     0.00%  cvc5     cvc5                                   [.] 0x00000000014248b4
+    10.80%     0.00%  cvc5     cvc5                                   [.] 0x0000000001424455
+    10.59%     0.00%  cvc5     cvc5                                   [.] 0x000000000133da6a
+    10.55%     0.00%  cvc5     cvc5                                   [.] 0x000000000133e575
+     9.05%     0.00%  cvc5     cvc5                                   [.] 0x0000000000850f48
+     8.88%     0.00%  cvc5     cvc5                                   [.] 0x000000000084de33
+     8.80%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fcaf94
+     8.03%     0.00%  cvc5     cvc5                                   [.] 0x0000000001860d92
+     7.84%     0.00%  cvc5     cvc5                                   [.] 0x0000000001871fc6
+     7.49%     0.00%  cvc5     cvc5                                   [.] 0x00000000014223f4
+     7.47%     0.00%  cvc5     cvc5                                   [.] 0x0000000001877acc
+     6.24%     0.00%  cvc5     cvc5                                   [.] 0x00000000006ea173
+     6.11%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422445
+     5.85%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fd56b7
+     5.23%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fdcee4
+     5.21%     0.00%  cvc5     cvc5                                   [.] 0x0000000001418ad0
+     5.21%     0.00%  cvc5     cvc5                                   [.] 0x0000000001861f4f
+     5.21%     0.00%  cvc5     cvc5                                   [.] 0x0000000001870fa5
+     5.21%     0.00%  cvc5     cvc5                                   [.] 0x00000000018776b9
+     5.16%     0.00%  cvc5     cvc5                                   [.] 0x000000000187679e
+     5.05%     0.00%  cvc5     cvc5                                   [.] 0x000000000084a844
+     5.00%     0.00%  cvc5     cvc5                                   [.] 0x0000000001860d63
+     4.90%     0.00%  cvc5     cvc5                                   [.] 0x000000000105b727
+     4.83%     0.00%  cvc5     cvc5                                   [.] 0x000000000090a4d9
+     4.79%     0.00%  cvc5     cvc5                                   [.] 0x0000000001978b68
+     4.57%     0.00%  cvc5     cvc5                                   [.] 0x00000000017d5f6c
+     4.46%     0.00%  cvc5     cvc5                                   [.] 0x00000000006868e6
+     4.46%     0.00%  cvc5     cvc5                                   [.] 0x00000000006c38f2
+     4.45%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a83aea
+     4.27%     0.00%  cvc5     cvc5                                   [.] 0x00000000014198fb
+     4.26%     0.00%  cvc5     cvc5                                   [.] 0x00000000014198eb
+     4.20%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422dc7
+     4.09%     0.00%  cvc5     cvc5                                   [.] 0x00000000008ff2bc
+     4.04%     0.00%  cvc5     cvc5                                   [.] 0x0000000001871f48
+     3.99%     0.00%  cvc5     cvc5                                   [.] 0x0000000001419920
+     3.73%     0.00%  cvc5     cvc5                                   [.] 0x0000000001420d90
+     3.72%     0.00%  cvc5     cvc5                                   [.] 0x0000000001a76ee1
+     3.70%     0.00%  cvc5     cvc5                                   [.] 0x000000000106f43b
+     3.62%     0.00%  cvc5     cvc5                                   [.] 0x000000000141ef9b
+     3.47%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84f14
+     3.26%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422510
+     3.15%     0.00%  cvc5     cvc5                                   [.] 0x000000000072fbab
+     3.15%     0.00%  cvc5     cvc5                                   [.] 0x000000000073483f
+     3.15%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e8ead
+     3.14%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422a27
+     3.13%     0.00%  cvc5     cvc5                                   [.] 0x0000000001420e0d
+     3.09%     0.00%  cvc5     cvc5                                   [.] 0x0000000001071fd1
+     2.89%     0.00%  cvc5     cvc5                                   [.] 0x000000000090a6d4
+     2.67%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84b21
+     2.66%     2.66%  cvc5     cvc5                                   [.] 0x0000000000684b21
+     2.66%     0.00%  cvc5     cvc5                                   [.] 0x000000000141eef8
+     2.65%     0.00%  cvc5     cvc5                                   [.] 0x00000000014224be
+     2.62%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422034
+     2.62%     0.00%  cvc5     cvc5                                   [.] 0x00000000018b9717
+     2.39%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422521
+     2.35%     0.00%  cvc5     cvc5                                   [.] 0x000000000090bb99
+     2.28%     0.00%  cvc5     cvc5                                   [.] 0x0000000000900017
+     2.24%     0.00%  cvc5     cvc5                                   [.] 0x000000000142781b
+     2.23%     0.00%  cvc5     cvc5                                   [.] 0x000000000142479c
+     2.21%     0.00%  cvc5     cvc5                                   [.] 0x0000000000740478
+     2.21%     0.00%  cvc5     cvc5                                   [.] 0x00000000007445d6
+     2.21%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de8178
+     2.21%     0.00%  cvc5     cvc5                                   [.] 0x0000000001871e17
+     2.20%     2.20%  cvc5     cvc5                                   [.] 0x0000000000684b16
+     2.20%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84b16
+     2.20%     0.00%  cvc5     cvc5                                   [.] 0x000000000090ac87
+     2.07%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fd5525
+     2.03%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fcb1ea
+     2.02%     0.00%  cvc5     cvc5                                   [.] 0x0000000001092600
+     2.00%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de6fed
+     2.00%     0.00%  cvc5     cvc5                                   [.] 0x0000000000dfa6db
+     2.00%     0.00%  cvc5     cvc5                                   [.] 0x0000000001354552
+     2.00%     0.00%  cvc5     cvc5                                   [.] 0x0000000001354daa
+     1.94%     0.00%  cvc5     cvc5                                   [.] 0x00000000017035b9
+     1.92%     1.92%  cvc5     cvc5                                   [.] 0x0000000000684b3d
+     1.92%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84b3d
+     1.88%     1.88%  cvc5     cvc5                                   [.] 0x0000000000684b25
+     1.88%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84b25
+     1.85%     0.00%  cvc5     cvc5                                   [.] 0x0000000001703342
+     1.85%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a83d50
+     1.83%     0.00%  python3  python3.12                             [.] Py_BytesMain
+     1.83%     0.00%  python3  libc.so.6                              [.] __libc_start_main
+     1.83%     0.00%  python3  python3.12                             [.] _start
+     1.79%     0.00%  python3  python3.12                             [.] Py_RunMain
+     1.77%     0.00%  cvc5     cvc5                                   [.] 0x000000000135359a
+     1.77%     1.41%  python3  python3.12                             [.] _PyEval_EvalFrameDefault
+     1.76%     0.00%  python3  python3.12                             [.] PyEval_EvalCode
+     1.75%     0.00%  cvc5     cvc5                                   [.] 0x000000000090add1
+     1.73%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a03863
+     1.72%     0.00%  python3  python3.12                             [.] PyRun_StringFlags
+     1.70%     0.00%  python3  python3.12                             [.] PyRun_SimpleStringFlags
+     1.70%     0.00%  cvc5     cvc5                                   [.] 0x000000000090a9c1
+     1.69%     0.00%  cvc5     cvc5                                   [.] 0x00000000008ff21f
+     1.67%     0.00%  cvc5     cvc5                                   [.] 0x0000000001071f82
+     1.66%     0.00%  cvc5     cvc5                                   [.] 0x000000000141990c
+     1.65%     1.65%  cvc5     cvc5                                   [.] 0x0000000001027601
+     1.65%     0.00%  cvc5     cvc5                                   [.] 0x0000000001427601
+     1.64%     0.00%  cvc5     cvc5                                   [.] 0x00000000008ff117
+     1.62%     0.00%  cvc5     cvc5                                   [.] 0x00000000008ffe67
+     1.56%     0.00%  cvc5     cvc5                                   [.] 0x00000000009067cc
+     1.55%     1.55%  cvc5     cvc5                                   [.] 0x0000000001496eda
+     1.55%     0.00%  cvc5     cvc5                                   [.] 0x0000000001896eda
+     1.47%     0.00%  cvc5     cvc5                                   [.] 0x0000000000812554
+     1.47%     1.47%  cvc5     cvc5                                   [.] 0x0000000000412554
+     1.47%     1.47%  cvc5     cvc5                                   [.] 0x0000000000412568
+     1.47%     0.00%  cvc5     cvc5                                   [.] 0x0000000000812568
+     1.46%     0.00%  cvc5     cvc5                                   [.] 0x000000000120d1d8
+     1.46%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84c5f
+     1.46%     1.46%  cvc5     cvc5                                   [.] 0x0000000000684c5f
+     1.44%     0.00%  cvc5     cvc5                                   [.] 0x00000000018716c6
+     1.43%     0.00%  python3  libc.so.6                              [.] 0x00007a45a742a1c9
+     1.37%     0.00%  cvc5     cvc5                                   [.] 0x000000000090297f
+     1.27%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a8d9ef
+     1.27%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a330ee
+     1.25%     0.00%  cvc5     cvc5                                   [.] 0x00000000018b8aa1
+     1.23%     0.00%  cvc5     cvc5                                   [.] 0x00000000007347b6
+     1.20%     0.00%  cvc5     cvc5                                   [.] 0x0000000000812cb2
+     1.14%     0.00%  cvc5     cvc5                                   [.] 0x000000000189780f
+     1.13%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a0361b
+     1.13%     0.00%  cvc5     cvc5                                   [.] 0x00000000010925e1
+     1.12%     1.12%  cvc5     cvc5                                   [.] 0x000000000077f0f6
+     1.12%     0.00%  cvc5     cvc5                                   [.] 0x0000000000b7f0f6
+     1.11%     0.00%  cvc5     cvc5                                   [.] 0x000000000084a98c
+     1.10%     0.00%  cvc5     cvc5                                   [.] 0x0000000000df9c81
+     1.09%     0.00%  cvc5     cvc5                                   [.] 0x00000000014224a9
+     1.08%     1.08%  cvc5     cvc5                                   [.] 0x000000000041256f
+     1.08%     0.00%  cvc5     cvc5                                   [.] 0x000000000081256f
+     1.08%     0.00%  cvc5     cvc5                                   [.] 0x000000000084acbb
+     1.05%     1.05%  cvc5     cvc5                                   [.] 0x0000000000684b0e
+     1.05%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84b0e
+     1.04%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a04150
+     1.04%     0.00%  cvc5     cvc5                                   [.] 0x000000000078b0e1
+     1.04%     1.04%  cvc5     cvc5                                   [.] 0x0000000000684c51
+     1.04%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84c51
+     0.99%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a34363
+     0.98%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fd8227
+     0.96%     0.96%  cvc5     cvc5                                   [.] 0x0000000000677cc4
+     0.96%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a77cc4
+     0.95%     0.00%  cvc5     cvc5                                   [.] 0x000000000090b2af
+     0.93%     0.93%  cvc5     cvc5                                   [.] 0x000000000077f0df
+     0.93%     0.00%  cvc5     cvc5                                   [.] 0x0000000000b7f0df
+     0.93%     0.00%  cvc5     cvc5                                   [.] 0x000000000084ac8f
+     0.92%     0.92%  cvc5     [unknown]                              [k] 0xffffffffb2e00b90
+     0.91%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a305e9
+     0.90%     0.00%  cvc5     cvc5                                   [.] 0x0000000000902b2f
+     0.90%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84b62
+     0.83%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fcdf3f
+     0.83%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a1abae
+     0.82%     0.00%  cvc5     cvc5                                   [.] 0x00000000007d1a29
+     0.82%     0.00%  cvc5     cvc5                                   [.] 0x000000000090ba1b
+     0.81%     0.00%  cvc5     cvc5                                   [.] 0x00000000007c2ebe
+     0.80%     0.00%  cvc5     cvc5                                   [.] 0x00000000007a7c9c
+     0.80%     0.00%  cvc5     cvc5                                   [.] 0x0000000001051c0c
+     0.80%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fccb9b
+     0.80%     0.00%  cvc5     cvc5                                   [.] 0x000000000109338d
+     0.80%     0.80%  cvc5     cvc5                                   [.] 0x00000000014b976b
+     0.80%     0.00%  cvc5     cvc5                                   [.] 0x00000000018b976b
+     0.79%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422fd7
+     0.79%     0.79%  cvc5     cvc5                                   [.] 0x000000000101f38d
+     0.79%     0.00%  cvc5     cvc5                                   [.] 0x000000000141f38d
+     0.77%     0.00%  cvc5     cvc5                                   [.] 0x0000000001878c59
+     0.76%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a32d1a
+     0.76%     0.76%  cvc5     cvc5                                   [.] 0x000000000101f391
+     0.76%     0.00%  cvc5     cvc5                                   [.] 0x000000000141f391
+     0.74%     0.00%  cvc5     cvc5                                   [.] 0x000000000090900c
+     0.73%     0.00%  cvc5     cvc5                                   [.] 0x0000000001066edf
+     0.73%     0.00%  cvc5     cvc5                                   [.] 0x0000000001420c90
+     0.73%     0.00%  cvc5     cvc5                                   [.] 0x00000000009f56a9
+     0.73%     0.73%  cvc5     cvc5                                   [.] 0x000000000033b221
+     0.73%     0.00%  cvc5     cvc5                                   [.] 0x000000000073b221
+     0.73%     0.00%  cvc5     cvc5                                   [.] 0x000000000090adee
+     0.72%     0.72%  cvc5     cvc5                                   [.] 0x00000000014758cb
+     0.72%     0.00%  cvc5     cvc5                                   [.] 0x00000000018758cb
+     0.71%     0.71%  cvc5     cvc5                                   [.] 0x000000000101ee23
+     0.71%     0.00%  cvc5     cvc5                                   [.] 0x000000000141ee23
+     0.71%     0.00%  cvc5     cvc5                                   [.] 0x00000000009f55ad
+     0.71%     0.00%  cbmc     cbmc                                   [.] field_sensitivityt::apply(namespacet const&, goto_symex_statet&, exprt, bool) const
+     0.71%     0.00%  cvc5     cvc5                                   [.] 0x00000000007d19cc
+     0.70%     0.00%  cvc5     cvc5                                   [.] 0x00000000007c2eee
+     0.69%     0.00%  cvc5     cvc5                                   [.] 0x00000000008125f3
+     0.68%     0.00%  cvc5     cvc5                                   [.] 0x000000000090ba40
+     0.68%     0.68%  cvc5     cvc5                                   [.] 0x000000000077f0fd
+     0.68%     0.00%  cvc5     cvc5                                   [.] 0x0000000000b7f0fd
+     0.68%     0.00%  cvc5     cvc5                                   [.] 0x0000000001875892
+     0.67%     0.00%  cvc5     cvc5                                   [.] 0x000000000078b0d6
+     0.67%     0.00%  cvc5     cvc5                                   [.] 0x000000000090a1a6
+     0.67%     0.00%  cvc5     cvc5                                   [.] 0x0000000000812e5f
+     0.66%     0.00%  cvc5     cvc5                                   [.] 0x000000000090a9de
+     0.66%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e6764
+     0.66%     0.00%  cvc5     cvc5                                   [.] 0x000000000084a9b8
+     0.65%     0.00%  cvc5     cvc5                                   [.] 0x00000000010627d1
+     0.64%     0.00%  cvc5     cvc5                                   [.] 0x0000000001354094
+     0.62%     0.00%  cvc5     cvc5                                   [.] 0x0000000001066dff
+     0.61%     0.01%  cbmc     cbmc                                   [.] field_sensitivityt::get_fields(namespacet const&, goto_symex_statet&, ssa_exprt const&, bool) const
+     0.60%     0.00%  cvc5     cvc5                                   [.] 0x0000000001422c9a
+     0.59%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e4eff
+     0.59%     0.00%  cvc5     cvc5                                   [.] 0x000000000141984e
+     0.59%     0.00%  cvc5     cvc5                                   [.] 0x0000000001066f49
+     0.59%     0.00%  cvc5     cvc5                                   [.] 0x0000000001066eed
+     0.58%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a30700
+     0.57%     0.00%  cvc5     cvc5                                   [.] 0x000000000120d4a8
+     0.57%     0.00%  cvc5     cvc5                                   [.] 0x000000000120dccf
+     0.57%     0.00%  cvc5     cvc5                                   [.] 0x0000000001a7559e
+     0.57%     0.00%  cvc5     cvc5                                   [.] 0x0000000000b72485
+     0.57%     0.00%  cvc5     cvc5                                   [.] 0x00000000018b9953
+     0.56%     0.00%  cvc5     cvc5                                   [.] 0x00000000018b8bf6
+     0.56%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fcdec2
+     0.55%     0.00%  cvc5     cvc5                                   [.] 0x0000000001347759
+     0.55%     0.00%  cvc5     cvc5                                   [.] 0x0000000001062d91
+     0.55%     0.55%  cvc5     cvc5                                   [.] 0x000000000101f376
+     0.55%     0.00%  cvc5     cvc5                                   [.] 0x000000000141f376
+     0.54%     0.54%  cvc5     cvc5                                   [.] 0x0000000000412588
+     0.54%     0.00%  cvc5     cvc5                                   [.] 0x0000000000812588
+     0.54%     0.54%  cvc5     cvc5                                   [.] 0x0000000000684c3b
+     0.54%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a84c3b
+     0.54%     0.54%  cvc5     cvc5                                   [.] 0x00000000014b9778
+     0.54%     0.00%  cvc5     cvc5                                   [.] 0x00000000018b9778
+     0.54%     0.00%  cvc5     cvc5                                   [.] 0x0000000001062c01
+     0.54%     0.10%  cbmc     cbmc                                   [.] jsont::jsont(jsont const&)
+     0.53%     0.00%  cvc5     cvc5                                   [.] 0x00000000007e5549
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Rb_tree(std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::map(std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_copy(std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node::operator()<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&>(std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) const (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_clone_node<false, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node>(std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >*, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_copy<false, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node>(std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > const&, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_copy<false, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node>(std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >*, std::_Rb_tree_node_base*, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_create_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&>(std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] cbmc_parse_optionst::doit()
+     0.53%     0.00%  cvc5     cvc5                                   [.] 0x0000000001878c2b
+     0.53%     0.00%  cbmc     cbmc                                   [.] std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>::pair(std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] void std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_construct_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&>(std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >*, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] void std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::construct<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&>(std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>*, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) (inlined)
+     0.53%     0.00%  cbmc     cbmc                                   [.] void std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::construct<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&>(std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >&, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>*, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) (inlined)
+     0.52%     0.00%  cvc5     cvc5                                   [.] 0x000000000141f365
+     0.52%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a841fc
+     0.52%     0.00%  cbmc     cbmc                                   [.] std::vector<jsont, std::allocator<jsont> >::vector(std::vector<jsont, std::allocator<jsont> > const&) (inlined)
+     0.51%     0.51%  cvc5     cvc5                                   [.] 0x00000000006841fc
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x0000000001421fe4
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x000000000090bc46
+     0.51%     0.00%  cbmc     cbmc                                   [.] jsont* std::__do_uninit_copy<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*>(__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, __gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*) (inlined)
+     0.51%     0.00%  cbmc     cbmc                                   [.] jsont* std::__uninitialized_copy<false>::__uninit_copy<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*>(__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, __gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*) (inlined)
+     0.51%     0.00%  cbmc     cbmc                                   [.] jsont* std::__uninitialized_copy_a<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*, jsont>(__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, __gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*, std::allocator<jsont>&) (inlined)
+     0.51%     0.00%  cbmc     cbmc                                   [.] jsont* std::uninitialized_copy<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*>(__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, __gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*) (inlined)
+     0.51%     0.00%  cbmc     cbmc                                   [.] void std::_Construct<jsont, jsont const&>(jsont*, jsont const&) (inlined)
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x00000000009f4026
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x0000000000a5ff42
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fe86e8
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x000000000120dd1d
+     0.51%     0.00%  cvc5     cvc5                                   [.] 0x00000000012101f4
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#
