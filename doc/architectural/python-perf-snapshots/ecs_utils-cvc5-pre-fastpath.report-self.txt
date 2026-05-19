@@ -1,0 +1,99 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 7K of event 'cycles:u'
+# Event count (approx.): 21782062763
+#
+# Overhead  Command  Shared Object                          Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+# ........  .......  .....................................  ...........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    29.09%  cbmc     cbmc                                   [.] irept::compare(irept const&) const
+            |
+            ---irept::compare(irept const&) const
+               |          
+               |--13.45%--0x57a98d60a99f
+               |          
+                --0.75%--irept::compare(irept const&) const
+
+    22.00%  cbmc     cbmc                                   [.] irept::number_of_non_comments(forward_list_as_mapt<dstringt, irept> const&)
+            |
+            ---irept::number_of_non_comments(forward_list_as_mapt<dstringt, irept> const&)
+               |          
+               |--15.01%--irept::compare(irept const&) const
+               |          |          
+               |           --7.71%--0x57a98d60a99f
+               |          
+                --0.52%--0xaaed9d7e7232efff
+
+    13.10%  python3  python3.12                             [.] _PyEval_EvalFrameDefault
+            |
+            ---_PyEval_EvalFrameDefault
+               |          
+                --13.00%--PyEval_EvalCode
+                          |          
+                           --12.93%--PyRun_StringFlags
+                                     PyRun_SimpleStringFlags
+                                     Py_RunMain
+                                     Py_BytesMain
+                                     |          
+                                     |--11.48%--0x70437b62a1c9
+                                     |          __libc_start_main
+                                     |          _start
+                                     |          
+                                      --1.30%--0x73e0c7e2a1c9
+                                                __libc_start_main
+                                                _start
+
+     1.59%  cbmc     cbmc                                   [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_erase(std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >*) [clone .isra.0]
+            |          
+             --0.94%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_erase(std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >*) (inlined)
+
+     1.11%  cbmc     cbmc                                   [.] irept::operator==(irept const&) const
+            |
+            ---irept::operator==(irept const&) const
+               |          
+                --0.72%--irept::operator==(irept const&) const
+                          |          
+                           --0.67%--irept::operator==(irept const&) const
+                                     |          
+                                      --0.61%--irept::operator==(irept const&) const
+                                                |          
+                                                 --0.55%--irept::operator==(irept const&) const
+
+     1.10%  cbmc     cbmc                                   [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          
+             --0.90%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+
+     0.98%  cbmc     libc.so.6                              [.] malloc
+            |
+            ---malloc
+               |          
+                --0.97%--operator new(unsigned long)
+
+     0.73%  cbmc     cbmc                                   [.] irept::find(dstringt const&) const
+            |
+            ---irept::find(dstringt const&) const
+
+     0.71%  cbmc     cbmc                                   [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_M_copy<false, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node>(std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >*, std::_Rb_tree_node_base*, std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::_Alloc_node&) [clone .isra.0]
+     0.65%  cbmc     cbmc                                   [.] jsont::jsont(jsont const&)
+     0.65%  cbmc     cbmc                                   [.] yyjsonlex(void*)
+            |
+            ---yyjsonlex(void*)
+               |          
+                --0.63%--yyjsonparse(json_parsert&, void*)
+                          parse_json(std::istream&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+                          parse_json(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+                          |          
+                           --0.60%--python_languaget::resolve_module(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+
+     0.65%  cbmc     libc.so.6                              [.] cfree
+            |
+            ---cfree
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

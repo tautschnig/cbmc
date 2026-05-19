@@ -1,0 +1,1351 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 54K of event 'cycles:u'
+# Event count (approx.): 165768988031
+#
+# Children      Self  Command  Shared Object                          Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+# ........  ........  .......  .....................................  ..................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    49.94%     0.00%  cvc5     cvc5                                   [.] 0x000000000061af5d
+            |
+            ---0x61af5d
+               |          
+                --49.82%--0x60b27b
+                          |          
+                           --48.33%--0x5c62b7
+                                     |          
+                                      --46.05%--0x1a2c3bf
+                                                |          
+                                                 --43.62%--0x6097fd
+
+    49.82%     0.00%  cvc5     cvc5                                   [.] 0x000000000060b27b
+            |
+            ---0x60b27b
+               |          
+                --48.33%--0x5c62b7
+                          |          
+                           --46.05%--0x1a2c3bf
+                                     |          
+                                      --43.62%--0x6097fd
+
+    48.33%     0.00%  cvc5     cvc5                                   [.] 0x00000000005c62b7
+            |
+            ---0x5c62b7
+               |          
+                --46.05%--0x1a2c3bf
+                          |          
+                           --43.62%--0x6097fd
+
+    46.05%     0.00%  cvc5     cvc5                                   [.] 0x0000000001a2c3bf
+            |
+            ---0x1a2c3bf
+               |          
+                --43.62%--0x6097fd
+
+    43.62%     0.00%  cvc5     cvc5                                   [.] 0x00000000006097fd
+            |
+            ---0x6097fd
+
+    34.44%     0.00%  cvc5     cvc5                                   [.] 0x000000000060cba4
+            |
+            ---0x60cba4
+               |          
+                --34.18%--0x6132fe
+                          |          
+                           --34.18%--0x61af5d
+                                     |          
+                                      --34.05%--0x60b27b
+                                                |          
+                                                 --33.38%--0x5c62b7
+                                                           |          
+                                                            --33.13%--0x1a2c3bf
+                                                                      |          
+                                                                       --32.61%--0x6097fd
+
+    34.43%     0.00%  cvc5     cvc5                                   [.] 0x00000000006132fe
+            |
+            ---0x6132fe
+               |          
+                --34.43%--0x61af5d
+                          |          
+                           --34.30%--0x60b27b
+                                     |          
+                                      --33.63%--0x5c62b7
+                                                |          
+                                                 --33.38%--0x1a2c3bf
+                                                           |          
+                                                            --32.86%--0x6097fd
+
+    34.28%     0.00%  cvc5     cvc5                                   [.] 0x000000000060c878
+            |
+            ---0x60c878
+               |          
+                --34.19%--0x60cba4
+                          |          
+                           --33.93%--0x6132fe
+                                     |          
+                                      --33.92%--0x61af5d
+                                                |          
+                                                 --33.80%--0x60b27b
+                                                           |          
+                                                            --33.13%--0x5c62b7
+                                                                      |          
+                                                                       --32.88%--0x1a2c3bf
+                                                                                 |          
+                                                                                  --32.36%--0x6097fd
+
+    29.78%     0.00%  cvc5     cvc5                                   [.] 0x00000000017d64f7
+            |
+            ---0x17d64f7
+               |          
+                --29.76%--0x60c878
+                          |          
+                           --29.68%--0x60cba4
+                                     |          
+                                      --29.42%--0x6132fe
+                                                |          
+                                                 --29.41%--0x61af5d
+                                                           |          
+                                                            --29.29%--0x60b27b
+                                                                      |          
+                                                                       --28.66%--0x5c62b7
+                                                                                 |          
+                                                                                  --28.46%--0x1a2c3bf
+                                                                                            |          
+                                                                                             --28.25%--0x6097fd
+
+    22.77%     0.00%  cvc5     cvc5                                   [.] 0x0000000000733bf9
+            |
+            ---0x733bf9
+               |          
+                --22.76%--0x733e21
+                          |          
+                           --22.75%--0x656621
+                                     |          
+                                      --22.18%--0x17def04
+                                                |          
+                                                 --22.04%--0x17d64f7
+                                                           |          
+                                                            --22.02%--0x60c878
+                                                                      |          
+                                                                       --21.94%--0x60cba4
+                                                                                 |          
+                                                                                  --21.78%--0x6132fe
+                                                                                            |          
+                                                                                             --21.78%--0x61af5d
+                                                                                                       |          
+                                                                                                        --21.65%--0x60b27b
+                                                                                                                  |          
+                                                                                                                   --21.03%--0x5c62b7
+                                                                                                                             |          
+                                                                                                                              --20.83%--0x1a2c3bf
+                                                                                                                                        |          
+                                                                                                                                         --20.65%--0x6097fd
+
+    22.76%     0.00%  cvc5     cvc5                                   [.] 0x0000000000733e21
+            |
+            ---0x733e21
+               |          
+                --22.75%--0x656621
+                          |          
+                           --22.18%--0x17def04
+                                     |          
+                                      --22.04%--0x17d64f7
+                                                |          
+                                                 --22.02%--0x60c878
+                                                           |          
+                                                            --21.94%--0x60cba4
+                                                                      |          
+                                                                       --21.78%--0x6132fe
+                                                                                 |          
+                                                                                  --21.78%--0x61af5d
+                                                                                            |          
+                                                                                             --21.65%--0x60b27b
+                                                                                                       |          
+                                                                                                        --21.03%--0x5c62b7
+                                                                                                                  |          
+                                                                                                                   --20.83%--0x1a2c3bf
+                                                                                                                             |          
+                                                                                                                              --20.65%--0x6097fd
+
+    22.75%     0.00%  cvc5     cvc5                                   [.] 0x0000000000656621
+            |
+            ---0x656621
+               |          
+                --22.18%--0x17def04
+                          |          
+                           --22.04%--0x17d64f7
+                                     |          
+                                      --22.02%--0x60c878
+                                                |          
+                                                 --21.94%--0x60cba4
+                                                           |          
+                                                            --21.78%--0x6132fe
+                                                                      |          
+                                                                       --21.78%--0x61af5d
+                                                                                 |          
+                                                                                  --21.65%--0x60b27b
+                                                                                            |          
+                                                                                             --21.03%--0x5c62b7
+                                                                                                       |          
+                                                                                                        --20.83%--0x1a2c3bf
+                                                                                                                  |          
+                                                                                                                   --20.65%--0x6097fd
+
+    22.73%     0.00%  cvc5     cvc5                                   [.] 0x0000000000740ef2
+            |
+            ---0x740ef2
+               |          
+                --22.71%--0x733bf9
+                          |          
+                           --22.69%--0x733e21
+                                     |          
+                                      --22.69%--0x656621
+                                                |          
+                                                 --22.12%--0x17def04
+                                                           |          
+                                                            --21.98%--0x17d64f7
+                                                                      |          
+                                                                       --21.96%--0x60c878
+                                                                                 |          
+                                                                                  --21.88%--0x60cba4
+                                                                                            |          
+                                                                                             --21.72%--0x6132fe
+                                                                                                       |          
+                                                                                                        --21.71%--0x61af5d
+                                                                                                                  |          
+                                                                                                                   --21.59%--0x60b27b
+                                                                                                                             |          
+                                                                                                                              --20.97%--0x5c62b7
+                                                                                                                                        |          
+                                                                                                                                         --20.77%--0x1a2c3bf
+                                                                                                                                                   |          
+                                                                                                                                                    --20.59%--0x6097fd
+
+    22.18%     0.00%  cvc5     cvc5                                   [.] 0x00000000017def04
+            |
+            ---0x17def04
+               |          
+                --22.04%--0x17d64f7
+                          |          
+                           --22.02%--0x60c878
+                                     |          
+                                      --21.94%--0x60cba4
+                                                |          
+                                                 --21.78%--0x6132fe
+                                                           |          
+                                                            --21.78%--0x61af5d
+                                                                      |          
+                                                                       --21.65%--0x60b27b
+                                                                                 |          
+                                                                                  --21.03%--0x5c62b7
+                                                                                            |          
+                                                                                             --20.83%--0x1a2c3bf
+                                                                                                       |          
+                                                                                                        --20.65%--0x6097fd
+
+    20.59%     0.00%  cbmc     cbmc                                   [.] cbmc_parse_optionst::doit()
+            |
+            ---cbmc_parse_optionst::doit()
+               |          
+                --12.96%--parse_options_baset::main()
+                          |          
+                           --12.83%--main
+                                     |          
+                                      --8.69%--0x7ea50a62a1c9
+                                                |          
+                                                 --8.05%--__libc_start_main
+                                                           |          
+                                                            --7.52%--_start
+
+    20.00%     0.00%  cbmc     cbmc                                   [.] goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+            |
+            ---goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          
+                --14.38%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          
+                           --12.62%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                     |          
+                                      --12.41%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                |          
+                                                 --10.51%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                           |          
+                                                            --8.90%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                      |          
+                                                                       --6.62%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                                                 |          
+                                                                                  --6.02%--multi_path_symex_only_checkert::generate_equation()
+
+    19.79%     0.00%  cbmc     cbmc                                   [.] symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+            |
+            ---symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+               |          
+                --19.66%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                          |          
+                           --19.50%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                     |          
+                                      --19.25%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                |          
+                                                 --13.63%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                           |          
+                                                            --11.92%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --11.71%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --9.82%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                            |          
+                                                                                             --8.22%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                                       |          
+                                                                                                        --5.97%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                                                                                  |          
+                                                                                                                   --5.37%--multi_path_symex_only_checkert::generate_equation()
+
+    19.66%     0.00%  cbmc     cbmc                                   [.] symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+            |
+            ---symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+               |          
+                --19.50%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                          |          
+                           --19.25%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                     |          
+                                      --13.63%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                |          
+                                                 --11.92%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                           |          
+                                                            --11.71%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --9.82%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                 |          
+                                                                                  --8.22%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                            |          
+                                                                                             --5.97%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                                                                       |          
+                                                                                                        --5.37%--multi_path_symex_only_checkert::generate_equation()
+
+    19.59%     0.00%  cvc5     cvc5                                   [.] 0x0000000000de8862
+            |
+            ---0xde8862
+               |          
+                --19.58%--0x744258
+                          0x740484
+                          |          
+                           --19.51%--0x740ef2
+                                     |          
+                                      --19.48%--0x733bf9
+                                                |          
+                                                 --19.47%--0x733e21
+                                                           |          
+                                                            --19.46%--0x656621
+                                                                      |          
+                                                                       --18.90%--0x17def04
+                                                                                 |          
+                                                                                  --18.76%--0x17d64f7
+                                                                                            |          
+                                                                                             --18.74%--0x60c878
+                                                                                                       |          
+                                                                                                        --18.65%--0x60cba4
+                                                                                                                  |          
+                                                                                                                   --18.50%--0x6132fe
+                                                                                                                             |          
+                                                                                                                              --18.49%--0x61af5d
+                                                                                                                                        |          
+                                                                                                                                         --18.47%--0x60b27b
+                                                                                                                                                   |          
+                                                                                                                                                    --18.18%--0x5c62b7
+                                                                                                                                                              |          
+                                                                                                                                                               --18.10%--0x1a2c3bf
+                                                                                                                                                                         |          
+                                                                                                                                                                          --17.94%--0x6097fd
+
+    19.59%     0.00%  cvc5     cvc5                                   [.] 0x000000000142e05b
+            |
+            ---0x142e05b
+               0xde8862
+               |          
+                --19.58%--0x744258
+                          0x740484
+                          |          
+                           --19.51%--0x740ef2
+                                     |          
+                                      --19.48%--0x733bf9
+                                                |          
+                                                 --19.47%--0x733e21
+                                                           |          
+                                                            --19.46%--0x656621
+                                                                      |          
+                                                                       --18.90%--0x17def04
+                                                                                 |          
+                                                                                  --18.76%--0x17d64f7
+                                                                                            |          
+                                                                                             --18.74%--0x60c878
+                                                                                                       |          
+                                                                                                        --18.65%--0x60cba4
+                                                                                                                  |          
+                                                                                                                   --18.50%--0x6132fe
+                                                                                                                             |          
+                                                                                                                              --18.49%--0x61af5d
+                                                                                                                                        |          
+                                                                                                                                         --18.47%--0x60b27b
+                                                                                                                                                   |          
+                                                                                                                                                    --18.18%--0x5c62b7
+                                                                                                                                                              |          
+                                                                                                                                                               --18.10%--0x1a2c3bf
+                                                                                                                                                                         |          
+                                                                                                                                                                          --17.94%--0x6097fd
+
+    19.59%     0.00%  cvc5     cvc5                                   [.] 0x0000000001442ad7
+            |
+            ---0x1442ad7
+               0x142e05b
+               0xde8862
+               |          
+                --19.58%--0x744258
+                          0x740484
+                          |          
+                           --19.51%--0x740ef2
+                                     |          
+                                      --19.48%--0x733bf9
+                                                |          
+                                                 --19.47%--0x733e21
+                                                           |          
+                                                            --19.46%--0x656621
+                                                                      |          
+                                                                       --18.90%--0x17def04
+                                                                                 |          
+                                                                                  --18.76%--0x17d64f7
+                                                                                            |          
+                                                                                             --18.74%--0x60c878
+                                                                                                       |          
+                                                                                                        --18.65%--0x60cba4
+                                                                                                                  |          
+                                                                                                                   --18.50%--0x6132fe
+                                                                                                                             |          
+                                                                                                                              --18.49%--0x61af5d
+                                                                                                                                        |          
+                                                                                                                                         --18.47%--0x60b27b
+                                                                                                                                                   |          
+                                                                                                                                                    --18.18%--0x5c62b7
+                                                                                                                                                              |          
+                                                                                                                                                               --18.10%--0x1a2c3bf
+                                                                                                                                                                         |          
+                                                                                                                                                                          --17.94%--0x6097fd
+
+    19.59%     0.00%  cvc5     cvc5                                   [.] 0x0000000001704587
+            |
+            ---0x1704587
+               0x1442ad7
+               0x142e05b
+               0xde8862
+               |          
+                --19.58%--0x744258
+                          0x740484
+                          |          
+                           --19.51%--0x740ef2
+                                     |          
+                                      --19.48%--0x733bf9
+                                                |          
+                                                 --19.47%--0x733e21
+                                                           |          
+                                                            --19.46%--0x656621
+                                                                      |          
+                                                                       --18.90%--0x17def04
+                                                                                 |          
+                                                                                  --18.76%--0x17d64f7
+                                                                                            |          
+                                                                                             --18.74%--0x60c878
+                                                                                                       |          
+                                                                                                        --18.65%--0x60cba4
+                                                                                                                  |          
+                                                                                                                   --18.50%--0x6132fe
+                                                                                                                             |          
+                                                                                                                              --18.49%--0x61af5d
+                                                                                                                                        |          
+                                                                                                                                         --18.47%--0x60b27b
+                                                                                                                                                   |          
+                                                                                                                                                    --18.18%--0x5c62b7
+                                                                                                                                                              |          
+                                                                                                                                                               --18.10%--0x1a2c3bf
+                                                                                                                                                                         |          
+                                                                                                                                                                          --17.94%--0x6097fd
+
+    19.58%     0.00%  cvc5     cvc5                                   [.] 0x0000000000740484
+            |
+            ---0x740484
+               |          
+                --19.51%--0x740ef2
+                          |          
+                           --19.48%--0x733bf9
+                                     |          
+                                      --19.47%--0x733e21
+                                                |          
+                                                 --19.46%--0x656621
+                                                           |          
+                                                            --18.90%--0x17def04
+                                                                      |          
+                                                                       --18.76%--0x17d64f7
+                                                                                 |          
+                                                                                  --18.74%--0x60c878
+                                                                                            |          
+                                                                                             --18.65%--0x60cba4
+                                                                                                       |          
+                                                                                                        --18.50%--0x6132fe
+                                                                                                                  |          
+                                                                                                                   --18.49%--0x61af5d
+                                                                                                                             |          
+                                                                                                                              --18.47%--0x60b27b
+                                                                                                                                        |          
+                                                                                                                                         --18.18%--0x5c62b7
+                                                                                                                                                   |          
+                                                                                                                                                    --18.10%--0x1a2c3bf
+                                                                                                                                                              |          
+                                                                                                                                                               --17.94%--0x6097fd
+
+    19.58%     0.00%  cvc5     cvc5                                   [.] 0x0000000000744258
+            |
+            ---0x744258
+               0x740484
+               |          
+                --19.51%--0x740ef2
+                          |          
+                           --19.48%--0x733bf9
+                                     |          
+                                      --19.47%--0x733e21
+                                                |          
+                                                 --19.46%--0x656621
+                                                           |          
+                                                            --18.90%--0x17def04
+                                                                      |          
+                                                                       --18.76%--0x17d64f7
+                                                                                 |          
+                                                                                  --18.74%--0x60c878
+                                                                                            |          
+                                                                                             --18.65%--0x60cba4
+                                                                                                       |          
+                                                                                                        --18.50%--0x6132fe
+                                                                                                                  |          
+                                                                                                                   --18.49%--0x61af5d
+                                                                                                                             |          
+                                                                                                                              --18.47%--0x60b27b
+                                                                                                                                        |          
+                                                                                                                                         --18.18%--0x5c62b7
+                                                                                                                                                   |          
+                                                                                                                                                    --18.10%--0x1a2c3bf
+                                                                                                                                                              |          
+                                                                                                                                                               --17.94%--0x6097fd
+
+    19.56%     0.00%  cbmc     cbmc                                   [.] symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+            |
+            ---symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+               |          
+                --19.27%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          
+                           --13.65%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                     |          
+                                      --11.94%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                |          
+                                                 --11.73%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                           |          
+                                                            --9.84%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                      |          
+                                                                       --8.24%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                 |          
+                                                                                  --5.99%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                                                            |          
+                                                                                             --5.38%--multi_path_symex_only_checkert::generate_equation()
+
+    18.43%     0.00%  cbmc     cbmc                                   [.] field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+            |
+            ---field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+               |          
+                --18.39%--symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                          |          
+                           --18.28%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                                     |          
+                                      --18.13%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                |          
+                                                 --17.91%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                           |          
+                                                            --12.66%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --10.99%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --10.78%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                            |          
+                                                                                             --8.94%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                                       |          
+                                                                                                        --7.40%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                                                  |          
+                                                                                                                   --5.25%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+
+    17.35%     0.00%  cvc5     cvc5                                   [.] 0x0000000000df9d74
+            |
+            ---0xdf9d74
+               |          
+                --16.57%--0x170341d
+                          |          
+                           --16.57%--0x170432e
+                                     |          
+                                      --16.57%--0x1704587
+                                                0x1442ad7
+                                                0x142e05b
+                                                0xde8862
+                                                |          
+                                                 --16.56%--0x744258
+                                                           0x740484
+                                                           |          
+                                                            --16.49%--0x740ef2
+                                                                      |          
+                                                                       --16.48%--0x733bf9
+                                                                                 |          
+                                                                                  --16.47%--0x733e21
+                                                                                            |          
+                                                                                             --16.46%--0x656621
+                                                                                                       |          
+                                                                                                        --15.91%--0x17def04
+                                                                                                                  |          
+                                                                                                                   --15.78%--0x17d64f7
+                                                                                                                             |          
+                                                                                                                              --15.76%--0x60c878
+                                                                                                                                        |          
+                                                                                                                                         --15.68%--0x60cba4
+                                                                                                                                                   |          
+                                                                                                                                                    --15.55%--0x6132fe
+                                                                                                                                                              |          
+                                                                                                                                                               --15.54%--0x61af5d
+                                                                                                                                                                         |          
+                                                                                                                                                                          --15.52%--0x60b27b
+                                                                                                                                                                                    |          
+                                                                                                                                                                                     --15.26%--0x5c62b7
+                                                                                                                                                                                               |          
+                                                                                                                                                                                                --15.19%--0x1a2c3bf
+                                                                                                                                                                                                          |          
+                                                                                                                                                                                                           --15.04%--0x6097fd
+
+    17.22%     0.07%  cbmc     cbmc                                   [.] field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+            |
+            ---field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          
+                --16.87%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |          
+                           --15.56%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     |          
+                                      --13.41%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                |          
+                                                 --12.19%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                           |          
+                                                            --10.71%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                                      |          
+                                                                       --7.21%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                                                 field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+                                                                                 symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                                                                                 symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                                                                                 symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                                                 |          
+                                                                                  --7.16%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                                                            |          
+                                                                                             --5.89%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+
+    16.93%     0.00%  cvc5     cvc5                                   [.] 0x000000000170432e
+            |
+            ---0x170432e
+               |          
+                --16.93%--0x1704587
+                          0x1442ad7
+                          0x142e05b
+                          0xde8862
+                          |          
+                           --16.92%--0x744258
+                                     0x740484
+                                     |          
+                                      --16.85%--0x740ef2
+                                                |          
+                                                 --16.83%--0x733bf9
+                                                           |          
+                                                            --16.82%--0x733e21
+                                                                      |          
+                                                                       --16.82%--0x656621
+                                                                                 |          
+                                                                                  --16.27%--0x17def04
+                                                                                            |          
+                                                                                             --16.13%--0x17d64f7
+                                                                                                       |          
+                                                                                                        --16.11%--0x60c878
+                                                                                                                  |          
+                                                                                                                   --16.04%--0x60cba4
+                                                                                                                             |          
+                                                                                                                              --15.91%--0x6132fe
+                                                                                                                                        |          
+                                                                                                                                         --15.90%--0x61af5d
+                                                                                                                                                   |          
+                                                                                                                                                    --15.88%--0x60b27b
+                                                                                                                                                              |          
+                                                                                                                                                               --15.62%--0x5c62b7
+                                                                                                                                                                         |          
+                                                                                                                                                                          --15.54%--0x1a2c3bf
+                                                                                                                                                                                    |          
+                                                                                                                                                                                     --15.40%--0x6097fd
+
+    16.73%     0.00%  cbmc     cbmc                                   [.] multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+            |
+            ---multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+               |          
+                --16.14%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                          |          
+                           --15.34%--cbmc_parse_optionst::doit()
+                                     |          
+                                      --8.42%--parse_options_baset::main()
+                                                |          
+                                                 --8.29%--main
+
+    16.57%     0.00%  cvc5     cvc5                                   [.] 0x000000000170341d
+            |
+            ---0x170341d
+               |          
+                --16.57%--0x170432e
+                          |          
+                           --16.57%--0x1704587
+                                     0x1442ad7
+                                     0x142e05b
+                                     0xde8862
+                                     |          
+                                      --16.56%--0x744258
+                                                0x740484
+                                                |          
+                                                 --16.49%--0x740ef2
+                                                           |          
+                                                            --16.48%--0x733bf9
+                                                                      |          
+                                                                       --16.47%--0x733e21
+                                                                                 |          
+                                                                                  --16.46%--0x656621
+                                                                                            |          
+                                                                                             --15.91%--0x17def04
+                                                                                                       |          
+                                                                                                        --15.78%--0x17d64f7
+                                                                                                                  |          
+                                                                                                                   --15.76%--0x60c878
+                                                                                                                             |          
+                                                                                                                              --15.68%--0x60cba4
+                                                                                                                                        |          
+                                                                                                                                         --15.55%--0x6132fe
+                                                                                                                                                   |          
+                                                                                                                                                    --15.54%--0x61af5d
+                                                                                                                                                              |          
+                                                                                                                                                               --15.52%--0x60b27b
+                                                                                                                                                                         |          
+                                                                                                                                                                          --15.26%--0x5c62b7
+                                                                                                                                                                                    |          
+                                                                                                                                                                                     --15.19%--0x1a2c3bf
+                                                                                                                                                                                               |          
+                                                                                                                                                                                                --15.04%--0x6097fd
+
+    16.14%     0.00%  cbmc     cbmc                                   [.] all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+            |
+            ---all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+               |          
+                --15.34%--cbmc_parse_optionst::doit()
+                          |          
+                           --8.42%--parse_options_baset::main()
+                                     |          
+                                      --8.29%--main
+
+    15.25%     0.00%  cvc5     cvc5                                   [.] 0x000000000061337b
+            |
+            ---0x61337b
+               0x61af5d
+               0x60b27b
+               |          
+                --14.43%--0x5c62b7
+                          |          
+                           --12.40%--0x1a2c3bf
+                                     |          
+                                      --10.49%--0x6097fd
+
+    15.17%     0.00%  cvc5     cvc5                                   [.] 0x00000000017f765f
+            |
+            ---0x17f765f
+               0x61337b
+               0x61af5d
+               0x60b27b
+               |          
+                --14.35%--0x5c62b7
+                          |          
+                           --12.32%--0x1a2c3bf
+                                     |          
+                                      --10.41%--0x6097fd
+
+    15.14%     0.00%  cvc5     cvc5                                   [.] 0x00000000017f9da5
+            |
+            ---0x17f9da5
+               0x17f765f
+               0x61337b
+               0x61af5d
+               0x60b27b
+               |          
+                --14.32%--0x5c62b7
+                          |          
+                           --12.29%--0x1a2c3bf
+                                     |          
+                                      --10.38%--0x6097fd
+
+    15.13%     0.00%  cvc5     cvc5                                   [.] 0x0000000001810378
+            |
+            ---0x1810378
+               0x17f9da5
+               0x17f765f
+               0x61337b
+               0x61af5d
+               0x60b27b
+               |          
+                --14.31%--0x5c62b7
+                          |          
+                           --12.28%--0x1a2c3bf
+                                     |          
+                                      --10.37%--0x6097fd
+
+    14.74%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e9a13
+            |
+            ---0x9e9a13
+               0xdf9d74
+               |          
+                --14.28%--0x170341d
+                          0x170432e
+                          0x1704587
+                          0x1442ad7
+                          0x142e05b
+                          0xde8862
+                          0x744258
+                          0x740484
+                          0x740ef2
+                          0x733bf9
+                          0x733e21
+                          0x656621
+                          0x17def04
+                          0x17d64f7
+                          0x60c878
+                          0x60cba4
+                          |          
+                           --14.28%--0x6132fe
+                                     0x61af5d
+                                     0x60b27b
+                                     |          
+                                      --14.23%--0x5c62b7
+                                                |          
+                                                 --14.22%--0x1a2c3bf
+                                                           |          
+                                                            --14.19%--0x6097fd
+
+    14.58%     0.00%  cbmc     cbmc                                   [.] goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+            |
+            ---goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+               |          
+                --12.81%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          
+                           --12.60%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                     |          
+                                      --10.69%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                |          
+                                                 --9.08%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                           |          
+                                                            --6.79%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                                      |          
+                                                                       --6.19%--multi_path_symex_only_checkert::generate_equation()
+
+    14.36%     0.00%  cvc5     cvc5                                   [.] 0x00000000009e6908
+            |
+            ---0x9e6908
+               |          
+                --14.28%--0x9e9a13
+                          0xdf9d74
+                          0x170341d
+                          0x170432e
+                          0x1704587
+                          0x1442ad7
+                          0x142e05b
+                          0xde8862
+                          0x744258
+                          0x740484
+                          0x740ef2
+                          0x733bf9
+                          0x733e21
+                          0x656621
+                          0x17def04
+                          0x17d64f7
+                          0x60c878
+                          0x60cba4
+                          |          
+                           --14.28%--0x6132fe
+                                     0x61af5d
+                                     0x60b27b
+                                     |          
+                                      --14.23%--0x5c62b7
+                                                |          
+                                                 --14.22%--0x1a2c3bf
+                                                           |          
+                                                            --14.19%--0x6097fd
+
+    12.96%     0.00%  cbmc     cbmc                                   [.] main
+            |
+            ---main
+               |          
+                --8.83%--0x7ea50a62a1c9
+                          |          
+                           --8.18%--__libc_start_main
+                                     |          
+                                      --7.66%--_start
+
+    12.96%     0.00%  cbmc     cbmc                                   [.] parse_options_baset::main()
+            |
+            ---parse_options_baset::main()
+               |          
+                --12.83%--main
+                          |          
+                           --8.69%--0x7ea50a62a1c9
+                                     |          
+                                      --8.05%--__libc_start_main
+                                                |          
+                                                 --7.52%--_start
+
+    12.81%     0.00%  cbmc     cbmc                                   [.] goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+            |
+            ---goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+               |          
+                --12.60%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          
+                           --10.69%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                     |          
+                                      --9.08%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                |          
+                                                 --6.79%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                           |          
+                                                            --6.19%--multi_path_symex_only_checkert::generate_equation()
+
+    12.60%     0.00%  cbmc     cbmc                                   [.] symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+            |
+            ---symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+               |          
+                --10.69%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                          |          
+                           --9.08%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                     |          
+                                      --6.79%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                |          
+                                                 --6.19%--multi_path_symex_only_checkert::generate_equation()
+
+    11.96%     0.00%  cvc5     cvc5                                   [.] 0x00000000018330d4
+            |
+            ---0x18330d4
+               0x1810378
+               0x17f9da5
+               0x17f765f
+               0x61337b
+               0x61af5d
+               0x60b27b
+               |          
+                --11.15%--0x5c62b7
+                          |          
+                           --9.13%--0x1a2c3bf
+                                     |          
+                                      --7.24%--0x6097fd
+
+    11.18%     0.02%  cbmc     cbmc                                   [.] goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+            |
+            ---goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |          
+                --9.92%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |          
+                           --8.78%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     |          
+                                      --7.75%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                |          
+                                                 --6.70%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                           |          
+                                                            --5.83%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+
+    10.69%     0.00%  cbmc     cbmc                                   [.] goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+            |
+            ---goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+               |          
+                --9.08%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                          |          
+                           --6.79%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                     |          
+                                      --6.19%--multi_path_symex_only_checkert::generate_equation()
+
+    10.06%     0.00%  cvc5     cvc5                                   [.] 0x00000000018162ba
+            |
+            ---0x18162ba
+               |          
+                --9.97%--0x18330d4
+                          0x1810378
+                          0x17f9da5
+                          0x17f765f
+                          0x61337b
+                          0x61af5d
+                          0x60b27b
+                          |          
+                           --9.15%--0x5c62b7
+                                     |          
+                                      --7.14%--0x1a2c3bf
+                                                |          
+                                                 --5.24%--0x6097fd
+
+     9.78%     0.00%  cvc5     cvc5                                   [.] 0x000000000180704b
+            |
+            ---0x180704b
+               0x18162ba
+               |          
+                --9.72%--0x18330d4
+                          0x1810378
+                          0x17f9da5
+                          0x17f765f
+                          0x61337b
+                          0x61af5d
+                          0x60b27b
+                          |          
+                           --8.90%--0x5c62b7
+                                     |          
+                                      --6.89%--0x1a2c3bf
+
+     9.08%     0.00%  cbmc     cbmc                                   [.] goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+            |
+            ---goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+               |          
+                --6.79%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                          |          
+                           --6.19%--multi_path_symex_only_checkert::generate_equation()
+
+     8.83%     0.00%  cbmc     libc.so.6                              [.] 0x00007ea50a62a1c9
+            |
+            ---0x7ea50a62a1c9
+               |          
+                --8.18%--__libc_start_main
+                          |          
+                           --7.66%--_start
+
+     8.56%     0.00%  cbmc     libc.so.6                              [.] __libc_start_main
+            |
+            ---__libc_start_main
+               |          
+                --8.03%--_start
+
+     8.03%     0.00%  cbmc     cbmc                                   [.] _start
+            |
+            ---_start
+
+     7.93%     0.00%  cbmc     cbmc                                   [.] goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+            |
+            ---goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+               |          
+                --7.33%--multi_path_symex_only_checkert::generate_equation()
+
+     7.58%     0.00%  cbmc     cbmc                                   [.] multi_path_symex_only_checkert::generate_equation()
+            |
+            ---multi_path_symex_only_checkert::generate_equation()
+               |          
+                --5.02%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+
+     7.39%     0.07%  cbmc     cbmc                                   [.] value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+            |
+            ---value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          
+                --5.97%--value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+
+     7.03%     0.59%  cbmc     libstdc++.so.6.0.33                    [.] operator new(unsigned long)
+            |
+            ---operator new(unsigned long)
+
+     6.58%     3.88%  cbmc     cbmc                                   [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          
+             --5.64%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+
+     6.56%     1.37%  cbmc     libc.so.6                              [.] cfree
+            |
+            ---cfree
+
+     6.41%     0.00%  cbmc     cbmc                                   [.] smt2_dect::dec_solve(exprt const&)
+            |
+            ---smt2_dect::dec_solve(exprt const&)
+               |          
+                --6.18%--decision_proceduret::operator()()
+                          |          
+                           --6.14%--run_property_decider(incremental_goto_checkert::resultt&, std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, goto_symex_property_decidert&, ui_message_handlert&, std::chrono::duration<double, std::ratio<1l, 1l> >, bool)
+                                     |          
+                                      --6.02%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                                                |          
+                                                 --5.99%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                           |          
+                                                            --5.93%--cbmc_parse_optionst::doit()
+
+     6.40%     1.99%  cbmc     libc.so.6                              [.] malloc
+            |
+            ---malloc
+               |          
+                --6.37%--operator new(unsigned long)
+
+     6.35%     0.00%  cvc5     cvc5                                   [.] 0x0000000000683e72
+            |
+            ---0x683e72
+               0x180704b
+               0x18162ba
+               |          
+                --6.30%--0x18330d4
+                          0x1810378
+                          0x17f9da5
+                          0x17f765f
+                          0x61337b
+                          0x61af5d
+                          0x60b27b
+                          |          
+                           --5.70%--0x5c62b7
+
+     6.34%     0.00%  cvc5     cvc5                                   [.] 0x0000000000b770a9
+            |
+            ---0xb770a9
+               |          
+                --6.34%--0x6c97f2
+                          0x683e72
+                          0x180704b
+                          0x18162ba
+                          |          
+                           --6.29%--0x18330d4
+                                     0x1810378
+                                     0x17f9da5
+                                     0x17f765f
+                                     0x61337b
+                                     0x61af5d
+                                     0x60b27b
+                                     |          
+                                      --5.69%--0x5c62b7
+
+     6.34%     0.00%  cvc5     cvc5                                   [.] 0x00000000006c97f2
+            |
+            ---0x6c97f2
+               0x683e72
+               0x180704b
+               0x18162ba
+               |          
+                --6.29%--0x18330d4
+                          0x1810378
+                          0x17f9da5
+                          0x17f765f
+                          0x61337b
+                          0x61af5d
+                          0x60b27b
+                          |          
+                           --5.69%--0x5c62b7
+
+     6.34%     0.00%  cvc5     cvc5                                   [.] 0x0000000000b89a68
+            |
+            ---0xb89a68
+               0xb770a9
+               |          
+                --6.34%--0x6c97f2
+                          0x683e72
+                          0x180704b
+                          0x18162ba
+                          |          
+                           --6.29%--0x18330d4
+                                     0x1810378
+                                     0x17f9da5
+                                     0x17f765f
+                                     0x61337b
+                                     0x61af5d
+                                     0x60b27b
+                                     |          
+                                      --5.69%--0x5c62b7
+
+     6.30%     0.08%  cbmc     cbmc                                   [.] smt2_dect::read_result(std::istream&)
+            |
+            ---smt2_dect::read_result(std::istream&)
+               |          
+                --6.03%--smt2_dect::dec_solve(exprt const&)
+                          |          
+                           --5.80%--decision_proceduret::operator()()
+                                     |          
+                                      --5.76%--run_property_decider(incremental_goto_checkert::resultt&, std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, goto_symex_property_decidert&, ui_message_handlert&, std::chrono::duration<double, std::ratio<1l, 1l> >, bool)
+                                                |          
+                                                 --5.64%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                                                           |          
+                                                            --5.61%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                                      |          
+                                                                       --5.55%--cbmc_parse_optionst::doit()
+
+     6.18%     0.00%  cbmc     cbmc                                   [.] decision_proceduret::operator()()
+            |
+            ---decision_proceduret::operator()()
+               |          
+                --6.14%--run_property_decider(incremental_goto_checkert::resultt&, std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, goto_symex_property_decidert&, ui_message_handlert&, std::chrono::duration<double, std::ratio<1l, 1l> >, bool)
+                          |          
+                           --6.02%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                                     |          
+                                      --5.99%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                |          
+                                                 --5.93%--cbmc_parse_optionst::doit()
+
+     6.14%     0.00%  cbmc     cbmc                                   [.] run_property_decider(incremental_goto_checkert::resultt&, std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, goto_symex_property_decidert&, ui_message_handlert&, std::chrono::duration<double, std::ratio<1l, 1l> >, bool)
+            |
+            ---run_property_decider(incremental_goto_checkert::resultt&, std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, goto_symex_property_decidert&, ui_message_handlert&, std::chrono::duration<double, std::ratio<1l, 1l> >, bool)
+               |          
+                --6.02%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                          |          
+                           --5.99%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                     |          
+                                      --5.94%--cbmc_parse_optionst::doit()
+
+     5.89%     0.00%  cvc5     cvc5                                   [.] 0x0000000000fdd051
+            |
+            ---0xfdd051
+               0x9e6908
+               0x9e9a13
+               0xdf9d74
+               0x170341d
+               0x170432e
+               0x1704587
+               0x1442ad7
+               0x142e05b
+               0xde8862
+               0x744258
+               0x740484
+               0x740ef2
+               0x733bf9
+               0x733e21
+               0x656621
+               0x17def04
+               0x17d64f7
+               0x60c878
+               0x60cba4
+               0x6132fe
+               0x61af5d
+               0x60b27b
+               0x5c62b7
+               0x1a2c3bf
+               0x6097fd
+
+     5.67%     0.01%  cbmc     cbmc                                   [.] symex_target_equationt::merge_ireps(SSA_stept&)
+            |
+            ---symex_target_equationt::merge_ireps(SSA_stept&)
+
+     5.67%     0.02%  cbmc     cbmc                                   [.] merge_irept::operator()(irept&)
+            |
+            ---merge_irept::operator()(irept&)
+               symex_target_equationt::merge_ireps(SSA_stept&)
+
+     5.65%     0.00%  cvc5     cvc5                                   [.] 0x00000000014232f5
+            |
+            ---0x14232f5
+               0xfdd051
+               0x9e6908
+               0x9e9a13
+               0xdf9d74
+               0x170341d
+               0x170432e
+               0x1704587
+               0x1442ad7
+               0x142e05b
+               0xde8862
+               0x744258
+               0x740484
+               0x740ef2
+               0x733bf9
+               0x733e21
+               0x656621
+               0x17def04
+               0x17d64f7
+               0x60c878
+               0x60cba4
+               0x6132fe
+               0x61af5d
+               0x60b27b
+               0x5c62b7
+               0x1a2c3bf
+               0x6097fd
+
+     5.62%     0.00%  cbmc     cbmc                                   [.] prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, symex_target_equationt&, goto_symex_property_decidert&, ui_message_handlert&)
+            |
+            ---prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, symex_target_equationt&, goto_symex_property_decidert&, ui_message_handlert&)
+               multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+               all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+               cbmc_parse_optionst::doit()
+               |          
+                --5.08%--parse_options_baset::main()
+                          |          
+                           --5.01%--main
+
+     5.56%     0.00%  cbmc     cbmc                                   [.] convert_symex_target_equation(symex_target_equationt&, decision_proceduret&, message_handlert&)
+            |
+            ---convert_symex_target_equation(symex_target_equationt&, decision_proceduret&, message_handlert&)
+               prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, symex_target_equationt&, goto_symex_property_decidert&, ui_message_handlert&)
+               multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+               all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+               cbmc_parse_optionst::doit()
+               |          
+                --5.02%--parse_options_baset::main()
+
+     5.56%     0.00%  cbmc     cbmc                                   [.] symex_target_equationt::convert(decision_proceduret&)
+            |
+            ---symex_target_equationt::convert(decision_proceduret&)
+               convert_symex_target_equation(symex_target_equationt&, decision_proceduret&, message_handlert&)
+               prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, symex_target_equationt&, goto_symex_property_decidert&, ui_message_handlert&)
+               multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+               all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+               cbmc_parse_optionst::doit()
+               |          
+                --5.02%--parse_options_baset::main()
+
+     5.56%     0.17%  cbmc     cbmc                                   [.] smt2_convt::parse_rec(irept const&, typet const&)
+            |
+            ---smt2_convt::parse_rec(irept const&, typet const&)
+
+     5.53%     0.80%  cbmc     cbmc                                   [.] merge_irept::merged(irept const&)
+            |
+            ---merge_irept::merged(irept const&)
+
+     5.38%     0.00%  cbmc     cbmc                                   [.] symex_target_equationt::convert_without_assertions(decision_proceduret&)
+            |
+            ---symex_target_equationt::convert_without_assertions(decision_proceduret&)
+               symex_target_equationt::convert(decision_proceduret&)
+               convert_symex_target_equation(symex_target_equationt&, decision_proceduret&, message_handlert&)
+               prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, symex_target_equationt&, goto_symex_property_decidert&, ui_message_handlert&)
+               multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+               all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+               cbmc_parse_optionst::doit()
+
+     5.34%     0.00%  cvc5     cvc5                                   [.] 0x00000000017d5f6c
+            |
+            ---0x17d5f6c
+               |          
+                --5.33%--0x17d64f7
+                          0x60c878
+                          |          
+                           --5.33%--0x60cba4
+                                     |          
+                                      --5.23%--0x6132fe
+                                                0x61af5d
+                                                0x60b27b
+                                                |          
+                                                 --5.22%--0x5c62b7
+                                                           |          
+                                                            --5.21%--0x1a2c3bf
+                                                                      |          
+                                                                       --5.20%--0x6097fd
+
+     5.27%     0.00%  cvc5     cvc5                                   [.] 0x000000000090c6d9
+            |
+            ---0x90c6d9
+               |          
+                --5.05%--0xe0e52e
+
+     5.08%     0.00%  cvc5     cvc5                                   [.] 0x0000000000e0e52e
+            |
+            ---0xe0e52e
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

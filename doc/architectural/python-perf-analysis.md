@@ -129,6 +129,180 @@ These are CBMC-formula-shape and cvc5-solver-tuning concerns rather
 than CBMC-frontend code-path concerns. Out of scope for the current
 performance round.
 
+## Layered call-stack breakdown — what dominates each backend
+
+The "irept hot symbols" view in the previous section is the
+*self-time* picture: which functions are actually executing
+the most cycles. By itself this can be misleading — for many
+benchmarks the answer "where do those cycles come from?" is
+more useful, because the fix often lives at a different
+layer than the leaf hot symbol.
+
+The table below aggregates `perf report --children` output
+for each benchmark, grouping per-symbol cycles into
+call-stack-level categories. *Children %* is the children-time
+of the highest-level enclosing function in each category
+(what fraction of the run is spent inside this layer or
+below). *Self %* is the self-time of all symbols in the
+category (cycles literally executed in those functions).
+
+Source data: `python-perf-snapshots/<bench>.report-children.txt`
+and `<bench>.report-callgraph.txt`.
+
+### `aws_untagged_resources_analyzer.py` — default backend, 34.2 s wall
+
+96.6 % cbmc / 2.7 % python3 / 0 % cvc5. Heaviest CBMC-bound
+benchmark in the suite.
+
+| Category                                            | Children % | Self % |
+|----------------------------------------------------:|-----------:|-------:|
+| `goto_symext::symex_step` and below                 |     71.0   |   0.0  |
+| &nbsp;&nbsp;`symex_assign` chain (descendants)      |     49.2   |   0.0  |
+| &nbsp;&nbsp;`field_sensitivity` recursive expansion |     27.3   |   0.3  |
+| &nbsp;&nbsp;`merge_gotos` / `phi_function` (branch-join SSA) | 22.0 | 0.2 |
+| &nbsp;&nbsp;`dereference` / `clean_expr`            |     17.9   |   0.0  |
+| `merge_ireps` (irept dedup)                         |     21.4   |   5.5  |
+| `build_identifier` / SSA renaming                   |     17.6   |   0.5  |
+| `irept` primitives (`operator==`, `compare`, `find`, `get`) | 11.1 | **24.7** |
+| stdlib (`malloc` / `free` / `operator new`)         |     13.5   |   8.0  |
+
+**Why we invoke these.** The benchmark has 953 GOTO
+instructions across its Python functions, with the longest
+single function (`run_analysis`) at 512. Inside that we have
+nested for-loops over dicts, list comprehensions, dict
+comprehensions, and try/except handlers — every single one
+is a Python-frontend-emitted cascade of `python_value`-typed
+struct assignments. CBMC then expands each struct assignment
+field-by-field via `field_sensitivityt::field_assignments_rec`
+(5 levels of recursion in the trace) and merges the resulting
+SSA at every branch join via `merge_gotos`. The 24.7 %
+self-time in irept primitives is the *symptom*; the 49 %
+spent in `symex_assign` is the *reason* we call them.
+
+### `test_bedrock_guardrails.py` — cvc5 backend, 51.4 s wall
+
+42.8 % cvc5 / ~50 % cbmc / 2.4 % python3.
+
+| Category                                            | Children % | Self % |
+|----------------------------------------------------:|-----------:|-------:|
+| `cvc5` solver internals (stripped binary, no symbols) |   —      |  42.8  |
+| `goto_symext::symex_step` and below                 |     14.6   |   0.0  |
+| &nbsp;&nbsp;`symex_assign` chain                    |     20.0   |   0.0  |
+| &nbsp;&nbsp;`field_sensitivity` recursive expansion |     18.4   |   0.1  |
+| `merge_ireps` (irept dedup)                         |      5.7   |   0.8  |
+| `irept` primitives (self)                           |      6.6   |  11.2  |
+| stdlib (self)                                       |      7.0   |   4.1  |
+| Python frontend (parse/convert)                     |      0.7   |   0.0  |
+
+**Why we invoke these.** Heavy boto3-stub interaction. Every
+`bedrock.create_guardrail(name=…, description=…,
+topicPolicyConfig=…)` call goes through a stub method body
+that asserts the kwargs against a TypedDict schema and
+returns a non-deterministic struct. Each return path emits a
+struct equality, which under cvc5 becomes a string-refinement
+axiom. Roughly half of wall time is cvc5 working through
+those axioms; the cbmc-side ~20 % is the same `symex_assign` /
+`field_sensitivity` cascade as `aws_untagged`, scaled smaller
+because the user code is shorter.
+
+### `s3_backup_restore.py` — cvc5 backend, 64.5 s wall
+
+86.5 % cvc5 / 1.9 % cbmc / 1.6 % python3. The most
+solver-bound outlier.
+
+| Category | Children % | Self % |
+|---|---:|---:|
+| `cvc5` solver internals | — | 86.5 |
+| Anything in cbmc | < 1 | < 1 |
+
+**Why we invoke cvc5 so much.** The CBMC side finishes its
+job in seconds — it produces a 3-4 MB SMT-LIB file with
+extensive string-refinement axioms over kwarg-key sets across
+many boto3 S3 methods. cvc5 then takes ~62 s and 4.3 GB of
+memory churning through the refinement loop. Effectively
+zero of this time is in CBMC's own code; reducing it requires
+either smaller formulas (CBMC frontend / refinement-loop
+output) or solver tuning.
+
+### `ecs_utils.py` — cvc5 backend, 3.4 s wall (after the SHARING fast-path)
+
+48.9 % cbmc / 36.9 % python3 / 15.0 % cvc5.
+
+| Category                              | Children % | Self % |
+|--------------------------------------:|-----------:|-------:|
+| Python AST parsing of stubs (libpython) |   35.7   |  27.3  |
+| `cbmc_parse_optionst::doit` and below |     19.8   |   0.0  |
+| &nbsp;&nbsp;`goto_symext::symex_step` |     14.5   |   0.0  |
+| &nbsp;&nbsp;&nbsp;&nbsp;`symex_assign` chain |  0.8 |   0.0  |
+| `cvc5` solver internals               |       —    |  15.0  |
+
+**Why this profile is dominated by Python parsing.** After
+the `irept::compare` SHARING fast-path landed, this benchmark
+went from 32 s to 3.4 s. The *rest* of the pipeline now
+matters more in relative terms. CBMC shells out to `python3
+-m ast` once per imported module to parse `.py` source, and
+`boto3/__init__.py` alone is ~5,000 lines (because of the
+per-service overload chain). In this short benchmark, parsing
+the stubs takes longer than the verification itself.
+
+This is the headline finding for short benchmarks across the
+suite: stub-parse time is now a non-trivial fixed cost. See
+`python-parse-daemon-design.md` for the proposed mitigation.
+
+## What the layered view tells us
+
+- **The "irept hot symbols" view in isolation was misleading.**
+  The actual root cause of long wall times is different per
+  benchmark:
+
+  - `aws_untagged` (default): `symex_assign` blowup from
+    Python's struct-heavy IR. The 24.7 % self-time in irept
+    primitives is a *symptom*; the cause is the 49 % spent
+    emitting per-field SSA assignments through
+    `field_sensitivityt::field_assignments_rec`.
+  - `test_bedrock_guardrails` (cvc5): half-and-half — cvc5
+    working on string-refinement axioms (43 %) plus the same
+    struct-assignment blowup (~20 %).
+  - `s3_backup_restore` (cvc5): solver internals (86.5 %),
+    nothing else matters.
+  - `ecs_utils` (cvc5, post-fix): Python-stub parsing (37 %)
+    is now the largest single component because the rest got
+    fast.
+
+- **Optimization opportunities cluster differently.** A
+  single fix won't help all four. In rough ROI order:
+
+  1. **Reduce field-by-field SSA expansion on `python_value`
+     structs.** Either cap `field_sensitivity` recursion
+     depth on `python_value`, or emit struct-level
+     (not field-level) SSA for tagged-union assignments.
+     Hits the largest CBMC-bound outlier
+     (`aws_untagged_resources_analyzer`) and several others.
+  2. **Parse-daemon for stub `.py` files.** Cache the
+     `python3 -m ast` JSON output across runs, keyed on file
+     content / mtime. Helps short benchmarks where the
+     ~37 % stub-parse fixed cost dominates.
+  3. **Cut SMT axiom volume from
+     `--python-required-kwarg-checks`.** The current
+     formulation emits O(K²) checks for K kwargs; an O(K)
+     hash-based formulation would directly translate to less
+     cvc5 work on `test_bedrock_guardrails`-shaped
+     benchmarks.
+  4. **`--slice-formula`** to drop unused SMT assertions
+     before solving. Won't reduce the symex side but may
+     shrink cvc5's working set on bedrock / s3 backup. (See
+     §`--slice-formula` measurement below.)
+  5. **Solver-side tuning** for `s3_backup_restore`-shaped
+     benchmarks (cvc5 hint flags, theory-specific options).
+
+- **The 4-5 outliers driving the suite's wall-time gap
+  between default and cvc5 are not all the same problem.**
+  Saying "cvc5 is slower" is correct on average but obscures
+  that `s3_backup_restore` is purely solver-bound while
+  `aws_untagged_resources_analyzer` is purely symex-bound and
+  `test_bedrock_guardrails` is half each. The optimization
+  budget should be spent accordingly.
+
 ## Reproducing
 
 ```bash
