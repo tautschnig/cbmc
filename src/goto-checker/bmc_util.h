@@ -171,6 +171,7 @@ void run_property_decider(
   "(show-goto-symex-steps)"                                                    \
   "(show-points-to-sets)"                                                      \
   "(slice-formula)"                                                            \
+  "(no-slice-formula)"                                                         \
   "(unwinding-assertions)"                                                     \
   "(no-unwinding-assertions)"                                                  \
   "(no-self-loops-to-assumptions)"                                             \
