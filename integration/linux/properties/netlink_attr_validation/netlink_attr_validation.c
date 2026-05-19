@@ -72,7 +72,7 @@ int nla_size_at_least(struct nlattr *attr, unsigned int size)
 }
 
 // =====================================================================
-// v2: shim definitions of __nla_parse and __nla_validate.
+// v2/v3: shim definitions of __nla_parse and __nla_validate.
 //
 // The kernel's <net/netlink.h> declares __nla_parse as an extern
 // implemented in lib/nlattr.c — but our scan path doesn't compile
@@ -81,45 +81,119 @@ int nla_size_at_least(struct nlattr *attr, unsigned int size)
 // symex executes our shim when it encounters a call to nla_parse
 // (or its inline wrapper) in any kernel TU.
 //
-// The shim's job: simulate the post-condition that successful
-// nla_parse establishes — namely, that each non-NULL tb[i] entry
-// has been validated to the policy's minimum size.  We
-// over-approximate by marking validated_min_size = 8 (large enough
-// to cover nla_get_u8/u16/u32/u64 reads).  This is an honest
-// over-approximation; type-mismatch shapes (NLA_U32 policy read as
-// nla_get_u64) are intentionally not caught — see the property
-// module README's "What this module does NOT cover" section.
+// v2: the shim simulated a successful parse by marking each
+// non-NULL tb[i] entry with a fixed validated_min_size = 8 (the
+// largest size we contract on).  This caught handlers that skipped
+// validation entirely AND handlers that went through the standard
+// API, but it deliberately over-approximated and so could not
+// catch type-mismatch shapes (NLA_U32 policy read as nla_get_u64).
+//
+// v3 reads `policy[i].type` and translates it into a per-attribute
+// minimum size:
+//   NLA_U8 / NLA_S8           -> 1 byte
+//   NLA_U16 / NLA_S16         -> 2 bytes
+//   NLA_U32 / NLA_S32         -> 4 bytes
+//   NLA_U64 / NLA_S64 / NLA_MSECS -> 8 bytes
+//   anything else (NLA_UNSPEC, NLA_FLAG, NLA_STRING, ...)  -> 0
+//
+// With the precise per-attribute min size, the contract on
+// `nla_get_u64(tb[i])` correctly fires when policy[i].type is
+// NLA_U32 (validated to 4 bytes, but reading 8).
 //
 // The loop is manually unrolled to depth 32 because CBMC's per-file
 // scan typically uses --unwind 2; a real `for` loop would only
 // validate tb[0] and tb[1].  Most kernel netlink protocols have
 // MAX_ATTR_TYPE < 32 (e.g. NFTA_*_MAX series tops out around 25 in
-// 6.12), so this depth covers the typical case.  Handlers with
-// larger maxtypes will leave their tb[32..] entries unvalidated,
-// producing the same false positives the v1 module has — flagged
-// in the v2 README as a deliberate trade-off.
-//
-// We don't intercept nla_parse_deprecated, nla_parse_strict,
-// nla_validate, nla_validate_nested, etc. — they all call
-// __nla_parse or __nla_validate underneath, and the shim catches
-// the underlying primitive.
+// 6.12), so this depth covers the typical case.
 
-// Forward decls so we can name the kernel's struct types in our
-// shim's signatures without pulling in <net/netlink.h>.
+// Forward decls.  We define a struct nla_policy compatible with
+// the kernel's <net/netlink.h> layout: type (u8) at offset 0,
+// validation_type (u8) at offset 1, len (u16) at offset 2, then a
+// union member — we model just an opaque 8-byte filler since we
+// only read `type`.  The structural-equivalence linker
+// reconciles this with the kernel's full layout when both TUs are
+// linked.
 struct nlattr;
-struct nla_policy;
 struct netlink_ext_ack;
 
-static void __nla_parse_validate_tb(struct nlattr **tb, int maxtype)
+struct nla_policy
+{
+  unsigned char type;
+  unsigned char validation_type;
+  unsigned short len;
+  // Kernel struct continues with a union of pointers / s16 pairs /
+  // function pointer; on x86_64 the union plus alignment makes the
+  // total struct size 16 bytes.  Match that with an opaque tail so
+  // policy[i] indexing computes the right offset.
+  unsigned long __opaque_union_filler;
+};
+
+// NLA_* type enum values from <net/netlink.h>:
+//   NLA_UNSPEC       = 0
+//   NLA_U8           = 1     NLA_S8           = 12
+//   NLA_U16          = 2     NLA_S16          = 13
+//   NLA_U32          = 3     NLA_S32          = 14
+//   NLA_U64          = 4     NLA_S64          = 15
+//   NLA_STRING       = 5
+//   NLA_FLAG         = 6
+//   NLA_MSECS        = 7
+//   NLA_NESTED       = 8     NLA_NESTED_ARRAY = 9
+//   NLA_NUL_STRING   = 10    NLA_BINARY       = 11
+//   NLA_BITFIELD32   = 16    NLA_REJECT       = 17
+//
+// We only translate the integer types; everything else returns 0
+// (no minimum size) which means nla_get_uX on it will fire the
+// contract precondition — that's the desired behaviour for code
+// that reads a typed value out of an attribute the policy didn't
+// validate as that type.
+static unsigned int __nla_min_size_for_policy_type(unsigned int t)
+{
+  switch(t)
+  {
+  case 1u:  // NLA_U8
+  case 12u: // NLA_S8
+    return 1u;
+  case 2u:  // NLA_U16
+  case 13u: // NLA_S16
+    return 2u;
+  case 3u:  // NLA_U32
+  case 14u: // NLA_S32
+    return 4u;
+  case 4u:  // NLA_U64
+  case 15u: // NLA_S64
+  case 7u:  // NLA_MSECS (treated as u64 by the kernel)
+    return 8u;
+  default:
+    return 0u;
+  }
+}
+
+static void __nla_parse_validate_tb(
+  struct nlattr **tb,
+  int maxtype,
+  const struct nla_policy *policy)
 {
   if(!tb)
     return;
-// Manually unrolled — see comment above for rationale.
+// Manually unrolled — see comment above for rationale.  Each step
+// reads policy[idx].type (when policy is provided) and derives the
+// per-attribute minimum size; without a policy, falls back to the
+// v2 over-approximation of 8 bytes so handlers that don't pass a
+// policy still see SOME validation.
 #define VALIDATE_TB_AT(idx)                                                    \
   do                                                                           \
   {                                                                            \
     if((idx) <= maxtype && tb[(idx)])                                          \
-      nla_validate_min_size(tb[(idx)], 8);                                     \
+    {                                                                          \
+      unsigned int __min_sz = 8u;                                              \
+      if(policy)                                                               \
+      {                                                                        \
+        unsigned int __t = (unsigned int)policy[(idx)].type;                   \
+        __min_sz = __nla_min_size_for_policy_type(__t);                        \
+      }                                                                        \
+      if(__min_sz > 0u)                                                        \
+        nla_validate_min_size(tb[(idx)], __min_sz);                            \
+    }                                                                          \
   } while(0)
   VALIDATE_TB_AT(0);
   VALIDATE_TB_AT(1);
@@ -167,10 +241,9 @@ int __nla_parse(
 {
   (void)head;
   (void)len;
-  (void)policy;
   (void)validate;
   (void)extack;
-  __nla_parse_validate_tb(tb, maxtype);
+  __nla_parse_validate_tb(tb, maxtype, policy);
   return 0;
 }
 
