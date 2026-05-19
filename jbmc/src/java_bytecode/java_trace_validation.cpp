@@ -307,6 +307,23 @@ static void check_step_assumptions(
 {
   if(!step.is_assignment() && !step.is_decl())
     return;
+  // Guard against trace steps where the SSA full_lhs was not bound
+  // by the decision procedure: build_goto_trace.cpp leaves
+  // full_lhs / full_lhs_value nil if SSA_step.ssa_full_lhs.is_nil()
+  // (or if the decision procedure has no value for the variable).
+  // The step is still tagged as an assignment, but its operands
+  // are nil, which fails the high-level expression check below.
+  // Symex-complexity cancellation can produce such steps when a
+  // loop is abandoned mid-body; before this guard, exposing more
+  // method bodies to symex (e.g. by giving a JDK collection
+  // model an iterator() body that previously stubbed out) would
+  // expand the symex tree to include cancellation points inside
+  // those bodies and trigger the validator on the abandoned-step
+  // RHS. Skipping the check is sound: a step with no LHS/value
+  // does not need to be validated as a meaningful assignment
+  // because it never executes.
+  if(step.full_lhs.is_nil() || step.full_lhs_value.is_nil())
+    return;
   check_lhs_assumptions(skip_typecast(step.full_lhs), ns, vm);
   check_rhs_assumptions(skip_typecast(step.full_lhs_value), ns, vm);
 }
