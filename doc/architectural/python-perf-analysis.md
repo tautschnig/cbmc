@@ -283,44 +283,90 @@ backends.
 `s3_backup_restore` is the standout: the cvc5 OOM that
 required raising `ulimit` to 8 GB now runs in 60 MB.
 
-### Why we are not enabling `--slice-formula` by default for `.py` source
+### Initial soundness blocker (fixed in 3c2a693177)
 
-The flag is unsound for **string-format intrinsics** that
-rely on the refinement-string solver's side-channel
-constraints (e.g. `cprover_string_of_int_func`'s
-length/content link to a `_PROVER_string_array_X` symbol).
-The slicer doesn't see those constraints as relevant to the
-property under consideration, so it slices them away — and
-then `len(str(42)) == 2` becomes solvable as `0`.
-
-Concretely, four regression tests fail with `--slice-formula`
-turned on by default:
+When first enabled, four regression tests failed with
+`--slice-formula`:
 
 * `regression/python/str-format-int-precision`
 * `regression/python/fstring-int-precision`
 * `regression/python/fstring-multi-arg`
 * `regression/python/fstring-pad-spec`
 
-None of the AWS-Python benchmarks exercise those idioms (no
-`assert len(f"{x}") == K` patterns), which is why the
-suite-level pass rate is unchanged. But default-on would
-silently break user code that relies on precise string-length
-semantics, and the regression tests catch the issue.
+Investigation traced the issue to a slicer ↔ string-
+refinement interaction. The CBMC string-refinement decision
+procedure consumes side-channel information from three
+families of intrinsic calls:
+
+  * `cprover_associate_array_to_pointer_func(arr, ptr)` —
+    populates `array_pool::arrays_of_pointers[ptr] = arr`.
+  * `cprover_associate_length_to_array_func(arr, len)` —
+    adds the constraint `arr.length == len`.
+  * `cprover_string_*_func(...)` — the actual string
+    builtins that `string_constraint_generator` axiomatises.
+
+These calls are emitted by the Python front-end as SSA
+assignments of the shape
+
+  __assoc_rc = cprover_associate_array_to_pointer_func(arr, ptr)
+
+— a function-call whose return-code LHS is an int symbol
+that nothing else uses. The slicer's data-flow algorithm
+correctly noted "LHS not transitively used by any
+assertion" and dropped the assignment, removing the *call*
+along with the side channel it carried. Without
+`associate_array_to_pointer`, the refinement engine's
+`add_axioms_for_length` for
+`cprover_string_length_func({2, ptr})` falls through to a
+fresh nondet length symbol instead of returning the known
+constant 2.
+
+The `--show-vcc` output makes the difference visible. With
+`--slice-formula`:
+
+```
+{-1} python::__string_len_7#0 = 0
+{-2} python::__str_int_14#1 =
+       cprover_string_length_func({ 2, address_of(42_constant_char_array[0]) })
+```
+
+Without, the same VCC includes the registration call:
+
+```
+…
+{-9} python::__string_ptr_7#1 = address_of(42_constant_char_array[0])
+{-10} return_value!0#1 =
+        cprover_associate_array_to_pointer_func({ 52, 50 },
+                                                address_of(42_constant_char_array[0]))
+{-11} goto_symex::return_value::python::stringify!0#1..length = 2
+…
+```
+
+The user's original framing — *"It is possible, though
+unlikely, that the code implementing --slice-formula has
+a bug. More likely is that this points to a bug elsewhere"*
+— turned out to be **half right**: the soundness gap was in
+the slicer, but caused by an interface contract the slicer
+didn't honour rather than a bug in its core data-flow logic.
+The fix is to teach the slicer that any assignment whose
+RHS contains a `function_application_exprt` to a
+`cprover_string_*` / `cprover_char_*` / `cprover_associate_*`
+symbol must be preserved regardless of LHS reachability.
+
+Implementation: ~30 lines in
+`src/goto-symex/slice.cpp::contains_string_refinement_intrinsic`
+(a depth-first scan for the relevant function names) plus a
+4-line guard at the top of `slice_assignment`. Four locked-in
+regression tests at
+`regression/python/<bench>/slice-formula.desc` exercise the
+existing test bodies with `--slice-formula` explicitly on.
 
 ### Recommendation
 
-Keep `--slice-formula` opt-in. Document it in the verification
-guide as the recommended flag for users who:
-
-* hit cvc5 OOM (the s3_backup_restore-shaped case),
-* care about wall-time on the heaviest cvc5 outliers,
-* and do not rely on precise string-format-length
-  reasoning over their formulas.
-
-A future fix should make the slicer aware of refinement-string
-side channels (declare any `cprover_string_*_func` call's
-companion length/content symbols as transitively relevant).
-That would make the flag default-safe for Python.
+`--slice-formula` is now default-on for `.py` source (commit
+3716b7ce3c) — the soundness blocker is gone, the pass rate
+is unchanged at 94.1 %, and the cvc5 wall savings are
+substantial. Pass `--no-slice-formula` to disable.
 
 ## Combined: parse daemon + `--slice-formula`
 
@@ -346,12 +392,9 @@ optimisations on, **cvc5 is now slightly faster than the
 default backend** suite-wide, while preserving the same
 94.1 % pass-rate.
 
-The four string-format regression tests still fail under
-`--slice-formula`, so the combined configuration is opt-in
-in the same way `--slice-formula` alone is. Users who want
-maximum cvc5 throughput AND don't rely on
-`assert len(str(int_value)) == K`-style invariants get the
-big win.
+`--slice-formula` is default-on for `.py` source as of
+commit 3716b7ce3c. The parse daemon is opt-in via the
+`CBMC_PYTHON_SERVER_SOCKET` env var.
 
 ## What the layered view tells us
 
