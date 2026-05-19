@@ -105,23 +105,24 @@ Optional flags worth considering:
   CBMC's bit-blaster + MiniSat. Useful for cross-checking. The
   CVC5 path matches the default backend on the AWS Python
   benchmark suite (94.1 % pass rate). With `--slice-formula`
-  also enabled, CVC5's wall time on the AWS suite is within
-  6 % of the default backend and the `s3_backup_restore`
-  outlier completes in 3 s (vs 64 s without slicing).
+  (now default-on for `.py` source), CVC5's wall time on the
+  AWS suite is within 6 % of the default backend and the
+  `s3_backup_restore` outlier completes in 3 s (vs 64 s
+  without slicing).
 
-- `--slice-formula`: drop SMT assertions unrelated to a
+The following flag is **on by default** for `.py` source
+files — listed here for visibility:
+
+- `--slice-formula`: drop SMT assignments unrelated to a
   property's reachability before solving. Big win on cvc5
   outliers (`s3_backup_restore` 64 s → 3 s; full-suite cvc5
   total 338 s → 223 s). Smaller win on default (~2 % wall).
-  **Caveat**: unsound for code that relies on the
-  refinement-string solver's side-channel constraints —
-  specifically `assert len(str(int_value)) == K` and the
-  `f"{x}"` family of format intrinsics. Four regression
-  tests fail when this is on (`str-format-int-precision`,
-  `fstring-int-precision`, `fstring-multi-arg`,
-  `fstring-pad-spec`), which is why it remains opt-in. Use
-  if you hit cvc5 OOM and don't rely on precise format-length
-  reasoning.
+  Pass `--no-slice-formula` to disable. Previously a soundness
+  blocker for the four `str-format-int-precision` /
+  `fstring-*` regression tests because the slicer dropped
+  CPROVER string-refinement intrinsic calls
+  (`cprover_associate_array_to_pointer_func` etc.) whose SSA
+  return-code symbol was unused. Fixed in commit 3c2a693177.
 
 ## Supported Python Features
 
