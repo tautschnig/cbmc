@@ -17,13 +17,18 @@
 #include <util/tempfile.h>
 
 #include <json/json_parser.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include "expr2python.h"
 #include "python_converter.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <sstream>
 #include <unistd.h>
+#include <vector>
 
 std::set<std::string> python_languaget::extensions() const
 {
@@ -97,6 +102,146 @@ void python_languaget::set_language_options(
   "json.dump(r,open(sys.argv[2],'w',encoding='utf-8'),default=str,ensure_ascii=False)\n"
 // clang-format on
 
+/// Daemon fast path: if CBMC_PYTHON_SERVER_SOCKET points at a
+/// running cbmc_python_server (Unix-domain socket), send the
+/// absolute source path and read back the JSON AST. Returns
+/// `true` on success (with `out` populated); returns `false` on
+/// any error so the caller can fall back to the one-shot
+/// `python3 -c …` path. Errors are intentionally silent — the
+/// daemon is purely an optimisation, never a soundness signal.
+static bool python_parse_via_daemon(
+  const std::string &path,
+  const std::string &json_path,
+  message_handlert &message_handler)
+{
+  const char *sock_env = std::getenv("CBMC_PYTHON_SERVER_SOCKET");
+  if(sock_env == nullptr)
+    return false;
+  std::string sock_path = sock_env;
+  if(sock_path.empty())
+    return false;
+
+  int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+  if(fd < 0)
+    return false;
+
+  struct sockaddr_un addr;
+  std::memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  if(sock_path.size() >= sizeof(addr.sun_path))
+  {
+    ::close(fd);
+    return false;
+  }
+  std::memcpy(addr.sun_path, sock_path.data(), sock_path.size());
+
+  if(::connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0)
+  {
+    ::close(fd);
+    return false;
+  }
+
+  // Resolve to absolute so the daemon (which has its own cwd)
+  // can find the file.
+  std::string abs_path;
+  char *rp = ::realpath(path.c_str(), nullptr);
+  if(rp != nullptr)
+  {
+    abs_path = rp;
+    std::free(rp);
+  }
+  else
+    abs_path = path;
+
+  std::string req = abs_path + "\n";
+  ssize_t sent = ::write(fd, req.data(), req.size());
+  if(sent != static_cast<ssize_t>(req.size()))
+  {
+    ::close(fd);
+    return false;
+  }
+
+  // Read header "<length>\n" then payload of that length.
+  std::string header;
+  char hb;
+  while(::read(fd, &hb, 1) == 1 && hb != '\n')
+    header.push_back(hb);
+  std::size_t length = 0;
+  try
+  {
+    length = std::stoul(header);
+  }
+  catch(...)
+  {
+    ::close(fd);
+    return false;
+  }
+  std::string payload;
+  payload.reserve(length);
+  std::vector<char> buf(8192);
+  while(payload.size() < length)
+  {
+    ssize_t n = ::read(
+      fd,
+      buf.data(),
+      std::min<std::size_t>(buf.size(), length - payload.size()));
+    if(n <= 0)
+      break;
+    payload.append(buf.data(), buf.data() + n);
+  }
+  ::close(fd);
+
+  if(payload.size() != length || length == 0)
+    return false;
+
+  // Write the JSON to the temp file the caller already created;
+  // this keeps the rest of the parse() pipeline unchanged.
+  std::ofstream out{json_path};
+  if(!out)
+    return false;
+  out.write(payload.data(), payload.size());
+  if(!out)
+    return false;
+  out.close();
+
+  // Quick error-envelope check: if the daemon hit a SyntaxError,
+  // the JSON is `{"_type": "Error", "message": "...", ...}` —
+  // surface it to the caller and treat as a parse failure (so the
+  // caller doesn't try to use a malformed AST). We do this by
+  // scanning the first ~64 bytes for `"_type":"Error"`; cheaper
+  // than a full JSON parse.
+  std::string head =
+    payload.substr(0, std::min<std::size_t>(payload.size(), 64));
+  if(
+    head.find("\"_type\":\"Error\"") != std::string::npos ||
+    head.find("\"_type\": \"Error\"") != std::string::npos)
+  {
+    messaget log{message_handler};
+    // Pull out the message field if present.
+    std::size_t mp = payload.find("\"message\"");
+    if(mp != std::string::npos)
+    {
+      std::size_t qs = payload.find('"', mp + 9);
+      if(qs != std::string::npos)
+      {
+        std::size_t ts = payload.find('"', qs + 1);
+        std::size_t qe = payload.find('"', ts + 1);
+        if(qe != std::string::npos)
+        {
+          std::string msg = payload.substr(ts + 1, qe - ts - 1);
+          log.error() << msg << messaget::eom;
+        }
+      }
+    }
+    // Daemon parse errors: mimic the one-shot path's behaviour by
+    // returning success-of-daemon-but-empty so the caller will
+    // notice via subsequent JSON validation. The simpler signal
+    // here is to just return false and let the one-shot retry.
+    return false;
+  }
+  return true;
+}
+
 bool python_languaget::parse(
   std::istream &,
   const std::string &path,
@@ -144,12 +289,20 @@ bool python_languaget::parse(
   temporary_filet stderr_file{"cbmc_python_err_", ".txt"};
   std::string stderr_path = stderr_file();
 
-  int ret = run(
-    "python3",
-    {"python3", "-c", PYTHON_AST_TO_JSON_CODE, path, json_path},
-    "",
-    "",
-    stderr_path);
+  // Daemon fast path (CBMC_PYTHON_SERVER_SOCKET set + reachable):
+  // skip the python3 fork/exec entirely. The server keeps the
+  // Python interpreter, ast, and json modules pre-loaded across
+  // requests, eliminating the ~28 ms cold-start cost per parse.
+  bool daemon_ok = python_parse_via_daemon(path, json_path, message_handler);
+
+  int ret = daemon_ok
+              ? 0
+              : run(
+                  "python3",
+                  {"python3", "-c", PYTHON_AST_TO_JSON_CODE, path, json_path},
+                  "",
+                  "",
+                  stderr_path);
 
   if(ret != 0)
   {
@@ -454,12 +607,20 @@ const jsont *python_languaget::resolve_module(
   temporary_filet stderr_file{"cbmc_python_moderr_", ".txt"};
   std::string stderr_path = stderr_file();
 
-  int ret = run(
-    "python3",
-    {"python3", "-c", PYTHON_AST_TO_JSON_CODE, found_path, json_path},
-    "",
-    "",
-    stderr_path);
+  // Daemon fast path: imported modules are the dominant source of
+  // python3 fork/exec cost (boto3 alone produces 30+ imports per
+  // benchmark). Skip the subprocess when the daemon is reachable.
+  bool daemon_ok = python_parse_via_daemon(found_path, json_path, handler);
+
+  int ret =
+    daemon_ok
+      ? 0
+      : run(
+          "python3",
+          {"python3", "-c", PYTHON_AST_TO_JSON_CODE, found_path, json_path},
+          "",
+          "",
+          stderr_path);
 
   if(ret != 0)
   {
