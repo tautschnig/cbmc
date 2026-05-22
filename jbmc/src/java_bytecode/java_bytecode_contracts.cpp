@@ -26,6 +26,8 @@ Date: May 2026
 #include <util/std_code.h>
 #include <util/std_expr.h>
 
+#include <ansi-c/c_expr.h>
+
 #include "java_types.h"
 
 #include <iostream>
@@ -1055,6 +1057,104 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
   std::map<irep_idt, exprt::operandst> assigns_per_function;
   const namespacet ns{goto_model.symbol_table};
 
+  // §F12-followups (task 3.5/3.6): pre-pass rewrite of
+  // JVerify.old(*) calls into history_exprt ASSIGNs across every
+  // function body. Runs before the main contract-extraction loop
+  // so `resolve_stack_temps` and the lambda predicate extractor
+  // both see history_exprt values directly. The DFCC pipeline's
+  // replace_history_old later binds these to the function's
+  // pre-state in the wrapper.
+  //
+  // Pattern recognition: JBMC compiles `JVerify.old(arg)` as a
+  // CALL with no LHS, followed (after exception-flow-handling
+  // instructions) by an ASSIGN that reads
+  // `jverify_old:#return_value` into a stack temp. We rewrite by
+  //
+  //   1. Turning the CALL into a SKIP, so the JVerify.old body
+  //      (which throws ContractException as a stub) isn't
+  //      executed.
+  //   2. Replacing the RHS of the subsequent return-value ASSIGN
+  //      with `history_exprt(arg, ID_old)`.
+  //
+  // Both rewrites preserve the goto-IR structure (no instruction
+  // counts change). The exception-handling IF/GOTO instructions
+  // between the two become unreachable but don't need explicit
+  // removal — symex's inflight_exception remains NULL across the
+  // SKIP'd call, so the IF takes its NULL branch.
+  {
+    const std::string jverify_old_prefix =
+      "java::org.strata.jverify.JVerify.old:";
+    for(auto &func_entry : goto_model.goto_functions.function_map)
+    {
+      auto &body = func_entry.second.body;
+      // First pass: identify CALL → JVerify.old(arg) instructions
+      // and record the (call_iter, callee_id, arg) triples.
+      struct old_call_info_t
+      {
+        goto_programt::targett call_it;
+        irep_idt callee_id;
+        exprt arg;
+      };
+      std::vector<old_call_info_t> calls;
+      for(auto bi = body.instructions.begin(); bi != body.instructions.end();
+          ++bi)
+      {
+        if(!bi->is_function_call())
+          continue;
+        const exprt &fn = bi->call_function();
+        if(fn.id() != ID_symbol)
+          continue;
+        const std::string fn_id =
+          id2string(to_symbol_expr(fn).get_identifier());
+        if(!has_prefix(fn_id, jverify_old_prefix))
+          continue;
+        const auto &args = bi->call_arguments();
+        if(args.size() != 1)
+          continue;
+        calls.push_back({bi, to_symbol_expr(fn).get_identifier(), args[0]});
+      }
+      if(calls.empty())
+        continue;
+      // Second pass: for each recorded call, walk forward from
+      // the call site looking for an ASSIGN of the form
+      // `tmp := <callee>:#return_value` and replace its RHS
+      // with the history_exprt of the call's argument. Stop the
+      // search at the next JVerify call site (so we don't
+      // accidentally cross into another old() call's
+      // return-value handling).
+      for(const auto &c : calls)
+      {
+        const std::string return_value_suffix =
+          id2string(c.callee_id) + "#return_value";
+        bool replaced = false;
+        for(auto bi = std::next(c.call_it); bi != body.instructions.end(); ++bi)
+        {
+          if(bi->is_function_call())
+            break;
+          if(!bi->is_assign())
+            continue;
+          const exprt &rhs = bi->assign_rhs();
+          if(rhs.id() != ID_symbol)
+            continue;
+          const std::string rhs_id =
+            id2string(to_symbol_expr(rhs).get_identifier());
+          if(rhs_id != return_value_suffix)
+            continue;
+          exprt history{history_exprt(c.arg, ID_old)};
+          if(history.type() != bi->assign_lhs().type())
+            history = typecast_exprt(history, bi->assign_lhs().type());
+          *bi = goto_programt::make_assignment(
+            bi->assign_lhs(), history, bi->source_location());
+          replaced = true;
+          break;
+        }
+        if(replaced)
+          c.call_it->turn_into_skip();
+      }
+      body.update();
+    }
+  }
+
   for(auto &func_entry : goto_model.goto_functions.function_map)
   {
     auto &body = func_entry.second.body;
@@ -1380,6 +1480,16 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           {
             goto_programt &target_body =
               const_cast<goto_programt &>(target_fn_it->second.body);
+
+            // §F12-followups (task 3.5/3.6): the global pre-pass
+            // at the top of lower_jverify_contracts has already
+            // rewritten JVerify.old(*) CALLs in every body
+            // (including this lambda target's) into ASSIGNs
+            // setting history_exprt(arg, ID_old). The predicate
+            // extraction below sees those values directly; the
+            // DFCC pipeline's replace_history_old binds them to
+            // the function's pre-state in the wrapper.
+
             const auto target_returns =
               find_return_value_assignments(target_body, info.target_method_id);
             // Resolve the predicate the lambda body returns. Each
