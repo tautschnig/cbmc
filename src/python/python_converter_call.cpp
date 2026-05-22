@@ -4302,6 +4302,18 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt code_point = convert_expression(*as_array(args).begin());
+      // PLR §builtins: chr(i) requires an integer argument. A float
+      // argument (e.g. chr(66.9)) raises TypeError. Emit the check
+      // before any range check, and reject any non-integer numeric
+      // type at conversion time.
+      if(code_point.type().id() == ID_floatbv)
+      {
+        add_check(
+          false_exprt{},
+          "exception",
+          "TypeError: an integer is required",
+          get_location(expr));
+      }
       // Range check: chr() requires 0 <= arg <= 0x10ffff
       add_check(
         and_exprt{

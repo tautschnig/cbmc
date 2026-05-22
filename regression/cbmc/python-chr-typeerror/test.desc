@@ -1,0 +1,6 @@
+CORE
+test.py
+--unwind 2 --no-unwinding-assertions
+^VERIFICATION FAILED$
+^EXIT=10$
+^SIGNAL=0$
