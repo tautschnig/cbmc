@@ -968,6 +968,29 @@ exprt python_convertert::convert_compare(const jsont &expr)
           goto done_cmp;
         }
       }
+      // PLR §6.10.3: lists, dicts, sets, and class instances are
+      // distinct heap objects per construction. Two list/dict
+      // values referenced through different *names* are different
+      // objects unless one was assigned from the other. We don't
+      // track aliasing, so this approximation breaks Python's
+      // `z = y` aliasing idiom — but on net resolves more
+      // soundness gaps (e.g. `[1,2,3] is [1,2,3]` correctly
+      // False) than it introduces (`y = x; assert y is x`).
+      // Same-symbol comparisons stay True, literal-vs-anything is
+      // False, and different-symbol cases are False.
+      if(
+        (is_python_list_type(current_left.type()) ||
+         is_python_dict_type(current_left.type())) &&
+        (is_python_list_type(right.type()) ||
+         is_python_dict_type(right.type())))
+      {
+        bool same_id = current_left.id() == ID_symbol &&
+                       right.id() == ID_symbol &&
+                       to_symbol_expr(current_left).get_identifier() ==
+                         to_symbol_expr(right).get_identifier();
+        cmp = same_id ? exprt{true_exprt{}} : exprt{false_exprt{}};
+        goto done_cmp;
+      }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
       cmp = equal_exprt{current_left, right};
@@ -1005,6 +1028,22 @@ exprt python_convertert::convert_compare(const jsont &expr)
           cmp = true_exprt{};
           goto done_cmp;
         }
+      }
+      // PLR §6.10.3: list/dict 'x is not y' — same logic as 'is'
+      // but inverted. Different-symbol or literal-on-either-side
+      // is True; same symbol is False. Aliasing is not tracked.
+      if(
+        (is_python_list_type(current_left.type()) ||
+         is_python_dict_type(current_left.type())) &&
+        (is_python_list_type(right.type()) ||
+         is_python_dict_type(right.type())))
+      {
+        bool same_id = current_left.id() == ID_symbol &&
+                       right.id() == ID_symbol &&
+                       to_symbol_expr(current_left).get_identifier() ==
+                         to_symbol_expr(right).get_identifier();
+        cmp = same_id ? exprt{false_exprt{}} : exprt{true_exprt{}};
+        goto done_cmp;
       }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
