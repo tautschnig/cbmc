@@ -1,0 +1,27 @@
+The fuzz-test harness in this directory is adapted from Strata
+Contributors' work at https://github.com/strata-org/Strata, specifically
+the files
+
+  Tools/Python/scripts/hypothesmith.sh
+  Tools/Python/scripts/gen_random_python.py
+  Tools/Python/scripts/gen_unrestricted.py
+  .github/workflows/python-fuzz.yml
+
+on the origin/tautschnig/hypothesmith branch.
+
+These upstream files are licensed under Apache-2.0 OR MIT (Strata's dual
+license). The CBMC-side adaptation:
+
+  - python-fuzz.sh        (driver, was hypothesmith.sh)
+  - .github/workflows/python-fuzz.yaml (was python-fuzz.yml)
+
+retargets the harness from Strata's pyAnalyzeLaurel pipeline to CBMC's
+Python frontend. The program-generator scripts (gen_random_python.py,
+gen_unrestricted.py) are functionally unchanged from upstream; the
+modifications are limited to copyright headers, module docstrings, and
+references to the consuming tool.
+
+The hypothesmith library that drives syntax-mode generation is a
+third-party dependency installed at runtime into a Python virtual
+environment; see https://github.com/Zac-HD/hypothesmith and its own
+license for redistribution terms.
