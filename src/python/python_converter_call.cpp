@@ -465,6 +465,21 @@ exprt python_convertert::convert_call(const jsont &expr)
           }
 
           // Exact models
+          if(func_name == "ceil" || func_name == "floor")
+          {
+            // PLib §math: floor/ceil of NaN raises ValueError, of
+            // ±inf raises OverflowError. CBMC's typecast to int
+            // produces an undefined-but-deterministic value for
+            // these inputs, which silently swallows the bug.
+            // Surface it as a property violation so callers see
+            // FAIL instead of SUCCESS on NaN/inf inputs.
+            add_check(
+              not_exprt{or_exprt{isnan_exprt{math_arg}, isinf_exprt{math_arg}}},
+              "exception",
+              std::string{"ValueError: math."} + func_name +
+                "() argument must be finite",
+              get_location(expr));
+          }
           if(func_name == "ceil")
             return plus_exprt{
               typecast_exprt{math_arg, python_int_type()},
@@ -4607,12 +4622,46 @@ exprt python_convertert::convert_call(const jsont &expr)
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
   }
-  // enumerate(iterable) → list of (index, element) tuples
+  // enumerate(iterable, start=0) → list of (start+i, element) tuples
   else if(func_name == "enumerate")
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      exprt arg = convert_expression(*as_array(args).begin());
+      auto arg_it = as_array(args).begin();
+      exprt arg = convert_expression(*arg_it);
+
+      // Parse the optional second positional argument (start) and
+      // the start=... keyword. Default is 0. PLib §enumerate.
+      mp_integer start_val{0};
+      ++arg_it;
+      if(arg_it != as_array(args).end())
+      {
+        exprt s = convert_expression(*arg_it);
+        if(s.is_constant())
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(s), v))
+            start_val = v;
+        }
+      }
+      const jsont &enum_kw = json_member(expr, "keywords");
+      if(enum_kw.is_array())
+      {
+        for(const auto &k : as_array(enum_kw))
+        {
+          if(json_string(json_member(k, "arg")) == "start")
+          {
+            exprt s = convert_expression(json_member(k, "value"));
+            if(s.is_constant())
+            {
+              mp_integer v;
+              if(!to_integer(to_constant_expr(s), v))
+                start_val = v;
+            }
+          }
+        }
+      }
+
       if(is_python_list_type(arg.type()))
       {
         const auto &list_st = to_struct_type(arg.type());
@@ -4633,7 +4682,8 @@ exprt python_convertert::convert_call(const jsont &expr)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           elems.push_back(struct_exprt{
-            {from_integer(i, python_int_type()), index_exprt{data, idx}},
+            {from_integer(start_val + mp_integer{i}, python_int_type()),
+             index_exprt{data, idx}},
             tuple_type});
         }
         return struct_exprt{

@@ -248,10 +248,20 @@ def isclose(
 # with non-negative nondet returns.
 # ---------------------------------------------------------------
 def factorial(n: int) -> int:
+    if n < 0:
+        raise ValueError("factorial() not defined for negative values")
     return 0
 
 
 def comb(n: int, k: int) -> int:
+    if n < 0 or k < 0:
+        raise ValueError("n and k must be non-negative integers")
+    return 0
+
+
+def perm(n: int, k: int) -> int:
+    if n < 0 or k < 0:
+        raise ValueError("n and k must be non-negative integers")
     return 0
 
 
@@ -264,4 +274,6 @@ def lcm(*integers) -> int:
 
 
 def isqrt(n: int) -> int:
+    if n < 0:
+        raise ValueError("isqrt() argument must be non-negative")
     return 0
