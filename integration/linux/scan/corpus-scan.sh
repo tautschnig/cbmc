@@ -91,6 +91,9 @@ CORPUS_PATTERNS=(
   $'resource_leak_on_error_path\tkmalloc\\(\tdrivers/base fs net kernel ipc'
   $'integer_overflow_in_alloc_size\tkmalloc\\(.*\\*\\s*sizeof\tdrivers/base fs net kernel'
   $'copy_from_user_size_check\tcopy_from_user\\(\tdrivers/base fs net kernel ipc'
+  $'use_after_free_generic\tkfree\\(\tdrivers/base fs net kernel ipc lib mm'
+  $'division_by_zero_check\tdo_div\\(|div_u64\\(|div_s64\\(\tdrivers/base fs net kernel'
+  $'uninit_to_user\tcopy_to_user\\(.*sizeof\\(\tdrivers/base fs net kernel ipc'
   # Existing modules without patterns yet.
   $'lock_state\tmutex_unlock\\(\tkernel fs net ipc'
   $'refcount_lifetime\trefcount_dec_and_test\\(\tkernel fs net'

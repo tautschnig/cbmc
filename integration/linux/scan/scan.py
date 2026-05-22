@@ -402,6 +402,15 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     "copy_from_user_size_check": [
         "__assert_copy_safe",
     ],
+    "use_after_free_generic": [
+        "__assert_not_freed",
+    ],
+    "division_by_zero_check": [
+        "__assert_divisor_safe",
+    ],
+    "uninit_to_user": [
+        "__assert_safe_for_userspace",
+    ],
 }
 
 
@@ -1100,6 +1109,63 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         "required_bodies": [
             "copy_len_safe",
         ],
+    },
+    "use_after_free_generic": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "use_after_free_generic_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "use_after_free_generic_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "use_after_free_generic_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "use_after_free_generic" /
+            "use_after_free_generic.c",
+        ],
+        "slice_preserve": ["mark_freed", "mark_alive", "is_freed"],
+        "required_bodies": ["is_freed"],
+    },
+    "division_by_zero_check": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "division_by_zero_check_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "division_by_zero_check_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "division_by_zero_check_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "division_by_zero_check" /
+            "division_by_zero_check.c",
+        ],
+        "slice_preserve": ["divisor_safe"],
+        "required_bodies": ["divisor_safe"],
+    },
+    "uninit_to_user": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "uninit_to_user_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "uninit_to_user_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "uninit_to_user_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "uninit_to_user" / "uninit_to_user.c",
+        ],
+        "slice_preserve": [
+            "mark_initialised",
+            "mark_uninitialised",
+            "is_initialised",
+        ],
+        "required_bodies": ["is_initialised"],
     },
 }
 
