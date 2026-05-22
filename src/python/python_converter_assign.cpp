@@ -2105,7 +2105,39 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   else if(op == "Mult")
     new_rhs = mult_exprt{arith_lhs, rhs};
   else if(op == "FloorDiv")
-    new_rhs = div_exprt{arith_lhs, rhs};
+  {
+    // PLR §6.7: x //= y must use Python's floored division (round
+    // toward -inf), not C's truncated division (round toward 0).
+    // The two diverge for negative-result cases: 7 //= -2 should
+    // be -4 (Python), not -3 (C).
+    //
+    // Mirror the convert_bin_op "FloorDiv" branch's runtime form:
+    //   q = a / b
+    //   r = a % b
+    //   if r != 0 && sign(a) != sign(b): q -= 1
+    // (constant folding is left to safe_typecast / simplify.)
+    if(
+      arith_lhs.type().id() == ID_signedbv ||
+      arith_lhs.type().id() == ID_unsignedbv)
+    {
+      exprt quotient = div_exprt{arith_lhs, rhs};
+      exprt remainder = mod_exprt{arith_lhs, rhs};
+      exprt has_remainder =
+        notequal_exprt{remainder, from_integer(0, arith_lhs.type())};
+      exprt diff_sign = binary_relation_exprt{
+        bitxor_exprt{arith_lhs, rhs},
+        ID_lt,
+        from_integer(0, arith_lhs.type())};
+      new_rhs = minus_exprt{
+        quotient,
+        if_exprt{
+          and_exprt{has_remainder, diff_sign},
+          from_integer(1, arith_lhs.type()),
+          from_integer(0, arith_lhs.type())}};
+    }
+    else
+      new_rhs = div_exprt{arith_lhs, rhs};
+  }
   else if(op == "Div")
   {
     // True division: result is float
@@ -2117,7 +2149,33 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     new_rhs = div_exprt{fl, fr};
   }
   else if(op == "Mod")
-    new_rhs = mod_exprt{arith_lhs, rhs};
+  {
+    // PLR §6.7: x %= y must follow Python's floored-division
+    // remainder (sign matches divisor), not C's (sign matches
+    // dividend). Mirror convert_bin_op's "Mod" runtime form:
+    //   r = a % b
+    //   if r != 0 && sign(a) != sign(b): r += b
+    if(
+      arith_lhs.type().id() == ID_signedbv ||
+      arith_lhs.type().id() == ID_unsignedbv)
+    {
+      exprt remainder = mod_exprt{arith_lhs, rhs};
+      exprt has_remainder =
+        notequal_exprt{remainder, from_integer(0, arith_lhs.type())};
+      exprt diff_sign = binary_relation_exprt{
+        bitxor_exprt{arith_lhs, rhs},
+        ID_lt,
+        from_integer(0, arith_lhs.type())};
+      new_rhs = plus_exprt{
+        remainder,
+        if_exprt{
+          and_exprt{has_remainder, diff_sign},
+          rhs,
+          from_integer(0, arith_lhs.type())}};
+    }
+    else
+      new_rhs = mod_exprt{arith_lhs, rhs};
+  }
   else if(op == "BitOr")
     new_rhs = bitor_exprt{arith_lhs, rhs};
   else if(op == "BitAnd")
