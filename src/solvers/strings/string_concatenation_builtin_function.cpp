@@ -81,6 +81,7 @@ string_constraint_generatort::add_axioms_for_concat_substr(
       idx,
       zero_if_negative(array_pool.get_or_create_length(s1)),
       equal_exprt(s1[idx], res[idx]),
+      ns,
       message_handler);
   }());
 
@@ -95,7 +96,7 @@ string_constraint_generatort::add_axioms_for_concat_substr(
       array_pool.get_or_create_length(res),
       array_pool.get_or_create_length(s1));
     return string_constraintt(
-      idx2, zero_if_negative(upper_bound), res_eq, message_handler);
+      idx2, zero_if_negative(upper_bound), res_eq, ns, message_handler);
   }());
 
   return {from_integer(0, get_return_code_type()), std::move(constraints)};

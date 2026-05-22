@@ -19,11 +19,12 @@ Author: Diffblue Ltd.
 /// \param expr: the expression to check for negativity
 /// \param message_handler: message handler
 /// \return true if `expr < 0` is unsatisfiable, false otherwise
-static bool cannot_be_neg(const exprt &expr, message_handlert &message_handler)
+static bool cannot_be_neg(
+  const exprt &expr,
+  const namespacet &ns,
+  message_handlert &message_handler)
 {
   satcheck_no_simplifiert sat_check(message_handler);
-  symbol_tablet symbol_table;
-  namespacet ns(symbol_table);
   bv_pointerst solver{ns, sat_check, message_handler};
   const exprt zero = from_integer(0, expr.type());
   const binary_relation_exprt non_neg(expr, ID_lt, zero);
@@ -36,6 +37,7 @@ string_constraintt::string_constraintt(
   const exprt &lower_bound,
   const exprt &upper_bound,
   const exprt &body,
+  const namespacet &ns,
   message_handlert &message_handler)
   : univ_var(_univ_var),
     lower_bound(lower_bound),
@@ -43,11 +45,11 @@ string_constraintt::string_constraintt(
     body(body)
 {
   INVARIANT(
-    cannot_be_neg(lower_bound, message_handler),
+    cannot_be_neg(lower_bound, ns, message_handler),
     "String constraints must have non-negative lower bound.\n" +
       lower_bound.pretty());
   INVARIANT(
-    cannot_be_neg(upper_bound, message_handler),
+    cannot_be_neg(upper_bound, ns, message_handler),
     "String constraints must have non-negative upper bound.\n" +
       upper_bound.pretty());
 }

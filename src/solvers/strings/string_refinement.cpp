@@ -1449,6 +1449,7 @@ static std::pair<bool, std::vector<exprt>> check_axioms(
       get(axiom.lower_bound),
       get(axiom.upper_bound),
       get(axiom.body),
+      ns,
       stream.message.get_message_handler());
 
     exprt negaxiom = axiom_in_model.negation();

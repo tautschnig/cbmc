@@ -72,6 +72,7 @@ string_constraint_generatort::add_axioms_for_index_of(
     lower_bound,
     zero_if_negative(index),
     implies_exprt(contains, notequal_exprt(str[n], c)),
+    ns,
     message_handler);
   constraints.universal.push_back(a4);
 
@@ -81,6 +82,7 @@ string_constraint_generatort::add_axioms_for_index_of(
     lower_bound,
     zero_if_negative(array_pool.get_or_create_length(str)),
     implies_exprt(not_exprt(contains), not_exprt(equal_exprt(str[m], c))),
+    ns,
     message_handler);
   constraints.universal.push_back(a5);
 
@@ -144,6 +146,7 @@ string_constraint_generatort::add_axioms_for_index_of_string(
     zero_if_negative(array_pool.get_or_create_length(needle)),
     implies_exprt(
       contains, equal_exprt(haystack[plus_exprt(qvar, offset)], needle[qvar])),
+    ns,
     message_handler);
   constraints.universal.push_back(a3);
 
@@ -246,6 +249,7 @@ string_constraint_generatort::add_axioms_for_last_index_of_string(
     qvar,
     zero_if_negative(array_pool.get_or_create_length(needle)),
     implies_exprt(contains, constr3),
+    ns,
     message_handler);
   constraints.universal.push_back(a3);
 
@@ -397,6 +401,7 @@ string_constraint_generatort::add_axioms_for_last_index_of(
     zero_if_negative(plus_exprt(index, index1)),
     zero_if_negative(end_index),
     implies_exprt(contains, notequal_exprt(str[n], c)),
+    ns,
     message_handler);
   constraints.universal.push_back(a4);
 
@@ -405,6 +410,7 @@ string_constraint_generatort::add_axioms_for_last_index_of(
     m,
     zero_if_negative(end_index),
     implies_exprt(not_exprt(contains), notequal_exprt(str[m], c)),
+    ns,
     message_handler);
   constraints.universal.push_back(a5);
 

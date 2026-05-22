@@ -56,6 +56,7 @@ string_constraint_generatort::add_axioms_for_equals(
       qvar,
       zero_if_negative(array_pool.get_or_create_length(s1)),
       implies_exprt(eq, equal_exprt(s1[qvar], s2[qvar])),
+      ns,
       message_handler);
   }());
 
@@ -162,6 +163,7 @@ string_constraint_generatort::add_axioms_for_equals_ignore_case(
     qvar,
     zero_if_negative(array_pool.get_or_create_length(s1)),
     implies_exprt(eq, constr2),
+    ns,
     message_handler);
   constraints.universal.push_back(a2);
 
@@ -231,6 +233,7 @@ string_constraint_generatort::add_axioms_for_compare_to(
     i,
     zero_if_negative(array_pool.get_or_create_length(s1)),
     implies_exprt(res_null, equal_exprt(s1[i], s2[i])),
+    ns,
     message_handler);
   constraints.universal.push_back(a2);
 
@@ -281,6 +284,7 @@ string_constraint_generatort::add_axioms_for_compare_to(
     i2,
     zero_if_negative(x),
     implies_exprt(not_exprt(res_null), equal_exprt(s1[i2], s2[i2])),
+    ns,
     message_handler);
   constraints.universal.push_back(a4);
 

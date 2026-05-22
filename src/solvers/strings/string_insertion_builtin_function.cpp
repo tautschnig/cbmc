@@ -114,7 +114,11 @@ string_constraintst string_insertion_builtin_functiont::constraints(
   constraints.universal.push_back([&] { // NOLINT
     const symbol_exprt i = generator.fresh_symbol("QA_insert1", index_type);
     return string_constraintt(
-      i, offset1, equal_exprt(result[i], input1[i]), message_handler);
+      i,
+      offset1,
+      equal_exprt(result[i], input1[i]),
+      generator.ns,
+      message_handler);
   }());
 
   // Axiom 3.
@@ -124,6 +128,7 @@ string_constraintst string_insertion_builtin_functiont::constraints(
       i,
       zero_if_negative(array_pool.get_or_create_length(input2)),
       equal_exprt(result[plus_exprt(i, offset1)], input2[i]),
+      generator.ns,
       message_handler);
   }());
 
@@ -137,6 +142,7 @@ string_constraintst string_insertion_builtin_functiont::constraints(
       equal_exprt(
         result[plus_exprt(i, array_pool.get_or_create_length(input2))],
         input1[i]),
+      generator.ns,
       message_handler);
   }());
 

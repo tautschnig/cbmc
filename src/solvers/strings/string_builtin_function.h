@@ -317,13 +317,14 @@ public:
 
   string_constraintst constraints(
     class symbol_generatort &fresh_symbol,
+    const namespacet &ns,
     message_handlert &message_handler) const;
 
   string_constraintst constraints(
     string_constraint_generatort &generator,
     message_handlert &message_handler) const override
   {
-    return constraints(generator.fresh_symbol, message_handler);
+    return constraints(generator.fresh_symbol, generator.ns, message_handler);
   };
 
   exprt length_constraint() const override
