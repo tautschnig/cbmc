@@ -186,3 +186,61 @@ The 10 remaining CRASHes (4× satcheck_minisat2.cpp:150,
 solver-layer issues — symptoms include stale-pointer
 `symbol_table1->symbols.size()` returning garbage during
 `namespacet::lookup`. They need a separate, broader fix.
+
+### Wave 2 — closing the CRASH and TOERR buckets
+
+| Outcome | Wave-1 | Wave-2 | Δ      |
+|---------|-------:|-------:|-------:|
+| PASS    | 2137   | 2147   |  +10   |
+| DIFF    | 594    | 616    |  +22   |
+| UNKNOWN | 219    | 237    |  +18   |
+| FAIL    | 68     | 68     |   +0   |
+| TOERR   | 48     | 7      |  **−41** |
+| CRASH   | 10     | 0      |  **−10** |
+| TIMEOUT | 13     | 15     |   +2   |
+| SKIP    | 1      | 1      |   +0   |
+
+Pass rate 69.1 % → 69.5 %.
+
+The TOERR drop is from a single change in `string_refinementt::dec_solve`:
+when the refinement loop reaches a fixed point (the SAT model is incorrect
+but `update_index_set` finds no new indices to refine on), we now log a
+warning and return `D_SATISFIABLE` conservatively instead of `D_ERROR`.
+This is sound for safety verification — we never miss a bug — at the cost
+of potentially over-reporting on properties the string solver cannot
+prove. 8 of the 41 affected tests are `*_fail` whose expected `FAILED`
+verdict the new behaviour happens to produce; the remaining 33 land in
+the DIFF / UNKNOWN buckets.
+
+The CRASH drop is from four narrowly-scoped softenings:
+
+* `string_refinementt::get` no longer `UNREACHABLE`s when an
+  if-condition resolves to a non-Boolean model value.
+* `dec_solve` skips universal axioms that fail
+  `is_valid_string_constraint` instead of aborting on the
+  `DATA_INVARIANT`. The validator is conservative; the Python
+  frontend's dict-of-string lowering legitimately produces patterns
+  it rejects.
+* `substitute_array_access` falls through to `std::nullopt` when
+  the array isn't a symbol/array/with/array_of/if (e.g. a
+  member_exprt of a struct), instead of `INVARIANT`.
+* `satcheck_minisat2_baset<T>::lcnf` and `boolbv_mapt::set_literals`
+  lazily allocate out-of-range SAT variables instead of aborting on
+  the `INVARIANT`. The newly allocated variables are unconstrained
+  Booleans.
+* The Python frontend now treats `[[1]] == [1]` (list with different
+  element types) as statically false rather than letting boolbv try
+  to widen 4160-bit list[int] to 266304-bit list[list[int]] and
+  segfault.
+
+The 7 remaining TOERRs are all CBMC frontend / symex limitations
+that need real refactoring rather than soft-fail wrappers:
+
+* 3× nested-lambda / typed-callable-return patterns (`assignment to
+  'symbol' not handled` from symex_assign).
+* 4× `defaultdict(int); d["a"] += 1` patterns (`l2_rename_rvalues
+  case 'struct' not handled` from goto_symex_state). The Python
+  frontend emits an LHS whose deepest else-branch is a struct
+  literal, which symex's L-value walker doesn't know how to assign
+  to.
+
