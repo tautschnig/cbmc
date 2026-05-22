@@ -2290,6 +2290,118 @@ exprt python_convertert::convert_call(const jsont &expr)
           return from_integer(0, python_int_type());
         }
         if(
+          method_name == "setdefault" &&
+          obj.id() == ID_symbol)
+        {
+          // PLR dict.setdefault(k, default=None): if k is in d
+          // return d[k]; otherwise insert (k, default) and return
+          // default. We model this with a side-effecting dict
+          // store on the missing-key path so a later `k in d`
+          // check correctly reports True.
+          const auto &dict_st = to_struct_type(obj_base_type);
+          const auto &keys_type =
+            to_array_type(dict_st.components()[1].type());
+          const auto &vals_type =
+            to_array_type(dict_st.components()[2].type());
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt keys_arr{obj, "keys", keys_type};
+          member_exprt vals_arr{obj, "values", vals_type};
+
+          // Resolve key (1st arg) and default (2nd arg or
+          // safe_zero of the value-type — which loses the
+          // None-ness when value-type can't hold the sentinel,
+          // but matches what dict.get already does).
+          if(!args.is_array() || as_array(args).empty())
+            return side_effect_expr_nondett{
+              vals_type.element_type(), get_location(expr)};
+          auto arg_it = as_array(args).begin();
+          exprt key_expr = convert_expression(*arg_it);
+          if(key_expr.type() != keys_type.element_type())
+            key_expr = safe_typecast(key_expr, keys_type.element_type());
+          exprt default_val;
+          {
+            const typet &elem_t = vals_type.element_type();
+            if(
+              elem_t.id() == ID_signedbv ||
+              elem_t.id() == ID_unsignedbv ||
+              elem_t.id() == ID_integer || elem_t.id() == ID_natural)
+              default_val =
+                from_integer(mp_integer{-4611686018427387904LL}, elem_t);
+            else
+              default_val = safe_zero(elem_t);
+          }
+          ++arg_it;
+          if(arg_it != as_array(args).end())
+          {
+            default_val = convert_expression(*arg_it);
+            if(default_val.type() != vals_type.element_type())
+              default_val =
+                safe_typecast(default_val, vals_type.element_type());
+          }
+
+          // Allocate found flag + result temp.
+          static unsigned sd_ctr = 0;
+          std::string fn = "__sd_found_" + std::to_string(sd_ctr++);
+          std::string fq = qualify_name(fn);
+          irep_idt fi{fq};
+          if(symbol_table.lookup(fi) == nullptr)
+          {
+            symbolt fs{fi, bool_typet{}, "python"};
+            fs.base_name = fn;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            symbol_table.add(fs);
+          }
+          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+          std::string rn = "__sd_result_" + std::to_string(sd_ctr - 1);
+          std::string rq = qualify_name(rn);
+          irep_idt ri{rq};
+          if(symbol_table.lookup(ri) == nullptr)
+          {
+            symbolt rs{ri, vals_type.element_type(), "python"};
+            rs.base_name = rn;
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            symbol_table.add(rs);
+          }
+          symbol_exprt result = symbol_table.lookup_ref(ri).symbol_expr();
+
+          pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
+          pending_checks.push_back(code_frontend_assignt{result, default_val});
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt match = equal_exprt{index_exprt{keys_arr, idx}, key_expr};
+            code_blockt update;
+            update.add(code_frontend_assignt{found, true_exprt{}});
+            update.add(
+              code_frontend_assignt{result, index_exprt{vals_arr, idx}});
+            pending_checks.push_back(
+              code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+          }
+          // If not found, append (key, default) and set length+=1.
+          code_blockt append;
+          append.add(
+            code_frontend_assignt{index_exprt{keys_arr, length}, key_expr});
+          append.add(
+            code_frontend_assignt{index_exprt{vals_arr, length}, default_val});
+          append.add(code_frontend_assignt{
+            length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          pending_checks.push_back(
+            code_ifthenelset{not_exprt{found}, std::move(append)});
+
+          // Invalidate the compile-time dict-literal tracking for
+          // this symbol. dict_literals captures the literal value of
+          // the dict at construction time and is used by the `key in
+          // dict` constant-fold path; without invalidation the fold
+          // would report the pre-setdefault state and miss the key
+          // we just inserted.
+          dict_literals.erase(to_symbol_expr(obj).get_identifier());
+
+          return result;
+        }
+        if(
           method_name == "setdefault" || method_name == "pop" ||
           method_name == "popitem")
           return side_effect_expr_nondett{
