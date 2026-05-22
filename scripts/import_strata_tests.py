@@ -31,15 +31,50 @@
 #     --cbmc build/bin/cbmc \
 #     --out regression/cbmc/python-strata-tests \
 #     [--include-pending]
+#
+# Memory safety:
+#   Every spawned CBMC and CPython subprocess is wrapped with a
+#   preexec_fn that calls resource.setrlimit(RLIMIT_AS, ...) before exec.
+#   The default cap is 4 GiB; override with the env var CBMC_MEM_MB
+#   (CBMC_MEM_MB=0 disables). This is a defence-in-depth: a single
+#   pathological test should never be able to exhaust the host running
+#   the importer.
 
 import argparse
 import concurrent.futures
 import csv
 import os
+import resource
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# Per-subprocess memory cap (RLIMIT_AS). Applied via preexec_fn to every
+# CPython and CBMC invocation we spawn so a single pathological test can't
+# exhaust the host. The default is 4 GiB; override with the env var
+# CBMC_MEM_MB before running the importer (CBMC_MEM_MB=0 disables the
+# cap).
+_DEFAULT_MEM_MB = 4096
+_MEM_BYTES = int(os.environ.get("CBMC_MEM_MB", _DEFAULT_MEM_MB)) * 1024 * 1024
+
+
+def _limit_mem():
+    """preexec_fn hook: cap virtual address space to _MEM_BYTES.
+
+    Setting RLIMIT_AS makes the kernel return ENOMEM from the next mmap()
+    once the cap is exceeded. CBMC's solver typically aborts cleanly with
+    a bad_alloc rather than getting OOM-killed by the parent, so a
+    timeout / non-zero exit still classifies the run as TIMEOUT/OTHER
+    rather than masking a real failure.
+    """
+    if _MEM_BYTES > 0:
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (_MEM_BYTES, _MEM_BYTES))
+        except (ValueError, OSError):
+            # Some environments (containers without CAP_SYS_RESOURCE) refuse
+            # to lower RLIMIT_AS — best-effort, don't crash the importer.
+            pass
 
 
 def run_python(path: Path, cwd: Path):
@@ -51,6 +86,7 @@ def run_python(path: Path, cwd: Path):
             text=True,
             timeout=10,
             cwd=str(cwd),
+            preexec_fn=_limit_mem,
         )
         if r.returncode == 0:
             return ("PASS", "")
@@ -93,6 +129,7 @@ def run_cbmc(cbmc: str, path: Path, unwind: int, timeout: int):
             capture_output=True,
             text=True,
             timeout=timeout,
+            preexec_fn=_limit_mem,
         )
         out = (r.stdout or "") + (r.stderr or "")
         if "VERIFICATION SUCCESSFUL" in out:

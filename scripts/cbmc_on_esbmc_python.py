@@ -26,10 +26,24 @@ import concurrent.futures as cf
 import csv
 import os
 import re
+import resource
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Per-CBMC subprocess memory cap (RLIMIT_AS). Applied via preexec_fn so a
+# pathological test on the sweep can't take down the host. Override with
+# CBMC_MEM_MB before running; CBMC_MEM_MB=0 disables.
+_MEM_BYTES = int(os.environ.get("CBMC_MEM_MB", "4096")) * 1024 * 1024
+
+
+def _limit_mem():
+    if _MEM_BYTES > 0:
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (_MEM_BYTES, _MEM_BYTES))
+        except (ValueError, OSError):
+            pass
 
 
 def parse_desc(path: Path):
@@ -107,6 +121,7 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
             text=True,
             timeout=timeout_s,
             errors="replace",
+            preexec_fn=_limit_mem,
         )
         wall_ms = int((time.monotonic() - start) * 1000)
         out = (cp.stdout or "") + "\n" + (cp.stderr or "")
