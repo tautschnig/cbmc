@@ -87,7 +87,18 @@ new bugs but does not gate merges.
 | `CBMC`          | `<repo-root>/build/bin/cbmc`         |
 | `CBMC_TIMEOUT`  | `30` (seconds per program)           |
 | `CBMC_UNWIND`   | `5` (loop unwind bound)              |
+| `CBMC_MEM_MB`   | `4096` (per-CBMC memory cap, MiB; `0` disables) |
 | `PYTHON`        | `<this dir>/.venv/bin/python3`       |
+
+### Memory safety
+
+The harness sets `ulimit -v $((CBMC_MEM_MB * 1024))` at the top of the
+shell so every subprocess it spawns — CBMC, the hypothesmith generator,
+the CPython sanity-check run — is bounded. Without this, a pathological
+fuzz program can blow up CBMC's solver memory and OOM-kill the host. The
+default 4 GiB is comfortably above CBMC's steady-state on the small
+generated programs; raise `CBMC_MEM_MB` if you see legitimate fuzz
+programs hitting the cap, or set `CBMC_MEM_MB=0` for diagnostic runs.
 
 ## License / attribution
 

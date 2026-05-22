@@ -97,6 +97,10 @@
 #                 to the repository root)
 #   CBMC_TIMEOUT  Per-program CBMC timeout in seconds (default: 30)
 #   CBMC_UNWIND   Loop unwind bound (default: 5)
+#   CBMC_MEM_MB   Per-CBMC-invocation memory cap in MiB (default: 4096).
+#                 Applied via `ulimit -v` so a runaway CBMC, CPython, or
+#                 hypothesmith generator can't take down the host. Set to
+#                 0 to disable the cap.
 #
 # ## Exit codes
 #
@@ -118,6 +122,23 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CBMC="${CBMC:-$REPO_ROOT/build/bin/cbmc}"
 CBMC_TIMEOUT="${CBMC_TIMEOUT:-30}"
 CBMC_UNWIND="${CBMC_UNWIND:-5}"
+
+# Per-CBMC memory cap (in MiB). Applied via ulimit -v so any subprocess
+# inheriting from this shell — CBMC, the hypothesmith generator, the
+# CPython sanity-check run — is bounded. Without a cap, a pathological
+# fuzz program can blow up CBMC's solver memory and OOM-kill the host
+# running the harness. 4 GiB is comfortably above the typical CBMC
+# steady-state on the small programs we generate; raise CBMC_MEM_MB if
+# you see legitimate fuzz programs hitting the cap. Set CBMC_MEM_MB=0
+# to disable the cap entirely (e.g. for diagnostic runs).
+CBMC_MEM_MB="${CBMC_MEM_MB:-4096}"
+if [ "$CBMC_MEM_MB" != "0" ]; then
+  # ulimit -v is in KiB. The cap propagates to every process this shell
+  # spawns, including the timeouted cbmc invocation and the python venv
+  # that drives the generator.
+  ulimit -v $((CBMC_MEM_MB * 1024)) 2>/dev/null || \
+    echo "warning: failed to set ulimit -v $((CBMC_MEM_MB * 1024)) — running without memory cap" >&2
+fi
 
 # Python venv (auto-created on first run)
 VENV="$SCRIPT_DIR/.venv"
