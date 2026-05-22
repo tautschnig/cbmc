@@ -291,3 +291,68 @@ CBMC produces but that disagree with the test's expected output (or
 with no expected output at all). Those are tractable on a
 case-by-case basis and don't risk aborting the verifier.
 
+
+### Wave 4 — soundness work (case-by-case)
+
+This wave reads each failing test against the Python Language
+Reference rather than ESBMC's expected output and fixes genuine
+PLR-vs-CBMC mismatches. Tests that test ESBMC-specific tool output
+(specific error wording, `--strict-types` flag) or methodology
+(`--incremental-bmc` vs fixed unwind) are *not* in scope: those
+aren't soundness gaps in CBMC.
+
+| Outcome | Wave-3 | Wave-4 | Δ      |
+|---------|-------:|-------:|-------:|
+| PASS    | 2150   | 2174   | +24    |
+| DIFF    | 620    | 596    | −24    |
+| UNKNOWN | 237    | 237    |  0     |
+| FAIL    | 68     | 68     |  0     |
+| TOERR   | 0      | 0      |  0     |
+| CRASH   | 0      | 0      |  0     |
+| TIMEOUT | 15     | 15     |  0     |
+| SKIP    | 1      | 1      |  0     |
+
+Pass rate **69.6 % → 70.3 %**.
+
+Four targeted fixes:
+
+* **`chr(<float>)` raises TypeError** (PLR §builtins). The frontend
+  silently accepted any numeric argument. Add a TypeError check
+  when the argument's type is `floatbv`. Resolves
+  `casting13-fail`.
+
+* **`dict.setdefault(key, default)` actually mutates the dict.**
+  Previously returned a nondet value without modelling the
+  insertion, so `key in d` after `setdefault(key)` was wrong.
+  Emit pending_checks that scan keys, set a found flag and a
+  result temp on match, and append `(key, default)` if no slot
+  matched. Invalidate `dict_literals` on mutation so the
+  `key in dict` constant-fold path doesn't report stale
+  pre-mutation state. Resolves `github_3658_5_fail`.
+
+* **`dict.pop(key)` and `dict.popitem()` mutate the dict and
+  raise KeyError.** Pop scans keys, returns the matched value
+  and shifts subsequent entries down; on miss without a default
+  it emits a KeyError check. Popitem snapshots `length-1` into a
+  fresh symbol BEFORE the decrement (otherwise the returned
+  `(key, value)` references the post-pop slot), then decrements.
+  Resolves `github_3783_fail`, `github_3784_fail`,
+  `github_3783_7-nondet_fail`, `github_3783_10-nondet_fail`.
+
+* **`min`/`max` work on N args and inlined heterogeneous lists.**
+  The previous handler folded only 2-arg numeric forms; 3+ args
+  or list arguments fell through to a generic call returning
+  nondet, which silently dropped many assertions. Now folds:
+  variadic numeric (with int/float promotion to double), constant
+  list with numeric or python_value-tagged element types
+  (unwrapping the `__tag`/`__int_val`/`__float_val` fields of
+  literal operands). Non-literal numeric lists keep the old
+  silent-drop behaviour to avoid regressing tests that depended
+  on it. Resolves `github_3849_fail`.
+
+Each fix lands with a focused regression test under
+`regression/cbmc/python-*` exercising the original repro plus
+adjacent cases (e.g. setdefault on present and missing keys, pop
+with and without default, min/max over a constant heterogeneous
+list).
+
