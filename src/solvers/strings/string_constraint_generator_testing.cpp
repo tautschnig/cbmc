@@ -65,6 +65,7 @@ string_constraint_generatort::add_axioms_for_is_prefix(
       maximum(
         from_integer(0, index_type), array_pool.get_or_create_length(prefix)),
       body,
+      ns,
       message_handler);
   }());
 
@@ -202,6 +203,7 @@ string_constraint_generatort::add_axioms_for_is_suffix(
     qvar,
     zero_if_negative(array_pool.get_or_create_length(s0)),
     implies_exprt(issuffix, equal_exprt(s0[qvar], s1[qvar_shifted])),
+    ns,
     message_handler);
   constraints.universal.push_back(a2);
 
@@ -283,6 +285,7 @@ string_constraint_generatort::add_axioms_for_contains(
     qvar,
     zero_if_negative(array_pool.get_or_create_length(s1)),
     implies_exprt(contains, equal_exprt(s1[qvar], s0[qvar_shifted])),
+    ns,
     message_handler);
   constraints.universal.push_back(a4);
 

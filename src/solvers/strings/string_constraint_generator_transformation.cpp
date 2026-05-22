@@ -61,6 +61,7 @@ string_constraint_generatort::add_axioms_for_set_length(
     idx,
     zero_if_negative(minimum(array_pool.get_or_create_length(s1), k)),
     equal_exprt(s1[idx], res[idx]),
+    ns,
     message_handler);
   constraints.universal.push_back(a2);
 
@@ -70,6 +71,7 @@ string_constraint_generatort::add_axioms_for_set_length(
     zero_if_negative(array_pool.get_or_create_length(s1)),
     zero_if_negative(array_pool.get_or_create_length(res)),
     equal_exprt(res[idx2], from_integer(0, char_type)),
+    ns,
     message_handler);
   constraints.universal.push_back(a3);
 
@@ -147,6 +149,7 @@ string_constraint_generatort::add_axioms_for_substring(
       idx,
       zero_if_negative(array_pool.get_or_create_length(res)),
       equal_exprt(res[idx], str[plus_exprt(start1, idx)]),
+      ns,
       message_handler);
   }());
 
@@ -215,7 +218,8 @@ string_constraint_generatort::add_axioms_for_trim(
 
   symbol_exprt n = fresh_symbol("QA_index_trim", index_type);
   binary_relation_exprt non_print(str[n], ID_le, space_char);
-  string_constraintt a6(n, zero_if_negative(idx), non_print, message_handler);
+  string_constraintt a6(
+    n, zero_if_negative(idx), non_print, ns, message_handler);
   constraints.universal.push_back(a6);
 
   // Axiom 7.
@@ -230,7 +234,7 @@ string_constraint_generatort::add_axioms_for_trim(
       ID_le,
       space_char);
     return string_constraintt(
-      n2, zero_if_negative(bound), eqn2, message_handler);
+      n2, zero_if_negative(bound), eqn2, ns, message_handler);
   }());
 
   symbol_exprt n3 = fresh_symbol("QA_index_trim3", index_type);
@@ -239,6 +243,7 @@ string_constraint_generatort::add_axioms_for_trim(
     n3,
     zero_if_negative(array_pool.get_or_create_length(res)),
     eqn3,
+    ns,
     message_handler);
   constraints.universal.push_back(a8);
 
@@ -341,6 +346,7 @@ string_constraint_generatort::add_axioms_for_replace(
       qvar,
       zero_if_negative(array_pool.get_or_create_length(res)),
       and_exprt(case1, case2),
+      ns,
       message_handler);
     constraints.universal.push_back(a2);
     return {from_integer(0, f.type()), std::move(constraints)};

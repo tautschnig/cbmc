@@ -145,6 +145,7 @@ string_constraintst string_constraint_generatort::add_constraint_on_characters(
     zero_if_negative(start),
     zero_if_negative(end),
     interval_constraint(chr, char_range),
+    ns,
     message_handler);
   return {{}, {sc}, {}};
 }

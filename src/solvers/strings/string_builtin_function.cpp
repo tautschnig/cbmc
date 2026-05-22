@@ -116,7 +116,11 @@ string_constraintst string_concat_char_builtin_functiont::constraints(
     const exprt upper_bound =
       zero_if_negative(array_pool.get_or_create_length(input));
     return string_constraintt(
-      idx, upper_bound, equal_exprt(input[idx], result[idx]), message_handler);
+      idx,
+      upper_bound,
+      equal_exprt(input[idx], result[idx]),
+      generator.ns,
+      message_handler);
   }());
   constraints.existential.push_back(
     equal_exprt(result[array_pool.get_or_create_length(input)], character));
@@ -176,6 +180,7 @@ string_constraintst string_set_char_builtin_functiont::constraints(
       zero_if_negative(
         minimum(array_pool.get_or_create_length(result), position)),
       a3_body,
+      generator.ns,
       message_handler);
   }());
   constraints.universal.push_back([&] {
@@ -187,6 +192,7 @@ string_constraintst string_set_char_builtin_functiont::constraints(
       zero_if_negative(plus_exprt(position, from_integer(1, position.type()))),
       zero_if_negative(array_pool.get_or_create_length(result)),
       a4_body,
+      generator.ns,
       message_handler);
   }());
   return constraints;
@@ -312,6 +318,7 @@ string_constraintst string_to_lower_case_builtin_functiont::constraints(
       idx,
       zero_if_negative(array_pool.get_or_create_length(result)),
       conditional_convert,
+      generator.ns,
       message_handler);
   }());
   return constraints;
@@ -346,6 +353,7 @@ std::optional<exprt> string_to_upper_case_builtin_functiont::eval(
 /// \return set of constraints
 string_constraintst string_to_upper_case_builtin_functiont::constraints(
   symbol_generatort &fresh_symbol,
+  const namespacet &ns,
   message_handlert &message_handler) const
 {
   string_constraintst constraints;
@@ -363,6 +371,7 @@ string_constraintst string_to_upper_case_builtin_functiont::constraints(
       equal_exprt(
         result[idx],
         if_exprt(is_lower_case(input[idx]), converted, input[idx])),
+      ns,
       message_handler);
   }());
   return constraints;
