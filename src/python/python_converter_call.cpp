@@ -968,10 +968,13 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(method_name == "upper" || method_name == "lower")
         {
           auto sv = extract_string_value(obj);
-          if(!sv.has_value() && obj.id() == ID_symbol)
+          if(
+            !sv.has_value() &&
+            (obj.id() == ID_symbol || obj.id() == ID_dereference))
           {
-            auto it =
-              string_constants.find(to_symbol_expr(obj).get_identifier());
+            auto it = string_constants.find(
+              obj.id() == ID_symbol ? to_symbol_expr(obj).get_identifier()
+                                    : irep_idt{});
             if(it != string_constants.end())
               sv = it->second;
           }
@@ -1720,10 +1723,13 @@ exprt python_convertert::convert_call(const jsont &expr)
           method_name == "count")
         {
           auto str_val = extract_string_value(obj);
-          if(!str_val.has_value() && obj.id() == ID_symbol)
+          if(
+            !str_val.has_value() &&
+            (obj.id() == ID_symbol || obj.id() == ID_dereference))
           {
-            auto it =
-              string_constants.find(to_symbol_expr(obj).get_identifier());
+            auto it = string_constants.find(
+              obj.id() == ID_symbol ? to_symbol_expr(obj).get_identifier()
+                                    : irep_idt{});
             if(it != string_constants.end())
               str_val = it->second;
           }
@@ -1971,10 +1977,11 @@ exprt python_convertert::convert_call(const jsont &expr)
               const exprt *dict_val = nullptr;
               if(obj.id() == ID_struct)
                 dict_val = &obj;
-              else if(obj.id() == ID_symbol)
+              else if((obj.id() == ID_symbol || obj.id() == ID_dereference))
               {
-                auto it =
-                  dict_literals.find(to_symbol_expr(obj).get_identifier());
+                auto it = dict_literals.find(
+                  obj.id() == ID_symbol ? to_symbol_expr(obj).get_identifier()
+                                        : irep_idt{});
                 if(it != dict_literals.end())
                   dict_val = &it->second;
               }
@@ -2027,9 +2034,11 @@ exprt python_convertert::convert_call(const jsont &expr)
           const exprt *dict_val = nullptr;
           if(obj.id() == ID_struct)
             dict_val = &obj;
-          else if(obj.id() == ID_symbol)
+          else if((obj.id() == ID_symbol || obj.id() == ID_dereference))
           {
-            auto it = dict_literals.find(to_symbol_expr(obj).get_identifier());
+            auto it = dict_literals.find(
+              obj.id() == ID_symbol ? to_symbol_expr(obj).get_identifier()
+                                    : irep_idt{});
             if(it != dict_literals.end())
               dict_val = &it->second;
           }
@@ -2070,9 +2079,11 @@ exprt python_convertert::convert_call(const jsont &expr)
           const exprt *dict_val = nullptr;
           if(obj.id() == ID_struct)
             dict_val = &obj;
-          else if(obj.id() == ID_symbol)
+          else if((obj.id() == ID_symbol || obj.id() == ID_dereference))
           {
-            auto it = dict_literals.find(to_symbol_expr(obj).get_identifier());
+            auto it = dict_literals.find(
+              obj.id() == ID_symbol ? to_symbol_expr(obj).get_identifier()
+                                    : irep_idt{});
             if(it != dict_literals.end())
               dict_val = &it->second;
           }
@@ -2116,9 +2127,11 @@ exprt python_convertert::convert_call(const jsont &expr)
           const exprt *dict_val = nullptr;
           if(obj.id() == ID_struct)
             dict_val = &obj;
-          else if(obj.id() == ID_symbol)
+          else if((obj.id() == ID_symbol || obj.id() == ID_dereference))
           {
-            auto it = dict_literals.find(to_symbol_expr(obj).get_identifier());
+            auto it = dict_literals.find(
+              obj.id() == ID_symbol ? to_symbol_expr(obj).get_identifier()
+                                    : irep_idt{});
             if(it != dict_literals.end())
               dict_val = &it->second;
           }
@@ -2170,7 +2183,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(method_name == "clear")
         {
           // d.clear() → set d.length = 0
-          if(obj.id() == ID_symbol)
+          if((obj.id() == ID_symbol || obj.id() == ID_dereference))
           {
             member_exprt length{obj, "length", signedbv_typet{64}};
             pending_checks.push_back(code_frontend_assignt{
@@ -2216,8 +2229,9 @@ exprt python_convertert::convert_call(const jsont &expr)
                 // Invalidate dict_literals tracking on obj so
                 // subsequent d["key"] lookups read from the
                 // mutated struct, not the stale literal.
-                if(obj.id() == ID_symbol)
-                  dict_literals.erase(to_symbol_expr(obj).get_identifier());
+                if((obj.id() == ID_symbol || obj.id() == ID_dereference))
+                  if(obj.id() == ID_symbol)
+                    dict_literals.erase(to_symbol_expr(obj).get_identifier());
                 const auto &dst_st = to_struct_type(obj.type());
                 const auto &keys_type =
                   to_array_type(dst_st.components()[1].type());
@@ -2291,7 +2305,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(
           method_name == "setdefault" &&
-          obj.id() == ID_symbol)
+          (obj.id() == ID_symbol || obj.id() == ID_dereference))
         {
           // PLR dict.setdefault(k, default=None): if k is in d
           // return d[k]; otherwise insert (k, default) and return
@@ -2397,11 +2411,14 @@ exprt python_convertert::convert_call(const jsont &expr)
           // dict` constant-fold path; without invalidation the fold
           // would report the pre-setdefault state and miss the key
           // we just inserted.
-          dict_literals.erase(to_symbol_expr(obj).get_identifier());
+          if(obj.id() == ID_symbol)
+            dict_literals.erase(to_symbol_expr(obj).get_identifier());
 
           return result;
         }
-        if(method_name == "pop" && obj.id() == ID_symbol)
+        if(
+          method_name == "pop" &&
+          (obj.id() == ID_symbol || obj.id() == ID_dereference))
         {
           // PLR dict.pop(key, default=...): if key in d, remove
           // and return its value. If key not in d and a default
@@ -2496,10 +2513,13 @@ exprt python_convertert::convert_call(const jsont &expr)
               "KeyError: key not found in dict",
               get_location(expr));
           }
-          dict_literals.erase(to_symbol_expr(obj).get_identifier());
+          if(obj.id() == ID_symbol)
+            dict_literals.erase(to_symbol_expr(obj).get_identifier());
           return result;
         }
-        if(method_name == "popitem" && obj.id() == ID_symbol)
+        if(
+          method_name == "popitem" &&
+          (obj.id() == ID_symbol || obj.id() == ID_dereference))
         {
           // PLR dict.popitem(): remove and return an arbitrary
           // (key, value) pair. Raises KeyError on empty dict.
@@ -2551,7 +2571,8 @@ exprt python_convertert::convert_call(const jsont &expr)
           // Decrement length AFTER recording the snapshot.
           pending_checks.push_back(
             code_frontend_assignt{length, last_idx_sym});
-          dict_literals.erase(to_symbol_expr(obj).get_identifier());
+          if(obj.id() == ID_symbol)
+            dict_literals.erase(to_symbol_expr(obj).get_identifier());
           return struct_exprt{{key_at, val_at}, tuple_t};
         }
         if(
