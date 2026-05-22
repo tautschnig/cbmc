@@ -1734,14 +1734,60 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     }
   }
 
-  // Determine the LHS expression based on target type
+  // Determine the LHS expression based on target type.
+  //
+  // For dict-subscript targets we deliberately bypass
+  // convert_subscript: that helper emits a KeyError check via
+  // pending_checks for missing keys, which is correct for plain
+  // d[k] reads but wrong for d[k] += rhs against a defaultdict
+  // (where the read is allowed to return the factory's default).
+  // We build the same chained `keys[i]==k ? values[i] : ... :
+  // safe_zero` read inline so the KeyError check stays out of the
+  // emitted GOTO. The follow-up store at the end of this function
+  // performs an append for the missing-key case, matching
+  // defaultdict's auto-insert semantics.
   exprt lhs;
+  bool dict_subscript_aug = false;
+  exprt dict_aug_container;
+  exprt dict_aug_key;
   if(have_subscript_rewrite)
     lhs = subscript_lhs;
   else if(is_node_type(target, "Name"))
     lhs = convert_name(target);
   else if(is_node_type(target, "Subscript"))
-    lhs = convert_subscript(target);
+  {
+    exprt container_check = convert_expression(json_member(target, "value"));
+    if(!container_check.is_nil() && is_python_dict_type(container_check.type()))
+    {
+      const auto &dict_st = to_struct_type(container_check.type());
+      const auto &keys_type = to_array_type(dict_st.components()[1].type());
+      const auto &vals_type = to_array_type(dict_st.components()[2].type());
+      member_exprt length{container_check, "length", signedbv_typet{64}};
+      member_exprt keys_arr{container_check, "keys", keys_type};
+      member_exprt vals_arr{container_check, "values", vals_type};
+      exprt key_expr = convert_expression(json_member(target, "slice"));
+      if(key_expr.type() != keys_type.element_type())
+        key_expr = safe_typecast(key_expr, keys_type.element_type());
+      exprt result = safe_zero(vals_type.element_type());
+      for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+        exprt key_i = index_exprt{keys_arr, idx};
+        if(key_i.type() != key_expr.type())
+          key_i = safe_typecast(key_i, key_expr.type());
+        exprt match = equal_exprt{key_i, key_expr};
+        result = if_exprt{
+          and_exprt{in_range, match}, index_exprt{vals_arr, idx}, result};
+      }
+      lhs = std::move(result);
+      dict_subscript_aug = true;
+      dict_aug_container = std::move(container_check);
+      dict_aug_key = std::move(key_expr);
+    }
+    else
+      lhs = convert_subscript(target);
+  }
   else if(is_node_type(target, "Attribute"))
     lhs = convert_attribute(target);
   else
@@ -2039,6 +2085,73 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         neg, code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
     }
   }
+
+  // Dict-subscript augmented assignment: d[key] += rhs.
+  //
+  // The lhs we built above is the read form: a chain of nested
+  // (key_match[i] ? d.values[i] : ...) ending in a struct constant
+  // default. Using that as a code_frontend_assignt LHS would have
+  // CBMC's symex hit "l2_rename_rvalues case `struct' not handled"
+  // on the leaf struct constant, which is not a writable location.
+  //
+  // Instead, follow the same pattern as the regular dict-subscript
+  // assign in convert_assign: snapshot the new value, then iterate
+  // over the dict's slots emitting `if(in_range && keys[i]==key)
+  // values[i] = new_val` and append a new (key, new_val) entry if
+  // the key wasn't found. This matches Python's defaultdict
+  // semantics — d[k] += v on a missing key inserts (k, factory()+v).
+  if(dict_subscript_aug)
+  {
+    code_blockt block;
+    const auto &dict_st = to_struct_type(dict_aug_container.type());
+    const auto &keys_type = to_array_type(dict_st.components()[1].type());
+    const auto &vals_type = to_array_type(dict_st.components()[2].type());
+    member_exprt length{dict_aug_container, "length", signedbv_typet{64}};
+    member_exprt keys_arr{dict_aug_container, "keys", keys_type};
+    member_exprt vals_arr{dict_aug_container, "values", vals_type};
+    exprt typed_new_val = new_rhs;
+    if(typed_new_val.type() != vals_type.element_type())
+      typed_new_val = safe_typecast(typed_new_val, vals_type.element_type());
+
+    static unsigned dict_aug_ctr = 0;
+    std::string fn = "__dict_aug_found_" + std::to_string(dict_aug_ctr++);
+    std::string fq = qualify_name(fn);
+    irep_idt fi{fq};
+    if(symbol_table.lookup(fi) == nullptr)
+    {
+      symbolt fs{fi, bool_typet{}, "python"};
+      fs.base_name = fn;
+      fs.is_lvalue = true;
+      fs.is_state_var = true;
+      symbol_table.add(fs);
+    }
+    symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+    block.add(code_frontend_assignt{found, false_exprt{}});
+    for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+    {
+      exprt idx = from_integer(i, signedbv_typet{64});
+      exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+      exprt match = equal_exprt{index_exprt{keys_arr, idx}, dict_aug_key};
+      code_blockt update;
+      update.add(
+        code_frontend_assignt{index_exprt{vals_arr, idx}, typed_new_val});
+      update.add(code_frontend_assignt{found, true_exprt{}});
+      block.add(
+        code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+    }
+    // defaultdict semantics: append (key, new_val) when missing.
+    code_blockt append;
+    append.add(
+      code_frontend_assignt{index_exprt{keys_arr, length}, dict_aug_key});
+    append.add(
+      code_frontend_assignt{index_exprt{vals_arr, length}, typed_new_val});
+    append.add(code_frontend_assignt{
+      length, plus_exprt{length, from_integer(1, signedbv_typet{64})}});
+    block.add(code_ifthenelset{not_exprt{found}, std::move(append)});
+    block.add_source_location() = loc;
+    return std::move(block);
+  }
+
   code_frontend_assignt assign{lhs, new_rhs};
   assign.add_source_location() = loc;
   return std::move(assign);
