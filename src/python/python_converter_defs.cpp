@@ -144,6 +144,29 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       param_type = pointer_type(param_type);
     }
 
+    // PLR §3.1: Mutable containers (list, dict) are also passed by
+    // reference. Without this, mutations inside the function (e.g.
+    // `xs.append(v)`) target a local copy and the caller's
+    // container is silently unaffected, which is unsound w.r.t.
+    // Python's reference semantics. The corresponding call-site
+    // wraps the argument with address_of (the existing
+    // 'struct arg -> pointer param' typecast path); inside the
+    // body, convert_name auto-dereferences these pointer-typed
+    // parameter symbols so existing member_exprt-based access
+    // continues to work transparently.
+    //
+    // Self parameters are excluded above; varargs (*args) and
+    // **kwargs are intentionally NOT wrapped here — they are
+    // packed/freshly-built at the call site, so by-value vs
+    // by-reference is moot, and pointer-wrapping them would
+    // break the existing pack/unpack logic.
+    if(
+      param_name != "self" &&
+      (is_python_list_type(param_type) || is_python_dict_type(param_type)))
+    {
+      param_type = pointer_type(param_type);
+    }
+
     code_typet::parametert p{param_type};
     p.set_identifier("python::" + func_name + "::" + param_name);
     p.set_base_name(param_name);
