@@ -1612,10 +1612,16 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
               const auto &enclosing_type = to_code_type(
                 goto_model.symbol_table.lookup_ref(func_entry.first).type);
               const typet &enclosing_ret_type = enclosing_type.return_type();
-              if(enclosing_ret_type.id() != ID_empty && !target_params.empty())
+              if(!target_params.empty())
               {
+                // For non-void enclosing functions, the last
+                // target parameter maps to __CPROVER_return_value.
+                // For void enclosing functions (BooleanSupplier
+                // shape), ALL target parameters are captures.
+                const bool is_void = (enclosing_ret_type.id() == ID_empty);
                 const symbol_exprt return_value_sym(
-                  CPROVER_PREFIX "return_value", enclosing_ret_type);
+                  CPROVER_PREFIX "return_value",
+                  is_void ? bool_typet() : enclosing_ret_type);
                 std::map<irep_idt, exprt> subst;
                 for(std::size_t i = 0; i < target_params.size(); ++i)
                 {
@@ -1623,7 +1629,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
                   if(pid.empty())
                     continue;
                   exprt replacement;
-                  if(i + 1 == target_params.size())
+                  if(!is_void && i + 1 == target_params.size())
                   {
                     replacement = return_value_sym;
                     if(return_value_sym.type() != target_params[i].type())
