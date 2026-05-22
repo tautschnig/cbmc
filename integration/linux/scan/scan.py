@@ -377,6 +377,13 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         "__cdp_get",
         "__cdp_put",
     ],
+    "tocttou_inode_check": [
+        # Three contracts modelling check, act, and concurrent
+        # mutation of a shared state field.
+        "__tic_check",
+        "__tic_act",
+        "__tic_change",
+    ],
 }
 
 
@@ -910,6 +917,31 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         ],
         "required_bodies": [
             "cdp_is_live",
+        ],
+    },
+    "tocttou_inode_check": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "tocttou_inode_check_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "tocttou_inode_check_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "tocttou_inode_check_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "tocttou_inode_check" /
+            "tocttou_inode_check.c",
+        ],
+        "slice_preserve": [
+            "tic_init",
+            "tic_check",
+            "tic_act_assuming",
+            "tic_change",
+        ],
+        "required_bodies": [
+            "tic_check",
         ],
     },
 }
