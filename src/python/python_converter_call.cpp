@@ -6205,6 +6205,68 @@ exprt python_convertert::convert_call(const jsont &expr)
       if(as_array(args).size() == 1)
       {
         exprt arg = convert_expression(*as_array(args).begin());
+        // Tuple-argument form: walk the struct's components in
+        // order. PLR §6.10.2 treats tuples and lists uniformly
+        // for min()/max().
+        if(!arg.is_nil() && is_python_tuple_type(arg.type()))
+        {
+          // Tuple is empty when it has no components.
+          const auto &tuple_st = to_struct_type(arg.type());
+          if(tuple_st.components().empty())
+          {
+            add_check(
+              false_exprt{},
+              "exception",
+              std::string{"ValueError: "} + func_name +
+                "() arg is an empty sequence",
+              get_location(expr));
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+          // Constant tuple fast path: walk the operands.
+          if(arg.id() == ID_struct &&
+             arg.operands().size() == tuple_st.components().size())
+          {
+            std::vector<exprt> elems;
+            for(const auto &op : arg.operands())
+              elems.push_back(op);
+            bool all_num = !elems.empty() &&
+                           std::all_of(elems.begin(), elems.end(),
+                                       [&](const exprt &e) {
+                                         const typet &t = e.type();
+                                         return t.id() == ID_signedbv ||
+                                                t.id() == ID_unsignedbv ||
+                                                t.id() == ID_floatbv ||
+                                                t.id() == ID_bool ||
+                                                t.id() == ID_integer;
+                                       });
+            if(all_num)
+            {
+              bool any_float = std::any_of(
+                elems.begin(), elems.end(),
+                [](const exprt &e) { return e.type().id() == ID_floatbv; });
+              if(any_float)
+              {
+                for(auto &e : elems)
+                  if(e.type().id() != ID_floatbv)
+                    e = safe_typecast(e, double_type());
+              }
+              else
+              {
+                for(std::size_t i = 1; i < elems.size(); i++)
+                  if(elems[i].type() != elems[0].type())
+                    elems[i] = safe_typecast(elems[i], elems[0].type());
+              }
+              exprt result = elems[0];
+              for(std::size_t i = 1; i < elems.size(); i++)
+                result = if_exprt{
+                  binary_relation_exprt{elems[i], op, result},
+                  elems[i],
+                  result};
+              return result;
+            }
+          }
+        }
         if(!arg.is_nil() && is_python_list_type(arg.type()))
         {
           const auto &lt = to_struct_type(arg.type());
