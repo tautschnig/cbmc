@@ -344,6 +344,16 @@ private:
   std::map<irep_idt, exprt> tuple_literals;
   std::map<irep_idt, double> float_constants; // track float/int constant values
 
+  /// PLR §8.7: leaf functions whose body is a single \`return <constant>\`
+  /// statement have a known compile-time return value. Recording it here
+  /// lets the assignment site \`c = f()\` propagate the constant through
+  /// downstream constant-folding (e.g. chr(c) at the call site folds to
+  /// the corresponding string when c is bound from such a leaf function).
+  /// Populated at the end of convert_function_def by inspecting the AST
+  /// body shape, and queried by try_eval_double when the expression
+  /// being evaluated is a function-call side-effect.
+  std::map<irep_idt, double> function_return_constants;
+
   /// Module-level globals registered by pass 0's plain-Assign
   /// pre-pass with a tentative placeholder type. Pass 0 has no
   /// access to the converted RHS expression, so it defaults to
