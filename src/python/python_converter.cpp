@@ -222,6 +222,21 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
   const exprt *ce = &e;
   if(ce->id() == ID_typecast && ce->operands().size() == 1)
     ce = &ce->operands()[0];
+  // PLR §8.7: a function call to a leaf function whose body is
+  // `return <constant>` returns the recorded constant. The call still
+  // happens at runtime (for any side-effects in the call wrapping),
+  // but for compile-time constant-folding purposes we can substitute
+  // the return value.
+  if(
+    ce->id() == ID_side_effect &&
+    ce->get(ID_statement) == ID_function_call && !ce->operands().empty() &&
+    ce->operands()[0].id() == ID_symbol)
+  {
+    irep_idt fn_id = to_symbol_expr(ce->operands()[0]).get_identifier();
+    auto it = function_return_constants.find(fn_id);
+    if(it != function_return_constants.end())
+      return it->second;
+  }
   if(ce->id() == ID_symbol)
   {
     auto it = float_constants.find(to_symbol_expr(*ce).get_identifier());

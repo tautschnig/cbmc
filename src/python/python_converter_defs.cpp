@@ -721,6 +721,41 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(sym_ptr != nullptr)
     sym_ptr->value = body_block;
 
+  // PLR §8.7: if the AST body is a single \`return <constant>\`, record
+  // the constant for downstream propagation. Only the simplest shape
+  // qualifies — single statement, Return AST node, value is a Constant
+  // node (or UnaryOp(USub, Constant) for negative literals). This
+  // covers the \`def f() -> int: return 97\` pattern where every call
+  // returns the same value, and lets \`c = f()\` look up f's constant
+  // through try_eval_double for further folding (chr(c), len(...) on
+  // a constant-length list, math.X on a constant double, etc.).
+  if(body.is_array() && as_array(body).size() == 1)
+  {
+    const jsont &only_stmt = *as_array(body).begin();
+    if(is_node_type(only_stmt, "Return"))
+    {
+      const jsont &val = json_member(only_stmt, "value");
+      if(!val.is_null())
+      {
+        // convert_expression would normally honour the surrounding
+        // function scope; we're past current_function = saved here so
+        // any reference to a parameter would mis-resolve. Restrict to
+        // pure-constant shapes.
+        bool is_const =
+          is_node_type(val, "Constant") ||
+          (is_node_type(val, "UnaryOp") &&
+           is_node_type(json_member(val, "operand"), "Constant"));
+        if(is_const)
+        {
+          exprt val_expr = convert_expression(val);
+          auto evd = try_eval_double(val_expr);
+          if(evd.has_value())
+            function_return_constants[symbol_id] = evd.value();
+        }
+      }
+    }
+  }
+
   // Function definitions don't produce executable code at the call site
   return code_skipt{};
 }
