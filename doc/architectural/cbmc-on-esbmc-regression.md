@@ -244,3 +244,50 @@ that need real refactoring rather than soft-fail wrappers:
   literal, which symex's L-value walker doesn't know how to assign
   to.
 
+
+### Wave 3 — closing the last 7 TOERRs via frontend refactoring
+
+| Outcome | Wave-2 | Wave-3 | Δ      |
+|---------|-------:|-------:|-------:|
+| PASS    | 2147   | 2150   |  +3    |
+| DIFF    | 616    | 620    |  +4    |
+| UNKNOWN | 237    | 237    |   0    |
+| FAIL    | 68     | 68     |   0    |
+| TOERR   | 7      | 0      |  **−7**|
+| CRASH   | 0      | 0      |   0    |
+| TIMEOUT | 15     | 15     |   0    |
+| SKIP    | 1      | 1      |   0    |
+
+Pass rate 69.5 % → 69.6 %. **TOERR 0, CRASH 0**.
+
+Three frontend changes resolve the seven remaining TOERRs:
+
+* **Lambda-returning-lambda registration** in `convert_lambda`. Without
+  it, `g = (lambda x: lambda y: x+y)(5)` emitted `g := <code-typed
+  return value>` and CBMC's symex aborted with "assignment to 'symbol'
+  not handled". Resolves `github_3724` (full beta-reduction; `g(10) ==
+  15` now verifies) and `lambda13`.
+
+* **Shadow imported-function names** in `convert_ann_assign`. When the
+  user's local `match: re.Match[str] | None = re.match(...)` collides
+  with the imported `python::match` (re's contents are flattened into
+  the top-level namespace), allocate a fresh `<qname>__shadow__vN`
+  symbol and route subsequent reads through `variable_versions`.
+  Resolves `github_3153`.
+
+* **Decompose dict-subscript AugAssign** in `convert_aug_assign`. The
+  previous lowering produced an L-value whose deepest else-branch was
+  a struct constant, which symex's L2 renamer can't write to. Replace
+  with a manual chained-if read (no KeyError check) plus an
+  iterator-based store with append-on-missing-key, mirroring
+  defaultdict's auto-insert. Resolves `github_3841_{2,6,7,8}`. The 4
+  tests now produce verdicts (FAILED rather than SUCCESSFUL because
+  `d: dict = defaultdict(int)` falls back to a nondet dict — that's a
+  separate semantic gap to address).
+
+The CBMC-on-ESBMC python regression suite is now CRASH-free and
+TOERR-free. Remaining gaps are pure DIFF / UNKNOWN — verdicts that
+CBMC produces but that disagree with the test's expected output (or
+with no expected output at all). Those are tractable on a
+case-by-case basis and don't risk aborting the verifier.
+
