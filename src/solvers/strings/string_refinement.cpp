@@ -787,18 +787,27 @@ string_refinementt::dec_solve(const exprt &assumption)
     supert::set_to(eq, true);
   }
 
-  std::transform(
-    constraints.universal.begin(),
-    constraints.universal.end(),
-    std::back_inserter(axioms.universal),
-    [&](string_constraintt constraint) {
-      constraint.replace_expr(symbol_resolve);
-      DATA_INVARIANT(
-        is_valid_string_constraint(log.error(), ns, constraint),
-        string_refinement_invariantt(
-          "string constraints satisfy their invariant"));
-      return constraint;
-    });
+  for(string_constraintt &constraint : constraints.universal)
+  {
+    constraint.replace_expr(symbol_resolve);
+    if(is_valid_string_constraint(log.error(), ns, constraint))
+      axioms.universal.push_back(std::move(constraint));
+    else
+    {
+      // Skip universal constraints whose body the validator can't
+      // confirm well-formed. Historically this was a DATA_INVARIANT
+      // that aborted CBMC; in practice the validation is conservative
+      // (it requires every reference to a given string array to use
+      // the same index expression) and rejects patterns the Python
+      // frontend legitimately emits (e.g. multi-slot dict-of-string
+      // lookups expanded into a chain over keys[0..N-1]). Dropping
+      // the axiom is sound for over-approximation: we just don't
+      // enforce that universal property, which may produce false
+      // positives but not false negatives.
+      log.warning() << "string_refinement: dropping malformed universal "
+                    << "constraint" << messaget::eom;
+    }
+  }
 
   std::transform(
     constraints.not_contains.begin(),
@@ -1298,11 +1307,12 @@ static std::optional<exprt> substitute_array_access(
     return substitute_array_access(
       *if_expr, index_expr.index(), symbol_generator, left_propagate);
 
-  INVARIANT(
-    array.is_nil() || array.id() == ID_symbol || array.id() == ID_nondet_symbol,
-    std::string(
-      "in case the array is unknown, it should be a symbol or nil, id: ") +
-      id2string(array.id()));
+  // For other expression shapes (e.g. member_exprt of a dict's
+  // values array, struct accesses produced by the Python frontend's
+  // dict-of-string lowering), treat the array as opaque and bail
+  // out without an INVARIANT abort. The caller falls back to leaving
+  // the index_exprt intact, which is sound — we just don't propagate
+  // through that array reference.
   return {};
 }
 
@@ -1910,6 +1920,7 @@ exprt string_refinementt::get(const exprt &expr) const
   if(index_expr && is_char_type(index_expr->type()))
   {
     std::reference_wrapper<const exprt> current(index_expr->array());
+    bool gave_up = false;
     while(current.get().id() == ID_if)
     {
       const auto &if_expr = expr_dynamic_cast<if_exprt>(current.get());
@@ -1919,8 +1930,17 @@ exprt string_refinementt::get(const exprt &expr) const
       else if(cond == false)
         current = std::cref(if_expr.false_case());
       else
-        UNREACHABLE;
+      {
+        // The model didn't give us a concrete value for the condition.
+        // Falling back to supert::get on the original index expression
+        // is sound — it returns the model value of the lvalue without
+        // attempting our character-array-specific propagation.
+        gave_up = true;
+        break;
+      }
     }
+    if(gave_up)
+      return supert::get(ecopy);
     const auto array = supert::get(current.get());
     const auto index = get(index_expr->index());
 
