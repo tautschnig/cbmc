@@ -17,6 +17,7 @@
 #include <util/std_types.h>
 #include <util/symbol.h>
 
+#include "python_complex_parser.h"
 #include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
@@ -57,19 +58,20 @@ exprt python_convertert::convert_constant(const jsont &expr)
       ieee_floatt ieee_val{
         ieee_float_spect::double_precision(),
         ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      // Bare std::stod throws on unparseable inputs (and would abort the
-      // frontend with an uncaught std::invalid_argument). Treat
-      // unparseable float literals as a nondet floating-point value so
-      // verification can continue in a sound over-approximation.
-      try
-      {
-        ieee_val.from_double(std::stod(val_str));
-      }
-      catch(const std::exception &)
-      {
+      // strtod is exception-free, reports parse position via endptr,
+      // and signals overflow via errno (returning ±HUGE_VAL, which is
+      // the right representation for an overflowed float literal).
+      // The AST gives us a well-formed float literal here, so the
+      // unconsumed-input branch is mostly defensive — but it does
+      // catch e.g. AST values like "1e10000garbage" cleanly rather
+      // than aborting with std::invalid_argument as std::stod would.
+      errno = 0;
+      char *endp = nullptr;
+      const double v = std::strtod(val_str.c_str(), &endp);
+      if(endp != val_str.c_str() + val_str.size())
         return side_effect_expr_nondett{
           ieee_val.to_expr().type(), source_locationt{}};
-      }
+      ieee_val.from_double(v);
       return ieee_val.to_expr();
     }
     else
@@ -147,95 +149,40 @@ exprt python_convertert::convert_constant(const jsont &expr)
         lt};
     }
 
-    // Detect complex number literals (e.g., "2j", "(1+2j)")
-    // Helper: parse a possibly-signed numeric prefix using std::stod,
-    // matching Python's complex() coefficient rules:
-    //   "" or "+"  -> +1.0
-    //   "-"        -> -1.0
-    //   anything else: try std::stod; on failure, fall through to the
-    //   string-literal path so we don't abort the frontend with an
-    //   uncaught std::invalid_argument.
-    auto parse_coefficient = [](const std::string &s) -> std::optional<double>
+    // Detect Python complex-literal strings (e.g. "2j", "(1+2j)",
+    // "1e3+2e-1j") and fold them into a python_complex struct
+    // expression. We only attempt the fold for strings that
+    // syntactically look like complex literals — ending in 'j' / 'J',
+    // or wrapped in parentheses — to preserve the previous behaviour
+    // of leaving plain strings (e.g. "hello", "42") as strings.
+    //
+    // The parser is exception-free: malformed inputs are returned as
+    // std::nullopt, which falls through to the plain string-literal
+    // path. Unlike the earlier std::stod-based code, no input
+    // (including "+j", "-j", "++1j") can escape as an uncaught C++
+    // exception. See python_complex_parser.h for the grammar.
+    const bool ends_j =
+      !str_val.empty() && (str_val.back() == 'j' || str_val.back() == 'J');
+    const bool parenthesised =
+      str_val.size() >= 2 && str_val.front() == '(' && str_val.back() == ')';
+    if(ends_j || parenthesised)
     {
-      if(s.empty() || s == "+")
-        return 1.0;
-      if(s == "-")
-        return -1.0;
-      try
+      if(auto cv = parse_python_complex_string(str_val); cv.has_value())
       {
-        return std::stod(s);
-      }
-      catch(const std::exception &)
-      {
-        return std::nullopt;
-      }
-    };
-
-    if(!str_val.empty() && str_val.back() == 'j')
-    {
-      // Parse imaginary part: "2j" → imag=2.0, real=0.0
-      std::string imag_str = str_val.substr(0, str_val.size() - 1);
-      auto imag_opt = parse_coefficient(imag_str);
-      if(!imag_opt.has_value())
-        return python_string_literal(str_val);
-      double imag_val = imag_opt.value();
-      ieee_floatt real_f{
-        ieee_float_spect::double_precision(),
-        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      real_f.from_double(0.0);
-      ieee_floatt imag_f{
-        ieee_float_spect::double_precision(),
-        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      imag_f.from_double(imag_val);
-      struct_typet::componentst comps;
-      comps.push_back(struct_typet::componentt{"real", double_type()});
-      comps.push_back(struct_typet::componentt{"imag", double_type()});
-      struct_typet ct{comps};
-      ct.set_tag("python_complex");
-      return struct_exprt{{real_f.to_expr(), imag_f.to_expr()}, ct};
-    }
-    if(str_val.size() >= 4 && str_val.front() == '(' && str_val.back() == ')')
-    {
-      // "(1+2j)" format — parse as complex
-      std::string inner = str_val.substr(1, str_val.size() - 2);
-      if(!inner.empty() && inner.back() == 'j')
-      {
-        inner.pop_back(); // remove 'j'
-        double real_val = 0.0, imag_val = 0.0;
-        // Find the last + or - that separates real and imag
-        size_t sep = inner.rfind('+');
-        if(sep == std::string::npos || sep == 0)
-          sep = inner.rfind('-');
-        if(sep != std::string::npos && sep > 0)
-        {
-          auto r_opt = parse_coefficient(inner.substr(0, sep));
-          auto i_opt = parse_coefficient(inner.substr(sep));
-          if(!r_opt.has_value() || !i_opt.has_value())
-            return python_string_literal(str_val);
-          real_val = r_opt.value();
-          imag_val = i_opt.value();
-        }
-        else
-        {
-          auto i_opt = parse_coefficient(inner);
-          if(!i_opt.has_value())
-            return python_string_literal(str_val);
-          imag_val = i_opt.value();
-        }
-        ieee_floatt rf{
+        ieee_floatt real_f{
           ieee_float_spect::double_precision(),
           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        rf.from_double(real_val);
-        ieee_floatt imf{
+        real_f.from_double(cv->first);
+        ieee_floatt imag_f{
           ieee_float_spect::double_precision(),
           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        imf.from_double(imag_val);
+        imag_f.from_double(cv->second);
         struct_typet::componentst comps;
         comps.push_back(struct_typet::componentt{"real", double_type()});
         comps.push_back(struct_typet::componentt{"imag", double_type()});
         struct_typet ct{comps};
         ct.set_tag("python_complex");
-        return struct_exprt{{rf.to_expr(), imf.to_expr()}, ct};
+        return struct_exprt{{real_f.to_expr(), imag_f.to_expr()}, ct};
       }
     }
 

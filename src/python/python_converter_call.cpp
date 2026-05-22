@@ -34,8 +34,10 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iomanip>
@@ -4110,17 +4112,23 @@ exprt python_convertert::convert_call(const jsont &expr)
           auto sv = extract_string_value(arg);
           if(sv.has_value())
           {
-            try
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            // strtod is exception-free; std::stod throws on
+            // out-of-range denormals like "1e-308" (libstdc++ quirk)
+            // and on unparseable inputs.
+            errno = 0;
+            char *endp = nullptr;
+            const double v = std::strtod(sv->c_str(), &endp);
+            if(endp == sv->c_str() + sv->size())
             {
-              ieee_floatt fv{
-                ieee_float_spect::double_precision(),
-                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-              fv.from_double(std::stod(sv.value()));
+              fv.from_double(v);
               return fv.to_expr();
             }
-            catch(...)
-            {
-            }
+            // Fall through to the nondet path below for malformed
+            // input — Python's float() would raise ValueError, but
+            // detecting that statically is the caller's job.
           }
         }
         // float(<python_value>) — extract the tagged-union's
@@ -5771,9 +5779,21 @@ exprt python_convertert::convert_call(const jsont &expr)
                 ieee_float_spect::double_precision(),
                 ieee_floatt::rounding_modet::ROUND_TO_EVEN};
               iv.from_expr(to_constant_expr(im));
-              double rd = std::stod(rv.to_ansi_c_string());
-              double id = std::stod(iv.to_ansi_c_string());
-              return double_to_floatbv(std::sqrt(rd * rd + id * id));
+              // Round-trip via strtod (exception-free). std::stod
+              // throws for out-of-range denormals and would unwind
+              // out of the frontend.
+              const std::string rs = rv.to_ansi_c_string();
+              const std::string is = iv.to_ansi_c_string();
+              errno = 0;
+              char *re_endp = nullptr;
+              const double rd = std::strtod(rs.c_str(), &re_endp);
+              char *im_endp = nullptr;
+              const double id = std::strtod(is.c_str(), &im_endp);
+              if(
+                re_endp == rs.c_str() + rs.size() &&
+                im_endp == is.c_str() + is.size())
+                return double_to_floatbv(std::sqrt(rd * rd + id * id));
+              // Round-trip failed; fall through to the nondet path.
             }
           }
           // Variable complex: sqrt(real² + imag²)
