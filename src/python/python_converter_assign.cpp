@@ -302,6 +302,13 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       list_literals.erase(symbol_id);
   }
+  if(is_python_tuple_type(rhs.type()))
+  {
+    if(rhs.id() == ID_struct)
+      tuple_literals[symbol_id] = rhs;
+    else
+      tuple_literals.erase(symbol_id);
+  }
   // Track numeric constants (including expressions)
   {
     auto ev = try_eval_double(rhs);
@@ -1651,6 +1658,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
         list_literals[sym.name] = typed_rhs;
       else
         list_literals.erase(sym.name);
+    }
+    if(is_python_tuple_type(typed_rhs.type()))
+    {
+      if(typed_rhs.id() == ID_struct)
+        tuple_literals[sym.name] = typed_rhs;
+      else
+        tuple_literals.erase(sym.name);
     }
     {
       auto ev = try_eval_double(typed_rhs);
