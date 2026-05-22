@@ -53,3 +53,37 @@ void rcu_read_unlock(void) __CPROVER_requires(__rcu_csection_depth > 0u)
 
 void synchronize_rcu(void) __CPROVER_requires(__rcu_csection_depth == 0u)
   __CPROVER_assigns();
+
+// =====================================================================
+// Per-thread / per-CPU variants for the concurrent harness.  Each
+// labelled function targets a distinct ghost depth counter so the
+// harness can model two RCU readers on different CPUs separately.
+// This catches the cross-thread unbalanced unlock bug class that
+// the single-counter model conflated.
+//
+// `synchronize_rcu_per_cpu` requires BOTH per-thread depths are
+// zero (no reader is currently in a critical section on either
+// CPU); CBMC's concurrent symex finds interleavings where one
+// thread enters its section while the writer thread runs
+// synchronize_rcu_per_cpu.
+
+extern unsigned int __rcu_depth_t1;
+extern unsigned int __rcu_depth_t2;
+
+void rcu_read_lock_t1(void) __CPROVER_assigns(__rcu_depth_t1)
+  __CPROVER_ensures(__rcu_depth_t1 == __CPROVER_old(__rcu_depth_t1) + 1u);
+
+void rcu_read_unlock_t1(void) __CPROVER_requires(__rcu_depth_t1 > 0u)
+  __CPROVER_assigns(__rcu_depth_t1)
+    __CPROVER_ensures(__rcu_depth_t1 == __CPROVER_old(__rcu_depth_t1) - 1u);
+
+void rcu_read_lock_t2(void) __CPROVER_assigns(__rcu_depth_t2)
+  __CPROVER_ensures(__rcu_depth_t2 == __CPROVER_old(__rcu_depth_t2) + 1u);
+
+void rcu_read_unlock_t2(void) __CPROVER_requires(__rcu_depth_t2 > 0u)
+  __CPROVER_assigns(__rcu_depth_t2)
+    __CPROVER_ensures(__rcu_depth_t2 == __CPROVER_old(__rcu_depth_t2) - 1u);
+
+void synchronize_rcu_per_cpu(void)
+  __CPROVER_requires(__rcu_depth_t1 == 0u && __rcu_depth_t2 == 0u)
+    __CPROVER_assigns();

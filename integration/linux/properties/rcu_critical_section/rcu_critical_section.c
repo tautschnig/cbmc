@@ -5,6 +5,8 @@
 #include "rcu_critical_section.h"
 
 unsigned int __rcu_csection_depth = 0;
+unsigned int __rcu_depth_t1 = 0;
+unsigned int __rcu_depth_t2 = 0;
 
 void rcu_csection_enter(void)
 {
@@ -30,4 +32,9 @@ int rcu_in_csection(void)
 int rcu_outside_csection(void)
 {
   return __rcu_csection_depth == 0 ? 1 : 0;
+}
+
+int rcu_any_thread_in_csection(void)
+{
+  return (__rcu_depth_t1 > 0u || __rcu_depth_t2 > 0u) ? 1 : 0;
 }

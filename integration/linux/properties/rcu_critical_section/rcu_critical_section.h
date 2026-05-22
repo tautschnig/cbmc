@@ -30,9 +30,18 @@
 /// A single integer ghost `__rcu_csection_depth` counts
 /// concurrently-open RCU critical sections in the current
 /// thread.  CBMC's per-thread serial execution makes this a
-/// faithful model for non-concurrent reasoning; concurrency
-/// support adds per-CPU complexity that's deferred to a future
-/// iteration.
+/// faithful model for non-concurrent reasoning.
+///
+/// **Per-CPU extension** (post-Phase-3 follow-up): we also
+/// expose per-thread depth ghosts `__rcu_depth_t1` and
+/// `__rcu_depth_t2` and contract variants
+/// `rcu_read_lock_t1` / `rcu_read_unlock_t1` / `_t2`.  These
+/// let a concurrent harness model two RCU readers separately
+/// and exercise the **cross-thread unbalanced unlock** bug
+/// class — thread B calling `rcu_read_unlock` when thread A
+/// is the one that holds a section.  The single-counter
+/// model couldn't catch this because A's enter raised the
+/// global counter for B to subsequently decrement.
 
 #ifndef INTEGRATION_LINUX_PROPERTIES_RCU_CRITICAL_SECTION_H
 #define INTEGRATION_LINUX_PROPERTIES_RCU_CRITICAL_SECTION_H
@@ -41,6 +50,12 @@
 // open right now.  Defined in rcu_critical_section.c; declared
 // here so the kernel adapter's contracts can reference it.
 extern unsigned int __rcu_csection_depth;
+
+// Per-thread depth ghosts for the per-CPU concurrent variant.
+// Each models one CPU's RCU read-side depth.  The harness
+// assigns one thread to t1 and another to t2.
+extern unsigned int __rcu_depth_t1;
+extern unsigned int __rcu_depth_t2;
 
 // Helpers for the unit test and the direct-call harness.  The
 // kernel adapter doesn't use these — it manipulates
@@ -53,5 +68,8 @@ unsigned int rcu_csection_depth(void);
 // Predicates for use in `__CPROVER_requires` clauses.
 int rcu_in_csection(void);
 int rcu_outside_csection(void);
+
+// Per-thread predicates: any thread is in a critical section.
+int rcu_any_thread_in_csection(void);
 
 #endif
