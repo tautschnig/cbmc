@@ -864,7 +864,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               else
                 parts.push_back(s);
 
-              struct_typet str_type = python_string_struct_def();
+              typet str_type = python_string_type();
               typet list_type = python_list_type(python_string_type());
               const auto &data_type =
                 to_array_type(to_struct_type(list_type).components()[1].type());
@@ -935,7 +935,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                   parts.push_back(current);
 
                   // Build list of string structs
-                  struct_typet str_type = python_string_struct_def();
+                  typet str_type = python_string_type();
                   const auto &data_type = array_typet(
                     unsignedbv_typet{8},
                     from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
@@ -4644,7 +4644,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         "value-error",
         "chr() arg not in range(0x110000)",
         get_location(expr));
-      struct_typet str_type = python_string_struct_def();
+      typet str_type = python_string_type();
       const auto &data_type = array_typet(
         unsignedbv_typet{8},
         from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
