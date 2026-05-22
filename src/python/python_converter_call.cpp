@@ -2774,6 +2774,37 @@ exprt python_convertert::convert_call(const jsont &expr)
           else
             pop_idx = minus_exprt{length, from_integer(1, signedbv_typet{64})};
 
+          // PLR list.pop: raises IndexError when the list is empty
+          // (default pop() with length == 0) or when the supplied
+          // index is out of range. Python also accepts negative
+          // indices that wrap from the end (-1 == last); the valid
+          // range after wrapping is [-length, length).
+          {
+            exprt zero64 = from_integer(0, signedbv_typet{64});
+            // If pop_idx is non-negative: pop_idx < length.
+            // If pop_idx is negative: pop_idx >= -length, i.e.
+            //   pop_idx + length >= 0.
+            exprt nonneg_ok = and_exprt{
+              binary_relation_exprt{pop_idx, ID_ge, zero64},
+              binary_relation_exprt{pop_idx, ID_lt, length}};
+            exprt neg_ok = and_exprt{
+              binary_relation_exprt{pop_idx, ID_lt, zero64},
+              binary_relation_exprt{
+                plus_exprt{pop_idx, length}, ID_ge, zero64}};
+            add_check(
+              or_exprt{nonneg_ok, neg_ok},
+              "exception",
+              "IndexError: pop index out of range",
+              get_location(expr));
+          }
+
+          // Normalise negative index for the actual extraction.
+          exprt zero64 = from_integer(0, signedbv_typet{64});
+          pop_idx = if_exprt{
+            binary_relation_exprt{pop_idx, ID_lt, zero64},
+            plus_exprt{pop_idx, length},
+            pop_idx};
+
           static unsigned pop_counter = 0;
           std::string tmp_name = "__pop_tmp_" + std::to_string(pop_counter++);
           std::string tmp_qname = qualify_name(tmp_name);
@@ -4321,14 +4352,38 @@ exprt python_convertert::convert_call(const jsont &expr)
           auto sv = extract_string_value(arg);
           if(sv.has_value())
           {
-            try
-            {
-              long long val = std::stoll(sv.value());
+            // Use strtoll for exception-free parsing with full
+            // consumption check. PLR int(s) raises ValueError on
+            // any string that can't be parsed as a base-10 int
+            // (after stripping leading/trailing whitespace);
+            // surface that as a property check when the input is
+            // statically a non-numeric literal.
+            std::string trimmed = sv.value();
+            // Strip ASCII whitespace from both ends per CPython.
+            std::size_t a = 0;
+            while(a < trimmed.size() &&
+                  std::isspace(static_cast<unsigned char>(trimmed[a])))
+              a++;
+            std::size_t b = trimmed.size();
+            while(b > a &&
+                  std::isspace(static_cast<unsigned char>(trimmed[b - 1])))
+              b--;
+            std::string body = trimmed.substr(a, b - a);
+            errno = 0;
+            char *endp = nullptr;
+            long long val = std::strtoll(body.c_str(), &endp, 10);
+            if(!body.empty() && endp == body.c_str() + body.size())
               return from_integer(val, python_int_type());
-            }
-            catch(...)
-            {
-            }
+            // Constant string that can't be parsed: surface a
+            // ValueError. This must precede the symbolic fallback
+            // below so the property check is emitted.
+            add_check(
+              false_exprt{},
+              "exception",
+              "ValueError: invalid literal for int() with base 10",
+              get_location(expr));
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
           }
           // Symbolic string: emit cprover_string_parse_int_func
           // so the solver knows the int's relationship to the
@@ -6155,6 +6210,20 @@ exprt python_convertert::convert_call(const jsont &expr)
           const auto &lt = to_struct_type(arg.type());
           typet elem_type =
             to_array_type(lt.components()[1].type()).element_type();
+          // PLR builtins: min()/max() on an empty sequence raises
+          // ValueError. The check uses the list's runtime length
+          // member, so it works for both literal-empty lists like
+          // \`max([])\` and runtime-empty lists.
+          {
+            member_exprt list_length{arg, "length", signedbv_typet{64}};
+            add_check(
+              binary_relation_exprt{
+                list_length, ID_gt, from_integer(0, signedbv_typet{64})},
+              "exception",
+              std::string{"ValueError: "} + func_name +
+                "() arg is an empty sequence",
+              get_location(expr));
+          }
           // Constant-list fast path (numeric or value-tagged).
           const exprt *list_val = nullptr;
           if(arg.id() == ID_struct)
