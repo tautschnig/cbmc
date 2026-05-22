@@ -509,6 +509,129 @@ void java_object_factoryt::gen_nondet_pointer_init(
     return;
   }
 
+  // §5.3 sealed field allocation. If `pointer_type`'s base type
+  // is a sealed class/interface with a non-empty
+  // ID_permitted_subclasses list, allocate one of the permitted
+  // concrete subtypes' full struct via a runtime nondet-switch,
+  // rather than allocating the abstract sealed-class struct and
+  // only constraining @class_identifier. The latter is enough
+  // for sealed-pattern-match dispatch (the typeSwitch reads
+  // @class_identifier) but breaks when downstream code casts
+  // the value to a permit subtype and reads a permit-specific
+  // field — the abstract struct doesn't carry that field, so
+  // JBMC's bad-dynamic-cast check fails.
+  //
+  // This complements the entry-point sealed-init mechanism in
+  // java_entry_point.cpp (which uses
+  // select_pointer_typet::get_parameter_alternative_types). The
+  // entry-point path covers top-level method parameters; this
+  // path covers fields whose static type is sealed (e.g. a
+  // record field `Inner inner` where `Inner` is sealed).
+  //
+  // The recursion-set/depth check below this block still gates
+  // the recursive allocation of each permit subtype, so deeply
+  // recursive sealed types fall back to null at the depth
+  // limit.
+  if(update_in_place == update_in_placet::NO_UPDATE_IN_PLACE)
+  {
+    const struct_tag_typet &tag_type =
+      to_struct_tag_type(pointer_type.base_type());
+    const symbolt *class_symbol =
+      symbol_table.lookup(tag_type.get_identifier());
+    if(class_symbol != nullptr)
+    {
+      const irep_idt permits_str =
+        class_symbol->type.get(ID_permitted_subclasses);
+      if(!permits_str.empty())
+      {
+        // Decode the comma-separated permit names.
+        std::vector<irep_idt> permits;
+        const std::string joined = id2string(permits_str);
+        std::string current;
+        for(char c : joined)
+        {
+          if(c == ',')
+          {
+            if(!current.empty())
+              permits.push_back("java::" + current);
+            current.clear();
+          }
+          else
+          {
+            current.push_back(c);
+          }
+        }
+        if(!current.empty())
+          permits.push_back("java::" + current);
+
+        // Filter to permits whose class symbol is loaded.
+        std::vector<irep_idt> resolved_permits;
+        for(const auto &p : permits)
+        {
+          if(symbol_table.lookup(p) != nullptr)
+            resolved_permits.push_back(p);
+        }
+
+        if(!resolved_permits.empty())
+        {
+          // Recursion-set / depth tracking: track the sealed tag
+          // so recursive sealed-typed fields fall back to null
+          // at the depth limit. We use a recursion_set_entryt
+          // tied to this scope; if we bail out, the destructor
+          // removes the entry.
+          recursion_set_entryt sealed_recursion_entry(recursion_set);
+          const struct_typet &struct_type = ns.follow_tag(tag_type);
+          const irep_idt &struct_tag = struct_type.get_tag();
+          if(
+            !sealed_recursion_entry.insert_entry(struct_tag) &&
+            depth >= object_factory_parameters.max_nondet_tree_depth)
+          {
+            assignments.add(code_frontend_assignt{
+              expr, null_pointer_exprt{pointer_type}, location});
+            return;
+          }
+
+          // Build one switch case per permit: allocate that
+          // permit's full struct, cast back to the sealed
+          // pointer type, and assign to expr.
+          alternate_casest cases;
+          for(const auto &permit_id : resolved_permits)
+          {
+            code_blockt case_code;
+            const pointer_typet permit_ptr =
+              java_reference_type(struct_tag_typet(permit_id));
+            const symbol_exprt new_obj = gen_nondet_subtype_pointer_init(
+              case_code, lifetime, permit_ptr, depth, location);
+            case_code.add(code_frontend_assignt(
+              expr, typecast_exprt(new_obj, pointer_type)));
+            cases.push_back(case_code);
+          }
+
+          // Optional null branch, mirroring the standard
+          // gen_nondet_pointer_init's allow_null logic.
+          const bool allow_null =
+            depth > object_factory_parameters.min_null_tree_depth;
+          if(allow_null)
+          {
+            code_blockt null_case;
+            null_case.add(code_frontend_assignt{
+              expr, null_pointer_exprt{pointer_type}, location});
+            cases.push_back(null_case);
+          }
+
+          assignments.add(generate_nondet_switch(
+            id2string(object_factory_parameters.function_id) + "_sealed_field",
+            cases,
+            java_int_type(),
+            ID_java,
+            location,
+            symbol_table));
+          return;
+        }
+      }
+    }
+  }
+
   // This deletes the recursion set entry on leaving this function scope,
   // if one is set below.
   recursion_set_entryt recursion_set_entry(recursion_set);
