@@ -6205,7 +6205,7 @@ exprt python_convertert::convert_call(const jsont &expr)
       if(as_array(args).size() == 1)
       {
         exprt arg = convert_expression(*as_array(args).begin());
-        // Tuple-argument form: walk the struct's components in
+        // Tuple-argument form: walk the struct.s components in
         // order. PLR §6.10.2 treats tuples and lists uniformly
         // for min()/max().
         if(!arg.is_nil() && is_python_tuple_type(arg.type()))
@@ -6223,12 +6223,25 @@ exprt python_convertert::convert_call(const jsont &expr)
             return side_effect_expr_nondett{
               python_int_type(), get_location(expr)};
           }
+          // Resolve a symbol-bound tuple to its tracked literal so
+          // the constant-fold path fires for `t = (...); min(t)`.
+          const exprt *tuple_val = nullptr;
+          if(arg.id() == ID_struct)
+            tuple_val = &arg;
+          else if(arg.id() == ID_symbol)
+          {
+            auto it =
+              tuple_literals.find(to_symbol_expr(arg).get_identifier());
+            if(it != tuple_literals.end())
+              tuple_val = &it->second;
+          }
           // Constant tuple fast path: walk the operands.
-          if(arg.id() == ID_struct &&
-             arg.operands().size() == tuple_st.components().size())
+          if(
+            tuple_val != nullptr && tuple_val->id() == ID_struct &&
+            tuple_val->operands().size() == tuple_st.components().size())
           {
             std::vector<exprt> elems;
-            for(const auto &op : arg.operands())
+            for(const auto &op : tuple_val->operands())
               elems.push_back(op);
             bool all_num = !elems.empty() &&
                            std::all_of(elems.begin(), elems.end(),

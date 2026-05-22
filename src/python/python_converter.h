@@ -336,6 +336,12 @@ private:
   /// the caller's receiving variable can trust those keys.
   std::map<std::string, std::set<std::string>> function_returned_dict_keys;
   std::map<irep_idt, exprt> list_literals; // track list literal values
+  /// Track tuple literal values keyed by symbol identifier. Same
+  /// purpose as list_literals: lets the constant-fold path in
+  /// convert_call resolve `min(t)`/`max(t)`/etc. when `t` was
+  /// assigned an inline tuple. Populated from convert_assign on
+  /// any `name = (...)` whose RHS is a python_tuple struct_exprt.
+  std::map<irep_idt, exprt> tuple_literals;
   std::map<irep_idt, double> float_constants; // track float/int constant values
   std::optional<std::string> extract_string_value(const exprt &e) const;
 
