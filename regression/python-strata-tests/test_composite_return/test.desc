@@ -1,0 +1,6 @@
+CORE
+test_composite_return.py
+--unwind 5 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+^EXIT=(0|10)$
+^SIGNAL=0$

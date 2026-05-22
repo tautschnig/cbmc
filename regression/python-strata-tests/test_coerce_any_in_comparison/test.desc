@@ -1,0 +1,6 @@
+CORE
+test_coerce_any_in_comparison.py
+--unwind 5 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$
+^EXIT=(0|10)$
+^SIGNAL=0$

@@ -1,0 +1,6 @@
+CORE
+test_soundness_list_mutation_via_func.py
+--unwind 5 --no-unwinding-assertions
+^VERIFICATION FAILED$
+^EXIT=(0|10)$
+^SIGNAL=0$

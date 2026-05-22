@@ -1,0 +1,5 @@
+KNOWNBUG
+test_regex_positive.py
+--unwind 5 --no-unwinding-assertions
+^EXIT=10$
+^SIGNAL=0$
