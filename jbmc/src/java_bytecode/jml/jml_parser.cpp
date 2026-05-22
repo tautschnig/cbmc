@@ -569,6 +569,68 @@ exprt jml_parser_statet::primary()
     return result;
   }
 
+  case jml_token_kindt::JML_SUM:
+  case jml_token_kindt::JML_PRODUCT:
+  case jml_token_kindt::JML_MIN:
+  case jml_token_kindt::JML_MAX:
+  case jml_token_kindt::JML_NUM_OF:
+  {
+    // \sum/\product/\min/\max/\num_of type var; range; body
+    const auto kind = peek();
+    advance();
+    typet var_type = parse_type();
+    if(has_error_)
+      return nil_exprt();
+    if(peek() != jml_token_kindt::IDENTIFIER)
+    {
+      error("expected variable name in aggregate expression");
+      return nil_exprt();
+    }
+    const std::string var_name = current().text;
+    advance();
+    if(!expect(jml_token_kindt::SEMICOLON, "';'"))
+      return nil_exprt();
+    exprt range = expr();
+    if(has_error_)
+      return nil_exprt();
+    if(!expect(jml_token_kindt::SEMICOLON, "';'"))
+      return nil_exprt();
+    exprt body = expr();
+    if(has_error_)
+      return nil_exprt();
+
+    // Determine the aggregate operation ID
+    irep_idt op_id;
+    switch(kind)
+    {
+    case jml_token_kindt::JML_SUM:
+      op_id = "jml_sum";
+      break;
+    case jml_token_kindt::JML_PRODUCT:
+      op_id = "jml_product";
+      break;
+    case jml_token_kindt::JML_MIN:
+      op_id = "jml_min";
+      break;
+    case jml_token_kindt::JML_MAX:
+      op_id = "jml_max";
+      break;
+    case jml_token_kindt::JML_NUM_OF:
+      op_id = "jml_num_of";
+      break;
+    default:
+      op_id = "jml_aggregate";
+    }
+
+    exprt result(op_id);
+    result.set("variable", var_name);
+    result.type() = var_type;
+    result.operands().push_back(symbol_exprt(var_name, var_type));
+    result.operands().push_back(range);
+    result.operands().push_back(body);
+    return result;
+  }
+
   case jml_token_kindt::JML_NOTHING:
     advance();
     return exprt("jml_nothing");
@@ -824,9 +886,11 @@ jml_clauset jml_parse_clause(
     result.kind = jml_clauset::kindt::ASSIGNABLE;
   else if(strip_prefix("signals"))
     result.kind = jml_clauset::kindt::SIGNALS;
-  else if(strip_prefix("invariant") || strip_prefix("maintaining"))
+  else if(strip_prefix("invariant") || strip_prefix("maintaining") ||
+          strip_prefix("loop_invariant"))
     result.kind = jml_clauset::kindt::INVARIANT;
-  else if(strip_prefix("decreases") || strip_prefix("decreasing"))
+  else if(strip_prefix("decreases") || strip_prefix("decreasing") ||
+          strip_prefix("loop_variant"))
     result.kind = jml_clauset::kindt::DECREASES;
   else if(text == "pure")
   {

@@ -38,6 +38,12 @@ enum class jml_token_kindt
   JML_NONNULLELEMENTS, // \nonnullelements
   JML_NOTHING,       // \nothing
   JML_EVERYTHING,    // \everything
+  JML_SUM,           // \sum
+  JML_PRODUCT,       // \product
+  JML_MIN,           // \min
+  JML_MAX,           // \max
+  JML_NUM_OF,        // \num_of
+  JML_INTO,          // \into (for \sum, \product ranges)
 
   // Operators
   PLUS,              // +

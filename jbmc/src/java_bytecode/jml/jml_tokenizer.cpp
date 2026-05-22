@@ -41,6 +41,11 @@ static const std::unordered_map<std::string, jml_token_kindt> jml_keywords = {
   {"\\nonnullelements", jml_token_kindt::JML_NONNULLELEMENTS},
   {"\\nothing", jml_token_kindt::JML_NOTHING},
   {"\\everything", jml_token_kindt::JML_EVERYTHING},
+  {"\\sum", jml_token_kindt::JML_SUM},
+  {"\\product", jml_token_kindt::JML_PRODUCT},
+  {"\\min", jml_token_kindt::JML_MIN},
+  {"\\max", jml_token_kindt::JML_MAX},
+  {"\\num_of", jml_token_kindt::JML_NUM_OF},
 };
 
 std::vector<jml_tokent> jml_tokenize(const std::string &input)

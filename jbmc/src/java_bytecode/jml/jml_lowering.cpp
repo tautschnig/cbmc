@@ -8,6 +8,7 @@ Author: Kiro (AI agent)
 
 #include "jml_lowering.h"
 
+#include <util/arith_tools.h>
 #include <util/c_types.h>
 #include <util/cprover_prefix.h>
 #include <util/fresh_symbol.h>
@@ -121,6 +122,8 @@ std::set<irep_idt> lower_jml_contracts(
     exprt::operandst requires_exprs;
     exprt::operandst ensures_exprs;
     exprt::operandst assigns_exprs;
+    exprt::operandst invariant_exprs;
+    exprt::operandst decreases_exprs;
 
     for(const auto &clause : spec.clauses)
     {
@@ -140,6 +143,12 @@ std::set<irep_idt> lower_jml_contracts(
         break;
       case jml_clauset::kindt::ASSIGNABLE:
         assigns_exprs.push_back(resolved);
+        break;
+      case jml_clauset::kindt::INVARIANT:
+        invariant_exprs.push_back(resolved);
+        break;
+      case jml_clauset::kindt::DECREASES:
+        decreases_exprs.push_back(resolved);
         break;
       default:
         break;
@@ -175,6 +184,77 @@ std::set<irep_idt> lower_jml_contracts(
           loc.set_property_class("postcondition");
           body.insert_before(
             it, goto_programt::make_assertion(ens, loc));
+        }
+      }
+    }
+
+    // Emit loop invariants at loop heads (back-edge targets).
+    // A loop head is any instruction that is the target of a
+    // backward GOTO (i.e., a GOTO whose target has a lower
+    // location number than the GOTO itself).
+    if(!invariant_exprs.empty())
+    {
+      // Find loop heads
+      std::vector<goto_programt::targett> loop_heads;
+      for(auto it = body.instructions.begin();
+          it != body.instructions.end();
+          ++it)
+      {
+        if(it->is_goto())
+        {
+          for(const auto &target : it->targets)
+          {
+            if(target->location_number <= it->location_number)
+              loop_heads.push_back(target);
+          }
+        }
+      }
+
+      // Insert invariant assertions at each loop head
+      for(auto head : loop_heads)
+      {
+        for(const auto &inv : invariant_exprs)
+        {
+          source_locationt loc = head->source_location();
+          loc.set_comment("JML loop invariant");
+          loc.set_property_class("loop-invariant");
+          body.insert_before(
+            head, goto_programt::make_assertion(inv, loc));
+        }
+      }
+    }
+
+    // Emit decreases (variant function) checks at loop heads.
+    // For each loop head, assert that the variant is non-negative
+    // (termination argument).
+    if(!decreases_exprs.empty())
+    {
+      std::vector<goto_programt::targett> loop_heads;
+      for(auto it = body.instructions.begin();
+          it != body.instructions.end();
+          ++it)
+      {
+        if(it->is_goto())
+        {
+          for(const auto &target : it->targets)
+          {
+            if(target->location_number <= it->location_number)
+              loop_heads.push_back(target);
+          }
+        }
+      }
+
+      for(auto head : loop_heads)
+      {
+        for(const auto &dec : decreases_exprs)
+        {
+          source_locationt loc = head->source_location();
+          loc.set_comment("JML decreases (non-negative)");
+          loc.set_property_class("loop-variant");
+          exprt non_neg = binary_relation_exprt(
+            dec, ID_ge, from_integer(0, dec.type()));
+          body.insert_before(
+            head, goto_programt::make_assertion(non_neg, loc));
         }
       }
     }
