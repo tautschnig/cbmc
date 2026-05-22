@@ -918,6 +918,100 @@ void java_object_factoryt::gen_nondet_struct_init(
       code_function_callt{cprover_nondet_initialize_symbol.symbol_expr(),
                           {address_of_exprt{expr}}});
   }
+
+  // §5.3 sealed field-lazy-init follow-on. If `struct_tag` is a
+  // sealed type, set_class_identifier above wrote a constant
+  // `@class_identifier == "java::<sealed-tag>"` to the root
+  // class field. F11's typeSwitch lowering then can't dispatch
+  // because the abstract sealed tag matches none of the
+  // permits, and javac's synthetic MatchException default
+  // fires. The entry-point sealed-init (commit 0c46fd1970)
+  // resolves this for top-level method parameters via a
+  // nondet-switch in the harness; for recursively-allocated
+  // fields (e.g. `record OuterA(Inner inner)` where Inner is
+  // sealed) we instead overwrite the constant @class_identifier
+  // with a nondet string and add an assume that constrains it
+  // to the disjunction of permits. F11's typeSwitch then
+  // dispatches correctly along each permit branch.
+  const symbolt *struct_class_symbol =
+    symbol_table.lookup("java::" + id2string(struct_tag));
+  if(struct_class_symbol != nullptr)
+  {
+    const irep_idt permits_str =
+      struct_class_symbol->type.get(ID_permitted_subclasses);
+    if(!permits_str.empty())
+    {
+      // Decode the comma-separated permit names.
+      std::vector<std::string> permits;
+      const std::string joined = id2string(permits_str);
+      std::string current;
+      for(char c : joined)
+      {
+        if(c == ',')
+        {
+          if(!current.empty())
+            permits.push_back(current);
+          current.clear();
+        }
+        else
+        {
+          current.push_back(c);
+        }
+      }
+      if(!current.empty())
+        permits.push_back(current);
+
+      // Build the @class_identifier member access using the same
+      // walk-down-op0 idiom as set_class_identifier and
+      // class_identifier.cpp's build_class_identifier.
+      exprt class_id_lhs = expr;
+      while(true)
+      {
+        const struct_typet &st =
+          ns.follow_tag(to_struct_tag_type(class_id_lhs.type()));
+        const struct_typet::componentst &cs = st.components();
+        INVARIANT(!cs.empty(), "class structs cannot be empty");
+        const auto &first_member_name = cs.front().get_name();
+        member_exprt member_expr(
+          class_id_lhs, first_member_name, cs.front().type());
+        if(first_member_name == JAVA_CLASS_IDENTIFIER_FIELD_NAME)
+        {
+          class_id_lhs = member_expr;
+          break;
+        }
+        class_id_lhs = member_expr;
+      }
+
+      // Symbol for nondet @class_identifier.
+      const symbolt &nondet_clsid_sym = get_fresh_aux_symbol(
+        class_id_lhs.type(),
+        id2string(object_factory_parameters.function_id),
+        "sealed_class_id",
+        location,
+        ID_java,
+        symbol_table);
+      assignments.add(code_frontend_declt(nondet_clsid_sym.symbol_expr()));
+      assignments.add(code_frontend_assignt(
+        nondet_clsid_sym.symbol_expr(),
+        side_effect_expr_nondett(class_id_lhs.type(), location)));
+      assignments.add(
+        code_frontend_assignt(class_id_lhs, nondet_clsid_sym.symbol_expr()));
+
+      // Disjunction over permits.
+      exprt::operandst disjuncts;
+      for(const auto &p : permits)
+      {
+        disjuncts.push_back(equal_exprt(
+          class_id_lhs, constant_exprt("java::" + p, class_id_lhs.type())));
+      }
+      if(!disjuncts.empty())
+      {
+        exprt assume_cond =
+          (disjuncts.size() == 1) ? disjuncts.front() : disjunction(disjuncts);
+        assignments.add(code_assumet(assume_cond));
+      }
+    }
+  }
 }
 
 /// Generate code block that verifies that an expression of type float or
