@@ -1,0 +1,9 @@
+CORE
+test.py
+--unwind 2 --no-unwinding-assertions
+^VERIFICATION (SUCCESSFUL|FAILED)$
+^EXIT=(0|10)$
+^SIGNAL=0$
+--
+^stod$
+^Invariant check failed
