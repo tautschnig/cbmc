@@ -83,6 +83,8 @@ CORPUS_PATTERNS=(
   $'kref_lifetime\tkref_put\\(\tfs net drivers/base kernel'
   $'rcu_critical_section\tsynchronize_rcu\\(\\)\tnet kernel fs ipc'
   $'cancel_work_before_free\tINIT_WORK\\(\tdrivers/base fs net kernel'
+  $'cancel_delayed_work_before_free\tINIT_DELAYED_WORK\\(\tdrivers/base fs net kernel'
+  $'del_timer_sync_before_free\ttimer_setup\\(\tdrivers/base fs net kernel'
   # Existing modules without patterns yet.
   $'lock_state\tmutex_unlock\\(\tkernel fs net ipc'
   $'refcount_lifetime\trefcount_dec_and_test\\(\tkernel fs net'
