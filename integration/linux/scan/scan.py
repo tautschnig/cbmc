@@ -390,6 +390,18 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     "del_timer_sync_before_free": [
         "__assert_no_armed_timer",
     ],
+    "null_after_alloc": [
+        "__assert_safe_to_deref",
+    ],
+    "resource_leak_on_error_path": [
+        "__assert_no_leak_at_exit",
+    ],
+    "integer_overflow_in_alloc_size": [
+        "__assert_size_safe",
+    ],
+    "copy_from_user_size_check": [
+        "__assert_copy_safe",
+    ],
 }
 
 
@@ -996,6 +1008,97 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         ],
         "required_bodies": [
             "timer_armed",
+        ],
+    },
+    "null_after_alloc": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "null_after_alloc_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "null_after_alloc_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "null_after_alloc_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "null_after_alloc" / "null_after_alloc.c",
+        ],
+        "slice_preserve": [
+            "assert_null_check_done",
+            "assert_null_check_clear",
+            "null_check_done",
+        ],
+        "required_bodies": [
+            "null_check_done",
+        ],
+    },
+    "resource_leak_on_error_path": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "resource_leak_on_error_path_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "resource_leak_on_error_path_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "resource_leak_on_error_path_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "resource_leak_on_error_path" /
+            "resource_leak_on_error_path.c",
+        ],
+        "slice_preserve": [
+            "leak_alloc_track",
+            "leak_alloc_freed",
+            "leak_outstanding",
+        ],
+        "required_bodies": [
+            "leak_outstanding",
+        ],
+    },
+    "integer_overflow_in_alloc_size": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "integer_overflow_in_alloc_size_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "integer_overflow_in_alloc_size_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "integer_overflow_in_alloc_size_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "integer_overflow_in_alloc_size" /
+            "integer_overflow_in_alloc_size.c",
+        ],
+        "slice_preserve": [
+            "alloc_size_safe",
+        ],
+        "required_bodies": [
+            "alloc_size_safe",
+        ],
+    },
+    "copy_from_user_size_check": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "copy_from_user_size_check_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "copy_from_user_size_check_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "copy_from_user_size_check_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "copy_from_user_size_check" /
+            "copy_from_user_size_check.c",
+        ],
+        "slice_preserve": [
+            "copy_len_safe",
+        ],
+        "required_bodies": [
+            "copy_len_safe",
         ],
     },
 }

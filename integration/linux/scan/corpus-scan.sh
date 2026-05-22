@@ -85,6 +85,12 @@ CORPUS_PATTERNS=(
   $'cancel_work_before_free\tINIT_WORK\\(\tdrivers/base fs net kernel'
   $'cancel_delayed_work_before_free\tINIT_DELAYED_WORK\\(\tdrivers/base fs net kernel'
   $'del_timer_sync_before_free\ttimer_setup\\(\tdrivers/base fs net kernel'
+  # Beyond-50% additions: very broad scope (lots of cocci hits
+  # expected; primary integration is hand triage).
+  $'null_after_alloc\tkmalloc\\(\tdrivers/base fs net kernel ipc lib mm'
+  $'resource_leak_on_error_path\tkmalloc\\(\tdrivers/base fs net kernel ipc'
+  $'integer_overflow_in_alloc_size\tkmalloc\\(.*\\*\\s*sizeof\tdrivers/base fs net kernel'
+  $'copy_from_user_size_check\tcopy_from_user\\(\tdrivers/base fs net kernel ipc'
   # Existing modules without patterns yet.
   $'lock_state\tmutex_unlock\\(\tkernel fs net ipc'
   $'refcount_lifetime\trefcount_dec_and_test\\(\tkernel fs net'
