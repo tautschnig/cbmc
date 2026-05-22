@@ -432,7 +432,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       exprt len = from_integer(1, signedbv_typet{64});
       return struct_exprt({len, ptr}, python_string_type());
     }
-    struct_typet str_type = python_string_struct_def();
+    typet str_type = python_string_type();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
       from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));

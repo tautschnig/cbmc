@@ -256,7 +256,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
         }
       }
       return side_effect_expr_nondett{bool_typet(), source_locationt{}};
-      struct_typet str_type = python_string_struct_def();
+      typet str_type = python_string_type();
       const auto &data_type = array_typet(
         unsignedbv_typet{8},
         from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));

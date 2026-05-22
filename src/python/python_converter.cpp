@@ -1591,7 +1591,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
       return side_effect_expr_nondett{python_string_type(), get_location(expr)};
 
     // Build result by concatenating all parts
-    struct_typet str_type = python_string_struct_def();
+    typet str_type = python_string_type();
     const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     // Collect all bytes from constant parts; use nondet for formatted values
