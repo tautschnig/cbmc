@@ -1,0 +1,6 @@
+CORE
+test_soundness_raise_in_try.py
+--unwind 5 --no-unwinding-assertions
+^VERIFICATION FAILED$
+^EXIT=(0|10)$
+^SIGNAL=0$

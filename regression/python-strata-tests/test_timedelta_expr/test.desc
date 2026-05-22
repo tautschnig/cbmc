@@ -1,0 +1,6 @@
+KNOWNBUG
+test_timedelta_expr.py
+--unwind 5 --no-unwinding-assertions
+^VERIFICATION FAILED$
+^EXIT=(0|10)$
+^SIGNAL=0$

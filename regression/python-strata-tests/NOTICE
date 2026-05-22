@@ -1,0 +1,8 @@
+The Python test files in this directory tree (one per subdirectory)
+were imported verbatim from the Strata project at
+https://github.com/strata-org/Strata, under the
+StrataTest/Languages/Python/tests/ subtree, and are licensed under
+Apache-2.0 OR MIT (Strata's dual license).
+
+The generated test.desc files in each subdirectory are CBMC-side
+metadata and are licensed under CBMC's existing terms (4-clause BSD).
