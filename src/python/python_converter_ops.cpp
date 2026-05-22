@@ -244,6 +244,119 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       return struct_exprt{
         {div_exprt{real_num, denom}, div_exprt{imag_num, denom}}, ct};
     }
+    if(op == "Pow")
+    {
+      // PLR §6.5: complex-base power. We don't model the value
+      // exactly (the exponent may be non-integer or non-constant
+      // and cmath's exact semantics are intricate), but we *do*
+      // surface ZeroDivisionError when the base is (0+0j) and
+      // the exponent has a negative real part with zero imag
+      // part (i.e. the exponent looks like a negative real
+      // number, the form an int exponent takes after promotion
+      // to complex above). Without this guard, the frontend
+      // silently produces a nondet result and a downstream
+      // assertion validates anything, so the bug is invisible.
+      auto is_zero_const = [](const exprt &e) {
+        // Look through trivial typecasts to find a constant.
+        const exprt *p = &e;
+        while(p->id() == ID_typecast && p->operands().size() == 1)
+          p = &p->operands()[0];
+        if(!p->is_constant())
+          return false;
+        if(p->type().id() == ID_floatbv)
+        {
+          ieee_floatt v{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          v.from_expr(to_constant_expr(*p));
+          return v.is_zero();
+        }
+        if(
+          p->type().id() == ID_signedbv || p->type().id() == ID_unsignedbv ||
+          p->type().id() == ID_integer)
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(*p), v))
+            return v == 0;
+        }
+        return false;
+      };
+      auto is_neg_const = [](const exprt &e) {
+        // Look through typecasts to find the underlying value;
+        // unary_minus(constant_pos) and direct negative constants
+        // both count as "negative".
+        const exprt *p = &e;
+        while(p->id() == ID_typecast && p->operands().size() == 1)
+          p = &p->operands()[0];
+        if(p->id() == ID_unary_minus && p->operands().size() == 1)
+        {
+          const exprt *inner = &p->operands()[0];
+          while(inner->id() == ID_typecast && inner->operands().size() == 1)
+            inner = &inner->operands()[0];
+          if(inner->is_constant())
+          {
+            // -<positive> is negative; -0 is zero (not negative).
+            if(inner->type().id() == ID_floatbv)
+            {
+              ieee_floatt v{
+                ieee_float_spect::double_precision(),
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              v.from_expr(to_constant_expr(*inner));
+              return !v.is_zero();
+            }
+            if(
+              inner->type().id() == ID_signedbv ||
+              inner->type().id() == ID_unsignedbv ||
+              inner->type().id() == ID_integer)
+            {
+              mp_integer v;
+              if(!to_integer(to_constant_expr(*inner), v))
+                return v > 0;
+            }
+          }
+          return false;
+        }
+        if(!p->is_constant())
+          return false;
+        if(p->type().id() == ID_floatbv)
+        {
+          ieee_floatt v{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          v.from_expr(to_constant_expr(*p));
+          return v.get_sign() && !v.is_zero() && !v.is_NaN();
+        }
+        if(
+          p->type().id() == ID_signedbv || p->type().id() == ID_integer)
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(*p), v))
+            return v < 0;
+        }
+        return false;
+      };
+      // Look through left/right struct_exprt to find the actual
+      // real/imag constant components. The member_exprt forms (lr,
+      // li, rr, ri) are NOT constants by themselves.
+      bool base_is_zero = false, exp_is_neg = false;
+      if(left.id() == ID_struct && left.operands().size() == 2)
+        base_is_zero = is_zero_const(left.operands()[0]) &&
+                       is_zero_const(left.operands()[1]);
+      if(right.id() == ID_struct && right.operands().size() == 2)
+        exp_is_neg = is_neg_const(right.operands()[0]) &&
+                     is_zero_const(right.operands()[1]);
+      if(base_is_zero && exp_is_neg)
+      {
+        // Direct property assertion (FALSE) — equivalent to a
+        // raise ZeroDivisionError that's never caught here.
+        add_check(
+          false_exprt{},
+          "exception",
+          "ZeroDivisionError: 0.0 to a negative power",
+          source_locationt{});
+      }
+      return side_effect_expr_nondett{ct, source_locationt{}};
+    }
     // Other ops: return nondet complex
     return side_effect_expr_nondett{ct, source_locationt{}};
   }
