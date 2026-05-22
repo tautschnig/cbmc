@@ -2401,6 +2401,159 @@ exprt python_convertert::convert_call(const jsont &expr)
 
           return result;
         }
+        if(method_name == "pop" && obj.id() == ID_symbol)
+        {
+          // PLR dict.pop(key, default=...): if key in d, remove
+          // and return its value. If key not in d and a default
+          // is supplied, return default. If key not in d and no
+          // default is supplied, raise KeyError.
+          const auto &dict_st = to_struct_type(obj_base_type);
+          const auto &keys_type =
+            to_array_type(dict_st.components()[1].type());
+          const auto &vals_type =
+            to_array_type(dict_st.components()[2].type());
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          member_exprt keys_arr{obj, "keys", keys_type};
+          member_exprt vals_arr{obj, "values", vals_type};
+
+          if(!args.is_array() || as_array(args).empty())
+            return side_effect_expr_nondett{
+              vals_type.element_type(), get_location(expr)};
+          auto arg_it = as_array(args).begin();
+          exprt key_expr = convert_expression(*arg_it);
+          if(key_expr.type() != keys_type.element_type())
+            key_expr = safe_typecast(key_expr, keys_type.element_type());
+          bool has_default = false;
+          exprt default_val = safe_zero(vals_type.element_type());
+          ++arg_it;
+          if(arg_it != as_array(args).end())
+          {
+            has_default = true;
+            default_val = convert_expression(*arg_it);
+            if(default_val.type() != vals_type.element_type())
+              default_val =
+                safe_typecast(default_val, vals_type.element_type());
+          }
+
+          static unsigned pop_ctr = 0;
+          std::string fn = "__pop_found_" + std::to_string(pop_ctr++);
+          irep_idt fi{qualify_name(fn)};
+          if(symbol_table.lookup(fi) == nullptr)
+          {
+            symbolt fs{fi, bool_typet{}, "python"};
+            fs.base_name = fn;
+            fs.is_lvalue = true;
+            fs.is_state_var = true;
+            symbol_table.add(fs);
+          }
+          symbol_exprt found = symbol_table.lookup_ref(fi).symbol_expr();
+
+          std::string rn = "__pop_result_" + std::to_string(pop_ctr - 1);
+          irep_idt ri{qualify_name(rn)};
+          if(symbol_table.lookup(ri) == nullptr)
+          {
+            symbolt rs{ri, vals_type.element_type(), "python"};
+            rs.base_name = rn;
+            rs.is_lvalue = true;
+            rs.is_state_var = true;
+            symbol_table.add(rs);
+          }
+          symbol_exprt result = symbol_table.lookup_ref(ri).symbol_expr();
+
+          pending_checks.push_back(code_frontend_assignt{found, false_exprt{}});
+          pending_checks.push_back(code_frontend_assignt{result, default_val});
+          // Find and remove (compact by shifting).
+          for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt match = equal_exprt{index_exprt{keys_arr, idx}, key_expr};
+            code_blockt update;
+            update.add(code_frontend_assignt{found, true_exprt{}});
+            update.add(
+              code_frontend_assignt{result, index_exprt{vals_arr, idx}});
+            // Shift remaining entries down to compact.
+            for(std::size_t j = i; j + 1 < PYTHON_MAX_DICT_SIZE; j++)
+            {
+              exprt jdx = from_integer(j, signedbv_typet{64});
+              exprt jdx1 = from_integer(j + 1, signedbv_typet{64});
+              update.add(code_frontend_assignt{
+                index_exprt{keys_arr, jdx}, index_exprt{keys_arr, jdx1}});
+              update.add(code_frontend_assignt{
+                index_exprt{vals_arr, jdx}, index_exprt{vals_arr, jdx1}});
+            }
+            update.add(code_frontend_assignt{
+              length, minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+            pending_checks.push_back(
+              code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
+          }
+          // KeyError when not found and no default given.
+          if(!has_default)
+          {
+            add_check(
+              found,
+              "exception",
+              "KeyError: key not found in dict",
+              get_location(expr));
+          }
+          dict_literals.erase(to_symbol_expr(obj).get_identifier());
+          return result;
+        }
+        if(method_name == "popitem" && obj.id() == ID_symbol)
+        {
+          // PLR dict.popitem(): remove and return an arbitrary
+          // (key, value) pair. Raises KeyError on empty dict.
+          const auto &dict_st = to_struct_type(obj_base_type);
+          const auto &keys_type =
+            to_array_type(dict_st.components()[1].type());
+          const auto &vals_type =
+            to_array_type(dict_st.components()[2].type());
+          member_exprt length{obj, "length", signedbv_typet{64}};
+          // Empty-dict KeyError check.
+          add_check(
+            binary_relation_exprt{
+              length, ID_gt, from_integer(0, signedbv_typet{64})},
+            "exception",
+            "KeyError: dictionary is empty",
+            get_location(expr));
+          // Snapshot the pre-popitem length so the (key, value) we
+          // return doesn't depend on the post-decrement length.
+          // pending_checks are emitted BEFORE the surrounding
+          // statement; without this snapshot the decrement would
+          // race ahead of the read and we'd return keys[length-2].
+          static unsigned pi_ctr = 0;
+          std::string ln = "__popitem_len_" + std::to_string(pi_ctr++);
+          irep_idt li{qualify_name(ln)};
+          if(symbol_table.lookup(li) == nullptr)
+          {
+            symbolt ls{li, signedbv_typet{64}, "python"};
+            ls.base_name = ln;
+            ls.is_lvalue = true;
+            ls.is_state_var = true;
+            symbol_table.add(ls);
+          }
+          symbol_exprt last_idx_sym =
+            symbol_table.lookup_ref(li).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{
+            last_idx_sym,
+            minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+          // Return tuple (keys[snapshot], values[snapshot]) since
+          // CPython pops in LIFO order.
+          member_exprt keys_arr{obj, "keys", keys_type};
+          member_exprt vals_arr{obj, "values", vals_type};
+          exprt key_at = index_exprt{keys_arr, last_idx_sym};
+          exprt val_at = index_exprt{vals_arr, last_idx_sym};
+          struct_typet::componentst tcomps;
+          tcomps.push_back(struct_typet::componentt{"_0", key_at.type()});
+          tcomps.push_back(struct_typet::componentt{"_1", val_at.type()});
+          struct_typet tuple_t{tcomps};
+          tuple_t.set_tag("python_tuple");
+          // Decrement length AFTER recording the snapshot.
+          pending_checks.push_back(
+            code_frontend_assignt{length, last_idx_sym});
+          dict_literals.erase(to_symbol_expr(obj).get_identifier());
+          return struct_exprt{{key_at, val_at}, tuple_t};
+        }
         if(
           method_name == "setdefault" || method_name == "pop" ||
           method_name == "popitem")
