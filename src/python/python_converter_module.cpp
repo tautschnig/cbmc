@@ -973,6 +973,12 @@ bool python_convertert::convert()
                 new_sym.is_state_var = true;
                 new_sym.is_static_lifetime = true;
                 symbol_table.add(new_sym);
+                // Track for pass 2: this symbol's type is a tentative
+                // placeholder. If pass 2 sees a different concrete RHS
+                // type it should replace, not cast (PLR §6.2 — a plain
+                // assignment binds the name to the value's type, with
+                // no implicit numeric coercion).
+                unannotated_globals.insert(sym_id);
               }
             }
           }

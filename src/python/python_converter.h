@@ -343,6 +343,22 @@ private:
   /// any `name = (...)` whose RHS is a python_tuple struct_exprt.
   std::map<irep_idt, exprt> tuple_literals;
   std::map<irep_idt, double> float_constants; // track float/int constant values
+
+  /// Module-level globals registered by pass 0's plain-Assign
+  /// pre-pass with a tentative placeholder type. Pass 0 has no
+  /// access to the converted RHS expression, so it defaults to
+  /// python_int_type() when the RHS isn't a Constant or List
+  /// literal. The actual symbol type is then refined in pass 2
+  /// when convert_assign sees the converted RHS: if the symbol
+  /// is in this set and the RHS type doesn't match, replace the
+  /// symbol's type rather than casting (which would be lossy
+  /// for e.g. `x = math.inf`, where casting +inf into a 64-bit
+  /// signed int erases the infinity).
+  ///
+  /// AnnAssign-registered symbols are NOT placed in this set —
+  /// the user has explicitly declared a type, and pass 2 should
+  /// continue to cast the RHS to honour that annotation.
+  std::set<irep_idt> unannotated_globals;
   std::optional<std::string> extract_string_value(const exprt &e) const;
 
   /// Best-effort static category of an expression node directly
