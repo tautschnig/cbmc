@@ -411,6 +411,12 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     "uninit_to_user": [
         "__assert_safe_for_userspace",
     ],
+    "permission_bypass": [
+        "__assert_privileged",
+    ],
+    "format_string": [
+        "__assert_format_safe",
+    ],
 }
 
 
@@ -1166,6 +1172,49 @@ KERNEL_ADAPTERS: dict[str, dict] = {
             "is_initialised",
         ],
         "required_bodies": ["is_initialised"],
+    },
+    "permission_bypass": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "permission_bypass_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "permission_bypass_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "permission_bypass_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "permission_bypass" /
+            "permission_bypass.c",
+        ],
+        "slice_preserve": [
+            "cap_check_passed",
+            "cap_check_clear",
+            "cap_was_checked",
+        ],
+        "required_bodies": ["cap_was_checked"],
+    },
+    "format_string": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "format_string_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "format_string_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "format_string_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "format_string" / "format_string.c",
+        ],
+        "slice_preserve": [
+            "mark_format_constant",
+            "mark_format_tainted",
+            "format_is_constant",
+        ],
+        "required_bodies": ["format_is_constant"],
     },
 }
 
