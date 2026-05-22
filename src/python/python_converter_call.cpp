@@ -7082,13 +7082,48 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     if(!arguments[i].is_nil() && arguments[i].type() != params[i].type())
     {
-      // Class reference: struct arg → pointer param → take address_of
+      // Class / list / dict reference: struct arg → pointer param.
+      // address_of needs an lvalue, so symbol_exprt arguments are
+      // taken-address-of directly. Literal struct_exprt or other
+      // rvalues are first materialized into a fresh local
+      // (pending_checks-staged so the materialization fires before
+      // the call) so address_of has something to point at.
+      //
+      // We accept any pointer-to-struct param type. Element-type
+      // mismatches between the argument's struct (e.g. list[str])
+      // and the parameter's pointee struct (e.g. list[int]) are
+      // bridged with a final typecast on the address_of, matching
+      // the existing safe_typecast struct->pointer path that
+      // CBMC's symex chases through dereferences.
       if(
         params[i].type().id() == ID_pointer &&
         arguments[i].type().id() == ID_struct &&
-        to_pointer_type(params[i].type()).base_type() == arguments[i].type())
+        to_pointer_type(params[i].type()).base_type().id() == ID_struct)
       {
-        arguments[i] = address_of_exprt{arguments[i]};
+        exprt addressable = arguments[i];
+        if(addressable.id() != ID_symbol)
+        {
+          static unsigned mat_ctr = 0;
+          std::string tn = "__byref_arg_" + std::to_string(mat_ctr++);
+          std::string tq = qualify_name(tn);
+          irep_idt ti{tq};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, addressable.type(), "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            ts.is_static_lifetime = current_function.empty();
+            symbol_table.add(ts);
+          }
+          symbol_exprt mat_sym = symbol_table.lookup_ref(ti).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{mat_sym, addressable});
+          addressable = mat_sym;
+        }
+        exprt addr = address_of_exprt{addressable};
+        if(addr.type() != params[i].type())
+          addr = typecast_exprt{addr, params[i].type()};
+        arguments[i] = std::move(addr);
       }
       else
       {
