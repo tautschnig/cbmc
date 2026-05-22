@@ -43,6 +43,7 @@ Date: May 2026
 #include <goto-instrument/contracts/contracts.h>
 #include <goto-instrument/contracts/dynamic-frames/dfcc.h>
 #include <goto-instrument/contracts/loop_contract_config.h>
+#include <goto-instrument/contracts/utils.h>
 
 static const std::string jverify_prefix =
   "java::org.strata.jverify.JVerify.";
@@ -837,7 +838,9 @@ static exprt resolve_stack_temps(
           --it;
           continue;
         }
-        if(it->is_skip() || it->is_location() || it->is_other())
+        if(
+          it->is_skip() || it->is_location() || it->is_other() ||
+          it->is_dead() || it->is_decl())
         {
           --it;
           continue;
@@ -990,7 +993,8 @@ static exprt resolve_stack_temps(
       const bool is_stack_temp = has_prefix(s, func_prefix) &&
                                  (s.find("$stack_tmp") != std::string::npos ||
                                   s.find("$tmp") != std::string::npos ||
-                                  s.find("::tmp") != std::string::npos);
+                                  s.find("::tmp") != std::string::npos ||
+                                  s.find("return_tmp") != std::string::npos);
       if(!is_stack_temp)
         return e;
       auto cached = resolved_cache.find(id);
@@ -1026,6 +1030,21 @@ static exprt resolve_stack_temps(
         exprt unfolded = rewrite(*diamond, depth + 1);
         resolved_cache[id] = unfolded;
         return unfolded;
+      }
+      // Single-definition fallback: if collect_definitions finds
+      // exactly one definition, use it directly. This handles
+      // temps that are defined inside a conditional block (so
+      // find_definition bails on the crossed branch) but have
+      // only one definition in the entire body — meaning the
+      // value is unambiguous on any path that reaches the use.
+      {
+        auto defs = collect_definitions(id);
+        if(defs.size() == 1)
+        {
+          exprt unfolded = rewrite(defs[0].first->assign_rhs(), depth + 1);
+          resolved_cache[id] = unfolded;
+          return unfolded;
+        }
       }
       const auto def = find_definition(id);
       if(!def.has_value())
@@ -1888,6 +1907,164 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       case jverify_contract_kindt::NOT_A_CONTRACT:
         UNREACHABLE;
       }
+    }
+  }
+
+  // §F12-followups (3.5/3.6 — body-level history binding).
+  //
+  // The JVerify.old() pre-pass at the top of this function
+  // rewrote `CALL JVerify.old(arg)` instructions into ASSIGNs
+  // of `history_exprt(arg, ID_old)`. The contract front-end's
+  // main loop above also emitted inline ASSERTs (and CALLs)
+  // that may transitively reference those history values via
+  // stack temps. Without binding, symex sees `history_exprt`
+  // as an unconstrained nondet and any old()-using leaf
+  // postcondition fails to verify in isolation.
+  //
+  // DFCC's wrapper-level pipeline calls `replace_history_old`
+  // on c_ensures clauses (in dfcc_wrapper_program.cpp) — that
+  // binds history_exprt at the wrapper boundary, but only
+  // covers the contract-level check. The function's own body
+  // (and the inline ASSERT we emit at body end for the leaf
+  // case) sees history_exprt unbound.
+  //
+  // Fix: walk every annotated function body, replace each
+  // history_exprt(parameter, ID_old) occurrence with a fresh
+  // aux symbol, and inject DECL+ASSIGN preludes at body entry
+  // populating each symbol with `parameter` (the pre-state
+  // value). This is the same plumbing
+  // `replace_history_parameter_rec` does at the wrapper level,
+  // applied at the body level. We share one
+  // parameter→history map per function so identical
+  // history_exprt subterms map to a single symbol.
+  //
+  // Limitation: lambda-target bodies invoked via the
+  // contract-front-end's CALL+ASSERT post-emission are
+  // separate functions — the prelude we inject at the lambda
+  // target's entry captures `parameter` at the moment the
+  // lambda runs (after the enclosing body), not at the
+  // enclosing function's entry. For lambda-form posts, DFCC's
+  // wrapper-level replace_history_old (on the captured
+  // c_ensures) provides the correct binding instead. We rely
+  // on the modular path for that case. The body-level pass
+  // here makes inline-form posts work in non-modular mode and
+  // makes the body-vs-contract assertion pass in modular
+  // mode.
+  for(auto &func_entry : goto_model.goto_functions.function_map)
+  {
+    auto &body = func_entry.second.body;
+    if(body.instructions.empty())
+      continue;
+
+    // Quick check: only spend time on this body if it actually
+    // contains a history_exprt subterm anywhere.
+    bool has_history = false;
+    for(const auto &ins : body.instructions)
+    {
+      ins.apply(
+        [&](const exprt &e)
+        {
+          if(has_history)
+            return;
+          std::function<void(const exprt &)> scan = [&](const exprt &x)
+          {
+            if(has_history)
+              return;
+            if(x.id() == ID_old)
+            {
+              has_history = true;
+              return;
+            }
+            for(const auto &op : x.operands())
+              scan(op);
+          };
+          scan(e);
+        });
+      if(has_history)
+        break;
+    }
+    if(!has_history)
+      continue;
+
+    // Per-function map: parameter expression → history symbol.
+    std::unordered_map<exprt, symbol_exprt, irep_hash> parameter2history;
+    goto_programt history_prelude;
+    const source_locationt prelude_loc =
+      body.instructions.begin()->source_location();
+
+    auto get_or_create_history = [&](const exprt &param) -> symbol_exprt
+    {
+      auto it = parameter2history.find(param);
+      if(it != parameter2history.end())
+        return it->second;
+      const symbol_exprt sym = get_fresh_aux_symbol(
+                                 param.type(),
+                                 id2string(func_entry.first),
+                                 "tmp_history_old",
+                                 prelude_loc,
+                                 ID_java,
+                                 goto_model.symbol_table)
+                                 .symbol_expr();
+      parameter2history.emplace(param, sym);
+      history_prelude.add(goto_programt::make_decl(sym, prelude_loc));
+      history_prelude.add(
+        goto_programt::make_assignment(sym, param, prelude_loc));
+      return sym;
+    };
+
+    // Recursive substitutor: walks an expression tree and
+    // replaces every history_exprt with the corresponding
+    // fresh symbol, allocating one per unique parameter.
+    std::function<exprt(const exprt &)> rewrite = [&](const exprt &x) -> exprt
+    {
+      if(x.id() == ID_old)
+      {
+        const exprt &param = to_history_expr(x, ID_old).expression();
+        // Recurse into the parameter first in case the
+        // parameter itself contains nested history_exprts.
+        const exprt rewritten_param = rewrite(param);
+        symbol_exprt sym = get_or_create_history(rewritten_param);
+        // The history symbol's type matches the parameter's
+        // type. Cast if the surrounding context expects a
+        // different type (rare; usually the irep types match
+        // already since history_exprt's type IS the parameter
+        // type).
+        if(sym.type() == x.type())
+          return sym;
+        return typecast_exprt(sym, x.type());
+      }
+      exprt result = x;
+      for(auto &op : result.operands())
+        op = rewrite(op);
+      return result;
+    };
+
+    for(auto bi = body.instructions.begin(); bi != body.instructions.end();
+        ++bi)
+    {
+      bi->transform(
+        [&](exprt e) -> std::optional<exprt>
+        {
+          const exprt rewritten = rewrite(e);
+          if(rewritten == e)
+            return std::nullopt;
+          return rewritten;
+        });
+    }
+
+    if(!history_prelude.instructions.empty())
+    {
+      // Prepend the prelude to the body. Use insert_before_swap
+      // on the first instruction to preserve any incoming
+      // GOTO targets (none expected at body entry, but safe).
+      auto first = body.instructions.begin();
+      for(auto pi = history_prelude.instructions.rbegin();
+          pi != history_prelude.instructions.rend();
+          ++pi)
+      {
+        body.insert_before_swap(first, *pi);
+      }
+      body.update();
     }
   }
 
