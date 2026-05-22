@@ -1327,6 +1327,38 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
     bool rhs_has_side_effect = rhs.id() == ID_side_effect;
 
+    // PLR §6.2 — Assignment statements: a plain assignment binds
+    // the name to the value, with the value's runtime type. The
+    // pre-pass (pass 0 in convert()) had to register module-level
+    // globals before the RHS was converted, so unannotated names
+    // get a tentative placeholder type (typically int). On the
+    // FIRST pass-2 assignment to such a symbol we refine its
+    // type to the actual RHS type and drop it from the
+    // unannotated_globals set. Subsequent rebinds then take the
+    // normal type-mismatch path (cast / versioning / wrap into
+    // tagged union), matching Python's dynamic-typing semantics
+    // where `x = 10; x = math.inf` is ambiguous and the existing
+    // logic resolves to a single chosen target type.
+    //
+    // Refining only on the first assignment is essential: by the
+    // time later assignments run, earlier `ASSIGN result := 10`
+    // statements have already been emitted referencing the
+    // symbol with its prior type. Changing the symbol's type
+    // after such an emission produces a goto with type-
+    // inconsistent ASSIGN/symbol pairs, which the symex code
+    // path cannot interpret coherently.
+    if(
+      existing != nullptr && unannotated_globals.count(existing->name) > 0 &&
+      rhs.type().id() != ID_empty && !rhs.is_nil())
+    {
+      if(existing->type != rhs.type())
+      {
+        symbol_table.get_writeable_ref(existing->name).type = rhs.type();
+        existing = symbol_table.lookup(existing->name);
+      }
+      unannotated_globals.erase(existing->name);
+    }
+
     if(
       existing != nullptr && existing->type != rhs.type() &&
       rhs.type().id() != ID_empty && !rhs.is_nil())
