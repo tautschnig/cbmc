@@ -396,3 +396,71 @@ Pass rate **70.3 % → 70.7 %**. Six fixes:
 * **`chr(<float>)` raises TypeError** (PLR §builtins). Already
   documented in Wave 4 — listed here for completeness.
 
+
+## Wave 6 (architectural) — Aug 2026 follow-up
+
+After the Wave 5 review, remaining DIFFs were classified by *root architectural
+issue* rather than by surface symptom. Two issues had a clean, well-scoped
+architectural fix:
+
+### 6a. String struct tag/def unification
+
+The frontend used **two distinct types** for refined-string struct expressions:
+
+  * `python_string_type()` — a `struct_tag_typet{tag-...}`, what the literal
+    builder (`build_string_struct`) returned.
+  * `python_string_struct_def()` — a `struct_typet` (inline definition), what
+    `chr()`, str-format, str-concat folding, str-aug paths, etc. used.
+
+When two such strings met in the equality handler,
+`current_left.type() != right.type()` was True and `safe_typecast` couldn't
+bridge them, so it fell into its last-resort
+`return side_effect_expr_nondett{target, ...}` path. The string solver then
+saw one operand as an opaque nondet, and the assertion either succeeded or
+failed essentially based on SAT bias.
+
+Fix: thread `python_string_type()` through every site that types a freshly
+built string struct expression. The single legitimate use of the inline
+definition (registering the type symbol in `convert_module`) is unchanged.
+
+### 6b. List comprehension with `range()`
+
+`convert_list_comp` only matched two iterable shapes — literal lists and
+Names-of-tracked-list_literals — and silently returned `nil_exprt` for
+anything else, which dropped the whole assignment. So
+`xs = [x*x for x in range(4)]` left `xs` zero-initialised, and downstream
+assertions about `xs` were satisfied or refuted against the zero default.
+
+Fix: add a third matcher branch for `Call(func=Name("range"), args=...)`
+with constant-int arguments, eagerly populating `gi.const_values` from the
+expanded sequence and feeding into the existing combination machinery.
+
+### Cumulative
+
+| Outcome | Wave 5 | Wave 6 | Δ |
+|---------|------:|-------:|---:|
+| PASS | 2187 | 2196 | +9 |
+| DIFF | 583 | 572 | −11 |
+| UNKNOWN | 237 | 237 | 0 |
+| FAIL | 68 | 68 | 0 |
+| TIMEOUT | 15 | 17 | +2 |
+| TOERR | 0 | 0 | 0 |
+| CRASH | 0 | 0 | 0 |
+| SKIP | 1 | 1 | 0 |
+
+Pass rate **70.7 % → 71.0 %**. The two TIMEOUT additions are correctness
+improvements that newly expose downstream pain (the comprehension that
+previously stub-evaluated to zero is now correctly running and stresses
+nested-list mutation in `github_3667_2-nondet`).
+
+### Architectural items still on the docket (post-Wave-6)
+
+| Pattern | Approx tests | Architectural fix |
+|---|---:|---|
+| Mutable container by-value vs by-ref in function args | 36 | Pass list/dict params by pointer at call boundaries; more involved refactor. |
+| `def f(): xs.append(...); f(ys)` loses mutation through return | 41 | Same root as above. |
+| Aliasing (`z = y`; `z is y`) | 37 | Object-id field, or change to pointer-copy semantics. |
+| Type inference on unannotated assignment (`x = math.inf` → int default) | 11 | Infer var type from RHS when annotation absent. |
+| Constant-fold across function-return-of-constant | unknown | `function_return_constants` map populated from analysis of leaf functions whose body is a single `return <constant>`. |
+| String concat inside loops not tracked | unknown (large) | Needs a real string-flow analysis or a syntactic fold that catches `s = s + c` patterns. |
+
