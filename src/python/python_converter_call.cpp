@@ -1920,9 +1920,25 @@ exprt python_convertert::convert_call(const jsont &expr)
             if(key_expr.type() != keys_type.element_type())
               key_expr = safe_typecast(key_expr, keys_type.element_type());
 
-            // Default value: None if not specified, else second arg
-            exprt default_val = from_integer(
-              mp_integer{-4611686018427387904LL}, vals_type.element_type());
+            // Default value: None if not specified, else second arg.
+            // The Python-int "None sentinel" is only representable in an
+            // integer-typed value column; for bool/float/string/etc. dicts
+            // there is no in-band None and we fall back to safe_zero of
+            // the element type (e.g. False for bool, 0.0 for float).
+            // Without this guard, from_integer aborts on the precondition
+            // when the value type cannot hold the sentinel — see
+            // regression test cbmc/python-dict-get-bool.
+            exprt default_val;
+            {
+              const typet &elem_t = vals_type.element_type();
+              if(
+                elem_t.id() == ID_signedbv || elem_t.id() == ID_unsignedbv ||
+                elem_t.id() == ID_integer || elem_t.id() == ID_natural)
+                default_val =
+                  from_integer(mp_integer{-4611686018427387904LL}, elem_t);
+              else
+                default_val = safe_zero(elem_t);
+            }
             ++arg_it;
             if(arg_it != as_array(args).end())
               default_val = safe_typecast(
@@ -4100,14 +4116,10 @@ exprt python_convertert::convert_call(const jsont &expr)
         // float(<other struct>): return a nondet float over-
         // approximation rather than letting smt2_conv's
         // typecast handler abort.
-        if(
-          arg.type().id() == ID_struct ||
-          arg.type().id() == ID_struct_tag)
+        if(arg.type().id() == ID_struct || arg.type().id() == ID_struct_tag)
         {
-          log_overapprox(
-            "float() on opaque struct — returning nondet float");
-          return side_effect_expr_nondett{
-            double_type(), source_locationt{}};
+          log_overapprox("float() on opaque struct — returning nondet float");
+          return side_effect_expr_nondett{double_type(), source_locationt{}};
         }
         return typecast_exprt{arg, double_type()};
       }
@@ -6440,16 +6452,17 @@ exprt python_convertert::convert_call(const jsont &expr)
               if(boto3_base_methods.count(attr_name) > 0)
                 continue;
               bool found = false;
-              if(cdm != class_declared_methods.end() &&
-                 cdm->second.count(attr_name) > 0)
+              if(
+                cdm != class_declared_methods.end() &&
+                cdm->second.count(attr_name) > 0)
                 found = true;
               if(!found)
               {
                 add_check(
                   false_exprt{},
                   "attribute-error",
-                  "argument " + std::to_string(i) + " of class '" +
-                    class_name + "' missing method '" + attr_name +
+                  "argument " + std::to_string(i) + " of class '" + class_name +
+                    "' missing method '" + attr_name +
                     "' referenced via Any-typed parameter '" +
                     id2string(params[i].get_base_name()) + "' in '" +
                     func_name + "'",
