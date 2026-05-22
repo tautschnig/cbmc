@@ -1,0 +1,274 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 36K of event 'cycles:u'
+# Event count (approx.): 111392896531
+#
+# Overhead  Command  Shared Object            Symbol                                                                                                                                                                                                   ...
+# ........  .......  .......................  ............................................................................................................................................................................................................
+#
+    11.31%  cbmc     cbmc                     [.] irept::operator==(irept const&) const
+            |
+            ---irept::operator==(irept const&) const
+               |          
+                --10.23%--irept::operator==(irept const&) const
+                          |          
+                          |--8.94%--irept::operator==(irept const&) const
+                          |          |          
+                          |           --7.97%--irept::operator==(irept const&) const
+                          |                     |          
+                          |                     |--6.82%--irept::operator==(irept const&) const
+                          |                     |          |          
+                          |                     |          |--5.73%--irept::operator==(irept const&) const
+                          |                     |          |          |          
+                          |                     |          |          |--4.67%--irept::operator==(irept const&) const
+                          |                     |          |          |          |          
+                          |                     |          |          |          |--3.63%--irept::operator==(irept const&) const
+                          |                     |          |          |          |          |          
+                          |                     |          |          |          |           --2.66%--irept::operator==(irept const&) const
+                          |                     |          |          |          |                     |          
+                          |                     |          |          |          |                      --1.73%--irept::operator==(irept const&) const
+                          |                     |          |          |          |                                |          
+                          |                     |          |          |          |                                 --1.09%--irept::operator==(irept const&) const
+                          |                     |          |          |          |          
+                          |                     |          |          |           --1.03%--merge_irept::merged(irept const&)
+                          |                     |          |          |          
+                          |                     |          |           --1.06%--merge_irept::merged(irept const&)
+                          |                     |          |          
+                          |                     |           --1.09%--merge_irept::merged(irept const&)
+                          |                     |          
+                          |                      --1.14%--merge_irept::merged(irept const&)
+                          |          
+                           --1.23%--merge_irept::merged(irept const&)
+
+     6.66%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          
+            |--4.90%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          |          
+            |           --3.20%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+            |                     irept::~irept() (inlined)
+            |                     |          
+            |                      --1.51%--std::pair<dstringt, irept>::~pair() (inlined)
+            |                                |          
+            |                                 --1.46%--void std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::destroy<std::pair<dstringt, irept> >(std::pair<dstringt, irept>*) (inlined)
+            |                                           void std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::destroy<std::pair<dstringt, irept> >(std::allocator<std::_Fwd_list_node<std::pair<dstringt, ire...
+            |                                           std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_erase_after(std::_Fwd_list_node_base*, std::_Fwd_list_node_base*) (inlined)
+            |                                           std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~_Fwd_list_base() (inlined)
+            |                                           std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~forward_list() (inlined)
+            |                                           forward_list_as_mapt<dstringt, irept>::~forward_list_as_mapt() (inlined)
+            |                                           |          
+            |                                            --1.40%--tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::~tree_nodet() (inlined)
+            |                                                      sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |                                                      |          
+            |                                                       --1.08%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+            |                                                                 irept::~irept() (inlined)
+            |          
+             --1.02%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+                       irept::~irept() (inlined)
+                       |          
+                        --1.01%--std::pair<dstringt, irept>::~pair() (inlined)
+                                  void std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::destroy<std::pair<dstringt, irept> >(std::pair<dstringt, irept>*) (inlined)
+                                  void std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::destroy<std::pair<dstringt, irept> >(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, std::pair<ds...
+                                  std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_erase_after(std::_Fwd_list_node_base*, std::_Fwd_list_node_base*) (inlined)
+                                  std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~_Fwd_list_base() (inlined)
+                                  std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~forward_list() (inlined)
+                                  forward_list_as_mapt<dstringt, irept>::~forward_list_as_mapt() (inlined)
+                                  tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::~tree_nodet() (inlined)
+                                  sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+
+     5.92%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_p...
+            |
+            ---std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_Mod_range_...
+               |          
+                --5.83%--std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_...
+                          |          
+                           --5.83%--string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+                                     |          
+                                     |--3.38%--build_identifier(exprt const&, dstringt const&, dstringt const&, dstringt const&)
+                                     |          update_identifier(ssa_exprt&)
+                                     |          |          
+                                     |          |--1.72%--field_sensitivityt::get_fields(namespacet const&, goto_symex_statet&, ssa_exprt const&, bool) const
+                                     |          |          |          
+                                     |          |           --1.64%--field_sensitivityt::get_fields(namespacet const&, goto_symex_statet&, ssa_exprt const&, bool) const
+                                     |          |                     |          
+                                     |          |                      --1.29%--field_sensitivityt::get_fields(namespacet const&, goto_symex_statet&, ssa_exprt const&, bool) const
+                                     |          |                                |          
+                                     |          |                                 --1.21%--field_sensitivityt::apply(namespacet const&, goto_symex_statet&, exprt, bool) const
+                                     |          |                                           field_sensitivityt::apply(namespacet const&, goto_symex_statet&, exprt, bool) const
+                                     |          |                                           |          
+                                     |          |                                            --1.20%--field_sensitivityt::apply(namespacet const&, goto_symex_statet&, exprt, bool) const
+                                     |          |          
+                                     |           --1.15%--symex_level2t::operator()(renamedt<ssa_exprt, (levelt)1>) const
+                                     |                     renamedt<ssa_exprt, (levelt)3> goto_symex_statet::set_indices<(levelt)3>(ssa_exprt, namespacet const&)
+                                     |          
+                                      --1.76%--symbol_table_baset::next_unused_suffix(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const
+                                                namespacet::smallest_unused_suffix(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const
+                                                get_new_name(dstringt const&, namespacet const&, char)
+                                                get_fresh_aux_symbol(typet const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char...
+                                                get_fresh_aux_symbol(typet const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char...
+                                                value_set_dereferencet::get_failure_value(exprt const&, typet const&)
+                                                value_set_dereferencet::handle_dereference_base_case(exprt const&, bool)
+                                                value_set_dereferencet::dereference(exprt const&, bool)
+                                                goto_symext::dereference_rec(exprt&, goto_symex_statet&, bool, bool)
+                                                goto_symext::dereference_rec(exprt&, goto_symex_statet&, bool, bool)
+                                                |          
+                                                 --1.75%--goto_symext::dereference_rec(exprt&, goto_symex_statet&, bool, bool)
+                                                           |          
+                                                            --1.24%--goto_symext::dereference_rec(exprt&, goto_symex_statet&, bool, bool)
+                                                                      |          
+                                                                       --1.24%--goto_symext::dereference_rec(exprt&, goto_symex_statet&, bool, bool)
+
+     5.50%  cbmc     cbmc                     [.] merge_irept::merged(irept const&)
+            |
+            ---merge_irept::merged(irept const&)
+               |          
+               |--2.88%--merge_irept::merged(irept const&)
+               |          |          
+               |          |--1.83%--merge_irept::operator()(irept&)
+               |          |          symex_target_equationt::merge_ireps(SSA_stept&)
+               |          |          |          
+               |          |           --1.38%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+               |          |          
+               |           --1.05%--merge_irept::merged(irept const&)
+               |          
+                --2.62%--merge_irept::operator()(irept&)
+                          symex_target_equationt::merge_ireps(SSA_stept&)
+                          |          
+                           --2.13%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+                                     |          
+                                      --1.18%--merge_names(goto_statet const&, goto_symex_statet&, namespacet const&, guard_exprt const&, messaget&, bool, symex_target_equationt&, incremental_dirtyt const&, ssa_exprt const&, unsigned long, unsigne...
+                                                goto_symext::phi_function(goto_statet const&, goto_symex_statet&)
+                                                goto_symext::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+                                                symex_bmct::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+                                                goto_symext::merge_gotos(goto_symex_statet&)
+                                                goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                multi_path_symex_only_checkert::generate_equation()
+                                                multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                                                all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                cbmc_parse_optionst::doit()
+
+     3.69%  cbmc     libc.so.6                [.] malloc
+            |
+            ---malloc
+               |          
+                --3.64%--operator new(unsigned long)
+                          |          
+                           --1.14%--std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::allocate(unsigned long, void const*) (inlined)
+                                     std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::allocate(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, unsigned long) (inlined)
+                                     std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_get_node() (inlined)
+                                     std::_Fwd_list_node<std::pair<dstringt, irept> >* std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_create_node<std::pair<dstringt, irept> const&>(std::pair<dstri...
+                                     |          
+                                      --1.03%--void std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_range_initialize<std::_Fwd_list_const_iterator<std::pair<dstringt, irept> > >(std::_Fwd_list_const_...
+                                                std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::forward_list(std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > > c...
+                                                forward_list_as_mapt<dstringt, irept>::forward_list_as_mapt(forward_list_as_mapt<dstringt, irept> const&) (inlined)
+
+     3.13%  cbmc     cbmc                     [.] irept::get(dstringt const&) const
+            |
+            ---irept::get(dstringt const&) const
+
+     2.72%  cbmc     libc.so.6                [.] cfree
+            |
+            ---cfree
+
+     2.65%  cbmc     cbmc                     [.] irept::find(dstringt const&) const
+            |
+            ---irept::find(dstringt const&) const
+
+     2.34%  cbmc     cbmc                     [.] std::_Hashtable<irept, irept, std::allocator<irept>, std::__detail::_Identity, std::equal_to<irept>, irep_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail...
+            |
+            ---std::_Hashtable<irept, irept, std::allocator<irept>, std::__detail::_Identity, std::equal_to<irept>, irep_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__deta...
+               merge_irept::merged(irept const&)
+               |          
+                --2.11%--merge_irept::merged(irept const&)
+                          merge_irept::operator()(irept&)
+                          symex_target_equationt::merge_ireps(SSA_stept&)
+                          |          
+                           --2.11%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+                                     |          
+                                      --1.24%--merge_names(goto_statet const&, goto_symex_statet&, namespacet const&, guard_exprt const&, messaget&, bool, symex_target_equationt&, incremental_dirtyt const&, ssa_exprt const&, unsigned long, unsigne...
+                                                goto_symext::phi_function(goto_statet const&, goto_symex_statet&)
+                                                goto_symext::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+                                                symex_bmct::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+                                                goto_symext::merge_gotos(goto_symex_statet&)
+                                                goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                multi_path_symex_only_checkert::generate_equation()
+                                                multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                                                all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                cbmc_parse_optionst::doit()
+
+     2.22%  cbmc     cbmc                     [.] hash_string(char const*)
+            |
+            ---hash_string(char const*)
+               |          
+                --1.86%--std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_...
+                          string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+                          |          
+                           --1.33%--build_identifier(exprt const&, dstringt const&, dstringt const&, dstringt const&)
+                                     update_identifier(ssa_exprt&)
+
+     1.81%  cbmc     libc.so.6                [.] 0x00000000000a9c06
+            |
+            ---0x70e7b46a9c06
+               |          
+                --1.46%--0x70e7b46aada4
+                          cfree
+
+     1.70%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::detach()
+     1.56%  cbmc     libc.so.6                [.] 0x00000000000a9afd
+            |
+            ---0x70e7b46a9afd
+
+     1.41%  cbmc     libc.so.6                [.] 0x00000000000a9c61
+            |
+            ---0x70e7b46a9c61
+               |          
+                --1.28%--0x70e7b46aada4
+                          cfree
+
+     1.17%  cbmc     cbmc                     [.] std::_Hashtable<dstringt, std::pair<dstringt const, symbolt>, std::allocator<std::pair<dstringt const, symbolt> >, std::__detail::_Select1st, std::equal_to<dstringt>, std::hash<dstringt>, std::__de...
+            |
+            ---std::_Hashtable<dstringt, std::pair<dstringt const, symbolt>, std::allocator<std::pair<dstringt const, symbolt> >, std::__detail::_Select1st, std::equal_to<dstringt>, std::hash<dstringt>, std::__detail::_Mod_range_hashing, std::__de...
+
+     1.16%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_p...
+            |
+            ---std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_Mod_range_...
+               std::__detail::_Map_base<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_M...
+               string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+               build_identifier(exprt const&, dstringt const&, dstringt const&, dstringt const&)
+               update_identifier(ssa_exprt&)
+
+     1.14%  cbmc     libstdc++.so.6.0.33      [.] operator new(unsigned long)
+            |
+            ---operator new(unsigned long)
+
+     1.12%  cbmc     cbmc                     [.] sharing_mapt<dstringt, std::pair<ssa_exprt, unsigned long>, false, std::hash<dstringt>, std::equal_to<dstringt> >::get_leaf_node(dstringt const&) const
+            |
+            ---sharing_mapt<dstringt, std::pair<ssa_exprt, unsigned long>, false, std::hash<dstringt>, std::equal_to<dstringt> >::get_leaf_node(dstringt const&) const
+
+     1.05%  cbmc     libstdc++.so.6.0.33      [.] std::basic_ostream<char, std::char_traits<char> >& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&, char const*, long)
+            |
+            ---std::basic_ostream<char, std::char_traits<char> >& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&, char const*, long)
+               |          
+                --1.03%--build_ssa_identifier_rec(exprt const&, dstringt const&, dstringt const&, dstringt const&, std::ostream&, std::ostream&)
+
+     1.01%  cbmc     cbmc                     [.] sharing_mapt<dstringt, value_sett::entryt, false, std::hash<dstringt>, std::equal_to<dstringt> >::get_leaf_node(dstringt const&) const
+            |
+            ---sharing_mapt<dstringt, value_sett::entryt, false, std::hash<dstringt>, std::equal_to<dstringt> >::get_leaf_node(dstringt const&) const
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

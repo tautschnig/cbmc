@@ -1,0 +1,244 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 5195715323
+#
+# Children      Self  Command  Shared Object            Symbol                                                                                                                                                                                         ...
+# ........  ........  .......  .......................  ..................................................................................................................................................................................................
+#
+    35.25%     0.00%  cbmc     cbmc                     [.] cbmc_parse_optionst::doit()
+    29.63%     0.00%  cbmc     cbmc                     [.] goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+    29.51%     0.00%  cbmc     cbmc                     [.] multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+    29.26%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+    29.14%     0.00%  cbmc     cbmc                     [.] symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+    28.78%     0.00%  cbmc     cbmc                     [.] all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+    28.53%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+    28.33%     0.00%  cbmc     cbmc                     [.] multi_path_symex_only_checkert::generate_equation()
+    27.97%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+    27.53%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+    19.57%     3.06%  cbmc     cbmc                     [.] jsont::jsont(jsont const&)
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_trai...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_trai...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_trai...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_trai...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_trai...
+    19.12%     0.00%  cbmc     cbmc                     [.] std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > ...
+    19.07%     0.00%  cbmc     cbmc                     [.] std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>::pair(std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::alloc...
+    19.07%     0.00%  cbmc     cbmc                     [.] void std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>...
+    19.07%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::construct<std::pair<std::__cxx11:...
+    19.07%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::construct<std::...
+    18.81%     0.00%  cbmc     cbmc                     [.] jsont* std::__do_uninit_copy<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*>(__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont,...
+    18.81%     0.00%  cbmc     cbmc                     [.] jsont* std::__uninitialized_copy<false>::__uninit_copy<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*>(__gnu_cxx::__normal_iterator<jsont ...
+    18.81%     0.00%  cbmc     cbmc                     [.] jsont* std::__uninitialized_copy_a<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*, jsont>(__gnu_cxx::__normal_iterator<jsont const*, std::...
+    18.81%     0.00%  cbmc     cbmc                     [.] jsont* std::uninitialized_copy<__gnu_cxx::__normal_iterator<jsont const*, std::vector<jsont, std::allocator<jsont> > >, jsont*>(__gnu_cxx::__normal_iterator<jsont const*, std::vector<json...
+    18.81%     0.00%  cbmc     cbmc                     [.] std::vector<jsont, std::allocator<jsont> >::vector(std::vector<jsont, std::allocator<jsont> > const&) (inlined)
+    18.69%     0.00%  cbmc     cbmc                     [.] void std::_Construct<jsont, jsont const&>(jsont*, jsont const&) (inlined)
+    16.50%     1.22%  cbmc     cbmc                     [.] yyjsonparse(json_parsert&, void*)
+    15.84%     0.00%  cbmc     cbmc                     [.] parse_json(std::istream&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+    15.47%     0.00%  cbmc     cbmc                     [.] parse_json(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+    14.95%     1.45%  cbmc     libstdc++.so.6.0.33      [.] operator new(unsigned long)
+    14.91%     0.00%  cbmc     cbmc                     [.] python_languaget::resolve_module(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+    14.87%     0.00%  cbmc     cbmc                     [.] python_convertert::convert()
+    14.80%     0.54%  cbmc     cbmc                     [.] jsont::~jsont()
+    14.74%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+    14.74%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+    14.69%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    14.69%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    14.69%     0.00%  cbmc     cbmc                     [.] std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > ...
+    14.68%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+    14.63%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    14.58%     0.00%  cbmc     cbmc                     [.] jsont::~jsont() (inlined)
+    14.58%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    14.58%     0.00%  cbmc     cbmc                     [.] std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>::~pair() (inlined)
+    14.58%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::destroy<std::pair<std::__cxx11::b...
+    14.58%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::destroy<std::pa...
+    14.18%     0.00%  cbmc     cbmc                     [.] std::vector<jsont, std::allocator<jsont> >::~vector() (inlined)
+    14.18%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<jsont*, jsont>(jsont*, jsont*, std::allocator<jsont>&) (inlined)
+    14.18%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<jsont*>(jsont*, jsont*) (inlined)
+    14.18%     0.00%  cbmc     cbmc                     [.] void std::_Destroy_aux<false>::__destroy<jsont*>(jsont*, jsont*) (inlined)
+    14.15%     0.00%  cbmc     cbmc                     [.] python_languaget::typecheck(symbol_table_baset&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+    14.12%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<jsont>(jsont*) (inlined)
+    13.92%     2.21%  cbmc     libc.so.6                [.] cfree
+    13.56%     3.37%  cbmc     libc.so.6                [.] malloc
+    11.01%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+    11.01%     0.00%  cbmc     cbmc                     [.] std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > ...
+     9.55%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+     9.40%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+     9.40%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::allocate(unsigned long, void const*) (...
+     9.40%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::allocate(std::alloca...
+     9.13%     0.00%  cvc5     cvc5                     [.] 0x00000000005c62b7
+     9.13%     0.00%  cvc5     cvc5                     [.] 0x000000000060b27b
+     9.13%     0.00%  cvc5     cvc5                     [.] 0x000000000061af5d
+     9.11%     0.00%  cbmc     cbmc                     [.] main
+     9.08%     0.00%  cvc5     cvc5                     [.] 0x00000000006097fd
+     9.08%     0.00%  cvc5     cvc5                     [.] 0x0000000001a2c3bf
+     8.76%     0.00%  cbmc     cbmc                     [.] parse_options_baset::main()
+     8.33%     0.00%  cbmc     libc.so.6                [.] __libc_start_main
+     8.13%     0.00%  cbmc     cbmc                     [.] field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+     8.12%     1.64%  cbmc     cbmc                     [.] merge_irept::merged(irept const&)
+     8.12%     0.00%  cbmc     cbmc                     [.] merge_irept::operator()(irept&)
+     8.06%     0.00%  cbmc     cbmc                     [.] symex_target_equationt::merge_ireps(SSA_stept&)
+     8.04%     0.00%  cbmc     cbmc                     [.] _start
+     7.86%     0.00%  cbmc     cbmc                     [.] symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+     7.57%     0.00%  cbmc     cbmc                     [.] field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+     7.53%     0.18%  cbmc     cbmc                     [.] field_sensitivityt::apply(namespacet const&, goto_symex_statet&, exprt, bool) const
+     7.47%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+     7.47%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::deallocate(std::_Rb_tree_node<std::pai...
+     7.47%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::deallocate(std::allo...
+     7.39%     0.00%  cbmc     cbmc                     [.] python_convertert::convert_class_def(jsont const&)
+     7.23%     0.00%  cbmc     cbmc                     [.] goto_symext::merge_gotos(goto_symex_statet&)
+     7.17%     0.00%  cbmc     libc.so.6                [.] 0x00007b28c162a1c9
+     7.03%     0.00%  cbmc     cbmc                     [.] python_convertert::convert_type_annotation(jsont const&)
+     6.96%     0.00%  cbmc     cbmc                     [.] update_identifier(ssa_exprt&)
+     6.94%     0.00%  cbmc     cbmc                     [.] goto_symext::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+     6.94%     0.00%  cbmc     cbmc                     [.] symex_bmct::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+     6.87%     2.94%  cbmc     cbmc                     [.] yyjsonlex(void*)
+     6.83%     0.00%  cbmc     cbmc                     [.] goto_symext::phi_function(goto_statet const&, goto_symex_statet&)
+     6.68%     0.00%  cbmc     cbmc                     [.] goto_symext::clean_expr(exprt, goto_symex_statet&, bool)
+     6.68%     0.00%  cbmc     cbmc                     [.] goto_symext::dereference(exprt&, goto_symex_statet&, bool)
+     6.47%     0.06%  cbmc     cbmc                     [.] build_identifier(exprt const&, dstringt const&, dstringt const&, dstringt const&)
+     6.37%     6.37%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+     6.22%     4.06%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+     6.20%     0.00%  cvc5     cvc5                     [.] 0x00000000006132fe
+     6.09%     0.00%  cbmc     cbmc                     [.] goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+     5.99%     0.00%  cvc5     cvc5                     [.] 0x000000000060cba4
+     5.99%     0.06%  cbmc     cbmc                     [.] merge_names(goto_statet const&, goto_symex_statet&, namespacet const&, guard_exprt const&, messaget&, bool, symex_target_equationt&, incremental_dirtyt const&, ssa_exprt const&, unsigned ...
+     5.95%     0.06%  cbmc     cbmc                     [.] field_sensitivityt::get_fields(namespacet const&, goto_symex_statet&, ssa_exprt const&, bool) const
+     5.94%     0.00%  cvc5     cvc5                     [.] 0x000000000060c878
+     5.69%     0.00%  cvc5     cvc5                     [.] 0x00000000017d64f7
+     5.08%     5.08%  cbmc     cbmc                     [.] irept::operator==(irept const&) const
+     4.71%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_function_call_symbol(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&, exprt const&, symbol_exprt const&, std::vector<exprt, std::alloc...
+     4.53%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_function_call_post_clean(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&, exprt const&, symbol_exprt const&, std::vector<exprt, std::a...
+     4.28%     0.00%  cbmc     cbmc                     [.] renamedt<exprt, (levelt)3> goto_symex_statet::rename<(levelt)3>(exprt, namespacet const&)
+     4.19%     0.00%  cbmc     cbmc                     [.] tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::~tree_nodet() (inlined)
+     4.16%     0.00%  cvc5     cvc5                     [.] 0x00000000017d5f6c
+     4.10%     0.00%  cbmc     cbmc                     [.] all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::~all_properties_verifier_with_trace_storaget()
+     4.10%     0.00%  cbmc     cbmc                     [.] multi_path_symex_checkert::~multi_path_symex_checkert() (inlined)
+     3.99%     0.00%  cbmc     cbmc                     [.] void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) (inlined)
+     3.88%     0.00%  cvc5     cvc5                     [.] 0x00000000006c4390
+     3.86%     0.79%  cbmc     libstdc++.so.6.0.33      [.] std::istream::read(char*, long)
+     3.81%     0.00%  cbmc     cbmc                     [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) (inli...
+     3.79%     0.00%  cbmc     cbmc                     [.] goto_symext::parameter_assignments(dstringt const&, goto_functiont const&, goto_symex_statet&, std::vector<exprt, std::allocator<exprt> > const&)
+     3.79%     0.00%  cbmc     cbmc                     [.] multi_path_symex_only_checkert::~multi_path_symex_only_checkert()
+     3.79%     0.00%  cbmc     cbmc                     [.] symex_target_equationt::~symex_target_equationt() (inlined)
+     3.72%     0.00%  cbmc     cbmc                     [.] void std::vector<jsont, std::allocator<jsont> >::_M_realloc_insert<jsont const&>(__gnu_cxx::__normal_iterator<jsont*, std::vector<jsont, std::allocator<jsont> > >, jsont const&)
+     3.63%     0.18%  cbmc     cbmc                     [.] build_ssa_identifier_rec(exprt const&, dstringt const&, dstringt const&, dstringt const&, std::ostream&, std::ostream&)
+     3.62%     0.00%  cbmc     cbmc                     [.] cbmc_parse_optionst::get_goto_program(goto_modelt&, optionst const&, cmdlinet const&, ui_message_handlert&)
+     3.57%     0.00%  cbmc     cbmc                     [.] renamedt<ssa_exprt, (levelt)3> goto_symex_statet::set_indices<(levelt)3>(ssa_exprt, namespacet const&)
+     3.46%     0.00%  cbmc     cbmc                     [.] irept::~irept() (inlined)
+     3.46%     0.00%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+     3.39%     0.00%  cbmc     cbmc                     [.] symex_level2t::operator()(renamedt<ssa_exprt, (levelt)1>) const
+     3.16%     0.00%  cbmc     libc.so.6                [.] 0x00007b28c16aada4
+     3.11%     3.11%  cbmc     cbmc                     [.] irept::find(dstringt const&) const
+     3.09%     0.00%  cbmc     cbmc                     [.] value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+     3.09%     0.00%  cbmc     cbmc                     [.] forward_list_as_mapt<dstringt, irept>::~forward_list_as_mapt() (inlined)
+     3.09%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_erase_after(std::_Fwd_list_node_base*, std::_Fwd_list_node_base*) (inlined)
+     3.09%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~_Fwd_list_base() (inlined)
+     3.09%     0.00%  cbmc     cbmc                     [.] std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~forward_list() (inlined)
+     2.92%     0.00%  cvc5     cvc5                     [.] 0x000000000061337b
+     2.92%     0.00%  cvc5     cvc5                     [.] 0x00000000017f765f
+     2.92%     0.00%  cvc5     cvc5                     [.] 0x00000000017f9da5
+     2.92%     0.00%  cvc5     cvc5                     [.] 0x0000000001810378
+     2.88%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_goto(goto_symex_statet&)
+     2.77%     0.73%  cbmc     libstdc++.so.6.0.33      [.] std::basic_ostream<char, std::char_traits<char> >& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&, char const*, long)
+     2.75%     0.00%  cbmc     cbmc                     [.] simplify_exprt::simplify(exprt&)
+     2.71%     0.06%  cbmc     cbmc                     [.] string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+     2.69%     2.69%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_trai...
+     2.60%     0.00%  cbmc     cbmc                     [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) (inli...
+     2.51%     0.00%  cbmc     cbmc                     [.] std::vector<irept, std::allocator<irept> >::~vector() (inlined)
+     2.51%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<irept*, irept>(irept*, irept*, std::allocator<irept>&) (inlined)
+     2.51%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<irept*>(irept*, irept*) (inlined)
+     2.51%     0.00%  cbmc     cbmc                     [.] void std::_Destroy_aux<false>::__destroy<irept*>(irept*, irept*) (inlined)
+     2.50%     0.18%  cbmc     cbmc                     [.] std::__cxx11::_List_base<SSA_stept, std::allocator<SSA_stept> >::_M_clear()
+     2.50%     0.00%  cbmc     cbmc                     [.] std::__cxx11::_List_base<SSA_stept, std::allocator<SSA_stept> >::~_List_base() (inlined)
+     2.50%     0.00%  cbmc     cbmc                     [.] std::__cxx11::list<SSA_stept, std::allocator<SSA_stept> >::~list() (inlined)
+     2.49%     0.90%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::detach()
+     2.47%     0.00%  cvc5     cvc5                     [.] 0x00000000006c77e7
+     2.47%     0.00%  cvc5     cvc5                     [.] 0x00000000019786fb
+     2.42%     0.00%  cbmc     cbmc                     [.] cbmc_parse_optionst::process_goto_program(goto_modelt&, optionst const&, messaget&)
+     2.42%     0.00%  cbmc     cbmc                     [.] convert_symex_target_equation(symex_target_equationt&, decision_proceduret&, message_handlert&)
+     2.42%     0.00%  cbmc     cbmc                     [.] multi_path_symex_checkert::prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&) (inlined)
+     2.42%     0.00%  cbmc     cbmc                     [.] prepare_property_decider(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&, symex_target_equationt&, goto_symex_propert...
+     2.42%     0.00%  cbmc     cbmc                     [.] symex_target_equationt::convert(decision_proceduret&)
+     2.38%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<irept>(irept*) (inlined)
+     2.36%     0.00%  cbmc     cbmc                     [.] symex_target_equationt::convert_without_assertions(decision_proceduret&)
+     2.36%     1.01%  cbmc     libstdc++.so.6.0.33      [.] std::basic_filebuf<char, std::char_traits<char> >::xsgetn(char*, long)
+     2.32%     0.18%  cbmc     cbmc                     [.] simplify_exprt::simplify_rec(exprt const&)
+     2.31%     2.31%  cbmc     cbmc                     [.] void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) [clone .isra.0]
+     2.08%     0.37%  cbmc     cbmc                     [.] simplify_exprt::simplify_node_preorder(exprt const&)
+     2.06%     0.00%  cbmc     cbmc                     [.] link_to_library(goto_modelt&, message_handlert&, std::function<void (std::set<dstringt, std::less<dstringt>, std::allocator<dstringt> > const&, symbol_tablet const&, symbol_tablet&, messa...
+     2.00%     0.73%  cbmc     cbmc                     [.] rename_symbolt::rename(exprt&) const
+     2.00%     0.00%  cbmc     cbmc                     [.] link_goto_model(goto_modelt&, goto_modelt&&, message_handlert&)
+     1.98%     0.12%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>...
+     1.94%     0.00%  cbmc     cbmc                     [.] std::pair<dstringt, irept>::~pair() (inlined)
+     1.94%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::destroy<std::pair<dstringt, irept> >(std::pair<dstringt, irept>*) (inlined)
+     1.94%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::destroy<std::pair<dstringt, irept> >(std::allocator<std::_Fwd_list_node<std::pair<dstringt,...
+     1.80%     0.00%  cbmc     cbmc                     [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_S_copy(char*, char const*, unsigned long) (inlined)
+     1.80%     0.00%  cbmc     cbmc                     [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_S_copy_chars(char*, char*, char*) (inlined)
+     1.80%     0.00%  cbmc     cbmc                     [.] std::char_traits<char>::copy(char*, char const*, unsigned long) (inlined)
+     1.76%     0.00%  cbmc     cbmc                     [.] tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::tree_nodet(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true> const&) (inlined)
+     1.75%     0.00%  cbmc     cbmc                     [.] language_filest::typecheck_module(symbol_table_baset&, language_modulet&, bool, message_handlert&)
+     1.72%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_assert(goto_programt::instructiont const&, goto_symex_statet&)
+     1.68%     0.72%  cbmc     libstdc++.so.6.0.33      [.] std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)
+     1.68%     0.00%  cvc5     cvc5                     [.] 0x0000000001a27e12
+     1.57%     0.00%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > co...
+     1.52%     0.00%  cbmc     libc.so.6                [.] exit
+     1.52%     0.00%  cbmc     libc.so.6                [.] 0x00007b28c162a1d0
+     1.52%     0.00%  cbmc     libc.so.6                [.] 0x00007b28c1647a75
+     1.51%     0.00%  cvc5     cvc5                     [.] 0x0000000001a291bf
+     1.51%     0.00%  cbmc     cbmc                     [.] linkingt::link(symbol_table_baset const&)
+     1.51%     1.51%  cbmc     cbmc                     [.] irept::get(dstringt const&) const
+     1.45%     0.00%  cbmc     cbmc                     [.] forward_list_as_mapt<dstringt, irept>::forward_list_as_mapt(forward_list_as_mapt<dstringt, irept> const&) (inlined)
+     1.45%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_node<std::pair<dstringt, irept> >* std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_create_node<std::pair<dstringt, irept> ...
+     1.45%     0.00%  cbmc     cbmc                     [.] std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::forward_list(std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, ...
+     1.45%     0.00%  cbmc     cbmc                     [.] void std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_range_initialize<std::_Fwd_list_const_iterator<std::pair<dstringt, irept> > >(std::_Fw...
+     1.41%     0.00%  cbmc     cbmc                     [.] simplify_exprt::simplify_index_preorder(index_exprt const&)
+     1.38%     1.38%  cbmc     libc.so.6                [.] 0x00000000000a9afd
+     1.38%     0.00%  cbmc     libc.so.6                [.] 0x00007b28c16a9afd
+     1.36%     0.00%  cbmc     cbmc                     [.] initialize_goto_model(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, ...
+     1.35%     0.00%  cvc5     cvc5                     [.] 0x00000000006c781b
+     1.35%     0.97%  cbmc     libstdc++.so.6.0.33      [.] std::basic_streambuf<char, std::char_traits<char> >::xsgetn(char*, long)
+     1.35%     0.00%  cbmc     cbmc                     [.] std::__cxx11::_List_base<SSA_stept, std::allocator<SSA_stept> >::_M_put_node(std::_List_node<SSA_stept>*) (inlined)
+     1.35%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_List_node<SSA_stept> >::deallocate(std::_List_node<SSA_stept>*, unsigned long) (inlined)
+     1.35%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_List_node<SSA_stept> > >::deallocate(std::allocator<std::_List_node<SSA_stept> >&, std::_List_node<SSA_stept>*, unsigned long) (inlined)
+     1.29%     0.00%  cbmc     cbmc                     [.] merge_irept::~merge_irept() (inlined)
+     1.29%     0.00%  cbmc     cbmc                     [.] std::_Hashtable<irept, irept, std::allocator<irept>, std::__detail::_Identity, std::equal_to<irept>, irep_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std...
+     1.29%     0.00%  cbmc     cbmc                     [.] std::unordered_set<irept, irep_hash, std::equal_to<irept>, std::allocator<irept> >::~unordered_set() (inlined)
+     1.28%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_put_node(std::_Fwd_list_node<std::pair<dstringt, irept> >*) (inlined)
+     1.28%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::deallocate(std::_Fwd_list_node<std::pair<dstringt, irept> >*, unsigned long) (inlined)
+     1.28%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::deallocate(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, std::_Fwd_list_no...
+     1.23%     0.00%  cvc5     cvc5                     [.] 0x0000000001a29831
+     1.21%     0.18%  cbmc     cbmc                     [.] irept::add(dstringt const&)
+     1.21%     0.00%  cbmc     cbmc                     [.] value_sett::get_value_set(exprt, namespacet const&, bool) const
+     1.21%     0.00%  cbmc     cbmc                     [.] value_sett::assign_rec(exprt const&, reference_counting<std::map<unsigned long, std::optional<exprt>, std::less<unsigned long>, std::allocator<std::pair<unsigned long const, std::optional...
+     1.21%     1.09%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>...
+     1.19%     0.00%  cbmc     cbmc                     [.] std::_Vector_base<jsont, std::allocator<jsont> >::_Vector_base(unsigned long, std::allocator<jsont> const&) (inlined)
+     1.17%     1.17%  cbmc     libc.so.6                [.] 0x00000000000a9c06
+     1.17%     0.00%  cbmc     libc.so.6                [.] 0x00007b28c16a9c06
+     1.17%     0.00%  cbmc     cbmc                     [.] smt2_convt::prepare_for_convert_expr(exprt const&)
+     1.16%     0.00%  cbmc     cbmc                     [.] simplify_exprt::simplify_member_preorder(member_exprt const&)
+     1.16%     0.00%  cbmc     cbmc                     [.] SSA_stept::~SSA_stept() (inlined)
+     1.16%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::_List_node<SSA_stept> >::destroy<SSA_stept>(SSA_stept*) (inlined)
+     1.16%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::_List_node<SSA_stept> > >::destroy<SSA_stept>(std::allocator<std::_List_node<SSA_stept> >&, SSA_stept*) (inlined)
+     1.15%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_get_node() (inlined)
+     1.15%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::allocate(unsigned long, void const*) (inlined)
+     1.15%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::allocate(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, unsigned long) (inl...
+     1.13%     0.00%  cvc5     cvc5                     [.] 0x000000000182eea1
+     1.12%     0.00%  cbmc     cbmc                     [.] initialize_from_source_files(std::__cxx11::list<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_...
+     1.11%     0.06%  cbmc     cbmc                     [.] smt2_convt::find_symbols(exprt const&)
+     1.09%     0.00%  cbmc     cbmc                     [.] from_integer(BigInt const&, typet const&)
+     1.09%     0.00%  cbmc     cbmc                     [.] value_sett::get_value_set_rec(exprt const&, reference_counting<std::map<unsigned long, std::optional<exprt>, std::less<unsigned long>, std::allocator<std::pair<unsigned long const, std::o...
+     1.06%     0.00%  cvc5     cvc5                     [.] 0x0000000001a2bb05
+     1.04%     0.06%  cbmc     cbmc                     [.] slice(symex_bmct&, symex_target_equationt&, namespacet const&, optionst const&, ui_message_handlert&)
+     1.04%     0.00%  cbmc     cbmc                     [.] postprocess_equation(symex_bmct&, symex_target_equationt&, optionst const&, namespacet const&, ui_message_handlert&)
+     1.03%     0.00%  cbmc     cbmc                     [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_local_data() (inlined)
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

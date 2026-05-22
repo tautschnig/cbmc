@@ -1,0 +1,169 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 5195715323
+#
+# Overhead  Command  Shared Object            Symbol                                                                                                                                                                                                   ...
+# ........  .......  .......................  ............................................................................................................................................................................................................
+#
+     6.37%  cbmc     cbmc                     [.] std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont...
+            |          
+            |--3.26%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair...
+            |          |          
+            |          |--2.17%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1s...
+            |          |          |          
+            |          |           --1.45%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std...
+            |          |                     std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocat...
+            |          |                     jsont::~jsont() (inlined)
+            |          |          
+            |           --1.09%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1s...
+            |                     std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, jsont, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pai...
+            |                     jsont::~jsont() (inlined)
+            |          
+             --1.57%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pair...
+                       std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::pai...
+                       |          
+                        --1.02%--std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1s...
+
+     5.08%  cbmc     cbmc                     [.] irept::operator==(irept const&) const
+            |
+            ---irept::operator==(irept const&) const
+               |          
+                --4.42%--irept::operator==(irept const&) const
+                          |          
+                           --4.06%--irept::operator==(irept const&) const
+                                     |          
+                                      --3.94%--irept::operator==(irept const&) const
+                                                |          
+                                                 --3.16%--irept::operator==(irept const&) const
+                                                           |          
+                                                            --2.73%--irept::operator==(irept const&) const
+                                                                      |          
+                                                                       --2.37%--irept::operator==(irept const&) const
+                                                                                 |          
+                                                                                  --2.01%--irept::operator==(irept const&) const
+                                                                                            |          
+                                                                                             --1.15%--irept::operator==(irept const&) const
+
+     4.06%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+            |          
+             --2.94%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+                       |          
+                        --1.82%--sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+                                  irept::~irept() (inlined)
+
+     3.37%  cbmc     libc.so.6                [.] malloc
+            |
+            ---malloc
+               operator new(unsigned long)
+               |          
+                --1.92%--std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::allocate(unsigned long, void const*) (inlined)
+                          std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::allocate(std::allocator<std::_Rb_tree_node<std::pair<s...
+                          std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std::...
+                          std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, ...
+                          std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, ...
+                          std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, ...
+                          std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, ...
+                          |          
+                           --1.09%--std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator...
+
+     3.11%  cbmc     cbmc                     [.] irept::find(dstringt const&) const
+            |
+            ---irept::find(dstringt const&) const
+               |          
+                --1.03%--rename_symbolt::rename(exprt&) const
+
+     3.06%  cbmc     cbmc                     [.] jsont::jsont(jsont const&)
+     2.94%  cbmc     cbmc                     [.] yyjsonlex(void*)
+            |
+            ---yyjsonlex(void*)
+               yyjsonparse(json_parsert&, void*)
+               parse_json(std::istream&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+               parse_json(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+               |          
+                --2.89%--python_languaget::resolve_module(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+                          |          
+                          |--1.49%--python_convertert::convert()
+                          |          python_languaget::typecheck(symbol_table_baset&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+                          |          
+                           --1.41%--python_convertert::convert_type_annotation(jsont const&)
+                                     python_convertert::convert_class_def(jsont const&)
+                                     python_convertert::convert()
+                                     python_languaget::typecheck(symbol_table_baset&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+
+     2.69%  cbmc     cbmc                     [.] std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, ...
+            |          
+             --1.03%--std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_local_data() (inlined)
+                       std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) (inlined)
+                       std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>::pair(std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> const&) (i...
+                       void std::__new_allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > >::construct<std::pair<std::__cxx11::basic_string<char, std::char_traits<...
+                       void std::allocator_traits<std::allocator<std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> > > >::construct<std::pair<std::__cxx11::basic_string<char,...
+                       void std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont>, std::_Select1st<std...
+                       std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std...
+                       std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std...
+                       std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std...
+                       std::_Rb_tree_node<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, jsont> >* std::_Rb_tree<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std...
+
+     2.31%  cbmc     cbmc                     [.] void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) [clone .isra.0]
+            |          
+             --1.71%--void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) (inlined)
+                       std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) (inlined)
+
+     2.21%  cbmc     libc.so.6                [.] cfree
+            |
+            ---cfree
+
+     1.64%  cbmc     cbmc                     [.] merge_irept::merged(irept const&)
+            |
+            ---merge_irept::merged(irept const&)
+               |          
+                --1.40%--merge_irept::merged(irept const&)
+
+     1.51%  cbmc     cbmc                     [.] irept::get(dstringt const&) const
+            |
+            ---irept::get(dstringt const&) const
+
+     1.45%  cbmc     libstdc++.so.6.0.33      [.] operator new(unsigned long)
+            |
+            ---operator new(unsigned long)
+
+     1.38%  cbmc     libc.so.6                [.] 0x00000000000a9afd
+            |
+            ---0x7b28c16a9afd
+
+     1.22%  cbmc     cbmc                     [.] yyjsonparse(json_parsert&, void*)
+            |
+            ---yyjsonparse(json_parsert&, void*)
+               parse_json(std::istream&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+               parse_json(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+               |          
+                --1.17%--python_languaget::resolve_module(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&)
+
+     1.17%  cbmc     libc.so.6                [.] 0x00000000000a9c06
+            |
+            ---0x7b28c16a9c06
+
+     1.09%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_p...
+            |
+            ---std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_Mod_range_...
+               |          
+                --1.03%--std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>, string_ptr_hash, std::__detail::_...
+                          string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+
+     1.01%  cbmc     libstdc++.so.6.0.33      [.] std::basic_filebuf<char, std::char_traits<char> >::xsgetn(char*, long)
+            |
+            ---std::basic_filebuf<char, std::char_traits<char> >::xsgetn(char*, long)
+               std::istream::read(char*, long)
+               yyjsonlex(void*)
+               yyjsonparse(json_parsert&, void*)
+               parse_json(std::istream&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+               parse_json(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, message_handlert&, jsont&)
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

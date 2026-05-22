@@ -396,6 +396,160 @@ default backend** suite-wide, while preserving the same
 commit 3716b7ce3c. The parse daemon is opt-in via the
 `CBMC_PYTHON_SERVER_SOCKET` env var.
 
+## Updated layered breakdown (post-optimisation)
+
+After the daemon + `--slice-formula` defaults landed, the
+same four representative benchmarks were re-profiled. The
+shape of the work has shifted significantly. Source data:
+`python-perf-snapshots/<bench>-final.report-{self,children,callgraph}.txt`.
+
+### Suite-level wall and memory (51 benchmarks)
+
+| Configuration                       | Wall (sum) | Median | Max | RSS (sum) | RSS (max) |
+|------------------------------------:|-----------:|-------:|----:|----------:|----------:|
+| **default**, baseline               |    215 s   |  2.7 s | 34.2 s |   9.1 GB |   1.7 GB |
+| **default**, slice on (default-on)  |    210 s   |  2.7 s | 35.0 s |   8.3 GB |   1.7 GB |
+| **default**, slice on + daemon      |  **152 s** |**1.6 s**|34.5 s|   8.3 GB |   1.7 GB |
+| **cvc5**, baseline                  |    338 s   |  3.0 s | 64.5 s |  14.4 GB |   4.3 GB |
+| **cvc5**, slice on (default-on)     |    223 s   |  2.8 s | 35.0 s |   8.5 GB |   1.7 GB |
+| **cvc5**, slice on + daemon         |  **162 s** |**1.6 s**|34.0 s|   8.6 GB |   1.7 GB |
+
+The two backends now run in nearly the same time and
+memory; cvc5 is just **6 %** slower than default at the
+suite level (162 s vs 152 s). Pass rate unchanged at
+94.1 % on both.
+
+### Per-outlier trajectory
+
+| Benchmark / backend                       | baseline       | + slice         | + slice + daemon |
+|-------------------------------------------|----------------|-----------------|------------------|
+| `aws_untagged_resources_analyzer` default | 35.0 s / 1.77 GB | 35.0 s / 1.77 GB | 34.5 s / 1.77 GB |
+| `aws_untagged_resources_analyzer` cvc5    | 34.9 s / 1.77 GB | 35.0 s / 1.77 GB | 34.0 s / 1.77 GB |
+| `test_bedrock_guardrails` default         | 20.4 s / 1.15 GB | 17.6 s / 0.93 GB | 16.5 s / 0.93 GB |
+| `test_bedrock_guardrails` cvc5            | 52.6 s / 1.48 GB | 17.8 s / 0.93 GB | 16.8 s / 0.93 GB |
+| `s3_backup_restore` default               |  2.7 s / 90 MB   |  2.7 s / 66 MB   |  1.6 s / 66 MB   |
+| `s3_backup_restore` cvc5                  | 29.7 s / 3.82 GB |  3.2 s / 59 MB   |  2.4 s / 60 MB   |
+| `ecs_utils` default                       |  3.9 s / 0.41 GB |  3.0 s / 176 MB  |  1.9 s / 175 MB  |
+| `ecs_utils` cvc5                          | 31.8 s / 2.40 GB |  2.8 s / 72 MB   |  1.8 s / 72 MB   |
+
+Notes on each:
+
+* `aws_untagged_resources_analyzer` — the suite's heaviest
+  symex-bound benchmark. Neither slice (it's already
+  unsliced — most assignments matter for the assertion
+  closure) nor daemon (it's a single-file run with few
+  imports) helps materially. Default and cvc5 backends
+  match because the formula is also short.
+* `test_bedrock_guardrails` — slice cuts the cvc5 time by
+  3× by removing string-refinement axiom volume cvc5
+  doesn't need. Default backend gets ~14 % from the same
+  effect.
+* `s3_backup_restore` — the famous OOM. Slice alone cuts
+  cvc5 time 9× and memory 65×; daemon's effect is smaller
+  here.
+* `ecs_utils` — already mostly fixed by the
+  `irept::compare` SHARING fast-path. With slice + daemon
+  it's now faster than the default backend was a month ago.
+
+### What changed in the layered breakdown
+
+For each of the four benchmarks below, *children* % is the
+fraction of cbmc-attributed wall time spent in that layer
+or below; *self* % is the actual cycles executing in the
+listed functions. comm split is `cbmc / cvc5 / python3`.
+
+#### `aws_untagged_resources_analyzer` (no major change)
+
+Both backends: cbmc 99.8 %, cvc5 0.0 %, python3 0.0 %.
+Identical to baseline within noise — this benchmark is
+symex-bound and our optimisations target the solver and
+parser.
+
+| Layer                                    | children % | self % |
+|-----------------------------------------:|-----------:|-------:|
+| `goto_symext::symex_step` and below      |     72.1   |   0.0  |
+| &nbsp;&nbsp;`symex_assign` chain         |     49.8   |   0.0  |
+| &nbsp;&nbsp;`field_sensitivity` recursive |    27.4   |   0.4  |
+| &nbsp;&nbsp;`merge_gotos`/`phi`           |    22.3   |   0.2  |
+| &nbsp;&nbsp;`dereference`/`clean_expr`    |    18.2   |   0.0  |
+| `merge_ireps` (irept dedup)              |     21.4   |   5.6  |
+| string-refinement loop                   |     20.9   |   5.5  |
+| `build_identifier` / SSA renaming        |     17.9   |   0.6  |
+| `irept` primitives (self)                |     11.3   |  25.6  |
+| stdlib (self)                            |     13.1   |   7.9  |
+| slice-formula                            |      2.7   |   1.1  |
+
+#### `test_bedrock_guardrails` (cvc5: 51 % was solver, now 0.5 %)
+
+| | cbmc | cvc5 | python3 |
+|---|---:|---:|---:|
+| baseline cvc5  | ~50 % | 42.8 % | 2.4 % |
+| **post cvc5**  | **100.3 %** | **0.5 %** | **0 %** |
+
+The 50-line `field_sensitivity` cascade now visibly
+dominates instead of being half-hidden by cvc5. cbmc-side
+breakdown for both backends is essentially identical post-
+fix:
+
+| Layer                                | children % | self % |
+|-------------------------------------:|-----------:|-------:|
+| `goto_symext::symex_step` and below  |     45.8   |   0.0  |
+| &nbsp;&nbsp;`symex_assign` chain     |     63.7   |   0.0  |
+| &nbsp;&nbsp;`field_sensitivity`      |     58.8   |   0.4  |
+| `merge_ireps`                        |     17.7   |   2.7  |
+| string-refinement loop               |     17.3   |   2.6  |
+| `irept` primitives (self)            |     13.1   |  30.2  |
+| stdlib (self)                        |     14.4   |   7.9  |
+
+#### `s3_backup_restore` (cvc5: 86 % was solver, now 29 %)
+
+| | cbmc | cvc5 | python3 |
+|---|---:|---:|---:|
+| baseline cvc5 | 1.9 % | 86.5 % | 1.6 % |
+| **post default** | 99.9 % | 0.0 % | 0 % |
+| **post cvc5**    | 71.0 % | 29.2 % | 0 % |
+
+The default backend now solves this benchmark in 1.6 s with
+sliced formula (vs 2.7 s before — formula slicing also
+helps boolbv slightly). Post-optimisation cvc5 still has a
+sizeable solver share (29 %) but the absolute time is just
+2.4 s.
+
+| Layer                                  | children % | self % |
+|---------------------------------------:|-----------:|-------:|
+| `symex_step` and below                 |     13.7   |   0.0  |
+| &nbsp;&nbsp;`field_sensitivity`        |     22.0   |   0.2  |
+| &nbsp;&nbsp;`dereference`/`clean_expr` |     14.4   |   0.0  |
+| `build_identifier` / SSA renaming      |     11.8   |   0.4  |
+| stdlib (self)                          |     12.9   |   8.2  |
+| `irept` primitives (self)              |      6.0   |   8.7  |
+| Python frontend                        |     11.0   |   0.1  |
+
+#### `ecs_utils` (Python parse-time gone, balanced)
+
+| | cbmc | cvc5 | python3 |
+|---|---:|---:|---:|
+| baseline cvc5 (post irept fix)  | 48.9 % | 15.0 % | **36.9 %** |
+| **post default**                | 100.0 % | 0.0 % | **0 %** |
+| **post cvc5**                   | 90.2 % | 9.5 % | **0 %** |
+
+The 37 % python3 share is gone (daemon serves all parse
+requests in-process). cvc5's residual 9.5 % is from the
+small-but-real string-refinement work this benchmark
+exercises; default backend has zero solver cost because the
+sliced formula is trivial for boolbv + MiniSat.
+
+| Layer                                 | children % | self % |
+|--------------------------------------:|-----------:|-------:|
+| `symex_step` and below                |     29.6   |   0.0  |
+| &nbsp;&nbsp;`symex_assign`            |     14.7   |   0.0  |
+| `merge_ireps`                         |      8.1   |   1.6  |
+| `build_identifier`/SSA renaming       |      7.0   |   0.1  |
+| string-refinement loop                |      8.1   |   1.6  |
+| Python frontend                       |     14.9   |   0.0  |
+| `irept` primitives (self)             |      6.2   |  14.8  |
+| stdlib (self)                         |     14.9   |   7.4  |
+
 ## What the layered view tells us
 
 - **The "irept hot symbols" view in isolation was misleading.**
