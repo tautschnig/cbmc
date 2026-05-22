@@ -106,6 +106,19 @@ exprt python_convertert::convert_lambda(const jsont &expr)
   body.add(code_frontend_returnt{body_val});
   func_sym.value = body;
 
+  // PLR §6.13: a lambda whose body is itself a callable expression
+  // (lambda x: lambda y: ...) is the closure-creating idiom. Register
+  // the outer-to-inner mapping so convert_assign's "lambda-returning
+  // function" detection can rewrite `g = outer(args)` into a direct
+  // closure-bound call to the inner lambda — without this CBMC's
+  // symex would see `g := <code-typed return value>` and abort with
+  // "assignment to 'symbol' not handled".
+  if(body_val.id() == ID_symbol && body_val.type().id() == ID_code)
+  {
+    lambda_returning_functions[lambda_name] =
+      to_symbol_expr(body_val).get_identifier();
+  }
+
   symbol_table.add(func_sym);
   return func_sym.symbol_expr();
 }
