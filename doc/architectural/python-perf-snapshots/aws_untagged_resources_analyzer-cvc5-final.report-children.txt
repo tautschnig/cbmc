@@ -1,0 +1,199 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 35K of event 'cycles:u'
+# Event count (approx.): 109739201035
+#
+# Children      Self  Command  Shared Object            Symbol                                                                                                                                                                                         ...
+# ........  ........  .......  .......................  ..................................................................................................................................................................................................
+#
+    75.06%     0.00%  cbmc     cbmc                     [.] cbmc_parse_optionst::doit()
+    72.25%     0.01%  cbmc     cbmc                     [.] goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+    71.41%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+    71.39%     0.01%  cbmc     cbmc                     [.] symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+    71.00%     0.00%  cbmc     cbmc                     [.] multi_path_symex_only_checkert::generate_equation()
+    70.59%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+    70.04%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+    68.37%     0.00%  cbmc     cbmc                     [.] multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+    68.17%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+    66.41%     0.00%  cbmc     cbmc                     [.] all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+    49.97%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+    35.29%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+    35.23%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+    27.54%     0.00%  cbmc     cbmc                     [.] field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+    24.83%     0.10%  cbmc     cbmc                     [.] field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+    22.38%     0.00%  cbmc     cbmc                     [.] goto_symext::merge_gotos(goto_symex_statet&)
+    21.63%     0.01%  cbmc     cbmc                     [.] symex_target_equationt::merge_ireps(SSA_stept&)
+    21.62%     0.08%  cbmc     cbmc                     [.] merge_irept::operator()(irept&)
+    21.50%     0.00%  cbmc     cbmc                     [.] symex_bmct::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+    21.50%     0.00%  cbmc     cbmc                     [.] goto_symext::merge_goto(symex_targett::sourcet const&, goto_statet&&, goto_symex_statet&)
+    21.46%     0.07%  cbmc     cbmc                     [.] symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+    21.10%     5.66%  cbmc     cbmc                     [.] merge_irept::merged(irept const&)
+    20.97%     0.09%  cbmc     cbmc                     [.] goto_symext::phi_function(goto_statet const&, goto_symex_statet&)
+    20.13%     0.00%  cbmc     cbmc                     [.] parse_options_baset::main()
+    19.74%     0.00%  cbmc     cbmc                     [.] main
+    19.37%     0.05%  cbmc     cbmc                     [.] merge_names(goto_statet const&, goto_symex_statet&, namespacet const&, guard_exprt const&, messaget&, bool, symex_target_equationt&, incremental_dirtyt const&, ssa_exprt const&, unsigned ...
+    18.35%     0.01%  cbmc     cbmc                     [.] goto_symext::dereference(exprt&, goto_symex_statet&, bool)
+    18.32%     0.05%  cbmc     cbmc                     [.] goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+    17.87%     0.10%  cbmc     cbmc                     [.] update_identifier(ssa_exprt&)
+    17.84%     0.00%  cbmc     cbmc                     [.] goto_symext::clean_expr(exprt, goto_symex_statet&, bool)
+    16.60%     0.17%  cbmc     cbmc                     [.] field_sensitivityt::get_fields(namespacet const&, goto_symex_statet&, ssa_exprt const&, bool) const
+    16.54%     0.35%  cbmc     cbmc                     [.] build_identifier(exprt const&, dstringt const&, dstringt const&, dstringt const&)
+    14.95%     0.14%  cbmc     cbmc                     [.] field_sensitivityt::apply(namespacet const&, goto_symex_statet&, exprt, bool) const
+    14.39%     0.00%  cbmc     libc.so.6                [.] __libc_start_main
+    14.36%     0.00%  cbmc     cbmc                     [.] _start
+    13.09%     2.68%  cbmc     libc.so.6                [.] cfree
+    12.98%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b22a1c9
+    12.63%     0.02%  cbmc     cbmc                     [.] goto_symext::dereference_rec(exprt&, goto_symex_statet&, bool, bool)
+    12.36%     6.85%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::remove_ref(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>*)
+    11.41%     0.20%  cbmc     cbmc                     [.] string_containert::get(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+    11.36%    11.36%  cbmc     cbmc                     [.] irept::operator==(irept const&) const
+    10.87%     0.00%  cbmc     cbmc                     [.] all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::~all_properties_verifier_with_trace_storaget()
+    10.87%     0.00%  cbmc     cbmc                     [.] multi_path_symex_checkert::~multi_path_symex_checkert() (inlined)
+    10.87%     0.00%  cbmc     cbmc                     [.] multi_path_symex_only_checkert::~multi_path_symex_only_checkert()
+    10.52%     1.18%  cbmc     libstdc++.so.6.0.33      [.] operator new(unsigned long)
+    10.28%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+     9.40%     4.03%  cbmc     libc.so.6                [.] malloc
+     9.20%     0.00%  cbmc     cbmc                     [.] tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::~tree_nodet() (inlined)
+     8.90%     0.53%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>...
+     8.41%     0.08%  cbmc     cbmc                     [.] value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+     8.33%     0.00%  cbmc     cbmc                     [.] symex_target_equationt::~symex_target_equationt() (inlined)
+     7.59%     0.00%  cbmc     cbmc                     [.] irept::~irept() (inlined)
+     7.59%     0.00%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+     6.72%     0.17%  cbmc     cbmc                     [.] std::__cxx11::_List_base<SSA_stept, std::allocator<SSA_stept> >::_M_clear()
+     6.72%     0.00%  cbmc     cbmc                     [.] std::__cxx11::_List_base<SSA_stept, std::allocator<SSA_stept> >::~_List_base() (inlined)
+     6.72%     0.00%  cbmc     cbmc                     [.] std::__cxx11::list<SSA_stept, std::allocator<SSA_stept> >::~list() (inlined)
+     6.65%     5.92%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>...
+     6.31%     0.00%  cbmc     cbmc                     [.] forward_list_as_mapt<dstringt, irept>::~forward_list_as_mapt() (inlined)
+     6.31%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_erase_after(std::_Fwd_list_node_base*, std::_Fwd_list_node_base*) (inlined)
+     6.31%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~_Fwd_list_base() (inlined)
+     6.31%     0.00%  cbmc     cbmc                     [.] std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::~forward_list() (inlined)
+     6.15%     0.00%  cbmc     cbmc                     [.] std::vector<irept, std::allocator<irept> >::~vector() (inlined)
+     6.13%     0.01%  cbmc     cbmc                     [.] renamedt<ssa_exprt, (levelt)3> goto_symex_statet::set_indices<(levelt)3>(ssa_exprt, namespacet const&)
+     5.96%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b2aada4
+     5.90%     0.46%  cbmc     cbmc                     [.] build_ssa_identifier_rec(exprt const&, dstringt const&, dstringt const&, dstringt const&, std::ostream&, std::ostream&)
+     5.81%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<irept*, irept>(irept*, irept*, std::allocator<irept>&) (inlined)
+     5.81%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<irept*>(irept*, irept*) (inlined)
+     5.81%     0.00%  cbmc     cbmc                     [.] void std::_Destroy_aux<false>::__destroy<irept*>(irept*, irept*) (inlined)
+     5.79%     0.01%  cbmc     cbmc                     [.] symex_level2t::operator()(renamedt<ssa_exprt, (levelt)1>) const
+     5.64%     0.00%  cbmc     cbmc                     [.] void std::_Destroy<irept>(irept*) (inlined)
+     5.55%     1.70%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::detach()
+     4.73%     0.00%  cbmc     cbmc                     [.] SSA_stept::~SSA_stept() (inlined)
+     4.73%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::_List_node<SSA_stept> >::destroy<SSA_stept>(SSA_stept*) (inlined)
+     4.73%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::_List_node<SSA_stept> > >::destroy<SSA_stept>(std::allocator<std::_List_node<SSA_stept> >&, SSA_stept*) (inlined)
+     4.59%     0.00%  cbmc     cbmc                     [.] exprt::~exprt() (inlined)
+     4.59%     0.00%  cbmc     cbmc                     [.] irept::~irept() (inlined)
+     4.59%     0.00%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+     4.46%     0.00%  cbmc     cbmc                     [.] value_set_dereferencet::dereference(exprt const&, bool)
+     4.45%     0.01%  cbmc     cbmc                     [.] value_set_dereferencet::handle_dereference_base_case(exprt const&, bool)
+     4.36%     0.03%  cbmc     cbmc                     [.] value_sett::get_value_set(exprt, namespacet const&, bool) const
+     4.33%     0.30%  cbmc     cbmc                     [.] simplify_exprt::simplify_rec(exprt const&)
+     4.21%     0.00%  cbmc     cbmc                     [.] std::pair<dstringt, irept>::~pair() (inlined)
+     4.21%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::destroy<std::pair<dstringt, irept> >(std::pair<dstringt, irept>*) (inlined)
+     4.21%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::destroy<std::pair<dstringt, irept> >(std::allocator<std::_Fwd_list_node<std::pair<dstringt,...
+     4.03%     0.02%  cbmc     cbmc                     [.] simplify_exprt::simplify(exprt&)
+     3.96%     0.18%  cbmc     cbmc                     [.] value_sett::get_value_set_rec(exprt const&, reference_counting<std::map<unsigned long, std::optional<exprt>, std::less<unsigned long>, std::allocator<std::pair<unsigned long const, std::o...
+     3.90%     0.00%  cbmc     cbmc                     [.] tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true>::tree_nodet(tree_nodet<irept, forward_list_as_mapt<dstringt, irept>, true> const&) (inlined)
+     3.89%     0.00%  cbmc     cbmc                     [.] value_set_dereferencet::get_failure_value(exprt const&, typet const&)
+     3.88%     0.01%  cbmc     cbmc                     [.] get_fresh_aux_symbol(typet const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::al...
+     3.88%     0.00%  cbmc     cbmc                     [.] get_fresh_aux_symbol(typet const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::al...
+     3.85%     0.00%  cbmc     cbmc                     [.] get_new_name(dstringt const&, namespacet const&, char)
+     3.84%     0.06%  cbmc     cbmc                     [.] symbol_table_baset::next_unused_suffix(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const
+     3.84%     0.00%  cbmc     cbmc                     [.] namespacet::smallest_unused_suffix(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const
+     3.80%     1.10%  cbmc     libstdc++.so.6.0.33      [.] std::basic_ostream<char, std::char_traits<char> >& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&, char const*, long)
+     3.66%     0.64%  cbmc     cbmc                     [.] simplify_exprt::simplify_node_preorder(exprt const&)
+     3.48%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_end_of_function(goto_symex_statet&)
+     3.42%     0.24%  cbmc     cbmc                     [.] postprocess_equation(symex_bmct&, symex_target_equationt&, optionst const&, namespacet const&, ui_message_handlert&)
+     3.33%     0.00%  cbmc     cbmc                     [.] forward_list_as_mapt<dstringt, irept>::forward_list_as_mapt(forward_list_as_mapt<dstringt, irept> const&) (inlined)
+     3.33%     0.00%  cbmc     cbmc                     [.] std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::forward_list(std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, ...
+     3.32%     0.00%  cbmc     cbmc                     [.] void std::forward_list<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_range_initialize<std::_Fwd_list_const_iterator<std::pair<dstringt, irept> > >(std::_Fw...
+     3.17%     3.17%  cbmc     cbmc                     [.] irept::get(dstringt const&) const
+     3.17%     0.47%  cbmc     cbmc                     [.] slice(symex_bmct&, symex_target_equationt&, namespacet const&, optionst const&, ui_message_handlert&)
+     3.14%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_node<std::pair<dstringt, irept> >* std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_create_node<std::pair<dstringt, irept> ...
+     3.03%     0.03%  cbmc     cbmc                     [.] renamedt<exprt, (levelt)3> goto_symex_statet::rename<(levelt)3>(exprt, namespacet const&)
+     2.91%     0.07%  cbmc     cbmc                     [.] value_sett::assign_rec(exprt const&, reference_counting<std::map<unsigned long, std::optional<exprt>, std::less<unsigned long>, std::allocator<std::pair<unsigned long const, std::optional...
+     2.83%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_set_return_value(goto_symex_statet&, exprt const&)
+     2.71%     0.42%  cbmc     cbmc                     [.] irept::add(dstringt const&)
+     2.70%     0.49%  cbmc     cbmc                     [.] symex_slicet::slice(symex_target_equationt&)
+     2.70%     0.00%  cbmc     cbmc                     [.] slice(symex_target_equationt&)
+     2.59%     2.59%  cbmc     cbmc                     [.] irept::find(dstringt const&) const
+     2.55%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_get_node() (inlined)
+     2.55%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::allocate(unsigned long, void const*) (inlined)
+     2.55%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::allocate(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, unsigned long) (inl...
+     2.51%     0.02%  cbmc     cbmc                     [.] goto_symex_statet::l2_thread_write_encoding(ssa_exprt const&, namespacet const&)
+     2.49%     0.00%  cbmc     cbmc                     [.] symbol_tablet::~symbol_tablet()
+     2.49%     0.00%  cbmc     cbmc                     [.] std::_Hashtable<dstringt, std::pair<dstringt const, symbolt>, std::allocator<std::pair<dstringt const, symbolt> >, std::__detail::_Select1st, std::equal_to<dstringt>, std::hash<dstringt>,...
+     2.49%     0.00%  cbmc     cbmc                     [.] std::unordered_map<dstringt, symbolt, std::hash<dstringt>, std::equal_to<dstringt>, std::allocator<std::pair<dstringt const, symbolt> > >::~unordered_map() (inlined)
+     2.49%     0.00%  cbmc     cbmc                     [.] std::_Hashtable<dstringt, std::pair<dstringt const, symbolt>, std::allocator<std::pair<dstringt const, symbolt> >, std::__detail::_Select1st, std::equal_to<dstringt>, std::hash<dstringt>,...
+     2.49%     0.00%  cbmc     cbmc                     [.] std::_Hashtable<dstringt, std::pair<dstringt const, symbolt>, std::allocator<std::pair<dstringt const, symbolt> >, std::__detail::_Select1st, std::equal_to<dstringt>, std::hash<dstringt>,...
+     2.49%     0.00%  cbmc     cbmc                     [.] std::__detail::_Hashtable_alloc<std::allocator<std::__detail::_Hash_node<std::pair<dstringt const, symbolt>, true> > >::_M_deallocate_buckets(std::__detail::_Hash_node_base**, unsigned lo...
+     2.49%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::__detail::_Hash_node_base*>::deallocate(std::__detail::_Hash_node_base**, unsigned long) (inlined)
+     2.49%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::__detail::_Hash_node_base*> >::deallocate(std::allocator<std::__detail::_Hash_node_base*>&, std::__detail::_Hash_node_base**, unsigned long) (inl...
+     2.38%     2.34%  cbmc     cbmc                     [.] std::_Hashtable<irept, irept, std::allocator<irept>, std::__detail::_Identity, std::equal_to<irept>, irep_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std...
+     2.31%     0.81%  cbmc     libstdc++.so.6.0.33      [.] std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)
+     2.26%     0.00%  cbmc     cbmc                     [.] std::_Fwd_list_base<std::pair<dstringt, irept>, std::allocator<std::pair<dstringt, irept> > >::_M_put_node(std::_Fwd_list_node<std::pair<dstringt, irept> >*) (inlined)
+     2.26%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >::deallocate(std::_Fwd_list_node<std::pair<dstringt, irept> >*, unsigned long) (inlined)
+     2.26%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > > >::deallocate(std::allocator<std::_Fwd_list_node<std::pair<dstringt, irept> > >&, std::_Fwd_list_no...
+     2.20%     0.00%  cbmc     cbmc                     [.] std::_Vector_base<irept, std::allocator<irept> >::~_Vector_base() (inlined)
+     2.19%     0.00%  cbmc     cbmc                     [.] std::_Vector_base<irept, std::allocator<irept> >::_M_deallocate(irept*, unsigned long) (inlined)
+     2.18%     0.03%  cbmc     cbmc                     [.] simplify_exprt::simplify_index_preorder(index_exprt const&)
+     2.17%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<irept>::deallocate(irept*, unsigned long) (inlined)
+     2.17%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<irept> >::deallocate(std::allocator<irept>&, irept*, unsigned long) (inlined)
+     2.14%     2.14%  cbmc     cbmc                     [.] hash_string(char const*)
+     2.04%     0.01%  cbmc     cbmc                     [.] goto_symext::symex_goto(goto_symex_statet&)
+     1.99%     0.00%  cbmc     cbmc                     [.] std::__cxx11::_List_base<SSA_stept, std::allocator<SSA_stept> >::_M_put_node(std::_List_node<SSA_stept>*) (inlined)
+     1.99%     0.00%  cbmc     cbmc                     [.] std::__new_allocator<std::_List_node<SSA_stept> >::deallocate(std::_List_node<SSA_stept>*, unsigned long) (inlined)
+     1.99%     0.00%  cbmc     cbmc                     [.] std::allocator_traits<std::allocator<std::_List_node<SSA_stept> > >::deallocate(std::allocator<std::_List_node<SSA_stept> >&, std::_List_node<SSA_stept>*, unsigned long) (inlined)
+     1.98%     0.16%  cbmc     cbmc                     [.] std::__detail::_Map_base<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<str...
+     1.95%     0.70%  cbmc     cbmc                     [.] symex_slicet::slice_assignment(SSA_stept&)
+     1.86%     0.06%  cbmc     cbmc                     [.] member_exprt::member_exprt(exprt, dstringt const&, typet)
+     1.80%     0.04%  cbmc     cbmc                     [.] SSA_assignment_stept::SSA_assignment_stept(symex_targett::sourcet, exprt, ssa_exprt, exprt, exprt, exprt, symex_targett::assignment_typet)
+     1.75%     0.16%  cbmc     cbmc                     [.] irept::remove(dstringt const&)
+     1.69%     0.34%  cbmc     cbmc                     [.] simplify_exprt::simplify_node(exprt const&)
+     1.63%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b2a9afd
+     1.63%     0.03%  cbmc     cbmc                     [.] value_sett::update_entry(value_sett::entryt const&, typet const&, reference_counting<std::map<unsigned long, std::optional<exprt>, std::less<unsigned long>, std::allocator<std::pair<unsig...
+     1.63%     1.63%  cbmc     libc.so.6                [.] 0x00000000000a9afd
+     1.61%     0.69%  cbmc     cbmc                     [.] std::_Hashtable<irept, irept, std::allocator<irept>, std::__detail::_Identity, std::equal_to<irept>, irep_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std...
+     1.61%     0.00%  cbmc     cbmc                     [.] merge_irept::~merge_irept() (inlined)
+     1.61%     0.00%  cbmc     cbmc                     [.] std::_Hashtable<irept, irept, std::allocator<irept>, std::__detail::_Identity, std::equal_to<irept>, irep_hash, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std...
+     1.61%     0.00%  cbmc     cbmc                     [.] std::unordered_set<irept, irep_hash, std::equal_to<irept>, std::allocator<irept> >::~unordered_set() (inlined)
+     1.59%     0.00%  cbmc     cbmc                     [.] std::__detail::_Hashtable_alloc<std::allocator<std::__detail::_Hash_node<irept, true> > >::_M_deallocate_nodes(std::__detail::_Hash_node<irept, true>*) (inlined)
+     1.58%     0.00%  cbmc     cbmc                     [.] std::__detail::_Hashtable_alloc<std::allocator<std::__detail::_Hash_node<irept, true> > >::_M_deallocate_node(std::__detail::_Hash_node<irept, true>*) (inlined)
+     1.55%     1.55%  cbmc     libc.so.6                [.] 0x00000000000a9c06
+     1.55%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b2a9c06
+     1.53%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b2a9c61
+     1.53%     1.53%  cbmc     libc.so.6                [.] 0x00000000000a9c61
+     1.51%     0.00%  cbmc     libc.so.6                [.] exit
+     1.51%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b22a1d0
+     1.51%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b247a75
+     1.50%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_decl(goto_symex_statet&, symbol_exprt const&)
+     1.48%     0.86%  cbmc     cbmc                     [.] string_containert::~string_containert()
+     1.48%     0.02%  cbmc     cbmc                     [.] from_integer(BigInt const&, typet const&)
+     1.45%     0.79%  cbmc     cbmc                     [.] irept::add(dstringt const&, irept)
+     1.38%     0.02%  cbmc     cbmc                     [.] simplify_exprt::simplify_member_preorder(member_exprt const&)
+     1.32%     0.02%  cbmc     cbmc                     [.] ssa_exprt::remove_level_2()
+     1.31%     0.00%  cbmc     cbmc                     [.] irept::~irept() (inlined)
+     1.31%     0.00%  cbmc     cbmc                     [.] sharing_treet<irept, forward_list_as_mapt<dstringt, irept> >::~sharing_treet() (inlined)
+     1.31%     0.00%  cbmc     cbmc                     [.] void std::__new_allocator<std::__detail::_Hash_node<irept, true> >::destroy<irept>(irept*) (inlined)
+     1.31%     0.00%  cbmc     cbmc                     [.] void std::allocator_traits<std::allocator<std::__detail::_Hash_node<irept, true> > >::destroy<irept>(std::allocator<std::__detail::_Hash_node<irept, true> >&, irept*) (inlined)
+     1.31%     0.01%  cbmc     cbmc                     [.] renamedt<ssa_exprt, (levelt)1> goto_symex_statet::rename_ssa<(levelt)1>(ssa_exprt, namespacet const&)
+     1.29%     0.20%  cbmc     cbmc                     [.] irept::irept(dstringt const&, forward_list_as_mapt<dstringt, irept> const&, std::vector<irept, std::allocator<irept> > const&)
+     1.25%     0.01%  cbmc     cbmc                     [.] goto_symext::symex_function_call_symbol(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&, exprt const&, symbol_exprt const&, std::vector<exprt, std::alloc...
+     1.23%     0.04%  cbmc     cbmc                     [.] symex_level2t::increase_generation(dstringt const&, ssa_exprt const&, std::function<unsigned long (dstringt const&)>)
+     1.23%     0.00%  cbmc     libc.so.6                [.] 0x00007d487b2a9d2a
+     1.19%     1.17%  cbmc     cbmc                     [.] std::_Hashtable<string_ptrt, std::pair<string_ptrt const, unsigned int>, std::allocator<std::pair<string_ptrt const, unsigned int> >, std::__detail::_Select1st, std::equal_to<string_ptrt>...
+     1.17%     1.15%  cbmc     cbmc                     [.] sharing_mapt<dstringt, std::pair<ssa_exprt, unsigned long>, false, std::hash<dstringt>, std::equal_to<dstringt> >::get_leaf_node(dstringt const&) const
+     1.16%     1.16%  cbmc     cbmc                     [.] std::_Hashtable<dstringt, std::pair<dstringt const, symbolt>, std::allocator<std::pair<dstringt const, symbolt> >, std::__detail::_Select1st, std::equal_to<dstringt>, std::hash<dstringt>,...
+     1.12%     0.02%  cbmc     cbmc                     [.] integer2bvrep(BigInt const&, unsigned long)
+     1.12%     0.29%  cbmc     libstdc++.so.6.0.33      [.] std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char> >::overflow(int)
+     1.11%     0.01%  cbmc     cbmc                     [.] equal_exprt::equal_exprt(exprt, exprt)
+     1.09%     0.03%  cbmc     cbmc                     [.] remove_level_2(ssa_exprt)
+     1.04%     0.12%  cbmc     libstdc++.so.6.0.33      [.] std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)
+     1.03%     0.13%  cbmc     cbmc                     [.] value_sett::get_index_of_symbol(dstringt, typet const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, namespacet const&) const
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

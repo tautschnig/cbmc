@@ -1,0 +1,897 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 17K of event 'cycles:u'
+# Event count (approx.): 52177853929
+#
+# Children      Self  Command  Shared Object            Symbol                                                                                                                                          ...
+# ........  ........  .......  .......................  ...................................................................................................................................................
+#
+    63.66%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+            |
+            ---goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          
+                --45.12%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          
+                           --39.62%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                     |          
+                                      --38.85%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                |          
+                                                 --32.95%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                           |          
+                                                            --28.13%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                      |          
+                                                                       --20.95%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_fie...
+                                                                                 |          
+                                                                                  --19.13%--multi_path_symex_only_checkert::generate_equation()
+                                                                                            |          
+                                                                                             --10.92%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std...
+                                                                                                       |          
+                                                                                                        --9.10%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                                                                                  |          
+                                                                                                                   --6.83%--cbmc_parse_optionst::doit()
+
+    63.03%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > co...
+            |
+            ---symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+               |          
+                --62.59%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                          |          
+                           --61.98%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                     |          
+                                      --61.30%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                |          
+                                                 --42.76%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                           |          
+                                                            --37.44%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --36.68%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --30.80%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> ...
+                                                                                            |          
+                                                                                             --26.02%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt c...
+                                                                                                       |          
+                                                                                                        --18.91%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt c...
+                                                                                                                  |          
+                                                                                                                   --17.10%--multi_path_symex_only_checkert::generate_equation()
+                                                                                                                             |          
+                                                                                                                              --8.93%--multi_path_symex_checkert::operator()(std::map<dstringt, property...
+                                                                                                                                        |          
+                                                                                                                                         --7.13%--all_properties_verifier_with_trace_storaget<multi_path...
+                                                                                                                                                   |          
+                                                                                                                                                    --4.87%--cbmc_parse_optionst::doit()
+
+    62.59%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > c...
+            |
+            ---symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+               |          
+                --61.98%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                          |          
+                           --61.30%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                     |          
+                                      --42.76%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                |          
+                                                 --37.44%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                           |          
+                                                            --36.68%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --30.80%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                 |          
+                                                                                  --26.02%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> con...
+                                                                                            |          
+                                                                                             --18.91%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> con...
+                                                                                                       |          
+                                                                                                        --17.10%--multi_path_symex_only_checkert::generate_equation()
+                                                                                                                  |          
+                                                                                                                   --8.93%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std...
+                                                                                                                             |          
+                                                                                                                              --7.13%--all_properties_verifier_with_trace_storaget<multi_path_symex_chec...
+                                                                                                                                        |          
+                                                                                                                                         --4.87%--cbmc_parse_optionst::doit()
+
+    62.19%     0.00%  cbmc     cbmc                     [.] symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+            |
+            ---symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+               |          
+                --61.37%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          
+                           --42.83%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                     |          
+                                      --37.51%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                |          
+                                                 --36.75%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                           |          
+                                                            --30.86%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                      |          
+                                                                       --26.08%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                                                 |          
+                                                                                  --18.97%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow...
+                                                                                            |          
+                                                                                             --17.16%--multi_path_symex_only_checkert::generate_equation()
+                                                                                                       |          
+                                                                                                        --8.99%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstr...
+                                                                                                                  |          
+                                                                                                                   --7.18%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::oper...
+                                                                                                                             |          
+                                                                                                                              --4.92%--cbmc_parse_optionst::doit()
+
+    58.78%     0.00%  cbmc     cbmc                     [.] field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+            |
+            ---field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+               |          
+                --58.57%--symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                          |          
+                           --58.24%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                                     |          
+                                      --57.71%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                |          
+                                                 --57.08%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                           |          
+                                                            --39.72%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --34.52%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --33.78%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                            |          
+                                                                                             --28.12%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstring...
+                                                                                                       |          
+                                                                                                        --23.51%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& ...
+                                                                                                                  |          
+                                                                                                                   --16.63%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& ...
+                                                                                                                             |          
+                                                                                                                              --15.01%--multi_path_symex_only_checkert::generate_equation()
+                                                                                                                                        |          
+                                                                                                                                         --7.36%--multi_path_symex_checkert::operator()(std::map<dstring...
+                                                                                                                                                   |          
+                                                                                                                                                    --5.68%--all_properties_verifier_with_trace_storaget...
+                                                                                                                                                              |          
+                                                                                                                                                               --4.20%--cbmc_parse_optionst::doit()
+
+    54.78%     0.15%  cbmc     cbmc                     [.] field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+            |
+            ---field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          
+                --53.69%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |          
+                          |--49.55%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |          |          
+                          |          |--42.58%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |          |          |          
+                          |          |          |--38.75%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |          |          |          |          
+                          |          |          |          |--34.13%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+                          |          |          |          |          |          
+                          |          |          |          |          |--22.88%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targ...
+                          |          |          |          |          |          field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targ...
+                          |          |          |          |          |          symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::...
+                          |          |          |          |          |          symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std:...
+                          |          |          |          |          |          symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >...
+                          |          |          |          |          |          |          
+                          |          |          |          |          |           --22.75%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          |          |          |          |                     |          
+                          |          |          |          |          |                      --18.16%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> cons...
+                          |          |          |          |          |                                |          
+                          |          |          |          |          |                                 --15.25%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&,...
+                          |          |          |          |          |                                           |          
+                          |          |          |          |          |                                            --14.76%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&...
+                          |          |          |          |          |                                                      |          
+                          |          |          |          |          |                                                       --11.12%--goto_symext::symex_threaded_step(goto_symex_statet&, std::functi...
+                          |          |          |          |          |                                                                 |          
+                          |          |          |          |          |                                                                  --8.49%--goto_symext::symex_with_state(goto_symex_statet&, std:...
+                          |          |          |          |          |                                                                            |          
+                          |          |          |          |          |                                                                             --5.16%--goto_symext::symex_from_entry_point_of(std:...
+                          |          |          |          |          |                                                                                       |          
+                          |          |          |          |          |                                                                                        --4.28%--multi_path_symex_only_checkert::...
+                          |          |          |          |          |          
+                          |          |          |          |           --11.24%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targ...
+                          |          |          |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::...
+                          |          |          |          |                     symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std:...
+                          |          |          |          |                     symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >...
+                          |          |          |          |                     goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          |          |          |                     |          
+                          |          |          |          |                      --7.93%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_sym...
+                          |          |          |          |                                |          
+                          |          |          |          |                                 --7.60%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_...
+                          |          |          |          |                                           |          
+                          |          |          |          |                                            --7.55%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, g...
+                          |          |          |          |                                                      |          
+                          |          |          |          |                                                       --6.79%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_func...
+                          |          |          |          |                                                                 |          
+                          |          |          |          |                                                                  --6.21%--goto_symext::symex_with_state(goto_symex_statet&, std::function<g...
+                          |          |          |          |                                                                            |          
+                          |          |          |          |                                                                             --4.99%--goto_symext::symex_from_entry_point_of(std::function<g...
+                          |          |          |          |                                                                                       |          
+                          |          |          |          |                                                                                        --4.57%--multi_path_symex_only_checkert::generate_eq...
+                          |          |          |          |                                                                                                  |          
+                          |          |          |          |                                                                                                   --2.20%--multi_path_symex_checkert::opera...
+                          |          |          |          |          
+                          |          |          |           --4.63%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) ...
+                          |          |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<e...
+                          |          |          |                     symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<...
+                          |          |          |                     symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                          |          |          |                     goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          |          |                     |          
+                          |          |          |                      --3.05%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          |          |                                |          
+                          |          |          |                                 --2.71%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          |          |                                           |          
+                          |          |          |                                            --2.61%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_s...
+                          |          |          |                                                      |          
+                          |          |          |                                                       --2.34%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const...
+                          |          |          |                                                                 |          
+                          |          |          |                                                                  --2.08%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functio...
+                          |          |          |          
+                          |          |           --3.83%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+                          |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > con...
+                          |          |                     |          
+                          |          |                      --3.78%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<e...
+                          |          |                                |          
+                          |          |                                 --3.77%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&...
+                          |          |                                           |          
+                          |          |                                            --3.37%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          |          
+                          |           --6.97%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+                          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                          |                     |          
+                          |                      --6.87%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > con...
+                          |                                |          
+                          |                                 --6.47%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                          |                                           |          
+                          |                                            --6.44%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |                                                      |          
+                          |                                                       --3.12%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_sym...
+                          |                                                                 |          
+                          |                                                                  --2.10%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_...
+                          |                                                                            |          
+                          |                                                                             --2.05%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, g...
+                          |          
+                           --3.84%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+                                     |          
+                                      --3.63%--symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                                                |          
+                                                 --3.46%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > con...
+                                                           |          
+                                                            --3.34%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                                      |          
+                                                                       --3.29%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+
+    45.75%     0.00%  cbmc     cbmc                     [.] goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+            |
+            ---goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+               |          
+                --40.23%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          
+                           --39.46%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                     |          
+                                      --33.54%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                |          
+                                                 --28.69%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                           |          
+                                                            --21.49%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definiti...
+                                                                      |          
+                                                                       --19.66%--multi_path_symex_only_checkert::generate_equation()
+                                                                                 |          
+                                                                                  --11.40%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator...
+                                                                                            |          
+                                                                                             --9.58%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                                                                       |          
+                                                                                                        --7.30%--cbmc_parse_optionst::doit()
+
+    40.23%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+            |
+            ---goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+               |          
+                --39.46%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                          |          
+                           --33.54%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                     |          
+                                      --28.69%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                                |          
+                                                 --21.49%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&...
+                                                           |          
+                                                            --19.66%--multi_path_symex_only_checkert::generate_equation()
+                                                                      |          
+                                                                       --11.40%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<...
+                                                                                 |          
+                                                                                  --9.58%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                                                            |          
+                                                                                             --7.30%--cbmc_parse_optionst::doit()
+
+    39.47%     0.00%  cbmc     cbmc                     [.] symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+            |
+            ---symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+               |          
+                --33.54%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                          |          
+                           --28.70%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                                     |          
+                                      --21.49%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                                |          
+                                                 --19.67%--multi_path_symex_only_checkert::generate_equation()
+                                                           |          
+                                                            --11.41%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt co...
+                                                                      |          
+                                                                       --9.59%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                                                 |          
+                                                                                  --7.30%--cbmc_parse_optionst::doit()
+
+    35.75%     0.04%  cbmc     cbmc                     [.] goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+            |
+            ---goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |          
+               |--31.74%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          |          
+               |          |--28.09%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          |          |          
+               |          |          |--24.82%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          |          |          |          
+               |          |          |          |--21.48%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          |          |          |          |          
+               |          |          |          |          |--18.70%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+               |          |          |          |          |          |          
+               |          |          |          |          |          |--12.73%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targ...
+               |          |          |          |          |          |          field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targ...
+               |          |          |          |          |          |          symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::...
+               |          |          |          |          |          |          symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std:...
+               |          |          |          |          |          |          symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >...
+               |          |          |          |          |          |          |          
+               |          |          |          |          |          |           --12.60%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          |          |          |          |          |                     |          
+               |          |          |          |          |          |                      --8.69%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const...
+               |          |          |          |          |          |                                |          
+               |          |          |          |          |          |                                 --6.97%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, ...
+               |          |          |          |          |          |                                           |          
+               |          |          |          |          |          |                                            --6.79%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)...
+               |          |          |          |          |          |                                                      |          
+               |          |          |          |          |          |                                                       --5.90%--goto_symext::symex_threaded_step(goto_symex_statet&, std::functio...
+               |          |          |          |          |          |                                                                 |          
+               |          |          |          |          |          |                                                                  --5.31%--goto_symext::symex_with_state(goto_symex_statet&, std:...
+               |          |          |          |          |          |                                                                            |          
+               |          |          |          |          |          |                                                                             --3.60%--goto_symext::symex_from_entry_point_of(std:...
+               |          |          |          |          |          |                                                                                       |          
+               |          |          |          |          |          |                                                                                        --3.23%--multi_path_symex_only_checkert::...
+               |          |          |          |          |          |          
+               |          |          |          |          |           --5.97%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targe...
+               |          |          |          |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::...
+               |          |          |          |          |                     symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std:...
+               |          |          |          |          |                     symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >...
+               |          |          |          |          |                     goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          |          |          |          |                     |          
+               |          |          |          |          |                      --2.66%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_sym...
+               |          |          |          |          |                                |          
+               |          |          |          |          |                                 --2.49%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_...
+               |          |          |          |          |                                           |          
+               |          |          |          |          |                                            --2.48%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, g...
+               |          |          |          |          |                                                      |          
+               |          |          |          |          |                                                       --2.02%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_func...
+               |          |          |          |          |          
+               |          |          |          |           --2.78%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) ...
+               |          |          |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<e...
+               |          |          |          |                     symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<...
+               |          |          |          |                     symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+               |          |          |          |                     goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          |          |          |          
+               |          |          |           --3.34%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+               |          |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > con...
+               |          |          |                     |          
+               |          |          |                      --3.31%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<e...
+               |          |          |                                |          
+               |          |          |                                 --3.30%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&...
+               |          |          |                                           |          
+               |          |          |                                            --2.90%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          |          |          
+               |          |           --3.26%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+               |          |                     symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+               |          |                     |          
+               |          |                      --3.17%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > con...
+               |          |                                |          
+               |          |                                 --2.77%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+               |          |                                           |          
+               |          |                                            --2.76%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          |          
+               |           --3.35%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool) const
+               |                     |          
+               |                      --3.14%--symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+               |                                |          
+               |                                 --3.00%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > con...
+               |                                           |          
+               |                                            --2.88%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+               |                                                      |          
+               |                                                       --2.83%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          
+                --3.78%--symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                          |          
+                           --3.70%--symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<exprt> > const&)
+                                     |          
+                                      --3.63%--symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                |          
+                                                 --3.57%--goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                           |          
+                                                            --2.39%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                      |          
+                                                                       --2.28%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --2.25%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                            |          
+                                                                                             --2.03%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt...
+
+    33.54%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+            |
+            ---goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+               |          
+                --28.70%--goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+                          |          
+                           --21.49%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                                     |          
+                                      --19.67%--multi_path_symex_only_checkert::generate_equation()
+                                                |          
+                                                 --11.41%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, proper...
+                                                           |          
+                                                            --9.59%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                                      |          
+                                                                       --7.30%--cbmc_parse_optionst::doit()
+
+    32.36%     0.00%  cbmc     cbmc                     [.] cbmc_parse_optionst::doit()
+            |
+            ---cbmc_parse_optionst::doit()
+               |          
+                --18.49%--parse_options_baset::main()
+                          |          
+                           --18.47%--main
+                                     |          
+                                      --15.87%--0x771fc882a1c9
+                                                |          
+                                                 --14.58%--__libc_start_main
+                                                           |          
+                                                            --14.25%--_start
+
+    28.70%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+            |
+            ---goto_symext::symex_with_state(goto_symex_statet&, std::function<goto_functiont const& (dstringt const&)> const&)
+               |          
+                --21.49%--goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+                          |          
+                           --19.67%--multi_path_symex_only_checkert::generate_equation()
+                                     |          
+                                      --11.41%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> >...
+                                                |          
+                                                 --9.59%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                           |          
+                                                            --7.30%--cbmc_parse_optionst::doit()
+
+    25.85%     0.00%  cbmc     cbmc                     [.] multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, prope...
+            |
+            ---multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+               |          
+                --24.03%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                          |          
+                           --21.75%--cbmc_parse_optionst::doit()
+                                     |          
+                                      --10.14%--parse_options_baset::main()
+                                                |          
+                                                 --10.13%--main
+                                                           |          
+                                                            --7.90%--0x771fc882a1c9
+                                                                      |          
+                                                                       --6.75%--__libc_start_main
+                                                                                 |          
+                                                                                  --6.47%--_start
+
+    25.20%     0.00%  cbmc     cbmc                     [.] multi_path_symex_only_checkert::generate_equation()
+            |
+            ---multi_path_symex_only_checkert::generate_equation()
+               |          
+                --16.94%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                          |          
+                           --15.12%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                     |          
+                                      --12.83%--cbmc_parse_optionst::doit()
+                                                |          
+                                                 --5.54%--parse_options_baset::main()
+                                                           |          
+                                                            --5.53%--main
+                                                                      |          
+                                                                       --3.81%--0x771fc882a1c9
+                                                                                 |          
+                                                                                  --2.88%--__libc_start_main
+                                                                                            |          
+                                                                                             --2.64%--_start
+
+    25.07%     0.00%  cbmc     cbmc                     [.] goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const...
+            |
+            ---goto_symext::symex_from_entry_point_of(std::function<goto_functiont const& (dstringt const&)> const&, shadow_memory_field_definitionst const&)
+               |          
+                --23.25%--multi_path_symex_only_checkert::generate_equation()
+                          |          
+                           --14.99%--multi_path_symex_checkert::operator()(std::map<dstringt, property_infot, std::less<dstringt>, std::allocator<std::pair<dstringt const, property_infot> > >&)
+                                     |          
+                                      --13.17%--all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+                                                |          
+                                                 --10.88%--cbmc_parse_optionst::doit()
+                                                           |          
+                                                            --3.59%--parse_options_baset::main()
+                                                                      |          
+                                                                       --3.58%--main
+                                                                                 |          
+                                                                                  --2.78%--0x771fc882a1c9
+
+    24.03%     0.00%  cbmc     cbmc                     [.] all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+            |
+            ---all_properties_verifier_with_trace_storaget<multi_path_symex_checkert>::operator()()
+               |          
+                --21.75%--cbmc_parse_optionst::doit()
+                          |          
+                           --10.14%--parse_options_baset::main()
+                                     |          
+                                      --10.13%--main
+                                                |          
+                                                 --7.90%--0x771fc882a1c9
+                                                           |          
+                                                            --6.75%--__libc_start_main
+                                                                      |          
+                                                                       --6.47%--_start
+
+    23.50%     0.29%  cbmc     cbmc                     [.] value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+            |
+            ---value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          
+               |--19.15%--value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          |          
+               |          |--14.29%--value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          |          |          
+               |          |          |--10.73%--value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          |          |          |          
+               |          |          |          |--7.42%--value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          |          |          |          |          
+               |          |          |          |          |--4.66%--value_sett::assign(exprt const&, exprt const&, namespacet const&, bool, bool)
+               |          |          |          |          |          |          
+               |          |          |          |          |           --3.03%--goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |          |          |          |          |          
+               |          |          |          |           --2.75%--goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |          |          |          |                     |          
+               |          |          |          |                      --2.74%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+               |          |          |          |                                field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targ...
+               |          |          |          |          
+               |          |          |           --3.31%--goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |          |          |                     |          
+               |          |          |                      --3.16%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+               |          |          |                                field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+               |          |          |                                |          
+               |          |          |                                 --3.14%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+               |          |          |          
+               |          |           --3.57%--goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |          |                     |          
+               |          |                      --2.72%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          |                                field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |          |                                |          
+               |          |                                 --2.58%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+               |          |                                           |          
+               |          |                                            --2.56%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+               |          |          
+               |           --4.86%--goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+               |                     |          
+               |                      --4.70%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                |          
+               |                                 --4.58%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                           |          
+               |                                            --4.39%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+               |                                                      |          
+               |                                                       --4.35%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+               |                                                                 |          
+               |                                                                  --3.22%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+               |                                                                            field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&,...
+               |                                                                            symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<e...
+               |                                                                            symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<...
+               |                                                                            symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocat...
+               |                                                                            goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |          
+                --4.35%--goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+                          |          
+                           --4.33%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     |          
+                                      --4.13%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                |          
+                                                 --3.99%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                           |          
+                                                            --3.86%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+                                                                      |          
+                                                                       --3.81%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+                                                                                 |          
+                                                                                  --2.34%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+                                                                                            field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&,...
+                                                                                            symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<e...
+                                                                                            symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<...
+                                                                                            symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocat...
+                                                                                            goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+
+    18.92%     0.00%  cbmc     cbmc                     [.] main
+            |
+            ---main
+               |          
+                --16.32%--0x771fc882a1c9
+                          |          
+                           --15.02%--__libc_start_main
+                                     |          
+                                      --14.69%--_start
+
+    18.49%     0.00%  cbmc     cbmc                     [.] parse_options_baset::main()
+            |
+            ---parse_options_baset::main()
+               |          
+                --18.47%--main
+                          |          
+                           --15.87%--0x771fc882a1c9
+                                     |          
+                                      --14.58%--__libc_start_main
+                                                |          
+                                                 --14.25%--_start
+
+    17.68%     0.02%  cbmc     cbmc                     [.] symex_target_equationt::merge_ireps(SSA_stept&)
+            |
+            ---symex_target_equationt::merge_ireps(SSA_stept&)
+               |          
+               |--13.37%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+               |          |          
+               |           --13.18%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                     |          
+               |                      --13.00%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                |          
+               |                                 --12.79%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                           |          
+               |                                            --12.59%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+               |                                                      |          
+               |                                                       --12.18%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targ...
+               |                                                                 |          
+               |                                                                 |--8.91%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+               |                                                                 |          field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&,...
+               |                                                                 |          symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<e...
+               |                                                                 |          symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<...
+               |                                                                 |          symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocat...
+               |                                                                 |          goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |                                                                 |          |          
+               |                                                                 |           --8.30%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const...
+               |                                                                 |                     |          
+               |                                                                 |                      --7.14%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, ...
+               |                                                                 |                                |          
+               |                                                                 |                                 --6.84%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)...
+               |                                                                 |                                           |          
+               |                                                                 |                                            --4.33%--goto_symext::symex_threaded_step(goto_symex_statet&, std::functio...
+               |                                                                 |                                                      |          
+               |                                                                 |                                                       --2.57%--goto_symext::symex_with_state(goto_symex_statet&, std:...
+               |                                                                 |          
+               |                                                                  --3.27%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, ...
+               |                                                                            symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<e...
+               |                                                                            symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<...
+               |                                                                            symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocat...
+               |                                                                            goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |                                                                            |          
+               |                                                                             --3.27%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const...
+               |                                                                                       |          
+               |                                                                                        --3.18%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, ...
+               |                                                                                                  |          
+               |                                                                                                   --3.16%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)...
+               |                                                                                                             |          
+               |                                                                                                              --2.96%--goto_symext::symex_threaded_step(goto_symex_statet&, std::functio...
+               |                                                                                                                        |          
+               |                                                                                                                         --2.66%--goto_symext::symex_with_state(goto_symex_statet&, std:...
+               |          
+                --4.31%--goto_symex_statet::l2_thread_write_encoding(ssa_exprt const&, namespacet const&)
+                          goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+                          |          
+                           --4.30%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     |          
+                                      --4.23%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                |          
+                                                 --4.22%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                           |          
+                                                            --4.20%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+                                                                      field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+                                                                      field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool)...
+                                                                      symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<e...
+                                                                      symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<...
+                                                                      symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                                      goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                                      |          
+                                                                       --3.51%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --2.92%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                            |          
+                                                                                             --2.81%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_s...
+                                                                                                       |          
+                                                                                                        --2.20%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const...
+
+    17.66%     0.07%  cbmc     cbmc                     [.] merge_irept::operator()(irept&)
+            |
+            ---merge_irept::operator()(irept&)
+               symex_target_equationt::merge_ireps(SSA_stept&)
+               |          
+               |--13.36%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignment_typet)
+               |          |          
+               |           --13.17%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                     |          
+               |                      --12.99%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                |          
+               |                                 --12.78%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                           |          
+               |                                            --12.58%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+               |                                                      |          
+               |                                                       --12.17%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targ...
+               |                                                                 |          
+               |                                                                 |--8.91%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+               |                                                                 |          field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&,...
+               |                                                                 |          symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<e...
+               |                                                                 |          symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<...
+               |                                                                 |          symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocat...
+               |                                                                 |          goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |                                                                 |          |          
+               |                                                                 |           --8.29%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const...
+               |                                                                 |                     |          
+               |                                                                 |                      --7.14%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, ...
+               |                                                                 |                                |          
+               |                                                                 |                                 --6.83%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)...
+               |                                                                 |                                           |          
+               |                                                                 |                                            --4.32%--goto_symext::symex_threaded_step(goto_symex_statet&, std::functio...
+               |                                                                 |                                                      |          
+               |                                                                 |                                                       --2.57%--goto_symext::symex_with_state(goto_symex_statet&, std:...
+               |                                                                 |          
+               |                                                                  --3.27%--field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, ...
+               |                                                                            symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<e...
+               |                                                                            symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<...
+               |                                                                            symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocat...
+               |                                                                            goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |                                                                            |          
+               |                                                                             --3.26%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const...
+               |                                                                                       |          
+               |                                                                                        --3.18%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, ...
+               |                                                                                                  |          
+               |                                                                                                   --3.16%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)...
+               |                                                                                                             |          
+               |                                                                                                              --2.95%--goto_symext::symex_threaded_step(goto_symex_statet&, std::functio...
+               |                                                                                                                        |          
+               |                                                                                                                         --2.65%--goto_symext::symex_with_state(goto_symex_statet&, std:...
+               |          
+                --4.30%--goto_symex_statet::l2_thread_write_encoding(ssa_exprt const&, namespacet const&)
+                          goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+                          |          
+                           --4.29%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                     |          
+                                      --4.22%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                |          
+                                                 --4.21%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                                                           |          
+                                                            --4.19%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+                                                                      field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+                                                                      field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, exprt const&, symex_targett&, bool)...
+                                                                      symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<e...
+                                                                      symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, std::vector<exprt, std::allocator<...
+                                                                      symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, std::allocator<exprt> >&)
+                                                                      goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                                                                      |          
+                                                                       --3.49%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                 |          
+                                                                                  --2.91%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_statet&)
+                                                                                            |          
+                                                                                             --2.79%--symex_bmct::symex_step(std::function<goto_functiont const& (dstringt const&)> const&, goto_symex_s...
+                                                                                                       |          
+                                                                                                        --2.19%--goto_symext::symex_threaded_step(goto_symex_statet&, std::function<goto_functiont const...
+
+    17.28%     2.60%  cbmc     cbmc                     [.] merge_irept::merged(irept const&)
+            |
+            ---merge_irept::merged(irept const&)
+               |          
+               |--9.09%--merge_irept::operator()(irept&)
+               |          symex_target_equationt::merge_ireps(SSA_stept&)
+               |          |          
+               |           --8.34%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett::assignmen...
+               |                     |          
+               |                      --8.29%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                |          
+               |                                 --8.20%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+               |                                           |          
+               |                                            --8.09%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+               |                                                      |          
+               |                                                       --8.00%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+               |                                                                 |          
+               |                                                                  --7.82%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+               |                                                                            |          
+               |                                                                             --6.49%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exp...
+               |                                                                                       field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, ex...
+               |                                                                                       symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, st...
+               |                                                                                       symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, s...
+               |                                                                                       symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, s...
+               |                                                                                       goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+               |                                                                                       |          
+               |                                                                                        --6.35%--goto_symext::execute_next_instruction(std::function<goto_functiont const& (dstringt con...
+               |                                                                                                  |          
+               |                                                                                                   --5.75%--goto_symext::symex_step(std::function<goto_functiont const& (dstringt const&...
+               |                                                                                                             |          
+               |                                                                                                              --5.49%--symex_bmct::symex_step(std::function<goto_functiont const& (dstri...
+               |                                                                                                                        |          
+               |                                                                                                                         --3.62%--goto_symext::symex_threaded_step(goto_symex_statet&, s...
+               |                                                                                                                                   |          
+               |                                                                                                                                    --2.10%--goto_symext::symex_with_state(goto_symex_st...
+               |          
+                --8.20%--merge_irept::merged(irept const&)
+                          |          
+                          |--5.33%--merge_irept::operator()(irept&)
+                          |          symex_target_equationt::merge_ireps(SSA_stept&)
+                          |          |          
+                          |           --4.02%--symex_target_equationt::assignment(exprt const&, ssa_exprt const&, exprt const&, exprt const&, exprt const&, symex_targett::sourcet const&, symex_targett...
+                          |                     |          
+                          |                      --3.91%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |                                field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) const
+                          |                                |          
+                          |                                 --3.83%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+                          |                                           |          
+                          |                                            --3.76%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+                          |                                                      |          
+                          |                                                       --3.67%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+                          |                                                                 |          
+                          |                                                                  --3.52%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exp...
+                          |                                                                            |          
+                          |                                                                             --2.18%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt ...
+                          |                                                                                       field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt...
+                          |                                                                                       symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt...
+                          |                                                                                       symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_expr...
+                          |                                                                                       symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vect...
+                          |                                                                                       goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+                          |          
+                           --2.87%--merge_irept::merged(irept const&)
+                                     |          
+                                      --2.84%--merge_irept::operator()(irept&)
+                                                symex_target_equationt::merge_ireps(SSA_stept&)
+                                                |          
+                                                 --2.24%--goto_symex_statet::l2_thread_write_encoding(ssa_exprt const&, namespacet const&)
+                                                           goto_symex_statet::assignment(ssa_exprt, exprt const&, namespacet const&, bool, bool, bool)
+                                                           |          
+                                                            --2.24%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool) ...
+                                                                      field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+                                                                      field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targett&, bool)...
+                                                                      |          
+                                                                       --2.21%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, symex_targe...
+                                                                                 |          
+                                                                                  --2.20%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exprt const&, ...
+                                                                                            |          
+                                                                                             --2.19%--field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, exp...
+                                                                                                       field_sensitivityt::field_assignments_rec(namespacet const&, goto_symex_statet&, exprt const&, ex...
+                                                                                                       field_sensitivityt::field_assignments(namespacet const&, goto_symex_statet&, ssa_exprt const&, ex...
+                                                                                                       symex_assignt::assign_non_struct_symbol(ssa_exprt const&, expr_skeletont const&, exprt const&, st...
+                                                                                                       symex_assignt::assign_from_struct(ssa_exprt const&, expr_skeletont const&, struct_exprt const&, s...
+                                                                                                       symex_assignt::assign_rec(exprt const&, expr_skeletont const&, exprt const&, std::vector<exprt, s...
+                                                                                                       goto_symext::symex_assign(goto_symex_statet&, exprt const&, exprt const&)
+
+    16.32%     0.00%  cbmc     libc.so.6                [.] 0x0000771fc882a1c9
+            |
+            ---0x771fc882a1c9
+               |          
+                --15.03%--__libc_start_main
+                          |          
+                           --14.70%--_start
+
+    16.19%     0.00%  cbmc     libc.so.6                [.] __libc_start_main
+            |
+            ---__libc_start_main
+               |          
+                --15.86%--_start
+
+    15.86%     0.00%  cbmc     cbmc                     [.] _start
+            |
+            ---_start
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#
