@@ -371,6 +371,12 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         # surfaces real kernel publish-before-init shapes.
         "__cpp_assert_safe_to_read",
     ],
+    "concurrent_double_put": [
+        # Contracts on synthetic get/put primitives that
+        # mutate the __cdp_live ghost via assigns+ensures.
+        "__cdp_get",
+        "__cdp_put",
+    ],
 }
 
 
@@ -879,6 +885,31 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         ],
         "required_bodies": [
             "cpp_safe_to_read",
+        ],
+    },
+    "concurrent_double_put": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "concurrent_double_put_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "concurrent_double_put_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "concurrent_double_put_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "concurrent_double_put" /
+            "concurrent_double_put.c",
+        ],
+        "slice_preserve": [
+            "cdp_get",
+            "cdp_put",
+            "cdp_clear",
+            "cdp_is_live",
+        ],
+        "required_bodies": [
+            "cdp_is_live",
         ],
     },
 }
