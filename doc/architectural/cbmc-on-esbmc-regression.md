@@ -356,3 +356,43 @@ adjacent cases (e.g. setdefault on present and missing keys, pop
 with and without default, min/max over a constant heterogeneous
 list).
 
+
+### Wave 5 — soundness work, batch 2
+
+| Outcome | W4 → W5 | Δ |
+|---------|--------:|---:|
+| PASS    | 2174 → 2187 | +13 |
+| DIFF    | 596 → 583   | −13 |
+
+Pass rate **70.3 % → 70.7 %**. Six fixes:
+
+* **`list.pop()` raises IndexError on empty list and `list.pop(i)`
+  raises IndexError when i is out of range** (PLR §builtins).
+  Range covers both non-negative `i < length` and negative
+  `i >= -length` (Python wraps negative indices). Resolves
+  `list_pop_fail`, `list_pop2_fail`.
+
+* **`min([])`/`max([])` raise ValueError** (PLR §builtins). Add
+  a `length > 0` property check at the start of the single-arg
+  list form. Resolves `max6-fail`, `max10-fail`.
+
+* **`int(str)` raises ValueError on non-numeric string** (PLR
+  §builtins). Replace `try { stoll }` with `strtoll` + 'must
+  consume entire whitespace-stripped body' check. Resolves
+  `int1_fail`.
+
+* **`x is y` for list/dict compares object identity, not content**
+  (PLR §6.10.3). Approximate identity by symbol identifier:
+  same-symbol → True, different-symbol or literal → False.
+  Aliasing (`z = y`) is not tracked, so tests depending on it
+  remain DIFF. Resolves `is2-fail`.
+
+* **`min`/`max` work on inline tuples and tuple-bound symbols.**
+  Extend the constant-fold to walk python_tuple struct components,
+  guarded by a new `tuple_literals` map populated from
+  `convert_ann_assign` and `assign_to_named_target` whenever a
+  tuple literal lands in a name. Resolves `tuple11_fail`.
+
+* **`chr(<float>)` raises TypeError** (PLR §builtins). Already
+  documented in Wave 4 — listed here for completeness.
+
