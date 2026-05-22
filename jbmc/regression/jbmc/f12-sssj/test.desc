@@ -1,0 +1,23 @@
+CORE
+F12Sssj
+--function F12Sssj.driver -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar --unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for the full SSSJ verification shape: ArrayList +
+iterator + sealed-pattern-match dispatch + reduce. Exercises:
+  - Sealed field allocation (nondet-switch over permits)
+  - get_class_identifier_field (interface instanceof via Object*)
+  - F9 CHECKCAST refinement guard (erased @class_identifier only)
+  - CProverArrayLikeIterator deterministic iteration
+  - Sealed-pattern-match (typeSwitch) on nested sealed types
+
+Pre-fix: MatchException thrown because F9 CHECKCAST refinement
+overwrote the concrete @class_identifier of objects returned by
+the iterator model. Post-fix: refinement is guarded on the
+erased default, preserving concrete tags.
