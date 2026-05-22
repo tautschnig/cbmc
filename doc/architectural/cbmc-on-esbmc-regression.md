@@ -141,3 +141,48 @@ CBMC's own invariants fire). Suggested order:
    `boolbv_map.cpp:91`) — 2 tests each.
 5. `stod` complex-number parser (5 tests).
 6. The 108 soundness DIFFs as separate, narrowly-scoped fixes.
+
+### Progress (after the first wave of fixes)
+
+The five commits that follow this baseline doc on the
+`cbmc-on-esbmc-python` branch land the following:
+
+| Outcome | Baseline | After fixes | Δ      |
+|---------|---------:|------------:|-------:|
+| PASS    | 2118     | 2137        | +19    |
+| DIFF    | 590      | 594         |  +4    |
+| UNKNOWN | 215      | 219         |  +4    |
+| FAIL    | 68       | 68          |  +0    |
+| TOERR   | 53       | 48          |  −5    |
+| CRASH   | 34       | 10          | **−24**|
+| TIMEOUT | 12       | 14          |  +2    |
+| SKIP    | 1        | 1           |  +0    |
+
+Pass rate 68.5 % → 69.1 %.
+
+The 24 fixed crashes split into:
+* 22× `string_expr.h:160` — guarded six `simplify_string_*` entry
+  points with `can_cast_expr<refined_string_exprt>` so that the
+  Python frontend's single-character expressions no longer trip
+  the `to_string_expr` precondition.
+* 2× `arith_tools.cpp:149 from_integer` — `dict.get` no longer
+  builds the int "None" sentinel when the value type can't hold
+  it (bool/string/float dicts get `safe_zero`).
+
+The 5 fixed TOERRs are the `complex_*` "stod" frontend aborts:
+unparseable complex-number coefficients no longer throw
+`std::invalid_argument` out of `convert_constant`.
+
+Soundness fixes (DIFFs that flipped from
+ESBMC-FAILED-vs-CBMC-SUCCESSFUL to a real verdict):
+* `enumerate(seq, start)` honours the start offset.
+* `math.comb`/`factorial`/`perm`/`isqrt` raise ValueError on
+  negative arguments.
+* `math.floor`/`math.ceil` raise on NaN / ±inf inputs.
+* `complex(0+0j) ** <negative>` raises ZeroDivisionError.
+
+The 10 remaining CRASHes (4× satcheck_minisat2.cpp:150,
+3× boolbv_map.cpp:91, 2× namespace.h:49, 1× misc) are deeper
+solver-layer issues — symptoms include stale-pointer
+`symbol_table1->symbols.size()` returning garbage during
+`namespacet::lookup`. They need a separate, broader fix.
