@@ -238,8 +238,33 @@ INSTR_GB="$tmp/${stem}.instr.gb"
 
 echo "[per-file] module=$MODULE file=$KERNEL_FILE function=$TARGET_FUNC"
 
+# Optional: instrument the kernel TU with synthetic-checkpoint
+# property-module markers before compilation.  Driven by the
+# INSTRUMENT environment variable (comma-separated shape list,
+# or "all" to enable all available shapes).
+INSTR_TU=""
+if [[ -n "${INSTRUMENT:-}" ]]; then
+  INSTR_TU="$tmp/${stem}.instrumented.c"
+  shapes_arg="$INSTRUMENT"
+  if [[ "$INSTRUMENT" == "all" ]]; then
+    shapes_arg=$("$SCRIPT_DIR/tools/instrument.py" --list-shapes \
+      | paste -sd, -)
+  fi
+  echo "[1a/7] instrumenting kernel TU (shapes: $shapes_arg)..."
+  "$SCRIPT_DIR/tools/instrument.py" "$FULL_KERNEL_FILE" \
+    --shapes "$shapes_arg" -o "$INSTR_TU" 2> "$tmp/instr.err" || {
+      echo "  FAIL: instrument.py returned $?" >&2
+      tail -5 "$tmp/instr.err" >&2
+      exit 3
+    }
+fi
+
 echo "[1/7] compiling kernel TU..."
-"$SCRIPT_DIR/compile_file.sh" "$LINUX_TREE" "$KERNEL_FILE" "$KERNEL_GB" \
+COMPILE_INPUT="$KERNEL_FILE"
+if [[ -n "$INSTR_TU" ]]; then
+  COMPILE_INPUT="$INSTR_TU"
+fi
+"$SCRIPT_DIR/compile_file.sh" "$LINUX_TREE" "$COMPILE_INPUT" "$KERNEL_GB" \
   >"$tmp/compile.log" 2>&1 || {
     echo "  FAIL: compile_file.sh returned $? on $KERNEL_FILE" >&2
     tail -10 "$tmp/compile.log" >&2
