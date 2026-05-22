@@ -736,6 +736,207 @@ static exprt resolve_stack_temps(
 
   std::map<irep_idt, exprt> resolved_cache;
 
+  // Helper: gather every assign of `target_id` in `body` along
+  // with the labelled instruction that begins its basic block (or
+  // body.begin() for the entry block). Used by the diamond-temp
+  // resolver below to detect "two definitions split by one IF"
+  // patterns that javac emits for boolean expression bodies.
+  // Returns (assign_iter, block_start_iter) for each definition.
+  auto collect_definitions = [&](const irep_idt &target_id)
+    -> std::vector<
+      std::pair<goto_programt::const_targett, goto_programt::const_targett>>
+  {
+    std::vector<
+      std::pair<goto_programt::const_targett, goto_programt::const_targett>>
+      defs;
+    goto_programt::const_targett block_start = body.instructions.cbegin();
+    for(auto it = body.instructions.cbegin();
+        it != body.instructions.cend() && it != call_it;
+        ++it)
+    {
+      // A new basic block begins at any GOTO target (label) or
+      // immediately after a GOTO/branch.
+      if(it->is_target())
+        block_start = it;
+      if(it->is_assign())
+      {
+        const exprt &lhs = it->assign_lhs();
+        if(
+          lhs.id() == ID_symbol &&
+          to_symbol_expr(lhs).get_identifier() == target_id)
+        {
+          defs.push_back({it, block_start});
+        }
+      }
+      // Reset block_start after any GOTO so the next instruction
+      // is treated as a new block start. (Both conditional and
+      // unconditional jumps end the current basic block; the
+      // fall-through after a conditional jump begins a new block
+      // even though no label is attached at that point.)
+      if(it->is_goto())
+      {
+        block_start = std::next(it);
+      }
+    }
+    return defs;
+  };
+
+  // Resolve a temp that has two definitions on a diamond CFG —
+  // each guarded by complementary branches of a single IF. javac
+  // compiles `(boolean ret) -> ret == (x > 0)` and similar
+  // boolean-expression lambda bodies via single IRETURN reading a
+  // stack-temp assigned in two branches:
+  //
+  //   IF guard GOTO L_else
+  //   ASSIGN tmp := <rhs_then>
+  //   GOTO L_merge
+  //   L_else: ASSIGN tmp := <rhs_else>
+  //   L_merge: <use tmp>
+  //
+  // If both rhs are syntactically identical, the temp is
+  // path-independent and we return that single value. Otherwise
+  // return `(NOT guard) ? rhs_then : rhs_else`. This pattern
+  // composes recursively when the rhs themselves reference
+  // earlier temps written in the same diamond.
+  //
+  // Returns nullopt if the CFG doesn't match (e.g. more than two
+  // definitions, no controlling IF, the IF is not in either
+  // block's predecessor chain).
+  auto resolve_diamond_temp =
+    [&](const irep_idt &target_id) -> std::optional<exprt>
+  {
+    auto defs = collect_definitions(target_id);
+    if(defs.size() != 2)
+      return {};
+
+    const exprt rhs0 = defs[0].first->assign_rhs();
+    const exprt rhs1 = defs[1].first->assign_rhs();
+
+    // Path-independent case: both branches assign the same RHS.
+    if(rhs0 == rhs1)
+      return rhs0;
+
+    // Walk back from defs[0].second (start of first block) through
+    // any preceding no-ops/labels to find the controlling IF.
+    // Same for defs[1].second.
+    auto find_guarding_if = [&](goto_programt::const_targett block_start)
+      -> std::optional<goto_programt::const_targett>
+    {
+      if(block_start == body.instructions.cbegin())
+        return {};
+      auto it = std::prev(block_start);
+      // Skip any unconditional GOTO that terminates the previous
+      // block (the typical "GOTO L_merge" between fall-through
+      // and else block).
+      while(it != body.instructions.cbegin())
+      {
+        if(it->is_goto() && it->condition().is_true())
+        {
+          --it;
+          continue;
+        }
+        if(it->is_skip() || it->is_location() || it->is_other())
+        {
+          --it;
+          continue;
+        }
+        break;
+      }
+      if(it->is_goto() && !it->condition().is_true())
+        return it;
+      return {};
+    };
+
+    auto guarding_if_0 = find_guarding_if(defs[0].second);
+    auto guarding_if_1 = find_guarding_if(defs[1].second);
+
+    // Both blocks should be reached through the SAME conditional
+    // — one via fall-through, the other via the GOTO target.
+    goto_programt::const_targett the_if = body.instructions.cend();
+    if(
+      guarding_if_0.has_value() && guarding_if_1.has_value() &&
+      *guarding_if_0 == *guarding_if_1)
+    {
+      the_if = *guarding_if_0;
+    }
+    else if(guarding_if_0.has_value() && !guarding_if_1.has_value())
+    {
+      // defs[1] is in the entry block; defs[0]'s guarding IF
+      // controls whether defs[0] OR defs[1] runs.
+      the_if = *guarding_if_0;
+    }
+    else if(guarding_if_1.has_value() && !guarding_if_0.has_value())
+    {
+      the_if = *guarding_if_1;
+    }
+    else
+    {
+      return {};
+    }
+
+    // Determine which RHS is taken when the IF condition is true
+    // (jump fires) vs false (fall-through).
+    const exprt cond = the_if->condition();
+    const auto if_target = the_if->get_target();
+    // defs[i]'s block_start equals if_target → that block is the
+    // jump target → that RHS is taken when cond is true.
+    bool def0_is_target = (defs[0].second == if_target);
+    bool def1_is_target = (defs[1].second == if_target);
+
+    exprt true_rhs;
+    exprt false_rhs;
+    if(def0_is_target && !def1_is_target)
+    {
+      true_rhs = rhs0;
+      false_rhs = rhs1;
+    }
+    else if(!def0_is_target && def1_is_target)
+    {
+      true_rhs = rhs1;
+      false_rhs = rhs0;
+    }
+    else
+    {
+      // Either both blocks are the IF target (impossible) or
+      // neither is — the diamond shape doesn't apply.
+      return {};
+    }
+
+    // Special case: rhs are the constants 1 and 0 (boolean
+    // encoding). Return cond directly without the if-then-else
+    // wrapper, with appropriate negation. Yields a much simpler
+    // predicate that downstream substitution can use directly.
+    auto unwrap_const_int = [](const exprt &e) -> std::optional<int>
+    {
+      exprt v = e;
+      while(v.id() == ID_typecast && v.operands().size() == 1)
+        v = v.operands()[0];
+      if(v.id() != ID_constant)
+        return {};
+      const auto i = numeric_cast<mp_integer>(to_constant_expr(v));
+      if(!i.has_value())
+        return {};
+      if(*i == 0)
+        return 0;
+      if(*i == 1)
+        return 1;
+      return {};
+    };
+    const auto t = unwrap_const_int(true_rhs);
+    const auto f = unwrap_const_int(false_rhs);
+    if(t.has_value() && f.has_value() && *t != *f)
+    {
+      // Wrap as int (the surrounding context expects int-like).
+      // Caller will take care of any further coercion to bool.
+      const typet result_type = true_rhs.type();
+      exprt cond_as_int = (*t == 1) ? cond : exprt(not_exprt(cond));
+      return typecast_exprt::conditional_cast(cond_as_int, result_type);
+    }
+
+    // General if-then-else.
+    return if_exprt(cond, true_rhs, false_rhs);
+  };
+
   // Walk back from `call_it` to find the most recent ASSIGN to
   // `target_id`, but bail out if the value is branch-dependent.
   // Specifically: if we cross any GOTO target (label) or any
@@ -808,6 +1009,19 @@ static exprt resolve_stack_temps(
       if(chain_rec.has_value())
       {
         exprt unfolded = rewrite(*chain_rec, depth + 1);
+        resolved_cache[id] = unfolded;
+        return unfolded;
+      }
+      // §F12-followups: diamond-temp resolver. javac compiles
+      // boolean-expression lambda bodies with a single IRETURN
+      // reading a stack-temp assigned in two branches via a
+      // single IF. find_definition's "bail on crossed-branch"
+      // policy is correct in general but throws away too much
+      // here. Try the diamond pattern before giving up.
+      auto diamond = resolve_diamond_temp(id);
+      if(diamond.has_value())
+      {
+        exprt unfolded = rewrite(*diamond, depth + 1);
         resolved_cache[id] = unfolded;
         return unfolded;
       }
@@ -941,8 +1155,9 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           // we cross a branch (so the assignment may not reach
           // `from`).
           auto find_unique_def =
-            [&](goto_programt::const_targett from,
-                const irep_idt &sym_id) -> std::optional<exprt>
+            [&](
+              goto_programt::const_targett from,
+              const irep_idt &sym_id) -> std::optional<exprt>
           {
             if(from == body.instructions.begin())
               return {};
@@ -974,8 +1189,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           // wrappers (Integer.valueOf, Long.valueOf, ...).
           std::function<exprt(const exprt &, goto_programt::const_targett)>
             trace_lvalue =
-              [&](const exprt &e_in,
-                  goto_programt::const_targett from) -> exprt
+              [&](const exprt &e_in, goto_programt::const_targett from) -> exprt
           {
             exprt e = strip_casts(e_in);
             if(e.id() != ID_symbol)
@@ -1058,8 +1272,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
                     to_constant_expr(addr.operands()[1]));
                   if(idx_opt.has_value())
                   {
-                    const exprt traced =
-                      trace_lvalue(cur->assign_rhs(), cur);
+                    const exprt traced = trace_lvalue(cur->assign_rhs(), cur);
                     captured_by_index.emplace(*idx_opt, traced);
                   }
                 }

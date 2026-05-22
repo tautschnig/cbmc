@@ -1,0 +1,24 @@
+CORE
+F12BoolPost
+--function F12BoolPost.caller --modular -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*JVerify postcondition.*FAILURE$
+--
+Regression for the diamond-temp resolver in
+java_bytecode_contracts.cpp's resolve_stack_temps. Pre-fix:
+boolean-return postconditions whose lambda body is a complex
+expression (here `(boolean ret) -> ret == (x > 0)`) compiled by
+javac to a single IRETURN reading a stack-temp assigned in two
+branches via an IF. resolve_stack_temps's find_definition bailed
+on crossed_branch, the predicate stayed unresolved, and the
+captured c_ensures referenced a non-existent stack temp. The
+caller's `check(r)` then failed.
+
+Post-fix: resolve_diamond_temp recognizes the two-branch pattern
+and reconstructs the predicate, recursively resolving nested
+temps. The caller proves cleanly under modular substitution.
