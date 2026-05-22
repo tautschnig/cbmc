@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 test_soundness_transitive_alias.py
 --unwind 5 --no-unwinding-assertions
 ^VERIFICATION FAILED$
