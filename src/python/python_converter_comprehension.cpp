@@ -97,10 +97,84 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
         return nil_exprt{};
       }
     }
+    // Range form: [f(x) for x in range(N)] or range(a, b[, c])
+    else if(
+      is_node_type(gen_iter, "Call") &&
+      is_node_type(json_member(gen_iter, "func"), "Name") &&
+      json_string(json_member(json_member(gen_iter, "func"), "id")) == "range")
+    {
+      const jsont &args_n = json_member(gen_iter, "args");
+      if(!args_n.is_array() || as_array(args_n).empty())
+      {
+        log.warning() << "range() in comprehension requires arguments"
+                      << messaget::eom;
+        return nil_exprt{};
+      }
+      std::vector<mp_integer> ints;
+      bool ok = true;
+      for(const auto &a : as_array(args_n))
+      {
+        exprt av = convert_expression(a);
+        // Try constant
+        if(av.is_constant() && av.type().id() == ID_signedbv)
+        {
+          mp_integer v;
+          if(!to_integer(to_constant_expr(av), v))
+          {
+            ints.push_back(v);
+            continue;
+          }
+        }
+        // Fall back to try_eval_double for tracked-symbol cases
+        auto evd = try_eval_double(av);
+        if(evd.has_value())
+        {
+          ints.push_back(mp_integer{static_cast<long long>(evd.value())});
+          continue;
+        }
+        ok = false;
+        break;
+      }
+      if(!ok || ints.size() < 1 || ints.size() > 3)
+      {
+        log.warning()
+          << "range() in comprehension requires constant integer arguments"
+          << messaget::eom;
+        return nil_exprt{};
+      }
+      mp_integer start{0}, stop, step{1};
+      if(ints.size() == 1)
+        stop = ints[0];
+      else
+      {
+        start = ints[0];
+        stop = ints[1];
+        if(ints.size() == 3)
+          step = ints[2];
+      }
+      if(step == 0)
+      {
+        log.warning() << "range() step cannot be zero" << messaget::eom;
+        return nil_exprt{};
+      }
+      typet i64 = signedbv_typet{64};
+      if(step > 0)
+      {
+        for(mp_integer i = start; i < stop; i += step)
+          gi.const_values.push_back(from_integer(i, i64));
+      }
+      else
+      {
+        for(mp_integer i = start; i > stop; i += step)
+          gi.const_values.push_back(from_integer(i, i64));
+      }
+    }
     else
     {
-      log.warning() << "List comprehension only supports literal list iterables"
-                    << messaget::eom;
+      log.warning()
+        << "List comprehension iterable shape not supported (only literal "
+           "list, name-of-tracked-list, or range())"
+        << messaget::eom;
       return nil_exprt{};
     }
     gens.push_back(std::move(gi));
