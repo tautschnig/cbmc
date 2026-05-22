@@ -384,6 +384,12 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
         "__tic_act",
         "__tic_change",
     ],
+    "cancel_delayed_work_before_free": [
+        "__assert_no_pending_dwork",
+    ],
+    "del_timer_sync_before_free": [
+        "__assert_no_armed_timer",
+    ],
 }
 
 
@@ -942,6 +948,54 @@ KERNEL_ADAPTERS: dict[str, dict] = {
         ],
         "required_bodies": [
             "tic_check",
+        ],
+    },
+    "cancel_delayed_work_before_free": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "cancel_delayed_work_before_free_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "cancel_delayed_work_before_free_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "cancel_delayed_work_before_free_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "cancel_delayed_work_before_free" /
+            "cancel_delayed_work_before_free.c",
+        ],
+        "slice_preserve": [
+            "cancel_dwork_set_pending",
+            "cancel_dwork_clear_pending",
+            "cancel_dwork_pending",
+        ],
+        "required_bodies": [
+            "cancel_dwork_pending",
+        ],
+    },
+    "del_timer_sync_before_free": {
+        "adapter":
+            SCRIPT_DIR / "adapters" /
+            "del_timer_sync_before_free_kernel_adapter.c",
+        "adapter_probe":
+            SCRIPT_DIR / "adapters" /
+            "del_timer_sync_before_free_kernel_adapter_probe.c",
+        "harness":
+            SCRIPT_DIR / "adapters" /
+            "del_timer_sync_before_free_kernel_direct_harness.c",
+        "harness_fix_define": "FIXED",
+        "deps": [
+            PROPERTIES_DIR / "del_timer_sync_before_free" /
+            "del_timer_sync_before_free.c",
+        ],
+        "slice_preserve": [
+            "timer_set_armed",
+            "timer_clear_armed",
+            "timer_armed",
+        ],
+        "required_bodies": [
+            "timer_armed",
         ],
     },
 }
