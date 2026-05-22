@@ -148,6 +148,7 @@
         <module>external_getstatic1</module>
         <module>f12-modular</module>
         <module>f12-bool-post</module>
+        <module>f12-old</module>
         <module>fake_stubs</module>
         <module>farith1</module>
         <module>fcmpx_dcmpx1</module>

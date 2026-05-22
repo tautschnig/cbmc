@@ -1,0 +1,22 @@
+CORE
+F12Old
+--function F12Old.caller --modular -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JVerify.old() lowering and modular verification.
+Pre-fix: JVerify.old(counter) was a stub call that threw
+ContractException; the captured c_ensures referenced an
+unconstrained value and the wrapper couldn't bind it.
+
+Post-fix: the pre-pass rewrites JVerify.old() calls to
+history_exprt(arg, ID_old), resolve_stack_temps fully resolves
+the diamond-temp + return_tmp chain, and DFCC's
+replace_history_old binds the history to the pre-state value.
+The caller chains two bump() calls and verifies
+counter == initial + 2 under modular substitution.
