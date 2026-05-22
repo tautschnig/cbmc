@@ -57,7 +57,19 @@ exprt python_convertert::convert_constant(const jsont &expr)
       ieee_floatt ieee_val{
         ieee_float_spect::double_precision(),
         ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-      ieee_val.from_double(std::stod(val_str));
+      // Bare std::stod throws on unparseable inputs (and would abort the
+      // frontend with an uncaught std::invalid_argument). Treat
+      // unparseable float literals as a nondet floating-point value so
+      // verification can continue in a sound over-approximation.
+      try
+      {
+        ieee_val.from_double(std::stod(val_str));
+      }
+      catch(const std::exception &)
+      {
+        return side_effect_expr_nondett{
+          ieee_val.to_expr().type(), source_locationt{}};
+      }
       return ieee_val.to_expr();
     }
     else
@@ -136,11 +148,37 @@ exprt python_convertert::convert_constant(const jsont &expr)
     }
 
     // Detect complex number literals (e.g., "2j", "(1+2j)")
+    // Helper: parse a possibly-signed numeric prefix using std::stod,
+    // matching Python's complex() coefficient rules:
+    //   "" or "+"  -> +1.0
+    //   "-"        -> -1.0
+    //   anything else: try std::stod; on failure, fall through to the
+    //   string-literal path so we don't abort the frontend with an
+    //   uncaught std::invalid_argument.
+    auto parse_coefficient = [](const std::string &s) -> std::optional<double>
+    {
+      if(s.empty() || s == "+")
+        return 1.0;
+      if(s == "-")
+        return -1.0;
+      try
+      {
+        return std::stod(s);
+      }
+      catch(const std::exception &)
+      {
+        return std::nullopt;
+      }
+    };
+
     if(!str_val.empty() && str_val.back() == 'j')
     {
       // Parse imaginary part: "2j" → imag=2.0, real=0.0
       std::string imag_str = str_val.substr(0, str_val.size() - 1);
-      double imag_val = imag_str.empty() ? 1.0 : std::stod(imag_str);
+      auto imag_opt = parse_coefficient(imag_str);
+      if(!imag_opt.has_value())
+        return python_string_literal(str_val);
+      double imag_val = imag_opt.value();
       ieee_floatt real_f{
         ieee_float_spect::double_precision(),
         ieee_floatt::rounding_modet::ROUND_TO_EVEN};
@@ -170,12 +208,20 @@ exprt python_convertert::convert_constant(const jsont &expr)
           sep = inner.rfind('-');
         if(sep != std::string::npos && sep > 0)
         {
-          real_val = std::stod(inner.substr(0, sep));
-          std::string imag_s = inner.substr(sep);
-          imag_val = imag_s.empty() ? 1.0 : std::stod(imag_s);
+          auto r_opt = parse_coefficient(inner.substr(0, sep));
+          auto i_opt = parse_coefficient(inner.substr(sep));
+          if(!r_opt.has_value() || !i_opt.has_value())
+            return python_string_literal(str_val);
+          real_val = r_opt.value();
+          imag_val = i_opt.value();
         }
         else
-          imag_val = inner.empty() ? 1.0 : std::stod(inner);
+        {
+          auto i_opt = parse_coefficient(inner);
+          if(!i_opt.has_value())
+            return python_string_literal(str_val);
+          imag_val = i_opt.value();
+        }
         ieee_floatt rf{
           ieee_float_spect::double_precision(),
           ieee_floatt::rounding_modet::ROUND_TO_EVEN};
