@@ -287,6 +287,12 @@ static simplify_exprt::resultt<> simplify_string_contains(
   // We want to get both arguments of any starts-with comparison, and
   // trace them back to the actual string instance. All variables on the
   // way must be constant for us to be sure this will work.
+  if(
+    expr.arguments().size() < 2 ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(0)) ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(1)))
+    return simplify_exprt::unchanged(expr);
+
   auto &first_argument = to_string_expr(expr.arguments().at(0));
   auto &second_argument = to_string_expr(expr.arguments().at(1));
 
@@ -431,6 +437,11 @@ static simplify_exprt::resultt<> simplify_string_index_of(
       starting_index = numeric_cast_v<std::size_t>(idx);
     }
   }
+
+  if(
+    expr.arguments().empty() ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(0)))
+    return simplify_exprt::unchanged(expr);
 
   const refined_string_exprt &s1 = to_string_expr(expr.arguments().at(0));
 
@@ -631,6 +642,12 @@ static simplify_exprt::resultt<> simplify_string_equals_ignore_case(
   // We want to get both arguments of any starts-with comparison, and
   // trace them back to the actual string instance. All variables on the
   // way must be constant for us to be sure this will work.
+  if(
+    expr.arguments().size() < 2 ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(0)) ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(1)))
+    return simplify_exprt::unchanged(expr);
+
   auto &first_argument = to_string_expr(expr.arguments().at(0));
   auto &second_argument = to_string_expr(expr.arguments().at(1));
 
@@ -679,6 +696,12 @@ static simplify_exprt::resultt<> simplify_string_startswith(
   // We want to get both arguments of any starts-with comparison, and
   // trace them back to the actual string instance. All variables on the
   // way must be constant for us to be sure this will work.
+  if(
+    expr.arguments().size() < 2 ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(0)) ||
+    !can_cast_expr<refined_string_exprt>(expr.arguments().at(1)))
+    return simplify_exprt::unchanged(expr);
+
   auto &first_argument = to_string_expr(expr.arguments().at(0));
   auto &second_argument = to_string_expr(expr.arguments().at(1));
 
