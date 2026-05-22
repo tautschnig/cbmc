@@ -464,3 +464,100 @@ nested-list mutation in `github_3667_2-nondet`).
 | Constant-fold across function-return-of-constant | unknown | `function_return_constants` map populated from analysis of leaf functions whose body is a single `return <constant>`. |
 | String concat inside loops not tracked | unknown (large) | Needs a real string-flow analysis or a syntactic fold that catches `s = s + c` patterns. |
 
+
+## Wave 7 (architectural) — type inference + by-reference Stage 1/2
+
+Two architectural changes from the post-Wave-6 docket landed:
+
+### 7a. Type inference for unannotated globals
+
+The pre-pass in `python_convertert::convert()` registers module-level
+globals before the RHS is evaluated. For plain `Assign` whose RHS
+isn't a Constant or List literal (e.g. `x = math.inf`,
+`y = some_func()`), the pre-pass falls through to the placeholder
+`python_int_type()`. Pass 2's existing-symbol-different-type branch
+then casts the RHS to the placeholder, which collapses `+inf` into a
+meaningless 64-bit signed int and silently breaks `math.isinf(x)`,
+`x > 1e300`, etc.
+
+Fix: a new `unannotated_globals` set marks every pass-0
+plain-Assign symbol. Pass 2's first assignment to such a symbol
+refines the symbol's type to the actual RHS type (and drops it
+out of the set). Subsequent rebinds take the existing
+type-mismatch path, preserving Python's dynamic-typing semantics
+for `x = 5; x = math.inf`.
+
+Refining only on the *first* assignment is essential: by the time
+later assignments run, earlier ASSIGN statements already reference
+the symbol with its prior type. Changing the symbol's type after
+such an emission produces a goto with type-inconsistent
+ASSIGN/symbol pairs.
+
+### 7b. By-reference semantics for mutable containers, Stage 1+2
+
+Python's `list` and `dict` are mutable; passing one to a function
+binds the parameter to the same object, so callee-side mutations
+are visible at the call site. The frontend was modelling them by
+value, so `def foo(xs): xs.append(4); foo(ys); assert len(ys)==4`
+was unsoundly verifying SUCCESSFUL when the assertion had to fail
+under by-value semantics — the frontend just dropped the mutation.
+
+Stage 1: convert_function_def's `add_positional` now wraps a
+list/dict parameter type in `pointer_type` (already done for
+non-self class instances). convert_name auto-dereferences any
+pointer-typed list/dict parameter symbol at every use site, so
+the existing `member_exprt`-based access machinery
+(`xs.length`, `xs.data`, `.keys`/`.values`) keeps working
+transparently. The user-function call dispatch materialises
+rvalue struct arguments into a fresh `__byref_arg_N` symbol
+before taking `address_of`.
+
+Stage 2: relaxed the `obj.id() == ID_symbol` guards on 11
+mutation-emitting branches (clear, pop, popitem, dict-subscript-
+assign, etc.) to also accept `dereference_exprt`, and guarded
+the `to_symbol_expr(obj).get_identifier()` literal-tracking
+lookups so they don't crash on non-symbol receivers. The
+literal-tracking maps don't and shouldn't cache the contents of
+pointer-deref'd parameters.
+
+Stage 3 (NOT in this wave): full aliasing semantics for
+`z = y; z is y`. That requires list/dict variable bindings (not
+just parameters) to be pointer copies — a much bigger refactor
+that needs its own scoping pass.
+
+### Cumulative
+
+| Outcome | Wave 6 | Wave 7 | Δ |
+|---------|------:|-------:|---:|
+| PASS | 2196 | 2202 | +6 |
+| DIFF | 572 | 566 | −6 |
+| UNKNOWN | 237 | 237 | 0 |
+| FAIL | 68 | 68 | 0 |
+| TIMEOUT | 17 | 17 | 0 |
+| TOERR | 0 | 0 | 0 |
+| CRASH | 0 | 0 | 0 |
+| SKIP | 1 | 1 | 0 |
+
+Pass rate **71.0 % → 71.2 %**. Headline movement is small but
+the architecture is now PLR-correct for two more axes:
+
+  * Type inference no longer corrupts +inf into int.
+  * Mutable-container parameters are by-reference, so
+    `xs.append(...)` inside a callee actually appends.
+
+One precision regression in the sweep: `list13` (now DIFF, was
+PASS), where two functions iterating the same list parameter no
+longer trivially-fold to equal returns because CBMC must treat
+any pointer-typed parameter as potentially aliased / mutated.
+That is the correct soundness cost.
+
+### Architectural items still on the docket (post-Wave-7)
+
+| Pattern | Approx tests | Architectural fix |
+|---|---:|---|
+| Aliasing (`z = y`; `z is y`) | 37 | Full pointer-copy for mutable bindings (Stage 3 of by-ref). |
+| Constant-fold across function-return-of-constant | unknown | Track which user functions are leaf and return a constant; propagate at call sites. |
+| String concat inside loops not tracked | unknown (large) | Either a real string-flow analysis or a syntactic fold for `s = s + c` patterns. |
+| math.X dispatch ordering | small | Inline math.isinf/isnan/isfinite preferentially over the symbol-table dispatch (currently inline never fires for `math.isinf(x)` because the bare-name symbol resolves first). |
+| List/dict subscript assign through method-call obj | small | The remaining mutation paths (some not yet relaxed for ID_dereference) need an audit. |
+
