@@ -60,14 +60,34 @@ exprt get_class_identifier_field(
   const namespacet &ns)
 {
   // Get a pointer from which we can extract a clsid.
-  // If it's already a pointer to an object of some sort, just use it;
-  // if it's void* then use the suggested type.
+  // @class_identifier lives at the root of every Java class
+  // hierarchy (inside java.lang.Object). When the pointer's static
+  // type is an interface or abstract class whose struct layout has a
+  // different nesting depth than the runtime object's actual type,
+  // accessing through the declared type reads the wrong offset.
+  // Fix: cast to the suggested_type (typically java.lang.Object) so
+  // build_class_identifier walks from the true root.
   PRECONDITION(this_expr_in.type().id() == ID_pointer);
 
-  exprt this_expr=this_expr_in;
+  exprt this_expr = this_expr_in;
   const auto &points_to = to_pointer_type(this_expr.type()).base_type();
-  if(points_to==empty_typet())
-    this_expr=typecast_exprt(this_expr, pointer_type(suggested_type));
+  if(points_to == empty_typet())
+  {
+    // void* — use suggested_type if available.
+    if(!suggested_type.get_identifier().empty())
+      this_expr = typecast_exprt(this_expr, pointer_type(suggested_type));
+  }
+  else if(
+    points_to.id() == ID_struct_tag &&
+    !suggested_type.get_identifier().empty() &&
+    to_struct_tag_type(points_to).get_identifier() !=
+      suggested_type.get_identifier())
+  {
+    // The pointer's static type differs from the suggested root
+    // type. Cast so build_class_identifier walks from the root
+    // where @class_identifier actually lives.
+    this_expr = typecast_exprt(this_expr, pointer_type(suggested_type));
+  }
   const dereference_exprt deref{this_expr};
   return build_class_identifier(deref, ns);
 }
