@@ -313,14 +313,16 @@ exprt python_convertert::convert_name(const jsont &expr)
 
   // PLR §3.1: Mutable containers passed by reference.
   // Parameters of list / dict type are registered as pointer-to-struct
-  // (see convert_function_def's add_positional). Auto-dereference
-  // them at use sites so the rest of the converter's
+  // (see convert_function_def's add_positional). Locals promoted to
+  // pointer storage by an aliasing assignment (`b: list = a`, see
+  // convert_ann_assign / convert_assign) are also pointer-to-struct.
+  // Auto-dereference both at use sites so the rest of the converter's
   // member_exprt-based access machinery (xs.length, xs.data,
   // .keys/.values for dicts) keeps working transparently. The
-  // resulting `*xs` is an lvalue that points at the caller's
-  // container, so mutations through it propagate.
+  // resulting `*xs` is an lvalue that points at the underlying
+  // container's storage, so mutations through it propagate.
   if(
-    sym->is_parameter && sym->type.id() == ID_pointer &&
+    sym->type.id() == ID_pointer &&
     (is_python_list_type(to_pointer_type(sym->type).base_type()) ||
      is_python_dict_type(to_pointer_type(sym->type).base_type())))
   {

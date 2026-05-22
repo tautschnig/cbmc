@@ -359,6 +359,23 @@ private:
   /// the user has explicitly declared a type, and pass 2 should
   /// continue to cast the RHS to honour that annotation.
   std::set<irep_idt> unannotated_globals;
+
+  /// PLR §3.1: names rebound to a mutable container do not copy the
+  /// container; they bind to the same object. To model that here, when
+  /// `b: list = a` (or the unannotated `b = a`) is converted with the
+  /// RHS resolving to another list/dict-typed symbol, the LHS symbol
+  /// is promoted to a pointer-to-struct and bound to `address_of(a)`.
+  /// `convert_name` then auto-dereferences the LHS at every read site,
+  /// so member access (`b[0]`, `b.length`) and method calls
+  /// (`b.append(v)`, `b.pop()`) operate through the deref'd pointer
+  /// and mutations propagate to the original `a`.
+  ///
+  /// `alias_targets[qualified_name(b)] = qualified_name(a)` records the
+  /// chain (transitive aliases store the FINAL target, never another
+  /// alias, so `c = b = a` collapses to `alias_targets[c] = a`). Used
+  /// by the `is`/`is not` handler to compare alias identity even when
+  /// the operands are auto-dereferenced symbol_exprt's at use sites.
+  std::map<irep_idt, irep_idt> alias_targets;
   std::optional<std::string> extract_string_value(const exprt &e) const;
 
   /// Best-effort static category of an expression node directly

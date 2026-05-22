@@ -140,6 +140,89 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     return code_skipt{};
   }
 
+  // PLR §3.1 — list / dict aliasing. When the RHS is another list/dict
+  // variable (or a chain of dereferences ending in one), the LHS must
+  // bind to the SAME object, not a fresh copy. Without this, code like
+  //
+  //     a: list = [1, 2, 3]
+  //     b: list = a
+  //     b[0] = 99
+  //     assert a[0] == 1   # FAILS in Python
+  //
+  // would currently struct-copy `a` into `b` and silently report
+  // VERIFICATION SUCCESSFUL — a soundness gap.
+  //
+  // Fix: promote the LHS symbol to pointer-to-struct, bind it to
+  // `address_of(rhs_target)`, and record the alias in
+  // `alias_targets`. `convert_name` auto-dereferences the LHS at
+  // every use, so subscript reads/writes and member access through
+  // the LHS go through the same memory the RHS occupies.
+  //
+  // CRITICAL: we gate this on the *AST shape* of the RHS, not on the
+  // converted exprt. A direct alias `b = a` has value AST shape
+  // Name("a"); a method call `b = a.copy()` has shape
+  // Call(func=Attribute(Name("a"), "copy"), ...). Both convert to the
+  // same symbol_exprt at the converted-exprt level (because
+  // .copy()'s handler currently returns obj rather than synthesising a
+  // new struct), but only the first should promote — `.copy()` MUST
+  // produce a fresh container, not an alias.
+  bool rhs_is_direct_name = is_node_type(value, "Name");
+  if(
+    rhs_is_direct_name && rhs.id() == ID_symbol &&
+    (is_python_list_type(rhs.type()) || is_python_dict_type(rhs.type())))
+  {
+    irep_idt rhs_id = to_symbol_expr(rhs).get_identifier();
+    auto chain = alias_targets.find(rhs_id);
+    irep_idt target_id = (chain != alias_targets.end()) ? chain->second : rhs_id;
+    const symbolt *target_sym = symbol_table.lookup(target_id);
+    if(target_sym != nullptr)
+    {
+      pointer_typet ptr_type{target_sym->type, 64};
+      symbol_table.get_writeable_ref(symbol_id).type = ptr_type;
+      alias_targets[qualified_name] = target_id;
+      // Aliasing makes the target's contents reachable through a
+      // second name; subsequent constant-fold lookups via
+      // list_literals / dict_literals would mis-fold reads against
+      // the snapshot taken at the original assignment, missing any
+      // mutation through the alias. Drop the cached literal so the
+      // converter falls back to the runtime read path.
+      list_literals.erase(target_id);
+      dict_literals.erase(target_id);
+      tuple_literals.erase(target_id);
+      string_constants.erase(target_id);
+      code_frontend_assignt assign{
+        symbol_table.lookup_ref(symbol_id).symbol_expr(),
+        address_of_exprt{target_sym->symbol_expr()}};
+      assign.add_source_location() = loc;
+      return std::move(assign);
+    }
+  }
+  if(
+    rhs_is_direct_name && rhs.id() == ID_dereference &&
+    rhs.operands().size() == 1 &&
+    rhs.operands()[0].id() == ID_symbol &&
+    rhs.operands()[0].type().id() == ID_pointer &&
+    (is_python_list_type(to_pointer_type(rhs.operands()[0].type()).base_type()) ||
+     is_python_dict_type(to_pointer_type(rhs.operands()[0].type()).base_type())))
+  {
+    // Pointer-copy from another already-promoted symbol or parameter.
+    const exprt &inner_sym = rhs.operands()[0];
+    symbol_table.get_writeable_ref(symbol_id).type = inner_sym.type();
+    irep_idt inner_id = to_symbol_expr(inner_sym).get_identifier();
+    auto chain = alias_targets.find(inner_id);
+    irep_idt target_id =
+      (chain != alias_targets.end()) ? chain->second : inner_id;
+    alias_targets[qualified_name] = target_id;
+    list_literals.erase(target_id);
+    dict_literals.erase(target_id);
+    tuple_literals.erase(target_id);
+    string_constants.erase(target_id);
+    code_frontend_assignt assign{
+      symbol_table.lookup_ref(symbol_id).symbol_expr(), inner_sym};
+    assign.add_source_location() = loc;
+    return std::move(assign);
+  }
+
   // If annotation gave a placeholder type (e.g., dict→int) but the RHS
   // has a concrete struct type, use the RHS type instead.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
