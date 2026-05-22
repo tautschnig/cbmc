@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+#
+# Adapted from Strata Contributors' .github/workflows/python-fuzz.yml
+# (origin/tautschnig/hypothesmith branch on github.com/strata-org/Strata).
+# The Strata workflow drove `strata pyAnalyzeLaurel` against random Python
+# programs; this CBMC-side adaptation runs those same programs through
+# CBMC's Python frontend instead. The driver script lives at
+# scripts/python-fuzz/python-fuzz.sh.
+#
+# =============================================================================
+# Python Front-End Fuzz Testing
+# =============================================================================
+#
+# This workflow fuzz-tests CBMC's Python front-end by generating random
+# Python programs and running them through the CBMC pipeline. It is
+# inspired by CBMC's existing CSmith workflow (.github/workflows/csmith.yaml)
+# and by the hypothesmith project (https://github.com/Zac-HD/hypothesmith),
+# which generates syntactically valid Python programs using the Hypothesis
+# property-based testing framework.
+#
+# ## Trigger
+#
+# Runs on pull_request only - not on merge_group or push to develop. Fuzz
+# tests are non-deterministic and meant to catch regressions in PRs, not
+# to gate merges or post-merge builds. A failed run is informational; the
+# step prints the seed so the failure can be reproduced locally with:
+#
+#   scripts/python-fuzz/python-fuzz.sh 20 <SEED> both --unrestricted
+#
+# ## What it tests
+#
+# Two modes run in sequence (`--mode both`):
+#
+# 1. Syntax mode - hypothesmith-driven generation of syntactically valid
+#    Python from the grammar. Each program is fed to CBMC. Failures of
+#    interest are CBMC crashes (Invariant violations, segfaults, panics)
+#    on syntactically valid input. Programs the frontend rejects with
+#    "warning: ignoring" or "no body for callee" are reported as SKIP.
+#
+# 2. Semantic mode - typed Python programs with assertions whose expected
+#    values are computed by CPython at generation time (analogous to CSmith
+#    computing a checksum). Each program is first run under CPython to
+#    confirm it is well-formed, then run under CBMC. If CBMC reports
+#    VERIFICATION FAILED on a program that CPython runs cleanly, that
+#    indicates a semantic modelling bug.
+#
+# `--unrestricted` is passed so the semantic-mode generator emits
+# constructs that may be beyond what CBMC supports today (classes,
+# generators, comprehensions, try/except, match, async, decorators, etc.).
+# Programs that hit unsupported constructs are reported as SKIP, not
+# failures.
+#
+# ## Failure handling
+#
+# The workflow does not gate merges. A failure surfaces as a workflow run
+# in red on the PR with the seed and source code printed in the log so
+# the bug can be reproduced and (optionally) filed as a frontend issue.
+# =============================================================================
+
+name: Python Fuzz
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  fuzz_python:
+    name: Fuzz-test CBMC Python front-end
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Fetch build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential flex bison cmake ninja-build ccache \
+            clang-19 clang++-19 \
+            python3 python3-venv
+
+      - name: Pick random seed
+        id: seed
+        run: echo "value=$(date +%s%N | cut -c1-10)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare ccache
+        uses: actions/cache@v5
+        with:
+          save-always: true
+          path: .ccache
+          key: ${{ runner.os }}-24.04-cmake-clang-${{ github.ref }}-${{ github.sha }}-PYFUZZ
+          restore-keys: |
+            ${{ runner.os }}-24.04-cmake-clang-${{ github.ref }}
+            ${{ runner.os }}-24.04-cmake-clang
+      - name: ccache environment
+        run: |
+          echo "CCACHE_BASEDIR=$PWD" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$PWD/.ccache" >> "$GITHUB_ENV"
+      - name: Zero ccache stats and limit in size
+        run: ccache -z --max-size=500M
+
+      - name: Configure CBMC
+        run: cmake -S . -Bbuild -G Ninja -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=ccache\ clang++-19
+
+      - name: Build CBMC
+        run: cmake --build build --target cbmc --parallel "$(nproc)"
+
+      - name: Print ccache stats
+        run: ccache -s
+
+      # Confirm CBMC's existing python regression suite is healthy on this
+      # PR. If this is red, the fuzzer's failures (next step) may be
+      # symptoms of a regression already caught by the regular suite.
+      - name: Sanity check CBMC python regression
+        run: |
+          cd regression/python
+          perl ../test.pl -e -p -c "$PWD/../../build/bin/cbmc" -C
+
+      - name: Run python fuzz tests (seed=${{ steps.seed.outputs.value }})
+        # The base generators only (no `--unrestricted`) cover the
+        # constructs CBMC's Python frontend is currently expected to
+        # handle: typed integer arithmetic, comparisons, boolean logic,
+        # string concatenation, if/else with compound conditions, floor
+        # division, modulo, unary negation, boolean negation. Adding
+        # `--unrestricted` enables ~60 extra generators (classes,
+        # generators, comprehensions, try/except, match, async,
+        # decorators, ...) that exercise gaps the frontend is known to
+        # have today; it is meant for local fuzz exploration, not for CI.
+        run: |
+          ./scripts/python-fuzz/python-fuzz.sh 20 \
+            "${{ steps.seed.outputs.value }}" both
+
+      - name: Reproduce hint (on failure)
+        if: failure()
+        run: |
+          echo "========================================================="
+          echo "Reproduce locally:"
+          echo "  ./scripts/python-fuzz/python-fuzz.sh 20 \\"
+          echo "    ${{ steps.seed.outputs.value }} both --unrestricted"
+          echo "========================================================="
