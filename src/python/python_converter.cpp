@@ -46,8 +46,10 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iomanip>
@@ -239,7 +241,20 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
       ieee_float_spect::double_precision(),
       ieee_floatt::rounding_modet::ROUND_TO_EVEN};
     fv.from_expr(to_constant_expr(*ce));
-    return std::stod(fv.to_ansi_c_string());
+    // Round-trip via to_ansi_c_string + strtod. We use strtod
+    // (exception-free) rather than std::stod because libstdc++'s
+    // stod throws std::out_of_range for very small denormals like
+    // 1e-308 that are technically representable as doubles, and any
+    // such throw would unwind out of the frontend with no caller
+    // catching it. ERANGE just rounds to the nearest representable
+    // value (which is what we want for a best-effort eval anyway).
+    const std::string s = fv.to_ansi_c_string();
+    errno = 0;
+    char *endp = nullptr;
+    const double v = std::strtod(s.c_str(), &endp);
+    if(endp != s.c_str() + s.size())
+      return std::nullopt;
+    return v;
   }
   // Binary and comparison operations (all 2-operand cases). We only
   // evaluate the operands once per invocation, regardless of which
