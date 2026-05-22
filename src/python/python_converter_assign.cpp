@@ -76,6 +76,44 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   std::string qualified_name = qualify_name(var_name);
   irep_idt symbol_id{qualified_name};
 
+  // Name-shadowing of imported functions. When a user's local
+  // variable name happens to collide with a function the import
+  // pipeline added at the same qualified scope (e.g. `match: ... =
+  // re.match(...)` reusing `python::match` because re's module
+  // contents are flattened into the top-level namespace), reusing
+  // the existing code-typed symbol would have CBMC's symex abort
+  // with "assignment to 'symbol' not handled". Instead, rename the
+  // new variable to a fresh `__shadow_<name>__vN` symbol and
+  // register the redirection in variable_versions so later reads
+  // of `var_name` resolve to the local variable rather than the
+  // imported function.
+  {
+    const symbolt *existing = symbol_table.lookup(symbol_id);
+    if(
+      existing != nullptr && existing->type.id() == ID_code &&
+      var_type.id() != ID_code)
+    {
+      unsigned &ver = version_counters[qualified_name];
+      ver++;
+      std::string versioned_name =
+        qualified_name + "__shadow__v" + std::to_string(ver);
+      irep_idt versioned_id{versioned_name};
+      if(symbol_table.lookup(versioned_id) == nullptr)
+      {
+        symbolt new_symbol{versioned_id, var_type, "python"};
+        new_symbol.base_name = var_name + "__shadow__v" + std::to_string(ver);
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        new_symbol.is_static_lifetime = current_function.empty();
+        symbol_table.add(new_symbol);
+      }
+      variable_versions[qualified_name] = versioned_id;
+      symbol_id = versioned_id;
+      qualified_name = versioned_name;
+    }
+  }
+
   // Create symbol if it doesn't exist
   if(symbol_table.lookup(symbol_id) == nullptr)
   {
