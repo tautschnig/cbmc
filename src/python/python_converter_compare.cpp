@@ -136,6 +136,34 @@ exprt python_convertert::convert_compare(const jsont &expr)
         else
           current_left = python_string_literal("__NEVER_EQUAL__");
       }
+      // PLR §6.10.1: lists with different element types are never equal.
+      // Two lists of different shapes (e.g. list[int] vs list[list[int]])
+      // pass through here as struct expressions whose underlying widths
+      // differ. Falling through to a plain equal_exprt would let
+      // boolbv::convert_bv_typecast try to widen/narrow one side to fit
+      // the other, which crashes on incompatible element types
+      // (regression test: assert [[1]] == [1]). Force the comparison to
+      // statically false by re-using the existing "__NEVER_EQUAL__"
+      // string-literal trick.
+      else if(
+        is_python_list_type(current_left.type()) &&
+        is_python_list_type(right.type()) &&
+        current_left.type() != right.type())
+      {
+        current_left = python_string_literal("__NEVER_EQUAL__");
+        right = python_string_literal("__NOT_EQUAL_TO_THIS__");
+      }
+      // PLR §6.10.1: list vs non-list (excluding python_value tagged
+      // unions, where the comparison stays dynamic) → never equal.
+      else if(
+        (is_python_list_type(current_left.type()) !=
+         is_python_list_type(right.type())) &&
+        !is_python_value_type(current_left.type()) &&
+        !is_python_value_type(right.type()))
+      {
+        current_left = python_string_literal("__NEVER_EQUAL__");
+        right = python_string_literal("__NOT_EQUAL_TO_THIS__");
+      }
       else if(current_left.type().id() == ID_floatbv)
       {
         // If right is an int constant, convert it exactly to float
