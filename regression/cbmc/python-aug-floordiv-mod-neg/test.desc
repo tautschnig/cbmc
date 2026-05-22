@@ -1,6 +1,6 @@
 CORE
-test_soundness_augfloordiv_neg.py
+main.py
 --unwind 5 --no-unwinding-assertions
-^VERIFICATION FAILED$
+^VERIFICATION SUCCESSFUL$
 ^EXIT=(0|10)$
 ^SIGNAL=0$
