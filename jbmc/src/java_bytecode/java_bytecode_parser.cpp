@@ -1768,6 +1768,38 @@ void java_bytecode_parsert::rclass_attribute()
   {
     java_bytecode_parsert::rinner_classes_attribute(attribute_length);
   }
+  else if(attribute_name == "PermittedSubclasses")
+  {
+    // JVM 17+ sealed-class attribute. Format (JVMS §4.7.31):
+    //   u2 number_of_classes;
+    //   u2 classes[number_of_classes];
+    // Each `classes[i]` is a constant-pool index pointing at a
+    // CONSTANT_Class_info whose name is the JVM-internal name of
+    // a permitted subclass.
+    //
+    // Stored on parsed_class.permitted_subclasses; lazy-init for
+    // an abstract sealed parameter consults the list to constrain
+    // @class_identifier to one of the permits. Without this,
+    // F11's typeSwitch lowering correctly returns the case index
+    // when the input is a permitted subtype, but nondet-allocated
+    // inputs may have no @class_identifier matching any permit,
+    // falling through to the synthetic-MatchException default
+    // that javac emits to satisfy the JVM verifier.
+    const u2 number_of_classes = read<u2>();
+    for(u2 i = 0; i < number_of_classes; i++)
+    {
+      // Same idiom as rinterfaces() (this file): resolve the
+      // CONSTANT_Class_info index via constant(), then read the
+      // C_base_name to get the class's dot-separated identifier
+      // (`pkg.Cls$Inner` form).
+      const irep_idt class_name =
+        constant(read<u2>()).type().get(ID_C_base_name);
+      if(class_name.empty())
+        continue;
+      parsed_class.permitted_subclasses.push_back(class_name);
+      parse_tree.class_refs.insert(class_name);
+    }
+  }
   else
     skip_bytes(attribute_length);
 }

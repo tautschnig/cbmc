@@ -322,6 +322,31 @@ void java_bytecode_convert_classt::convert(
   class_type.set_is_anonymous_class(c.is_anonymous_class);
   class_type.set_outer_class(c.outer_class);
   class_type.set_super_class(c.super_class);
+
+  // §5.3 / sealed-init: propagate the permitted-subclasses list
+  // (parsed from the JVM 17 PermittedSubclasses attribute) onto
+  // the class type so lazy-init can constrain @class_identifier
+  // of an abstract sealed parameter to one of the permits.
+  // Without this, F11's typeSwitch lowering correctly dispatches
+  // on the real runtime tag but a nondet-allocated input may have
+  // no permits-matching tag at all, falling through to the
+  // synthetic MatchException default.
+  //
+  // Storage: a single comma-separated string in the irep's id.
+  // Cheap to encode/decode and avoids whatever sub-irep
+  // round-tripping does to nested anonymous ireps in the named-
+  // sub map.
+  if(!c.permitted_subclasses.empty())
+  {
+    std::string joined;
+    for(const auto &name : c.permitted_subclasses)
+    {
+      if(!joined.empty())
+        joined += ",";
+      joined += id2string(name);
+    }
+    class_type.set(ID_permitted_subclasses, joined);
+  }
   if(c.is_enum)
   {
     if(max_array_length != 0 && c.enum_elements > max_array_length)

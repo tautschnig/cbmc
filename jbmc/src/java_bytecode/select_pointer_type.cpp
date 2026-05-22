@@ -12,10 +12,13 @@ Author: Diffblue Ltd.
 
 #include "select_pointer_type.h"
 
+#include <util/namespace.h>
+#include <util/std_code.h>
+#include <util/std_types.h>
+#include <util/symbol_table_base.h>
+
 #include "generic_parameter_specialization_map.h"
 #include "java_types.h"
-
-#include <util/std_types.h>
 
 pointer_typet select_pointer_typet::convert_pointer_type(
   const pointer_typet &pointer_type,
@@ -82,9 +85,87 @@ pointer_typet select_pointer_typet::specialize_generics(
 
 std::set<struct_tag_typet>
 select_pointer_typet::get_parameter_alternative_types(
-  const irep_idt &,
-  const irep_idt &,
-  const namespacet &) const
+  const irep_idt &function_name,
+  const irep_idt &parameter_name,
+  const namespacet &ns) const
 {
+  // §5.3 / sealed-init: if the parameter's static type is a
+  // sealed class/interface, inject the permitted-subclasses
+  // list as alternative concrete types for the harness's
+  // nondet switch. Without this, JBMC's lazy-init allocates an
+  // object whose @class_identifier is left as the abstract
+  // sealed-interface tag, and any sealed-pattern-match
+  // downstream falls into the synthetic MatchException default
+  // that javac emits to satisfy the JVM verifier (the permits
+  // clause proves the default unreachable, but only if the
+  // runtime tag is pinned to one of the permits — that's what
+  // we do here).
+  //
+  // Mechanism: locate the parameter symbol via the function
+  // symbol's parameter list, follow the parameter's pointer
+  // type to the underlying struct_tag_typet, look up the class
+  // on the symbol table, and read the
+  // ID_permitted_subclasses string set by
+  // java_bytecode_convert_class.cpp.
+  //
+  // Limitation: this only fires for entry-point parameters.
+  // Field-lazy-init for sealed-typed fields inside
+  // nondet-allocated classes is a separate code path
+  // (gen_nondet_pointer_init in java_object_factory.cpp) and
+  // doesn't yet consult the permits list. For sealed types
+  // exposed via a record field (e.g.,
+  // `record OuterA(Inner inner)` where Inner is sealed),
+  // verification still hits the MatchException default. Filed
+  // as future work.
+  const symbolt *function_symbol = ns.get_symbol_table().lookup(function_name);
+  if(function_symbol == nullptr || function_symbol->type.id() != ID_code)
+    return {};
+  const code_typet &code_type = to_code_type(function_symbol->type);
+  for(const auto &param : code_type.parameters())
+  {
+    if(param.get_identifier() != parameter_name)
+      continue;
+    if(param.type().id() != ID_pointer)
+      return {};
+    const typet &subtype = to_pointer_type(param.type()).base_type();
+    if(subtype.id() != ID_struct_tag)
+      return {};
+    const irep_idt &class_id = to_struct_tag_type(subtype).get_identifier();
+    const symbolt *class_symbol = ns.get_symbol_table().lookup(class_id);
+    if(class_symbol == nullptr)
+      return {};
+    const irep_idt permits_str =
+      class_symbol->type.get(ID_permitted_subclasses);
+    if(permits_str.empty())
+      return {};
+    std::set<struct_tag_typet> result;
+    const std::string joined = id2string(permits_str);
+    std::string current;
+    auto try_add = [&](const std::string &name)
+    {
+      if(name.empty())
+        return;
+      const std::string permit_name = "java::" + name;
+      // Skip permits whose class symbol isn't loaded; nondet-
+      // init can't allocate a class it has no symbol for.
+      if(ns.get_symbol_table().lookup(permit_name) == nullptr)
+        return;
+      result.insert(struct_tag_typet(permit_name));
+    };
+    for(char c : joined)
+    {
+      if(c == ',')
+      {
+        try_add(current);
+        current.clear();
+      }
+      else
+      {
+        current.push_back(c);
+      }
+    }
+    try_add(current);
+    return result;
+  }
   return {};
 }

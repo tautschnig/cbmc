@@ -321,6 +321,18 @@ struct java_bytecode_parse_treet
 
     typedef std::list<irep_idt> implementst;
     implementst implements;
+    /// Permitted subclasses of a sealed class/interface (JEP 409).
+    /// Populated from the {@code PermittedSubclasses} class-file
+    /// attribute. Empty for non-sealed types. JBMC's lazy-init
+    /// uses this list to constrain @class_identifier of a
+    /// nondet-allocated abstract sealed parameter to one of the
+    /// permitted concrete types — without that constraint, any
+    /// sealed-pattern-match downstream falls into the synthetic
+    /// MatchException default the JVM verifier requires javac to
+    /// emit, even though the permits clause proves it
+    /// unreachable.
+    typedef std::list<irep_idt> permitted_subclassest;
+    permitted_subclassest permitted_subclasses;
     std::optional<std::string> signature;
     typedef std::list<fieldt> fieldst;
     typedef std::list<methodt> methodst;
