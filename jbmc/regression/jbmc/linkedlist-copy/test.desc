@@ -1,0 +1,21 @@
+CORE
+LinkedListCopy
+--function LinkedListCopy.testCopyCtor --unwind 8 -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for LinkedList(Collection<? extends E> c)
+constructor.
+
+Pre-fix: the constructor ignored c entirely and produced a list
+with nondet size and no elements. Verification of any property
+that depended on the copied contents silently failed.
+
+Post-fix: when the source is a LinkedList, the constructor
+copies elementData via non-overlapping System.arraycopy and
+sets size accordingly.

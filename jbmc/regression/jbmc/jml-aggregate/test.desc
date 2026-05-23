@@ -1,0 +1,27 @@
+CORE
+JmlAggregate
+--function JmlAggregate.sumGE --jml-source src/main/java/JmlAggregate.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML \sum aggregate expansion with transposed
+bounds (REVIEW-PRE-PUSH high item 5).
+
+Pre-fix: jml_lowering.cpp's bound-matching code lumped LE and
+GE into the same branch and conflated `var <= lb` with
+`lb <= var`. As a result, range conditions like `i >= 0 && i <= 4`
+would mis-classify the bounds (treating an upper bound as a
+lower bound), producing wrong expansion or no expansion at all.
+
+Post-fix: bound matching canonicalises by checking which side
+contains the bound variable; conjuncts are flipped to `var <op'> k`
+form before classification.
+
+This test exercises the GE form (`i >= 0 && i <= 4`); the
+sum-from-0-to-4 = 10 and matches the LT form
+`0 <= i && i < 5; i` which is verified by sumLT in the same file.

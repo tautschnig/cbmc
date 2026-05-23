@@ -1,6 +1,6 @@
 CORE
 LinkedListBasic
---function LinkedListBasic.testBasicOps --unwind 5 -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar
+--function LinkedListBasic.testBasicOps --unwind 6 -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
@@ -9,14 +9,12 @@ LinkedListBasic
 ^CONVERSION ERROR
 ^.*FAILURE$
 --
-Regression for LinkedList model.
+Regression for LinkedList model: add, get, size, getFirst,
+getLast, isEmpty, addFirst, removeFirst.
 
-Verifies the basic LinkedList operations (size, isEmpty, add,
-get, getFirst, getLast) using JBMC's core-models.jar
-LinkedList implementation.
-
-Note: this test deliberately does NOT exercise removeFirst /
-addFirst because the model implements them via in-place
-System.arraycopy on the backing array, which JBMC's array
-model does not handle correctly with overlapping ranges.
-That limitation is tracked in REVIEW-PRE-PUSH.md.
+addFirst and removeFirst were previously broken because the
+model used System.arraycopy with overlapping source and
+destination ranges. JBMC's array model treats arraycopy as
+opaque, so no elements were transferred. The fix
+(REVIEW-PRE-PUSH medium item 4) replaced the arraycopy calls
+with element-wise shift loops; both methods now work.

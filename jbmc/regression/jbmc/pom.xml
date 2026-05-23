@@ -155,8 +155,12 @@
         <module>jml-old</module>
         <module>jml-result</module>
         <module>jml-conjunction</module>
+        <module>jml-aggregate</module>
         <module>linkedhashmap-basic</module>
+        <module>linkedhashmap-copy</module>
         <module>linkedlist-basic</module>
+        <module>linkedlist-copy</module>
+        <module>linkedlist-removeoccurrence</module>
         <module>fake_stubs</module>
         <module>farith1</module>
         <module>fcmpx_dcmpx1</module>

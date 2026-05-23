@@ -1,0 +1,25 @@
+CORE
+LinkedListRemoveOccurrence
+--function LinkedListRemoveOccurrence.testRemoveFirstOccurrence --unwind 8 -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for LinkedList.removeFirstOccurrence and
+descendingIterator (REVIEW-PRE-PUSH high items 3, 4).
+
+Pre-fix: removeFirstOccurrence/removeLastOccurrence called
+CProver.notModelled() which throws — any code path reaching
+them failed verification, even when the result was irrelevant.
+descendingIterator returned a forward iterator (unsound for
+any property over reverse iteration).
+
+Post-fix: both methods are properly modelled with element-wise
+loops (System.arraycopy is opaque in JBMC and cannot be used
+to transfer Object[] contents). descendingIterator builds a
+reversed copy of the backing array and iterates it forward,
+preserving descending semantics without mutating the source.

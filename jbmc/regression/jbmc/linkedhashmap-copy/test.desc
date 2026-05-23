@@ -1,0 +1,22 @@
+CORE
+LinkedHashMapCopy
+--function LinkedHashMapCopy.testCopyCtor --unwind 8 -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for LinkedHashMap (and inherited HashMap) copy
+constructor.
+
+Pre-fix: HashMap(Map m) ignored m and produced an empty map
+with nondet size; LinkedHashMap inherited the bug. Verification
+of `new LinkedHashMap<>(src).get(key)` matching src.get(key)
+silently failed because dst was empty.
+
+Post-fix: when the source is a HashMap (incl. LinkedHashMap),
+the constructor uses non-overlapping System.arraycopy to copy
+the backing keys[] and values[] arrays.
