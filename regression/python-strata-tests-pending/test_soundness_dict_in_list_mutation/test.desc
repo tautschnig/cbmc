@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 test_soundness_dict_in_list_mutation.py
 --unwind 5 --no-unwinding-assertions
 ^VERIFICATION FAILED$
