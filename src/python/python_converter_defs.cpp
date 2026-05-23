@@ -410,7 +410,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       return_type = has_float_param ? double_type() : python_int_type();
     }
     else if(!has_value_return)
-      return_type = empty_typet{};
+    {
+      // PLR §7.6: a function that does not execute a value-returning
+      // \`return\` statement falls off the end and returns None. Model
+      // None as the int-typed sentinel so callers can distinguish it
+      // from concrete values via \`r is None\`.
+      // Only \`empty_typet\` is the "void" indicator that suppresses
+      // the implicit return and makes the call's value undefined; we
+      // want a real return slot.
+      return_type = python_int_type();
+    }
   }
 
   code_typet func_type{parameters, return_type};

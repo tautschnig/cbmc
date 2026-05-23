@@ -1034,7 +1034,7 @@ codet python_convertert::convert_return(const jsont &stmt)
 
   if(value.is_null())
   {
-    // Bare return — check if function expects a return value
+    // Bare \`return\` — PLR §7.6: returns None.
     if(!current_function.empty())
     {
       irep_idt func_id{"python::" + current_function};
@@ -1043,8 +1043,17 @@ codet python_convertert::convert_return(const jsont &stmt)
         func_sym != nullptr && func_sym->type.id() == ID_code &&
         to_code_type(func_sym->type).return_type().id() != ID_empty)
       {
+        const typet &rt = to_code_type(func_sym->type).return_type();
+        // Encode None per the function's return type:
+        //   * python_value -> tagged-union NONE
+        //   * int / float / etc. -> int None-sentinel typecast
+        //   * empty (void) -> bare return
+        if(is_python_value_type(rt))
+          return code_frontend_returnt{make_python_value(
+            python_type_tagt::NONE, from_integer(0, signedbv_typet{64}))};
+        const mp_integer none_val{-4611686018427387904LL};
         return code_frontend_returnt{
-          from_integer(0, to_code_type(func_sym->type).return_type())};
+          safe_typecast(from_integer(none_val, python_int_type()), rt)};
       }
     }
     return code_frontend_returnt{};
