@@ -45,6 +45,15 @@ INTEG_ROOT = SCRIPT_DIR.parent              # integration/linux/
 PROPERTIES_DIR = INTEG_ROOT / "properties"
 REPO_ROOT = INTEG_ROOT.parent.parent        # repository root
 
+# Postfilter for known-FP shapes on per-file `failed`
+# verdicts.  Imported lazily to keep scan.py importable even
+# when triage_filter has a syntax error or is moved.
+try:
+    sys.path.insert(0, str(SCRIPT_DIR))
+    from triage_filter import classify as _triage_classify  # noqa: E402
+except Exception:  # pragma: no cover
+    _triage_classify = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Resource limits for every subprocess we spawn.  Both cbmc and
@@ -2035,6 +2044,21 @@ def run_cbmc_per_file(
         elif rc == 10:
             status = "failed"
             notes = "" + confidence_note.lstrip()
+            # Run the triage postfilter to detect known FP
+            # shapes.  When matched, we keep status=failed
+            # but annotate notes so downstream rollups can
+            # filter the headline candidate list.
+            if _triage_classify is not None:
+                try:
+                    fv = _triage_classify(str(target), func)
+                    if fv.shape:
+                        status = "failed-likely-fp"
+                        notes = (
+                            f"likely-fp shape={fv.shape} "
+                            f"({fv.reason})"
+                        ).strip() + confidence_note
+                except Exception:
+                    pass
         elif rc == 11:
             status = "noise"
             notes = (
@@ -2079,6 +2103,12 @@ def run_cbmc_per_file(
         mr.cbmc_status = "timeout"
     elif "error" in statuses:
         mr.cbmc_status = "error"
+    elif "failed-likely-fp" in statuses:
+        # All `failed` verdicts were classified as known
+        # false-positive shapes by the triage filter; surface
+        # this as a distinct status so the aggregate row
+        # doesn't appear in the headline candidate list.
+        mr.cbmc_status = "failed-likely-fp"
     elif "successful" in statuses:
         mr.cbmc_status = "successful"
     elif "no-function-found" in statuses:

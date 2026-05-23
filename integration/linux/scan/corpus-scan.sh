@@ -334,6 +334,7 @@ if groups["other"]:
 if perfile_rows:
     pf_groups = {
         "failed": [],         # candidate bugs — needs triage
+        "failed-likely-fp": [],  # known FP-shape filtered out
         "successful": [],     # contract holds at this site
         "noise": [],          # only CBMC built-in checks fired
         "vacuous": [],        # no contract clause was checked
@@ -367,6 +368,24 @@ if perfile_rows:
             lines = ",".join(str(L) for L in hit_lines)
             print(f"  {path:<{w_path}} {module:<14}  "
                   f"{func:<{w_func}}  hits@L:{lines}")
+
+    if pf_groups.get("failed-likely-fp"):
+        rs = pf_groups["failed-likely-fp"]
+        print(f"\n--- per-file FAILED but classified as likely "
+              f"false-positive shape (filtered): {len(rs)} row(s) "
+              f"— see notes for shape ---")
+        w_path = _width(rs, 0)
+        w_func = _width(rs, 2)
+        for path, module, func, hit_lines, _, notes in rs:
+            lines = ",".join(str(L) for L in hit_lines)
+            shape = ""
+            for line in (notes or "").splitlines():
+                if "shape=" in line:
+                    shape = line.strip()
+                    break
+            print(f"  {path:<{w_path}} {module:<14}  "
+                  f"{func:<{w_func}}  hits@L:{lines}  "
+                  f"{shape[:60]}")
 
     for cat in ("timeout", "error", "no-function-found", "other"):
         rs = pf_groups[cat]
@@ -416,7 +435,8 @@ for cat in ("pipeline-ok", "compile-fail", "timeout",
 print(f"  total cocci hits      : {total_hits}")
 if perfile_rows:
     print(f"  per-file rows         : {len(perfile_rows)}")
-    for cat in ("failed", "successful", "noise", "vacuous",
+    for cat in ("failed", "failed-likely-fp", "successful",
+                "noise", "vacuous",
                 "skipped",
                 "timeout", "error", "no-function-found", "other"):
         if pf_groups.get(cat):
