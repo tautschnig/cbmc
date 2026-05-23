@@ -6643,12 +6643,19 @@ exprt python_convertert::convert_call(const jsont &expr)
   // ValueError for domain violations, and range-constrained
   // nondet return for symbolic arguments.
 
-  // Check function aliases (lambda assignments: double = lambda x: x*2)
-  if(sym == nullptr || sym->type.id() != ID_code)
+  // Check function aliases (lambda assignments: double = lambda x: x*2,
+  // decorator application: @dec def f → f = dec(f), etc.)
+  // PLR §8.7: decorators rebind the function name to the wrapper.
+  // We check aliases FIRST so that a decorated function dispatches
+  // through its wrapper even though the original symbol exists.
   {
     auto alias_it = function_aliases.find(qualify_name(func_name));
     if(alias_it != function_aliases.end())
-      sym = symbol_table.lookup(alias_it->second);
+    {
+      const symbolt *alias_sym = symbol_table.lookup(alias_it->second);
+      if(alias_sym != nullptr && alias_sym->type.id() == ID_code)
+        sym = alias_sym;
+    }
   }
 
   if(sym == nullptr || sym->type.id() != ID_code)
@@ -7097,6 +7104,63 @@ exprt python_convertert::convert_call(const jsont &expr)
   // Remove trailing nil arguments beyond param count
   while(!arguments.empty() && arguments.back().is_nil())
     arguments.pop_back();
+
+  // PLR §8.7: *args packing. When the call site provides more
+  // positional arguments than the function has non-vararg parameters,
+  // and the function's last parameter is a list (our model for *args),
+  // pack the trailing positionals into a list struct and pass that as
+  // the single vararg parameter.
+  if(arguments.size() > params.size() && !params.empty())
+  {
+    // Check if the last param is list-typed (our *args model)
+    const auto &last_param_type = params.back().type();
+    if(is_python_list_type(last_param_type))
+    {
+      std::size_t n_regular = params.size() - 1; // non-vararg params
+      // Pack arguments[n_regular..] into a list
+      const auto &list_st = to_struct_type(last_param_type);
+      const auto &data_type = to_array_type(list_st.components()[1].type());
+      exprt::operandst elems;
+      for(std::size_t i = n_regular; i < arguments.size(); i++)
+      {
+        exprt arg = arguments[i];
+        if(arg.type() != data_type.element_type())
+          arg = safe_typecast(arg, data_type.element_type());
+        elems.push_back(arg);
+      }
+      while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+        elems.push_back(safe_zero(data_type.element_type()));
+      exprt length = from_integer(
+        static_cast<long long>(arguments.size() - n_regular),
+        signedbv_typet{64});
+      exprt packed = struct_exprt{
+        {length, array_exprt{std::move(elems), data_type}}, last_param_type};
+      // Trim arguments to n_regular + 1 (the packed list)
+      arguments.resize(n_regular);
+      arguments.push_back(std::move(packed));
+    }
+  }
+  // Also handle the case where arguments.size() <= params.size() but
+  // the last param is *args and no trailing args were provided — pass
+  // an empty list.
+  if(
+    arguments.size() < params.size() && !params.empty() &&
+    is_python_list_type(params.back().type()))
+  {
+    // Fill missing regular params with nil (handled below), then
+    // ensure the *args slot gets an empty list.
+    while(arguments.size() < params.size() - 1)
+      arguments.push_back(nil_exprt{});
+    const auto &list_st = to_struct_type(params.back().type());
+    const auto &data_type = to_array_type(list_st.components()[1].type());
+    exprt::operandst elems;
+    while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+      elems.push_back(safe_zero(data_type.element_type()));
+    exprt length = from_integer(0LL, signedbv_typet{64});
+    arguments.push_back(struct_exprt{
+      {length, array_exprt{std::move(elems), data_type}},
+      params.back().type()});
+  }
 
   // Typecast arguments to match parameter types
   for(std::size_t i = 0; i < arguments.size() && i < params.size(); i++)
