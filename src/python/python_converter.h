@@ -752,6 +752,23 @@ private:
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
 
+  /// PLR §4.1 (Truth Value Testing): return a `bool_typet`-typed
+  /// expression that is true iff `e` is "truthy" in Python.
+  ///
+  /// Per PLR / object.__bool__ docs, the following are FALSE:
+  ///   * False, None, 0 (any numeric zero, including 0.0 and -0.0)
+  ///   * Empty sequence: "", [], (), b""
+  ///   * Empty mapping: {}, set()
+  ///   * Class instances whose `__bool__` returns False, or whose
+  ///     `__len__` returns 0 when `__bool__` is absent.
+  ///
+  /// Everything else (including NaN!) is truthy. The current
+  /// implementation handles the primitive and built-in collection
+  /// cases; class-instance dispatch through __bool__/__len__ is
+  /// done by the caller via dunder-method lookup at call sites
+  /// (so a single helper doesn't need access to symbol_table state).
+  exprt python_truthiness(const exprt &e);
+
   /// PLR §3.1: rebuild a list-struct expression so its element type
   /// is `python_value`. Each existing data element is `wrap_value`'d
   /// individually. Used when promoting an escaped mutable's storage

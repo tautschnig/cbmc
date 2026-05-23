@@ -4515,7 +4515,7 @@ exprt python_convertert::convert_call(const jsont &expr)
               bool_typet{},
               get_location(expr)};
         }
-        return safe_typecast(arg, bool_typet{});
+        return python_truthiness(arg);
       }
     }
     return false_exprt{};
