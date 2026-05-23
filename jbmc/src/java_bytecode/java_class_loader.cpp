@@ -8,12 +8,14 @@ Author: Daniel Kroening, kroening@kroening.com
 
 #include "java_class_loader.h"
 
-#include <stack>
-
 #include <util/message.h>
 #include <util/suffix.h>
 
 #include "java_class_loader_limit.h"
+
+#include <filesystem>
+#include <set>
+#include <stack>
 
 java_class_loadert::parse_tree_with_overlayst &java_class_loadert::
 operator()(const irep_idt &class_name, message_handlert &message_handler)
@@ -226,6 +228,83 @@ std::vector<irep_idt> java_class_loadert::load_entire_jar(
   classpath_entries.pop_front();
 
   return *classes;
+}
+
+/// Enumerate all class names available across every classpath
+/// entry. JAR entries are inspected via the central directory;
+/// directory entries are walked recursively. The returned vector
+/// is deduplicated.
+std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
+  message_handlert &message_handler)
+{
+  std::set<irep_idt> seen;
+  std::vector<irep_idt> result;
+  messaget log{message_handler};
+
+  for(const auto &entry : classpath_entries)
+  {
+    if(entry.kind == classpath_entryt::JAR)
+    {
+      // Read the JAR's central directory and collect .class files.
+      try
+      {
+        const auto filenames = jar_pool(entry.path).filenames();
+        for(const auto &filename : filenames)
+        {
+          if(!has_suffix(filename, ".class"))
+            continue;
+          // Skip module-info.class which has no useful type info
+          if(filename == "module-info.class")
+            continue;
+          const std::string class_name = file_to_class_name(filename);
+          if(class_name.empty())
+            continue;
+          const irep_idt id{class_name};
+          if(seen.insert(id).second)
+            result.push_back(id);
+        }
+      }
+      catch(const std::runtime_error &)
+      {
+        log.debug() << "failed to enumerate JAR " << entry.path
+                    << messaget::eom;
+      }
+    }
+    else if(entry.kind == classpath_entryt::DIRECTORY)
+    {
+      // Walk the directory tree and collect .class files.
+      std::error_code ec;
+      auto it = std::filesystem::recursive_directory_iterator(entry.path, ec);
+      if(ec)
+      {
+        log.debug() << "failed to enumerate directory " << entry.path << ": "
+                    << ec.message() << messaget::eom;
+        continue;
+      }
+      const std::filesystem::path root{entry.path};
+      for(const auto &dir_entry : it)
+      {
+        if(!dir_entry.is_regular_file(ec) || ec)
+          continue;
+        const auto &p = dir_entry.path();
+        if(p.extension() != ".class")
+          continue;
+        if(p.filename() == "module-info.class")
+          continue;
+        // Compute the relative path from root so it's a class file name.
+        const auto rel = std::filesystem::relative(p, root, ec);
+        if(ec)
+          continue;
+        const std::string class_name = file_to_class_name(rel.string());
+        if(class_name.empty())
+          continue;
+        const irep_idt id{class_name};
+        if(seen.insert(id).second)
+          result.push_back(id);
+      }
+    }
+  }
+  return result;
 }
 
 std::optional<std::vector<irep_idt>> java_class_loadert::read_jar_file(

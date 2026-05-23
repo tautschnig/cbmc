@@ -48,6 +48,7 @@ Author: Daniel Kroening, kroening@kroening.com
   "(lazy-methods-extra-entry-point):" \
   "(java-load-class):" \
   "(java-no-load-class):" \
+  "(java-load-classpath-implementations)" \
   "(static-values):" \
   "(java-lift-clinit-calls)"
 
@@ -82,6 +83,10 @@ Author: Daniel Kroening, kroening@kroening.com
   " {y--java-cp-include-files} {ur} \t " \
   "regexp or JSON list of files to load (with '@' prefix)\n" \
   " {y--java-load-class} {uCLASS} \t also load code from class {uCLASS}\n" \
+  " {y--java-load-classpath-implementations} \t " \
+  "scan the classpath for classes that implement an entry-point parameter's " \
+  "interface or extend an abstract class, and load them so the entry-point " \
+  "harness can allocate one of them nondeterministically\n" \
   " {y--java-no-load-class} {uCLASS} \t never load code from class " \
   "{uCLASS}\n" \
   " {y--ignore-manifest-main-class} \t " \
@@ -225,6 +230,9 @@ struct java_bytecode_language_optionst
 
   /// list of classes to force load even without reference from the entry point
   std::vector<irep_idt> java_load_classes;
+  /// scan classpath for implementations of interface/abstract entry-point
+  /// parameter types and auto-load them
+  bool java_load_classpath_implementations = false;
   std::string java_cp_include_files;
   /// JSON which contains initial values of static fields (right
   /// after the static initializer of the class was run). This is read from the

@@ -436,6 +436,21 @@ void ci_lazy_methodst::initialize_instantiated_classes(
       {
         const pointer_typet &original_pointer = to_pointer_type(param.type());
         needed_lazy_methods.add_all_needed_classes(original_pointer);
+
+        // Consult the pointer-type selector for alternative concrete
+        // types (e.g. classes that implement an interface entry-point
+        // parameter, or sealed-class permits). Without this, lazy
+        // methods would only mark the parameter's static type as
+        // instantiated; downstream remove_virtual_functions would then
+        // fail to resolve dispatch to concrete callees.
+        const auto alternatives =
+          pointer_type_selector.get_parameter_alternative_types(
+            symbol.name, param.get_identifier(), ns);
+        for(const auto &alt : alternatives)
+        {
+          needed_lazy_methods.add_needed_class(alt.get_identifier());
+          needed_lazy_methods.add_all_needed_classes(pointer_type(alt));
+        }
       }
     }
   }

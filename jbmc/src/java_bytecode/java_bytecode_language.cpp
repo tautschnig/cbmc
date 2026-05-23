@@ -14,6 +14,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <util/invariant.h>
 #include <util/journalling_symbol_table.h>
 #include <util/options.h>
+#include <util/prefix.h>
 #include <util/suffix.h>
 #include <util/symbol_table_builder.h>
 
@@ -82,6 +83,11 @@ void parse_java_language_options(const cmdlinet &cmd, optionst &options)
 
   if(cmd.isset("java-load-class"))
     options.set_option("java-load-class", cmd.get_values("java-load-class"));
+
+  if(cmd.isset("java-load-classpath-implementations"))
+  {
+    options.set_option("java-load-classpath-implementations", true);
+  }
 
   if(cmd.isset("java-no-load-class"))
   {
@@ -176,6 +182,8 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
     java_load_classes.insert(
       java_load_classes.end(), load_values.begin(), load_values.end());
   }
+  java_load_classpath_implementations =
+    options.get_bool_option("java-load-classpath-implementations");
   if(options.is_set("java-no-load-class"))
   {
     const auto &no_load_values = options.get_list_option("java-no-load-class");
@@ -358,6 +366,54 @@ void java_bytecode_languaget::parse_from_main_class(
     if(parse_trees.empty() || !parse_trees.front().loading_successful)
     {
       throwMainClassLoadingError(id2string(main_class));
+    }
+
+    // If --java-load-classpath-implementations is set, scan all
+    // available class files in the classpath. Any class whose
+    // descriptor contains a reference to a parameter type that
+    // is an interface or abstract class is queued for loading;
+    // the load happens on the next operator() invocation.
+    //
+    // This unblocks virtual dispatch through interface-typed
+    // entry-point parameters by ensuring concrete implementors
+    // are present in the symbol table when the entry-point
+    // harness's nondet-switch is built. Without this option, the
+    // user must list each implementor via --java-load-class.
+    if(language_options.has_value() &&
+       language_options->java_load_classpath_implementations)
+    {
+      const auto candidates =
+        java_class_loader.enumerate_classpath_classes(message_handler);
+      std::vector<irep_idt> to_load;
+      for(const auto &c : candidates)
+      {
+        // Skip the JDK and our own already-loaded models —
+        // loading them eagerly explodes analysis cost and is
+        // never the user's intent.
+        const std::string &name = id2string(c);
+        if(has_prefix(name, "java.") ||
+           has_prefix(name, "javax.") ||
+           has_prefix(name, "sun.") ||
+           has_prefix(name, "com.sun.") ||
+           has_prefix(name, "jdk.") ||
+           has_prefix(name, "org.cprover."))
+        {
+          continue;
+        }
+        to_load.push_back(c);
+      }
+      if(!to_load.empty())
+      {
+        log.status() << "Auto-loading " << to_load.size()
+                     << " classpath classes for interface/abstract "
+                     << "entry-point parameter resolution"
+                     << messaget::eom;
+        java_class_loader.add_load_classes(to_load);
+        // Re-invoke the loader so the queued classes are
+        // actually parsed. Already-loaded classes (including the
+        // main class) are skipped by the internal class_map check.
+        java_class_loader(main_class, message_handler);
+      }
     }
   }
 }

@@ -78,6 +78,19 @@ public:
   std::vector<irep_idt>
   load_entire_jar(const std::string &jar_path, message_handlert &);
 
+  /// Enumerate the names of all classes available across every
+  /// classpath entry, without loading them. Used to discover
+  /// candidate implementations for an interface or abstract
+  /// entry-point parameter (the entry-point harness's
+  /// nondet-switch over alternative concrete types).
+  ///
+  /// For JAR entries this reads the central directory; for
+  /// directory entries it walks the directory tree. The returned
+  /// set is deduplicated; when multiple entries provide the same
+  /// class, only one name is returned (the actual class loaded
+  /// at parse time follows the existing classpath precedence).
+  std::vector<irep_idt> enumerate_classpath_classes(message_handlert &);
+
   /// Map from class names to the bytecode parse trees
   fixed_keys_map_wrappert<parse_tree_with_overridest_mapt>
   get_class_with_overlays_map()
