@@ -34,8 +34,8 @@ The cross-tabulation drives the `test.desc` shape:
 | Bucket | Count |
 |---|---:|
 | Total imported | 229 |
-| `CORE` (Py == CBMC) | 195 |
-| `KNOWNBUG` (Py-passes / CBMC-rejects) | 31 |
+| `CORE` (Py == CBMC) | 198 |
+| `KNOWNBUG` (Py-passes / CBMC-rejects) | 28 |
 | `SKIP` (broken upstream / CBMC can't run) | 3 |
 
 ## Re-importing
