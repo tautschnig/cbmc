@@ -768,11 +768,16 @@ codet python_convertert::convert_statement(const jsont &stmt)
 
       auto [cond, binds] = compile_pattern(pattern, subject);
       code_blockt body_block;
+      // PLR §8.6: match case bodies are branches — increment
+      // if_else_depth so path-insensitive tracking (string_constants,
+      // etc.) is invalidated for variables assigned inside.
+      if_else_depth++;
       if(body.is_array())
       {
         for(const auto &s : as_array(body))
           body_block.add(convert_statement(s));
       }
+      if_else_depth--;
       // When the pattern matches, run bindings. Then check
       // the guard — if it fails, fall through to the rest of
       // the chain (PLR 10.6: 'If the guard evaluates as

@@ -1862,6 +1862,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
         string_constants[sym.name] = sv.value();
       else
         string_constants.erase(sym.name);
+      // PLR correctness: if we're inside a branch (if_else_depth > 0),
+      // the string_constants tracking is path-insensitive — the last
+      // branch processed wins, which is wrong for code like:
+      //   if cond: r = "two"
+      //   else: r = "other"
+      //   assert r == "two"
+      // where the converter processes both branches sequentially and
+      // the else-branch's "other" overwrites the if-branch's "two".
+      // At the assert site, the constant-fold path then compares
+      // "other" != "two" → false, which is unsound.
+      //
+      // Fix: when inside a branch, ERASE the tracking so the
+      // comparison falls through to the string solver (which handles
+      // path-sensitivity correctly via SSA).
+      if(if_else_depth > 0)
+        string_constants.erase(sym.name);
     }
     if(is_python_dict_type(typed_rhs.type()))
     {
