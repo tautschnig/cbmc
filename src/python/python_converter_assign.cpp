@@ -133,6 +133,28 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // PLR §3.1: storage promotion for escaped mutables.
+  // If this name's qualified form is in `escaped_mutables` (i.e. it
+  // appears as a Name element of some List/Dict literal elsewhere)
+  // and the RHS is a list with a non-python_value element type,
+  // rebuild the RHS as `list[python_value]`. This makes the deref-
+  // cast in `python_value_list` (which assumes list[python_value])
+  // type-correct when this storage is later referenced via
+  // `make_python_value(LIST, address_of(this_symbol))`.
+  if(escaped_mutables.count(symbol_id) > 0 && is_python_list_type(rhs.type()))
+  {
+    const auto &src_st = to_struct_type(rhs.type());
+    const auto &src_data_type = to_array_type(src_st.components()[1].type());
+    if(!is_python_value_type(src_data_type.element_type()))
+    {
+      rhs = rebuild_list_as_pv(rhs);
+      var_type = python_list_type(python_value_type());
+      // Update the symbol's type to match.
+      symbolt &existing = symbol_table.get_writeable_ref(symbol_id);
+      existing.type = var_type;
+    }
+  }
+
   // Function alias: g: Callable = double → record alias
   if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
   {
@@ -348,7 +370,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   {
     if(rhs.id() == ID_struct)
     {
-      dict_literals[symbol_id] = rhs;
+      // PLR §3.1: do NOT cache escaped mutables — another reference
+      // may mutate them, invalidating the snapshot.
+      if(escaped_mutables.count(symbol_id) == 0)
+        dict_literals[symbol_id] = rhs;
       // Populate per-key static category from the original
       // AST. The struct exprt's value array has had all
       // values typecast to a single uniform type via
@@ -449,7 +474,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   }
   if(is_python_list_type(rhs.type()))
   {
-    if(rhs.id() == ID_struct)
+    if(rhs.id() == ID_struct && escaped_mutables.count(symbol_id) == 0)
       list_literals[symbol_id] = rhs;
     else
       list_literals.erase(symbol_id);
@@ -1369,6 +1394,73 @@ codet python_convertert::convert_assign(const jsont &stmt)
           continue;
         }
       }
+      // PLR §3.1: subscript-assign through a python_value (with LIST
+      // or DICT tag). `outer[i]` returned a python_value whose
+      // __list_ptr / __class_ptr points to inner's storage. We must
+      // write through the deref so the mutation propagates to inner.
+      if(!obj.is_nil() && is_python_value_type(obj.type()))
+      {
+        // Probe the slice type to decide between LIST and DICT.
+        const jsont &slice_node = json_member(target, "slice");
+        exprt slice_probe = convert_expression(slice_node);
+        bool string_key =
+          !slice_probe.is_nil() && is_python_string_type(slice_probe.type());
+
+        // Try LIST tag first (integer slice).
+        if(!string_key)
+        {
+          exprt list_val = python_value_list(obj);
+          if(is_python_list_type(list_val.type()))
+          {
+            const auto &list_st = to_struct_type(list_val.type());
+            const auto &data_type =
+              to_array_type(list_st.components()[1].type());
+            member_exprt data{list_val, "data", data_type};
+            index_exprt lhs{data, slice_probe};
+            // Inner is list[python_value]; the rhs must be a python_value.
+            exprt typed_rhs = rhs;
+            if(typed_rhs.type() != data_type.element_type())
+              typed_rhs = wrap_value(typed_rhs);
+            code_frontend_assignt assign{lhs, std::move(typed_rhs)};
+            assign.add_source_location() = loc;
+            block.add(std::move(assign));
+            continue;
+          }
+        }
+        // DICT tag: the dict's storage is reached via __class_ptr cast.
+        // Canonical dict type is `dict[refined_string, python_value]`.
+        if(string_key)
+        {
+          typet dict_type =
+            python_dict_type(python_string_type(), python_value_type());
+          exprt class_ptr = python_value_class_ptr(obj);
+          pointer_typet dict_ptr_type{dict_type, 64};
+          dereference_exprt dict_val{
+            typecast_exprt{class_ptr, dict_ptr_type}, dict_type};
+          const auto &dict_st = to_struct_type(dict_type);
+          const auto &keys_type = to_array_type(dict_st.components()[1].type());
+          const auto &vals_type = to_array_type(dict_st.components()[2].type());
+          member_exprt length{dict_val, "length", signedbv_typet{64}};
+          member_exprt keys_arr{dict_val, "keys", keys_type};
+          member_exprt vals_arr{dict_val, "values", vals_type};
+          exprt typed_key = slice_probe;
+          if(typed_key.type() != keys_type.element_type())
+            typed_key = safe_typecast(typed_key, keys_type.element_type());
+          exprt typed_val = rhs;
+          if(typed_val.type() != vals_type.element_type())
+            typed_val = wrap_value(typed_val);
+          for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
+            exprt match = equal_exprt{index_exprt{keys_arr, idx}, typed_key};
+            block.add(code_ifthenelset{
+              and_exprt{in_range, match},
+              code_frontend_assignt{index_exprt{vals_arr, idx}, typed_val}});
+          }
+          continue;
+        }
+      }
       if(!obj.is_nil() && is_python_list_type(obj.type()))
       {
         const jsont &slice_node = json_member(target, "slice");
@@ -1469,6 +1561,21 @@ codet python_convertert::convert_assign(const jsont &stmt)
       continue; // Not a Name target — already handled above
     std::string qualified_name = qualify_name(var_name);
     irep_idt symbol_id{qualified_name};
+
+    // PLR §3.1: storage promotion for escaped mutables.
+    // If this name is in `escaped_mutables` (appears in some
+    // List/Dict literal elsewhere) and the RHS is a list whose
+    // element type is not already python_value, rebuild the RHS
+    // as `list[python_value]`. This makes the deref-cast in
+    // python_value_list type-correct when this storage is
+    // referenced via `make_python_value(LIST, &this_symbol)`.
+    if(escaped_mutables.count(symbol_id) > 0 && is_python_list_type(rhs.type()))
+    {
+      const auto &src_st = to_struct_type(rhs.type());
+      const auto &src_data_type = to_array_type(src_st.components()[1].type());
+      if(!is_python_value_type(src_data_type.element_type()))
+        rhs = rebuild_list_as_pv(rhs);
+    }
 
     // Check if variable exists and has a different type (type change)
     const symbolt *existing = symbol_table.lookup(symbol_id);

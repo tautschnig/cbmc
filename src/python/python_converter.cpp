@@ -657,6 +657,201 @@ std::string python_convertert::qualify_name(const std::string &name) const
   return "python::" + name;
 }
 
+/// PLR §3.1: pre-scan a body to populate `escaped_mutables`.
+///
+/// A name "escapes" if it appears in any of these positions:
+///   * As a Name element of a List literal:    `[..., name, ...]`
+///   * As a Name value of a Dict literal:      `{..., key: name}`
+///   * As an argument to a list-mutating method:
+///     `lst.append(name)`, `lst.extend(name)`, `lst.insert(_, name)`
+///
+/// The scan walks Assign / AnnAssign / AugAssign / Expr / If / For /
+/// While / Try / With statements and recurses into nested blocks.
+/// FunctionDef and ClassDef bodies are NOT recursed into here — those
+/// scopes have their own pre-scan invocations.
+///
+/// Implementation note: we conservatively qualify names against the
+/// current_function context. The pre-scan must therefore be invoked
+/// AFTER current_function has been set for the scope being scanned
+/// (i.e. inside convert_function_def's body conversion, after the
+/// `current_function = ...` assignment).
+void python_convertert::collect_escaped_mutables(const jsont &body)
+{
+  if(!body.is_array())
+    return;
+
+  // Local lambdas that walk JSON nodes. We use std::function to allow
+  // mutual recursion between scan_stmts, scan_expr, and the helpers.
+  std::function<void(const jsont &)> scan_stmts;
+  std::function<void(const jsont &)> scan_expr;
+
+  auto add_escape = [&](const std::string &name)
+  { escaped_mutables.insert(irep_idt{qualify_name(name)}); };
+
+  scan_expr = [&](const jsont &expr)
+  {
+    if(!expr.is_object())
+      return;
+    if(is_node_type(expr, "List"))
+    {
+      const jsont &elts = json_member(expr, "elts");
+      if(elts.is_array())
+      {
+        for(const auto &elt : as_array(elts))
+        {
+          if(is_node_type(elt, "Name"))
+            add_escape(json_string(json_member(elt, "id")));
+          else
+            scan_expr(elt);
+        }
+      }
+    }
+    else if(is_node_type(expr, "Dict"))
+    {
+      const jsont &values = json_member(expr, "values");
+      if(values.is_array())
+      {
+        for(const auto &v : as_array(values))
+        {
+          if(is_node_type(v, "Name"))
+            add_escape(json_string(json_member(v, "id")));
+          else
+            scan_expr(v);
+        }
+      }
+    }
+    else if(is_node_type(expr, "Call"))
+    {
+      // .append(name) / .extend(name) / .insert(_, name)
+      const jsont &func = json_member(expr, "func");
+      const jsont &args = json_member(expr, "args");
+      // .append(name) / .insert(_, name) — these store the
+      // argument BY REFERENCE (Python aliasing semantics). NB:
+      // .extend(name) is NOT an escape — it copies elements.
+      if(is_node_type(func, "Attribute") && args.is_array())
+      {
+        std::string method = json_string(json_member(func, "attr"));
+        if(method == "append")
+        {
+          auto args_arr = as_array(args);
+          if(args_arr.begin() != args_arr.end())
+          {
+            const jsont &a0 = *args_arr.begin();
+            if(is_node_type(a0, "Name"))
+              add_escape(json_string(json_member(a0, "id")));
+          }
+        }
+        else if(method == "insert")
+        {
+          // insert(idx, value) — value is the second arg
+          auto args_arr = as_array(args);
+          auto it = args_arr.begin();
+          if(it != args_arr.end())
+          {
+            ++it;
+            if(it != args_arr.end())
+            {
+              const jsont &a1 = *it;
+              if(is_node_type(a1, "Name"))
+                add_escape(json_string(json_member(a1, "id")));
+            }
+          }
+        }
+      }
+      // Recurse into call args for nested patterns
+      if(args.is_array())
+        for(const auto &a : as_array(args))
+          scan_expr(a);
+    }
+    else if(is_node_type(expr, "BinOp"))
+    {
+      scan_expr(json_member(expr, "left"));
+      scan_expr(json_member(expr, "right"));
+    }
+    else if(is_node_type(expr, "BoolOp"))
+    {
+      const jsont &values = json_member(expr, "values");
+      if(values.is_array())
+        for(const auto &v : as_array(values))
+          scan_expr(v);
+    }
+    else if(is_node_type(expr, "UnaryOp"))
+    {
+      scan_expr(json_member(expr, "operand"));
+    }
+    else if(is_node_type(expr, "IfExp"))
+    {
+      scan_expr(json_member(expr, "body"));
+      scan_expr(json_member(expr, "orelse"));
+    }
+    else if(is_node_type(expr, "Subscript"))
+    {
+      scan_expr(json_member(expr, "value"));
+    }
+  };
+
+  scan_stmts = [&](const jsont &stmts)
+  {
+    if(!stmts.is_array())
+      return;
+    for(const auto &s : as_array(stmts))
+    {
+      if(is_node_type(s, "Assign") || is_node_type(s, "AnnAssign"))
+      {
+        scan_expr(json_member(s, "value"));
+      }
+      else if(is_node_type(s, "AugAssign"))
+      {
+        scan_expr(json_member(s, "value"));
+      }
+      else if(is_node_type(s, "Expr"))
+      {
+        scan_expr(json_member(s, "value"));
+      }
+      else if(is_node_type(s, "Return"))
+      {
+        scan_expr(json_member(s, "value"));
+      }
+      else if(is_node_type(s, "If"))
+      {
+        scan_expr(json_member(s, "test"));
+        scan_stmts(json_member(s, "body"));
+        scan_stmts(json_member(s, "orelse"));
+      }
+      else if(is_node_type(s, "While"))
+      {
+        scan_expr(json_member(s, "test"));
+        scan_stmts(json_member(s, "body"));
+        scan_stmts(json_member(s, "orelse"));
+      }
+      else if(is_node_type(s, "For"))
+      {
+        scan_expr(json_member(s, "iter"));
+        scan_stmts(json_member(s, "body"));
+        scan_stmts(json_member(s, "orelse"));
+      }
+      else if(is_node_type(s, "With"))
+      {
+        scan_stmts(json_member(s, "body"));
+      }
+      else if(is_node_type(s, "Try"))
+      {
+        scan_stmts(json_member(s, "body"));
+        scan_stmts(json_member(s, "orelse"));
+        scan_stmts(json_member(s, "finalbody"));
+        const jsont &handlers = json_member(s, "handlers");
+        if(handlers.is_array())
+          for(const auto &h : as_array(handlers))
+            scan_stmts(json_member(h, "body"));
+      }
+      // FunctionDef / ClassDef: don't recurse — those have their own
+      // pre-scan invocations driven by convert_function_def.
+    }
+  };
+
+  scan_stmts(body);
+}
+
 exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
 {
   if(!is_python_value_type(e.type()))
@@ -745,6 +940,59 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
 
   // Default: extract int
   return python_value_int(e);
+}
+
+/// PLR §3.1: rebuild a list-struct expression so its element type
+/// is `python_value`. Each existing data element is `wrap_value`'d
+/// individually. Used when promoting an escaped mutable's storage.
+exprt python_convertert::rebuild_list_as_pv(const exprt &list_expr)
+{
+  if(!is_python_list_type(list_expr.type()))
+    return list_expr;
+  // If element type is already python_value, no rebuild needed.
+  const auto &src_st = to_struct_type(list_expr.type());
+  const auto &src_data_type = to_array_type(src_st.components()[1].type());
+  if(is_python_value_type(src_data_type.element_type()))
+    return list_expr;
+
+  typet pv_list_type = python_list_type(python_value_type());
+  const auto &pv_data_type =
+    to_array_type(to_struct_type(pv_list_type).components()[1].type());
+
+  // For struct_exprt RHS (a literal), iterate its operands directly so
+  // we keep the original element values (constants, etc.). For an
+  // already-stored value, fall back to indexing into the data array.
+  exprt::operandst wrapped_elems;
+  exprt src_len;
+  if(
+    list_expr.id() == ID_struct && list_expr.operands().size() == 2 &&
+    list_expr.operands()[1].id() == ID_array)
+  {
+    src_len = list_expr.operands()[0];
+    const exprt &data_arr = list_expr.operands()[1];
+    for(const auto &op : data_arr.operands())
+      wrapped_elems.push_back(wrap_value(op));
+  }
+  else
+  {
+    src_len = member_exprt{list_expr, "length", signedbv_typet{64}};
+    member_exprt src_data{list_expr, "data", src_data_type};
+    for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+    {
+      exprt elem = index_exprt{src_data, from_integer(i, signedbv_typet{64})};
+      wrapped_elems.push_back(wrap_value(elem));
+    }
+  }
+  // Pad with safe_zero(python_value) so the array size matches.
+  while(wrapped_elems.size() < PYTHON_MAX_LIST_LENGTH)
+    wrapped_elems.push_back(safe_zero(python_value_type()));
+  // Trim if the source had a non-default array size larger than max.
+  if(wrapped_elems.size() > PYTHON_MAX_LIST_LENGTH)
+    wrapped_elems.resize(PYTHON_MAX_LIST_LENGTH);
+
+  return struct_exprt{
+    {src_len, array_exprt{std::move(wrapped_elems), pv_data_type}},
+    pv_list_type};
 }
 
 exprt python_convertert::wrap_value(const exprt &e)
