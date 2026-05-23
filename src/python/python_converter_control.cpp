@@ -557,6 +557,12 @@ codet python_convertert::convert_for(const jsont &stmt)
       symbol_table.lookup_ref(ti).symbol_expr(), iterable});
     iterable = symbol_table.lookup_ref(ti).symbol_expr();
   }
+  // PLR §4.1: \`for x in xs\` where xs is python_value (e.g. an
+  // unannotated function parameter that received a list at the
+  // call site). Deref __list_ptr as list[python_value] so the
+  // standard list-iteration path below handles it precisely.
+  if(is_python_value_type(iterable.type()))
+    iterable = python_value_list(iterable);
 
   bool is_list = is_python_list_type(iterable.type());
   bool is_string = is_python_string_type(iterable.type());
@@ -772,11 +778,6 @@ codet python_convertert::convert_for(const jsont &stmt)
       "with loop variable nondet (so contained call sites are still "
       "type-checked)");
     {
-      // Flush any pending checks that the iter-expression
-      // conversion accumulated (e.g. attribute-error
-      // properties from .items() on a class without that
-      // method). These belong BEFORE the loop, not inside
-      // the conditionally-executed body.
       code_blockt pre_loop_unsup;
       for(auto &pc : pending_checks)
         pre_loop_unsup.add(std::move(pc));
