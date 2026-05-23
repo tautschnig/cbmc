@@ -781,6 +781,213 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   // Function definitions don't produce executable code at the call site
+  // UNLESS the function has decorators (PLR §8.7).
+  //
+  // PLR §8.7: "A function definition may be wrapped by one or more
+  // decorator expressions. (...) The result is then bound to the
+  // function name instead of the function object."
+  //
+  // @dec
+  // def f(x): ...
+  //
+  // is equivalent to:
+  //
+  // def f(x): ...
+  // f = dec(f)
+  //
+  // For multiple decorators they are applied bottom-up:
+  // @dec1 @dec2 def f(): ... → f = dec1(dec2(f))
+  //
+  // We emit the decorator call(s) as pending_checks so they fire
+  // at the statement site where the function definition appears.
+  // The function_aliases map is updated to point at the wrapper
+  // so subsequent calls to `f` dispatch through the decorator.
+  if(decorators.is_array() && !is_c_intrinsic)
+  {
+    // Collect non-overload, non-c_intrinsic decorators (bottom-up order
+    // = reverse of the list in the AST, which is top-down).
+    std::vector<const jsont *> user_decorators;
+    for(const auto &dec : as_array(decorators))
+    {
+      if(
+        is_node_type(dec, "Name") &&
+        json_string(json_member(dec, "id")) == "overload")
+        continue;
+      if(
+        is_node_type(dec, "Name") &&
+        (json_string(json_member(dec, "id")) == "staticmethod" ||
+         json_string(json_member(dec, "id")) == "classmethod" ||
+         json_string(json_member(dec, "id")) == "property"))
+        continue;
+      if(is_node_type(dec, "Call"))
+      {
+        const jsont &df = json_member(dec, "func");
+        if(
+          is_node_type(df, "Name") &&
+          json_string(json_member(df, "id")) == "c_intrinsic")
+          continue;
+      }
+      user_decorators.push_back(&dec);
+    }
+    if(!user_decorators.empty())
+    {
+      // Build the chain: start with the raw function, apply each
+      // decorator from bottom (last in list) to top (first).
+      // For each decorator, look up its symbol and emit a call.
+      // The final result is aliased to the function name.
+      code_blockt dec_block;
+      for(auto rit = user_decorators.rbegin(); rit != user_decorators.rend();
+          ++rit)
+      {
+        const jsont &dec = **rit;
+        exprt dec_expr = convert_expression(dec);
+        if(dec_expr.is_nil() || dec_expr.type().id() != ID_code)
+          continue;
+        // The decorator is a function. Call it with the current
+        // function as argument. The result becomes the new binding.
+        // We model this by recording the decorator's inner function
+        // (if it returns one) as the alias target. For the common
+        // pattern where the decorator defines a `wrapper` inside and
+        // returns it, the wrapper is already registered as a symbol
+        // by convert_function_def (since it's a nested def inside
+        // the decorator body). We look for it by convention:
+        // decorator_name::wrapper.
+        std::string dec_name =
+          id2string(to_symbol_expr(dec_expr).get_identifier());
+        // Look for a nested function named "wrapper" inside the decorator.
+        // The frontend registers nested functions with various naming
+        // conventions; try the most common ones.
+        irep_idt wrapper_id;
+        for(const std::string &candidate :
+            {dec_name + "::wrapper",
+             std::string{"python::wrapper"},
+             std::string{"python::" + func_name + "::wrapper"}})
+        {
+          if(symbol_table.lookup(irep_idt{candidate}) != nullptr)
+          {
+            wrapper_id = irep_idt{candidate};
+            break;
+          }
+        }
+        // Also scan the decorator's body AST for a nested FunctionDef
+        // named "wrapper" and use whatever symbol name it got.
+        if(wrapper_id.empty())
+        {
+          // Find the decorator's AST in the module body
+          const jsont &mod_body = json_member(parse_tree.ast_json, "body");
+          if(mod_body.is_array())
+          {
+            for(const auto &s : as_array(mod_body))
+            {
+              if(
+                is_node_type(s, "FunctionDef") &&
+                json_string(json_member(s, "name")) ==
+                  id2string(to_symbol_expr(dec_expr).get_identifier())
+                    .substr(8)) // strip "python::"
+              {
+                const jsont &dec_body = json_member(s, "body");
+                if(dec_body.is_array())
+                {
+                  for(const auto &inner : as_array(dec_body))
+                  {
+                    if(is_node_type(inner, "FunctionDef"))
+                    {
+                      std::string inner_name =
+                        json_string(json_member(inner, "name"));
+                      irep_idt cand{"python::" + inner_name};
+                      if(symbol_table.lookup(cand) != nullptr)
+                      {
+                        wrapper_id = cand;
+                        break;
+                      }
+                    }
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+        const symbolt *wrapper_sym =
+          wrapper_id.empty() ? nullptr : symbol_table.lookup(wrapper_id);
+        if(wrapper_sym != nullptr && wrapper_sym->type.id() == ID_code)
+        {
+          // Redirect calls to f to go through wrapper instead
+          function_aliases[id2string(symbol_id)] = wrapper_id;
+          // The wrapper's body calls `fn(*args)` where `fn` is a
+          // closure-captured reference to the original function.
+          // Bind `fn` (the decorator's parameter name) to the
+          // original function, then RE-CONVERT the wrapper's body
+          // so the call resolves correctly. The first conversion
+          // happened when the decorator was defined (before we knew
+          // what fn would be), so it emitted "no body for callee fn".
+          const code_typet &dec_type =
+            to_code_type(symbol_table.lookup_ref(dec_name).type);
+          if(!dec_type.parameters().empty())
+          {
+            std::string param_base =
+              id2string(dec_type.parameters()[0].get_base_name());
+            // Bind fn → original f in all scopes the wrapper might
+            // look it up from.
+            function_aliases["python::" + param_base] = symbol_id;
+            function_aliases[id2string(wrapper_id) + "::" + param_base] =
+              symbol_id;
+            function_aliases[id2string(
+              dec_type.parameters()[0].get_identifier())] = symbol_id;
+          }
+          // Re-convert the wrapper's body now that fn is bound.
+          // Find the wrapper's AST in the decorator's body.
+          const jsont &mod_body = json_member(parse_tree.ast_json, "body");
+          if(mod_body.is_array())
+          {
+            for(const auto &s : as_array(mod_body))
+            {
+              if(
+                !is_node_type(s, "FunctionDef") ||
+                json_string(json_member(s, "name")) !=
+                  id2string(to_symbol_expr(dec_expr).get_identifier())
+                    .substr(8))
+                continue;
+              const jsont &dec_body_ast = json_member(s, "body");
+              if(!dec_body_ast.is_array())
+                break;
+              for(const auto &inner : as_array(dec_body_ast))
+              {
+                if(!is_node_type(inner, "FunctionDef"))
+                  continue;
+                std::string inner_name =
+                  json_string(json_member(inner, "name"));
+                if(irep_idt{"python::" + inner_name} != wrapper_id)
+                  continue;
+                // Re-convert the wrapper function body
+                std::string saved_fn = current_function;
+                current_function = inner_name;
+                const jsont &wrapper_body_ast = json_member(inner, "body");
+                code_blockt new_body;
+                if(wrapper_body_ast.is_array())
+                {
+                  for(const auto &ws : as_array(wrapper_body_ast))
+                    new_body.add(convert_statement(ws));
+                }
+                // Append default return
+                const code_typet &wt = to_code_type(wrapper_sym->type);
+                if(wt.return_type().id() != ID_empty)
+                  new_body.add(
+                    code_frontend_returnt{safe_zero(wt.return_type())});
+                current_function = saved_fn;
+                symbol_table.get_writeable_ref(wrapper_id).value = new_body;
+                break;
+              }
+              break;
+            }
+          }
+        }
+      }
+      if(!dec_block.statements().empty())
+        return std::move(dec_block);
+    }
+  }
+
   return code_skipt{};
 }
 
