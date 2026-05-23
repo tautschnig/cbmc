@@ -1121,6 +1121,51 @@ codet python_convertert::convert_return(const jsont &stmt)
 
   exprt ret_val = convert_expression(value);
 
+  // PLR §3.1: if the return value is a Name that resolves to a
+  // pointer-typed list/dict symbol (a parameter or an alias-promoted
+  // local), return the POINTER rather than the dereferenced struct.
+  // This preserves object identity through the call boundary: the
+  // caller's `b = f(a)` will see a pointer-typed RHS and bind `b`
+  // as an alias of the underlying storage, so mutations through `b`
+  // propagate to `a`. Without this, convert_name's auto-deref
+  // produces `*x` (a struct copy), and the caller gets an
+  // independent value — a soundness gap.
+  //
+  // We also promote the function's declared return type to the
+  // pointer type so the call site's side_effect_expr_function_callt
+  // has the correct type and the assignment path can detect the
+  // pointer-typed result and bind the LHS as an alias.
+  if(is_node_type(value, "Name"))
+  {
+    std::string ret_name = json_string(json_member(value, "id"));
+    std::string ret_qname = qualify_name(ret_name);
+    auto ver_it = variable_versions.find(ret_qname);
+    irep_idt lookup_id = (ver_it != variable_versions.end())
+                           ? ver_it->second
+                           : irep_idt{ret_qname};
+    const symbolt *ret_sym = symbol_table.lookup(lookup_id);
+    if(
+      ret_sym != nullptr && ret_sym->type.id() == ID_pointer &&
+      (is_python_list_type(to_pointer_type(ret_sym->type).base_type()) ||
+       is_python_dict_type(to_pointer_type(ret_sym->type).base_type())))
+    {
+      // Promote the function's return type to pointer so the call
+      // site sees a pointer-typed result.
+      if(!current_function.empty())
+      {
+        irep_idt func_id{"python::" + current_function};
+        symbolt *func_sym_w = symbol_table.get_writeable(func_id);
+        if(func_sym_w != nullptr && func_sym_w->type.id() == ID_code)
+        {
+          code_typet &ft = to_code_type(func_sym_w->type);
+          if(ft.return_type() != ret_sym->type)
+            ft.return_type() = ret_sym->type;
+        }
+      }
+      return code_frontend_returnt{ret_sym->symbol_expr()};
+    }
+  }
+
   // PLR: record dict-literal return keys for caller-side
   // dict_literals propagation. If a function returns a dict
   // literal with constant keys, callers that assign the

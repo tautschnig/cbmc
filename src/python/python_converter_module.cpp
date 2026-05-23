@@ -284,6 +284,14 @@ void python_convertert::process_imported_module(
               const jsont &ann = json_member(p, "annotation");
               typet ptype = ann.is_null() ? python_value_type()
                                           : convert_type_annotation(ann);
+              // PLR §3.1: mutable containers are passed by reference.
+              // Mirror convert_function_def's add_positional.
+              if(
+                pname != "self" &&
+                (is_python_list_type(ptype) || is_python_dict_type(ptype)))
+              {
+                ptype = pointer_type(ptype);
+              }
               code_typet::parametert param{ptype};
               param.set_identifier("python::" + fname + "::" + pname);
               param.set_base_name(pname);

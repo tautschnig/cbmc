@@ -478,6 +478,15 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     param_symbol.is_parameter = true;
     if(symbol_table.lookup(param_symbol.name) == nullptr)
       symbol_table.add(param_symbol);
+    else
+    {
+      // The module pre-scan may have created this symbol with a
+      // different type (e.g. struct list instead of pointer-to-list).
+      // Update it to match the function's actual parameter type.
+      symbolt &existing = symbol_table.get_writeable_ref(param_symbol.name);
+      if(existing.type != param_symbol.type)
+        existing.type = param_symbol.type;
+    }
   }
 
   // Convert function body

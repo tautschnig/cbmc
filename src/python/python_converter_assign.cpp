@@ -223,6 +223,22 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     return std::move(assign);
   }
 
+  // PLR §3.1: if the RHS is pointer-to-list/dict (from a function
+  // returning its parameter pointer), promote the LHS to pointer type
+  // and bind directly. This covers `b: list = identity(a)` where
+  // identity returns its pointer-typed parameter.
+  if(
+    rhs.type().id() == ID_pointer &&
+    (is_python_list_type(to_pointer_type(rhs.type()).base_type()) ||
+     is_python_dict_type(to_pointer_type(rhs.type()).base_type())))
+  {
+    symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
+    code_frontend_assignt assign{
+      symbol_table.lookup_ref(symbol_id).symbol_expr(), rhs};
+    assign.add_source_location() = loc;
+    return std::move(assign);
+  }
+
   // If annotation gave a placeholder type (e.g., dict→int) but the RHS
   // has a concrete struct type, use the RHS type instead.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
@@ -1595,6 +1611,24 @@ codet python_convertert::convert_assign(const jsont &stmt)
       new_symbol.is_state_var = true;
       new_symbol.is_static_lifetime = current_function.empty();
       symbol_table.add(new_symbol);
+    }
+
+    // PLR §3.1: if the RHS is pointer-to-list/dict (from a function
+    // that returns its parameter pointer, or from a ternary that
+    // forwards a pointer), promote the LHS symbol to the same pointer
+    // type so the binding is an alias, not a struct copy.
+    if(
+      rhs.type().id() == ID_pointer &&
+      (is_python_list_type(to_pointer_type(rhs.type()).base_type()) ||
+       is_python_dict_type(to_pointer_type(rhs.type()).base_type())))
+    {
+      symbolt &lhs_sym = symbol_table.get_writeable_ref(symbol_id);
+      if(lhs_sym.type != rhs.type())
+        lhs_sym.type = rhs.type();
+      code_frontend_assignt assign{lhs_sym.symbol_expr(), rhs};
+      assign.add_source_location() = loc;
+      block.add(std::move(assign));
+      continue;
     }
 
     const symbolt &sym = symbol_table.lookup_ref(symbol_id);

@@ -7145,6 +7145,19 @@ exprt python_convertert::convert_call(const jsont &expr)
         if(addr.type() != params[i].type())
           addr = typecast_exprt{addr, params[i].type()};
         arguments[i] = std::move(addr);
+        // PLR §3.1: passing a mutable container by reference means
+        // the callee may mutate it. Invalidate the literal cache so
+        // subsequent reads at the call site don't constant-fold
+        // against the pre-call snapshot.
+        if(addressable.id() == ID_symbol)
+        {
+          irep_idt sid = to_symbol_expr(addressable).get_identifier();
+          list_literals.erase(sid);
+          dict_literals.erase(sid);
+          tuple_literals.erase(sid);
+          string_constants.erase(sid);
+          float_constants.erase(sid);
+        }
       }
       else
       {
