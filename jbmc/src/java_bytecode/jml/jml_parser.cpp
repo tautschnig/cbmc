@@ -149,9 +149,9 @@ exprt jml_parser_statet::equiv_expr()
     if(has_error_)
       return nil_exprt();
     if(is_equiv)
-      left = equal_exprt(left, right);
+      left = binary_relation_exprt(left, ID_equal, right);
     else
-      left = notequal_exprt(left, right);
+      left = binary_relation_exprt(left, ID_notequal, right);
   }
   return left;
 }
@@ -267,9 +267,9 @@ exprt jml_parser_statet::equality_expr()
     if(has_error_)
       return nil_exprt();
     if(is_eq)
-      left = equal_exprt(left, right);
+      left = binary_relation_exprt(left, ID_equal, right);
     else
-      left = notequal_exprt(left, right);
+      left = binary_relation_exprt(left, ID_notequal, right);
   }
   return left;
 }

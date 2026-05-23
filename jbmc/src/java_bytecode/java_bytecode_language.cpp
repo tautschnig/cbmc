@@ -379,8 +379,9 @@ void java_bytecode_languaget::parse_from_main_class(
     // are present in the symbol table when the entry-point
     // harness's nondet-switch is built. Without this option, the
     // user must list each implementor via --java-load-class.
-    if(language_options.has_value() &&
-       language_options->java_load_classpath_implementations)
+    if(
+      language_options.has_value() &&
+      language_options->java_load_classpath_implementations)
     {
       const auto candidates =
         java_class_loader.enumerate_classpath_classes(message_handler);
@@ -391,12 +392,10 @@ void java_bytecode_languaget::parse_from_main_class(
         // loading them eagerly explodes analysis cost and is
         // never the user's intent.
         const std::string &name = id2string(c);
-        if(has_prefix(name, "java.") ||
-           has_prefix(name, "javax.") ||
-           has_prefix(name, "sun.") ||
-           has_prefix(name, "com.sun.") ||
-           has_prefix(name, "jdk.") ||
-           has_prefix(name, "org.cprover."))
+        if(
+          has_prefix(name, "java.") || has_prefix(name, "javax.") ||
+          has_prefix(name, "sun.") || has_prefix(name, "com.sun.") ||
+          has_prefix(name, "jdk.") || has_prefix(name, "org.cprover."))
         {
           continue;
         }
@@ -406,8 +405,7 @@ void java_bytecode_languaget::parse_from_main_class(
       {
         log.status() << "Auto-loading " << to_load.size()
                      << " classpath classes for interface/abstract "
-                     << "entry-point parameter resolution"
-                     << messaget::eom;
+                     << "entry-point parameter resolution" << messaget::eom;
         java_class_loader.add_load_classes(to_load);
         // Re-invoke the loader so the queued classes are
         // actually parsed. Already-loaded classes (including the

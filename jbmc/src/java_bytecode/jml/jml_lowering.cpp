@@ -132,6 +132,47 @@ exprt resolve_jml_expr(
   for(auto &op : result.operands())
     op = resolve_jml_expr(op, method_id, class_id, ns, param_names);
 
+  // Refresh the outer type after resolution. The parser
+  // constructs many wrapper expressions (history_exprt,
+  // unary_exprt, member_exprt, plus/minus/times) before the
+  // inner symbol's type is known; their .type() field reflects
+  // the unresolved operand's default type. Now that operands
+  // are resolved, propagate the type up:
+  if(result.type() == typet() || result.type().id().empty())
+  {
+    if(
+      result.id() == ID_old || result.id() == "loop_entry" ||
+      result.id() == ID_unary_minus || result.id() == ID_unary_plus)
+    {
+      if(!result.operands().empty())
+        result.type() = result.operands()[0].type();
+    }
+    else if(
+      result.id() == ID_plus || result.id() == ID_minus ||
+      result.id() == ID_mult || result.id() == ID_div ||
+      result.id() == ID_mod || result.id() == ID_bitand ||
+      result.id() == ID_bitor || result.id() == ID_bitxor ||
+      result.id() == ID_shl || result.id() == ID_ashr || result.id() == ID_lshr)
+    {
+      // Binary arithmetic / bitwise: type follows lhs.
+      // (Java's promotion rules would widen byte/short → int but
+      // the existing test uses int operands; widening can be
+      // added later if needed.)
+      if(!result.operands().empty())
+        result.type() = result.operands()[0].type();
+    }
+    else if(
+      result.id() == ID_lt || result.id() == ID_le || result.id() == ID_gt ||
+      result.id() == ID_ge || result.id() == ID_equal ||
+      result.id() == ID_notequal || result.id() == ID_and ||
+      result.id() == ID_or || result.id() == ID_not ||
+      result.id() == ID_implies)
+    {
+      // Logical / relational: result is bool.
+      result.type() = bool_typet();
+    }
+  }
+
   // Lower aggregate expressions (\sum, \product, \min, \max)
   // by bounded expansion when the range is of the form
   // `lb <= var && var < ub` with constant bounds.
@@ -311,8 +352,102 @@ std::set<irep_idt> lower_jml_contracts(
     if(requires_exprs.empty() && ensures_exprs.empty())
       continue;
 
+    // Pre-state capture for \old(expr): walk all ensures and
+    // collect every history_exprt(expr, ID_old) subexpression.
+    // For each unique expr, declare a fresh symbol and assign
+    // it expr's value at function entry; then substitute
+    // history_exprt(...) with the fresh symbol.
+    //
+    // Without this pass, inline-lowered ensures would reference
+    // the parser's history_exprt, which symex cannot evaluate
+    // for non-modular verification (no DFCC pre-state binding).
+    std::map<std::string, symbol_exprt> old_capture;
+    std::function<exprt(exprt)> capture_old = [&](exprt e) -> exprt
+    {
+      for(auto &op : e.operands())
+        op = capture_old(op);
+      if(e.id() == ID_old && e.operands().size() == 1 && !e.type().id().empty())
+      {
+        // Key by serialized expression text (cheap canonical form).
+        std::ostringstream key_oss;
+        key_oss << e.operands()[0].pretty();
+        const std::string key = key_oss.str();
+        auto it_cap = old_capture.find(key);
+        if(it_cap != old_capture.end())
+          return it_cap->second;
+        // Build fresh symbol: <method>::__jml_old_<idx>
+        const std::string fresh_name = id2string(method_id) + "::__jml_old_" +
+                                       std::to_string(old_capture.size());
+        symbol_exprt fresh{fresh_name, e.type()};
+        old_capture.emplace(key, fresh);
+        return fresh;
+      }
+      return e;
+    };
+    for(auto &ens : ensures_exprs)
+      ens = capture_old(ens);
+
     // Emit body-level ASSUME for requires at function entry
     auto first_it = body.instructions.begin();
+
+    // Pre-state capture: DECL + ASSIGN for each captured \old.
+    for(const auto &[key, fresh] : old_capture)
+    {
+      // Add the symbol to the symbol table so symex sees it.
+      symbolt sym;
+      sym.name = fresh.get_identifier();
+      sym.base_name = sym.name;
+      sym.type = fresh.type();
+      sym.mode = ID_java;
+      sym.is_thread_local = true;
+      sym.is_lvalue = true;
+      sym.is_state_var = true;
+      goto_model.symbol_table.insert(std::move(sym));
+
+      // Find the corresponding source expression by re-resolving
+      // the key (cheap: walk ensures_exprs to find a matching
+      // history_exprt's operand).
+      exprt source_expr;
+      bool found = false;
+      std::function<void(const exprt &)> find_src = [&](const exprt &e)
+      {
+        if(found)
+          return;
+        if(e.id() == ID_old && e.operands().size() == 1)
+        {
+          std::ostringstream oss;
+          oss << e.operands()[0].pretty();
+          if(oss.str() == key)
+          {
+            source_expr = e.operands()[0];
+            found = true;
+            return;
+          }
+        }
+        for(const auto &op : e.operands())
+          find_src(op);
+      };
+      // Look in raw spec.clauses (before substitution).
+      for(const auto &clause : spec.clauses)
+      {
+        if(clause.kind != jml_clauset::kindt::ENSURES)
+          continue;
+        exprt resolved = resolve_jml_expr(
+          clause.expr, method_id, class_id, ns, spec.param_names);
+        find_src(resolved);
+        if(found)
+          break;
+      }
+      if(!found)
+        continue;
+
+      source_locationt loc = first_it->source_location();
+      loc.set_comment("JML \\old capture");
+      body.insert_before(first_it, goto_programt::make_decl(fresh, loc));
+      body.insert_before(
+        first_it, goto_programt::make_assignment(fresh, source_expr, loc));
+    }
+
     for(const auto &req : requires_exprs)
     {
       source_locationt loc = first_it->source_location();
@@ -474,6 +609,37 @@ std::set<irep_idt> lower_jml_contracts(
         contract.module = sym_it->module;
         contract.location = sym_it->location;
         goto_model.symbol_table.insert(std::move(contract));
+      }
+    }
+  }
+
+  // After mutating function symbol types to
+  // code_with_contract_typet, refresh every CALL instruction's
+  // call_function operand type from the symbol table. Without
+  // this, --validate-goto-model fires `<callee> type
+  // inconsistency` because the cached operand type at the call
+  // site no longer matches the symbol-table entry's type. This
+  // mirrors dfcct::refresh_call_function_types() in
+  // src/goto-instrument/contracts/dynamic-frames/dfcc.cpp.
+  if(!annotated_functions.empty())
+  {
+    const namespacet ns_refresh{goto_model.symbol_table};
+    for(auto &gf_pair : goto_model.goto_functions.function_map)
+    {
+      for(auto &ins : gf_pair.second.body.instructions)
+      {
+        if(!ins.is_function_call())
+          continue;
+        exprt &callee = ins.call_function();
+        if(callee.id() != ID_symbol)
+          continue;
+        const irep_idt callee_id = to_symbol_expr(callee).get_identifier();
+        if(annotated_functions.count(callee_id) == 0)
+          continue; // Only refresh callees we touched.
+        const symbolt *sym = ns_refresh.get_symbol_table().lookup(callee_id);
+        if(sym == nullptr)
+          continue;
+        callee.type() = sym->type;
       }
     }
   }
