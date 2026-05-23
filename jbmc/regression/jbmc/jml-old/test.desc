@@ -1,0 +1,22 @@
+CORE
+JmlOld
+--function JmlOld.increment --jml-source src/main/java/JmlOld.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML \old() in postconditions.
+
+Verifies that the JML pipeline correctly:
+- Parses \old(expr) into a history_exprt(expr, ID_old)
+- Captures the pre-state value at function entry into a fresh
+  symbol __jml_old_<idx>, declared and assigned via DECL/ASSIGN
+- Substitutes history_exprt occurrences in ensures with the
+  fresh symbol so symex can evaluate the postcondition
+
+The increment() method takes a parameter x and returns x+1; the
+JML postcondition compares \result to \old(x) + 1, which holds.

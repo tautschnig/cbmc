@@ -1,0 +1,20 @@
+CORE
+LinkedHashMapBasic
+--function LinkedHashMapBasic.testBasicOps --unwind 5 -cp target/classes:../../../lib/java-models-library/target/core-models.jar:../../../lib/java-models-library/target/cprover-api.jar
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for LinkedHashMap model.
+
+Verifies the basic LinkedHashMap operations (size, isEmpty,
+put, get, containsKey) using JBMC's core-models.jar
+LinkedHashMap implementation.
+
+The model extends HashMap; this test confirms the inherited
+implementation behaves correctly through the LinkedHashMap
+public interface.

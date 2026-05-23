@@ -1,0 +1,30 @@
+CORE
+IfaceDispatch
+--function IfaceDispatch.test --java-load-classpath-implementations --unwind 3 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+^.*no body for callee
+--
+Regression for Item B: virtual dispatch through interface
+entry-point parameters with --java-load-classpath-implementations.
+
+The test class IfaceDispatch.test takes a Greeter g (interface)
+and calls g.greet(). With --java-load-classpath-implementations:
+- enumerate_classpath_classes scans the classpath JARs/dirs
+- Hello and Bye (concrete implementations) are auto-loaded
+- select_pointer_typet::get_parameter_alternative_types walks
+  the class hierarchy and returns Hello, Bye as alternatives
+- ci_lazy_methodst::initialize_instantiated_classes seeds these
+  as instantiable so their greet() method bodies are reachable
+- The entry-point harness emits a nondet-switch that allocates
+  a Hello or Bye object
+- remove_virtual_functions resolves g.greet() to either
+  Hello.greet() or Bye.greet()
+
+The assertion `r == 1 || r == 2` succeeds because both
+implementations return one of those values.

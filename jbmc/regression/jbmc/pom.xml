@@ -150,6 +150,13 @@
         <module>f12-bool-post</module>
         <module>f12-old</module>
         <module>f12-sssj</module>
+        <module>iface-dispatch</module>
+        <module>jml-basic</module>
+        <module>jml-old</module>
+        <module>jml-result</module>
+        <module>jml-conjunction</module>
+        <module>linkedhashmap-basic</module>
+        <module>linkedlist-basic</module>
         <module>fake_stubs</module>
         <module>farith1</module>
         <module>fcmpx_dcmpx1</module>

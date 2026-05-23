@@ -1,0 +1,22 @@
+CORE
+JmlConjunction
+--function JmlConjunction.product --jml-source src/main/java/JmlConjunction.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML compound boolean logic in postconditions.
+
+Verifies the JML pipeline correctly:
+- Parses && (AND), || (OR), ==> (IMPLIES) operators
+- Resolves multiple parameters in a single expression
+- Lowers (a && b) ==> c into !(a && b) || c
+- Combines multiple ensures clauses
+
+The product method takes non-negative x, y and the contract
+encodes both branches: (x>0 && y>0 → result>0) and
+(x==0 || y==0 → result==0).

@@ -1,0 +1,21 @@
+CORE
+JmlResult
+--function JmlResult.clampLow --jml-source src/main/java/JmlResult.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML \result references combined with multiple
+parameters and multiple ensures clauses.
+
+Verifies that the JML pipeline correctly:
+- Maps \result to <method>#return_value
+- Resolves the parameters lo, hi (positionally) by base name
+- Lowers multiple //@ ensures clauses (one per line) into
+  separate ASSERT statements
+- Combines requires and ensures correctly: under
+  precondition lo <= hi, the clamp result is in [lo, hi]

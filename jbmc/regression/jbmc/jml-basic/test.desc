@@ -1,0 +1,19 @@
+CORE
+JmlBasic
+--function JmlBasic.identity --jml-source src/main/java/JmlBasic.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML //@ requires/ensures support via --jml-source.
+
+Verifies the basic JML pipeline:
+- jml_source_extractor scans the .java file for //@ comments
+- jml_tokenizer + jml_parser turn the JML expression into an exprt
+- jml_lowering resolves \result to method's #return_value symbol
+  and resolves the parameter `x` by name
+- The lowered contract is wired into the GOTO model and proved
