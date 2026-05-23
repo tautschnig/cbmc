@@ -1442,23 +1442,31 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
 
     // PLR §6.11: "x or y" returns x if x is truthy, else y
     // "x and y" returns x if x is falsy, else y
+    // The result IS one of the operands (not coerced to bool).
+    // When the operand types differ, wrap both into python_value
+    // so the resulting expression has a uniform type. Downstream
+    // comparisons / arithmetic unwrap via unwrap_value.
     if(op == "And")
     {
-      exprt cond = safe_typecast(result, bool_typet{});
-      // If result is falsy, return result; else return next
+      exprt cond = python_truthiness(result);
+      // If result is falsy, return result; else return next.
       if(result.type() == next.type())
         result = if_exprt{cond, next, result};
       else
-        result = and_exprt{cond, safe_typecast(next, bool_typet{})};
+      {
+        result = if_exprt{cond, wrap_value(next), wrap_value(result)};
+      }
     }
     else if(op == "Or")
     {
-      exprt cond = safe_typecast(result, bool_typet{});
-      // If result is truthy, return result; else return next
+      exprt cond = python_truthiness(result);
+      // If result is truthy, return result; else return next.
       if(result.type() == next.type())
         result = if_exprt{cond, result, next};
       else
-        result = or_exprt{cond, safe_typecast(next, bool_typet{})};
+      {
+        result = if_exprt{cond, wrap_value(result), wrap_value(next)};
+      }
     }
     else
     {
