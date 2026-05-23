@@ -131,6 +131,115 @@ exprt resolve_jml_expr(
   exprt result = e;
   for(auto &op : result.operands())
     op = resolve_jml_expr(op, method_id, class_id, ns, param_names);
+
+  // Lower aggregate expressions (\sum, \product, \min, \max)
+  // by bounded expansion when the range is of the form
+  // `lb <= var && var < ub` with constant bounds.
+
+  // Lower \fresh(e) to __CPROVER_is_fresh(e, sizeof(*e))
+  if(result.id() == "jml_fresh" && result.operands().size() == 1)
+  {
+    const exprt &arg = result.operands()[0];
+    // __CPROVER_is_fresh is a predicate that checks the pointer
+    // was freshly allocated. For DFCC, it's handled by the
+    // pointer-predicate infrastructure.
+    exprt is_fresh("is_fresh");
+    is_fresh.type() = bool_typet();
+    is_fresh.operands().push_back(arg);
+    return is_fresh;
+  }
+
+  if(
+    result.id() == "jml_sum" || result.id() == "jml_product" ||
+    result.id() == "jml_min" || result.id() == "jml_max")
+  {
+    if(result.operands().size() == 3)
+    {
+      const exprt &var_expr = result.operands()[0];
+      const exprt &range = result.operands()[1];
+      const exprt &body = result.operands()[2];
+
+      // Try to extract bounds from range: lb <= var && var < ub
+      // Look for and_exprt with two relational operands
+      std::optional<mp_integer> lb_val, ub_val;
+      if(range.id() == ID_and && range.operands().size() == 2)
+      {
+        for(const auto &conjunct : range.operands())
+        {
+          if(conjunct.id() == ID_le || conjunct.id() == ID_ge)
+          {
+            // lb <= var or var >= lb
+            const auto &rel = to_binary_relation_expr(conjunct);
+            if(rel.rhs() == var_expr && rel.lhs().is_constant())
+              lb_val = numeric_cast<mp_integer>(to_constant_expr(rel.lhs()));
+            else if(rel.lhs() == var_expr && rel.rhs().is_constant())
+              lb_val = numeric_cast<mp_integer>(to_constant_expr(rel.rhs()));
+          }
+          else if(conjunct.id() == ID_lt || conjunct.id() == ID_gt)
+          {
+            // var < ub or ub > var
+            const auto &rel = to_binary_relation_expr(conjunct);
+            if(rel.lhs() == var_expr && rel.rhs().is_constant())
+              ub_val = numeric_cast<mp_integer>(to_constant_expr(rel.rhs()));
+            else if(rel.rhs() == var_expr && rel.lhs().is_constant())
+              ub_val = numeric_cast<mp_integer>(to_constant_expr(rel.lhs()));
+          }
+        }
+      }
+
+      if(
+        lb_val.has_value() && ub_val.has_value() && *lb_val < *ub_val &&
+        *ub_val - *lb_val <= 100) // Safety bound
+      {
+        // Expand: op(body[var:=lb], body[var:=lb+1], ..., body[var:=ub-1])
+        const irep_idt var_id = to_symbol_expr(var_expr).get_identifier();
+        exprt::operandst expanded;
+        for(mp_integer i = *lb_val; i < *ub_val; ++i)
+        {
+          // Substitute var with constant i in body
+          exprt substituted = body;
+          std::function<void(exprt &)> subst = [&](exprt &ex)
+          {
+            if(
+              ex.id() == ID_symbol &&
+              to_symbol_expr(ex).get_identifier() == var_id)
+            {
+              ex = from_integer(i, var_expr.type());
+            }
+            for(auto &op2 : ex.operands())
+              subst(op2);
+          };
+          subst(substituted);
+          expanded.push_back(substituted);
+        }
+
+        if(expanded.empty())
+          return result; // Can't expand
+
+        // Combine based on operation
+        exprt combined = expanded[0];
+        for(std::size_t i = 1; i < expanded.size(); ++i)
+        {
+          if(result.id() == "jml_sum")
+            combined = plus_exprt(combined, expanded[i]);
+          else if(result.id() == "jml_product")
+            combined = mult_exprt(combined, expanded[i]);
+          else if(result.id() == "jml_min")
+            combined = if_exprt(
+              binary_relation_exprt(combined, ID_le, expanded[i]),
+              combined,
+              expanded[i]);
+          else // jml_max
+            combined = if_exprt(
+              binary_relation_exprt(combined, ID_ge, expanded[i]),
+              combined,
+              expanded[i]);
+        }
+        return combined;
+      }
+    }
+  }
+
   return result;
 }
 

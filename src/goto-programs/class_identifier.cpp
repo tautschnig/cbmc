@@ -77,17 +77,6 @@ exprt get_class_identifier_field(
     if(!suggested_type.get_identifier().empty())
       this_expr = typecast_exprt(this_expr, pointer_type(suggested_type));
   }
-  else if(
-    points_to.id() == ID_struct_tag &&
-    !suggested_type.get_identifier().empty() &&
-    to_struct_tag_type(points_to).get_identifier() !=
-      suggested_type.get_identifier())
-  {
-    // The pointer's static type differs from the suggested root
-    // type. Cast so build_class_identifier walks from the root
-    // where @class_identifier actually lives.
-    this_expr = typecast_exprt(this_expr, pointer_type(suggested_type));
-  }
   const dereference_exprt deref{this_expr};
   return build_class_identifier(deref, ns);
 }
