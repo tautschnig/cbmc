@@ -240,23 +240,48 @@ echo "[per-file] module=$MODULE file=$KERNEL_FILE function=$TARGET_FUNC"
 
 # Optional: instrument the kernel TU with synthetic-checkpoint
 # property-module markers before compilation.  Driven by the
-# INSTRUMENT environment variable (comma-separated shape list,
-# or "all" to enable all available shapes).
+# INSTRUMENT environment variable:
+#   INSTRUMENT=all       — apply all available cocci rules.
+#   INSTRUMENT=cocci     — same as 'all' (alias).
+#   INSTRUMENT=regex     — use the older regex-based instrument.py
+#                          (kept for fallback comparison).
+#   INSTRUMENT=<shapes>  — comma-separated list of cocci shapes.
 INSTR_TU=""
 if [[ -n "${INSTRUMENT:-}" ]]; then
   INSTR_TU="$tmp/${stem}.instrumented.c"
-  shapes_arg="$INSTRUMENT"
-  if [[ "$INSTRUMENT" == "all" ]]; then
-    shapes_arg=$("$SCRIPT_DIR/tools/instrument.py" --list-shapes \
-      | paste -sd, -)
-  fi
-  echo "[1a/7] instrumenting kernel TU (shapes: $shapes_arg)..."
-  "$SCRIPT_DIR/tools/instrument.py" "$FULL_KERNEL_FILE" \
-    --shapes "$shapes_arg" -o "$INSTR_TU" 2> "$tmp/instr.err" || {
-      echo "  FAIL: instrument.py returned $?" >&2
-      tail -5 "$tmp/instr.err" >&2
-      exit 3
-    }
+  echo "[1a/7] instrumenting kernel TU (mode: $INSTRUMENT)..."
+  case "$INSTRUMENT" in
+    regex)
+      # Legacy regex-based tool (kept for comparison).
+      "$SCRIPT_DIR/tools/instrument.py" "$FULL_KERNEL_FILE" \
+        --shapes "$(  "$SCRIPT_DIR/tools/instrument.py" \
+                      --list-shapes | paste -sd, -)" \
+        -o "$INSTR_TU" 2> "$tmp/instr.err" || {
+          echo "  FAIL: instrument.py returned $?" >&2
+          tail -5 "$tmp/instr.err" >&2
+          exit 3
+        }
+      ;;
+    all|cocci)
+      "$SCRIPT_DIR/tools/instrument-cocci.sh" \
+        "$FULL_KERNEL_FILE" "$INSTR_TU" \
+        2> "$tmp/instr.err" || {
+          echo "  FAIL: instrument-cocci.sh returned $?" >&2
+          tail -5 "$tmp/instr.err" >&2
+          exit 3
+        }
+      ;;
+    *)
+      "$SCRIPT_DIR/tools/instrument-cocci.sh" \
+        "$FULL_KERNEL_FILE" "$INSTR_TU" \
+        --shapes "$INSTRUMENT" \
+        2> "$tmp/instr.err" || {
+          echo "  FAIL: instrument-cocci.sh returned $?" >&2
+          tail -5 "$tmp/instr.err" >&2
+          exit 3
+        }
+      ;;
+  esac
 fi
 
 echo "[1/7] compiling kernel TU..."
@@ -264,6 +289,11 @@ COMPILE_INPUT="$KERNEL_FILE"
 if [[ -n "$INSTR_TU" ]]; then
   COMPILE_INPUT="$INSTR_TU"
 fi
+# When compiling an instrumented copy, propagate the original
+# source file's directory as an include path so #include "..."
+# forms in the TU still resolve.
+ORIG_SRC_DIR="$LINUX_TREE/$(dirname "$KERNEL_FILE")"
+SOURCE_INCLUDE_DIR="$ORIG_SRC_DIR" \
 "$SCRIPT_DIR/compile_file.sh" "$LINUX_TREE" "$COMPILE_INPUT" "$KERNEL_GB" \
   >"$tmp/compile.log" 2>&1 || {
     echo "  FAIL: compile_file.sh returned $? on $KERNEL_FILE" >&2

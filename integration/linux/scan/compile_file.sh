@@ -83,6 +83,15 @@ if [[ -n $EXTRA_DEFINE ]]; then
   EXTRA_ARGS+=("-D$EXTRA_DEFINE")
 fi
 
+# When SOURCE_INCLUDE_DIR is set in the environment, add it
+# to the include path.  This is used when the source file is
+# an instrumented copy at an absolute path outside the kernel
+# tree: #include "foo.h" forms in the kernel TU need to
+# resolve against the original source's directory.
+if [[ -n "${SOURCE_INCLUDE_DIR:-}" ]]; then
+  EXTRA_ARGS+=("-I" "$SOURCE_INCLUDE_DIR")
+fi
+
 "$GOTOCC" --native-compiler gcc \
   --export-file-local-symbols \
   -Wall \
