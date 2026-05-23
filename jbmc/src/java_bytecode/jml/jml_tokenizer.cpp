@@ -56,6 +56,7 @@ std::vector<jml_tokent> jml_tokenize(const std::string &input)
 
   auto peek = [&]() -> char
   { return pos < len ? input[pos] : '\0'; };
+  (void)peek; // Used in future extensions
   auto advance = [&]() -> char
   { return pos < len ? input[pos++] : '\0'; };
   auto match = [&](char expected) -> bool

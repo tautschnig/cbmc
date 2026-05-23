@@ -17,10 +17,9 @@ Author: Kiro (AI agent)
 #include <util/std_code.h>
 #include <util/std_expr.h>
 
-#include <ansi-c/c_expr.h>
-
 #include <goto-programs/goto_model.h>
 
+#include <ansi-c/c_expr.h>
 #include <langapi/language_util.h>
 
 namespace
@@ -33,37 +32,55 @@ exprt resolve_jml_expr(
   const exprt &e,
   const irep_idt &method_id,
   const irep_idt &class_id,
-  const namespacet &ns)
+  const namespacet &ns,
+  const std::vector<std::string> &param_names)
 {
   // Resolve symbol_exprt with empty type: look up as parameter
   // or field of the enclosing class.
-  if(e.id() == ID_symbol && e.type().id() == ID_empty)
+  if(e.id() == ID_symbol && e.type() == typet())
   {
     const irep_idt &name = to_symbol_expr(e).get_identifier();
     const std::string name_str = id2string(name);
 
-    // Try as a parameter: method_id::name
-    const irep_idt param_id =
-      id2string(method_id) + "::" + name_str;
-    if(const auto *sym = ns.get_symbol_table().lookup(param_id))
-      return sym->symbol_expr();
+    // Special case: \result → method's #return_value symbol
+    if(name_str == CPROVER_PREFIX "return_value")
+    {
+      const irep_idt rv_id = id2string(method_id) + "#return_value";
+      if(const auto *sym = ns.get_symbol_table().lookup(rv_id))
+        return sym->symbol_expr();
+      return e;
+    }
 
-    // Try as a static field: class_id.name
-    const irep_idt field_id =
-      id2string(class_id) + "." + name_str;
-    if(const auto *sym = ns.get_symbol_table().lookup(field_id))
-      return sym->symbol_expr();
-
-    // Try as a parameter with arg prefix: method_id::arg0<name>
-    // JBMC names parameters as arg0a, arg1i, etc. — try prefix match.
+    // Try as a parameter: match by base_name or by position.
+    // JBMC names parameters as java::Class.method:(sig)::arg0x
+    // where x is a type suffix. We match by base_name first.
     const symbolt *func_sym = ns.get_symbol_table().lookup(method_id);
     if(func_sym != nullptr && func_sym->type.id() == ID_code)
     {
       const auto &params = to_code_type(func_sym->type).parameters();
+
+      // Positional match via param_names from source signature
+      for(std::size_t i = 0; i < param_names.size() && i < params.size(); ++i)
+      {
+        if(param_names[i] == name_str)
+        {
+          if(!params[i].get_identifier().empty())
+          {
+            if(
+              const auto *psym =
+                ns.get_symbol_table().lookup(params[i].get_identifier()))
+              return psym->symbol_expr();
+          }
+        }
+      }
+
+      // Fallback: match by base_name substring
       for(const auto &p : params)
       {
         const std::string base = id2string(p.get_base_name());
-        if(base == name_str || base.find(name_str) != std::string::npos)
+        if(
+          base == name_str || (base.size() > name_str.size() &&
+                               base.substr(0, name_str.size()) == name_str))
         {
           if(!p.get_identifier().empty())
           {
@@ -73,7 +90,29 @@ exprt resolve_jml_expr(
           }
         }
       }
+      // Also try matching by stripping "arg" prefix + index:
+      for(std::size_t i = 0; i < params.size(); ++i)
+      {
+        const std::string pid = id2string(params[i].get_identifier());
+        if(
+          pid.size() > name_str.size() &&
+          pid.substr(pid.size() - name_str.size()) == name_str)
+        {
+          if(const auto *psym = ns.get_symbol_table().lookup(pid))
+            return psym->symbol_expr();
+        }
+      }
     }
+
+    // Try as a fully-qualified parameter: method_id::name
+    const irep_idt param_id = id2string(method_id) + "::" + name_str;
+    if(const auto *sym = ns.get_symbol_table().lookup(param_id))
+      return sym->symbol_expr();
+
+    // Try as a static field: class_id.name
+    const irep_idt field_id = id2string(class_id) + "." + name_str;
+    if(const auto *sym = ns.get_symbol_table().lookup(field_id))
+      return sym->symbol_expr();
 
     // Leave unresolved — will produce a verification failure with
     // a clear "unknown symbol" message.
@@ -91,7 +130,7 @@ exprt resolve_jml_expr(
   // Recurse into operands
   exprt result = e;
   for(auto &op : result.operands())
-    op = resolve_jml_expr(op, method_id, class_id, ns);
+    op = resolve_jml_expr(op, method_id, class_id, ns, param_names);
   return result;
 }
 
@@ -130,8 +169,8 @@ std::set<irep_idt> lower_jml_contracts(
       if(clause.expr.is_nil())
         continue;
 
-      exprt resolved =
-        resolve_jml_expr(clause.expr, method_id, class_id, ns);
+      exprt resolved = resolve_jml_expr(
+        clause.expr, method_id, class_id, ns, spec.param_names);
 
       switch(clause.kind)
       {
@@ -150,7 +189,12 @@ std::set<irep_idt> lower_jml_contracts(
       case jml_clauset::kindt::DECREASES:
         decreases_exprs.push_back(resolved);
         break;
-      default:
+      case jml_clauset::kindt::SIGNALS:
+      case jml_clauset::kindt::PURE:
+      case jml_clauset::kindt::NULLABLE:
+      case jml_clauset::kindt::NON_NULL:
+      case jml_clauset::kindt::ALSO:
+      case jml_clauset::kindt::UNKNOWN:
         break;
       }
     }

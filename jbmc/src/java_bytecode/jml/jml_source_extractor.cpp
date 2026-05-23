@@ -12,6 +12,7 @@ Author: Kiro (AI agent)
 
 #include <fstream>
 #include <regex>
+#include <sstream>
 #include <string>
 
 namespace
@@ -179,6 +180,33 @@ jml_contract_mapt jml_extract_from_source(
           const irep_idt cid = "java::" + class_name;
           jml_method_spect spec;
           spec.method_id = method_id;
+
+          // Extract parameter names from the signature
+          auto paren_start = trimmed.find('(');
+          auto paren_end = trimmed.find(')');
+          if(
+            paren_start != std::string::npos &&
+            paren_end != std::string::npos && paren_end > paren_start)
+          {
+            std::string params_str =
+              trimmed.substr(paren_start + 1, paren_end - paren_start - 1);
+            // Split by comma, extract last word of each param
+            std::istringstream pss(params_str);
+            std::string param;
+            while(std::getline(pss, param, ','))
+            {
+              param = trim(param);
+              if(param.empty())
+                continue;
+              // Last word is the parameter name
+              auto last_space = param.rfind(' ');
+              if(last_space != std::string::npos)
+                spec.param_names.push_back(trim(param.substr(last_space + 1)));
+              else
+                spec.param_names.push_back(param);
+            }
+          }
+
           for(const auto &jml_line : pending_jml)
           {
             auto clause = jml_parse_clause(

@@ -11,6 +11,10 @@ Author: Kiro (AI agent)
 
 #include "jml_parser.h"
 
+// Suppress -Wswitch-enum: the JML token enum has many values and
+// our switches intentionally use default: for unhandled cases.
+#pragma GCC diagnostic ignored "-Wswitch-enum"
+
 #include "jml_tokenizer.h"
 
 #include <util/arith_tools.h>

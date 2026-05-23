@@ -24,10 +24,10 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/instrument_preconditions.h>
 #include <goto-programs/loop_ids.h>
 #include <goto-programs/remove_returns.h>
-#include <goto-programs/rewrite_rw_ok.h>
 #include <goto-programs/remove_skip.h>
 #include <goto-programs/remove_unused_functions.h>
 #include <goto-programs/remove_virtual_functions.h>
+#include <goto-programs/rewrite_rw_ok.h>
 #include <goto-programs/set_properties.h>
 #include <goto-programs/show_goto_functions.h>
 #include <goto-programs/show_properties.h>
@@ -51,6 +51,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <java_bytecode/java_multi_path_symex_only_checker.h>
 #include <java_bytecode/java_single_path_symex_checker.h>
 #include <java_bytecode/java_single_path_symex_only_checker.h>
+#include <java_bytecode/jml/jml_integration.h>
 #include <java_bytecode/lazy_goto_model.h>
 #include <java_bytecode/remove_exceptions.h>
 #include <java_bytecode/remove_instanceof.h>
@@ -850,6 +851,27 @@ bool jbmc_parse_optionst::process_goto_functions(
 
   // Lower JVerify contract calls to GOTO assertions/assumptions
   std::set<irep_idt> annotated_functions = lower_jverify_contracts(goto_model);
+
+  // JML support: if --jml-specs-path or --jml-source is specified,
+  // load and lower JML specifications alongside JVerify contracts.
+  if(cmdline.isset("jml-specs-path") || cmdline.isset("jml-source"))
+  {
+    jml_configt jml_config;
+    if(cmdline.isset("jml-specs-path"))
+    {
+      for(const auto &p : cmdline.get_values("jml-specs-path"))
+        jml_config.spec_paths.emplace_back(p);
+    }
+    if(cmdline.isset("jml-source"))
+    {
+      for(const auto &p : cmdline.get_values("jml-source"))
+        jml_config.source_files.emplace_back(p);
+    }
+    jml_config.modular = cmdline.isset("modular");
+    auto jml_annotated = process_jml_specs(goto_model, jml_config);
+    for(const auto &id : jml_annotated)
+      annotated_functions.insert(id);
+  }
 
   // F12: in modular mode, additionally substitute calls to annotated
   // functions with their contracts so the callee body is never

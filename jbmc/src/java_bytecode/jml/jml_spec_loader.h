@@ -52,6 +52,10 @@ struct jml_method_spect
 {
   irep_idt method_id; // Fully-qualified GOTO symbol id
   std::vector<jml_clauset> clauses;
+  /// Source-level parameter names (from the method signature in
+  /// the .jml or .java file). Used for positional matching against
+  /// JBMC's arg0x, arg1x, ... parameter identifiers.
+  std::vector<std::string> param_names;
 };
 
 /// Map from method identifier to its JML specification.

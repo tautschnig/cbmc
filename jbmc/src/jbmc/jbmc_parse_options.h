@@ -53,6 +53,8 @@ class optionst;
   OPT_JAVA_GOTO_BINARY \
   "(no-assertions)(no-assumptions)" \
   "(modular)" /* F12: replace calls to JVerify-annotated methods with their contracts */ \
+  "(jml-specs-path):" /* JML: directories containing .jml sidecar files */ \
+  "(jml-source):" /* JML: Java source files to scan for //@ annotations */ \
   OPT_XML_INTERFACE \
   OPT_JSON_INTERFACE \
   "(smt1)" /* rejected, will eventually disappear */ \
