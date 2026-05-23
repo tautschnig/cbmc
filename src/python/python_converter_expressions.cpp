@@ -661,6 +661,38 @@ exprt python_convertert::convert_list(const jsont &expr)
       continue;
     }
 
+    // PLR §3.1: if the element is a Name that resolves to an
+    // escaped list/dict-typed symbol (i.e. a name that we promoted
+    // to `list[python_value]` / `dict[str, python_value]` storage),
+    // wrap it as `make_python_value(LIST_or_DICT, &symbol)` —
+    // pointing to the original symbol's storage, NOT a struct copy.
+    // This makes `outer = [inner]; outer[0][0] = 99` write through
+    // to inner.data[0].
+    if(is_node_type(elt, "Name"))
+    {
+      std::string en = json_string(json_member(elt, "id"));
+      irep_idt eq{qualify_name(en)};
+      if(escaped_mutables.count(eq) > 0)
+      {
+        const symbolt *esym = symbol_table.lookup(eq);
+        if(esym != nullptr)
+        {
+          if(is_python_list_type(esym->type))
+          {
+            elements.push_back(make_python_value(
+              python_type_tagt::LIST, address_of_exprt{esym->symbol_expr()}));
+            continue;
+          }
+          if(is_python_dict_type(esym->type))
+          {
+            elements.push_back(make_python_value(
+              python_type_tagt::DICT, address_of_exprt{esym->symbol_expr()}));
+            continue;
+          }
+        }
+      }
+    }
+
     exprt e = convert_expression(elt);
     if(e.is_nil())
       return nil_exprt{};
@@ -899,7 +931,38 @@ exprt python_convertert::convert_dict(const jsont &expr)
   for(; key_it != as_array(keys).end(); ++key_it, ++val_it)
   {
     exprt k = convert_expression(*key_it);
-    exprt v = convert_expression(*val_it);
+    exprt v;
+    // PLR §3.1: if the value is a Name resolving to an escaped
+    // list/dict-typed symbol, wrap as `make_python_value(LIST/DICT,
+    // &symbol)` — pointing to the original storage. Subsequent
+    // mutations through this dict's value propagate to the symbol.
+    bool wrapped_as_ref = false;
+    if(is_node_type(*val_it, "Name"))
+    {
+      std::string vn = json_string(json_member(*val_it, "id"));
+      irep_idt vq{qualify_name(vn)};
+      if(escaped_mutables.count(vq) > 0)
+      {
+        const symbolt *vsym = symbol_table.lookup(vq);
+        if(vsym != nullptr)
+        {
+          if(is_python_list_type(vsym->type))
+          {
+            v = make_python_value(
+              python_type_tagt::LIST, address_of_exprt{vsym->symbol_expr()});
+            wrapped_as_ref = true;
+          }
+          else if(is_python_dict_type(vsym->type))
+          {
+            v = make_python_value(
+              python_type_tagt::DICT, address_of_exprt{vsym->symbol_expr()});
+            wrapped_as_ref = true;
+          }
+        }
+      }
+    }
+    if(!wrapped_as_ref)
+      v = convert_expression(*val_it);
     if(k.is_nil() || v.is_nil())
       continue;
     pairs.emplace_back(k, v);

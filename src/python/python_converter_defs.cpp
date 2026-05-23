@@ -691,6 +691,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   if(body.is_array())
   {
+    // PLR §3.1: pre-scan to identify names that escape into a
+    // container literal (or list-mutating method). This must run
+    // BEFORE convert_statement(s) so that the literal-construction
+    // path knows to wrap the escaped Names with python_value
+    // pointers rather than struct-copying them.
+    collect_escaped_mutables(body);
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
   }

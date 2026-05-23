@@ -386,6 +386,23 @@ private:
   /// by the `is`/`is not` handler to compare alias identity even when
   /// the operands are auto-dereferenced symbol_exprt's at use sites.
   std::map<irep_idt, irep_idt> alias_targets;
+
+  /// PLR §3.1: per-scope set of qualified names that escape into a
+  /// container literal (i.e. appear as a Name element of a List/Dict
+  /// literal). Such names get their storage promoted to
+  /// `list[python_value]` (or stay `dict[str, python_value]`) so that
+  /// the tagged-union deref-cast in `python_value_list` is type-
+  /// correct, enabling sound nested-mutable semantics:
+  ///
+  ///     inner: list = [1, 2]
+  ///     outer = [inner]      # outer.data[0] = pv(LIST, &inner)
+  ///     outer[0][0] = 99     # writes through to inner.data[0]
+  ///     assert inner[0] == 99
+  ///
+  /// Populated by collect_escaped_mutables (a pre-scan over the
+  /// module body / function body before convert_module_body runs).
+  std::set<irep_idt> escaped_mutables;
+  void collect_escaped_mutables(const jsont &body);
   std::optional<std::string> extract_string_value(const exprt &e) const;
 
   /// Best-effort static category of an expression node directly
@@ -734,6 +751,14 @@ private:
 
   /// Wrap a concrete typed value into a tagged-union value.
   exprt wrap_value(const exprt &e);
+
+  /// PLR §3.1: rebuild a list-struct expression so its element type
+  /// is `python_value`. Each existing data element is `wrap_value`'d
+  /// individually. Used when promoting an escaped mutable's storage
+  /// (so subsequent `python_value_list` deref-casts read the right
+  /// memory layout). Input must be a python_list-typed exprt; result
+  /// has type `python_list_type(python_value_type())`.
+  exprt rebuild_list_as_pv(const exprt &list_expr);
 
   /// Safe typecast: handles tagged unions, struct-to-scalar, and other
   /// cases that would crash with a raw typecast_exprt.

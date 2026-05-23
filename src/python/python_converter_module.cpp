@@ -1092,6 +1092,12 @@ bool python_convertert::convert()
   }
 
   // Second pass: convert top-level statements (excluding function defs)
+  // PLR §3.1: pre-scan module body to identify names that escape
+  // into a container literal (so the literal-construction path can
+  // wrap them as python_value pointers, preserving aliasing).
+  // current_function is "" at module scope, so escapees get
+  // qualified as `python::<name>`.
+  collect_escaped_mutables(body);
   code_blockt module_body = convert_module_body(body);
 
   // Store the module body as a function symbol for later use by
