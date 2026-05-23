@@ -995,6 +995,172 @@ exprt python_convertert::rebuild_list_as_pv(const exprt &list_expr)
     pv_list_type};
 }
 
+/// PLR §4.1 (Truth Value Testing): return a bool-typed expression
+/// that is true iff `e` is truthy in Python. See header for the
+/// list of false values.
+exprt python_convertert::python_truthiness(const exprt &e)
+{
+  const typet &t = e.type();
+
+  // Already bool — identity.
+  if(t.id() == ID_bool)
+    return e;
+
+  // None sentinel for int representation: -2^62.
+  const mp_integer none_sentinel{-4611686018427387904LL};
+
+  // Concrete numeric types.
+  if(t.id() == ID_signedbv || t.id() == ID_integer)
+  {
+    // 0 and the None-sentinel both represent falsy values.
+    return and_exprt{
+      notequal_exprt{e, from_integer(0, t)},
+      notequal_exprt{e, from_integer(none_sentinel, t)}};
+  }
+  if(t.id() == ID_unsignedbv || t.id() == ID_c_bool)
+    return notequal_exprt{e, from_integer(0, t)};
+  if(t.id() == ID_floatbv)
+  {
+    // PLR §4.4: 0.0 (and -0.0) are falsy; NaN is truthy.
+    // IEEE: 0.0 == -0.0, so a single != 0.0 covers both.
+    return notequal_exprt{e, safe_zero(t)};
+  }
+
+  // Python tagged union: dispatch on the __tag field.
+  if(is_python_value_type(t))
+  {
+    // For each non-NONE tag, build (tag-match AND value-truthy).
+    // The disjunction is true exactly when one of the cases matches
+    // and the underlying value is truthy. NONE / unrecognised tags
+    // fall through to false.
+    auto bool_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::BOOL),
+      notequal_exprt{
+        python_value_bool(e), from_integer(0, signedbv_typet{32})}};
+    auto int_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::INT),
+      and_exprt{
+        notequal_exprt{
+          python_value_int(e), from_integer(0, signedbv_typet{64})},
+        notequal_exprt{
+          python_value_int(e),
+          from_integer(none_sentinel, signedbv_typet{64})}}};
+    auto float_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::FLOAT),
+      notequal_exprt{python_value_float(e), safe_zero(double_type())}};
+    auto str_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::STR),
+      notequal_exprt{
+        member_exprt{python_value_str(e), "length", signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})}};
+    auto list_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::LIST),
+      notequal_exprt{
+        member_exprt{python_value_list(e), "length", signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})}};
+    // CLASS-tagged python_value: presence of class-instance is
+    // truthy by default (object instance with no __bool__/__len__
+    // is True per PLR). Conservative; per-class dispatch is done
+    // by callers when they have struct context.
+    auto class_truthy = python_value_is(e, python_type_tagt::CLASS);
+    // DICT-tagged python_value: __class_ptr points at a dict; deref
+    // and read length. Use canonical dict[str, python_value] type.
+    typet dict_type =
+      python_dict_type(python_string_type(), python_value_type());
+    pointer_typet dict_ptr_type{dict_type, 64};
+    dereference_exprt dict_deref{
+      typecast_exprt{python_value_class_ptr(e), dict_ptr_type}, dict_type};
+    auto dict_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::DICT),
+      notequal_exprt{
+        member_exprt{dict_deref, "length", signedbv_typet{64}},
+        from_integer(0, signedbv_typet{64})}};
+    return or_exprt{
+      or_exprt{or_exprt{bool_truthy, int_truthy}, float_truthy},
+      or_exprt{
+        or_exprt{str_truthy, list_truthy},
+        or_exprt{dict_truthy, class_truthy}}};
+  }
+
+  // String / list / dict: truthy iff length > 0.
+  if(
+    is_python_string_type(t) || is_python_list_type(t) ||
+    is_python_dict_type(t))
+  {
+    return notequal_exprt{
+      member_exprt{e, "length", signedbv_typet{64}},
+      from_integer(0, signedbv_typet{64})};
+  }
+
+  // Tuple: truthy iff it has any field. Tuples are tagged structs;
+  // size is encoded in the type (no length field).
+  if(is_python_tuple_type(t))
+  {
+    if(t.id() == ID_struct)
+      return to_struct_type(t).components().empty() ? exprt{false_exprt{}}
+                                                    : exprt{true_exprt{}};
+  }
+
+  // Pointer-to-list/dict: deref and recurse.
+  if(t.id() == ID_pointer)
+  {
+    const auto &base = to_pointer_type(t).base_type();
+    if(is_python_list_type(base) || is_python_dict_type(base))
+      return python_truthiness(dereference_exprt{e});
+  }
+
+  // Class instance struct: try __bool__ then __len__; default True.
+  if(t.id() == ID_struct || t.id() == ID_struct_tag)
+  {
+    std::string tag;
+    if(t.id() == ID_struct)
+      tag = id2string(to_struct_type(t).get_tag());
+    else
+      tag = id2string(to_struct_tag_type(t).get_identifier());
+    // Complex: 0+0j is falsy.
+    if(tag == "python_complex" && t.id() == ID_struct)
+    {
+      return or_exprt{
+        notequal_exprt{
+          member_exprt{e, "real", double_type()}, safe_zero(double_type())},
+        notequal_exprt{
+          member_exprt{e, "imag", double_type()}, safe_zero(double_type())}};
+    }
+    if(tag.substr(0, 13) == "python_class_")
+    {
+      std::string cls = tag.substr(13);
+      irep_idt bid{"python::" + cls + "::__bool__"};
+      const symbolt *bsym = symbol_table.lookup(bid);
+      if(bsym != nullptr && bsym->type.id() == ID_code)
+      {
+        return side_effect_expr_function_callt{
+          bsym->symbol_expr(),
+          {address_of_exprt{e}},
+          bool_typet{},
+          source_locationt{}};
+      }
+      irep_idt lid{"python::" + cls + "::__len__"};
+      const symbolt *lsym = symbol_table.lookup(lid);
+      if(lsym != nullptr && lsym->type.id() == ID_code)
+      {
+        side_effect_expr_function_callt call{
+          lsym->symbol_expr(),
+          {address_of_exprt{e}},
+          to_code_type(lsym->type).return_type(),
+          source_locationt{}};
+        return notequal_exprt{
+          std::move(call),
+          from_integer(0, to_code_type(lsym->type).return_type())};
+      }
+    }
+    // No dunder available — class instances default to truthy.
+    return true_exprt{};
+  }
+
+  // Unknown type: conservative nondet truthiness.
+  return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
+}
+
 exprt python_convertert::wrap_value(const exprt &e)
 {
   if(is_python_value_type(e.type()))
@@ -1175,17 +1341,9 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
       }
     }
 
-    // PLib stdtypes: Truth Value Testing — "the following values are
-    // considered false: None, False, zero, empty sequences/mappings"
-    // None sentinel → false for truthiness
-    if(target.id() == ID_bool && e.type().id() == ID_signedbv)
-    {
-      exprt none_val =
-        from_integer(mp_integer{-4611686018427387904LL}, e.type());
-      return and_exprt{
-        notequal_exprt{e, from_integer(0, e.type())},
-        notequal_exprt{e, none_val}};
-    }
+    // PLR §4.1: scalar → bool is Python truth value testing.
+    if(target.id() == ID_bool)
+      return python_truthiness(e);
     return typecast_exprt{e, target};
   }
 
@@ -1241,43 +1399,9 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
     }
   }
 
-  // PLR §4.1: Tagged union → bool (truth value testing)
-  if(is_python_value_type(e.type()) && target.id() == ID_bool)
-  {
-    // Dispatch on tag: INT→int_val!=0, FLOAT→float_val!=0,
-    // BOOL→bool_val, STR/LIST→true (non-empty assumed)
-    return or_exprt{
-      and_exprt{
-        python_value_is(e, python_type_tagt::BOOL),
-        notequal_exprt{
-          python_value_bool(e), from_integer(0, signedbv_typet{32})}},
-      and_exprt{
-        python_value_is(e, python_type_tagt::INT),
-        notequal_exprt{
-          python_value_int(e), from_integer(0, signedbv_typet{64})}}};
-  }
-
-  // PLib stdtypes: list/string/dict truthiness — non-empty is truthy
-  if(target.id() == ID_bool && e.type().id() == ID_struct)
-  {
-    if(
-      is_python_string_type(e.type()) || is_python_list_type(e.type()) ||
-      is_python_dict_type(e.type()))
-      return notequal_exprt{
-        member_exprt{e, "length", signedbv_typet{64}},
-        from_integer(0, signedbv_typet{64})};
-    // Complex truthiness: 0+0j is falsy
-    if(
-      e.type().id() == ID_struct &&
-      to_struct_type(e.type()).get_tag() == "python_complex")
-      return or_exprt{
-        notequal_exprt{
-          member_exprt{e, "real", double_type()}, safe_zero(double_type())},
-        notequal_exprt{
-          member_exprt{e, "imag", double_type()}, safe_zero(double_type())}};
-    // Other structs (class instances) are always truthy
-    return true_exprt{};
-  }
+  // PLR §4.1: any-source-type → bool dispatches through truthiness.
+  if(target.id() == ID_bool)
+    return python_truthiness(e);
 
   // List/dict type coercion: list[float] → list[int] etc.
   // The struct layout is the same (length + data array), only element type differs.

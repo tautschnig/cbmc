@@ -723,6 +723,19 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
   }
 
+  // PLR §6.7: bool is a numeric subtype of int. For arithmetic
+  // operations, coerce bool operands to int so `True + True == 2`
+  // rather than `True | True == True`.
+  if(
+    left.type().id() == ID_bool && right.type().id() == ID_bool &&
+    (op == "Add" || op == "Sub" || op == "Mult" || op == "FloorDiv" ||
+     op == "Mod" || op == "Pow" || op == "BitAnd" || op == "BitOr" ||
+     op == "BitXor" || op == "LShift" || op == "RShift"))
+  {
+    left = safe_typecast(left, python_int_type());
+    right = safe_typecast(right, python_int_type());
+  }
+
   if(op == "Add")
   {
     if(
@@ -1283,7 +1296,7 @@ exprt python_convertert::convert_unary_op(const jsont &expr)
   else if(op == "UAdd")
     return operand;
   else if(op == "Not")
-    return not_exprt{safe_typecast(operand, bool_typet{})};
+    return not_exprt{python_truthiness(operand)};
   else if(op == "Invert")
   {
     // PLR §6.7: bitwise ~x. Promote bool to int, then bitnot.
