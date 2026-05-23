@@ -238,6 +238,21 @@ codet python_convertert::convert_statement(const jsont &stmt)
             del_block.add(code_frontend_assignt{
               length,
               minus_exprt{length, from_integer(1, signedbv_typet{64})}});
+
+            // PLR §5.6.1: after the shift the now-stale tail element
+            // at the OLD length-1 position (== NEW length, since we
+            // just decremented) still holds the value copied from the
+            // (now removed) last entry. Zero it so a subsequent
+            // struct-level equality compare against a freshly-built
+            // list literal (which has zero padding past its length)
+            // matches. Without this, `del lst[i]` followed by
+            // `assert lst == [..]` fails the equality on the stale
+            // data[length] slot. The index uses the just-decremented
+            // length, which equals the OLD length-1, i.e. the first
+            // out-of-bounds slot.
+            del_block.add(code_frontend_assignt{
+              index_exprt{data, length},
+              safe_zero(data_type.element_type())});
           }
           // PLR §7.5: del d["key"] on dict — scan, shift, decrement
           else if(!obj.is_nil() && is_python_dict_type(obj.type()))
