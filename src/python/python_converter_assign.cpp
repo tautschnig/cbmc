@@ -239,6 +239,59 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     return std::move(assign);
   }
 
+  // PLR §3.1: ternary alias — `c = a if cond else b` where both
+  // branches are list/dict Names. The ternary should produce a
+  // pointer-level if-then-else so mutations through `c` propagate
+  // to the chosen branch's storage.
+  if(is_node_type(value, "IfExp"))
+  {
+    const jsont &body_node = json_member(value, "body");
+    const jsont &orelse_node = json_member(value, "orelse");
+    if(is_node_type(body_node, "Name") && is_node_type(orelse_node, "Name"))
+    {
+      std::string body_name = json_string(json_member(body_node, "id"));
+      std::string orelse_name = json_string(json_member(orelse_node, "id"));
+      std::string body_qname = qualify_name(body_name);
+      std::string orelse_qname = qualify_name(orelse_name);
+      // Resolve through alias_targets / variable_versions
+      auto resolve = [&](const std::string &qn) -> const symbolt *
+      {
+        auto vit = variable_versions.find(qn);
+        irep_idt lid =
+          vit != variable_versions.end() ? vit->second : irep_idt{qn};
+        auto ait = alias_targets.find(lid);
+        if(ait != alias_targets.end())
+          lid = ait->second;
+        return symbol_table.lookup(lid);
+      };
+      const symbolt *body_sym = resolve(body_qname);
+      const symbolt *orelse_sym = resolve(orelse_qname);
+      if(
+        body_sym != nullptr && orelse_sym != nullptr &&
+        (is_python_list_type(body_sym->type) ||
+         is_python_dict_type(body_sym->type)) &&
+        (is_python_list_type(orelse_sym->type) ||
+         is_python_dict_type(orelse_sym->type)))
+      {
+        // Build pointer-level ternary: cond ? &body : &orelse
+        exprt cond = convert_expression(json_member(value, "test"));
+        if(cond.type().id() != ID_bool)
+          cond = safe_typecast(cond, bool_typet{});
+        pointer_typet ptr_type{body_sym->type, 64};
+        exprt ptr_body = address_of_exprt{body_sym->symbol_expr()};
+        exprt ptr_orelse = address_of_exprt{orelse_sym->symbol_expr()};
+        if(ptr_orelse.type() != ptr_type)
+          ptr_orelse = typecast_exprt{ptr_orelse, ptr_type};
+        exprt ternary = if_exprt{cond, ptr_body, ptr_orelse};
+        symbol_table.get_writeable_ref(symbol_id).type = ptr_type;
+        code_frontend_assignt assign{
+          symbol_table.lookup_ref(symbol_id).symbol_expr(), ternary};
+        assign.add_source_location() = loc;
+        return std::move(assign);
+      }
+    }
+  }
+
   // If annotation gave a placeholder type (e.g., dict→int) but the RHS
   // has a concrete struct type, use the RHS type instead.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
