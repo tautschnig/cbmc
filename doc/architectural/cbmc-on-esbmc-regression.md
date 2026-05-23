@@ -561,3 +561,109 @@ That is the correct soundness cost.
 | math.X dispatch ordering | small | Inline math.isinf/isnan/isfinite preferentially over the symbol-table dispatch (currently inline never fires for `math.isinf(x)` because the bare-name symbol resolves first). |
 | List/dict subscript assign through method-call obj | small | The remaining mutation paths (some not yet relaxed for ID_dereference) need an audit. |
 
+
+## Wave 8 — priority sequence 1-5
+
+Followed the priority recommendation from the cross-source correctness
+review (ESBMC + Strata + hypothesmith). Items shipped in order:
+
+### 8a. By-reference Stage 3 — pointer-copy aliasing
+
+`b = a` for list/dict-typed Names now promotes `b` to pointer-to-
+struct, binds to `address_of(a)`, and records the alias chain in a
+new `alias_targets` map. `convert_name`'s auto-deref machinery
+already extends transparently. AST-shape gating (only when the RHS is
+a Name AST node) keeps `b = a.copy()` from inadvertently aliasing.
+
+* Strata pending soundness gaps: **19 → 12 → 10** (after Stage 3 +
+  the aug-assign fix below). Closed: list_alias_mutation,
+  dict_alias_mutation, transitive_alias, list_swap_via_alias,
+  alias_mutation_in_branch, dict_alias_conditional, augmented_alias.
+* ESBMC sweep: +1 PASS (list_copy_15).
+
+### 8b. Aug-assign sign edge cases
+
+`x //= n` and `x %= n` now use Python's floored-division semantics
+(round toward -infinity for `//`; sign matches divisor for `%`),
+mirroring the bin-op runtime form. Previously fell through to bare
+`div_exprt` / `mod_exprt` (C-truncated).
+
+* Closes: `test_soundness_augfloordiv_neg`, `test_soundness_augmod_neg`.
+
+### 8c. Function-return constant propagation
+
+A new `function_return_constants` map records leaf functions whose
+AST body is a single `return <constant>` (or `return -<constant>`).
+`try_eval_double` chases function-call side-effects through this map,
+so `c = f()` followed by `chr(c)` / arithmetic / etc. fold the same
+way `c = 97` would.
+
+* ESBMC: `casting-chr-func` DIFF → PASS.
+
+### 8d. Hypothesmith fuzz triage
+
+55 → 50 `--unrestricted` failures across 5 seeds × 30 programs.
+The single high-impact fix landed:
+
+* `del lst[i]` now zeros `data[length]` (the OLD `length-1` slot)
+  after decrementing length. Previously the stale tail value caused
+  struct-equality compares against fresh list literals to mismatch.
+
+The remaining 50 failures cluster by feature: decorators, generators
+/ yield, set operations, `*args`, structural-`match`, list/dict
+comprehensions with filters. Each is its own architectural item;
+deferred to follow-up waves.
+
+### 8e. ESBMC long-tail
+
+Spot-checked 3 candidates from the 85 soundness-gap bucket
+(`complex_pow_zerodiv`, `dict_del12_fail`, `dict_del16_fail`). The
+first two turn out to be CBMC's actual Python semantics being more
+permissive than ESBMC's expected wording (not soundness gaps under
+PLR); the third is a real `del d[k]` issue with symbolic keys that
+would fold cleanly into a future dict-del wave. Held back from
+this batch in favour of consolidating the larger items above.
+
+### Cumulative
+
+| Outcome | Wave 7 | Wave 8 | Δ |
+|---------|------:|-------:|---:|
+| PASS | 2202 | 2204 | +2 |
+| DIFF | 566 | 564 | −2 |
+| UNKNOWN | 237 | 237 | 0 |
+| FAIL | 68 | 68 | 0 |
+| TIMEOUT | 17 | 17 | 0 |
+| SKIP | 1 | 1 | 0 |
+
+Pass rate **71.2 % → 71.3 %** (modest because Stage 3 + aug-assign +
+function-return-constants mostly land on Strata-pending tests, not
+the ESBMC corpus). Strata-pending soundness gaps: **19 → 10** (-9).
+
+Strata-pending CORE: 186 → 195 (+9). Strata-pending KNOWNBUG: 40 → 31
+(-9; all the closed soundness gaps).
+
+Hypothesmith --unrestricted: 55 → 50 failures (-5; del fix).
+
+CBMC's own python regression remains all-green throughout.
+
+### Remaining (post-Wave-8) priorities
+
+**Strata-pending soundness gaps (10):**
+
+| Pattern | Count | Suggested fix |
+|---|---:|---|
+| Nested mutable in container literal | 7 | Recursive promotion of references stored inside list/dict literals (`[inner, ...]`, `{"k": inner}`). |
+| Function-return alias / mutation-via-func | 2 | Honour pointer-typed return at call site (extends Stage 1's pointer-passing to return values). |
+| Ternary alias | 1 | `if-else` expression returning Name needs to forward the alias target. |
+
+**Hypothesmith --unrestricted (50):**
+
+| Category | Count | Note |
+|---|---:|---|
+| Decorator | ~8 | `@d` rewrites function symbol; needs proper indirection. |
+| Generator / yield | ~7 | Generator-list materialisation gap. |
+| Set ops on `set([list])` | ~5 | Combination of constructor and binop falls through. |
+| `*args` / `**kwargs` | ~8 | Vararg packing at call site mishandles trailing positionals. |
+| Structural `match` | ~5 | Match isn't end-to-end yet. |
+| List/dict comprehension with filter | ~5 | Filter clause integration. |
+
