@@ -15,8 +15,6 @@ Author: Kiro (AI agent)
 // our switches intentionally use default: for unhandled cases.
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
-#include "jml_tokenizer.h"
-
 #include <util/arith_tools.h>
 #include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
@@ -27,6 +25,9 @@ Author: Kiro (AI agent)
 #include <util/std_expr.h>
 
 #include <ansi-c/c_expr.h>
+
+#include "jml_ids.h"
+#include "jml_tokenizer.h"
 
 #include <functional>
 #include <sstream>
@@ -453,7 +454,7 @@ exprt jml_parser_statet::postfix_expr()
         // generic "method call" expression. For now, use a
         // side_effect_expr_function_callt-like shape.
         // We'll refine this during type resolution in Phase 3.
-        exprt call("jml_method_call");
+        exprt call(jml_ids::jml_method_call);
         call.set("method_name", field_name);
         call.operands().push_back(left);
         for(auto &a : args)
@@ -464,7 +465,7 @@ exprt jml_parser_statet::postfix_expr()
       {
         // Field access: obj.field
         // Use an unresolved representation (type resolution in Phase 3).
-        exprt field_access("jml_field_access");
+        exprt field_access(jml_ids::jml_field_access);
         field_access.set("field_name", field_name);
         field_access.operands().push_back(left);
         left = field_access;
@@ -568,7 +569,7 @@ exprt jml_parser_statet::primary()
     if(!expect(jml_token_kindt::RPAREN, "')'"))
       return nil_exprt();
     // Represent as a special expression; lowered in Phase 3
-    exprt result("jml_nonnullelements");
+    exprt result(jml_ids::jml_nonnullelements);
     result.operands().push_back(arg);
     return result;
   }
@@ -608,22 +609,22 @@ exprt jml_parser_statet::primary()
     switch(kind)
     {
     case jml_token_kindt::JML_SUM:
-      op_id = "jml_sum";
+      op_id = jml_ids::jml_sum;
       break;
     case jml_token_kindt::JML_PRODUCT:
-      op_id = "jml_product";
+      op_id = jml_ids::jml_product;
       break;
     case jml_token_kindt::JML_MIN:
-      op_id = "jml_min";
+      op_id = jml_ids::jml_min;
       break;
     case jml_token_kindt::JML_MAX:
-      op_id = "jml_max";
+      op_id = jml_ids::jml_max;
       break;
     case jml_token_kindt::JML_NUM_OF:
-      op_id = "jml_num_of";
+      op_id = jml_ids::jml_num_of;
       break;
     default:
-      op_id = "jml_aggregate";
+      op_id = jml_ids::jml_aggregate;
     }
 
     exprt result(op_id);
@@ -637,11 +638,11 @@ exprt jml_parser_statet::primary()
 
   case jml_token_kindt::JML_NOTHING:
     advance();
-    return exprt("jml_nothing");
+    return exprt(jml_ids::jml_nothing);
 
   case jml_token_kindt::JML_EVERYTHING:
     advance();
-    return exprt("jml_everything");
+    return exprt(jml_ids::jml_everything);
 
   case jml_token_kindt::LPAREN:
   {
@@ -703,7 +704,7 @@ exprt jml_parser_statet::parse_fresh()
   if(!expect(jml_token_kindt::RPAREN, "')'"))
     return nil_exprt();
   // Represent as a special expression; lowered in Phase 3
-  exprt result("jml_fresh");
+  exprt result(jml_ids::jml_fresh);
   result.operands().push_back(arg);
   return result;
 }

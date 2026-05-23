@@ -28,29 +28,80 @@ std::string trim(const std::string &s)
 }
 
 /// Extract class name from a line like "public class Foo {"
+/// Strip Java // line comments and string literals from a line so
+/// regex pattern matching doesn't accidentally match inside them.
+/// Block-comment regions (`/* ... */`) are tracked separately by the
+/// caller.
+std::string strip_line_comments_and_strings(const std::string &line)
+{
+  std::string out;
+  out.reserve(line.size());
+  bool in_string = false;
+  char string_quote = '\0';
+  for(std::size_t i = 0; i < line.size(); ++i)
+  {
+    const char c = line[i];
+    if(in_string)
+    {
+      // Skip the contents of a string literal.
+      if(c == '\\' && i + 1 < line.size())
+      {
+        ++i; // skip the escaped char
+        continue;
+      }
+      if(c == string_quote)
+        in_string = false;
+      continue;
+    }
+    if(c == '"' || c == '\'')
+    {
+      in_string = true;
+      string_quote = c;
+      continue;
+    }
+    if(c == '/' && i + 1 < line.size() && line[i + 1] == '/')
+      break; // line comment: ignore the rest
+    out.push_back(c);
+  }
+  return out;
+}
+
+/// Extract class name from a line like "public class Foo {".
+/// Requires a class/interface/record/enum keyword preceded by a
+/// modifier or appearing at start-of-statement (after stripping
+/// comments and strings) to reduce false positives.
 std::string extract_class_name(const std::string &line)
 {
-  std::regex re(R"((class|interface|record|enum)\s+(\w+))");
+  const std::string clean = strip_line_comments_and_strings(line);
+  // Match: <modifiers?> <class|interface|record|enum> <name>.
+  // The modifiers group accepts any subset, in any order, separated
+  // by whitespace. The leading boundary requires start-of-line or a
+  // delimiter so we don't accidentally match `aclass` etc.
+  static const std::regex re{
+    R"((?:^|[\s;{}])\s*(?:(?:public|private|protected|static|final|abstract|sealed|strictfp)\s+)*(class|interface|record|enum)\s+(\w+))"};
   std::smatch m;
-  if(std::regex_search(line, m, re))
+  if(std::regex_search(clean, m, re))
     return m[2].str();
   return "";
 }
 
 /// Extract method name from a line like "public int bar(int x) {"
+/// or "public int bar(" (continuation across multiple lines).
 std::string extract_method_name(const std::string &line)
 {
-  auto paren = line.find('(');
+  const std::string clean = strip_line_comments_and_strings(line);
+  auto paren = clean.find('(');
   if(paren == std::string::npos)
     return "";
   auto end = paren;
-  while(end > 0 && line[end - 1] == ' ')
+  while(end > 0 && clean[end - 1] == ' ')
     --end;
   auto start = end;
-  while(start > 0 && (std::isalnum(static_cast<unsigned char>(line[start - 1])) ||
-                       line[start - 1] == '_'))
+  while(start > 0 &&
+        (std::isalnum(static_cast<unsigned char>(clean[start - 1])) ||
+         clean[start - 1] == '_'))
     --start;
-  return line.substr(start, end - start);
+  return clean.substr(start, end - start);
 }
 
 /// Find method symbol in symbol table by class + method name.

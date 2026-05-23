@@ -22,6 +22,8 @@ Author: Kiro (AI agent)
 #include <ansi-c/c_expr.h>
 #include <langapi/language_util.h>
 
+#include "jml_ids.h"
+
 namespace
 {
 
@@ -74,13 +76,14 @@ exprt resolve_jml_expr(
         }
       }
 
-      // Fallback: match by base_name substring
+      // Fallback: match by exact base_name. The previous prefix
+      // form (`base.substr(0, name_str.size()) == name_str`) was
+      // unsound — `i` would match `idx`, `iter`, etc. Aggregate
+      // bound variables in particular need to NOT match.
       for(const auto &p : params)
       {
         const std::string base = id2string(p.get_base_name());
-        if(
-          base == name_str || (base.size() > name_str.size() &&
-                               base.substr(0, name_str.size()) == name_str))
+        if(base == name_str)
         {
           if(!p.get_identifier().empty())
           {
@@ -90,18 +93,13 @@ exprt resolve_jml_expr(
           }
         }
       }
-      // Also try matching by stripping "arg" prefix + index:
-      for(std::size_t i = 0; i < params.size(); ++i)
-      {
-        const std::string pid = id2string(params[i].get_identifier());
-        if(
-          pid.size() > name_str.size() &&
-          pid.substr(pid.size() - name_str.size()) == name_str)
-        {
-          if(const auto *psym = ns.get_symbol_table().lookup(pid))
-            return psym->symbol_expr();
-        }
-      }
+      // Note: the previous "match by stripping 'arg' prefix +
+      // index" fallback (where `name_str` was matched against the
+      // suffix of any param's identifier) has been REMOVED. It
+      // produced false matches such as `i` -> `arg0i`. If a JML
+      // expression cannot be resolved through the strict paths
+      // above, leave it unresolved so downstream produces a clear
+      // error rather than silently bind to the wrong variable.
     }
 
     // Try as a fully-qualified parameter: method_id::name
@@ -125,6 +123,179 @@ exprt resolve_jml_expr(
   {
     // Defer to Phase 3 full resolution (needs type info from obj)
     return e;
+  }
+
+  // Aggregate expressions need special handling: their bound
+  // variable (operand[0]) is a symbol_exprt with the user's name
+  // (e.g., "i"). If we recurse into operands first, the bound
+  // variable's references inside the range and body get resolved
+  // by the parameter-name fallback (substring matching) to
+  // arbitrary parameters in the enclosing method. To avoid that,
+  // we handle aggregates here, before generic recursion:
+  //   1. Extract bound variable name and type
+  //   2. Resolve the range with the bound variable shadowed
+  //   3. Try to extract constant bounds from the resolved range
+  //   4. For constant bounds, substitute the bound variable with
+  //      each integer value, then recursively resolve the
+  //      substituted body
+  if(
+    e.id() == jml_ids::jml_sum || e.id() == jml_ids::jml_product ||
+    e.id() == jml_ids::jml_min || e.id() == jml_ids::jml_max)
+  {
+    if(e.operands().size() == 3 && e.operands()[0].id() == ID_symbol)
+    {
+      const symbol_exprt &bound_var = to_symbol_expr(e.operands()[0]);
+      const irep_idt &bound_name = bound_var.get_identifier();
+      const typet &bound_type = bound_var.type();
+      const exprt &raw_range = e.operands()[1];
+      const exprt &raw_body = e.operands()[2];
+
+      // Substitute the bound variable's parser-level (untyped)
+      // symbol_exprt with a typed one, so the resolver will skip
+      // it (its type is no longer empty).
+      auto type_bound_refs = [&](exprt ex) -> exprt
+      {
+        std::function<void(exprt &)> walk = [&](exprt &x)
+        {
+          if(
+            x.id() == ID_symbol &&
+            to_symbol_expr(x).get_identifier() == bound_name)
+          {
+            x = symbol_exprt(bound_name, bound_type);
+          }
+          for(auto &child : x.operands())
+            walk(child);
+        };
+        walk(ex);
+        return ex;
+      };
+
+      const exprt range = resolve_jml_expr(
+        type_bound_refs(raw_range), method_id, class_id, ns, param_names);
+
+      // Extract constant bounds from the resolved range:
+      // `lb <= bound_var && bound_var < ub` (or any commuted /
+      // open / closed variant).
+      std::optional<mp_integer> lb_val, ub_val;
+      auto extract_constant = [](const exprt &x) -> std::optional<mp_integer>
+      {
+        if(!x.is_constant())
+          return {};
+        return numeric_cast<mp_integer>(to_constant_expr(x));
+      };
+      auto is_bound_ref = [&](const exprt &x) -> bool
+      {
+        return x.id() == ID_symbol &&
+               to_symbol_expr(x).get_identifier() == bound_name;
+      };
+      if(range.id() == ID_and && range.operands().size() == 2)
+      {
+        for(const auto &conjunct : range.operands())
+        {
+          const irep_idt &op = conjunct.id();
+          if(op != ID_le && op != ID_lt && op != ID_ge && op != ID_gt)
+          {
+            continue;
+          }
+          const auto &rel = to_binary_relation_expr(conjunct);
+          const bool var_on_lhs = is_bound_ref(rel.lhs());
+          const bool var_on_rhs = is_bound_ref(rel.rhs());
+          if(var_on_lhs == var_on_rhs)
+            continue;
+          const auto k = var_on_lhs ? extract_constant(rel.rhs())
+                                    : extract_constant(rel.lhs());
+          if(!k.has_value())
+            continue;
+          // Canonicalise to `bound_var <op'> k`.
+          irep_idt canonical_op = op;
+          if(var_on_rhs)
+          {
+            if(op == ID_le)
+              canonical_op = ID_ge;
+            else if(op == ID_lt)
+              canonical_op = ID_gt;
+            else if(op == ID_ge)
+              canonical_op = ID_le;
+            else // ID_gt
+              canonical_op = ID_lt;
+          }
+          if(canonical_op == ID_lt)
+            ub_val = *k;
+          else if(canonical_op == ID_le)
+            ub_val = *k + 1;
+          else if(canonical_op == ID_gt)
+            lb_val = *k + 1;
+          else // ID_ge
+            lb_val = *k;
+        }
+      }
+
+      static constexpr int MAX_AGGREGATE_EXPANSION = 100;
+      if(
+        lb_val.has_value() && ub_val.has_value() && *lb_val < *ub_val &&
+        *ub_val - *lb_val <= MAX_AGGREGATE_EXPANSION)
+      {
+        // For each integer i in [lb, ub): substitute bound_var
+        // with constant i in the body, then recursively resolve
+        // the substituted body.
+        exprt::operandst expanded;
+        for(mp_integer i = *lb_val; i < *ub_val; ++i)
+        {
+          exprt body_i = raw_body;
+          std::function<void(exprt &)> sub = [&](exprt &x)
+          {
+            if(
+              x.id() == ID_symbol &&
+              to_symbol_expr(x).get_identifier() == bound_name)
+            {
+              x = from_integer(i, bound_type);
+              return;
+            }
+            for(auto &child : x.operands())
+              sub(child);
+          };
+          sub(body_i);
+          expanded.push_back(
+            resolve_jml_expr(body_i, method_id, class_id, ns, param_names));
+        }
+        if(expanded.empty())
+        {
+          // Empty range → identity element.
+          if(e.id() == jml_ids::jml_sum)
+            return from_integer(0, bound_type);
+          else if(e.id() == jml_ids::jml_product)
+            return from_integer(1, bound_type);
+          // For min/max with empty range there's no sensible
+          // identity; fall through to leave as uninterpreted.
+        }
+        else
+        {
+          exprt combined = expanded[0];
+          for(std::size_t k = 1; k < expanded.size(); ++k)
+          {
+            if(e.id() == jml_ids::jml_sum)
+              combined = plus_exprt(combined, expanded[k]);
+            else if(e.id() == jml_ids::jml_product)
+              combined = mult_exprt(combined, expanded[k]);
+            else if(e.id() == jml_ids::jml_min)
+              combined = if_exprt(
+                binary_relation_exprt(combined, ID_le, expanded[k]),
+                combined,
+                expanded[k]);
+            else // jml_max
+              combined = if_exprt(
+                binary_relation_exprt(combined, ID_ge, expanded[k]),
+                combined,
+                expanded[k]);
+          }
+          return combined;
+        }
+      }
+      // Bounds couldn't be extracted; fall through to leave the
+      // aggregate as an uninterpreted exprt with resolved sub-
+      // expressions. This is sound but the solver won't be able
+      // to evaluate it.
+    }
   }
 
   // Recurse into operands
@@ -176,109 +347,52 @@ exprt resolve_jml_expr(
   // Lower aggregate expressions (\sum, \product, \min, \max)
   // by bounded expansion when the range is of the form
   // `lb <= var && var < ub` with constant bounds.
+  //
+  // Aggregates are now handled at the top of resolve_jml_expr,
+  // BEFORE generic operand recursion (because the bound variable
+  // shadows enclosing parameters, so we must avoid resolving its
+  // references via the substring-fallback path). The early-handler
+  // returns directly when expansion succeeds; control flow only
+  // reaches this section when expansion failed (e.g. non-constant
+  // bounds), in which case we leave the aggregate as an
+  // uninterpreted exprt.
 
-  // Lower \fresh(e) to __CPROVER_is_fresh(e, sizeof(*e))
-  if(result.id() == "jml_fresh" && result.operands().size() == 1)
+  // Lower \fresh(e) to a call to __CPROVER_is_fresh(ptr, size).
+  //
+  // The contract is: \fresh(p) holds iff p was freshly allocated
+  // (and therefore does not alias any pre-existing object). DFCC's
+  // memory_predicates pass recognises calls to the symbol
+  // __CPROVER_is_fresh and replaces them with the appropriate
+  // pointer-allocation check.
+  //
+  // Two-arg shape (ptr, size) is required by the C typechecker
+  // (see src/ansi-c/c_typecheck_expr.cpp). For Java references the
+  // size value matters only for byte-level allocation tracking;
+  // for reference-level freshness we use the size_t representation
+  // of 1 (one object), which is the smallest sound choice.
+  //
+  // For inline (non-modular) JML, this expands to a function call
+  // that DFCC's instrument pass turns into the proper predicate
+  // when the goto-program is processed; for non-DFCC pipelines the
+  // call remains unresolved and downstream symex will treat it as
+  // an opaque boolean (the test will then fall back to assuming
+  // fresh, which is the conservative behaviour for `requires`).
+  if(result.id() == jml_ids::jml_fresh && result.operands().size() == 1)
   {
     const exprt &arg = result.operands()[0];
-    // __CPROVER_is_fresh is a predicate that checks the pointer
-    // was freshly allocated. For DFCC, it's handled by the
-    // pointer-predicate infrastructure.
-    exprt is_fresh("is_fresh");
-    is_fresh.type() = bool_typet();
-    is_fresh.operands().push_back(arg);
-    return is_fresh;
-  }
-
-  if(
-    result.id() == "jml_sum" || result.id() == "jml_product" ||
-    result.id() == "jml_min" || result.id() == "jml_max")
-  {
-    if(result.operands().size() == 3)
+    if(arg.type().id() != ID_pointer)
     {
-      const exprt &var_expr = result.operands()[0];
-      const exprt &range = result.operands()[1];
-      const exprt &body = result.operands()[2];
-
-      // Try to extract bounds from range: lb <= var && var < ub
-      // Look for and_exprt with two relational operands
-      std::optional<mp_integer> lb_val, ub_val;
-      if(range.id() == ID_and && range.operands().size() == 2)
-      {
-        for(const auto &conjunct : range.operands())
-        {
-          if(conjunct.id() == ID_le || conjunct.id() == ID_ge)
-          {
-            // lb <= var or var >= lb
-            const auto &rel = to_binary_relation_expr(conjunct);
-            if(rel.rhs() == var_expr && rel.lhs().is_constant())
-              lb_val = numeric_cast<mp_integer>(to_constant_expr(rel.lhs()));
-            else if(rel.lhs() == var_expr && rel.rhs().is_constant())
-              lb_val = numeric_cast<mp_integer>(to_constant_expr(rel.rhs()));
-          }
-          else if(conjunct.id() == ID_lt || conjunct.id() == ID_gt)
-          {
-            // var < ub or ub > var
-            const auto &rel = to_binary_relation_expr(conjunct);
-            if(rel.lhs() == var_expr && rel.rhs().is_constant())
-              ub_val = numeric_cast<mp_integer>(to_constant_expr(rel.rhs()));
-            else if(rel.rhs() == var_expr && rel.lhs().is_constant())
-              ub_val = numeric_cast<mp_integer>(to_constant_expr(rel.lhs()));
-          }
-        }
-      }
-
-      if(
-        lb_val.has_value() && ub_val.has_value() && *lb_val < *ub_val &&
-        *ub_val - *lb_val <= 100) // Safety bound
-      {
-        // Expand: op(body[var:=lb], body[var:=lb+1], ..., body[var:=ub-1])
-        const irep_idt var_id = to_symbol_expr(var_expr).get_identifier();
-        exprt::operandst expanded;
-        for(mp_integer i = *lb_val; i < *ub_val; ++i)
-        {
-          // Substitute var with constant i in body
-          exprt substituted = body;
-          std::function<void(exprt &)> subst = [&](exprt &ex)
-          {
-            if(
-              ex.id() == ID_symbol &&
-              to_symbol_expr(ex).get_identifier() == var_id)
-            {
-              ex = from_integer(i, var_expr.type());
-            }
-            for(auto &op2 : ex.operands())
-              subst(op2);
-          };
-          subst(substituted);
-          expanded.push_back(substituted);
-        }
-
-        if(expanded.empty())
-          return result; // Can't expand
-
-        // Combine based on operation
-        exprt combined = expanded[0];
-        for(std::size_t i = 1; i < expanded.size(); ++i)
-        {
-          if(result.id() == "jml_sum")
-            combined = plus_exprt(combined, expanded[i]);
-          else if(result.id() == "jml_product")
-            combined = mult_exprt(combined, expanded[i]);
-          else if(result.id() == "jml_min")
-            combined = if_exprt(
-              binary_relation_exprt(combined, ID_le, expanded[i]),
-              combined,
-              expanded[i]);
-          else // jml_max
-            combined = if_exprt(
-              binary_relation_exprt(combined, ID_ge, expanded[i]),
-              combined,
-              expanded[i]);
-        }
-        return combined;
-      }
+      // \fresh applied to a non-reference is ill-typed; leave
+      // it as an uninterpreted exprt and let downstream produce
+      // a clear error.
+      return result;
     }
+    const symbol_exprt is_fresh_fun{
+      CPROVER_PREFIX "is_fresh",
+      mathematical_function_typet{{arg.type(), size_type()}, bool_typet{}}};
+    const exprt size_expr = from_integer(1, size_type());
+    function_application_exprt call{is_fresh_fun, {arg, size_expr}};
+    return call;
   }
 
   return result;

@@ -157,11 +157,23 @@ select_pointer_typet::get_parameter_alternative_types(
         return {};
 
       // Build a class hierarchy on the fly and find concrete
-      // descendants. Note: a more elegant solution would be to
-      // pass class_hierarchyt through the constructor, but the
-      // existing select_pointer_typet has no hierarchy member;
-      // building it once per entry-point parameter is acceptable
-      // overhead (entry-point code runs once per analysis).
+      // descendants.
+      //
+      // Note on cost: this function is called from two sites per
+      // entry-point parameter (java_entry_point.cpp's nondet-switch
+      // construction and ci_lazy_methods.cpp's reachability
+      // seeding), so for a typical JBMC run with a single entry
+      // point and a handful of pointer-typed parameters we
+      // rebuild the hierarchy O(2 * params) times. Each rebuild
+      // walks the symbol table once, which is cheap relative to
+      // bytecode parsing. We deliberately do NOT cache across
+      // calls: ci_lazy_methods may load additional classes
+      // between the two invocations, in which case a cached
+      // hierarchy from the first call would be stale at the
+      // second. If profiling later shows this is a hotspot, the
+      // appropriate fix is to thread a class_hierarchyt reference
+      // through select_pointer_typet's constructor and
+      // invalidate it after class loading completes.
       class_hierarchyt class_hierarchy{ns.get_symbol_table()};
       const auto descendants = class_hierarchy.get_children_trans(class_id);
       std::set<struct_tag_typet> result;

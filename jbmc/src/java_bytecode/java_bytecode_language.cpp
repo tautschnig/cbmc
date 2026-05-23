@@ -263,6 +263,24 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
   should_lift_clinit_calls = options.get_bool_option("java-lift-clinit-calls");
 }
 
+/// Returns true if `class_name` belongs to a JDK / JBMC-internal
+/// package whose contents should NOT be eagerly loaded by
+/// --java-load-classpath-implementations. Loading these explodes
+/// analysis cost and is never the user's intent: the user wants
+/// implementations of their OWN interfaces, not e.g. every
+/// implementor of java.util.List.
+static bool is_stdlib_class_name(const std::string &class_name)
+{
+  static constexpr const char *prefixes[] = {
+    "java.", "javax.", "sun.", "com.sun.", "jdk.", "org.cprover."};
+  for(const char *p : prefixes)
+  {
+    if(has_prefix(class_name, p))
+      return true;
+  }
+  return false;
+}
+
 /// Consume options that are java bytecode specific.
 void java_bytecode_languaget::set_language_options(
   const optionst &options,
@@ -391,14 +409,8 @@ void java_bytecode_languaget::parse_from_main_class(
         // Skip the JDK and our own already-loaded models —
         // loading them eagerly explodes analysis cost and is
         // never the user's intent.
-        const std::string &name = id2string(c);
-        if(
-          has_prefix(name, "java.") || has_prefix(name, "javax.") ||
-          has_prefix(name, "sun.") || has_prefix(name, "com.sun.") ||
-          has_prefix(name, "jdk.") || has_prefix(name, "org.cprover."))
-        {
+        if(is_stdlib_class_name(id2string(c)))
           continue;
-        }
         to_load.push_back(c);
       }
       if(!to_load.empty())

@@ -45,10 +45,26 @@ std::set<irep_idt> process_jml_specs(
   // Step 3: Lower JML contracts into the GOTO model
   auto annotated = lower_jml_contracts(goto_model, contracts);
 
-  // Step 4: If modular mode, apply DFCC substitution
-  // (This reuses the existing apply_modular_contract_substitution
-  // from java_bytecode_contracts.cpp — called by the main pipeline
-  // after this function returns.)
+  // Step 4: modular substitution.
+  //
+  // Note on `config.modular`: this flag is currently informational
+  // only. The actual modular substitution lives in the main JBMC
+  // pipeline (apply_modular_contract_substitution in
+  // java_bytecode_contracts.cpp), which runs after this function
+  // returns and consults its own --modular CLI flag rather than
+  // anything in jml_configt.
+  //
+  // The reason we accept the flag here is API stability: callers
+  // that orchestrate JML lowering and modular substitution from a
+  // single config object should not have to thread two flags. If
+  // a future refactor moves the substitution call inside
+  // process_jml_specs, this is the place to dispatch on
+  // config.modular.
+  //
+  // For now, we silently rely on the caller to set --modular at the
+  // CLI level if they want modular semantics; an end-to-end test
+  // that exercises both --jml-source and --modular together is
+  // future work (tracked in REVIEW-PRE-PUSH.md).
 
   return annotated;
 }

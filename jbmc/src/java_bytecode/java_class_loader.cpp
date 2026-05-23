@@ -9,6 +9,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "java_class_loader.h"
 
 #include <util/message.h>
+#include <util/prefix.h>
 #include <util/suffix.h>
 
 #include "java_class_loader_limit.h"
@@ -241,6 +242,32 @@ std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
   std::vector<irep_idt> result;
   messaget log{message_handler};
 
+  // Helper: a filename is "uninteresting" for class-hierarchy
+  // discovery purposes when it sits at a JVM-managed path that
+  // contains no application classes (multi-release jars'
+  // versioned overlays, package-info attribute holders, the
+  // module descriptor, OSGi metadata, etc.). Skipping these
+  // before file_to_class_name avoids producing mangled class
+  // names that the loader would later reject.
+  auto is_skipped_class_file = [](const std::string &filename) -> bool
+  {
+    if(!has_suffix(filename, ".class"))
+      return true;
+    if(filename == "module-info.class")
+      return true;
+    if(has_suffix(filename, "/module-info.class"))
+      return true;
+    if(filename == "package-info.class")
+      return true;
+    if(has_suffix(filename, "/package-info.class"))
+      return true;
+    if(has_prefix(filename, "META-INF/"))
+      return true;
+    if(filename.find("/META-INF/") != std::string::npos)
+      return true;
+    return false;
+  };
+
   for(const auto &entry : classpath_entries)
   {
     if(entry.kind == classpath_entryt::JAR)
@@ -251,10 +278,7 @@ std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
         const auto filenames = jar_pool(entry.path).filenames();
         for(const auto &filename : filenames)
         {
-          if(!has_suffix(filename, ".class"))
-            continue;
-          // Skip module-info.class which has no useful type info
-          if(filename == "module-info.class")
+          if(is_skipped_class_file(filename))
             continue;
           const std::string class_name = file_to_class_name(filename);
           if(class_name.empty())
@@ -264,10 +288,13 @@ std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
             result.push_back(id);
         }
       }
-      catch(const std::runtime_error &)
+      catch(const std::runtime_error &e)
       {
-        log.debug() << "failed to enumerate JAR " << entry.path
-                    << messaget::eom;
+        // Surface enumeration failures so users can correlate
+        // missing-implementation warnings with bad classpath
+        // entries.
+        log.warning() << "failed to enumerate JAR " << entry.path << ": "
+                      << e.what() << messaget::eom;
       }
     }
     else if(entry.kind == classpath_entryt::DIRECTORY)
@@ -277,8 +304,8 @@ std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
       auto it = std::filesystem::recursive_directory_iterator(entry.path, ec);
       if(ec)
       {
-        log.debug() << "failed to enumerate directory " << entry.path << ": "
-                    << ec.message() << messaget::eom;
+        log.warning() << "failed to enumerate directory " << entry.path << ": "
+                      << ec.message() << messaget::eom;
         continue;
       }
       const std::filesystem::path root{entry.path};
@@ -287,15 +314,15 @@ std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
         if(!dir_entry.is_regular_file(ec) || ec)
           continue;
         const auto &p = dir_entry.path();
-        if(p.extension() != ".class")
-          continue;
-        if(p.filename() == "module-info.class")
-          continue;
-        // Compute the relative path from root so it's a class file name.
+        // Compute the relative path from root so we can apply the
+        // same filename-shape filter as for JAR entries.
         const auto rel = std::filesystem::relative(p, root, ec);
         if(ec)
           continue;
-        const std::string class_name = file_to_class_name(rel.string());
+        const std::string filename = rel.generic_string();
+        if(is_skipped_class_file(filename))
+          continue;
+        const std::string class_name = file_to_class_name(filename);
         if(class_name.empty())
           continue;
         const irep_idt id{class_name};
