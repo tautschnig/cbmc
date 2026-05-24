@@ -271,13 +271,66 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None,
     return (file_path, fn_name, fix_hash)
 
 
+def _find_files_in_trees(file_path: str,
+                         kernel_trees: list[str]) -> list[str]:
+    """Return ALL kernel trees where file_path exists,
+    ordered as given."""
+    return [kt for kt in kernel_trees
+            if (Path(kt) / file_path).exists()]
+
+
 def _find_file_in_tree(file_path: str,
                        kernel_trees: list[str]) -> str | None:
-    """Return the kernel tree where file_path exists."""
+    """Return the FIRST kernel tree where file_path exists,
+    or None.  Backwards-compatible single-tree lookup."""
+    found = _find_files_in_trees(file_path, kernel_trees)
+    return found[0] if found else None
+
+
+def _find_vuln_tree(file_path: str, fix_hash: str | None,
+                    kernel_trees: list[str]) -> tuple[str | None, str]:
+    """Find the LTS tree where the file is in (or can be
+    reverted to) pre-fix state.  Returns (tree, state) where
+    state is one of:
+       'already_vuln', 'reverted', 'divergent', 'no_patch'.
+
+    Tries each tree in order; returns the first 'already_vuln'
+    if any, then the first 'reverted' if any, else
+    'divergent' / 'no_patch' from the last attempt."""
+    if not fix_hash:
+        return (kernel_trees[0] if kernel_trees else None, "no_patch")
+    cache_file = PATCH_CACHE / f"{fix_hash[:12]}.patch"
+    if not cache_file.exists():
+        return (kernel_trees[0] if kernel_trees else None, "no_patch")
+    try:
+        patch_text = cache_file.read_text(errors="replace")
+    except OSError:
+        return (None, "no_patch")
+    file_diff = _extract_file_diff(patch_text, file_path)
+    if not file_diff:
+        return (None, "no_patch")
+    last_state = "no_patch"
+    last_tree: str | None = None
+    reverted_candidate: tuple[str, str] | None = None
     for kt in kernel_trees:
-        if (Path(kt) / file_path).exists():
-            return kt
-    return None
+        src = Path(kt) / file_path
+        if not src.exists():
+            continue
+        last_tree = kt
+        # Mock CveCase to call _detect_state_and_apply.
+        c = CveCase(cve="", category="", summary="",
+                    file_path=file_path, function="",
+                    module=None, kernel_tree=kt,
+                    fix_hash=fix_hash)
+        ok, state, _ = _detect_state_and_apply(c)
+        if state == "already_vuln":
+            return (kt, state)
+        if state == "reverted" and reverted_candidate is None:
+            reverted_candidate = (kt, state)
+        last_state = state
+    if reverted_candidate is not None:
+        return reverted_candidate
+    return (last_tree, last_state)
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +639,14 @@ def main() -> int:
             fp, fn, fh = _parse_patch(cve)
             if not fp or not fn:
                 continue
-            kt = _find_file_in_tree(fp, kernel_trees)
+            # In invert mode, prefer the tree where the file
+            # is already in vuln state (or can be reverted to
+            # one).  In fix-direction mode, just pick the
+            # first tree containing the file.
+            if args.invert:
+                kt, _ = _find_vuln_tree(fp, fh, kernel_trees)
+            else:
+                kt = _find_file_in_tree(fp, kernel_trees)
             if not kt:
                 continue
             mods = _pick_modules(fp, fn, kt,
