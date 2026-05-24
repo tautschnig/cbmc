@@ -201,6 +201,9 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("localize-faults"))
     options.set_option("localize-faults", true);
 
+  if(cmdline.isset("proof-explanation"))
+    options.set_option("proof-explanation", true);
+
   if(cmdline.isset("symex-complexity-limit"))
   {
     options.set_option(
@@ -1081,6 +1084,8 @@ void jbmc_parse_optionst::help()
     " {y--stop-on-fail} \t stop analysis once a failed property is detected"
     " (implies {y--trace})\n"
     " {y--localize-faults} \t localize faults (experimental)\n"
+    " {y--proof-explanation} \t show which program steps contribute to each"
+    " successful proof\n"
     HELP_JAVA_TRACE_VALIDATION
     "\n"
     "Platform options:\n"

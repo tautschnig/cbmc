@@ -149,9 +149,12 @@
         <module>f12-modular</module>
         <module>f12-bool-post</module>
         <module>f12-old</module>
+        <module>f12-old-proof-explanation</module>
         <module>f12-sssj</module>
         <module>iface-dispatch</module>
+        <module>iface-dispatch-proof-explanation</module>
         <module>jml-basic</module>
+        <module>jml-basic-proof-explanation</module>
         <module>jml-old</module>
         <module>jml-result</module>
         <module>jml-conjunction</module>

@@ -1,0 +1,25 @@
+CORE
+IfaceDispatch
+--function IfaceDispatch.test --java-load-classpath-implementations --unwind 3 -cp target/classes --proof-explanation
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Proof explanation:$
+^Per-property proof explanations:$
+arg0a_alternative_java::(Hello|Bye)|g_alternative_java::(Hello|Bye)
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+^.*no body for callee
+--
+Phase-2 regression test: --proof-explanation works with the
+Item B interface-dispatch path (--java-load-classpath-implementations).
+
+Reuses the IfaceDispatch test class from iface-dispatch. The
+expected output shows that the proof of `r == 1 || r == 2`
+references the entry-point harness's Hello / Bye alternative
+allocations (arg0a_alternative_java::Hello /
+arg0a_alternative_java::Bye), confirming that the proof
+explanation includes the nondet-switch construction the harness
+emitted.

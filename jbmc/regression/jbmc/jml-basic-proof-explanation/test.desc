@@ -1,0 +1,30 @@
+CORE
+JmlBasic
+--function JmlBasic.identity --jml-source src/main/java/JmlBasic.java --unwind 5 -cp target/classes --proof-explanation
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Proof explanation:$
+^Per-property proof explanations:$
+^.*\[assumption\].*JmlBasic\.java.*≥ 0
+^.*\[assignment\].*#return_value.*=.*arg0i
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Phase-2 regression test for --proof-explanation on JBMC.
+
+Reuses the JmlBasic.identity test class with `//@ requires x >= 0;
+//@ ensures \\result >= x;`. Verifies the JBMC --proof-explanation
+output:
+- includes a "Proof explanation:" section header
+- includes a "Per-property proof explanations:" section header
+- the per-property slice for the JML postcondition contains both
+  the precondition (rendered as [assumption] x >= 0) and the body
+  assignment (rendered as [assignment] #return_value = arg0i)
+
+This is a smoke test confirming the inherited word-level proof
+machinery (CBMC PR #8927, cherry-picked at 04c20d4808/2c8b422f3b/
+f067644cff) reaches Java verification through JBMC's CLI wiring
+(commit adding --proof-explanation to JBMC_OPTIONS).

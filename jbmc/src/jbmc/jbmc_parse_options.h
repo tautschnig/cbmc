@@ -84,6 +84,7 @@ class optionst;
   JAVA_BYTECODE_LANGUAGE_OPTIONS \
   "(java-unwind-enum-static)" \
   "(localize-faults)" \
+  "(proof-explanation)" \
   "(java-threading)" \
   OPT_GOTO_TRACE \
   OPT_VALIDATE \

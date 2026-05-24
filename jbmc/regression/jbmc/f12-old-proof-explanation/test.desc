@@ -1,0 +1,30 @@
+CORE
+F12Old
+--function F12Old.caller --modular -cp target/classes --proof-explanation
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Proof explanation:$
+^Per-property proof explanations:$
+F12Old\.java
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Phase-2 regression test: --proof-explanation works under --modular.
+
+Reuses the F12Old test class (JVerify-style precondition /
+postcondition / assigns + JVerify.old() in postcondition). Adds
+--proof-explanation to the existing f12-old invocation and
+verifies the explanation:
+- includes the standard "Proof explanation:" / "Per-property
+  proof explanations:" headers
+- references the F12Old.java source
+
+We deliberately don't pin the exact slice contents because
+DFCC's modular substitution adds many synthetic
+__CPROVER_contracts_* write-set steps; the test stays robust
+against churn there. The doc-form (3) Tomb & Joshi static-
+coverage layer (Phase 4) will produce per-clause warnings that
+filter the synthetic steps out.
