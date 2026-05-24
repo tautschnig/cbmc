@@ -5712,6 +5712,15 @@ exprt python_convertert::convert_call(const jsont &expr)
                 exprt in_range = binary_relation_exprt{idx, ID_lt, length};
                 exprt elem = index_exprt{data, idx};
 
+                // PLR §6.2.4: generator expressions only iterate
+                // over the first `length` items. Pending checks
+                // emitted while converting the element expression
+                // (e.g. ZeroDivisionError on `1 % x`) must be
+                // guarded by `i < length`, otherwise they fire
+                // for buffer slots beyond the iterable's actual
+                // length (where x = 0 from zero-init), producing
+                // spurious exceptions on empty lists.
+                std::size_t pc_before = pending_checks.size();
                 exprt elt_expr = convert_expression(elt);
                 std::function<void(exprt &)> subst = [&](exprt &e)
                 {
@@ -5724,6 +5733,30 @@ exprt python_convertert::convert_call(const jsont &expr)
                       subst(op);
                 };
                 subst(elt_expr);
+                // Wrap each newly-added pending check in a guard:
+                // only fire if `i < length`. Substitute the iter
+                // symbol with the indexed element first.
+                for(std::size_t pi = pc_before; pi < pending_checks.size();
+                    pi++)
+                {
+                  codet &pc = pending_checks[pi];
+                  // Substitute iter symbol → data[i] inside the
+                  // check too.
+                  std::function<void(exprt &)> esubst = [&](exprt &e)
+                  {
+                    if(
+                      e.id() == ID_symbol &&
+                      to_symbol_expr(e).get_identifier() == iter_sym_id)
+                      e = elem;
+                    else
+                      for(auto &op : e.operands())
+                        esubst(op);
+                  };
+                  for(auto &op : pc.operands())
+                    esubst(op);
+                  // Wrap the entire pc as: if(in_range) { pc }
+                  pc = code_ifthenelset{in_range, std::move(pc)};
+                }
 
                 if(elt_expr.type() != bool_typet{})
                   elt_expr = safe_typecast(elt_expr, bool_typet{});
