@@ -299,31 +299,65 @@ codet python_convertert::convert_with(const jsont &stmt)
             json_string(json_member(json_member(ctx_expr, "func"), "id"));
           const struct_typet &cls_type = class_types[cls_name];
 
+          // PLR §8.5: 'with CM() as v' is equivalent to:
+          //     manager = CM()
+          //     v = manager.__enter__()
+          // The bound name receives __enter__'s return value, NOT
+          // the manager itself. Look up __enter__ on the class and,
+          // if it returns non-empty, use that return type as v's
+          // type. Materialise a temp manager and call __init__,
+          // then call __enter__ binding its result to v.
+          irep_idt enter_id{"python::" + cls_name + "::__enter__"};
+          const symbolt *enter_sym = symbol_table.lookup(enter_id);
+          typet v_type = cls_type;
+          if(enter_sym != nullptr)
+          {
+            const code_typet &et = to_code_type(enter_sym->type);
+            if(et.return_type().id() != ID_empty)
+              v_type = et.return_type();
+          }
+
+          // Manager temp (the context manager instance).
+          static unsigned with_mgr_ctr = 0;
+          std::string mgr_name =
+            "__with_mgr_" + std::to_string(with_mgr_ctr++);
+          std::string mgr_qname = qualify_name(mgr_name);
+          irep_idt mgr_id{mgr_qname};
+          if(symbol_table.lookup(mgr_id) == nullptr)
+          {
+            symbolt mgr_sym{mgr_id, cls_type, "python"};
+            mgr_sym.base_name = mgr_name;
+            mgr_sym.is_lvalue = true;
+            mgr_sym.is_state_var = true;
+            symbol_table.add(mgr_sym);
+          }
+          const symbolt &mgr = symbol_table.lookup_ref(mgr_id);
+
+          // Bound variable v with v_type (= __enter__'s return type).
           if(symbol_table.lookup(sym_id) == nullptr)
           {
-            symbolt new_sym{sym_id, cls_type, "python"};
+            symbolt new_sym{sym_id, v_type, "python"};
             new_sym.base_name = var_name;
             new_sym.is_lvalue = true;
             new_sym.is_state_var = true;
             symbol_table.add(new_sym);
           }
 
-          // Call __init__
+          // Call __init__ on manager
           irep_idt init_id{"python::" + cls_name + "::__init__"};
           const symbolt *init_sym = symbol_table.lookup(init_id);
           if(init_sym != nullptr)
           {
-            const symbolt &var_sym = symbol_table.lookup_ref(sym_id);
             exprt::operandst args;
-            args.push_back(address_of_exprt{var_sym.symbol_expr()});
+            args.push_back(address_of_exprt{mgr.symbol_expr()});
             const jsont &call_args = json_member(ctx_expr, "args");
             if(call_args.is_array())
             {
               for(const auto &a : as_array(call_args))
                 args.push_back(convert_expression(a));
             }
-            // Match argument types to parameter types
-            const auto &init_params = to_code_type(init_sym->type).parameters();
+            const auto &init_params =
+              to_code_type(init_sym->type).parameters();
             for(std::size_t ai = 0; ai < args.size() && ai < init_params.size();
                 ai++)
             {
@@ -333,6 +367,39 @@ codet python_convertert::convert_with(const jsont &stmt)
             side_effect_expr_function_callt call{
               init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
             block.add(code_expressiont{call});
+          }
+
+          // Call __enter__ and bind result to v.
+          if(enter_sym != nullptr)
+          {
+            const symbolt &v_sym = symbol_table.lookup_ref(sym_id);
+            exprt::operandst eargs;
+            eargs.push_back(address_of_exprt{mgr.symbol_expr()});
+            const code_typet &et = to_code_type(enter_sym->type);
+            if(et.return_type().id() == ID_empty)
+            {
+              // void __enter__: just call it, no binding.
+              side_effect_expr_function_callt call{
+                enter_sym->symbol_expr(),
+                std::move(eargs),
+                empty_typet{},
+                loc};
+              block.add(code_expressiont{call});
+            }
+            else
+            {
+              side_effect_expr_function_callt call{
+                enter_sym->symbol_expr(),
+                std::move(eargs),
+                et.return_type(),
+                loc};
+              exprt rhs = call;
+              if(rhs.type() != v_sym.type)
+                rhs = safe_typecast(rhs, v_sym.type);
+              code_frontend_assignt assign{v_sym.symbol_expr(), std::move(rhs)};
+              assign.add_source_location() = loc;
+              block.add(std::move(assign));
+            }
           }
         }
         else
