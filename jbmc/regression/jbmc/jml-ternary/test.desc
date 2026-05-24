@@ -1,0 +1,23 @@
+CORE
+JmlTernary
+--function JmlTernary.clampLow10 --jml-source src/main/java/JmlTernary.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML ternary expressions in postconditions.
+
+Pre-fix: jml_lowering.cpp's type-propagation pass handled
+arithmetic, relational and logical operators but NOT if_exprt
+(C-style ternary). When the parser built `cond ? a : b` with
+empty type (operands not yet resolved), the empty type would
+flow into downstream construction, causing solver type
+mismatches.
+
+Post-fix: if_exprt has its type set to operand[1]'s type
+(the then-branch) after operand recursion. The else-branch
+type must match (Java semantics) and is checked downstream.

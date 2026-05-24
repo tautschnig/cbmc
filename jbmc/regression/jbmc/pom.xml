@@ -156,6 +156,7 @@
         <module>jml-result</module>
         <module>jml-conjunction</module>
         <module>jml-aggregate</module>
+        <module>jml-ternary</module>
         <module>linkedhashmap-basic</module>
         <module>linkedhashmap-copy</module>
         <module>linkedlist-basic</module>
