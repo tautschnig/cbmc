@@ -560,7 +560,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   code_blockt body_block;
 
-  // For generators, initialize __gen_result.length = 0
+  // For generators, initialize __gen_result.length = 0 and zero
+  // the data buffer so list-equality with a literal works for
+  // values beyond the populated length (PLR §6.2.9 + §6.10.1).
   if(is_generator)
   {
     body_block.add(code_frontend_assignt{
@@ -569,6 +571,25 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         "length",
         signedbv_typet{64}},
       from_integer(0, signedbv_typet{64})});
+    // Zero the data array via an assignment to a fresh
+    // zero-initialised array of the same type.
+    if(return_type.id() == ID_struct)
+    {
+      const auto &rt = to_struct_type(return_type);
+      if(rt.components().size() >= 2)
+      {
+        const auto &data_t = to_array_type(rt.components()[1].type());
+        exprt::operandst zero_elems;
+        while(zero_elems.size() < PYTHON_MAX_LIST_LENGTH)
+          zero_elems.push_back(safe_zero(data_t.element_type()));
+        body_block.add(code_frontend_assignt{
+          member_exprt{
+            symbol_table.lookup_ref(gen_result_id).symbol_expr(),
+            "data",
+            data_t},
+          array_exprt{std::move(zero_elems), data_t}});
+      }
+    }
   }
 
   const jsont &body = json_member(stmt, "body");
