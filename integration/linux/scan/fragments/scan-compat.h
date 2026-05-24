@@ -106,8 +106,6 @@
 #endif
 #define __annotated(p, attr) 0
 
-#endif
-
 /* Linux 6.12's printk_ratelimited expands to a statement_expression
  * containing `static DEFINE_RATELIMIT_STATE(...)` — a static local
  * with a compound-literal initializer that includes a spinlock init.
@@ -120,6 +118,51 @@
 #  undef printk_ratelimited
 #endif
 #define printk_ratelimited(fmt, ...) do { } while (0)
+
+/* The same goto-cc-cant-fold-spinlock-init issue affects every
+ * subsystem that defines its own ratelimited-print helpers
+ * (dev_*_ratelimited, btrfs_*_rl, pr_*_ratelimited, etc.).  All
+ * of them ultimately expand DEFINE_RATELIMIT_STATE.  Override
+ * DEFINE_RATELIMIT_STATE itself so the static-storage struct
+ * gets implicit zero-initialisation instead of the spinlock
+ * compound literal.  Sound for goto-cc scans: ratelimit_state
+ * contents are only ever read by ___ratelimit() — they don't
+ * affect any property we check.
+ *
+ * To keep this override stable against the kernel's own
+ * `#define DEFINE_RATELIMIT_STATE` (which is in
+ * <linux/ratelimit_types.h> and lacks an #ifndef guard), we
+ * include ratelimit_types.h FIRST so its define runs, and
+ * THEN we undef + redefine.  ratelimit_types.h is a leaf
+ * header (no transitive struct task_struct etc.) so this
+ * doesn't perturb structural equivalence the way pulling in
+ * mutex.h/spinlock.h would. */
+#include <linux/ratelimit_types.h>
+#ifdef DEFINE_RATELIMIT_STATE
+#  undef DEFINE_RATELIMIT_STATE
+#endif
+#define DEFINE_RATELIMIT_STATE(name, interval_init, burst_init) \
+    struct ratelimit_state name
+#ifdef RATELIMIT_STATE_INIT
+#  undef RATELIMIT_STATE_INIT
+#endif
+#define RATELIMIT_STATE_INIT(name, interval_init, burst_init) \
+    { .interval = (interval_init), .burst = (burst_init) }
+#ifdef RATELIMIT_STATE_INIT_DISABLED
+#  undef RATELIMIT_STATE_INIT_DISABLED
+#endif
+#define RATELIMIT_STATE_INIT_DISABLED { .interval = 0, .burst = 0 }
+
+/* DEFINE_MUTEX / DEFINE_SPINLOCK / DEFINE_RWLOCK have the
+ * same non-foldable-compound-literal pathology, but we
+ * cannot safely override them here: the override would
+ * either (a) be shadowed by the kernel's own #define when
+ * <linux/mutex.h> is later loaded by the TU, or (b) require
+ * us to #include the kernel header from this file, which
+ * pulls in <linux/sched.h> early and triggers LIM-013
+ * struct task_struct mismatches at link time.  Files that
+ * use DEFINE_MUTEX at module scope therefore still hit the
+ * compile-fail path; this is recorded as a known limitation. */
 
 /* Linux 6.1+ added `bpf_jit_fill_hole_with_zero` as a callback
  * parameter to `bpf_prog_pack_alloc` from kernel/bpf/dispatcher.c.
@@ -150,3 +193,5 @@ void bpf_jit_fill_hole_with_zero(void *area, unsigned int size)
   (void)area;
   (void)size;
 }
+
+#endif /* INTEGRATION_LINUX_SCAN_FRAGMENTS_SCAN_COMPAT_H */

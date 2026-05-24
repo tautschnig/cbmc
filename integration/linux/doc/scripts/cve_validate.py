@@ -92,21 +92,21 @@ _MODULE_API_PATTERNS = [
 ]
 
 
-def _pick_module(file_path: str, function: str,
-                 kernel_tree: str | None) -> str | None:
-    """Choose a per-file-capable module by scanning the
-    function body for matching kernel-API calls."""
+def _pick_modules(file_path: str, function: str,
+                  kernel_tree: str | None,
+                  max_modules: int = 5) -> list[str]:
+    """Choose ALL plausible per-file-capable modules for a
+    function, ranked by API match count.  Returns up to
+    max_modules ordered most-relevant-first."""
     if not kernel_tree:
-        return None
+        return []
     src = Path(kernel_tree) / file_path
     if not src.exists():
-        return None
+        return []
     try:
         text = src.read_text(errors="replace")
     except OSError:
-        return None
-    # Function-body extraction is the same heuristic as
-    # triage_filter — find `function(` then match braces.
+        return []
     sys.path.insert(0, str(SCAN_DIR))
     try:
         from triage_filter import _function_body  # type: ignore
@@ -114,11 +114,7 @@ def _pick_module(file_path: str, function: str,
     except Exception:
         body = ""
     if not body:
-        # Fall back to scanning the whole file (still useful
-        # signal even if the function-extraction misses).
         body = text
-    # Score each module by the count of API matches in the
-    # function body.
     scores = []
     for mod, pat in _MODULE_API_PATTERNS:
         if mod not in _PERFILE_MODULES:
@@ -126,11 +122,16 @@ def _pick_module(file_path: str, function: str,
         n = len(re.findall(pat, body))
         if n > 0:
             scores.append((n, mod))
-    if not scores:
-        return None
-    # Highest-count wins.
     scores.sort(reverse=True)
-    return scores[0][1]
+    return [mod for _, mod in scores[:max_modules]]
+
+
+def _pick_module(file_path: str, function: str,
+                 kernel_tree: str | None) -> str | None:
+    """Choose the single best per-file-capable module.
+    Backwards-compatible thin wrapper around _pick_modules."""
+    mods = _pick_modules(file_path, function, kernel_tree)
+    return mods[0] if mods else None
 
 # Category → (module, [contract function args]).  When a
 # category maps to 'skip' the validation runner skips it.
@@ -166,13 +167,18 @@ class CveCase:
     function: str | None = None
     module: str | None = None
     kernel_tree: str | None = None
+    fix_hash: str | None = None
     verdict: str = "?"   # "candidate", "fp-filtered", "successful",
                           # "vacuous", "skipped", "noise", "error"
     note: str = ""
+    # Set when running in --invert mode and the inverse-
+    # patch application succeeded.  None otherwise.
+    inverted_file: str | None = None
 
 
-def _parse_patch(cve: str) -> tuple[str | None, str | None]:
-    """Return (file_path, function_name) for a CVE.
+def _parse_patch(cve: str) -> tuple[str | None, str | None,
+                                     str | None]:
+    """Return (file_path, function_name, fix_hash) for a CVE.
 
     Looks up the CVE JSON record under VULNS_ROOT, picks
     the first programFiles entry and the first 'lessThan'
@@ -185,15 +191,15 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None]:
     year = cve.split("-")[1] if "-" in cve else ""
     jpath = VULNS_ROOT / year / f"{cve}.json"
     if not jpath.exists():
-        return (None, None)
+        return (None, None, None)
     try:
         doc = json.loads(jpath.read_text(errors="replace"))
     except Exception:
-        return (None, None)
+        return (None, None, None)
     cna = doc.get("containers", {}).get("cna", {})
     affected = cna.get("affected", [])
     if not affected:
-        return (None, None)
+        return (None, None, None)
     # Get the first programFiles entry as our file_path.
     file_path = None
     for a in affected:
@@ -212,16 +218,16 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None]:
         if fix_hash:
             break
     if not fix_hash:
-        return (file_path, None)
+        return (file_path, None, None)
     cache_file = PATCH_CACHE / f"{fix_hash[:12]}.patch"
     if not cache_file.exists():
-        return (file_path, None)
+        return (file_path, None, fix_hash)
     try:
         text = cache_file.read_text(errors="replace")
     except OSError:
-        return (file_path, None)
+        return (file_path, None, fix_hash)
     if not text:
-        return (file_path, None)
+        return (file_path, None, fix_hash)
     # If file_path wasn't in the CVE JSON, take it from the
     # first diff --git header.
     if not file_path:
@@ -253,7 +259,7 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None]:
                     section, re.MULTILINE,
                 )
                 if hm:
-                    return (file_path, hm.group(1))
+                    return (file_path, hm.group(1), fix_hash)
     # Fallback: first @@ in entire patch.
     hm = re.search(
         r"^@@ [-0-9,+ ]+@@\s+(?:static\s+|extern\s+|const\s+|inline\s+)*"
@@ -262,7 +268,7 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None]:
         text, re.MULTILINE,
     )
     fn_name = hm.group(1) if hm else None
-    return (file_path, fn_name)
+    return (file_path, fn_name, fix_hash)
 
 
 def _find_file_in_tree(file_path: str,
@@ -274,14 +280,170 @@ def _find_file_in_tree(file_path: str,
     return None
 
 
-def _run_scan(case: CveCase, timeout: int = 240) -> CveCase:
+# ---------------------------------------------------------------------------
+# Inverse-patch support
+# ---------------------------------------------------------------------------
+
+def _extract_file_diff(patch_text: str, file_path: str) -> str | None:
+    """Return only the diff section for `file_path` from a
+    multi-file patch.  Returns None if the file is not in the
+    patch."""
+    pat = re.compile(r"^diff --git a/(\S+) ", re.MULTILINE)
+    sections = []
+    for m in pat.finditer(patch_text):
+        sections.append((m.start(), m.group(1)))
+    sections.append((len(patch_text), ""))
+    for i in range(len(sections) - 1):
+        start, fn = sections[i]
+        end = sections[i+1][0]
+        if fn == file_path:
+            return patch_text[start:end]
+    return None
+
+
+def _detect_state_and_apply(case: CveCase) -> tuple[bool, str, str]:
+    """Determine the kernel file's state relative to the
+    fix patch and produce a vuln-state (pre-fix) version.
+
+    Returns (ok, state, msg) where state is one of:
+       'already_vuln'     — file is pre-fix; no patching
+                            needed.
+       'reverted'         — file was post-fix; we reverted
+                            it to pre-fix in case.inverted_file.
+       'divergent'        — file diverges from both pre-fix
+                            and post-fix; skip.
+       'no_patch'         — no patch available.
+    """
+    import shutil
+    import tempfile
+    if not case.fix_hash or not case.file_path or not case.kernel_tree:
+        return (False, "no_patch", "missing fix_hash / file / tree")
+    cache_file = PATCH_CACHE / f"{case.fix_hash[:12]}.patch"
+    if not cache_file.exists():
+        return (False, "no_patch", f"patch cache miss: "
+                                   f"{cache_file.name}")
+    try:
+        patch_text = cache_file.read_text(errors="replace")
+    except OSError as e:
+        return (False, "no_patch", f"unreadable patch: {e}")
+    file_diff = _extract_file_diff(patch_text, case.file_path)
+    if not file_diff:
+        return (False, "no_patch", f"no diff for "
+                                   f"{case.file_path}")
+    src = Path(case.kernel_tree) / case.file_path
+    tmp = Path(tempfile.mkdtemp(prefix="cve_invert_"))
+    dest_dir = tmp / case.file_path
+    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest_dir)
+    diff_file = tmp / "fix.patch"
+    diff_file.write_text(file_diff)
+
+    # Try `patch -R --dry-run` first to detect the state.
+    dry = subprocess.run(
+        ["patch", "-R", "--dry-run", "-p1",
+         "--no-backup-if-mismatch", "-f", "-i", "fix.patch"],
+        cwd=tmp, capture_output=True, text=True,
+        timeout=60, check=False)
+    if dry.returncode == 0:
+        # File is post-fix; can revert to pre-fix.
+        real = subprocess.run(
+            ["patch", "-R", "-p1", "--no-backup-if-mismatch",
+             "-f", "-i", "fix.patch"],
+            cwd=tmp, capture_output=True, text=True,
+            timeout=60, check=False)
+        if real.returncode == 0:
+            case.inverted_file = str(dest_dir)
+            return (True, "reverted", "applied reverse patch")
+        shutil.rmtree(tmp, ignore_errors=True)
+        return (False, "divergent", f"reverse apply failed: "
+                                    f"{real.stderr.strip()[:120]}")
+    # Reverse-dry-run failed.  Check if forward-dry-run
+    # succeeds — if so, the file is already pre-fix
+    # (vulnerable).
+    fwd = subprocess.run(
+        ["patch", "--dry-run", "-p1", "--no-backup-if-mismatch",
+         "-f", "-i", "fix.patch"],
+        cwd=tmp, capture_output=True, text=True,
+        timeout=60, check=False)
+    shutil.rmtree(tmp, ignore_errors=True)
+    if fwd.returncode == 0:
+        # File is already pre-fix; the LTS tree's copy IS
+        # the vulnerable version.  No reversion needed.
+        return (True, "already_vuln",
+                "file is already pre-fix (vulnerable)")
+    return (False, "divergent",
+            "file diverges from both pre-fix and post-fix "
+            "states (likely backport variant)")
+
+
+def _apply_inverse(case: CveCase) -> tuple[bool, str]:
+    """Compatibility wrapper around _detect_state_and_apply.
+    Returns (ok, message).  case.inverted_file is set only
+    when state == 'reverted'."""
+    ok, state, msg = _detect_state_and_apply(case)
+    return (ok, f"{state}: {msg}")
+
+
+def _restore_backup(backup: Path) -> None:
+    """Restore the .pre-invert backup over the live file.
+
+    Idempotent — does nothing if backup doesn't exist."""
+    import shutil
+    if not backup.exists():
+        return
+    live = backup.with_suffix("")
+    # Drop the .pre-invert suffix to recover the original
+    # file name.
+    name = backup.name
+    if name.endswith(".pre-invert"):
+        live = backup.parent / name[:-len(".pre-invert")]
+    try:
+        shutil.move(str(backup), str(live))
+    except OSError:
+        pass
+
+
+def _run_scan(case: CveCase, timeout: int = 240,
+              invert: bool = False) -> CveCase:
     """Run scan-per-file.sh on the case and update the
-    verdict."""
+    verdict.
+
+    When invert=True, applies the CVE's fix patch in reverse
+    to a temporary copy of the kernel file, swaps it into
+    the kernel tree for the duration of the scan, and
+    restores the original on the way out.  This converts a
+    fix-direction kernel into a vuln-direction one for the
+    one specific file."""
     if (case.module is None or case.kernel_tree is None
             or case.file_path is None or case.function is None):
         case.verdict = "skipped"
         case.note = "missing module/tree/file/function mapping"
         return case
+
+    # If inverting, determine the file's state and (if
+    # post-fix) apply the patch in reverse to a temp copy.
+    backup = None
+    state = "n/a"
+    if invert:
+        ok, state, msg = _detect_state_and_apply(case)
+        if not ok:
+            case.verdict = "skipped"
+            case.note = f"{state}: {msg}"
+            return case
+        if state == "reverted":
+            # Swap the inverted file into the kernel tree.
+            live = Path(case.kernel_tree) / case.file_path
+            backup = live.with_suffix(live.suffix + ".pre-invert")
+            try:
+                import shutil
+                shutil.copy2(live, backup)
+                shutil.copy2(case.inverted_file, live)
+            except OSError as e:
+                case.verdict = "error"
+                case.note = f"swap failed: {e}"
+                return case
+        # else state == 'already_vuln' — file is already
+        # in the desired state; no swap.
     cmd = [
         str(SCAN_PER_FILE),
         case.module,
@@ -299,13 +461,33 @@ def _run_scan(case: CveCase, timeout: int = 240) -> CveCase:
     except subprocess.TimeoutExpired:
         case.verdict = "timeout"
         case.note = f"timeout > {timeout}s"
+        if backup:
+            _restore_backup(backup)
         return case
+    finally:
+        # Always restore the backup, even on success path
+        # below (we'll do it after computing verdict so
+        # subsequent triage_filter classify() also runs
+        # against the inverted file).
+        pass
     out = (r.stdout or "") + (r.stderr or "")
     rc = r.returncode
+    state_tag = f" [state={state}]" if invert and state != "n/a" else ""
     # scan-per-file.sh exit codes (cf. scan.py docstring).
     if rc == 0:
         case.verdict = "successful"
-        case.note = "contract holds (likely fix backported)"
+        if invert and state == "already_vuln":
+            case.note = (
+                "contract holds even though file is "
+                "vulnerable — catalog MISSED the bug"
+                + state_tag)
+        elif invert and state == "reverted":
+            case.note = (
+                "contract holds after reverting fix — "
+                "catalog MISSED the bug" + state_tag)
+        else:
+            case.note = ("contract holds (likely fix "
+                         "backported)" + state_tag)
     elif rc == 10:
         case.verdict = "candidate"
         # If the triage filter says fp, we'll downgrade.
@@ -319,12 +501,15 @@ def _run_scan(case: CveCase, timeout: int = 240) -> CveCase:
             )
             if v.shape:
                 case.verdict = "fp-filtered"
-                case.note = f"filtered: {v.shape} ({v.reason})"
+                case.note = (f"filtered: {v.shape} "
+                             f"({v.reason})" + state_tag)
             else:
                 # Genuine candidate — likely matches the CVE.
-                case.note = "contract violation reported"
+                case.note = ("contract violation reported"
+                             + state_tag)
         except Exception as e:
-            case.note = f"contract violation; filter err: {e}"
+            case.note = (f"contract violation; filter err: "
+                         f"{e}" + state_tag)
     elif rc == 11:
         case.verdict = "noise"
         case.note = "only built-in CBMC checks fired"
@@ -346,6 +531,8 @@ def _run_scan(case: CveCase, timeout: int = 240) -> CveCase:
     else:
         case.verdict = "error"
         case.note = f"unexpected exit {rc}"
+    if backup:
+        _restore_backup(backup)
     return case
 
 
@@ -355,6 +542,12 @@ def main() -> int:
                     help="number of CVEs to sample")
     ap.add_argument("--timeout", type=int, default=240)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--invert", action="store_true",
+                    help="apply the CVE's fix in reverse "
+                         "before scanning (vuln direction)")
+    ap.add_argument("--modules-per-cve", type=int, default=1,
+                    help="try the top-N most-relevant "
+                         "per-file modules per CVE (default 1)")
     ap.add_argument("--out-csv", default="/tmp/cve-validate-results.csv")
     ap.add_argument("--out-md", default="/tmp/cve-validate-results.md")
     ap.add_argument("--kernel-trees", default=(
@@ -390,24 +583,27 @@ def main() -> int:
             if accepted >= target_per_cat:
                 break
             cve = r["cve"]
-            fp, fn = _parse_patch(cve)
+            fp, fn, fh = _parse_patch(cve)
             if not fp or not fn:
                 continue
             kt = _find_file_in_tree(fp, kernel_trees)
             if not kt:
                 continue
-            mod = _pick_module(fp, fn, kt)
-            if not mod:
+            mods = _pick_modules(fp, fn, kt,
+                                 max_modules=args.modules_per_cve)
+            if not mods:
                 continue
-            sampled.append(CveCase(
-                cve=cve, category=cat,
-                summary=r.get("summary", "")[:120],
-                file_path=fp, function=fn,
-                module=mod, kernel_tree=kt,
-            ))
+            for mod in mods:
+                sampled.append(CveCase(
+                    cve=cve, category=cat,
+                    summary=r.get("summary", "")[:120],
+                    file_path=fp, function=fn,
+                    module=mod, kernel_tree=kt,
+                    fix_hash=fh,
+                ))
             accepted += 1
     rng.shuffle(sampled)
-    sampled = sampled[:args.n]
+    sampled = sampled[:args.n * max(1, args.modules_per_cve)]
     cases = sampled
     runnable = list(cases)
     print(f"sample={len(cases)} runnable={len(runnable)}")
@@ -417,7 +613,7 @@ def main() -> int:
         print(f"[{i}/{len(runnable)}] {c.cve} {c.category} "
               f"{c.module} {c.file_path}:{c.function} ...",
               flush=True)
-        _run_scan(c, args.timeout)
+        _run_scan(c, args.timeout, invert=args.invert)
         print(f"    verdict={c.verdict}  {c.note[:80]}")
 
     # Mark the un-runnable.
