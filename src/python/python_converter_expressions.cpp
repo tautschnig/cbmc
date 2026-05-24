@@ -154,6 +154,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       member_exprt keys{value, "keys", keys_type};
       member_exprt vals{value, "values", vals_type};
 
+      // PLR §6.10.1: when the key type is python_string, struct
+      // equality compares the data POINTERS, which differ between
+      // a literal "0" and a runtime-constructed str(0) even when
+      // the contents match. Use the string solver for content
+      // equality so dict comprehensions like {str(i): v for ...}
+      // can be looked up via d["0"].
+      bool keys_are_strings = is_python_string_type(keys_type.element_type());
+
       // Scan: result = values[i] where keys[i] == slice
       exprt result =
         safe_zero(vals_type.element_type()); // default if not found
@@ -165,7 +173,23 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         exprt key_i = index_exprt{keys, idx};
         if(key_i.type() != slice.type())
           key_i = safe_typecast(key_i, slice.type());
-        exprt match = equal_exprt{key_i, slice};
+        exprt match;
+        if(keys_are_strings && is_python_string_type(slice.type()))
+        {
+          match = emit_string_bool_function(
+            ID_cprover_string_equal_func,
+            key_i,
+            slice,
+            symbol_table,
+            pending_checks);
+          // emit_string_bool_function returns c_bool — coerce
+          if(match.type() != bool_typet{})
+            match = typecast_exprt{std::move(match), bool_typet{}};
+        }
+        else
+        {
+          match = equal_exprt{key_i, slice};
+        }
         exprt cond = and_exprt{in_range, match};
         result = if_exprt{cond, index_exprt{vals, idx}, result};
         found = or_exprt{found, cond};

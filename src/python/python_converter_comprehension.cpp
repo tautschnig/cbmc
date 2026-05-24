@@ -601,6 +601,61 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     exprt v = convert_expression(val_expr_json);
     subst(k);
     subst(v);
+    // PLR §6.2.7: when a dict-comp key/value is a function call
+    // whose only non-constant argument was the iteration variable,
+    // the post-substitution expression is a side-effect (e.g.
+    // {__string_len, __string_ptr} for str(i)) that no longer
+    // refers to the constant. To recover the constant fold, when
+    // the key was the AST `str(<iter-var>)` we re-convert it with
+    // the iteration variable replaced by its concrete constant.
+    auto try_constant_fold_call = [&](
+                                    const jsont &call_ast,
+                                    const std::vector<std::pair<irep_idt, exprt>>
+                                      &binds) -> exprt {
+      if(!is_node_type(call_ast, "Call"))
+        return nil_exprt{};
+      const jsont &func = json_member(call_ast, "func");
+      if(!is_node_type(func, "Name"))
+        return nil_exprt{};
+      std::string fn_name = json_string(json_member(func, "id"));
+      const jsont &args_n = json_member(call_ast, "args");
+      if(!args_n.is_array() || as_array(args_n).size() != 1)
+        return nil_exprt{};
+      const jsont &arg = *as_array(args_n).begin();
+      // Only support an argument that is the iteration variable
+      // directly. (Compound expressions like str(i+1) would
+      // require recursive AST evaluation.)
+      if(!is_node_type(arg, "Name"))
+        return nil_exprt{};
+      std::string aname = json_string(json_member(arg, "id"));
+      irep_idt qid{qualify_name(aname)};
+      const exprt *bound = nullptr;
+      for(const auto &[sid, val] : binds)
+      {
+        if(sid == qid)
+        {
+          bound = &val;
+          break;
+        }
+      }
+      if(bound == nullptr || !bound->is_constant())
+        return nil_exprt{};
+      mp_integer iv;
+      if(
+        bound->type().id() != ID_signedbv ||
+        to_integer(to_constant_expr(*bound), iv))
+        return nil_exprt{};
+      // Fold known builtins.
+      if(fn_name == "str")
+        return python_string_literal(integer2string(iv));
+      return nil_exprt{};
+    };
+    if(exprt folded_k = try_constant_fold_call(key_expr_json, bindings);
+       folded_k.is_not_nil())
+      k = std::move(folded_k);
+    if(exprt folded_v = try_constant_fold_call(val_expr_json, bindings);
+       folded_v.is_not_nil())
+      v = std::move(folded_v);
     pairs.emplace_back(std::move(k), std::move(v));
   }
 
