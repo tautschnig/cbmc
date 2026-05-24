@@ -157,6 +157,10 @@
         <module>jml-conjunction</module>
         <module>jml-aggregate</module>
         <module>jml-ternary</module>
+        <module>jml-forall</module>
+        <module>jml-exists</module>
+        <module>jml-this-field</module>
+        <module>jml-inherited-field</module>
         <module>linkedhashmap-basic</module>
         <module>linkedhashmap-copy</module>
         <module>linkedlist-basic</module>

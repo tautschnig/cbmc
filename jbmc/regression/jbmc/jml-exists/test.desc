@@ -1,0 +1,25 @@
+KNOWNBUG
+JmlExists
+--function JmlExists.hasZero --jml-source src/main/java/JmlExists.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+KNOWNBUG: \exists in JML preconditions / postconditions.
+
+Sibling of jml-forall: the parser builds exists_exprt nodes,
+but symex doesn't currently bind the quantifier variable. The
+failure mode is identical:
+
+    Invariant check failed
+    Condition: found_l0
+    Reason: level0: failed to find i
+
+A skolemization pass that turns `\exists v. P(v)` into
+`P(witness_v)` (where `witness_v` is a nondet int constrained
+by the range) would unblock this. See jml-forall for the
+broader options.

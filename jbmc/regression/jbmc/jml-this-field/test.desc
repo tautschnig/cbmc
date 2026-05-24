@@ -1,0 +1,34 @@
+KNOWNBUG
+JmlThisField
+--function JmlThisField.bump --jml-source src/main/java/JmlThisField.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+KNOWNBUG: this.field resolution in JML expressions.
+
+The JML parser produces a `jml_field_access` exprt for
+`this.counter`, but resolve_jml_expr in jml_lowering.cpp only
+handles unqualified symbol_exprt / static-field paths. The
+`jml_field_access` node never gets resolved, so its type stays
+empty and downstream construction fails with:
+
+    Condition: lhs.type() == rhs.type()
+    Reason: assignments must be type consistent, got ...
+
+To unblock this test, the resolver needs:
+  1. Recognise `this` (the special token) as the method's
+     instance-method `this` parameter (typically arg0a in
+     JBMC's name scheme for instance methods).
+  2. Resolve `jml_field_access(this, "counter")` to a
+     member_exprt(this_deref, "counter") with the field's
+     declared type.
+  3. The same path can serve `obj.field.subfield` chains by
+     recursing.
+
+Until that lands, instance-field references in JML expressions
+remain unsupported.

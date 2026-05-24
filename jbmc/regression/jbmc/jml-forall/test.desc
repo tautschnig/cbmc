@@ -1,0 +1,31 @@
+KNOWNBUG
+JmlForall
+--function JmlForall.identity --jml-source src/main/java/JmlForall.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+KNOWNBUG: \forall in JML preconditions / postconditions.
+
+The JML parser correctly produces forall_exprt nodes, but JBMC's
+symex pipeline doesn't currently know how to bind the
+quantifier's bound variable. The error manifests as:
+
+    Invariant check failed
+    Condition: found_l0
+    Reason: level0: failed to find i
+
+To unblock this test, JBMC needs one of:
+  (a) Skolemization of universally-quantified preconditions
+      (replace forall var. P(var) with assume P(nondet_var())).
+  (b) Bounded expansion analogous to the \sum/\product handling
+      in jml_lowering.cpp, when the range bounds are constant.
+  (c) A symex-level lowering of forall/exists to native CBMC
+      quantifier instructions.
+
+Until one of those lands, this test stays KNOWNBUG so the
+intent is captured but the suite stays green.
