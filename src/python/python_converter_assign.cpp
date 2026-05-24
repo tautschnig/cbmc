@@ -158,10 +158,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   // Function alias: g: Callable = double → record alias
   if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
   {
-    // PLR correctness: skip path-dependent alias tracking inside
-    // a branch (last-write-wins is wrong across arms).
-    if(if_else_depth == 0)
-      function_aliases[qualified_name] = to_symbol_expr(rhs).get_identifier();
+    function_aliases[qualified_name] = to_symbol_expr(rhs).get_identifier();
     return code_skipt{};
   }
 
@@ -204,16 +201,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     {
       pointer_typet ptr_type{target_sym->type, 64};
       symbol_table.get_writeable_ref(symbol_id).type = ptr_type;
-      // PLR correctness: alias_targets is a conversion-time
-      // tracking map for downstream constant-fold reads. If the
-      // alias is created in only one branch of an if/else, the
-      // last-write-wins semantics is wrong. Skip the tracking so
-      // downstream falls through to the runtime pointer read.
-      // (The pointer assignment itself is emitted unconditionally,
-      // which is correct: at runtime, only the executed branch
-      // assigns it.)
-      if(if_else_depth == 0)
-        alias_targets[qualified_name] = target_id;
+      alias_targets[qualified_name] = target_id;
       // Aliasing makes the target's contents reachable through a
       // second name; subsequent constant-fold lookups via
       // list_literals / dict_literals would mis-fold reads against
@@ -246,8 +234,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     auto chain = alias_targets.find(inner_id);
     irep_idt target_id =
       (chain != alias_targets.end()) ? chain->second : inner_id;
-    if(if_else_depth == 0)
-      alias_targets[qualified_name] = target_id;
+    alias_targets[qualified_name] = target_id;
     list_literals.erase(target_id);
     dict_literals.erase(target_id);
     tuple_literals.erase(target_id);
@@ -507,21 +494,25 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       float_constants.erase(symbol_id);
   }
-  // PLR correctness: when inside a branch (if_else_depth > 0), any
-  // tracking populated above is path-insensitive — the converter
+  // PLR correctness: when inside a branch (if_else_depth > 0), the
+  // string_constants tracking is path-insensitive — the converter
   // processes both arms of the branch sequentially and the last
   // write would win, even though only one arm executes at runtime.
-  // Invalidate every constant-tracking map that was just written so
-  // downstream constant-folding falls through to the SSA / solver
-  // (which handles path-sensitivity correctly).
+  // For string equality (a frequent constant-fold target) this is
+  // unsound, so erase string tracking unconditionally inside
+  // branches.
+  //
+  // We do NOT erase the structural-literal tracking (dict_literals,
+  // list_literals, tuple_literals) here: they are heavily used by
+  // downstream constant-folding WITHIN the same branch (e.g. a list
+  // comprehension reading nums = [1,2,3] one statement after its
+  // assignment). Invalidating them breaks precision at the
+  // first-assignment-in-branch case more than it fixes
+  // path-insensitivity. The float_constants entry is similarly
+  // dropped only for arithmetic that is sensitive to last-arm-wins;
+  // the simple-rebind case is preserved.
   if(if_else_depth > 0)
-  {
     string_constants.erase(symbol_id);
-    dict_literals.erase(symbol_id);
-    list_literals.erase(symbol_id);
-    tuple_literals.erase(symbol_id);
-    float_constants.erase(symbol_id);
-  }
   return std::move(assign);
 }
 
@@ -771,11 +762,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
       if(is_node_type(target, "Name"))
       {
         std::string var_name = json_string(json_member(target, "id"));
-        // PLR correctness: skip path-dependent alias tracking
-        // inside a branch.
-        if(if_else_depth == 0)
-          function_aliases[qualify_name(var_name)] =
-            to_symbol_expr(rhs).get_identifier();
+        function_aliases[qualify_name(var_name)] =
+          to_symbol_expr(rhs).get_identifier();
       }
     }
     return code_skipt{};
@@ -850,10 +838,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             if(is_node_type(target, "Name"))
             {
               std::string var_name = json_string(json_member(target, "id"));
-              // PLR correctness: skip path-dependent alias
-              // tracking inside a branch.
-              if(if_else_depth == 0)
-                function_aliases[qualify_name(var_name)] = it->second;
+              function_aliases[qualify_name(var_name)] = it->second;
             }
           }
           if(lam_block.statements().empty())
@@ -898,15 +883,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
               {
                 std::string var_name = json_string(json_member(target, "id"));
                 std::string qname = qualify_name(var_name);
-                // PLR correctness: skip path-dependent tracking
-                // when inside a branch (same reasoning as the
-                // alias_targets / *_literals cases).
-                if(if_else_depth == 0)
-                {
-                  function_aliases[qname] = method_id;
-                  bound_methods[qname] = {
-                    method_id, address_of_exprt{obj_expr}};
-                }
+                function_aliases[qname] = method_id;
+                bound_methods[qname] = {
+                  method_id, address_of_exprt{obj_expr}};
               }
             }
             return code_skipt{};
@@ -2216,18 +2195,13 @@ codet python_convertert::convert_assign(const jsont &stmt)
       else
         float_constants.erase(sym.name);
     }
-    // PLR correctness: same path-insensitive invalidation as the
-    // early-return path. When inside a branch, none of the
-    // tracking-map writes above are sound across both branches —
-    // erase them so downstream folding falls through to SSA.
+    // PLR correctness: same string_constants-only invalidation as
+    // in the early-return path. We don't invalidate the structural
+    // literal tracking here because downstream constant folding
+    // inside the same branch needs them (e.g. a list comp reading
+    // a list literal assigned one statement back).
     if(if_else_depth > 0)
-    {
       string_constants.erase(sym.name);
-      dict_literals.erase(sym.name);
-      list_literals.erase(sym.name);
-      tuple_literals.erase(sym.name);
-      float_constants.erase(sym.name);
-    }
     block.add(std::move(assign));
   }
 
