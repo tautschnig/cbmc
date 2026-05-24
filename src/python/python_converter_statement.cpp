@@ -759,6 +759,16 @@ codet python_convertert::convert_statement(const jsont &stmt)
     for(const auto &c : as_array(cases))
       case_list.push_back(&c);
 
+    // PLR §8.6 control-flow correctness: snapshot tracking before
+    // the first case, restore between cases so each arm is
+    // processed against the pre-match state, capture per-arm
+    // post-state, and merge all arm states at the end (after the
+    // chain is built). The chain itself iterates reverse-then-
+    // wrap, which doesn't affect arm-state capture as long as
+    // each arm's body is processed against a restored snapshot.
+    tracking_snapshott pre_match_tracking = snapshot_tracking();
+    std::vector<tracking_snapshott> arm_states;
+
     for(auto it = case_list.rbegin(); it != case_list.rend(); ++it)
     {
       const jsont &match_case = **it;
@@ -768,9 +778,11 @@ codet python_convertert::convert_statement(const jsont &stmt)
 
       auto [cond, binds] = compile_pattern(pattern, subject);
       code_blockt body_block;
-      // PLR §8.6: match case bodies are branches — increment
-      // if_else_depth so path-insensitive tracking (string_constants,
-      // etc.) is invalidated for variables assigned inside.
+      // Restore tracking to pre-match so this arm starts fresh.
+      restore_tracking(pre_match_tracking);
+      // PLR §8.6: match case bodies are branches — bump
+      // if_else_depth so legacy-callers of the path-insensitive
+      // gate are still inhibited inside.
       if_else_depth++;
       if(body.is_array())
       {
@@ -778,6 +790,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
           body_block.add(convert_statement(s));
       }
       if_else_depth--;
+      arm_states.push_back(snapshot_tracking());
       // When the pattern matches, run bindings. Then check
       // the guard — if it fails, fall through to the rest of
       // the chain (PLR 10.6: 'If the guard evaluates as
@@ -806,6 +819,28 @@ codet python_convertert::convert_statement(const jsont &stmt)
           matched.add(st);
       }
       chain = code_ifthenelset{cond, std::move(matched), std::move(chain)};
+    }
+    // Merge arm states: starting from the first arm's post-state,
+    // pairwise merge with the rest. This produces a final
+    // tracking state where only entries that ALL arms agree on
+    // survive. If there's only one arm, merge it with the
+    // pre-match snapshot (the case where the match doesn't fire
+    // is equivalent to the snapshot continuing unchanged).
+    if(arm_states.empty())
+      restore_tracking(pre_match_tracking);
+    else if(arm_states.size() == 1)
+      merge_tracking(arm_states[0], pre_match_tracking);
+    else
+    {
+      // Initialise the live maps from arm_states[0], then merge
+      // with each subsequent arm via merge_tracking (which
+      // overwrites).
+      restore_tracking(arm_states[0]);
+      for(std::size_t i = 1; i < arm_states.size(); i++)
+      {
+        tracking_snapshott current = snapshot_tracking();
+        merge_tracking(current, arm_states[i]);
+      }
     }
     result = std::move(chain);
   }

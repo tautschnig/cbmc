@@ -499,6 +499,79 @@ exprt python_convertert::build_string_literal(const std::string &s)
   return struct_exprt{{length, content}, python_string_type()};
 }
 
+// PLR control-flow correctness: per-branch snapshot + merge for
+// conversion-time constant-tracking maps. See the declaration of
+// tracking_snapshott in python_converter.h for the full rationale.
+
+python_convertert::tracking_snapshott
+python_convertert::snapshot_tracking() const
+{
+  tracking_snapshott snap;
+  snap.string_constants = string_constants;
+  snap.dict_literals = dict_literals;
+  snap.list_literals = list_literals;
+  snap.tuple_literals = tuple_literals;
+  snap.float_constants = float_constants;
+  snap.alias_targets = alias_targets;
+  return snap;
+}
+
+void python_convertert::restore_tracking(const tracking_snapshott &snap)
+{
+  string_constants = snap.string_constants;
+  dict_literals = snap.dict_literals;
+  list_literals = snap.list_literals;
+  tuple_literals = snap.tuple_literals;
+  float_constants = snap.float_constants;
+  alias_targets = snap.alias_targets;
+}
+
+namespace
+{
+/// Merge two maps: keep the entry under key K only when both maps
+/// have it AND the values compare equal. Used by merge_tracking
+/// to discard entries that disagree across branches. Keys present
+/// in only one map are dropped (path-dependent).
+template <typename K, typename V, typename Eq>
+std::map<K, V>
+merge_maps(const std::map<K, V> &a, const std::map<K, V> &b, Eq eq)
+{
+  std::map<K, V> out;
+  for(const auto &kv : a)
+  {
+    auto it = b.find(kv.first);
+    if(it != b.end() && eq(kv.second, it->second))
+      out.insert(kv);
+  }
+  return out;
+}
+} // namespace
+
+void python_convertert::merge_tracking(
+  const tracking_snapshott &state0,
+  const tracking_snapshott &state1)
+{
+  string_constants = merge_maps(
+    state0.string_constants,
+    state1.string_constants,
+    [](const std::string &x, const std::string &y) { return x == y; });
+  auto expr_eq = [](const exprt &x, const exprt &y) { return x == y; };
+  dict_literals =
+    merge_maps(state0.dict_literals, state1.dict_literals, expr_eq);
+  list_literals =
+    merge_maps(state0.list_literals, state1.list_literals, expr_eq);
+  tuple_literals =
+    merge_maps(state0.tuple_literals, state1.tuple_literals, expr_eq);
+  float_constants = merge_maps(
+    state0.float_constants,
+    state1.float_constants,
+    [](double x, double y) { return x == y; });
+  alias_targets = merge_maps(
+    state0.alias_targets,
+    state1.alias_targets,
+    [](const irep_idt &x, const irep_idt &y) { return x == y; });
+}
+
 /// Back-end-dispatching Python string literal. See
 /// python-string-phase2-backend-abstraction.md.
 exprt python_convertert::python_string_literal(const std::string &s)

@@ -134,6 +134,11 @@ codet python_convertert::convert_if(const jsont &stmt)
 
   // Save version state before branches
   auto saved_versions = variable_versions;
+  // PLR control-flow correctness: capture the conversion-time
+  // tracking maps before processing either arm, so each arm sees
+  // the pre-branch state and we can merge their post-states at
+  // the join. See tracking_snapshott in python_converter.h.
+  tracking_snapshott pre_branch_tracking = snapshot_tracking();
   if_else_depth++;
 
   // Path-sensitive truthiness: when the test is a bare Name
@@ -222,6 +227,11 @@ codet python_convertert::convert_if(const jsont &stmt)
   // Save then-branch versions, restore for else branch
   auto then_versions = variable_versions;
   variable_versions = saved_versions;
+  // Capture the then-branch's post-state of the tracking maps,
+  // then restore the pre-branch snapshot before processing the
+  // else branch so it starts from the same state.
+  tracking_snapshott then_tracking = snapshot_tracking();
+  restore_tracking(pre_branch_tracking);
 
   // Convert orelse (may be empty, elif chain, or else block)
   const jsont &orelse = json_member(stmt, "orelse");
@@ -235,6 +245,12 @@ codet python_convertert::convert_if(const jsont &stmt)
     // then-branch version (the else branch's version is only live on
     // the else path, which CBMC handles via the if-then-else structure)
     variable_versions = then_versions;
+    // Capture the else-branch's post-state and merge it with the
+    // then-branch's. After merge_tracking, the live tracking maps
+    // contain only entries that both arms agree on; disagreements
+    // are dropped, falling through to the SSA-aware solver.
+    tracking_snapshott else_tracking = snapshot_tracking();
+    merge_tracking(then_tracking, else_tracking);
 
     if_else_depth--;
 
@@ -251,6 +267,11 @@ codet python_convertert::convert_if(const jsont &stmt)
   else
   {
     variable_versions = then_versions;
+    // No else branch: the else-arm post-state equals the
+    // pre-branch snapshot. Merge the then-arm's tracking with
+    // that snapshot so entries that survive only on the
+    // then-path are dropped (they're path-dependent).
+    merge_tracking(then_tracking, pre_branch_tracking);
     if_else_depth--;
 
     code_ifthenelset if_stmt{test, std::move(then_block)};

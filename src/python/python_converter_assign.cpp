@@ -494,25 +494,6 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       float_constants.erase(symbol_id);
   }
-  // PLR correctness: when inside a branch (if_else_depth > 0), the
-  // string_constants tracking is path-insensitive — the converter
-  // processes both arms of the branch sequentially and the last
-  // write would win, even though only one arm executes at runtime.
-  // For string equality (a frequent constant-fold target) this is
-  // unsound, so erase string tracking unconditionally inside
-  // branches.
-  //
-  // We do NOT erase the structural-literal tracking (dict_literals,
-  // list_literals, tuple_literals) here: they are heavily used by
-  // downstream constant-folding WITHIN the same branch (e.g. a list
-  // comprehension reading nums = [1,2,3] one statement after its
-  // assignment). Invalidating them breaks precision at the
-  // first-assignment-in-branch case more than it fixes
-  // path-insensitivity. The float_constants entry is similarly
-  // dropped only for arithmetic that is sensitive to last-arm-wins;
-  // the simple-rebind case is preserved.
-  if(if_else_depth > 0)
-    string_constants.erase(symbol_id);
   return std::move(assign);
 }
 
@@ -2195,13 +2176,6 @@ codet python_convertert::convert_assign(const jsont &stmt)
       else
         float_constants.erase(sym.name);
     }
-    // PLR correctness: same string_constants-only invalidation as
-    // in the early-return path. We don't invalidate the structural
-    // literal tracking here because downstream constant folding
-    // inside the same branch needs them (e.g. a list comp reading
-    // a list literal assigned one statement back).
-    if(if_else_depth > 0)
-      string_constants.erase(sym.name);
     block.add(std::move(assign));
   }
 
@@ -2369,15 +2343,9 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       if(lv.has_value() && rv.has_value())
       {
         std::string result = lv.value() + rv.value();
-        // Update tracking — but invalidate when in branch
+        // Update tracking
         if(lhs.id() == ID_symbol)
-        {
-          irep_idt lid = to_symbol_expr(lhs).get_identifier();
-          if(if_else_depth > 0)
-            string_constants.erase(lid);
-          else
-            string_constants[lid] = result;
-        }
+          string_constants[to_symbol_expr(lhs).get_identifier()] = result;
         return code_frontend_assignt{lhs, python_string_literal(result)};
       }
     }
