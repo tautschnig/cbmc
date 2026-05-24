@@ -2091,6 +2091,55 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
       return std::move(block);
     }
   }
+  // PLR §6.2.9: 'yield from G()' delegates: each value yielded
+  // by G is yielded by the enclosing generator. Equivalent to:
+  //     for v in G():
+  //         yield v
+  // We model this by evaluating G() (which produces a list under
+  // our eager generator model) and appending each element to
+  // __gen_result.
+  if(
+    is_node_type(value, "YieldFrom") && !current_function.empty() &&
+    generator_functions.count(current_function))
+  {
+    const jsont &yf_val = json_member(value, "value");
+    exprt src = convert_expression(yf_val);
+    std::string grn = "__gen_result_" + current_function;
+    std::string grq = qualify_name(grn);
+    irep_idt gri{grq};
+    const symbolt *grs = symbol_table.lookup(gri);
+    if(
+      !src.is_nil() && is_python_list_type(src.type()) && grs != nullptr)
+    {
+      const auto &dst_list_st = to_struct_type(grs->type);
+      const auto &dst_data_type =
+        to_array_type(dst_list_st.components()[1].type());
+      member_exprt dst_data{grs->symbol_expr(), "data", dst_data_type};
+      member_exprt dst_len{grs->symbol_expr(), "length", signedbv_typet{64}};
+      const auto &src_list_st = to_struct_type(src.type());
+      const auto &src_data_type =
+        to_array_type(src_list_st.components()[1].type());
+      member_exprt src_data{src, "data", src_data_type};
+      member_exprt src_len{src, "length", signedbv_typet{64}};
+      code_blockt block;
+      // For each i in [0, MAX), if i < src_len, append src.data[i].
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+      {
+        exprt idx = from_integer(i, signedbv_typet{64});
+        exprt elem = index_exprt{src_data, idx};
+        if(elem.type() != dst_data_type.element_type())
+          elem = safe_typecast(elem, dst_data_type.element_type());
+        code_blockt append;
+        append.add(
+          code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
+        append.add(code_frontend_assignt{
+          dst_len, plus_exprt{dst_len, from_integer(1, signedbv_typet{64})}});
+        block.add(code_ifthenelset{
+          binary_relation_exprt{idx, ID_lt, src_len}, std::move(append)});
+      }
+      return std::move(block);
+    }
+  }
 
   // Check for __CPROVER_assume calls
   if(is_node_type(value, "Call"))
