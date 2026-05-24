@@ -919,39 +919,70 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         }
         // Also scan the decorator's body AST for a nested FunctionDef
         // named "wrapper" and use whatever symbol name it got.
+        // PLR §8.7: decorators may be defined inside another
+        // function (e.g. a test harness that defines `my_dec`
+        // and then `@my_dec def f(): ...` all inside one
+        // outer function). We therefore search the parse tree
+        // RECURSIVELY for the decorator's FunctionDef node,
+        // not just the module body.
+        std::function<const jsont *(const jsont &, const std::string &)>
+          find_func_def =
+            [&](const jsont &scope_body,
+                const std::string &name) -> const jsont * {
+          if(!scope_body.is_array())
+            return nullptr;
+          for(const auto &s : as_array(scope_body))
+          {
+            if(
+              is_node_type(s, "FunctionDef") &&
+              json_string(json_member(s, "name")) == name)
+              return &s;
+            // Recurse into nested function bodies to find
+            // decorators defined inside other functions.
+            if(is_node_type(s, "FunctionDef") || is_node_type(s, "ClassDef"))
+            {
+              const jsont &b = json_member(s, "body");
+              if(const jsont *r = find_func_def(b, name))
+                return r;
+            }
+            // Recurse into if/for/while/try bodies too, in case
+            // the decorator is defined inside a control-flow block.
+            for(const std::string &fld :
+                std::vector<std::string>{
+                  "body", "orelse", "finalbody", "handlers"})
+            {
+              const jsont &fb = json_member(s, fld);
+              if(fb.is_array())
+                if(const jsont *r = find_func_def(fb, name))
+                  return r;
+            }
+          }
+          return nullptr;
+        };
         if(wrapper_id.empty())
         {
-          // Find the decorator's AST in the module body
-          const jsont &mod_body = json_member(parse_tree.ast_json, "body");
-          if(mod_body.is_array())
+          std::string dec_short =
+            id2string(to_symbol_expr(dec_expr).get_identifier()).substr(8);
+          const jsont *dec_ast =
+            find_func_def(json_member(parse_tree.ast_json, "body"), dec_short);
+          if(dec_ast != nullptr)
           {
-            for(const auto &s : as_array(mod_body))
+            const jsont &dec_body = json_member(*dec_ast, "body");
+            if(dec_body.is_array())
             {
-              if(
-                is_node_type(s, "FunctionDef") &&
-                json_string(json_member(s, "name")) ==
-                  id2string(to_symbol_expr(dec_expr).get_identifier())
-                    .substr(8)) // strip "python::"
+              for(const auto &inner : as_array(dec_body))
               {
-                const jsont &dec_body = json_member(s, "body");
-                if(dec_body.is_array())
+                if(is_node_type(inner, "FunctionDef"))
                 {
-                  for(const auto &inner : as_array(dec_body))
+                  std::string inner_name =
+                    json_string(json_member(inner, "name"));
+                  irep_idt cand{"python::" + inner_name};
+                  if(symbol_table.lookup(cand) != nullptr)
                   {
-                    if(is_node_type(inner, "FunctionDef"))
-                    {
-                      std::string inner_name =
-                        json_string(json_member(inner, "name"));
-                      irep_idt cand{"python::" + inner_name};
-                      if(symbol_table.lookup(cand) != nullptr)
-                      {
-                        wrapper_id = cand;
-                        break;
-                      }
-                    }
+                    wrapper_id = cand;
+                    break;
                   }
                 }
-                break;
               }
             }
           }
@@ -960,8 +991,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           wrapper_id.empty() ? nullptr : symbol_table.lookup(wrapper_id);
         if(wrapper_sym != nullptr && wrapper_sym->type.id() == ID_code)
         {
-          // Redirect calls to f to go through wrapper instead
+          // Redirect calls to f to go through wrapper instead.
+          // Set the alias under BOTH the unqualified "python::f"
+          // key (for module-level callers) AND the qualified key
+          // "python::<current_function>::f" (for callers inside
+          // the same enclosing function), since the call-site
+          // lookup uses qualify_name() which differs by context.
           function_aliases[id2string(symbol_id)] = wrapper_id;
+          if(!current_function.empty())
+            function_aliases["python::" + current_function + "::" + func_name] =
+              wrapper_id;
           // The wrapper's body calls `fn(*args)` where `fn` is a
           // closure-captured reference to the original function.
           // Bind `fn` (the decorator's parameter name) to the
@@ -984,21 +1023,48 @@ codet python_convertert::convert_function_def(const jsont &stmt)
               dec_type.parameters()[0].get_identifier())] = symbol_id;
           }
           // Re-convert the wrapper's body now that fn is bound.
-          // Find the wrapper's AST in the decorator's body.
-          const jsont &mod_body = json_member(parse_tree.ast_json, "body");
-          if(mod_body.is_array())
-          {
-            for(const auto &s : as_array(mod_body))
+          // Find the wrapper's AST in the decorator's body — search
+          // RECURSIVELY through the parse tree so decorators
+          // defined inside another function are also handled.
+          std::function<const jsont *(const jsont &, const std::string &)>
+            find_decorator_ast =
+              [&](const jsont &scope_body,
+                  const std::string &name) -> const jsont * {
+            if(!scope_body.is_array())
+              return nullptr;
+            for(const auto &s : as_array(scope_body))
             {
               if(
-                !is_node_type(s, "FunctionDef") ||
-                json_string(json_member(s, "name")) !=
-                  id2string(to_symbol_expr(dec_expr).get_identifier())
-                    .substr(8))
-                continue;
-              const jsont &dec_body_ast = json_member(s, "body");
-              if(!dec_body_ast.is_array())
-                break;
+                is_node_type(s, "FunctionDef") &&
+                json_string(json_member(s, "name")) == name)
+                return &s;
+              if(is_node_type(s, "FunctionDef") || is_node_type(s, "ClassDef"))
+              {
+                const jsont &b = json_member(s, "body");
+                if(const jsont *r = find_decorator_ast(b, name))
+                  return r;
+              }
+              for(const std::string &fld :
+                  std::vector<std::string>{
+                    "body", "orelse", "finalbody", "handlers"})
+              {
+                const jsont &fb = json_member(s, fld);
+                if(fb.is_array())
+                  if(const jsont *r = find_decorator_ast(fb, name))
+                    return r;
+              }
+            }
+            return nullptr;
+          };
+          std::string dec_short =
+            id2string(to_symbol_expr(dec_expr).get_identifier()).substr(8);
+          const jsont *dec_ast = find_decorator_ast(
+            json_member(parse_tree.ast_json, "body"), dec_short);
+          if(dec_ast != nullptr)
+          {
+            const jsont &dec_body_ast = json_member(*dec_ast, "body");
+            if(dec_body_ast.is_array())
+            {
               for(const auto &inner : as_array(dec_body_ast))
               {
                 if(!is_node_type(inner, "FunctionDef"))
@@ -1026,7 +1092,6 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 symbol_table.get_writeable_ref(wrapper_id).value = new_body;
                 break;
               }
-              break;
             }
           }
         }
