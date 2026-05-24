@@ -7101,6 +7101,53 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
   }
 
+  // PLR §8.7: pack *args BEFORE keyword handling. The keyword loop
+  // resizes arguments to params.size() and writes kwarg values to
+  // their named slots, including kwonly slots after *args. If we
+  // packed AFTER, the kwonly slot's value would be swept into the
+  // *args list (wrong) or the positionals at *args slot would be
+  // overwritten by later kwarg writes. Packing first leaves a
+  // single packed-list entry at va_idx and nil placeholders at
+  // kwonly slots, which the keyword loop then fills cleanly.
+  {
+    auto va_it_pre = function_vararg_index.find(sym->name);
+    if(
+      va_it_pre != function_vararg_index.end() &&
+      va_it_pre->second < params.size())
+    {
+      std::size_t va_idx = va_it_pre->second;
+      const auto &va_param_type = params[va_idx].type();
+      if(is_python_list_type(va_param_type))
+      {
+        const auto &list_st = to_struct_type(va_param_type);
+        const auto &data_type =
+          to_array_type(list_st.components()[1].type());
+        exprt::operandst elems;
+        for(std::size_t i = va_idx; i < arguments.size(); i++)
+        {
+          exprt arg = arguments[i];
+          if(arg.is_nil())
+            continue;
+          if(arg.type() != data_type.element_type())
+            arg = safe_typecast(arg, data_type.element_type());
+          elems.push_back(arg);
+        }
+        std::size_t n_packed = elems.size();
+        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+          elems.push_back(safe_zero(data_type.element_type()));
+        exprt length =
+          from_integer(static_cast<long long>(n_packed), signedbv_typet{64});
+        exprt packed = struct_exprt{
+          {length, array_exprt{std::move(elems), data_type}}, va_param_type};
+        arguments.resize(va_idx);
+        arguments.push_back(std::move(packed));
+        // Pad to params.size() so kwarg loop can index kwonly slots.
+        while(arguments.size() < params.size())
+          arguments.push_back(nil_exprt{});
+      }
+    }
+  }
+
   // Handle keyword arguments: match by parameter name
   const jsont &keywords = json_member(expr, "keywords");
   if(keywords.is_array() && !as_array(keywords).empty())
@@ -7354,57 +7401,16 @@ exprt python_convertert::convert_call(const jsont &expr)
   while(!arguments.empty() && arguments.back().is_nil())
     arguments.pop_back();
 
-  // PLR §8.7: *args packing using the explicit vararg index.
-  //
-  // When a function `def f(a, *args, [closures...])` is called as
-  // f(1, 2, 3), the caller provides 3 positionals. The wrapper has
-  // params: [a, args(list), closure1, closure2, ...]. We must:
-  //   - Bind a := 1
-  //   - Pack [2, 3] into the args list at index P (the recorded
-  //     vararg index)
-  //   - Leave closure params (after P) as nil — they get filled by
-  //     safe_zero / the closure-binding machinery.
+  // PLR §8.7: *args packing — the primary packing happens
+  // BEFORE keyword handling (above). Only the legacy "trailing
+  // list param without function_vararg_index" fallback runs
+  // here; functions with a recorded vararg index already had
+  // their *args packed.
   {
     auto va_it = function_vararg_index.find(sym->name);
     if(va_it != function_vararg_index.end() && va_it->second < params.size())
     {
-      std::size_t va_idx = va_it->second;
-      const auto &va_param_type = params[va_idx].type();
-      if(is_python_list_type(va_param_type))
-      {
-        const auto &list_st = to_struct_type(va_param_type);
-        const auto &data_type = to_array_type(list_st.components()[1].type());
-        exprt::operandst elems;
-        // The *args slot collects positionals from index va_idx
-        // up to (but not including) any args that were already
-        // assigned to closure-capture params at higher indices.
-        // Since arguments are positional and only the user-visible
-        // params (before closures) are filled, the trailing
-        // arguments beyond va_idx are the *args contents.
-        std::size_t end = arguments.size();
-        for(std::size_t i = va_idx; i < end; i++)
-        {
-          exprt arg = arguments[i];
-          if(arg.is_nil())
-            break;
-          if(arg.type() != data_type.element_type())
-            arg = safe_typecast(arg, data_type.element_type());
-          elems.push_back(arg);
-        }
-        std::size_t n_packed = elems.size();
-        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-          elems.push_back(safe_zero(data_type.element_type()));
-        exprt length =
-          from_integer(static_cast<long long>(n_packed), signedbv_typet{64});
-        exprt packed = struct_exprt{
-          {length, array_exprt{std::move(elems), data_type}}, va_param_type};
-        // Trim arguments to va_idx, then append packed list and
-        // re-pad with nil for any closure params after.
-        arguments.resize(va_idx);
-        arguments.push_back(std::move(packed));
-        while(arguments.size() < params.size())
-          arguments.push_back(nil_exprt{});
-      }
+      // Already packed by the early pass — nothing to do.
     }
     else if(arguments.size() > params.size() && !params.empty())
     {
