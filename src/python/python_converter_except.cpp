@@ -433,6 +433,11 @@ codet python_convertert::convert_try(const jsont &stmt)
   if(body.is_array())
   {
     bool first = true;
+    // PLR §8.4: statements in a try body after the first are
+    // guarded by ¬exception_active — they form branches whose
+    // execution depends on the exception state, so path-
+    // insensitive tracking should be invalidated.
+    if_else_depth++;
     for(const auto &s : as_array(body))
     {
       codet stmt_code = convert_statement(s);
@@ -448,6 +453,7 @@ codet python_convertert::convert_try(const jsont &stmt)
         block.add(std::move(stmt_code));
       first = false;
     }
+    if_else_depth--;
   }
   try_depth--;
   active_exception_handlers.pop_back();
@@ -546,8 +552,15 @@ codet python_convertert::convert_try(const jsont &stmt)
       const jsont &handler_body = json_member(handler, "body");
       if(handler_body.is_array())
       {
+        // PLR §8.4: each except handler is a branch — increment
+        // if_else_depth so path-insensitive tracking
+        // (string_constants, etc.) is invalidated for variables
+        // assigned inside, the same way as if/else and match
+        // case bodies.
+        if_else_depth++;
         for(const auto &s : as_array(handler_body))
           except_block.add(convert_statement(s));
+        if_else_depth--;
       }
 
       exprt condition = exc_sym->symbol_expr();
