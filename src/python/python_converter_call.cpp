@@ -5338,6 +5338,14 @@ exprt python_convertert::convert_call(const jsont &expr)
         member_exprt length{arg, "length", signedbv_typet{64}};
         member_exprt data{arg, "data", data_type};
 
+        // PLR §6.2.5: if the list element type is python_value
+        // (typical for *args), unwrap each element to its
+        // numeric content. Otherwise accumulate at the element
+        // type directly.
+        bool elem_is_value = is_python_value_type(data_type.element_type());
+        typet acc_type = elem_is_value ? python_int_type()
+                                       : data_type.element_type();
+
         // Unrolled accumulation: result = sum of data[0..length-1]
         static unsigned sum_counter = 0;
         std::string tmp_name = "__sum_" + std::to_string(sum_counter++);
@@ -5345,22 +5353,26 @@ exprt python_convertert::convert_call(const jsont &expr)
         irep_idt tmp_id{tmp_qname};
         if(symbol_table.lookup(tmp_id) == nullptr)
         {
-          symbolt tmp_sym{tmp_id, data_type.element_type(), "python"};
+          symbolt tmp_sym{tmp_id, acc_type, "python"};
           tmp_sym.base_name = tmp_name;
           tmp_sym.is_lvalue = true;
           tmp_sym.is_state_var = true;
           symbol_table.add(tmp_sym);
         }
         symbol_exprt tmp = symbol_table.lookup_ref(tmp_id).symbol_expr();
-        pending_checks.push_back(code_frontend_assignt{
-          tmp, from_integer(0, data_type.element_type())});
+        pending_checks.push_back(
+          code_frontend_assignt{tmp, from_integer(0, acc_type)});
         for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
+          exprt elem = index_exprt{data, idx};
+          if(elem_is_value)
+            elem = unwrap_value(elem, acc_type);
+          else if(elem.type() != acc_type)
+            elem = safe_typecast(elem, acc_type);
           pending_checks.push_back(code_ifthenelset{
             binary_relation_exprt{idx, ID_lt, length},
-            code_frontend_assignt{
-              tmp, plus_exprt{tmp, index_exprt{data, idx}}}});
+            code_frontend_assignt{tmp, plus_exprt{tmp, elem}}});
         }
         return std::move(tmp);
       }
@@ -6607,12 +6619,67 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
           }
           // Non-literal numeric list with a numeric element type:
-          // there's nothing precise we can return without a runtime
-          // walker, but falling through to nil_exprt has the
-          // historical effect of silently dropping the assertion
-          // (it becomes a no-op statement). Preserve that
-          // behaviour for compatibility with tests that didn't
-          // verify this path.
+          // PLR §6.10.2: emit a runtime reduction. Walk the data
+          // array up to length, accumulating min/max via guarded
+          // updates. This handles min(args) / max(args) where args
+          // is a *args list of python_value, the typical case in
+          // user-defined varargs functions.
+          if(is_python_list_type(arg.type()))
+          {
+            const auto &list_st_mm = to_struct_type(arg.type());
+            const auto &data_t_mm =
+              to_array_type(list_st_mm.components()[1].type());
+            const typet &elem_t_mm = data_t_mm.element_type();
+            bool elem_is_value_mm = is_python_value_type(elem_t_mm);
+            typet acc_type =
+              elem_is_value_mm ? python_int_type() : elem_t_mm;
+            if(is_numeric(acc_type) || elem_is_value_mm)
+            {
+              member_exprt llen{arg, "length", signedbv_typet{64}};
+              member_exprt ldata{arg, "data", data_t_mm};
+              static unsigned mm_ctr = 0;
+              std::string mn =
+                std::string{"__"} + id2string(func_name) + "_" +
+                std::to_string(mm_ctr++);
+              std::string mq = qualify_name(mn);
+              irep_idt mi{mq};
+              if(symbol_table.lookup(mi) == nullptr)
+              {
+                symbolt ms{mi, acc_type, "python"};
+                ms.base_name = mn;
+                ms.is_lvalue = true;
+                ms.is_state_var = true;
+                symbol_table.add(ms);
+              }
+              symbol_exprt acc =
+                symbol_table.lookup_ref(mi).symbol_expr();
+              // Initialise with the first element (data[0]).
+              {
+                exprt e0 = index_exprt{ldata, from_integer(0, signedbv_typet{64})};
+                if(elem_is_value_mm)
+                  e0 = unwrap_value(e0, acc_type);
+                else if(e0.type() != acc_type)
+                  e0 = safe_typecast(e0, acc_type);
+                pending_checks.push_back(code_frontend_assignt{acc, e0});
+              }
+              // For i in 1..MAX, if i < length, update acc.
+              for(std::size_t i = 1; i < PYTHON_MAX_LIST_LENGTH; i++)
+              {
+                exprt idx = from_integer(i, signedbv_typet{64});
+                exprt elem = index_exprt{ldata, idx};
+                if(elem_is_value_mm)
+                  elem = unwrap_value(elem, acc_type);
+                else if(elem.type() != acc_type)
+                  elem = safe_typecast(elem, acc_type);
+                exprt better = binary_relation_exprt{elem, op, acc};
+                exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+                pending_checks.push_back(code_ifthenelset{
+                  and_exprt{in_range, better},
+                  code_frontend_assignt{acc, elem}});
+              }
+              return std::move(acc);
+            }
+          }
         }
       }
 
