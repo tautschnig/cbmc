@@ -263,8 +263,13 @@ std::vector<irep_idt> java_class_loadert::enumerate_classpath_classes(
       return true;
     if(has_prefix(filename, "META-INF/"))
       return true;
-    if(filename.find("/META-INF/") != std::string::npos)
-      return true;
+    // We deliberately do NOT match `/META-INF/` as a substring:
+    // a user-controlled path like
+    // `org/example/META-INF/Foo.class` is technically a valid
+    // (if oddly-named) class file under the JLS, and the
+    // surface-syntax check below would over-filter. JAR archives
+    // place the conventional META-INF directory at the root, so
+    // the prefix check above catches the standard case.
     return false;
   };
 

@@ -232,7 +232,7 @@ exprt resolve_jml_expr(
 
       static constexpr int MAX_AGGREGATE_EXPANSION = 100;
       if(
-        lb_val.has_value() && ub_val.has_value() && *lb_val < *ub_val &&
+        lb_val.has_value() && ub_val.has_value() && *lb_val <= *ub_val &&
         *ub_val - *lb_val <= MAX_AGGREGATE_EXPANSION)
       {
         // For each integer i in [lb, ub): substitute bound_var
@@ -260,36 +260,36 @@ exprt resolve_jml_expr(
         }
         if(expanded.empty())
         {
-          // Empty range → identity element.
+          // Empty range (lb == ub) → identity element.
           if(e.id() == jml_ids::jml_sum)
             return from_integer(0, bound_type);
           else if(e.id() == jml_ids::jml_product)
             return from_integer(1, bound_type);
           // For min/max with empty range there's no sensible
-          // identity; fall through to leave as uninterpreted.
+          // identity. Leave the aggregate uninterpreted; the
+          // user shouldn't have written it over an empty range
+          // anyway.
+          return e;
         }
-        else
+        exprt combined = expanded[0];
+        for(std::size_t k = 1; k < expanded.size(); ++k)
         {
-          exprt combined = expanded[0];
-          for(std::size_t k = 1; k < expanded.size(); ++k)
-          {
-            if(e.id() == jml_ids::jml_sum)
-              combined = plus_exprt(combined, expanded[k]);
-            else if(e.id() == jml_ids::jml_product)
-              combined = mult_exprt(combined, expanded[k]);
-            else if(e.id() == jml_ids::jml_min)
-              combined = if_exprt(
-                binary_relation_exprt(combined, ID_le, expanded[k]),
-                combined,
-                expanded[k]);
-            else // jml_max
-              combined = if_exprt(
-                binary_relation_exprt(combined, ID_ge, expanded[k]),
-                combined,
-                expanded[k]);
-          }
-          return combined;
+          if(e.id() == jml_ids::jml_sum)
+            combined = plus_exprt(combined, expanded[k]);
+          else if(e.id() == jml_ids::jml_product)
+            combined = mult_exprt(combined, expanded[k]);
+          else if(e.id() == jml_ids::jml_min)
+            combined = if_exprt(
+              binary_relation_exprt(combined, ID_le, expanded[k]),
+              combined,
+              expanded[k]);
+          else // jml_max
+            combined = if_exprt(
+              binary_relation_exprt(combined, ID_ge, expanded[k]),
+              combined,
+              expanded[k]);
         }
+        return combined;
       }
       // Bounds couldn't be extracted; fall through to leave the
       // aggregate as an uninterpreted exprt with resolved sub-
@@ -312,7 +312,7 @@ exprt resolve_jml_expr(
   if(result.type() == typet() || result.type().id().empty())
   {
     if(
-      result.id() == ID_old || result.id() == "loop_entry" ||
+      result.id() == ID_old || result.id() == ID_loop_entry ||
       result.id() == ID_unary_minus || result.id() == ID_unary_plus)
     {
       if(!result.operands().empty())
@@ -341,6 +341,14 @@ exprt resolve_jml_expr(
     {
       // Logical / relational: result is bool.
       result.type() = bool_typet();
+    }
+    else if(result.id() == ID_if && result.operands().size() == 3)
+    {
+      // Ternary: type follows the (resolved) then/else branches.
+      // The parser builds if_exprt for `cond ? a : b` constructs
+      // with empty type because operand[1]/[2] aren't resolved
+      // yet at construction time.
+      result.type() = result.operands()[1].type();
     }
   }
 
@@ -475,25 +483,37 @@ std::set<irep_idt> lower_jml_contracts(
     // Without this pass, inline-lowered ensures would reference
     // the parser's history_exprt, which symex cannot evaluate
     // for non-modular verification (no DFCC pre-state binding).
-    std::map<std::string, symbol_exprt> old_capture;
+    //
+    // We record the source expression alongside the fresh symbol
+    // so the DECL/ASSIGN emission below doesn't need to re-walk
+    // the clauses to find each \old's operand.
+    struct old_capture_entryt
+    {
+      symbol_exprt fresh;
+      exprt source_expr;
+    };
+    std::map<std::string, old_capture_entryt> old_capture;
     std::function<exprt(exprt)> capture_old = [&](exprt e) -> exprt
     {
       for(auto &op : e.operands())
         op = capture_old(op);
       if(e.id() == ID_old && e.operands().size() == 1 && !e.type().id().empty())
       {
-        // Key by serialized expression text (cheap canonical form).
+        // Key by serialized expression text. pretty() builds a
+        // recursive string representation; not free, but the
+        // alternative — structural exprt equality — has its own
+        // cost and we'd still need a stable key for the map.
         std::ostringstream key_oss;
         key_oss << e.operands()[0].pretty();
         const std::string key = key_oss.str();
         auto it_cap = old_capture.find(key);
         if(it_cap != old_capture.end())
-          return it_cap->second;
+          return it_cap->second.fresh;
         // Build fresh symbol: <method>::__jml_old_<idx>
         const std::string fresh_name = id2string(method_id) + "::__jml_old_" +
                                        std::to_string(old_capture.size());
         symbol_exprt fresh{fresh_name, e.type()};
-        old_capture.emplace(key, fresh);
+        old_capture.emplace(key, old_capture_entryt{fresh, e.operands()[0]});
         return fresh;
       }
       return e;
@@ -505,61 +525,25 @@ std::set<irep_idt> lower_jml_contracts(
     auto first_it = body.instructions.begin();
 
     // Pre-state capture: DECL + ASSIGN for each captured \old.
-    for(const auto &[key, fresh] : old_capture)
+    for(const auto &[key, entry] : old_capture)
     {
       // Add the symbol to the symbol table so symex sees it.
       symbolt sym;
-      sym.name = fresh.get_identifier();
+      sym.name = entry.fresh.get_identifier();
       sym.base_name = sym.name;
-      sym.type = fresh.type();
+      sym.type = entry.fresh.type();
       sym.mode = ID_java;
       sym.is_thread_local = true;
       sym.is_lvalue = true;
       sym.is_state_var = true;
       goto_model.symbol_table.insert(std::move(sym));
 
-      // Find the corresponding source expression by re-resolving
-      // the key (cheap: walk ensures_exprs to find a matching
-      // history_exprt's operand).
-      exprt source_expr;
-      bool found = false;
-      std::function<void(const exprt &)> find_src = [&](const exprt &e)
-      {
-        if(found)
-          return;
-        if(e.id() == ID_old && e.operands().size() == 1)
-        {
-          std::ostringstream oss;
-          oss << e.operands()[0].pretty();
-          if(oss.str() == key)
-          {
-            source_expr = e.operands()[0];
-            found = true;
-            return;
-          }
-        }
-        for(const auto &op : e.operands())
-          find_src(op);
-      };
-      // Look in raw spec.clauses (before substitution).
-      for(const auto &clause : spec.clauses)
-      {
-        if(clause.kind != jml_clauset::kindt::ENSURES)
-          continue;
-        exprt resolved = resolve_jml_expr(
-          clause.expr, method_id, class_id, ns, spec.param_names);
-        find_src(resolved);
-        if(found)
-          break;
-      }
-      if(!found)
-        continue;
-
       source_locationt loc = first_it->source_location();
       loc.set_comment("JML \\old capture");
-      body.insert_before(first_it, goto_programt::make_decl(fresh, loc));
+      body.insert_before(first_it, goto_programt::make_decl(entry.fresh, loc));
       body.insert_before(
-        first_it, goto_programt::make_assignment(fresh, source_expr, loc));
+        first_it,
+        goto_programt::make_assignment(entry.fresh, entry.source_expr, loc));
     }
 
     for(const auto &req : requires_exprs)
