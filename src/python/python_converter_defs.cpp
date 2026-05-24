@@ -184,23 +184,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       add_positional(param);
   }
 
-  // PLR §8.7: keyword-only arguments (after * in parameter list)
-  const jsont &kwonlyargs = json_member(args_node, "kwonlyargs");
-  if(kwonlyargs.is_array())
-  {
-    for(const auto &param : as_array(kwonlyargs))
-    {
-      std::string param_name = json_string(json_member(param, "arg"));
-      const jsont &annotation = json_member(param, "annotation");
-      typet param_type = annotation.is_null()
-                           ? python_int_type()
-                           : convert_type_annotation(annotation);
-      code_typet::parametert p{param_type};
-      p.set_identifier("python::" + func_name + "::" + param_name);
-      p.set_base_name(param_name);
-      parameters.push_back(p);
-    }
-  }
+  // PLR §8.7: keyword-only arguments are appended later (after *args),
+  // since per Python's parameter ordering, kwonlyargs follow the
+  // bare * or *args separator. See block below after the vararg
+  // handling for the actual append; this comment documents the
+  // ordering decision.
 
   // PLR §8.7: *args — catch-all positional argument tuple.
   // We model it as a list (our tuple model is effectively a list here).
@@ -272,6 +260,40 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           !val.is_nil() && val.type().id() != ID_struct &&
           val.type().id() != ID_pointer)
           default_values[{func_name, i}] = val;
+      }
+    }
+  }
+  // PLR §8.7: keyword-only parameter defaults are stored separately
+  // in `kw_defaults` (positional defaults are in `defaults`). Each
+  // entry is either an expression (default value) or null
+  // (parameter is required). Match each entry to the kwonlyargs
+  // parameter at the same index — kwonlyargs are appended to
+  // `parameters` after the regular params and any *args slot, in
+  // the order they appear.
+  {
+    const jsont &kwonly = json_member(args_node, "kwonlyargs");
+    const jsont &kw_defaults = json_member(args_node, "kw_defaults");
+    if(
+      kwonly.is_array() && kw_defaults.is_array() &&
+      as_array(kwonly).size() == as_array(kw_defaults).size())
+    {
+      // Find the first index of kwonlyargs in `parameters`. The
+      // kwonlyargs were appended just after *args (or after the
+      // regular params if no *args). We can scan parameters by
+      // identifier-prefix to locate them.
+      std::size_t kwonly_count = as_array(kwonly).size();
+      std::size_t kwonly_start = parameters.size() - kwonly_count;
+      auto kw_it = as_array(kwonly).begin();
+      auto def_it = as_array(kw_defaults).begin();
+      for(std::size_t k = 0; k < kwonly_count; k++, ++kw_it, ++def_it)
+      {
+        if(def_it->is_null())
+          continue; // required kwonly param, no default
+        exprt val = convert_expression(*def_it);
+        if(
+          !val.is_nil() && val.type().id() != ID_struct &&
+          val.type().id() != ID_pointer)
+          default_values[{func_name, kwonly_start + k}] = val;
       }
     }
   }
