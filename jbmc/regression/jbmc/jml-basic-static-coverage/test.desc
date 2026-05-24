@@ -1,0 +1,35 @@
+CORE
+JmlBasic
+--function JmlBasic.identity --jml-source src/main/java/JmlBasic.java --unwind 5 -cp target/classes --static-coverage
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Proof explanation:$
+^Per-property proof explanations:$
+^Static coverage: every contract element contributes to a property's proof\.$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+^Static coverage warnings:$
+--
+Phase 4 regression test for --static-coverage on JBMC.
+
+Reuses the JmlBasic.identity test class with
+`//@ requires x >= 0; //@ ensures \\result >= x;`. The precondition
+and the postcondition are both used in the proof, so this is the
+"all elements contribute" positive case: the static-coverage
+report should print the "every contract element contributes"
+acknowledgement and emit no per-element warnings.
+
+Verifies:
+- --static-coverage implies --proof-explanation (both section
+  headers appear).
+- The "Static coverage:" acknowledgement line is printed.
+- No "Static coverage warnings:" header is printed.
+
+This pairs with the unit tests in
+unit/goto-checker/proof_explanation/classify_uncovered.cpp which
+exercise classify_uncovered() directly — those cover the per-
+element warning kinds (UNNECESSARY_PRECONDITION, etc.) without
+needing an unsat-core-capable solver wired in at the CLI level.

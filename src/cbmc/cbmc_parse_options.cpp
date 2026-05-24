@@ -216,8 +216,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("no-array-field-sensitivity", true);
   }
 
-  if(cmdline.isset("reachability-slice") &&
-     cmdline.isset("reachability-slice-fb"))
+  if(
+    cmdline.isset("reachability-slice") &&
+    cmdline.isset("reachability-slice-fb"))
   {
     log.error()
       << "--reachability-slice and --reachability-slice-fb must not be "
@@ -300,9 +301,9 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("no-simplify"))
     options.set_option("simplify", false);
 
-  if(cmdline.isset("stop-on-fail") ||
-     cmdline.isset("dimacs") ||
-     cmdline.isset("outfile"))
+  if(
+    cmdline.isset("stop-on-fail") || cmdline.isset("dimacs") ||
+    cmdline.isset("outfile"))
     options.set_option("stop-on-fail", true);
 
   if(
@@ -332,6 +333,14 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(cmdline.isset("proof-explanation"))
     options.set_option("proof-explanation", true);
+
+  // --static-coverage implies --proof-explanation: it adds Tomb &
+  // Joshi per-element warnings on top of the explanation pipeline.
+  if(cmdline.isset("static-coverage"))
+  {
+    options.set_option("static-coverage", true);
+    options.set_option("proof-explanation", true);
+  }
 
   if(cmdline.isset("unwind"))
   {
@@ -450,8 +459,7 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("symex-coverage-report"))
   {
     options.set_option(
-      "symex-coverage-report",
-      cmdline.get_value("symex-coverage-report"));
+      "symex-coverage-report", cmdline.get_value("symex-coverage-report"));
     options.set_option("paths-symex-explore-all", true);
   }
 
@@ -511,8 +519,7 @@ int cbmc_parse_optionst::doit()
   // Unwinding of transition systems is done by hw-cbmc.
   //
 
-  if(cmdline.isset("module") ||
-     cmdline.isset("gen-interface"))
+  if(cmdline.isset("module") || cmdline.isset("gen-interface"))
   {
     log.error() << "This version of CBMC has no support for "
                    " hardware modules. Please use hw-cbmc."
@@ -573,7 +580,7 @@ int cbmc_parse_optionst::doit()
       return CPROVER_EXIT_INCORRECT_TASK;
     }
 
-    std::string filename=cmdline.args[0];
+    std::string filename = cmdline.args[0];
 
     std::ifstream infile(widen_if_needed(filename));
 
@@ -584,10 +591,9 @@ int cbmc_parse_optionst::doit()
       return CPROVER_EXIT_INCORRECT_TASK;
     }
 
-    std::unique_ptr<languaget> language=
-      get_language_from_filename(filename);
+    std::unique_ptr<languaget> language = get_language_from_filename(filename);
 
-    if(language==nullptr)
+    if(language == nullptr)
     {
       log.error() << "failed to figure out type of file '" << filename << "'"
                   << messaget::eom;
@@ -611,11 +617,12 @@ int cbmc_parse_optionst::doit()
   int get_goto_program_ret =
     get_goto_program(goto_model, options, cmdline, ui_message_handler);
 
-  if(get_goto_program_ret!=-1)
+  if(get_goto_program_ret != -1)
     return get_goto_program_ret;
 
-  if(cmdline.isset("show-claims") || // will go away
-     cmdline.isset("show-properties")) // use this one
+  if(
+    cmdline.isset("show-claims") ||   // will go away
+    cmdline.isset("show-properties")) // use this one
   {
     show_properties(goto_model, ui_message_handler);
     return CPROVER_EXIT_SUCCESS;

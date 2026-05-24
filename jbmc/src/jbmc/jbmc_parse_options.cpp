@@ -178,9 +178,9 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
   if(cmdline.isset("no-simplify"))
     options.set_option("simplify", false);
 
-  if(cmdline.isset("stop-on-fail") ||
-     cmdline.isset("dimacs") ||
-     cmdline.isset("outfile"))
+  if(
+    cmdline.isset("stop-on-fail") || cmdline.isset("dimacs") ||
+    cmdline.isset("outfile"))
     options.set_option("stop-on-fail", true);
 
   if(
@@ -203,6 +203,15 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(cmdline.isset("proof-explanation"))
     options.set_option("proof-explanation", true);
+
+  // --static-coverage is a strict superset of --proof-explanation:
+  // it requires the underlying explanation pipeline to run, then
+  // adds Tomb & Joshi per-element warnings on top.
+  if(cmdline.isset("static-coverage"))
+  {
+    options.set_option("static-coverage", true);
+    options.set_option("proof-explanation", true);
+  }
 
   if(cmdline.isset("symex-complexity-limit"))
   {
@@ -295,9 +304,7 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
   }
 
   // remove unused equations
-  options.set_option(
-    "slice-formula",
-    cmdline.isset("slice-formula"));
+  options.set_option("slice-formula", cmdline.isset("slice-formula"));
 
   if(cmdline.isset("arrays-uf-always"))
     options.set_option("arrays-uf", "always");
@@ -339,8 +346,7 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
 
   if(cmdline.isset("symex-coverage-report"))
     options.set_option(
-      "symex-coverage-report",
-      cmdline.get_value("symex-coverage-report"));
+      "symex-coverage-report", cmdline.get_value("symex-coverage-report"));
 
   if(cmdline.isset("validate-ssa-equation"))
   {
@@ -361,10 +367,10 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
   {
     options.set_option("symex-driven-lazy-loading", true);
     for(const char *opt :
-      { "nondet-static",
-        "full-slice",
-        "reachability-slice",
-        "reachability-slice-fb" })
+        {"nondet-static",
+         "full-slice",
+         "reachability-slice",
+         "reachability-slice-fb"})
     {
       if(cmdline.isset(opt))
       {
@@ -418,23 +424,25 @@ int jbmc_parse_optionst::doit()
   // output the options
   switch(ui_message_handler.get_ui())
   {
-    case ui_message_handlert::uit::PLAIN:
-      log.conditional_output(
-        log.debug(), [&options](messaget::mstreamt &debug_stream) {
-          debug_stream << "\nOptions: \n";
-          options.output(debug_stream);
-          debug_stream << messaget::eom;
-        });
-      break;
-    case ui_message_handlert::uit::JSON_UI:
-    {
-      json_objectt json_options{{"options", options.to_json()}};
-      log.debug() << json_options;
-      break;
-    }
-    case ui_message_handlert::uit::XML_UI:
-      log.debug() << options.to_xml();
-      break;
+  case ui_message_handlert::uit::PLAIN:
+    log.conditional_output(
+      log.debug(),
+      [&options](messaget::mstreamt &debug_stream)
+      {
+        debug_stream << "\nOptions: \n";
+        options.output(debug_stream);
+        debug_stream << messaget::eom;
+      });
+    break;
+  case ui_message_handlert::uit::JSON_UI:
+  {
+    json_objectt json_options{{"options", options.to_json()}};
+    log.debug() << json_options;
+    break;
+  }
+  case ui_message_handlert::uit::XML_UI:
+    log.debug() << options.to_xml();
+    break;
   }
 
   register_language(new_ansi_c_language);
@@ -718,7 +726,8 @@ void jbmc_parse_optionst::process_goto_function(
   // Java virtual functions -> explicit dispatch tables:
   remove_virtual_functions(function, *class_hierarchy);
 
-  auto function_is_stub = [&symbol_table, &model](const irep_idt &id) {
+  auto function_is_stub = [&symbol_table, &model](const irep_idt &id)
+  {
     return symbol_table.lookup_ref(id).value.is_nil() &&
            !model.can_produce_function(id);
   };
@@ -1086,6 +1095,8 @@ void jbmc_parse_optionst::help()
     " {y--localize-faults} \t localize faults (experimental)\n"
     " {y--proof-explanation} \t show which program steps contribute to each"
     " successful proof\n"
+    " {y--static-coverage} \t show static-coverage warnings for unused"
+    " contract elements (implies {y--proof-explanation})\n"
     HELP_JAVA_TRACE_VALIDATION
     "\n"
     "Platform options:\n"

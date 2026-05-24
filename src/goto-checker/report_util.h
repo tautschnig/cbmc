@@ -62,6 +62,7 @@ void output_error_trace_with_fault_localization(
 
 struct proof_explanation_stept;
 struct proof_invariantt;
+struct static_coverage_warningt;
 
 void output_proof_explanation(
   const std::vector<proof_explanation_stept> &,
@@ -69,6 +70,14 @@ void output_proof_explanation(
 
 void output_per_property_proof_explanations(
   const std::map<irep_idt, std::vector<proof_explanation_stept>> &,
+  ui_message_handlert &);
+
+/// Print Tomb & Joshi static-coverage warnings (form (3) of the
+/// explaining-proofs deliverable). Call after the proof
+/// explanation has been emitted so users can read the per-step
+/// detail and the per-element warnings together.
+void output_static_coverage_warnings(
+  const std::vector<static_coverage_warningt> &,
   ui_message_handlert &);
 
 void output_proof_invariants(

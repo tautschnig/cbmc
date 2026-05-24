@@ -188,7 +188,7 @@ void run_property_decider(
   "(unwind-max):"                                                              \
   "(ignore-properties-before-unwind-min)"                                      \
   "(symex-cache-dereferences)"                                                 \
-  "(proof-explanation)" OPT_UNWINDSET
+  "(proof-explanation)(static-coverage)" OPT_UNWINDSET
 
 #define HELP_BMC                                                               \
   " {y--paths} [strategy] \t explore paths one at a time\n"                    \
@@ -236,6 +236,9 @@ void run_property_decider(
   " {y--symex-cache-dereferences} \t enable caching of repeated "              \
   "dereferences\n"                                                             \
   " {y--proof-explanation} \t "                                                \
-  "show word-level explanation for proved properties\n"
+  "show word-level explanation for proved properties\n"                        \
+  " {y--static-coverage} \t "                                                  \
+  "show static-coverage warnings for unused contract elements "                \
+  "(implies {y--proof-explanation})\n"
 
 #endif // CPROVER_GOTO_CHECKER_BMC_UTIL_H

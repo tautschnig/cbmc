@@ -149,6 +149,135 @@ bool is_relevant_proof_step(const SSA_stept &step)
   return true;
 }
 
+step_kindt classify_step(const SSA_stept &step)
+{
+  // Inspect the source-location comment that JBMC's contract-
+  // lowering passes attach. See java_bytecode_contracts.cpp and
+  // jml_lowering.cpp for the canonical comment strings.
+  const auto &loc = step.source.pc->source_location();
+  const auto &comment = loc.get_comment();
+  if(!comment.empty())
+  {
+    const std::string c = id2string(comment);
+    if(
+      c == "JML requires" || c == "JVerify precondition" ||
+      c == "JVerify assume")
+    {
+      return step_kindt::PRECONDITION;
+    }
+    if(
+      c == "JML ensures" || c == "JVerify postcondition" ||
+      c == "JVerify postcondition (lambda, unresolved)" || c == "JVerify check")
+    {
+      return step_kindt::POSTCONDITION;
+    }
+    if(c == "JML loop invariant" || c == "JVerify loop invariant")
+    {
+      return step_kindt::LOOP_INVARIANT;
+    }
+    if(
+      c == "JML decreases (non-negative)" ||
+      c == "JVerify decreases (non-negativity)")
+    {
+      return step_kindt::DECREASES;
+    }
+    if(c == "JML \\old capture")
+    {
+      return step_kindt::OLD_CAPTURE;
+    }
+  }
+  // property_class-based fallback for contract-derived ASSERTs
+  // that DFCC may have rewritten beyond the original comment.
+  const auto &property_class = loc.get_property_class();
+  if(!property_class.empty())
+  {
+    const std::string p = id2string(property_class);
+    if(p == "precondition")
+      return step_kindt::PRECONDITION;
+    if(p == "postcondition")
+      return step_kindt::POSTCONDITION;
+    if(p == "loop_invariant")
+      return step_kindt::LOOP_INVARIANT;
+  }
+
+  // DFCC's contracts machinery uses synthetic write-set helpers
+  // and locals named __CPROVER_contracts_*. Filter these out so
+  // they don't dominate the static-coverage warnings.
+  if(step.is_assignment())
+  {
+    const std::string lhs_id = id2string(step.ssa_lhs.get_object_name());
+    if(
+      lhs_id.find("__CPROVER_contracts_") != std::string::npos ||
+      lhs_id.find("__contract_write_set") != std::string::npos ||
+      lhs_id.find("__requires_write_set") != std::string::npos ||
+      lhs_id.find("__ensures_write_set") != std::string::npos ||
+      lhs_id.find("__ptr_pred_ctx") != std::string::npos ||
+      lhs_id.find("__no_alloc_dealloc") != std::string::npos ||
+      lhs_id.find("__write_set_to_check") != std::string::npos)
+    {
+      return step_kindt::CONTRACTS_INTERNAL;
+    }
+  }
+
+  // No contract provenance — fall back to the structural kind.
+  if(step.is_assignment())
+    return step_kindt::REGULAR_ASSIGNMENT;
+  if(step.is_assume())
+    return step_kindt::REGULAR_ASSUMPTION;
+  if(step.is_assert())
+    return step_kindt::REGULAR_ASSERTION;
+  return step_kindt::OTHER;
+}
+
+std::vector<static_coverage_warningt>
+classify_uncovered(const std::vector<proof_explanation_stept> &explanation)
+{
+  std::vector<static_coverage_warningt> warnings;
+  for(const auto &step : explanation)
+  {
+    if(step.in_core)
+      continue;
+    // Filter DFCC synthetic steps — they produce noise without
+    // surfacing real specification gaps.
+    if(step.step_kind == step_kindt::CONTRACTS_INTERNAL)
+      continue;
+    static_coverage_warningt w;
+    w.loc = step.source_location;
+    w.description = step.description;
+    switch(step.step_kind)
+    {
+    case step_kindt::PRECONDITION:
+      w.kind = static_coverage_warningt::kindt::UNNECESSARY_PRECONDITION;
+      break;
+    case step_kindt::POSTCONDITION:
+      w.kind = static_coverage_warningt::kindt::VACUOUS_POSTCONDITION;
+      break;
+    case step_kindt::LOOP_INVARIANT:
+      w.kind = static_coverage_warningt::kindt::UNNECESSARY_INVARIANT;
+      break;
+    case step_kindt::REGULAR_ASSUMPTION:
+      w.kind = static_coverage_warningt::kindt::UNNECESSARY_ASSUMPTION;
+      break;
+    case step_kindt::REGULAR_ASSIGNMENT:
+      w.kind = static_coverage_warningt::kindt::UNCONSTRAINED_CODE;
+      break;
+    case step_kindt::DECREASES:
+    case step_kindt::OLD_CAPTURE:
+    case step_kindt::CONTRACTS_INTERNAL:
+    case step_kindt::REGULAR_ASSERTION:
+    case step_kindt::OTHER:
+      // No actionable warning for these kinds; their unused-ness
+      // is rarely meaningful for the user (DECREASES/OLD_CAPTURE
+      // are bookkeeping; CONTRACTS_INTERNAL is DFCC noise; an
+      // assertion that's not in the core means a different
+      // assertion proved it).
+      continue;
+    }
+    warnings.push_back(std::move(w));
+  }
+  return warnings;
+}
+
 std::vector<proof_explanation_stept> get_proof_explanation(
   const symex_target_equationt &equation,
   const namespacet &ns)
@@ -165,6 +294,7 @@ std::vector<proof_explanation_stept> get_proof_explanation(
     explanation_step.step_type = step_type_string(step);
     explanation_step.description = step_description(step, ns);
     explanation_step.in_core = true;
+    explanation_step.step_kind = classify_step(step);
 
     result.push_back(std::move(explanation_step));
   }
@@ -268,6 +398,7 @@ std::vector<proof_explanation_stept> get_proof_explanation_with_core(
     explanation_step.step_type = step_type_string(step);
     explanation_step.description = step_description(step, ns);
     explanation_step.in_core = in_conflict[i];
+    explanation_step.step_kind = classify_step(step);
 
     result.push_back(std::move(explanation_step));
   }

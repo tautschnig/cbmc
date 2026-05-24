@@ -114,6 +114,17 @@ public:
         output_per_property_proof_explanations(per_prop, ui_message_handler);
       }
     }
+    if constexpr(has_get_proof_explanationt<incremental_goto_checkerT>::value)
+    {
+      if(
+        options.get_bool_option("static-coverage") &&
+        determine_result(properties) == resultt::PASS)
+      {
+        auto explanation = incremental_goto_checker.get_proof_explanation();
+        auto warnings = classify_uncovered(explanation);
+        output_static_coverage_warnings(warnings, ui_message_handler);
+      }
+    }
     incremental_goto_checker.report();
   }
 

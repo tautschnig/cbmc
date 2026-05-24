@@ -155,6 +155,7 @@
         <module>iface-dispatch-proof-explanation</module>
         <module>jml-basic</module>
         <module>jml-basic-proof-explanation</module>
+        <module>jml-basic-static-coverage</module>
         <module>jml-old</module>
         <module>jml-result</module>
         <module>jml-conjunction</module>

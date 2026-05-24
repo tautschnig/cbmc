@@ -136,6 +136,7 @@ multi_path_symex_checkert::operator()(propertiest &properties)
             pstep.step_type = step_type_string(step);
             pstep.description = step_description(step, ns);
             pstep.in_core = true;
+            pstep.step_kind = classify_step(step);
             filtered.push_back(std::move(pstep));
           }
         }

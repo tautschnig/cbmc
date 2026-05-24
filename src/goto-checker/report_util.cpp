@@ -880,3 +880,117 @@ void output_overall_result(
     break;
   }
 }
+
+/// Map a static-coverage warning kind to its human-readable label.
+static const char *
+static_coverage_kind_string(static_coverage_warningt::kindt kind)
+{
+  switch(kind)
+  {
+  case static_coverage_warningt::kindt::UNNECESSARY_PRECONDITION:
+    return "unnecessary precondition";
+  case static_coverage_warningt::kindt::VACUOUS_POSTCONDITION:
+    return "vacuous postcondition";
+  case static_coverage_warningt::kindt::UNNECESSARY_INVARIANT:
+    return "unnecessary loop invariant";
+  case static_coverage_warningt::kindt::UNNECESSARY_ASSUMPTION:
+    return "unnecessary assumption";
+  case static_coverage_warningt::kindt::UNCONSTRAINED_CODE:
+    return "unconstrained code (assignment unused by any property)";
+  }
+  UNREACHABLE;
+}
+
+/// JSON variant of the kind label (lowerCamelCase / dashed) so the
+/// machine-readable output is a stable enum.
+static const char *static_coverage_kind_id(static_coverage_warningt::kindt kind)
+{
+  switch(kind)
+  {
+  case static_coverage_warningt::kindt::UNNECESSARY_PRECONDITION:
+    return "unnecessary-precondition";
+  case static_coverage_warningt::kindt::VACUOUS_POSTCONDITION:
+    return "vacuous-postcondition";
+  case static_coverage_warningt::kindt::UNNECESSARY_INVARIANT:
+    return "unnecessary-loop-invariant";
+  case static_coverage_warningt::kindt::UNNECESSARY_ASSUMPTION:
+    return "unnecessary-assumption";
+  case static_coverage_warningt::kindt::UNCONSTRAINED_CODE:
+    return "unconstrained-code";
+  }
+  UNREACHABLE;
+}
+
+void output_static_coverage_warnings(
+  const std::vector<static_coverage_warningt> &warnings,
+  ui_message_handlert &ui_message_handler)
+{
+  messaget log(ui_message_handler);
+  switch(ui_message_handler.get_ui())
+  {
+  case ui_message_handlert::uit::PLAIN:
+  {
+    if(warnings.empty())
+    {
+      log.result()
+        << "\nStatic coverage: every contract element contributes to a "
+        << "property's proof." << messaget::eom;
+      break;
+    }
+    log.result() << "\nStatic coverage warnings:" << messaget::eom;
+    for(const auto &w : warnings)
+    {
+      log.result() << "  [" << static_coverage_kind_string(w.kind) << "] ";
+      if(!w.loc.get_file().empty())
+        log.result() << w.loc.get_file() << ":";
+      if(!w.loc.get_line().empty())
+        log.result() << w.loc.get_line() << " ";
+      log.result() << w.description << messaget::eom;
+    }
+    break;
+  }
+  case ui_message_handlert::uit::JSON_UI:
+  {
+    json_stream_objectt &json_result =
+      ui_message_handler.get_json_stream().push_back_stream_object();
+    json_stream_arrayt &json_warns =
+      json_result.push_back_stream_array("staticCoverageWarnings");
+    for(const auto &w : warnings)
+    {
+      json_objectt json_warn;
+      json_warn["kind"] = json_stringt(static_coverage_kind_id(w.kind));
+      json_warn["description"] = json_stringt(w.description);
+      json_objectt json_location;
+      if(!w.loc.get_file().empty())
+        json_location["file"] = json_stringt(id2string(w.loc.get_file()));
+      if(!w.loc.get_line().empty())
+        json_location["line"] = json_stringt(id2string(w.loc.get_line()));
+      if(!w.loc.get_function().empty())
+      {
+        json_location["function"] =
+          json_stringt(id2string(w.loc.get_function()));
+      }
+      json_warn["sourceLocation"] = std::move(json_location);
+      json_warns.push_back(std::move(json_warn));
+    }
+    break;
+  }
+  case ui_message_handlert::uit::XML_UI:
+  {
+    xmlt xml_warns("static-coverage-warnings");
+    for(const auto &w : warnings)
+    {
+      xmlt xml_warn("warning");
+      xml_warn.set_attribute("kind", static_coverage_kind_id(w.kind));
+      xml_warn.set_attribute("description", w.description);
+      if(!w.loc.get_file().empty())
+        xml_warn.set_attribute("file", id2string(w.loc.get_file()));
+      if(!w.loc.get_line().empty())
+        xml_warn.set_attribute("line", id2string(w.loc.get_line()));
+      xml_warns.new_element().swap(xml_warn);
+    }
+    log.result() << xml_warns;
+    break;
+  }
+  }
+}

@@ -26,6 +26,40 @@ struct SSA_stept;
 
 /// A single step in a proof explanation, representing a program step
 /// that contributes to proving a property.
+/// Source-artifact classification of an SSA step (Tomb & Joshi
+/// FMCAD 2025 static coverage). Distinguishes contract-derived
+/// steps (precondition, postcondition, loop invariant, etc.) from
+/// regular code so that `classify_uncovered()` can produce
+/// per-element-type warnings instead of a unified in-core /
+/// not-in-core listing.
+enum class step_kindt
+{
+  /// Contract precondition (ASSUME at entry of a verified method).
+  PRECONDITION,
+  /// Contract postcondition (ASSERT at exit of a verified method).
+  POSTCONDITION,
+  /// Loop invariant (assertion side, on entry / exit / preservation).
+  LOOP_INVARIANT,
+  /// Termination-measure non-negativity (`JVerify.decreases` /
+  /// `//@ decreases`).
+  DECREASES,
+  /// Synthetic DECL+ASSIGN at function entry that captures a
+  /// pre-state value for `\\old` lookups.
+  OLD_CAPTURE,
+  /// DFCC-generated write-set machinery
+  /// (`__CPROVER_contracts_write_set_*` etc.). Filtered out of
+  /// static-coverage warnings to avoid false-positive noise.
+  CONTRACTS_INTERNAL,
+  /// Regular code-level assignment (no contract provenance).
+  REGULAR_ASSIGNMENT,
+  /// Regular code-level assumption (e.g. `__CPROVER_assume`).
+  REGULAR_ASSUMPTION,
+  /// Regular code-level assertion (e.g. `__CPROVER_assert`).
+  REGULAR_ASSERTION,
+  /// Anything not classified above.
+  OTHER,
+};
+
 struct proof_explanation_stept
 {
   /// Source location of the contributing step
@@ -40,7 +74,56 @@ struct proof_explanation_stept
   /// Whether this step is in the unsat core (true by default
   /// for backward compatibility with the basic approach)
   bool in_core = true;
+
+  /// Source-artifact classification (defaults to OTHER for
+  /// callers that don't run the classifier).
+  step_kindt step_kind = step_kindt::OTHER;
 };
+
+/// Classify an SSA step by its source-location comment / property
+/// class. Reads the metadata that JBMC's contract-lowering passes
+/// (`java_bytecode_contracts.cpp`, `jml_lowering.cpp`) and DFCC
+/// already attach. Returns OTHER when no recognised provenance is
+/// present.
+step_kindt classify_step(const SSA_stept &step);
+
+/// A static-coverage warning produced when a contract-derived SSA
+/// step is *not* in the unsat core: i.e., the contract artifact
+/// was unnecessary, vacuous, or otherwise irrelevant to the proof.
+struct static_coverage_warningt
+{
+  enum class kindt
+  {
+    /// Precondition assumption was not used by any property's
+    /// proof (the contract over-constrains the caller).
+    UNNECESSARY_PRECONDITION,
+    /// Postcondition was proved without engaging any non-trivial
+    /// behaviour (the contract is vacuous).
+    VACUOUS_POSTCONDITION,
+    /// Loop invariant was unused (vacuously preserved or not
+    /// referenced by any proof obligation).
+    UNNECESSARY_INVARIANT,
+    /// Code-level assumption was unnecessary.
+    UNNECESSARY_ASSUMPTION,
+    /// Assignment had no observable effect on any property.
+    UNCONSTRAINED_CODE,
+  };
+  kindt kind;
+  source_locationt loc;
+  std::string description;
+};
+
+/// Produce per-element static-coverage warnings from a
+/// proof-explanation. Each warning corresponds to a contract or
+/// code element that did NOT contribute to the unsat core, with
+/// element-type-aware classification.
+///
+/// This is the doc's "form (3)" explaining-proofs deliverable
+/// (Tomb & Joshi FMCAD 2025), built on top of PR #8927's
+/// proof-explanation infrastructure. CONTRACTS_INTERNAL steps
+/// (DFCC write-set machinery) are filtered to avoid noise.
+std::vector<static_coverage_warningt>
+classify_uncovered(const std::vector<proof_explanation_stept> &explanation);
 
 /// Extract a word-level proof explanation from an UNSAT result.
 /// After the solver returns UNSATISFIABLE, this function iterates

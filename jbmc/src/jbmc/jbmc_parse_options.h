@@ -85,6 +85,7 @@ class optionst;
   "(java-unwind-enum-static)" \
   "(localize-faults)" \
   "(proof-explanation)" \
+  "(static-coverage)" \
   "(java-threading)" \
   OPT_GOTO_TRACE \
   OPT_VALIDATE \
