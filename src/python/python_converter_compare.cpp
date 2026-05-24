@@ -136,22 +136,98 @@ exprt python_convertert::convert_compare(const jsont &expr)
         else
           current_left = python_string_literal("__NEVER_EQUAL__");
       }
-      // PLR §6.10.1: lists with different element types are never equal.
-      // Two lists of different shapes (e.g. list[int] vs list[list[int]])
-      // pass through here as struct expressions whose underlying widths
-      // differ. Falling through to a plain equal_exprt would let
-      // boolbv::convert_bv_typecast try to widen/narrow one side to fit
-      // the other, which crashes on incompatible element types
-      // (regression test: assert [[1]] == [1]). Force the comparison to
-      // statically false by re-using the existing "__NEVER_EQUAL__"
-      // string-literal trick.
+      // PLR §6.10.1: lists with different element types compare
+      // structurally — equal iff same length and corresponding
+      // elements compare equal. We can't fall through to a plain
+      // equal_exprt because boolbv would crash on incompatible
+      // widths (e.g. python_value vs int64). Build the comparison
+      // explicitly:
+      //   len(L) == len(R) ∧ ∀i<len. L.data[i] == R.data[i]
+      // unwrapping python_value as needed.
       else if(
         is_python_list_type(current_left.type()) &&
         is_python_list_type(right.type()) &&
         current_left.type() != right.type())
       {
-        current_left = python_string_literal("__NEVER_EQUAL__");
-        right = python_string_literal("__NOT_EQUAL_TO_THIS__");
+        const auto &lt = to_struct_type(current_left.type());
+        const auto &rt = to_struct_type(right.type());
+        const auto &ldata = to_array_type(lt.components()[1].type());
+        const auto &rdata = to_array_type(rt.components()[1].type());
+        const typet &le = ldata.element_type();
+        const typet &re = rdata.element_type();
+        // Only handle the case where the two element types are
+        // bridgeable: both numeric (int/int, int/float, value/int,
+        // value/float). Truly incompatible (e.g. list[list] vs
+        // list[int]) still gets the never-equal trick.
+        bool can_bridge = false;
+        bool le_num = le.id() == ID_signedbv || le.id() == ID_floatbv ||
+                      is_python_value_type(le);
+        bool re_num = re.id() == ID_signedbv || re.id() == ID_floatbv ||
+                      is_python_value_type(re);
+        if(le_num && re_num)
+          can_bridge = true;
+        // Both python_string is also handled here.
+        if(is_python_string_type(le) && is_python_string_type(re))
+          can_bridge = true;
+        if(can_bridge)
+        {
+          member_exprt llen{current_left, "length", signedbv_typet{64}};
+          member_exprt rlen{right, "length", signedbv_typet{64}};
+          member_exprt lda{current_left, "data", ldata};
+          member_exprt rda{right, "data", rdata};
+          // Pick a target element type: prefer the more specific
+          // (non-python_value) one; else float over int.
+          typet target = le;
+          if(is_python_value_type(le) && !is_python_value_type(re))
+            target = re;
+          else if(is_python_value_type(re) && !is_python_value_type(le))
+            target = le;
+          else if(le.id() == ID_floatbv)
+            target = le;
+          else if(re.id() == ID_floatbv)
+            target = re;
+          exprt all_equal = equal_exprt{llen, rlen};
+          for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+            exprt l_el = index_exprt{lda, idx, le};
+            exprt r_el = index_exprt{rda, idx, re};
+            if(is_python_value_type(le) && !is_python_value_type(target))
+              l_el = unwrap_value(l_el, target);
+            else if(l_el.type() != target)
+              l_el = safe_typecast(l_el, target);
+            if(is_python_value_type(re) && !is_python_value_type(target))
+              r_el = unwrap_value(r_el, target);
+            else if(r_el.type() != target)
+              r_el = safe_typecast(r_el, target);
+            exprt el_eq = (target.id() == ID_floatbv)
+                            ? exprt{ieee_float_equal_exprt{l_el, r_el}}
+                            : exprt{equal_exprt{l_el, r_el}};
+            // out-of-range index trivially holds
+            all_equal =
+              and_exprt{all_equal, or_exprt{not_exprt{in_range}, el_eq}};
+          }
+          // Tunnel the bridged comparison through the rest of the
+          // pipeline by replacing both operands with concrete
+          // booleans of the same content.
+          if(op == "Eq")
+          {
+            current_left = std::move(all_equal);
+            right = true_exprt{};
+          }
+          else
+          {
+            current_left = not_exprt{std::move(all_equal)};
+            right = true_exprt{};
+          }
+        }
+        else
+        {
+          // Fallback: structurally incompatible → never equal
+          current_left = python_string_literal("__NEVER_EQUAL__");
+          right = python_string_literal("__NOT_EQUAL_TO_THIS__");
+        }
       }
       // PLR §6.10.1: list vs non-list (excluding python_value tagged
       // unions, where the comparison stays dynamic) → never equal.
