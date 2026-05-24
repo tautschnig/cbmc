@@ -336,18 +336,27 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     for(std::size_t i = 0; i < max_len; i++)
     {
       exprt idx = from_integer(i, signedbv_typet{64});
+      exprt src_elem;
       if(is_reverse)
       {
         // result[i] = src[length - 1 - i]
-        result_elems.push_back(index_exprt{
+        src_elem = index_exprt{
           src_data,
           minus_exprt{
-            minus_exprt{length, from_integer(1, signedbv_typet{64})}, idx}});
+            minus_exprt{length, from_integer(1, signedbv_typet{64})}, idx}};
       }
       else
       {
-        result_elems.push_back(index_exprt{src_data, plus_exprt{lower, idx}});
+        src_elem = index_exprt{src_data, plus_exprt{lower, idx}};
       }
+      // PLR §6.10.1: positions beyond new_length must be zero so
+      // struct-equality with a list literal (whose trailing slots
+      // are zeros) works. Without this, `[1,2,3,4,5][1:4] == [2,3,4]`
+      // fails because the slice reads xs[4]=5 into result.data[3]
+      // while the literal has 0 there.
+      exprt in_slice = binary_relation_exprt{idx, ID_lt, new_length};
+      result_elems.push_back(
+        if_exprt{in_slice, src_elem, safe_zero(elem_type)});
     }
 
     array_exprt result_data{std::move(result_elems), result_data_type};
