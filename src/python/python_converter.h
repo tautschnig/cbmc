@@ -348,6 +348,68 @@ private:
   std::map<irep_idt, exprt> tuple_literals;
   std::map<irep_idt, double> float_constants; // track float/int constant values
 
+  /// PLR control-flow correctness: per-branch snapshot + merge for
+  /// conversion-time constant-tracking maps.
+  ///
+  /// The frontend constant-folds at conversion time using the maps
+  /// above (string_constants, dict_literals, list_literals,
+  /// tuple_literals, float_constants). When an assignment occurs
+  /// inside an if/else (or match/case, or try/except), the writes
+  /// from one arm leak into the other arm's processing because the
+  /// converter walks both arms sequentially. Without merge logic,
+  /// the final state has the LAST-PROCESSED arm's writes, which
+  /// downstream reads then incorrectly treat as known.
+  ///
+  /// Solution: snapshot the maps before any branch. Process each
+  /// arm independently, capturing per-arm post-states. After all
+  /// arms are processed, merge: for every key that appears in
+  /// any arm's post-state, retain the value only if all arms
+  /// agree (same value for keys all arms set, OR all arms left
+  /// unchanged so the snapshot value still holds). Keys where
+  /// arms disagree are dropped, falling through to runtime SSA.
+  struct tracking_snapshott
+  {
+    std::map<irep_idt, std::string> string_constants;
+    std::map<irep_idt, exprt> dict_literals;
+    std::map<irep_idt, exprt> list_literals;
+    std::map<irep_idt, exprt> tuple_literals;
+    std::map<irep_idt, double> float_constants;
+    std::map<irep_idt, irep_idt> alias_targets;
+    // function_aliases and bound_methods are intentionally NOT
+    // snapshot/merged: they record one-way name → callable
+    // mappings whose runtime dispatch is needed for any program
+    // that reassigns a callable in a branch (e.g. `if cond: h = f
+    // else: h = g; h(...)`). Merge would drop the entries and
+    // emit "no body for callee h", regressing the common case
+    // where the condition is constant or where the rebind is
+    // semantically uniform. We accept the residual path-
+    // insensitivity for these two maps as a known trade-off.
+  };
+
+  /// Capture the current state of all conversion-time tracking
+  /// maps. O(N) in the size of all maps.
+  tracking_snapshott snapshot_tracking() const;
+
+  /// Replace all conversion-time tracking maps with the snapshot's
+  /// values. Used between branches to revert the writes from the
+  /// previous branch before processing the next one.
+  void restore_tracking(const tracking_snapshott &snap);
+
+  /// Merge two arm-states into the live tracking maps. For each
+  /// key appearing in either arm, retain the entry only if both
+  /// arms agree on its value (same bytes for *_constants, same
+  /// expression structure for *_literals). Disagreements are
+  /// dropped from the live maps. Keys not present in either arm
+  /// are also absent from the merged result.
+  ///
+  /// The order is: snapshot pre-branches captured, then apply
+  /// snapshot, process arm0, capture state0, restore snapshot,
+  /// process arm1, capture state1, then call merge_tracking with
+  /// state0 and state1 to overwrite the live maps.
+  void merge_tracking(
+    const tracking_snapshott &state0,
+    const tracking_snapshott &state1);
+
   /// PLR §8.7: leaf functions whose body is a single \`return <constant>\`
   /// statement have a known compile-time return value. Recording it here
   /// lets the assignment site \`c = f()\` propagate the constant through

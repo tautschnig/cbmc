@@ -430,13 +430,16 @@ codet python_convertert::convert_try(const jsont &stmt)
     }
     active_exception_handlers.push_back(std::move(caught));
   }
+  // PLR §8.4 control-flow correctness: snapshot tracking before
+  // try body, capture state after try, and for each except
+  // handler restore-snapshot-then-process so handlers see the
+  // pre-try state. Merge all post-states (try-success + each
+  // except handler) at the end.
+  tracking_snapshott pre_try_tracking = snapshot_tracking();
+  std::vector<tracking_snapshott> arm_states;
   if(body.is_array())
   {
     bool first = true;
-    // PLR §8.4: statements in a try body after the first are
-    // guarded by ¬exception_active — they form branches whose
-    // execution depends on the exception state, so path-
-    // insensitive tracking should be invalidated.
     if_else_depth++;
     for(const auto &s : as_array(body))
     {
@@ -455,6 +458,7 @@ codet python_convertert::convert_try(const jsont &stmt)
     }
     if_else_depth--;
   }
+  arm_states.push_back(snapshot_tracking());
   try_depth--;
   active_exception_handlers.pop_back();
 
@@ -552,15 +556,14 @@ codet python_convertert::convert_try(const jsont &stmt)
       const jsont &handler_body = json_member(handler, "body");
       if(handler_body.is_array())
       {
-        // PLR §8.4: each except handler is a branch — increment
-        // if_else_depth so path-insensitive tracking
-        // (string_constants, etc.) is invalidated for variables
-        // assigned inside, the same way as if/else and match
-        // case bodies.
+        // Restore snapshot so this handler sees pre-try state, not
+        // the leaked state from the try body or previous handlers.
+        restore_tracking(pre_try_tracking);
         if_else_depth++;
         for(const auto &s : as_array(handler_body))
           except_block.add(convert_statement(s));
         if_else_depth--;
+        arm_states.push_back(snapshot_tracking());
       }
 
       exprt condition = exc_sym->symbol_expr();
@@ -655,6 +658,30 @@ codet python_convertert::convert_try(const jsont &stmt)
   {
     for(const auto &s : as_array(finalbody))
       block.add(convert_statement(s));
+  }
+
+  // Merge arm states: try-success (arm_states[0]) plus each
+  // except-handler post-state (arm_states[1..]). Path-dependent
+  // entries (assigned inconsistently across arms) are dropped.
+  if(arm_states.empty())
+  {
+    // No body and no handlers — nothing to merge; restore.
+    restore_tracking(pre_try_tracking);
+  }
+  else if(arm_states.size() == 1)
+  {
+    // Only the try body executed. Path-dependent entries are
+    // those that differ from pre-try — merge with snapshot.
+    merge_tracking(arm_states[0], pre_try_tracking);
+  }
+  else
+  {
+    restore_tracking(arm_states[0]);
+    for(std::size_t i = 1; i < arm_states.size(); i++)
+    {
+      tracking_snapshott current = snapshot_tracking();
+      merge_tracking(current, arm_states[i]);
+    }
   }
 
   return std::move(block);
