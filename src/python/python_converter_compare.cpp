@@ -754,6 +754,15 @@ exprt python_convertert::convert_compare(const jsont &expr)
         member_exprt data{container, "data", data_type};
         member_exprt length{container, "length", signedbv_typet{64}};
 
+        // PLR §6.10.1: when the list element type is python_string,
+        // struct equality compares the data POINTER, not the content.
+        // Use the string solver's content-equality for membership so
+        // 'str(1) in [str(0), str(1), str(2)]' resolves correctly even
+        // when the elements were constructed at runtime.
+        bool list_of_strings =
+          is_python_string_type(data_type.element_type()) &&
+          is_python_string_type(item.type());
+
         // Build disjunction for up to PYTHON_MAX_LIST_LENGTH elements
         // guarded by index < length
         exprt in_expr = false_exprt{};
@@ -764,7 +773,22 @@ exprt python_convertert::convert_compare(const jsont &expr)
           // Ensure types match for equality comparison
           if(current_left.type() != elem.type())
             elem = safe_typecast(elem, current_left.type());
-          exprt match = equal_exprt{current_left, elem};
+          exprt match;
+          if(list_of_strings)
+          {
+            match = emit_string_bool_function(
+              ID_cprover_string_equal_func,
+              elem,
+              current_left,
+              symbol_table,
+              pending_checks);
+            if(match.type() != bool_typet{})
+              match = typecast_exprt{std::move(match), bool_typet{}};
+          }
+          else
+          {
+            match = equal_exprt{current_left, elem};
+          }
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
           in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
         }

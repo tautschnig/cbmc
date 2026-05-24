@@ -4968,8 +4968,24 @@ exprt python_convertert::convert_call(const jsont &expr)
         return std::move(tmp);
       }
     }
-    return side_effect_expr_nondett{
-      python_list_type(python_int_type()), get_location(expr)};
+    // PLR §6.10.2: set() with no argument (or with a non-list
+    // argument we can't statically expand) returns an empty set.
+    // Return an empty list-shaped struct (our string-set model is
+    // list-backed) so subsequent in/add operations work
+    // structurally rather than against a nondet placeholder.
+    {
+      typet elem_t = python_value_type();
+      typet st_t = python_list_type(elem_t);
+      const auto &list_st = to_struct_type(st_t);
+      const auto &data_t = to_array_type(list_st.components()[1].type());
+      exprt::operandst zeros;
+      while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
+        zeros.push_back(safe_zero(data_t.element_type()));
+      return struct_exprt{
+        {from_integer(0LL, signedbv_typet{64}),
+         array_exprt{std::move(zeros), data_t}},
+        st_t};
+    }
   }
   // list() / reversed() — return copy or nondet
   else if(func_name == "list" || func_name == "reversed")

@@ -372,6 +372,51 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     }
     if(!passes_filter)
       continue;
+    // PLR §6.2.7: if the element expression is `str(<iter-var>)`,
+    // fold it to a concrete python_string_literal at conversion
+    // time. (Mirrors the dict-comp constant-folding for the same
+    // reason: the runtime-emitted cprover_string_of_int_func is
+    // a side effect that the element-equal comparison can't see
+    // through.)
+    auto try_fold_str_call =
+      [&](const jsont &call_ast,
+          const std::vector<std::pair<irep_idt, exprt>> &binds) -> exprt {
+      if(!is_node_type(call_ast, "Call"))
+        return nil_exprt{};
+      const jsont &func = json_member(call_ast, "func");
+      if(!is_node_type(func, "Name"))
+        return nil_exprt{};
+      std::string fn_name = json_string(json_member(func, "id"));
+      const jsont &args_n = json_member(call_ast, "args");
+      if(!args_n.is_array() || as_array(args_n).size() != 1)
+        return nil_exprt{};
+      const jsont &arg = *as_array(args_n).begin();
+      if(!is_node_type(arg, "Name"))
+        return nil_exprt{};
+      std::string aname = json_string(json_member(arg, "id"));
+      irep_idt qid{qualify_name(aname)};
+      const exprt *bound = nullptr;
+      for(const auto &[sid, val] : binds)
+      {
+        if(sid == qid)
+        {
+          bound = &val;
+          break;
+        }
+      }
+      if(bound == nullptr || !bound->is_constant())
+        return nil_exprt{};
+      mp_integer iv;
+      if(
+        bound->type().id() != ID_signedbv ||
+        to_integer(to_constant_expr(*bound), iv))
+        return nil_exprt{};
+      if(fn_name == "str")
+        return python_string_literal(integer2string(iv));
+      return nil_exprt{};
+    };
+    if(exprt folded = try_fold_str_call(elt, bindings); folded.is_not_nil())
+      elt_expr = std::move(folded);
     elements.push_back(elt_expr);
   }
 
