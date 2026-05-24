@@ -883,6 +883,183 @@ codet python_convertert::convert_assign(const jsont &stmt)
     if(is_node_type(target, "Tuple") || is_node_type(target, "List"))
     {
       const jsont &elts = json_member(target, "elts");
+      // PLR §7.2.2: extended starred unpacking
+      //   first, *rest = [1, 2, 3]
+      //   *head, last = [1, 2, 3]
+      //   a, *mid, z = [1, 2, 3, 4, 5]
+      // Triggered for any Tuple/List target with at least one
+      // Starred element AND a list-typed rhs. Handled in front
+      // of the existing tuple-rhs path so that list rhs gets a
+      // proper expansion.
+      bool has_starred = false;
+      std::size_t star_idx = 0;
+      if(elts.is_array())
+      {
+        std::size_t i = 0;
+        for(const auto &e : as_array(elts))
+        {
+          if(is_node_type(e, "Starred"))
+          {
+            has_starred = true;
+            star_idx = i;
+            break;
+          }
+          ++i;
+        }
+      }
+      if(
+        has_starred && elts.is_array() &&
+        (is_python_list_type(rhs.type()) || is_python_tuple_type(rhs.type())))
+      {
+        // Materialise the rhs into a fresh tmp so the
+        // assignment-target list reads from a snapshot
+        // (matches simple-tuple-unpack semantics).
+        static unsigned starred_ctr = 0;
+        std::string tmpn = "__starred_" + std::to_string(starred_ctr++);
+        std::string tmpq = qualify_name(tmpn);
+        irep_idt tmpid{tmpq};
+        if(symbol_table.lookup(tmpid) == nullptr)
+        {
+          symbolt ts{tmpid, rhs.type(), "python"};
+          ts.base_name = tmpn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt rhs_snap = symbol_table.lookup_ref(tmpid).symbol_expr();
+        block.add(code_frontend_assignt{rhs_snap, rhs});
+
+        // Get data array + length of rhs
+        bool rhs_is_list = is_python_list_type(rhs.type());
+        if(rhs_is_list)
+        {
+          const auto &lst = to_struct_type(rhs.type());
+          const auto &data_t = to_array_type(lst.components()[1].type());
+          const typet &elem_t = data_t.element_type();
+          member_exprt rhs_data{rhs_snap, "data", data_t};
+          member_exprt rhs_len{rhs_snap, "length", signedbv_typet{64}};
+          std::size_t n_elts = as_array(elts).size();
+          std::size_t n_trailing = n_elts - star_idx - 1;
+
+          auto emit_simple = [&](const jsont &elt_node, exprt rhs_val)
+          {
+            std::string en = json_string(json_member(elt_node, "id"));
+            if(en.empty())
+              return;
+            std::string qn = qualify_name(en);
+            irep_idt sid{qn};
+            if(symbol_table.lookup(sid) == nullptr)
+            {
+              symbolt ns{sid, rhs_val.type(), "python"};
+              ns.base_name = en;
+              ns.location = loc;
+              ns.is_lvalue = true;
+              ns.is_state_var = true;
+              ns.is_static_lifetime = current_function.empty();
+              symbol_table.add(ns);
+            }
+            const symbolt &tsym = symbol_table.lookup_ref(sid);
+            exprt rv = rhs_val;
+            if(rv.type() != tsym.type)
+              rv = safe_typecast(rv, tsym.type);
+            block.add(code_frontend_assignt{tsym.symbol_expr(), rv});
+          };
+
+          // Pre-star elements: source[0..star_idx-1]
+          std::size_t i = 0;
+          for(const auto &elt : as_array(elts))
+          {
+            if(i >= star_idx)
+              break;
+            exprt idx_e = from_integer(i, signedbv_typet{64});
+            emit_simple(elt, index_exprt{rhs_data, idx_e, elem_t});
+            ++i;
+          }
+          // Starred element: build a list from source[star_idx ..
+          // length - n_trailing - 1].
+          {
+            const jsont &starred =
+              *std::next(as_array(elts).begin(), star_idx);
+            const jsont &inner = json_member(starred, "value");
+            std::string sn;
+            if(is_node_type(inner, "Name"))
+              sn = json_string(json_member(inner, "id"));
+            if(!sn.empty())
+            {
+              // Build a fresh list with the same element type.
+              typet rest_list_t = python_list_type(elem_t);
+              std::string sq = qualify_name(sn);
+              irep_idt rs_id{sq};
+              if(symbol_table.lookup(rs_id) == nullptr)
+              {
+                symbolt rs{rs_id, rest_list_t, "python"};
+                rs.base_name = sn;
+                rs.location = loc;
+                rs.is_lvalue = true;
+                rs.is_state_var = true;
+                rs.is_static_lifetime = current_function.empty();
+                symbol_table.add(rs);
+              }
+              const symbolt &rsym = symbol_table.lookup_ref(rs_id);
+              const auto &rest_st = to_struct_type(rest_list_t);
+              const auto &rest_data_t =
+                to_array_type(rest_st.components()[1].type());
+              // length_rest = max(0, rhs_len - n_trailing - star_idx)
+              exprt new_len = minus_exprt{
+                rhs_len,
+                from_integer(
+                  static_cast<long long>(n_trailing + star_idx),
+                  signedbv_typet{64})};
+              exprt zero64 = from_integer(0LL, signedbv_typet{64});
+              exprt len_clamped =
+                if_exprt{binary_relation_exprt{new_len, ID_lt, zero64},
+                         zero64,
+                         new_len};
+              // Build elems: rhs_data[star_idx + i] if i < length_rest
+              exprt::operandst elems;
+              for(int k = 0; k < PYTHON_MAX_LIST_LENGTH; ++k)
+              {
+                exprt k_e = from_integer(k, signedbv_typet{64});
+                exprt src_idx =
+                  plus_exprt{from_integer(
+                               static_cast<long long>(star_idx),
+                               signedbv_typet{64}),
+                             k_e};
+                exprt val = index_exprt{rhs_data, src_idx, elem_t};
+                exprt in_range =
+                  binary_relation_exprt{k_e, ID_lt, len_clamped};
+                exprt el =
+                  if_exprt{in_range, val, safe_zero(elem_t)};
+                elems.push_back(std::move(el));
+              }
+              exprt rest_val = struct_exprt{
+                {len_clamped,
+                 array_exprt{std::move(elems), rest_data_t}},
+                rest_list_t};
+              block.add(code_frontend_assignt{rsym.symbol_expr(), rest_val});
+            }
+          }
+          // Post-star elements: source[length - n_trailing + j]
+          std::size_t j = 0;
+          for(const auto &elt : as_array(elts))
+          {
+            if(j > star_idx)
+            {
+              std::size_t off = j - star_idx - 1; // 0-indexed within trail
+              exprt src_idx = plus_exprt{
+                rhs_len,
+                from_integer(
+                  static_cast<long long>(off) -
+                    static_cast<long long>(n_trailing),
+                  signedbv_typet{64})};
+              emit_simple(elt, index_exprt{rhs_data, src_idx, elem_t});
+            }
+            ++j;
+          }
+          continue;
+        }
+      }
       if(elts.is_array() && is_python_tuple_type(rhs.type()))
       {
         const auto &tuple_st = to_struct_type(rhs.type());
