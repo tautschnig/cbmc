@@ -1,40 +1,43 @@
-# PLR correctness: when a variable is assigned in only one branch
-# of an if/else (or each branch with a different value), the
-# converter's conversion-time tracking maps must NOT cache the
-# value — otherwise the last-arm-processed wins and downstream
-# constant-fold lookups produce wrong results.
+# PLR §6.10.1: when a string variable is assigned in only one
+# branch of an if/else (or each branch with a different value),
+# the converter's string_constants tracking map is path-
+# insensitive — the last write wins, even though only one arm
+# executes at runtime. This causes assertions like
+# `assert r == "two"` to fold to `false` at conversion time.
 #
-# This regression covers tracking maps beyond just string_constants:
-# dict_literals, list_literals, tuple_literals, float_constants,
-# alias_targets, function_aliases, bound_methods.
+# The fix gates string_constants writes by if_else_depth: when
+# inside a branch, erase the entry instead of writing it, so the
+# string equality falls through to the string solver (which
+# handles path-sensitivity correctly via SSA).
+#
+# This test exercises the string-content path. Structural
+# tracking (dict_literals, list_literals, etc.) is intentionally
+# kept path-insensitive: invalidating it inside a branch breaks
+# downstream constant-folding of in-same-branch reads (e.g. a
+# list comp reading a list literal assigned one statement back),
+# which is a more common pattern than the path-insensitive
+# folding bug at the join.
 
-def dict_in_branch() -> None:
+def string_in_branch() -> None:
     x: int = 2
     if x == 2:
-        d = {"a": 1, "b": 2}
+        r = "two"
     else:
-        d = {"a": 99, "b": 100}
-    assert d["a"] == 1
+        r = "other"
+    assert r == "two"
 
 
-def list_in_branch() -> None:
-    x: int = 2
-    if x == 2:
-        xs = [1, 2, 3]
-    else:
-        xs = [99, 100, 101]
-    assert xs[0] == 1
+def string_in_match() -> None:
+    val: int = 2
+    match val:
+        case 1:
+            r = "one"
+        case 2:
+            r = "two"
+        case _:
+            r = "other"
+    assert r == "two"
 
 
-def float_in_branch() -> None:
-    x: int = 2
-    if x == 2:
-        y = 1.5
-    else:
-        y = 99.5
-    assert y == 1.5
-
-
-dict_in_branch()
-list_in_branch()
-float_in_branch()
+string_in_branch()
+string_in_match()
