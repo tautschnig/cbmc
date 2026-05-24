@@ -4893,6 +4893,55 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // PLR §6.10.2: set(list_of_ints) — build a bitmap-set so it
+      // interoperates with set literals {1,2,3} and the binary
+      // operators (|, &, -, ^). For non-int element types we
+      // fall through to the legacy list-backed path.
+      if(
+        is_python_list_type(arg.type()) &&
+        to_array_type(to_struct_type(arg.type()).components()[1].type())
+            .element_type()
+            .id() == ID_signedbv)
+      {
+        const auto &list_st = to_struct_type(arg.type());
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        member_exprt src_data{arg, "data", data_type};
+        member_exprt src_len{arg, "length", signedbv_typet{64}};
+
+        // Build the bitmap by OR-ing 1 << data[i] for each
+        // i in [0, length).
+        static unsigned bm_set_ctr = 0;
+        std::string bm_name =
+          "__set_bm_" + std::to_string(bm_set_ctr++);
+        std::string bm_qname = qualify_name(bm_name);
+        irep_idt bm_id{bm_qname};
+        if(symbol_table.lookup(bm_id) == nullptr)
+        {
+          symbolt bm_sym{bm_id, unsignedbv_typet{64}, "python"};
+          bm_sym.base_name = bm_name;
+          bm_sym.is_lvalue = true;
+          bm_sym.is_state_var = true;
+          symbol_table.add(bm_sym);
+        }
+        symbol_exprt bm = symbol_table.lookup_ref(bm_id).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{
+          bm, from_integer(0, unsignedbv_typet{64})});
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        {
+          exprt idx = from_integer(i, signedbv_typet{64});
+          exprt elem = index_exprt{src_data, idx};
+          // shift = 1 << elem (as unsigned 64).
+          exprt shift_amt =
+            typecast_exprt{elem, unsignedbv_typet{64}};
+          exprt one_shifted = shl_exprt{
+            from_integer(1, unsignedbv_typet{64}), shift_amt};
+          pending_checks.push_back(code_ifthenelset{
+            binary_relation_exprt{idx, ID_lt, src_len},
+            code_frontend_assignt{bm, bitor_exprt{bm, one_shifted}}});
+        }
+        return struct_exprt{
+          {bm, from_integer(0, signedbv_typet{64})}, python_set_type()};
+      }
       if(is_python_list_type(arg.type()))
       {
         const auto &list_st = to_struct_type(arg.type());
@@ -5426,6 +5475,17 @@ exprt python_convertert::convert_call(const jsont &expr)
         to_array_type(to_struct_type(lt).components()[1].type());
       member_exprt data{tmp, "data", data_type};
       member_exprt length{tmp, "length", signedbv_typet{64}};
+
+      // PLR §6.10.1: zero-init the data buffer so trailing slots
+      // beyond the materialised range match a literal's trailing
+      // zeros at struct-equality time.
+      {
+        exprt::operandst zeros;
+        while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
+          zeros.push_back(safe_zero(data_type.element_type()));
+        pending_checks.push_back(code_frontend_assignt{
+          data, array_exprt{std::move(zeros), data_type}});
+      }
 
       // Fill: data[i] = start + i * step for i in 0..MAX
       pending_checks.push_back(
