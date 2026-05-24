@@ -6842,6 +6842,48 @@ exprt python_convertert::convert_call(const jsont &expr)
             continue;
           }
         }
+        // PLR §8.7: f(*xs) where xs is a list-typed expression
+        // (e.g. a parameter, not a literal). The target
+        // function's arity tells us how many elements to read
+        // from the list. Generate xs.data[0], xs.data[1], ...,
+        // xs.data[target_arity-1] for the remaining slots.
+        // If the list is shorter at run time, the trailing
+        // reads return zero (the list buffer is fixed-size and
+        // zero-initialised), which over-approximates a Python
+        // TypeError-at-runtime as a precision-loss but is sound
+        // for the common case where the caller correctly forwards.
+        if(is_python_list_type(inner.type()))
+        {
+          // Number of remaining positional slots in the target
+          // (params already provided so far excluded).
+          std::size_t already = arguments.size();
+          // Target arity: regular params (non-vararg). If the
+          // target's last param is itself list-typed (*args), we
+          // expand up to that param and let downstream packing
+          // re-pack the rest.
+          std::size_t remaining = 0;
+          if(params.size() > already)
+            remaining = params.size() - already;
+          // Cap at PYTHON_MAX_LIST_LENGTH so we don't read past
+          // the buffer.
+          if(remaining > PYTHON_MAX_LIST_LENGTH)
+            remaining = PYTHON_MAX_LIST_LENGTH;
+          if(remaining > 0)
+          {
+            const auto &list_st = to_struct_type(inner.type());
+            const auto &data_type =
+              to_array_type(list_st.components()[1].type());
+            exprt data_member = member_exprt{inner, "data", data_type};
+            for(std::size_t i = 0; i < remaining; i++)
+            {
+              exprt idx = from_integer(
+                static_cast<long long>(i), signedbv_typet{64});
+              arguments.push_back(
+                index_exprt{data_member, idx, data_type.element_type()});
+            }
+            continue;
+          }
+        }
         log_overapprox(
           "PEP 448 call unpacking of non-literal iterable — nondet");
         arguments.push_back(
@@ -7105,61 +7147,121 @@ exprt python_convertert::convert_call(const jsont &expr)
   while(!arguments.empty() && arguments.back().is_nil())
     arguments.pop_back();
 
-  // PLR §8.7: *args packing. When the call site provides more
-  // positional arguments than the function has non-vararg parameters,
-  // and the function's last parameter is a list (our model for *args),
-  // pack the trailing positionals into a list struct and pass that as
-  // the single vararg parameter.
-  if(arguments.size() > params.size() && !params.empty())
+  // PLR §8.7: *args packing using the explicit vararg index.
+  //
+  // When a function `def f(a, *args, [closures...])` is called as
+  // f(1, 2, 3), the caller provides 3 positionals. The wrapper has
+  // params: [a, args(list), closure1, closure2, ...]. We must:
+  //   - Bind a := 1
+  //   - Pack [2, 3] into the args list at index P (the recorded
+  //     vararg index)
+  //   - Leave closure params (after P) as nil — they get filled by
+  //     safe_zero / the closure-binding machinery.
   {
-    // Check if the last param is list-typed (our *args model)
-    const auto &last_param_type = params.back().type();
-    if(is_python_list_type(last_param_type))
+    auto va_it = function_vararg_index.find(sym->name);
+    if(va_it != function_vararg_index.end() && va_it->second < params.size())
     {
-      std::size_t n_regular = params.size() - 1; // non-vararg params
-      // Pack arguments[n_regular..] into a list
-      const auto &list_st = to_struct_type(last_param_type);
-      const auto &data_type = to_array_type(list_st.components()[1].type());
-      exprt::operandst elems;
-      for(std::size_t i = n_regular; i < arguments.size(); i++)
+      std::size_t va_idx = va_it->second;
+      const auto &va_param_type = params[va_idx].type();
+      if(is_python_list_type(va_param_type))
       {
-        exprt arg = arguments[i];
-        if(arg.type() != data_type.element_type())
-          arg = safe_typecast(arg, data_type.element_type());
-        elems.push_back(arg);
+        const auto &list_st = to_struct_type(va_param_type);
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        exprt::operandst elems;
+        // The *args slot collects positionals from index va_idx
+        // up to (but not including) any args that were already
+        // assigned to closure-capture params at higher indices.
+        // Since arguments are positional and only the user-visible
+        // params (before closures) are filled, the trailing
+        // arguments beyond va_idx are the *args contents.
+        std::size_t end = arguments.size();
+        for(std::size_t i = va_idx; i < end; i++)
+        {
+          exprt arg = arguments[i];
+          if(arg.is_nil())
+            break;
+          if(arg.type() != data_type.element_type())
+            arg = safe_typecast(arg, data_type.element_type());
+          elems.push_back(arg);
+        }
+        std::size_t n_packed = elems.size();
+        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+          elems.push_back(safe_zero(data_type.element_type()));
+        exprt length =
+          from_integer(static_cast<long long>(n_packed), signedbv_typet{64});
+        exprt packed = struct_exprt{
+          {length, array_exprt{std::move(elems), data_type}}, va_param_type};
+        // Trim arguments to va_idx, then append packed list and
+        // re-pad with nil for any closure params after.
+        arguments.resize(va_idx);
+        arguments.push_back(std::move(packed));
+        while(arguments.size() < params.size())
+          arguments.push_back(nil_exprt{});
       }
-      while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-        elems.push_back(safe_zero(data_type.element_type()));
-      exprt length = from_integer(
-        static_cast<long long>(arguments.size() - n_regular),
-        signedbv_typet{64});
-      exprt packed = struct_exprt{
-        {length, array_exprt{std::move(elems), data_type}}, last_param_type};
-      // Trim arguments to n_regular + 1 (the packed list)
-      arguments.resize(n_regular);
-      arguments.push_back(std::move(packed));
+    }
+    else if(arguments.size() > params.size() && !params.empty())
+    {
+      // Fallback for the legacy "trailing list param" case where
+      // function_vararg_index wasn't populated (e.g. dynamically
+      // synthesised functions). Same as before: if the LAST param
+      // is list-typed, pack trailing positionals into it.
+      const auto &last_param_type = params.back().type();
+      if(is_python_list_type(last_param_type))
+      {
+        std::size_t n_regular = params.size() - 1;
+        const auto &list_st = to_struct_type(last_param_type);
+        const auto &data_type = to_array_type(list_st.components()[1].type());
+        exprt::operandst elems;
+        for(std::size_t i = n_regular; i < arguments.size(); i++)
+        {
+          exprt arg = arguments[i];
+          if(arg.type() != data_type.element_type())
+            arg = safe_typecast(arg, data_type.element_type());
+          elems.push_back(arg);
+        }
+        std::size_t n_packed = elems.size();
+        while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+          elems.push_back(safe_zero(data_type.element_type()));
+        exprt length =
+          from_integer(static_cast<long long>(n_packed), signedbv_typet{64});
+        exprt packed = struct_exprt{
+          {length, array_exprt{std::move(elems), data_type}}, last_param_type};
+        arguments.resize(n_regular);
+        arguments.push_back(std::move(packed));
+      }
     }
   }
-  // Also handle the case where arguments.size() <= params.size() but
-  // the last param is *args and no trailing args were provided — pass
-  // an empty list.
-  if(
-    arguments.size() < params.size() && !params.empty() &&
-    is_python_list_type(params.back().type()))
+  // Empty-args fallback: if we have a vararg param and no
+  // positionals reached its slot, pass an empty list.
   {
-    // Fill missing regular params with nil (handled below), then
-    // ensure the *args slot gets an empty list.
-    while(arguments.size() < params.size() - 1)
-      arguments.push_back(nil_exprt{});
-    const auto &list_st = to_struct_type(params.back().type());
-    const auto &data_type = to_array_type(list_st.components()[1].type());
-    exprt::operandst elems;
-    while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-      elems.push_back(safe_zero(data_type.element_type()));
-    exprt length = from_integer(0LL, signedbv_typet{64});
-    arguments.push_back(struct_exprt{
-      {length, array_exprt{std::move(elems), data_type}},
-      params.back().type()});
+    auto va_it = function_vararg_index.find(sym->name);
+    if(va_it != function_vararg_index.end() && va_it->second < params.size())
+    {
+      std::size_t va_idx = va_it->second;
+      if(va_idx >= arguments.size() || arguments[va_idx].is_nil())
+      {
+        const auto &va_param_type = params[va_idx].type();
+        if(is_python_list_type(va_param_type))
+        {
+          const auto &list_st = to_struct_type(va_param_type);
+          const auto &data_type = to_array_type(list_st.components()[1].type());
+          exprt::operandst elems;
+          while(elems.size() < PYTHON_MAX_LIST_LENGTH)
+            elems.push_back(safe_zero(data_type.element_type()));
+          exprt length = from_integer(0LL, signedbv_typet{64});
+          exprt packed = struct_exprt{
+            {length, array_exprt{std::move(elems), data_type}}, va_param_type};
+          while(arguments.size() < va_idx)
+            arguments.push_back(nil_exprt{});
+          if(arguments.size() == va_idx)
+            arguments.push_back(std::move(packed));
+          else
+            arguments[va_idx] = std::move(packed);
+          while(arguments.size() < params.size())
+            arguments.push_back(nil_exprt{});
+        }
+      }
+    }
   }
 
   // Typecast arguments to match parameter types
