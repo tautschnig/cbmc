@@ -369,6 +369,90 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                   return_type = python_value_type();
               }
             }
+            // PLR §6.10.5: 'return a, b' — the implicit tuple
+            // is the return value. Infer the tuple type from
+            // the syntactic shape (the element types are
+            // approximated as python_int_type for unannotated
+            // scalars; this matches how tuple literals get
+            // their element types inferred elsewhere).
+            if(is_node_type(rv, "Tuple") && return_type.id() == ID_empty)
+            {
+              const jsont &telts = json_member(rv, "elts");
+              if(telts.is_array() && !as_array(telts).empty())
+              {
+                std::vector<typet> elem_types;
+                for(const auto &e : as_array(telts))
+                {
+                  // Default to int; widen on Constant(float)
+                  // or Constant(str). For Name operands, look
+                  // up the symbol if it already exists (typed
+                  // local variable assigned earlier in the
+                  // body) and use its type. Anything else
+                  // stays int and the call-site safe_typecast
+                  // handles mismatches.
+                  typet et = python_int_type();
+                  if(is_node_type(e, "Constant"))
+                  {
+                    const jsont &cv = json_member(e, "value");
+                    if(cv.is_string())
+                      et = python_string_type();
+                    else if(cv.is_number())
+                    {
+                      std::string vs = cv.value;
+                      if(
+                        vs.find('.') != std::string::npos ||
+                        vs.find('e') != std::string::npos)
+                        et = double_type();
+                    }
+                  }
+                  else if(is_node_type(e, "Name"))
+                  {
+                    // Symbol may not exist yet (body not yet
+                    // converted). Look up an enclosing
+                    // AnnAssign for this name in the function
+                    // body to get its declared type. If none,
+                    // fall back to double_type — it can hold
+                    // both ints and floats.
+                    std::string nm = json_string(json_member(e, "id"));
+                    irep_idt nid{"python::" + func_name + "::" + nm};
+                    const symbolt *ns = symbol_table.lookup(nid);
+                    if(ns != nullptr && ns->type.id() != ID_empty)
+                      et = ns->type;
+                    else
+                    {
+                      // Search the function body for AnnAssign
+                      // 'nm: T = ...' to get the annotation.
+                      const jsont &fn_body = json_member(stmt, "body");
+                      if(fn_body.is_array())
+                      {
+                        for(const auto &bs : as_array(fn_body))
+                        {
+                          if(!is_node_type(bs, "AnnAssign"))
+                            continue;
+                          const jsont &target = json_member(bs, "target");
+                          if(
+                            !is_node_type(target, "Name") ||
+                            json_string(json_member(target, "id")) != nm)
+                            continue;
+                          const jsont &ann = json_member(bs, "annotation");
+                          if(!ann.is_null())
+                            et = convert_type_annotation(ann);
+                          break;
+                        }
+                      }
+                      // Default fallback for unannotated locals:
+                      // double_type covers both int and float
+                      // promotions, which is sound for most
+                      // tuple-return + isfinite/isnan patterns.
+                      if(et == python_int_type())
+                        et = double_type();
+                    }
+                  }
+                  elem_types.push_back(et);
+                }
+                return_type = python_tuple_type(elem_types);
+              }
+            }
           }
         }
         // Detect yield (generator function) and infer the
