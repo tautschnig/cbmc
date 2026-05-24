@@ -5230,6 +5230,97 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         return std::move(tmp);
       }
+      // PLR §6.10.2: sorted() on a bitmap-int-set materialises
+      // the set's elements as a list, then sorts. We iterate
+      // bits 0..63 of the bitmap and fill the list with the
+      // bits that are set (already in numeric order, so the
+      // forward pass produces a sorted list).
+      if(is_python_set_type(arg.type()))
+      {
+        member_exprt bm{arg, "bitmap", unsignedbv_typet{64}};
+        member_exprt off{arg, "offset", signedbv_typet{64}};
+        typet lt = python_list_type(python_int_type());
+        const auto &slist_st = to_struct_type(lt);
+        const auto &sdata_type =
+          to_array_type(slist_st.components()[1].type());
+        static unsigned setsort_ctr = 0;
+        std::string tn = "__set_sort_" + std::to_string(setsort_ctr++);
+        std::string tq = qualify_name(tn);
+        irep_idt ti{tq};
+        if(symbol_table.lookup(ti) == nullptr)
+        {
+          symbolt ts{ti, lt, "python"};
+          ts.base_name = tn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        symbol_exprt stmp = symbol_table.lookup_ref(ti).symbol_expr();
+        member_exprt sdata{stmp, "data", sdata_type};
+        member_exprt slength{stmp, "length", signedbv_typet{64}};
+        // PLR §6.10.1: zero-init the data buffer so positions
+        // beyond the materialised length match a literal's
+        // trailing zeros at struct-equality time.
+        {
+          exprt::operandst zeros;
+          while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
+            zeros.push_back(safe_zero(sdata_type.element_type()));
+          pending_checks.push_back(code_frontend_assignt{
+            sdata, array_exprt{std::move(zeros), sdata_type}});
+        }
+        pending_checks.push_back(
+          code_frontend_assignt{slength, from_integer(0, signedbv_typet{64})});
+        for(std::size_t bit = 0; bit < 64; bit++)
+        {
+          exprt bit_set = notequal_exprt{
+            bitand_exprt{
+              bm, from_integer(mp_integer{1} << bit, unsignedbv_typet{64})},
+            from_integer(0, unsignedbv_typet{64})};
+          exprt val = plus_exprt{
+            off,
+            from_integer(static_cast<long long>(bit), signedbv_typet{64})};
+          if(val.type() != sdata_type.element_type())
+            val = safe_typecast(val, sdata_type.element_type());
+          code_blockt append;
+          append.add(code_frontend_assignt{index_exprt{sdata, slength}, val});
+          append.add(code_frontend_assignt{
+            slength, plus_exprt{slength, from_integer(1, signedbv_typet{64})}});
+          pending_checks.push_back(
+            code_ifthenelset{bit_set, std::move(append)});
+        }
+        if(sorted_reverse)
+        {
+          for(std::size_t i = 0; i < 32; i++)
+          {
+            exprt il = from_integer(i, signedbv_typet{64});
+            exprt ir = minus_exprt{
+              minus_exprt{slength, from_integer(1, signedbv_typet{64})}, il};
+            exprt do_swap = binary_relation_exprt{il, ID_lt, ir};
+            static unsigned swap_ctr = 0;
+            std::string sn =
+              "__set_sort_swap_" + std::to_string(swap_ctr++);
+            std::string sq = qualify_name(sn);
+            irep_idt si{sq};
+            if(symbol_table.lookup(si) == nullptr)
+            {
+              symbolt ss{si, sdata_type.element_type(), "python"};
+              ss.base_name = sn;
+              ss.is_lvalue = true;
+              ss.is_state_var = true;
+              symbol_table.add(ss);
+            }
+            symbol_exprt sv = symbol_table.lookup_ref(si).symbol_expr();
+            code_blockt swap;
+            swap.add(code_frontend_assignt{sv, index_exprt{sdata, il}});
+            swap.add(code_frontend_assignt{
+              index_exprt{sdata, il}, index_exprt{sdata, ir}});
+            swap.add(code_frontend_assignt{index_exprt{sdata, ir}, sv});
+            pending_checks.push_back(
+              code_ifthenelset{do_swap, std::move(swap)});
+          }
+        }
+        return std::move(stmp);
+      }
     }
     return side_effect_expr_nondett{
       python_list_type(python_int_type()), get_location(expr)};
