@@ -314,6 +314,10 @@ private:
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
+  /// PLR §8.7: index of the *args parameter for each function that
+  /// has one. Stored explicitly because closure captures are appended
+  /// after *args, so its position isn't always last.
+  std::map<irep_idt, std::size_t> function_vararg_index;
   // Default parameter values evaluated at definition time
   // Maps (function_name, param_index) → default value expression
   std::map<std::pair<std::string, std::size_t>, exprt> default_values;

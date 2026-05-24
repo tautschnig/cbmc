@@ -213,6 +213,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     code_typet::parametert p{va_type};
     p.set_identifier("python::" + func_name + "::" + varargs_name);
     p.set_base_name(varargs_name);
+    // PLR §8.7: record the index of the *args param so the call
+    // site can locate it for packing/unpacking even when closure
+    // captures are appended later.
+    function_vararg_index[irep_idt{"python::" + func_name}] =
+      parameters.size();
     parameters.push_back(p);
   }
 
