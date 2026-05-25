@@ -342,7 +342,8 @@ make_nondet_string(symbol_table_baset &symbol_table)
   const irep_idt &func_id,
   const exprt::operandst &extra_args,
   symbol_table_baset &symbol_table,
-  std::vector<codet> &pending_checks)
+  std::vector<codet> &pending_checks,
+  bool in_loop = false)
 {
   exprt result = make_nondet_string(symbol_table);
 
@@ -356,12 +357,25 @@ make_nondet_string(symbol_table_baset &symbol_table)
   // UNSAT and any assertion verifying SUCCESSFUL
   // (github_3127_1_fail). Havoc the output args before each
   // call so SSA gives them fresh L2 indices.
-  pending_checks.push_back(code_frontend_assignt{
-    result.operands()[0],
-    side_effect_expr_nondett{result.operands()[0].type(), source_locationt{}}});
-  pending_checks.push_back(code_frontend_assignt{
-    result.operands()[1],
-    side_effect_expr_nondett{result.operands()[1].type(), source_locationt{}}});
+  //
+  // We only do the havoc when the call site is inside a loop
+  // (in_loop=true). Outside loops, the call site never repeats
+  // and the unchanged symbols carry no stale constraints. The
+  // pointer havoc creates one fresh address-of object per call
+  // per execution, which would cumulate above CBMC's 256-object
+  // cap on string-heavy class re-instantiation tests
+  // (github_2992_lower) if applied unconditionally.
+  if(in_loop)
+  {
+    pending_checks.push_back(code_frontend_assignt{
+      result.operands()[0],
+      side_effect_expr_nondett{
+        result.operands()[0].type(), source_locationt{}}});
+    pending_checks.push_back(code_frontend_assignt{
+      result.operands()[1],
+      side_effect_expr_nondett{
+        result.operands()[1].type(), source_locationt{}}});
+  }
 
   std::vector<typet> arg_types;
   arg_types.push_back(signedbv_typet{64});

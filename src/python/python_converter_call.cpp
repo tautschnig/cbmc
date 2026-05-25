@@ -1171,7 +1171,8 @@ exprt python_convertert::convert_call(const jsont &expr)
                                      : ID_cprover_string_to_lower_case_func,
               {src},
               symbol_table,
-              pending_checks);
+              pending_checks,
+              loop_depth > 0);
           }
           const auto &data_type = array_typet(
             unsignedbv_typet{8},
@@ -1689,7 +1690,8 @@ exprt python_convertert::convert_call(const jsont &expr)
                   ID_cprover_string_of_int_func,
                   {as_i64},
                   symbol_table,
-                  pending_checks);
+                  pending_checks,
+                  loop_depth > 0);
                 auto ensure_fn = [&](const irep_idt &fid)
                 {
                   if(symbol_table.lookup(fid) == nullptr)
@@ -5904,7 +5906,8 @@ exprt python_convertert::convert_call(const jsont &expr)
           ID_cprover_string_of_int_func,
           {as_i64},
           symbol_table,
-          pending_checks);
+          pending_checks,
+          loop_depth > 0);
         auto ensure_fn = [&](const irep_idt &fid)
         {
           if(symbol_table.lookup(fid) == nullptr)
@@ -5943,7 +5946,8 @@ exprt python_convertert::convert_call(const jsont &expr)
           ID_cprover_string_of_double_func,
           {arg},
           symbol_table,
-          pending_checks);
+          pending_checks,
+          loop_depth > 0);
         auto ensure_fn2 = [&](const irep_idt &fid)
         {
           if(symbol_table.lookup(fid) == nullptr)
