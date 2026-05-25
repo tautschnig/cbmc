@@ -47,16 +47,39 @@ def _limit_mem():
 
 
 def parse_desc(path: Path):
-    """Return (tag, source, expected_lines) where expected_lines is a list of
-    regex strings from line 4 onwards (until the first blank line)."""
+    """Return (tag, source, expected_lines).
+
+    Test descriptors look like:
+      line 0: TAGS
+      line 1: source
+      line 2: command-line args (may be empty / absent)
+      line 3+: zero or more blank lines then expected regex(es)
+
+    Some descriptors omit the args line entirely (e.g.
+    github_2879_5/test.desc). Heuristic: if line 2 starts with
+    a regex anchor ('^') we treat it as the start of the regex
+    block; otherwise it's args and the regex block begins at
+    line 3 (skipping blanks)."""
     text = path.read_text(errors="replace").splitlines()
     tag = text[0].strip() if len(text) > 0 else ""
     source = text[1].strip() if len(text) > 1 else ""
+    # Determine where the regex block starts.
+    regex_start = 3
+    if (
+        len(text) > 2
+        and text[2].strip().startswith("^")
+        and not text[2].strip().startswith("--")
+    ):
+        regex_start = 2
     expected = []
-    for line in text[3:]:
+    saw_any = False
+    for line in text[regex_start:]:
         if line.strip() == "":
-            break
+            if saw_any:
+                break
+            continue  # Skip blank lines BEFORE the regex section
         expected.append(line)
+        saw_any = True
     return tag, source, expected
 
 
