@@ -87,8 +87,9 @@ exprt resolve_jml_expr(
         {
           if(!p.get_identifier().empty())
           {
-            if(const auto *psym =
-                 ns.get_symbol_table().lookup(p.get_identifier()))
+            if(
+              const auto *psym =
+                ns.get_symbol_table().lookup(p.get_identifier()))
               return psym->symbol_expr();
           }
         }
@@ -408,9 +409,8 @@ exprt resolve_jml_expr(
 
 } // namespace
 
-std::set<irep_idt> lower_jml_contracts(
-  goto_modelt &goto_model,
-  const jml_contract_mapt &contracts)
+std::set<irep_idt>
+lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
 {
   std::set<irep_idt> annotated_functions;
   const namespacet ns{goto_model.symbol_table};
@@ -540,6 +540,7 @@ std::set<irep_idt> lower_jml_contracts(
 
       source_locationt loc = first_it->source_location();
       loc.set_comment("JML \\old capture");
+      loc.set_step_kind(ID_old_capture);
       body.insert_before(first_it, goto_programt::make_decl(entry.fresh, loc));
       body.insert_before(
         first_it,
@@ -550,15 +551,14 @@ std::set<irep_idt> lower_jml_contracts(
     {
       source_locationt loc = first_it->source_location();
       loc.set_comment("JML requires");
+      loc.set_step_kind(ID_precondition);
       loc.set_property_class("precondition");
-      body.insert_before(
-        first_it, goto_programt::make_assumption(req, loc));
+      body.insert_before(first_it, goto_programt::make_assumption(req, loc));
     }
 
     // Emit body-level ASSERT for ensures at return sites
     // Find all SET_RETURN_VALUE or END_FUNCTION instructions
-    for(auto it = body.instructions.begin();
-        it != body.instructions.end();
+    for(auto it = body.instructions.begin(); it != body.instructions.end();
         ++it)
     {
       if(it->type() == END_FUNCTION)
@@ -567,9 +567,9 @@ std::set<irep_idt> lower_jml_contracts(
         {
           source_locationt loc = it->source_location();
           loc.set_comment("JML ensures");
+          loc.set_step_kind(ID_postcondition);
           loc.set_property_class("postcondition");
-          body.insert_before(
-            it, goto_programt::make_assertion(ens, loc));
+          body.insert_before(it, goto_programt::make_assertion(ens, loc));
         }
       }
     }
@@ -582,8 +582,7 @@ std::set<irep_idt> lower_jml_contracts(
     {
       // Find loop heads
       std::vector<goto_programt::targett> loop_heads;
-      for(auto it = body.instructions.begin();
-          it != body.instructions.end();
+      for(auto it = body.instructions.begin(); it != body.instructions.end();
           ++it)
       {
         if(it->is_goto())
@@ -603,9 +602,9 @@ std::set<irep_idt> lower_jml_contracts(
         {
           source_locationt loc = head->source_location();
           loc.set_comment("JML loop invariant");
+          loc.set_step_kind(ID_loop_invariant);
           loc.set_property_class("loop-invariant");
-          body.insert_before(
-            head, goto_programt::make_assertion(inv, loc));
+          body.insert_before(head, goto_programt::make_assertion(inv, loc));
         }
       }
     }
@@ -616,8 +615,7 @@ std::set<irep_idt> lower_jml_contracts(
     if(!decreases_exprs.empty())
     {
       std::vector<goto_programt::targett> loop_heads;
-      for(auto it = body.instructions.begin();
-          it != body.instructions.end();
+      for(auto it = body.instructions.begin(); it != body.instructions.end();
           ++it)
       {
         if(it->is_goto())
@@ -636,11 +634,11 @@ std::set<irep_idt> lower_jml_contracts(
         {
           source_locationt loc = head->source_location();
           loc.set_comment("JML decreases (non-negative)");
+          loc.set_step_kind(ID_decreases);
           loc.set_property_class("loop-variant");
-          exprt non_neg = binary_relation_exprt(
-            dec, ID_ge, from_integer(0, dec.type()));
-          body.insert_before(
-            head, goto_programt::make_assertion(non_neg, loc));
+          exprt non_neg =
+            binary_relation_exprt(dec, ID_ge, from_integer(0, dec.type()));
+          body.insert_before(head, goto_programt::make_assertion(non_neg, loc));
         }
       }
     }
@@ -664,8 +662,7 @@ std::set<irep_idt> lower_jml_contracts(
       for(const auto &p : existing_type.parameters())
       {
         if(!p.get_identifier().empty())
-          parameter_syms.push_back(
-            symbol_exprt(p.get_identifier(), p.type()));
+          parameter_syms.push_back(symbol_exprt(p.get_identifier(), p.type()));
       }
 
       auto wrap_lambda = [&](const exprt &e) -> exprt

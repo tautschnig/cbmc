@@ -45,8 +45,7 @@ Date: May 2026
 #include <goto-instrument/contracts/loop_contract_config.h>
 #include <goto-instrument/contracts/utils.h>
 
-static const std::string jverify_prefix =
-  "java::org.strata.jverify.JVerify.";
+static const std::string jverify_prefix = "java::org.strata.jverify.JVerify.";
 
 bool is_jverify_contract_method(const irep_idt &method_id)
 {
@@ -63,10 +62,9 @@ jverify_contract_kindt classify_jverify_call(const irep_idt &method_id)
 
   const std::string after_prefix = id_str.substr(jverify_prefix.size());
   const auto colon_pos = after_prefix.find(':');
-  const std::string method_name =
-    (colon_pos != std::string::npos)
-      ? after_prefix.substr(0, colon_pos)
-      : after_prefix;
+  const std::string method_name = (colon_pos != std::string::npos)
+                                    ? after_prefix.substr(0, colon_pos)
+                                    : after_prefix;
 
   if(method_name == "precondition")
     return jverify_contract_kindt::PRECONDITION;
@@ -156,8 +154,7 @@ lambda_post_infot trace_lambda_postcondition(
     if(call_fn.id() != ID_symbol)
       continue;
     const irep_idt &callee_id = to_symbol_expr(call_fn).get_identifier();
-    if(!has_prefix(
-         id2string(callee_id), "java::lambda_synthetic_class$"))
+    if(!has_prefix(id2string(callee_id), "java::lambda_synthetic_class$"))
       continue;
     if(!ends_with(id2string(callee_id), ".<init>"))
       continue;
@@ -178,7 +175,7 @@ lambda_post_infot trace_lambda_postcondition(
     // in the bytecode ever explicitly calls it).
     const std::string constructor_str = id2string(callee_id);
     const std::string class_name_str =
-      constructor_str.substr(0, constructor_str.size() - 7);  // strip ".<init>"
+      constructor_str.substr(0, constructor_str.size() - 7); // strip ".<init>"
 
     const auto *class_sym = ns.get_symbol_table().lookup(class_name_str);
     if(class_sym == nullptr)
@@ -211,7 +208,8 @@ lambda_post_infot trace_lambda_postcondition(
 }
 
 // Unused helper: kept for future use
-[[maybe_unused]] bool ends_with_sfx(const std::string &s, const std::string &suffix)
+[[maybe_unused]] bool
+ends_with_sfx(const std::string &s, const std::string &suffix)
 {
   return s.size() >= suffix.size() &&
          s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -223,9 +221,8 @@ lambda_post_infot trace_lambda_postcondition(
 ///
 /// JBMC represents returns as `ASSIGN func#return_value := expr` followed
 /// eventually by reaching END_FUNCTION / SET_RETURN_VALUE.
-std::vector<goto_programt::targett> find_return_value_assignments(
-  goto_programt &body,
-  const irep_idt &function_id)
+std::vector<goto_programt::targett>
+find_return_value_assignments(goto_programt &body, const irep_idt &function_id)
 {
   std::vector<goto_programt::targett> returns;
   const std::string needle = id2string(function_id) + "#return_value";
@@ -382,9 +379,7 @@ static std::optional<exprt> reconstruct_mixed_predicate(
     if(!it->is_assign())
       continue;
     const exprt &lhs = it->assign_lhs();
-    if(
-      lhs.id() != ID_symbol ||
-      to_symbol_expr(lhs).get_identifier() != temp_id)
+    if(lhs.id() != ID_symbol || to_symbol_expr(lhs).get_identifier() != temp_id)
       continue;
     const exprt &rhs = it->assign_rhs();
     if(rhs.id() != ID_constant)
@@ -501,7 +496,6 @@ static std::optional<exprt> reconstruct_mixed_predicate(
     disjuncts.size() == 1 ? disjuncts.front() : disjunction(disjuncts);
   return result;
 }
-
 
 ///
 /// javac compiles `precondition(c1 && c2 && ... && cN)` to:
@@ -1063,7 +1057,7 @@ static exprt resolve_stack_temps(
   return rewrite(expr, 0);
 }
 
-}  // namespace
+} // namespace
 
 std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 {
@@ -1177,7 +1171,8 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
   for(auto &func_entry : goto_model.goto_functions.function_map)
   {
     auto &body = func_entry.second.body;
-    for(auto it = body.instructions.begin(); it != body.instructions.end(); ++it)
+    for(auto it = body.instructions.begin(); it != body.instructions.end();
+        ++it)
     {
       if(!it->is_function_call())
         continue;
@@ -1186,8 +1181,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       if(call_fn.id() != ID_symbol)
         continue;
 
-      const irep_idt &callee_id =
-        to_symbol_expr(call_fn).get_identifier();
+      const irep_idt &callee_id = to_symbol_expr(call_fn).get_identifier();
 
       const auto kind = classify_jverify_call(callee_id);
       if(kind == jverify_contract_kindt::NOT_A_CONTRACT)
@@ -1423,11 +1417,12 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         {
           exprt::operandst conjuncts;
           for(const auto &arg : args)
-            conjuncts.push_back(binary_relation_exprt(
-              arg, ID_ge, from_integer(0, arg.type())));
+            conjuncts.push_back(
+              binary_relation_exprt(arg, ID_ge, from_integer(0, arg.type())));
           condition = conjunction(conjuncts);
         }
         loc.set_comment("JVerify decreases (non-negativity)");
+        loc.set_step_kind(ID_decreases);
         loc.set_property_class("decreases");
         *it = goto_programt::make_assertion(condition, loc);
         continue;
@@ -1460,14 +1455,15 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         if(!info.valid)
         {
           loc.set_comment("JVerify postcondition (lambda, unresolved)");
+          loc.set_step_kind(ID_postcondition);
           loc.set_property_class("postcondition");
           *it = goto_programt::make_assertion(false_exprt(), loc);
           continue;
         }
 
         // Erase the original postcondition call.
-        const auto ret_assignments = find_return_value_assignments(
-          body, func_entry.first);
+        const auto ret_assignments =
+          find_return_value_assignments(body, func_entry.first);
 
         it->turn_into_skip();
 
@@ -1711,14 +1707,14 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 
           source_locationt post_loc = loc;
           post_loc.set_comment("JVerify postcondition");
+          post_loc.set_step_kind(ID_postcondition);
           post_loc.set_property_class("postcondition");
 
           auto decl_ret_save =
             goto_programt::make_decl(ret_save.symbol_expr(), loc);
           auto assign_ret_save = goto_programt::make_assignment(
             ret_save.symbol_expr(), return_value_expr, loc);
-          auto decl_tmp =
-            goto_programt::make_decl(tmp_sym.symbol_expr(), loc);
+          auto decl_tmp = goto_programt::make_decl(tmp_sym.symbol_expr(), loc);
 
           symbol_exprt target_fn(info.target_method_id, target_type);
           code_function_callt::argumentst call_args;
@@ -1743,8 +1739,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           }
 
           auto call = goto_programt::make_function_call(
-            code_function_callt(
-              nil_exprt{}, target_fn, std::move(call_args)),
+            code_function_callt(nil_exprt{}, target_fn, std::move(call_args)),
             loc);
 
           // JBMC's calling convention: the function's return value is
@@ -1768,8 +1763,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
             goto_model.symbol_table.insert(std::move(rv_sym));
           symbol_exprt rv_expr(rv_name, target_type.return_type());
           auto assign_from_rv =
-            goto_programt::make_assignment(
-              tmp_sym.symbol_expr(), rv_expr, loc);
+            goto_programt::make_assignment(tmp_sym.symbol_expr(), rv_expr, loc);
 
           exprt truth;
           if(tmp_sym.type.id() == ID_bool)
@@ -1777,8 +1771,7 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           else
             truth = notequal_exprt(
               tmp_sym.symbol_expr(), from_integer(0, tmp_sym.type));
-          auto assert_instr =
-            goto_programt::make_assertion(truth, post_loc);
+          auto assert_instr = goto_programt::make_assertion(truth, post_loc);
 
           // Retarget the original return-value assignment to use ret_save.
           ret_it->assign_rhs_nonconst() = ret_save.symbol_expr();
@@ -1815,8 +1808,9 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
           // ret_it should now target first_inserted.
           for(auto &other : body.instructions)
           {
-            if(other.is_goto() || other.is_incomplete_goto() ||
-               other.is_start_thread())
+            if(
+              other.is_goto() || other.is_incomplete_goto() ||
+              other.is_start_thread())
             {
               for(auto &tgt : other.targets)
               {
@@ -1836,7 +1830,8 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       // Boolean / primitive-arg contract calls.
       exprt condition = first_arg;
       if(condition.type().id() != ID_bool)
-        condition = notequal_exprt(condition, from_integer(0, condition.type()));
+        condition =
+          notequal_exprt(condition, from_integer(0, condition.type()));
 
       // F12: collect this clause as a contract attribute on the
       // enclosing function. PRECONDITION → c_requires; POSTCONDITION
@@ -1882,9 +1877,9 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       case jverify_contract_kindt::ASSUME:
       {
         loc.set_comment(
-          kind == jverify_contract_kindt::PRECONDITION
-            ? "JVerify precondition"
-            : "JVerify assume");
+          kind == jverify_contract_kindt::PRECONDITION ? "JVerify precondition"
+                                                       : "JVerify assume");
+        loc.set_step_kind(ID_precondition);
         *it = goto_programt::make_assumption(condition, loc);
         break;
       }
@@ -1892,19 +1887,20 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       case jverify_contract_kindt::CHECK:
       case jverify_contract_kindt::INVARIANT:
       {
-        const char *comment =
-          kind == jverify_contract_kindt::POSTCONDITION
-            ? "JVerify postcondition"
-            : (kind == jverify_contract_kindt::INVARIANT
-                 ? "JVerify loop invariant"
-                 : "JVerify check");
+        const char *comment = kind == jverify_contract_kindt::POSTCONDITION
+                                ? "JVerify postcondition"
+                                : (kind == jverify_contract_kindt::INVARIANT
+                                     ? "JVerify loop invariant"
+                                     : "JVerify check");
         loc.set_comment(comment);
+        loc.set_step_kind(
+          kind == jverify_contract_kindt::INVARIANT ? ID_loop_invariant
+                                                    : ID_postcondition);
         loc.set_property_class(
           kind == jverify_contract_kindt::POSTCONDITION
             ? "postcondition"
-            : (kind == jverify_contract_kindt::INVARIANT
-                 ? "loop-invariant"
-                 : "assertion"));
+            : (kind == jverify_contract_kindt::INVARIANT ? "loop-invariant"
+                                                         : "assertion"));
         *it = goto_programt::make_assertion(condition, loc);
         break;
       }
@@ -2323,11 +2319,10 @@ void apply_modular_contract_substitution(
 
     // The Java-side return_value symbol pattern: <fid>#return_value.
     // It exists for every Java method with a non-void return type.
-    const irep_idt return_value_id =
-      id2string(fid) + "#return_value";
+    const irep_idt return_value_id = id2string(fid) + "#return_value";
     const auto *rv_sym = goto_model.symbol_table.lookup(return_value_id);
     if(rv_sym == nullptr)
-      continue;  // void-returning method; nothing to bridge.
+      continue; // void-returning method; nothing to bridge.
     const symbol_exprt rv_expr = rv_sym->symbol_expr();
 
     auto &body = fn_it->second.body;

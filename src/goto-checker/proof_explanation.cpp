@@ -151,10 +151,33 @@ bool is_relevant_proof_step(const SSA_stept &step)
 
 step_kindt classify_step(const SSA_stept &step)
 {
-  // Inspect the source-location comment that JBMC's contract-
-  // lowering passes attach. See java_bytecode_contracts.cpp and
-  // jml_lowering.cpp for the canonical comment strings.
+  // First, look for a structured step_kind attribute on the
+  // source location. JBMC's contract-lowering passes
+  // (java_bytecode_contracts.cpp, jml_lowering.cpp) set this
+  // alongside the human-readable comment. Reading the structured
+  // tag is robust against future cosmetic changes to comment
+  // strings.
   const auto &loc = step.source.pc->source_location();
+  const auto &kind = loc.get_step_kind();
+  if(!kind.empty())
+  {
+    const irep_idt &k = kind;
+    if(k == ID_precondition)
+      return step_kindt::PRECONDITION;
+    if(k == ID_postcondition)
+      return step_kindt::POSTCONDITION;
+    if(k == ID_loop_invariant)
+      return step_kindt::LOOP_INVARIANT;
+    if(k == ID_decreases)
+      return step_kindt::DECREASES;
+    if(k == ID_old_capture)
+      return step_kindt::OLD_CAPTURE;
+    // Unknown step_kind — fall through to the legacy paths.
+  }
+
+  // Legacy: inspect the source-location comment. Kept for
+  // backward compatibility with any lowering pass that hasn't
+  // migrated to the structured attribute yet.
   const auto &comment = loc.get_comment();
   if(!comment.empty())
   {

@@ -6,7 +6,6 @@ Author: Daniel Kroening, kroening@kroening.com
 
 \*******************************************************************/
 
-
 #ifndef CPROVER_UTIL_SOURCE_LOCATION_H
 #define CPROVER_UTIL_SOURCE_LOCATION_H
 
@@ -16,7 +15,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <optional>
 #include <string>
 
-class source_locationt:public irept
+class source_locationt : public irept
 {
 public:
   source_locationt()
@@ -79,6 +78,20 @@ public:
   const irep_idt &get_comment() const
   {
     return get(ID_comment);
+  }
+
+  /// Source-artifact provenance tag for this location, set by
+  /// JBMC's contract-lowering passes (java_bytecode_contracts.cpp,
+  /// jml_lowering.cpp). Read by proof_explanation::classify_step()
+  /// to drive Tomb & Joshi static-coverage warnings (form 3 of the
+  /// explaining-proofs deliverable). The value is one of:
+  ///   precondition / postcondition / loop_invariant /
+  ///   decreases / old_capture
+  /// Empty for instructions with no contract provenance; callers
+  /// then fall back to property_class or the structural step kind.
+  const irep_idt &get_step_kind() const
+  {
+    return get(ID_step_kind);
   }
 
   const irep_idt &get_case_number() const
@@ -158,6 +171,13 @@ public:
     set(ID_comment, comment);
   }
 
+  /// Tag this location with a contract-element provenance kind.
+  /// See get_step_kind() for the recognised values.
+  void set_step_kind(const irep_idt &step_kind)
+  {
+    set(ID_step_kind, step_kind);
+  }
+
   // for switch case number
   void set_case_number(const irep_idt &number)
   {
@@ -224,7 +244,7 @@ protected:
   std::string as_string(bool print_cwd) const;
 };
 
-std::ostream &operator <<(std::ostream &, const source_locationt &);
+std::ostream &operator<<(std::ostream &, const source_locationt &);
 
 template <>
 struct diagnostics_helpert<source_locationt>
