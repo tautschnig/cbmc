@@ -321,6 +321,31 @@ codet python_convertert::convert_statement(const jsont &stmt)
                 code_frontend_assignt{
                   length,
                   minus_exprt{length, from_integer(1, signedbv_typet{64})}}});
+
+              // PLR §7.5: 'del d[key]' raises KeyError when the
+              // key is not present. Emit a conditional raise so
+              // try/except can catch it and bare uses surface
+              // the missing-key bug.
+              const symbolt *exc_sym =
+                symbol_table.lookup("python::__exception_active");
+              const symbolt *exc_type_sym =
+                symbol_table.lookup("python::__exception_type");
+              if(exc_sym != nullptr)
+              {
+                exprt missing = not_exprt{found};
+                del_block.add(code_ifthenelset{
+                  missing,
+                  code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}}});
+                if(exc_type_sym != nullptr)
+                {
+                  long type_hash = exception_type_hash("KeyError");
+                  del_block.add(code_ifthenelset{
+                    missing,
+                    code_frontend_assignt{
+                      exc_type_sym->symbol_expr(),
+                      from_integer(type_hash, python_int_type())}});
+                }
+              }
             }
           }
         }
