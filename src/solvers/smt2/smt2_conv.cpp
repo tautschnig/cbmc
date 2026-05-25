@@ -205,7 +205,10 @@ void smt2_convt::write_footer()
   {
     out << "(check-sat-assuming (";
     for(const auto &assumption : assumptions)
+    {
+      out << " ";
       convert_literal(assumption);
+    }
     out << "))\n";
 
     if(produce_unsat_cores)

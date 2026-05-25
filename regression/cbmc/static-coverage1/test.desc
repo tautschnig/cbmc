@@ -1,0 +1,36 @@
+CORE smt-backend
+main.c
+--z3 --static-coverage
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+^Static coverage warnings:$
+^.*\[unconstrained code .*\] main.c:.*$
+^.*\[unnecessary assumption\] main.c:.*$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^line \d+ column \d+: unknown constant
+--
+End-to-end regression test for the Tomb & Joshi static-coverage
+warning emission path. Exercises:
+
+  * the SMT2 unsat-core fix in smt2_conv.cpp (literals separated
+    by spaces in the check-sat-assuming list — without it Z3
+    fails to parse `truetruetrueB0...`),
+  * the --static-coverage CLI flag implying --proof-explanation,
+  * the report_util output_static_coverage_warnings() emitter,
+  * classify_uncovered() correctly mapping not-in-core
+    assumptions to UNNECESSARY_ASSUMPTION and not-in-core
+    assignments to UNCONSTRAINED_CODE.
+
+The negative-side regex on the SMT2 parser error guards against
+the bug we found and fixed: `line ... column ... unknown constant`
+showed up when literals were concatenated.
+
+The branchy main intentionally produces non-constant guards on
+the if-branches so the unsat-core mechanism has labeled
+assumptions to discriminate. Top-level straight-line code
+produces constant-true guards which the conflict_provider
+machinery skips (this is by design — see proof_explanation.cpp
+around line 343).
