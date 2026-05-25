@@ -835,10 +835,21 @@ exprt python_convertert::convert_call(const jsont &expr)
       {
         if(method_name == "split")
         {
-          // PLib stdtypes: str.split(sep) — constant optimization
+          // PLib stdtypes: str.split(sep[, maxsplit]) — constant optimization
           if(args.is_array() && !as_array(args).empty())
           {
-            exprt delim_expr = convert_expression(*as_array(args).begin());
+            auto ait = as_array(args).begin();
+            exprt delim_expr = convert_expression(*ait);
+            // PLR: optional 2nd arg is maxsplit (max number of
+            // splits performed; default unlimited = -1).
+            long long max_split = -1;
+            ++ait;
+            if(ait != as_array(args).end())
+            {
+              auto cv = try_eval_double(convert_expression(*ait));
+              if(cv.has_value())
+                max_split = static_cast<long long>(cv.value());
+            }
             auto obj_sv = extract_string_value(obj);
             auto delim_sv = extract_string_value(delim_expr);
             if(obj_sv.has_value() && delim_sv.has_value())
@@ -849,8 +860,14 @@ exprt python_convertert::convert_call(const jsont &expr)
               if(!d.empty())
               {
                 std::size_t pos = 0;
+                long long splits = 0;
                 while(pos <= s.size())
                 {
+                  if(max_split >= 0 && splits >= max_split)
+                  {
+                    parts.push_back(s.substr(pos));
+                    break;
+                  }
                   auto found = s.find(d, pos);
                   if(found == std::string::npos)
                   {
@@ -859,6 +876,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                   }
                   parts.push_back(s.substr(pos, found - pos));
                   pos = found + d.size();
+                  splits++;
                 }
               }
               else
@@ -1329,7 +1347,7 @@ exprt python_convertert::convert_call(const jsont &expr)
         }
         if(method_name == "replace" || method_name == "format")
         {
-          // PLib stdtypes: str.replace(old, new) for constant strings
+          // PLib stdtypes: str.replace(old, new[, count]) for constant strings
           if(
             method_name == "replace" && args.is_array() &&
             as_array(args).size() >= 2)
@@ -1338,6 +1356,16 @@ exprt python_convertert::convert_call(const jsont &expr)
             exprt old_expr = convert_expression(*ait);
             ++ait;
             exprt new_expr = convert_expression(*ait);
+            // PLR: optional 3rd arg is the maximum number of
+            // replacements; default is 'unlimited'. -1 sentinel.
+            long long max_count = -1;
+            ++ait;
+            if(ait != as_array(args).end())
+            {
+              auto cv = try_eval_double(convert_expression(*ait));
+              if(cv.has_value())
+                max_count = static_cast<long long>(cv.value());
+            }
             // Extract all three as constant strings
             auto extract_str = [&](const exprt &e) -> std::string
             {
@@ -1351,11 +1379,17 @@ exprt python_convertert::convert_call(const jsont &expr)
             std::string new_s = extract_str(new_expr);
             if(!src.empty() && !old_s.empty())
             {
-              // Perform replacement
+              // Perform replacement up to max_count times.
               std::string result;
               std::size_t pos = 0;
+              long long replaced = 0;
               while(pos < src.size())
               {
+                if(max_count >= 0 && replaced >= max_count)
+                {
+                  result += src.substr(pos);
+                  break;
+                }
                 auto found = src.find(old_s, pos);
                 if(found == std::string::npos)
                 {
@@ -1364,6 +1398,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 }
                 result += src.substr(pos, found - pos) + new_s;
                 pos = found + old_s.size();
+                replaced++;
               }
               // Build string literal
               return python_string_literal(result);
@@ -1796,8 +1831,10 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
               if(method_name == "index" || method_name == "rindex")
               {
-                auto pos =
-                  (method_name == "index") ? s.find(sub) : s.rfind(sub);
+                // PLR: str.index(sub, start, end) searches the
+                // substring s[start:end], NOT the full string.
+                auto pos = (method_name == "index") ? slice.find(sub)
+                                                    : slice.rfind(sub);
                 if(pos == std::string::npos)
                 {
                   // Raise ValueError
@@ -1808,8 +1845,12 @@ exprt python_convertert::convert_call(const jsont &expr)
                       exc_sym->symbol_expr(), true_exprt{}});
                   return from_integer(-1, python_int_type());
                 }
+                // Translate slice-relative position back to the
+                // original-string position.
                 return from_integer(
-                  static_cast<long long>(pos), python_int_type());
+                  static_cast<long long>(pos) +
+                    static_cast<long long>(start),
+                  python_int_type());
               }
               if(method_name == "count")
               {
