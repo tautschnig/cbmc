@@ -6110,6 +6110,11 @@ exprt python_convertert::convert_call(const jsont &expr)
           const jsont &gen_iter = json_member(gen, "iter");
           const jsont &gen_target = json_member(gen, "target");
           std::string iter_var = json_string(json_member(gen_target, "id"));
+          // PLR §6.2.4: 'for x in xs if PRED(x)' filter clause —
+          // skip elements that fail PRED. We support a single
+          // generator with zero-or-more 'if' clauses ANDed
+          // together (the common case).
+          const jsont &gen_ifs = json_member(gen, "ifs");
 
           if(is_node_type(gen_iter, "List") || is_node_type(gen_iter, "Name"))
           {
@@ -6156,10 +6161,38 @@ exprt python_convertert::convert_call(const jsont &expr)
                 if(elt_expr.type() != bool_typet{})
                   elt_expr = typecast_exprt{elt_expr, bool_typet{}};
 
+                // PLR §6.2.4: apply 'if' filter clauses. The
+                // generator only yields when all 'if' predicates
+                // hold; for filtered-out elements all() vacuously
+                // succeeds and any() doesn't contribute.
+                exprt filter_pred = true_exprt{};
+                if(gen_ifs.is_array())
+                {
+                  for(const auto &if_node : as_array(gen_ifs))
+                  {
+                    exprt fp = convert_expression(if_node);
+                    std::function<void(exprt &)> fsubst = [&](exprt &e)
+                    {
+                      if(
+                        e.id() == ID_symbol &&
+                        to_symbol_expr(e).get_identifier() == iter_sym_id)
+                        e = val;
+                      else
+                        for(auto &op : e.operands())
+                          fsubst(op);
+                    };
+                    fsubst(fp);
+                    if(fp.type() != bool_typet{})
+                      fp = safe_typecast(fp, bool_typet{});
+                    filter_pred = and_exprt{filter_pred, fp};
+                  }
+                }
+
                 if(func_name == "all")
-                  result = and_exprt{result, elt_expr};
+                  result = and_exprt{
+                    result, or_exprt{not_exprt{filter_pred}, elt_expr}};
                 else
-                  result = or_exprt{result, elt_expr};
+                  result = or_exprt{result, and_exprt{filter_pred, elt_expr}};
               }
               return result;
             }
@@ -6245,11 +6278,39 @@ exprt python_convertert::convert_call(const jsont &expr)
                 if(elt_expr.type() != bool_typet{})
                   elt_expr = safe_typecast(elt_expr, bool_typet{});
 
+                // PLR §6.2.4: apply the optional 'if' filter
+                // clauses. AND all filters together; element
+                // contributes only when filter is true.
+                exprt filter_pred = true_exprt{};
+                if(gen_ifs.is_array())
+                {
+                  for(const auto &if_node : as_array(gen_ifs))
+                  {
+                    exprt fp = convert_expression(if_node);
+                    // Substitute iter_var → elem in the filter
+                    std::function<void(exprt &)> fsubst = [&](exprt &e)
+                    {
+                      if(
+                        e.id() == ID_symbol &&
+                        to_symbol_expr(e).get_identifier() == iter_sym_id)
+                        e = elem;
+                      else
+                        for(auto &op : e.operands())
+                          fsubst(op);
+                    };
+                    fsubst(fp);
+                    if(fp.type() != bool_typet{})
+                      fp = safe_typecast(fp, bool_typet{});
+                    filter_pred = and_exprt{filter_pred, fp};
+                  }
+                }
+                exprt eff_in_range = and_exprt{in_range, filter_pred};
+
                 if(func_name == "all")
-                  result =
-                    and_exprt{result, or_exprt{not_exprt{in_range}, elt_expr}};
+                  result = and_exprt{
+                    result, or_exprt{not_exprt{eff_in_range}, elt_expr}};
                 else
-                  result = or_exprt{result, and_exprt{in_range, elt_expr}};
+                  result = or_exprt{result, and_exprt{eff_in_range, elt_expr}};
               }
               return result;
             }
