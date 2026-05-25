@@ -1847,6 +1847,12 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return bool_typet{};
   else if(type_name == "str")
     return python_string_type();
+  else if(type_name == "bytes" || type_name == "bytearray")
+    // PLR §4.6: bytes is a sequence of integers in [0, 256). We
+    // model it as a list of unsigned 8-bit integers, sharing the
+    // same struct shape as Python lists so existing list-method
+    // and indexing handlers work transparently.
+    return python_list_type(unsignedbv_typet{8});
   else if(type_name == "None" || type_name == "NoneType")
     return empty_typet{};
   else if(type_name == "list" || type_name == "List")
