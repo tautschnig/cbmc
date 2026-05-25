@@ -31,10 +31,74 @@ exprt python_convertert::convert_lambda(const jsont &expr)
   code_typet::parameterst parameters;
   if(params.is_array())
   {
+    // PLR: scan the lambda body for binary operations that
+    // operate on float constants. If 'a + 1.1' or similar
+    // appears in the body, the parameter type is widened to
+    // double. This matches Python's dynamic typing where the
+    // arithmetic forces the operand to be promoted to float.
+    std::function<bool(const jsont &)> body_uses_float =
+      [&](const jsont &n) -> bool {
+      if(!n.is_object())
+      {
+        if(n.is_array())
+        {
+          for(const auto &e : as_array(n))
+            if(body_uses_float(e))
+              return true;
+        }
+        return false;
+      }
+      if(is_node_type(n, "Constant"))
+      {
+        const jsont &cv = json_member(n, "value");
+        if(cv.is_number())
+        {
+          std::string vs = cv.value;
+          if(
+            vs.find('.') != std::string::npos ||
+            vs.find('e') != std::string::npos)
+            return true;
+        }
+      }
+      // Recurse into common AST sub-fields. Covers BinOp,
+      // BoolOp, Compare, UnaryOp, IfExp, Call, Tuple, List,
+      // Dict, Subscript, Attribute. Any field we don't list
+      // simply isn't traversed; that's a precision loss but
+      // not unsoundness for this widening heuristic.
+      static const std::vector<std::string> sub_fields{
+        "left",
+        "right",
+        "operand",
+        "value",
+        "values",
+        "elts",
+        "args",
+        "body",
+        "test",
+        "comparators",
+        "func",
+        "slice"};
+      for(const auto &f : sub_fields)
+      {
+        const jsont &child = json_member(n, f);
+        if(!child.is_null() && body_uses_float(child))
+          return true;
+      }
+      return false;
+    };
+    bool has_float = body_uses_float(body_expr);
+    typet default_param_type =
+      has_float ? double_type() : python_int_type();
     for(const auto &param : as_array(params))
     {
       std::string param_name = json_string(json_member(param, "arg"));
-      code_typet::parametert p{python_int_type()};
+      // Use the annotation if provided; otherwise the body-
+      // scan default.
+      const jsont &annotation = json_member(param, "annotation");
+      typet ptype = annotation.is_null()
+                      ? default_param_type
+                      : convert_type_annotation(annotation);
+      code_typet::parametert p{ptype};
       p.set_identifier("python::" + lambda_name + "::" + param_name);
       p.set_base_name(param_name);
       parameters.push_back(p);
