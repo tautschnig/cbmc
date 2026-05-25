@@ -250,6 +250,13 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
     if(!to_integer(to_constant_expr(*ce), iv))
       return static_cast<double>(iv.to_long());
   }
+  // PLR §3.2.1: bool is a subtype of int; True == 1, False == 0.
+  // Honor that here so callers like complex(True, False) get the
+  // right values via constant-fold.
+  if(ce->is_constant() && ce->type().id() == ID_bool)
+  {
+    return ce->is_true() ? 1.0 : 0.0;
+  }
   if(ce->is_constant() && ce->type().id() == ID_floatbv)
   {
     ieee_floatt fv{

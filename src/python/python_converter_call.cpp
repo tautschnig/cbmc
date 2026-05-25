@@ -4843,10 +4843,19 @@ exprt python_convertert::convert_call(const jsont &expr)
           real_val = arg;
         else
         {
+          // PLR §3.2: bool/int are subtypes of complex's real/
+          // imag inputs. Promote via try_eval_double so
+          // expressions like complex(-1, -2) and
+          // complex(True, False) (which arrive as UnaryOp /
+          // bool constants, not is_constant() raw integers)
+          // get the right value.
+          auto ev = try_eval_double(arg);
           ieee_floatt fv{
             ieee_float_spect::double_precision(),
             ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          if(arg.is_constant())
+          if(ev.has_value())
+            fv.from_double(ev.value());
+          else if(arg.is_constant())
           {
             mp_integer iv;
             if(!to_integer(to_constant_expr(arg), iv))
@@ -4863,10 +4872,13 @@ exprt python_convertert::convert_call(const jsont &expr)
           imag_val = arg;
         else
         {
+          auto ev = try_eval_double(arg);
           ieee_floatt fv{
             ieee_float_spect::double_precision(),
             ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          if(arg.is_constant())
+          if(ev.has_value())
+            fv.from_double(ev.value());
+          else if(arg.is_constant())
           {
             mp_integer iv;
             if(!to_integer(to_constant_expr(arg), iv))
