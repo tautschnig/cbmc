@@ -175,6 +175,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
         // Both python_string is also handled here.
         if(is_python_string_type(le) && is_python_string_type(re))
           can_bridge = true;
+        // python_value vs string and vice versa: bridge by
+        // unwrapping the value to string.
+        if(
+          (is_python_value_type(le) && is_python_string_type(re)) ||
+          (is_python_string_type(le) && is_python_value_type(re)))
+          can_bridge = true;
         if(can_bridge)
         {
           member_exprt llen{current_left, "length", signedbv_typet{64}};
@@ -188,6 +194,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
             target = re;
           else if(is_python_value_type(re) && !is_python_value_type(le))
             target = le;
+          else if(is_python_string_type(le))
+            target = le;
+          else if(is_python_string_type(re))
+            target = re;
           else if(le.id() == ID_floatbv)
             target = le;
           else if(re.id() == ID_floatbv)
@@ -207,9 +217,29 @@ exprt python_convertert::convert_compare(const jsont &expr)
               r_el = unwrap_value(r_el, target);
             else if(r_el.type() != target)
               r_el = safe_typecast(r_el, target);
-            exprt el_eq = (target.id() == ID_floatbv)
-                            ? exprt{ieee_float_equal_exprt{l_el, r_el}}
-                            : exprt{equal_exprt{l_el, r_el}};
+            exprt el_eq;
+            if(target.id() == ID_floatbv)
+              el_eq = ieee_float_equal_exprt{l_el, r_el};
+            else if(is_python_string_type(target))
+            {
+              // PLR §6.10.1: compare string CONTENTS via the
+              // string solver, not pointer equality. Plain
+              // equal_exprt on python_string structs would
+              // compare (length, data_ptr) where data_ptrs
+              // typically differ between literals and
+              // runtime-built strings.
+              exprt sm = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                l_el,
+                r_el,
+                symbol_table,
+                pending_checks);
+              if(sm.type() != bool_typet{})
+                sm = typecast_exprt{std::move(sm), bool_typet{}};
+              el_eq = std::move(sm);
+            }
+            else
+              el_eq = equal_exprt{l_el, r_el};
             // out-of-range index trivially holds
             all_equal =
               and_exprt{all_equal, or_exprt{not_exprt{in_range}, el_eq}};
@@ -550,37 +580,98 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Eq")
     {
+      // PLR §6.10.1: list[str] equality. Same-type list-of-strings
+      // structural equality compares the data POINTERS in the
+      // value arrays, which differ between a runtime-built str
+      // and a literal even when contents match. Do an explicit
+      // element-wise content compare via the string solver
+      // (cprover_string_equal_func).
+      auto resolve_struct_type = [&](const typet &t) -> typet
+      {
+        if(t.id() == ID_struct_tag)
+        {
+          const symbolt *s =
+            symbol_table.lookup(to_struct_tag_type(t).get_identifier());
+          if(s != nullptr)
+            return s->type;
+        }
+        return t;
+      };
+      typet l_resolved = resolve_struct_type(current_left.type());
+      typet r_resolved = resolve_struct_type(right.type());
+      auto is_list_t = [](const typet &t) {
+        return t.id() == ID_struct &&
+               to_struct_type(t).get_tag() == "python_list";
+      };
+      if(
+        is_list_t(l_resolved) && is_list_t(r_resolved) &&
+        l_resolved == r_resolved)
+      {
+        const auto &lt = to_struct_type(l_resolved);
+        const auto &dt = to_array_type(lt.components()[1].type());
+        if(is_python_string_type(dt.element_type()))
+        {
+          member_exprt llen{current_left, "length", signedbv_typet{64}};
+          member_exprt rlen{right, "length", signedbv_typet{64}};
+          member_exprt lda{current_left, "data", dt};
+          member_exprt rda{right, "data", dt};
+          exprt all_equal = equal_exprt{llen, rlen};
+          for(int i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          {
+            exprt idx = from_integer(i, signedbv_typet{64});
+            exprt in_range = binary_relation_exprt{idx, ID_lt, llen};
+            exprt l_el = index_exprt{lda, idx, dt.element_type()};
+            exprt r_el = index_exprt{rda, idx, dt.element_type()};
+            exprt sm = emit_string_bool_function(
+              ID_cprover_string_equal_func,
+              l_el,
+              r_el,
+              symbol_table,
+              pending_checks);
+            if(sm.type() != bool_typet{})
+              sm = typecast_exprt{std::move(sm), bool_typet{}};
+            all_equal = and_exprt{all_equal, or_exprt{not_exprt{in_range}, sm}};
+          }
+          return all_equal;
+        }
+      }
       // PLR §3.3.1 __eq__: if the class defines __eq__, use it
       // in preference to structural equality.
       if(
         current_left.type().id() == ID_struct && right.type().id() == ID_struct)
-      {
-        const auto &eq_st = to_struct_type(current_left.type());
-        std::string eq_tag = id2string(eq_st.get_tag());
-        if(eq_tag.substr(0, 13) == "python_class_")
+        // PLR §3.3.1 __eq__: if the class defines __eq__, use it
+        // in preference to structural equality.
+        if(
+          current_left.type().id() == ID_struct &&
+          right.type().id() == ID_struct)
         {
-          std::string cls = eq_tag.substr(13);
-          irep_idt mid{"python::" + cls + "::__eq__"};
-          const symbolt *msym = symbol_table.lookup(mid);
-          if(msym != nullptr && msym->type.id() == ID_code)
+          const auto &eq_st = to_struct_type(current_left.type());
+          std::string eq_tag = id2string(eq_st.get_tag());
+          if(eq_tag.substr(0, 13) == "python_class_")
           {
-            const code_typet &mty = to_code_type(msym->type);
-            exprt self_ptr = address_of_exprt{current_left};
-            exprt other_arg = right;
-            if(
-              mty.parameters().size() >= 2 &&
-              other_arg.type() != mty.parameters()[1].type())
-              other_arg = safe_typecast(other_arg, mty.parameters()[1].type());
-            side_effect_expr_function_callt call{
-              msym->symbol_expr(),
-              {self_ptr, std::move(other_arg)},
-              mty.return_type(),
-              get_location(expr)};
-            cmp = std::move(call);
-            goto done_cmp;
+            std::string cls = eq_tag.substr(13);
+            irep_idt mid{"python::" + cls + "::__eq__"};
+            const symbolt *msym = symbol_table.lookup(mid);
+            if(msym != nullptr && msym->type.id() == ID_code)
+            {
+              const code_typet &mty = to_code_type(msym->type);
+              exprt self_ptr = address_of_exprt{current_left};
+              exprt other_arg = right;
+              if(
+                mty.parameters().size() >= 2 &&
+                other_arg.type() != mty.parameters()[1].type())
+                other_arg =
+                  safe_typecast(other_arg, mty.parameters()[1].type());
+              side_effect_expr_function_callt call{
+                msym->symbol_expr(),
+                {self_ptr, std::move(other_arg)},
+                mty.return_type(),
+                get_location(expr)};
+              cmp = std::move(call);
+              goto done_cmp;
+            }
           }
         }
-      }
       if(
         is_python_set_type(current_left.type()) &&
         is_python_set_type(right.type()))
