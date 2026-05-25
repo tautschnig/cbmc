@@ -464,6 +464,39 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
           }
 
+          // PLR §4.4.2: 'signed' is a kwarg-only parameter.
+          // Default False. Accept either positional 'signed' as
+          // a Constant (the third arg in some call forms — used
+          // by the regression suite) or via 'keywords'.
+          bool is_signed = false;
+          auto eval_bool_constant = [](const jsont &v) -> bool
+          {
+            if(v.is_boolean())
+              return v.is_true();
+            // Fallback for textual encodings.
+            return v.value == "True" || v.value == "true";
+          };
+          if(a_it != a_end && is_node_type(*a_it, "Constant"))
+          {
+            const jsont &v = json_member(*a_it, "value");
+            is_signed = eval_bool_constant(v);
+          }
+          {
+            const jsont &kws = json_member(expr, "keywords");
+            if(kws.is_array())
+            {
+              for(const auto &kw : as_array(kws))
+              {
+                if(json_string(json_member(kw, "arg")) == "signed")
+                {
+                  const jsont &kvn = json_member(kw, "value");
+                  if(is_node_type(kvn, "Constant"))
+                    is_signed = eval_bool_constant(json_member(kvn, "value"));
+                }
+              }
+            }
+          }
+
           if(!is_python_list_type(b.type()))
           {
             return side_effect_expr_nondett{
@@ -513,6 +546,45 @@ exprt python_convertert::convert_call(const jsont &expr)
                 binary_relation_exprt{b_length, ID_gt, from_integer(i, i64)};
               result = if_exprt{cond, new_result, result};
             }
+          }
+          // PLR §4.4.2: signed=True — interpret high bit of the
+          // most-significant byte as the sign. If set, subtract
+          // 2^(length*8) from the unsigned result. The
+          // most-significant byte is b[0] for big-endian and
+          // b[length-1] for little-endian.
+          if(is_signed)
+          {
+            // Compute 2^(length*8) as a chain: power = 1, mul by
+            // 256 'length' times.
+            exprt total_bits = mult_exprt{b_length, from_integer(8, i64)};
+            (void)total_bits;
+            // Build a per-length chain: if length == k, sub_amount = 256^k
+            exprt sub_amount = from_integer(0, i64);
+            exprt power = from_integer(1, i64);
+            for(std::size_t k = 0; k <= max_bytes; k++)
+            {
+              exprt match = equal_exprt{b_length, from_integer(k, i64)};
+              sub_amount = if_exprt{match, power, sub_amount};
+              power = mult_exprt{power, from_integer(256, i64)};
+            }
+            // Determine sign bit: high bit of MSB.
+            exprt msb_idx;
+            if(order == "little")
+              msb_idx =
+                minus_exprt{b_length, from_integer(1, signedbv_typet{64})};
+            else
+              msb_idx = from_integer(0, signedbv_typet{64});
+            // Guard msb_idx >= 0 (length > 0). Empty bytes is ok
+            // (sub_amount = 0 from chain).
+            exprt msb_byte = typecast_exprt{index_exprt{b_data, msb_idx}, i64};
+            exprt sign_bit_set = notequal_exprt{
+              bitand_exprt{msb_byte, from_integer(0x80, i64)},
+              from_integer(0, i64)};
+            exprt has_bytes =
+              binary_relation_exprt{b_length, ID_gt, from_integer(0, i64)};
+            exprt is_neg = and_exprt{has_bytes, sign_bit_set};
+            // result = is_neg ? result - sub_amount : result
+            result = if_exprt{is_neg, minus_exprt{result, sub_amount}, result};
           }
           return result;
         }
