@@ -171,6 +171,25 @@ def copysign(x: float, y: float) -> float: ...
 def fmod(x: float, y: float) -> float: ...
 
 
+def modf(x: float):
+    # PLR / cmath modf: returns (fractional_part, integer_part)
+    # of x. Both components are finite when x is finite.
+    # Approximated as (x - trunc(x), trunc(x)).
+    integer_part: float = float(int(x))
+    fractional_part: float = x - integer_part
+    return fractional_part, integer_part
+
+
+# Note: frexp and ldexp are intentionally NOT modelled here.
+# Modeling them as nondet floats would expose them to assertions
+# in user code (e.g. 'm == 0.5' after 'm, e = frexp(8.0)') that
+# can't hold for arbitrary nondet, regressing tests that
+# previously passed because the unmodeled function silently
+# dropped its tuple-unpacking. Modeling them precisely would
+# require constant-folding at the call site for the common
+# 'frexp(constant)' pattern; that is tracked as a separate gap.
+
+
 @c_intrinsic("remainder", fold="remainder")
 def remainder(x: float, y: float) -> float: ...
 
@@ -222,14 +241,17 @@ def radians(x: float) -> float:
 # Float classification. Exact models live in the frontend's inline
 # path.
 # ---------------------------------------------------------------
+@c_intrinsic("isnan")
 def isnan(x: float) -> bool:
     return False
 
 
+@c_intrinsic("isinf")
 def isinf(x: float) -> bool:
     return False
 
 
+@c_intrinsic("isfinite")
 def isfinite(x: float) -> bool:
     return True
 
