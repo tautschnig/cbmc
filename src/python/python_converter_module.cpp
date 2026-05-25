@@ -271,6 +271,75 @@ void python_convertert::process_imported_module(
         if(ret_type.id() == ID_empty)
           ret_type = python_int_type();
 
+        // PLR §6.10.5: if there's no return annotation, scan the
+        // body for a Tuple-shaped return and infer the result as
+        // a python_tuple_type. Mirror the inference in
+        // convert_function_def, since process_imported_module
+        // doesn't reuse that path.
+        if(returns.is_null())
+        {
+          const jsont &fbody = json_member(stmt, "body");
+          if(fbody.is_array())
+          {
+            for(const auto &bs : as_array(fbody))
+            {
+              if(!is_node_type(bs, "Return"))
+                continue;
+              const jsont &rv = json_member(bs, "value");
+              if(!is_node_type(rv, "Tuple"))
+                continue;
+              const jsont &telts = json_member(rv, "elts");
+              if(!telts.is_array() || as_array(telts).empty())
+                continue;
+              std::vector<typet> elem_types;
+              for(const auto &e : as_array(telts))
+              {
+                typet et = python_int_type();
+                if(is_node_type(e, "Constant"))
+                {
+                  const jsont &cv = json_member(e, "value");
+                  if(cv.is_string())
+                    et = python_string_type();
+                  else if(cv.is_number())
+                  {
+                    std::string vs = cv.value;
+                    if(
+                      vs.find('.') != std::string::npos ||
+                      vs.find('e') != std::string::npos)
+                      et = double_type();
+                  }
+                }
+                else if(is_node_type(e, "Name"))
+                {
+                  // Look for an enclosing AnnAssign 'name: T = ...'
+                  // in the function body to recover the annotated
+                  // type.
+                  std::string nm = json_string(json_member(e, "id"));
+                  for(const auto &bs2 : as_array(fbody))
+                  {
+                    if(!is_node_type(bs2, "AnnAssign"))
+                      continue;
+                    const jsont &target = json_member(bs2, "target");
+                    if(
+                      !is_node_type(target, "Name") ||
+                      json_string(json_member(target, "id")) != nm)
+                      continue;
+                    const jsont &ann = json_member(bs2, "annotation");
+                    if(!ann.is_null())
+                      et = convert_type_annotation(ann);
+                    break;
+                  }
+                  if(et == python_int_type())
+                    et = double_type();
+                }
+                elem_types.push_back(et);
+              }
+              ret_type = python_tuple_type(elem_types);
+              break;
+            }
+          }
+        }
+
         // Parse parameters
         code_typet::parameterst params;
         const jsont &args_node = json_member(stmt, "args");
