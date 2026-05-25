@@ -50,6 +50,10 @@ from pathlib import Path
 CVE_CSV = Path("/tmp/cve-survey/cves_classified_v3.csv")
 PATCH_CACHE = Path("/tmp/cve-survey/patch_cache")
 VULNS_ROOT = Path("/tmp/cve-survey/vulns/cve/published")
+# Default location for an upstream torvalds/linux.git clone
+# used by --use-upstream-vuln mode.  Set via --upstream-repo
+# to override.
+DEFAULT_UPSTREAM_REPO = Path("/home/ubuntu/torvalds-linux.git")
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCAN_DIR = REPO_ROOT / "integration" / "linux" / "scan"
@@ -437,6 +441,132 @@ def _apply_inverse(case: CveCase) -> tuple[bool, str]:
     return (ok, f"{state}: {msg}")
 
 
+# ---------------------------------------------------------------------------
+# Upstream pre-fix-checkout support
+# ---------------------------------------------------------------------------
+
+def _all_fix_hashes(cve: str) -> list[str]:
+    """Return all candidate fix-commit hashes from a CVE's
+    JSON record (every `lessThan` whose value looks like a
+    git hash).  The CVE JSON often lists multiple hashes:
+    one for each branch (stable backport hashes plus the
+    mainline hash).  Useful for finding a hash that's
+    resolvable in a given upstream repo when the first one
+    isn't."""
+    import json
+    year = cve.split("-")[1] if "-" in cve else ""
+    jpath = VULNS_ROOT / year / f"{cve}.json"
+    if not jpath.exists():
+        return []
+    try:
+        doc = json.loads(jpath.read_text(errors="replace"))
+    except Exception:
+        return []
+    cna = doc.get("containers", {}).get("cna", {})
+    hashes: list[str] = []
+    for a in cna.get("affected", []):
+        for v in a.get("versions", []):
+            lt = v.get("lessThan", "")
+            if re.match(r"^[0-9a-f]{8,}$", lt) and lt not in hashes:
+                hashes.append(lt)
+    return hashes
+
+
+def _extract_upstream_vuln(case: CveCase,
+                           upstream_repo: Path) -> tuple[bool, str]:
+    """Extract `case.file_path` at the parent commit of
+    case.fix_hash from the upstream linux.git checkout, write
+    it to a temp file, and store the path on
+    case.inverted_file.
+
+    Returns (ok, message).  This is the cleanest way to test
+    a CVE in vuln direction: we get the EXACT file content
+    just before the fix landed, regardless of how LTS
+    backports diverged.
+
+    Caches extracted files at /tmp/cve-validate/upstream-cache/
+    so re-runs of the validator don't refetch from the
+    upstream remote (relevant for partial clones where
+    `git show` triggers an on-demand blob fetch).
+    """
+    import shutil
+    import tempfile
+    if not case.fix_hash or not case.file_path:
+        return (False, "missing fix_hash / file_path")
+    if not (upstream_repo / "HEAD").exists():
+        return (False, f"upstream repo not found at {upstream_repo}")
+    # Cache path: /tmp/cve-validate/upstream-cache/<fix_hash[:12]>/<file_path>
+    cache_root = Path("/tmp/cve-validate/upstream-cache") \
+        / case.fix_hash[:12]
+    cache_dest = cache_root / case.file_path
+    if cache_dest.exists() and cache_dest.stat().st_size > 0:
+        case.inverted_file = str(cache_dest)
+        return (True, f"cache hit at {cache_dest}")
+
+    # Probe whether the commit is local before any operation
+    # that would trigger an on-demand fetch.  If the primary
+    # fix_hash isn't local, try every `lessThan` from the
+    # CVE record (stable backport hashes alongside the
+    # mainline hash) until we find one that's local.
+    candidate_hashes = [case.fix_hash] + [
+        h for h in _all_fix_hashes(case.cve)
+        if h != case.fix_hash]
+    selected_hash: str | None = None
+    for h in candidate_hashes:
+        cat_cmd = ["git", "--git-dir", str(upstream_repo),
+                   "cat-file", "-t", h]
+        try:
+            r = subprocess.run(
+                cat_cmd, capture_output=True, text=True,
+                timeout=10, check=False,
+                env={**os.environ,
+                     "GIT_NO_LAZY_FETCH": "1",
+                     "GIT_TERMINAL_PROMPT": "0"})
+        except subprocess.TimeoutExpired:
+            continue
+        if r.returncode == 0 and r.stdout.strip() == "commit":
+            selected_hash = h
+            break
+    if selected_hash is None:
+        return (False, "no candidate fix-hash is in upstream "
+                       "(likely stable-only)")
+    # Resolve the parent commit.
+    parent_cmd = ["git", "--git-dir", str(upstream_repo),
+                  "rev-parse", f"{selected_hash}^"]
+    try:
+        r = subprocess.run(
+            parent_cmd, capture_output=True, text=True,
+            timeout=30, check=False,
+            env={**os.environ,
+                 "GIT_NO_LAZY_FETCH": "1",
+                 "GIT_TERMINAL_PROMPT": "0"})
+    except subprocess.TimeoutExpired:
+        return (False, "git rev-parse timed out")
+    if r.returncode != 0:
+        return (False, f"git rev-parse {selected_hash}^ failed: "
+                       f"{r.stderr.strip()[:120]}")
+    parent_sha = r.stdout.strip()
+    # Extract the file at parent.
+    show_cmd = ["git", "--git-dir", str(upstream_repo),
+                "show", f"{parent_sha}:{case.file_path}"]
+    try:
+        r = subprocess.run(
+            show_cmd, capture_output=True, text=True,
+            timeout=60, check=False,
+            env={**os.environ,
+                 "GIT_NO_LAZY_FETCH": "1",
+                 "GIT_TERMINAL_PROMPT": "0"})
+    except subprocess.TimeoutExpired:
+        return (False, "git show timed out")
+    if r.returncode != 0:
+        return (False, f"git show failed: "
+                       f"{r.stderr.strip()[:120]}")
+    cache_dest.parent.mkdir(parents=True, exist_ok=True)
+    cache_dest.write_text(r.stdout)
+    case.inverted_file = str(cache_dest)
+    return (True, f"extracted at parent {parent_sha[:12]}")
+
+
 def _restore_backup(backup: Path) -> None:
     """Restore the .pre-invert backup over the live file.
 
@@ -457,33 +587,53 @@ def _restore_backup(backup: Path) -> None:
 
 
 def _run_scan(case: CveCase, timeout: int = 240,
-              invert: bool = False) -> CveCase:
+              invert: bool = False,
+              upstream_repo: Path | None = None) -> CveCase:
     """Run scan-per-file.sh on the case and update the
     verdict.
 
-    When invert=True, applies the CVE's fix patch in reverse
-    to a temporary copy of the kernel file, swaps it into
-    the kernel tree for the duration of the scan, and
-    restores the original on the way out.  This converts a
-    fix-direction kernel into a vuln-direction one for the
-    one specific file."""
+    When invert=True and upstream_repo is None, applies the
+    CVE's fix patch in reverse to a temporary copy of the
+    kernel file.
+
+    When invert=True and upstream_repo is set, extracts the
+    kernel file at the upstream parent-of-fix commit
+    instead.  This is the most reliable way to get a
+    vuln-direction file: it sidesteps LTS-backport
+    divergence entirely."""
     if (case.module is None or case.kernel_tree is None
             or case.file_path is None or case.function is None):
         case.verdict = "skipped"
         case.note = "missing module/tree/file/function mapping"
         return case
 
-    # If inverting, determine the file's state and (if
-    # post-fix) apply the patch in reverse to a temp copy.
+    # If inverting, decide how to produce a vuln-direction
+    # version of the file.  Preferred order:
+    #   1. LTS already_vuln  — file is already pre-fix; use as-is.
+    #   2. LTS reverted      — fix patch reverses cleanly on LTS.
+    #   3. Upstream extract  — file at fix-commit's parent in
+    #                          torvalds/linux.git, used when the
+    #                          LTS state is divergent.
+    # Falling back to upstream-extract only when LTS isn't
+    # cleanly testable preserves the LTS's compile context for
+    # the common case (where LTS API is what the catalog was
+    # validated against) and only takes the API-drift risk
+    # when there's no alternative.
     backup = None
     state = "n/a"
     if invert:
         ok, state, msg = _detect_state_and_apply(case)
+        if not ok and upstream_repo is not None:
+            ok2, msg2 = _extract_upstream_vuln(case, upstream_repo)
+            if ok2:
+                ok = True
+                state = "upstream_vuln"
+                msg = msg2
         if not ok:
             case.verdict = "skipped"
             case.note = f"{state}: {msg}"
             return case
-        if state == "reverted":
+        if state in ("reverted", "upstream_vuln"):
             # Swap the inverted file into the kernel tree.
             live = Path(case.kernel_tree) / case.file_path
             backup = live.with_suffix(live.suffix + ".pre-invert")
@@ -538,6 +688,10 @@ def _run_scan(case: CveCase, timeout: int = 240,
             case.note = (
                 "contract holds after reverting fix — "
                 "catalog MISSED the bug" + state_tag)
+        elif invert and state == "upstream_vuln":
+            case.note = (
+                "contract holds on upstream pre-fix file "
+                "— catalog MISSED the bug" + state_tag)
         else:
             case.note = ("contract holds (likely fix "
                          "backported)" + state_tag)
@@ -598,6 +752,13 @@ def main() -> int:
     ap.add_argument("--invert", action="store_true",
                     help="apply the CVE's fix in reverse "
                          "before scanning (vuln direction)")
+    ap.add_argument("--upstream-repo", default=None,
+                    help="path to a torvalds/linux.git "
+                         "checkout; when set with --invert, "
+                         "extract the kernel file at the "
+                         "fix-commit's parent rather than "
+                         "reversing the patch.  This sidesteps "
+                         "LTS-backport divergence.")
     ap.add_argument("--modules-per-cve", type=int, default=1,
                     help="try the top-N most-relevant "
                          "per-file modules per CVE (default 1)")
@@ -611,6 +772,13 @@ def main() -> int:
     args = ap.parse_args()
 
     kernel_trees = args.kernel_trees.split(",")
+    upstream_repo = (Path(args.upstream_repo)
+                     if args.upstream_repo else None)
+    if upstream_repo is not None and not (upstream_repo / "HEAD").exists():
+        print(f"warning: upstream-repo {upstream_repo} doesn't look "
+              f"like a git dir; falling back to local-revert mode",
+              file=sys.stderr)
+        upstream_repo = None
     rng = random.Random(args.seed)
 
     # Stratified sample: aim for 2-4 CVEs per category that
@@ -632,36 +800,76 @@ def main() -> int:
     for cat, rs in rows_by_cat.items():
         rng.shuffle(rs)
         accepted = 0
-        for r in rs:
+        # In invert mode, prefer cases where SOME vuln-direction
+        # source is available in pass 1 (LTS already_vuln,
+        # LTS reverted, or upstream extractable).  Pass 2
+        # accepts everything as a fallback.
+        passes = ([{"already_vuln", "reverted",
+                    "upstream_vuln"}, None]
+                  if args.invert else [None])
+        for accept_states in passes:
             if accepted >= target_per_cat:
                 break
-            cve = r["cve"]
-            fp, fn, fh = _parse_patch(cve)
-            if not fp or not fn:
-                continue
-            # In invert mode, prefer the tree where the file
-            # is already in vuln state (or can be reverted to
-            # one).  In fix-direction mode, just pick the
-            # first tree containing the file.
-            if args.invert:
-                kt, _ = _find_vuln_tree(fp, fh, kernel_trees)
-            else:
-                kt = _find_file_in_tree(fp, kernel_trees)
-            if not kt:
-                continue
-            mods = _pick_modules(fp, fn, kt,
-                                 max_modules=args.modules_per_cve)
-            if not mods:
-                continue
-            for mod in mods:
-                sampled.append(CveCase(
-                    cve=cve, category=cat,
-                    summary=r.get("summary", "")[:120],
-                    file_path=fp, function=fn,
-                    module=mod, kernel_tree=kt,
-                    fix_hash=fh,
-                ))
-            accepted += 1
+            for r in rs:
+                if accepted >= target_per_cat:
+                    break
+                cve = r["cve"]
+                fp, fn, fh = _parse_patch(cve)
+                if not fp or not fn:
+                    continue
+                if args.invert:
+                    kt, st = _find_vuln_tree(fp, fh, kernel_trees)
+                    # If LTS state isn't clean and upstream repo is
+                    # available, treat the case as 'upstream_vuln'
+                    # if any candidate fix-hash is local-resolvable
+                    # in upstream.
+                    if (st not in ("already_vuln", "reverted")
+                            and upstream_repo is not None
+                            and fh):
+                        for h in [fh] + [
+                                hh for hh in _all_fix_hashes(cve)
+                                if hh != fh]:
+                            cat_cmd = ["git", "--git-dir",
+                                       str(upstream_repo),
+                                       "cat-file", "-t", h]
+                            try:
+                                cr = subprocess.run(
+                                    cat_cmd, capture_output=True,
+                                    text=True, timeout=10,
+                                    check=False,
+                                    env={**os.environ,
+                                         "GIT_NO_LAZY_FETCH": "1",
+                                         "GIT_TERMINAL_PROMPT": "0"})
+                                if (cr.returncode == 0
+                                        and cr.stdout.strip()
+                                        == "commit"):
+                                    st = "upstream_vuln"
+                                    break
+                            except subprocess.TimeoutExpired:
+                                continue
+                    if (accept_states is not None
+                            and st not in accept_states):
+                        continue
+                else:
+                    kt = _find_file_in_tree(fp, kernel_trees)
+                if not kt:
+                    continue
+                # Skip cases we already accepted in an earlier pass.
+                if any(c.cve == cve for c in sampled):
+                    continue
+                mods = _pick_modules(
+                    fp, fn, kt, max_modules=args.modules_per_cve)
+                if not mods:
+                    continue
+                for mod in mods:
+                    sampled.append(CveCase(
+                        cve=cve, category=cat,
+                        summary=r.get("summary", "")[:120],
+                        file_path=fp, function=fn,
+                        module=mod, kernel_tree=kt,
+                        fix_hash=fh,
+                    ))
+                accepted += 1
     rng.shuffle(sampled)
     sampled = sampled[:args.n * max(1, args.modules_per_cve)]
     cases = sampled
@@ -673,7 +881,8 @@ def main() -> int:
         print(f"[{i}/{len(runnable)}] {c.cve} {c.category} "
               f"{c.module} {c.file_path}:{c.function} ...",
               flush=True)
-        _run_scan(c, args.timeout, invert=args.invert)
+        _run_scan(c, args.timeout, invert=args.invert,
+                  upstream_repo=upstream_repo)
         print(f"    verdict={c.verdict}  {c.note[:80]}")
 
     # Mark the un-runnable.
