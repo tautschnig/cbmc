@@ -368,7 +368,25 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   }
   if(is_python_dict_type(rhs.type()))
   {
-    if(rhs.id() == ID_struct)
+    // PLR §8.5: pick up the defaultdict-factory hint stashed
+    // by convert_call. If non-empty, the RHS came from
+    // 'defaultdict(F)' or 'Counter()' and the LHS dict should
+    // return F()'s zero on missing-key reads.
+    bool is_defaultdict_assign = !pending_defaultdict_factory.empty();
+    if(is_defaultdict_assign)
+    {
+      defaultdict_factories[symbol_id] = pending_defaultdict_factory;
+      pending_defaultdict_factory.clear();
+    }
+    else
+    {
+      // Plain-dict assignment: clear any prior defaultdict
+      // tracking so reusing a name as a regular dict reverts
+      // to KeyError-on-miss semantics.
+      defaultdict_factories.erase(symbol_id);
+      pending_defaultdict_factory.clear();
+    }
+    if(rhs.id() == ID_struct && !is_defaultdict_assign)
     {
       // PLR §3.1: do NOT cache escaped mutables — another reference
       // may mutate them, invalidating the snapshot.

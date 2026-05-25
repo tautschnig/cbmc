@@ -910,6 +910,40 @@ exprt python_convertert::convert_call(const jsont &expr)
             return tv;
           }
         }
+        // PLR §8.5: collections module — defaultdict / Counter
+        // via module-qualified call, e.g. collections.defaultdict(int)
+        // or col.defaultdict(int) when imported as col.
+        if(
+          imported_modules.count(obj_name) > 0 &&
+          (method_name == "defaultdict" || method_name == "Counter"))
+        {
+          std::string factory;
+          if(method_name == "Counter")
+            factory = "int";
+          else if(args.is_array() && !as_array(args).empty())
+          {
+            const jsont &fa = *as_array(args).begin();
+            if(is_node_type(fa, "Name"))
+              factory = json_string(json_member(fa, "id"));
+            else if(is_node_type(fa, "Constant"))
+            {
+              const jsont &cv = json_member(fa, "value");
+              if(cv.is_null())
+                factory = "";
+            }
+          }
+          typet val_type = python_int_type();
+          if(factory == "str")
+            val_type = python_string_type();
+          else if(factory == "list")
+            val_type = python_list_type(python_int_type());
+          else if(factory == "float")
+            val_type = double_type();
+          typet dict_type = python_dict_type(python_string_type(), val_type);
+          exprt empty = safe_zero(dict_type);
+          pending_defaultdict_factory = factory;
+          return empty;
+        }
         // PLR stdlib: re module — return nondet for all methods
         if(obj_name == "re")
           return side_effect_expr_nondett{
@@ -5043,6 +5077,51 @@ exprt python_convertert::convert_call(const jsont &expr)
       }
     }
     return struct_exprt{{real_val, imag_val}, complex_type};
+  }
+  // PLR §8.5: collections.defaultdict / Counter constructor.
+  // Either form:
+  //   defaultdict(factory)            - bare-name from `from collections
+  //                                     import defaultdict`
+  //   collections.defaultdict(factory) - module-qualified
+  //   col.defaultdict(factory)        - module alias
+  // We model both as an empty dict, and remember the receiving
+  // variable's factory so subsequent missing-key reads return
+  // the factory's zero value instead of raising KeyError.
+  // (defaultdict_factories registration happens in convert_assign
+  // because we don't know the assignment target here; see the
+  // _defaultdict_factory_pending hint we attach to the result.)
+  else if(
+    collections_imports.count(func_name) > 0 &&
+    (collections_imports[func_name] == "defaultdict" ||
+     collections_imports[func_name] == "Counter"))
+  {
+    // Determine factory and corresponding value type.
+    std::string factory;
+    if(collections_imports[func_name] == "Counter")
+      factory = "int"; // Counter values default to 0
+    else if(args.is_array() && !as_array(args).empty())
+    {
+      const jsont &fa = *as_array(args).begin();
+      if(is_node_type(fa, "Name"))
+        factory = json_string(json_member(fa, "id"));
+      else if(is_node_type(fa, "Constant"))
+      {
+        const jsont &cv = json_member(fa, "value");
+        if(cv.is_null())
+          factory = ""; // defaultdict(None) → plain dict
+      }
+    }
+    typet val_type = python_int_type();
+    if(factory == "str")
+      val_type = python_string_type();
+    else if(factory == "list")
+      val_type = python_list_type(python_int_type());
+    else if(factory == "float")
+      val_type = double_type();
+    typet dict_type = python_dict_type(python_string_type(), val_type);
+    exprt empty = safe_zero(dict_type);
+    pending_defaultdict_factory = factory;
+    return empty;
   }
   // PLib stdtypes: set(iterable) — deduplicate elements
   else if(func_name == "dict")

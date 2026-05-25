@@ -486,6 +486,23 @@ private:
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
+
+  /// PLR §8.5: collections module imports. Maps the binding
+  /// name (asname after 'from collections import X as Y' / bare
+  /// X / fully-qualified collections.X) to the original
+  /// collections symbol name ("defaultdict", "Counter", ...).
+  /// Lets convert_call route the call to the right
+  /// special-case constructor regardless of how the user
+  /// imported the symbol.
+  std::map<std::string, std::string> collections_imports;
+
+  /// PLR §8.5: out-of-band hint from convert_call to
+  /// convert_assign. When convert_call sees a defaultdict /
+  /// Counter constructor, it stashes the factory name here so
+  /// convert_assign (which has access to the LHS target name)
+  /// can register the new variable in defaultdict_factories.
+  /// Cleared after each top-level assignment.
+  std::string pending_defaultdict_factory;
   /// Names whose import could not be resolved. Populated when
   /// module_resolver returns nullptr for 'import X' or
   /// 'from Y import ...'. Calls to these names should not
@@ -596,6 +613,16 @@ private:
   /// D[K'] subscript reads can skip the KeyError check when
   /// K' structurally matches a guaranteed key.
   std::map<irep_idt, std::set<std::string>> dict_guaranteed_keys;
+
+  /// PLR §8.5: collections.defaultdict(factory). Tracks dicts
+  /// constructed via 'collections.defaultdict(F)' / 'Counter()'
+  /// — for these, missing-key reads return F() (the factory's
+  /// zero value: 0 for int, "" for str, [] for list, etc.)
+  /// instead of raising KeyError. Map: dict-symbol-id →
+  /// factory-type-name (e.g. "int", "str", "list", "Counter",
+  /// or "" for defaultdict(None) which falls back to plain-dict
+  /// behaviour).
+  std::map<irep_idt, std::string> defaultdict_factories;
 
   /// Path-sensitive lower bounds on list lengths active in the
   /// current expression scope. Populated by the short-circuiting
