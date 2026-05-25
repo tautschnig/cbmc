@@ -504,6 +504,18 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     else
       tuple_literals.erase(symbol_id);
   }
+  // PLR §6.5: track python_complex literals (structs with tag
+  // 'python_complex') so 'z = complex(a, b)' can be recovered
+  // by the constant-fold path of '**'.
+  if(
+    rhs.type().id() == ID_struct &&
+    to_struct_type(rhs.type()).get_tag() == "python_complex")
+  {
+    if(rhs.id() == ID_struct)
+      complex_literals[symbol_id] = rhs;
+    else
+      complex_literals.erase(symbol_id);
+  }
   // Track numeric constants (including expressions)
   {
     auto ev = try_eval_double(rhs);
@@ -2186,6 +2198,16 @@ codet python_convertert::convert_assign(const jsont &stmt)
         tuple_literals[sym.name] = typed_rhs;
       else
         tuple_literals.erase(sym.name);
+    }
+    // PLR §6.5: complex literal tracking (parallel to tuple).
+    if(
+      typed_rhs.type().id() == ID_struct &&
+      to_struct_type(typed_rhs.type()).get_tag() == "python_complex")
+    {
+      if(typed_rhs.id() == ID_struct)
+        complex_literals[sym.name] = typed_rhs;
+      else
+        complex_literals.erase(sym.name);
     }
     {
       auto ev = try_eval_double(typed_rhs);

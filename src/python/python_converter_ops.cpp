@@ -355,6 +355,70 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           "ZeroDivisionError: 0.0 to a negative power",
           source_locationt{});
       }
+      // PLR §6.5: complex Pow constant-fold via
+      //   z**w = exp(w * log(z))
+      // when all four components (left.real, left.imag,
+      // right.real, right.imag) are compile-time constants.
+      // 'left' / 'right' here are struct_exprts after the
+      // numeric→complex promotion above; for symbol bases like
+      // 'z = complex(4, 0); w = z**0.5' we additionally look
+      // through the complex_literals snapshot so the symbol's
+      // recorded struct value is recovered.
+      auto try_components =
+        [&](const exprt &e) -> std::optional<std::pair<double, double>>
+      {
+        const exprt *p = &e;
+        if(p->id() == ID_symbol && is_complex(p->type()))
+        {
+          auto it = complex_literals.find(to_symbol_expr(*p).get_identifier());
+          if(it != complex_literals.end())
+            p = &it->second;
+        }
+        if(
+          is_complex(p->type()) && p->id() == ID_struct &&
+          p->operands().size() == 2)
+        {
+          auto rr = try_eval_double(p->operands()[0]);
+          auto ii = try_eval_double(p->operands()[1]);
+          if(rr.has_value() && ii.has_value())
+            return std::make_pair(rr.value(), ii.value());
+        }
+        return std::nullopt;
+      };
+      auto bc = try_components(left);
+      auto ec = try_components(right);
+      if(bc.has_value() && ec.has_value())
+      {
+        const double a = bc->first, b = bc->second;
+        const double cc = ec->first, dd = ec->second;
+        double rr_v, ii_v;
+        if(a == 0.0 && b == 0.0)
+        {
+          if(dd == 0.0 && cc > 0.0)
+          {
+            rr_v = 0.0;
+            ii_v = 0.0;
+          }
+          else
+          {
+            return side_effect_expr_nondett{ct, source_locationt{}};
+          }
+        }
+        else
+        {
+          const double mag = std::sqrt(a * a + b * b);
+          const double arg_ = std::atan2(b, a);
+          const double log_re = std::log(mag);
+          const double log_im = arg_;
+          const double prod_re = cc * log_re - dd * log_im;
+          const double prod_im = cc * log_im + dd * log_re;
+          const double exp_re = std::exp(prod_re);
+          rr_v = exp_re * std::cos(prod_im);
+          ii_v = exp_re * std::sin(prod_im);
+        }
+        return struct_exprt{
+          {double_to_floatbv(rr_v), double_to_floatbv(ii_v)}, ct};
+      }
       return side_effect_expr_nondett{ct, source_locationt{}};
     }
     // Other ops: return nondet complex
@@ -969,7 +1033,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         exp_known = true;
       }
     }
-    // PLR §6.5: Complex power — not supported as exact expression
+    // PLR §6.5: Complex power is handled in the
+    // is_complex(left) && is_complex(right) block above. If
+    // the early block didn't fold, fall through to nondet.
     if(is_complex(left.type()))
       return side_effect_expr_nondett{left.type(), source_locationt{}};
 
