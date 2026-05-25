@@ -196,8 +196,26 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
   {
     if(arg.size() >= 3 && arg.substr(arg.size() - 3) == ".py")
     {
-      options.set_option("signed-overflow-check", false);
+      // PLR §6.5: Python integers are unbounded but our model
+      // uses 64-bit. Skip overflow checks by default for .py.
+      // The user can opt back in with --signed-overflow-check
+      // or --overflow-check (alias for both signed+unsigned).
+      const bool want_overflow = cmdline.isset("signed-overflow-check") ||
+                                 cmdline.isset("overflow-check");
+      options.set_option("signed-overflow-check", want_overflow);
       options.set_option("div-by-zero-check", false);
+      // PLR: pointer / bounds / primitive checks query CBMC's
+      // C-language deallocated/dead/etc. machinery which doesn't
+      // exist in Python mode. Disable them by default; users
+      // can re-enable specific ones if needed.
+      if(!cmdline.isset("pointer-check"))
+        options.set_option("pointer-check", false);
+      if(!cmdline.isset("bounds-check"))
+        options.set_option("bounds-check", false);
+      if(!cmdline.isset("pointer-primitive-check"))
+        options.set_option("pointer-primitive-check", false);
+      if(!cmdline.isset("undefined-shift-check"))
+        options.set_option("undefined-shift-check", false);
       if(!cmdline.isset("z3") && !cmdline.isset("smt2") && !cmdline.isset("cvc5"))
         options.set_option("refine-strings", true);
       // Cross-function Any-erasure detection: catches calls to a

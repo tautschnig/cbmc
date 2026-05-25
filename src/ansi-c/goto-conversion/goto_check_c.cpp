@@ -2107,7 +2107,7 @@ void goto_check_ct::goto_check(
   const auto &function_symbol = ns.lookup(function_identifier);
   mode = function_symbol.mode;
 
-  if(mode != ID_C && mode != ID_cpp)
+  if(mode != ID_C && mode != ID_cpp && mode != "python")
     return;
 
   assertions.clear();

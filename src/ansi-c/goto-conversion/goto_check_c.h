@@ -41,7 +41,7 @@ void goto_check_c(
   "(bounds-check)(pointer-check)(memory-leak-check)(memory-cleanup-check)"     \
   "(div-by-zero-check)(float-div-by-zero-check)"                               \
   "(enum-range-check)"                                                         \
-  "(signed-overflow-check)(unsigned-overflow-check)"                           \
+  "(signed-overflow-check)(unsigned-overflow-check)(overflow-check)"           \
   "(pointer-overflow-check)(conversion-check)(undefined-shift-check)"          \
   "(float-overflow-check)(nan-check)(no-built-in-assertions)"                  \
   "(pointer-primitive-check)"                                                  \
@@ -110,7 +110,7 @@ void goto_check_c(
   options.set_option("memory-leak-check", cmdline.isset("memory-leak-check")); \
   options.set_option("memory-cleanup-check", cmdline.isset("memory-cleanup-check")); /* NOLINT(whitespace/line_length) */ \
   options.set_option("enum-range-check", cmdline.isset("enum-range-check")); \
-  options.set_option("unsigned-overflow-check", cmdline.isset("unsigned-overflow-check")); /* NOLINT(whitespace/line_length) */  \
+  options.set_option("unsigned-overflow-check", cmdline.isset("unsigned-overflow-check") || cmdline.isset("overflow-check")); /* NOLINT(whitespace/line_length) */  \
   options.set_option("pointer-overflow-check", cmdline.isset("pointer-overflow-check")); /* NOLINT(whitespace/line_length) */  \
   options.set_option("conversion-check", cmdline.isset("conversion-check")); \
   options.set_option("float-overflow-check", cmdline.isset("float-overflow-check")); /* NOLINT(whitespace/line_length) */  \

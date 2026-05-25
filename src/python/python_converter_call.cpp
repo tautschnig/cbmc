@@ -4749,9 +4749,42 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     return false_exprt{};
   }
-  // print() — no-op, return None (modeled as 0)
+  // print() — return None (modeled as a sentinel int). The
+  // arguments aren't observed by the verifier, but they ARE
+  // evaluated and assigned to a discard-temp so any embedded
+  // checks (overflow on a+b, KeyError on d[k], etc.) fire at
+  // the call site.
   else if(func_name == "print")
   {
+    if(args.is_array())
+    {
+      static unsigned print_arg_ctr = 0;
+      for(const auto &a : as_array(args))
+      {
+        exprt v = convert_expression(a);
+        if(v.is_nil())
+          continue;
+        std::string tn = "__print_arg_" + std::to_string(print_arg_ctr++);
+        std::string tq = qualify_name(tn);
+        irep_idt tid{tq};
+        if(symbol_table.lookup(tid) == nullptr)
+        {
+          symbolt s{tid, v.type(), "python"};
+          s.base_name = tn;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        // Re-fetch in case lookup_ref updates type
+        const symbolt &ts = symbol_table.lookup_ref(tid);
+        symbol_exprt te = ts.symbol_expr();
+        // Assign so goto-instrument's overflow / KeyError checks
+        // see the embedded sub-expressions.
+        if(v.type() != te.type())
+          v = safe_typecast(v, te.type());
+        pending_checks.push_back(code_frontend_assignt{te, v});
+      }
+    }
     mp_integer none_val = mp_integer(1) << 62;
     none_val = -none_val;
     return from_integer(none_val, python_int_type());
