@@ -346,8 +346,10 @@ codet python_convertert::convert_while(const jsont &stmt)
   const jsont &body = json_member(stmt, "body");
   if(body.is_array())
   {
+    loop_depth++;
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
+    loop_depth--;
   }
 
   auto wrap_with_else = [&](codet &&loop_code) -> codet
@@ -513,8 +515,10 @@ codet python_convertert::convert_for(const jsont &stmt)
     const jsont &body = json_member(stmt, "body");
     if(body.is_array())
     {
+      loop_depth++;
       for(const auto &s : as_array(body))
         body_block.add(convert_statement(s));
+      loop_depth--;
     }
     body_block.add(code_frontend_assignt{loop_sym, plus_exprt{loop_sym, step}});
 
@@ -638,8 +642,10 @@ codet python_convertert::convert_for(const jsont &stmt)
     const jsont &body_stmts = json_member(stmt, "body");
     if(body_stmts.is_array())
     {
+      loop_depth++;
       for(const auto &s : as_array(body_stmts))
         body_block.add(convert_statement(s));
+      loop_depth--;
     }
     body_block.add(code_frontend_assignt{
       idx_var, plus_exprt{idx_var, from_integer(1, signedbv_typet{64})}});
@@ -730,8 +736,10 @@ codet python_convertert::convert_for(const jsont &stmt)
         const jsont &body_j = json_member(stmt, "body");
         if(body_j.is_array())
         {
+          loop_depth++;
           for(const auto &s : as_array(body_j))
             body_block.add(convert_statement(s));
+          loop_depth--;
         }
 
         // Loop: for N iterations, call __next__, check
@@ -857,8 +865,10 @@ codet python_convertert::convert_for(const jsont &stmt)
       const jsont &body = json_member(stmt, "body");
       if(body.is_array())
       {
+        loop_depth++;
         for(const auto &s : as_array(body))
           body_once.add(convert_statement(s));
+        loop_depth--;
       }
       // After body runs once, set once=false so the next
       // iteration exits.
@@ -1015,8 +1025,10 @@ codet python_convertert::convert_for(const jsont &stmt)
   const jsont &body = json_member(stmt, "body");
   if(body.is_array())
   {
+    loop_depth++;
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
+    loop_depth--;
   }
 
   // __idx += 1

@@ -405,7 +405,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         ID_cprover_string_concat_func,
         {to_string_struct(left), to_string_struct(right)},
         symbol_table,
-        pending_checks);
+        pending_checks,
+        loop_depth > 0);
     }
     typet str_type = python_string_type();
     const auto &data_type = array_typet(

@@ -626,6 +626,13 @@ private:
   /// Depth of if/else nesting (>0 means we're inside a branch).
   unsigned if_else_depth = 0;
   unsigned try_depth = 0;
+  /// Depth of enclosing for/while loops at the current AST node.
+  /// Used by string-handling helpers to decide whether to havoc
+  /// SSA outputs of cprover_string_*_func intrinsics. Outside any
+  /// loop the same call site never repeats, so havocing is
+  /// unnecessary (and would cost an extra pointer object per
+  /// call).
+  unsigned loop_depth = 0;
 
   /// Stack of active exception handlers. Each frame is the set of
   /// exception class names caught by one enclosing try/except. An
