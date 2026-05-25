@@ -404,22 +404,122 @@ codet python_convertert::convert_with(const jsont &stmt)
         }
         else
         {
-          // Non-constructor: with expr as x → x = expr
+          // PLR §8.5: 'with EXPR as v' is equivalent to:
+          //   manager = EXPR
+          //   v = manager.__enter__()
+          // Evaluate EXPR, then if its class has __enter__,
+          // call it and bind v to the return value. Otherwise
+          // fall back to v = EXPR (legacy behaviour for
+          // expressions whose static type doesn't reveal a CM
+          // protocol).
           exprt ctx = convert_expression(ctx_expr);
           if(!ctx.is_nil())
           {
-            if(symbol_table.lookup(sym_id) == nullptr)
+            // Determine the class tag of ctx (if any) to look
+            // up __enter__.
+            std::string cls_name;
+            typet ctx_class_type = ctx.type();
+            if(ctx.type().id() == ID_struct)
             {
-              symbolt new_sym{sym_id, ctx.type(), "python"};
-              new_sym.base_name = var_name;
-              new_sym.is_lvalue = true;
-              new_sym.is_state_var = true;
-              symbol_table.add(new_sym);
+              std::string tag =
+                id2string(to_struct_type(ctx.type()).get_tag());
+              cls_name =
+                tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
             }
-            const symbolt &sym = symbol_table.lookup_ref(sym_id);
-            code_frontend_assignt assign{sym.symbol_expr(), ctx};
-            assign.add_source_location() = loc;
-            block.add(std::move(assign));
+            else if(ctx.type().id() == ID_struct_tag)
+            {
+              std::string tag = id2string(
+                to_struct_tag_type(ctx.type()).get_identifier());
+              if(tag.substr(0, 17) == "tag-python_class_")
+                cls_name = tag.substr(17);
+              else if(tag.substr(0, 4) == "tag-")
+                cls_name = tag.substr(4);
+            }
+            irep_idt enter_id{
+              cls_name.empty() ? std::string{}
+                               : "python::" + cls_name + "::__enter__"};
+            const symbolt *enter_sym =
+              cls_name.empty() ? nullptr : symbol_table.lookup(enter_id);
+            if(enter_sym != nullptr)
+            {
+              const code_typet &et = to_code_type(enter_sym->type);
+              typet v_type = (et.return_type().id() == ID_empty)
+                               ? ctx.type()
+                               : et.return_type();
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt new_sym{sym_id, v_type, "python"};
+                new_sym.base_name = var_name;
+                new_sym.is_lvalue = true;
+                new_sym.is_state_var = true;
+                symbol_table.add(new_sym);
+              }
+              // Materialise ctx into a temp so we can pass its
+              // address to __enter__.
+              static unsigned with_mgr_ctr2 = 0;
+              std::string mgr_name =
+                "__with_mgr_e_" + std::to_string(with_mgr_ctr2++);
+              std::string mgr_qname = qualify_name(mgr_name);
+              irep_idt mgr_id{mgr_qname};
+              if(symbol_table.lookup(mgr_id) == nullptr)
+              {
+                symbolt mgr_sym{mgr_id, ctx.type(), "python"};
+                mgr_sym.base_name = mgr_name;
+                mgr_sym.is_lvalue = true;
+                mgr_sym.is_state_var = true;
+                symbol_table.add(mgr_sym);
+              }
+              const symbolt &mgr = symbol_table.lookup_ref(mgr_id);
+              block.add(code_frontend_assignt{mgr.symbol_expr(), ctx});
+              const symbolt &v_sym = symbol_table.lookup_ref(sym_id);
+              if(et.return_type().id() == ID_empty)
+              {
+                exprt::operandst eargs{address_of_exprt{mgr.symbol_expr()}};
+                side_effect_expr_function_callt call{
+                  enter_sym->symbol_expr(),
+                  std::move(eargs),
+                  empty_typet{},
+                  loc};
+                block.add(code_expressiont{call});
+                // Without a return value, fall back to binding v
+                // to the manager itself.
+                block.add(code_frontend_assignt{
+                  v_sym.symbol_expr(), mgr.symbol_expr()});
+              }
+              else
+              {
+                exprt::operandst eargs{address_of_exprt{mgr.symbol_expr()}};
+                side_effect_expr_function_callt call{
+                  enter_sym->symbol_expr(),
+                  std::move(eargs),
+                  et.return_type(),
+                  loc};
+                exprt rhs = call;
+                if(rhs.type() != v_sym.type)
+                  rhs = safe_typecast(rhs, v_sym.type);
+                code_frontend_assignt assign{
+                  v_sym.symbol_expr(), std::move(rhs)};
+                assign.add_source_location() = loc;
+                block.add(std::move(assign));
+              }
+            }
+            else
+            {
+              // No __enter__ — fall back to the legacy
+              // behaviour: v = expr.
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt new_sym{sym_id, ctx.type(), "python"};
+                new_sym.base_name = var_name;
+                new_sym.is_lvalue = true;
+                new_sym.is_state_var = true;
+                symbol_table.add(new_sym);
+              }
+              const symbolt &sym = symbol_table.lookup_ref(sym_id);
+              code_frontend_assignt assign{sym.symbol_expr(), ctx};
+              assign.add_source_location() = loc;
+              block.add(std::move(assign));
+            }
           }
         }
       }
