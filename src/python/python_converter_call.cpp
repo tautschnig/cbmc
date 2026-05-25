@@ -365,6 +365,158 @@ exprt python_convertert::convert_call(const jsont &expr)
     if(is_node_type(obj_node, "Name"))
     {
       std::string obj_name = json_string(json_member(obj_node, "id"));
+      // PLR §4.4.2: int.from_bytes(b, byteorder, *, signed=False)
+      //             int.to_bytes(self, length, byteorder, *, signed=False)
+      // Class-method dispatch on the int built-in. The byteorder
+      // is treated as a string literal at the call site
+      // ("big" / "little"); a runtime byteorder selector would
+      // need a 2× expression and is not exercised by any
+      // current test. signed=True is uncommon; we treat it as
+      // signed=False (sound for non-negative values, the
+      // common case). Placed BEFORE imported_modules check
+      // because 'int' is a built-in, not an imported module.
+      if(obj_name == "int")
+      {
+        // int.to_bytes(x, length, byteorder)
+        // Returns a python_list_type(uint8) of `length` bytes.
+        if(method_name == "to_bytes" && args.is_array())
+        {
+          auto a_it = as_array(args).begin();
+          auto a_end = as_array(args).end();
+          if(a_it != a_end)
+          {
+            exprt x = convert_expression(*a_it++);
+            if(x.type() != python_int_type())
+              x = safe_typecast(x, python_int_type());
+
+            std::size_t n_len = 0;
+            if(a_it != a_end)
+            {
+              exprt n_expr = convert_expression(*a_it++);
+              if(n_expr.is_constant())
+              {
+                mp_integer iv;
+                if(!to_integer(to_constant_expr(n_expr), iv))
+                  n_len = iv.to_ulong();
+              }
+            }
+            std::string order = "big";
+            if(a_it != a_end)
+            {
+              if(is_node_type(*a_it, "Constant"))
+              {
+                const jsont &v = json_member(*a_it, "value");
+                if(v.is_string())
+                  order = json_string(v);
+              }
+            }
+
+            if(n_len == 0 || n_len > 16)
+            {
+              return side_effect_expr_nondett{
+                python_list_type(unsignedbv_typet{8}), get_location(expr)};
+            }
+
+            const typet u8 = unsignedbv_typet{8};
+            const typet i64 = python_int_type();
+            const std::size_t buf_len =
+              std::max<std::size_t>(PYTHON_MAX_LIST_LENGTH, n_len);
+            array_typet data_t{u8, from_integer(buf_len, i64)};
+
+            // For big-endian: data[i] = (x >> ((n-1-i)*8)) & 0xff
+            // For little-endian: data[i] = (x >> (i*8)) & 0xff
+            exprt::operandst bytes_ops;
+            for(std::size_t i = 0; i < n_len; i++)
+            {
+              std::size_t shift = (order == "little") ? i : (n_len - 1 - i);
+              exprt shifted =
+                lshr_exprt{x, from_integer(static_cast<long>(shift) * 8, i64)};
+              exprt masked = bitand_exprt{shifted, from_integer(0xff, i64)};
+              bytes_ops.push_back(typecast_exprt{masked, u8});
+            }
+            while(bytes_ops.size() < buf_len)
+              bytes_ops.push_back(from_integer(0, u8));
+
+            array_exprt data_arr{std::move(bytes_ops), data_t};
+            return struct_exprt{
+              {from_integer(n_len, i64), data_arr}, python_list_type(u8)};
+          }
+        }
+        // int.from_bytes(b, byteorder, signed=False)
+        // Returns an int read from the bytes object b.
+        if(method_name == "from_bytes" && args.is_array())
+        {
+          auto a_it = as_array(args).begin();
+          auto a_end = as_array(args).end();
+          if(a_it == a_end)
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+
+          exprt b = convert_expression(*a_it++);
+          std::string order = "big";
+          if(a_it != a_end)
+          {
+            if(is_node_type(*a_it, "Constant"))
+            {
+              const jsont &v = json_member(*a_it, "value");
+              if(v.is_string())
+                order = json_string(v);
+            }
+          }
+
+          if(!is_python_list_type(b.type()))
+          {
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          }
+
+          const typet i64 = python_int_type();
+          member_exprt b_length{b, "length", i64};
+          const auto &lt = to_struct_type(b.type());
+          typet data_arr_type;
+          for(const auto &c : lt.components())
+            if(c.get_name() == "data")
+              data_arr_type = c.type();
+          member_exprt b_data{b, "data", data_arr_type};
+
+          // Build a chain of conditional accumulations:
+          //   result = (i < length) ? acc(result, b[i]) : result
+          // For up to 16 bytes (more than fits any 64-bit int).
+          const std::size_t max_bytes = 16;
+          exprt result = from_integer(0, i64);
+          if(order == "little")
+          {
+            // result += b.data[i] * 256^i  for i < length
+            exprt power = from_integer(1, i64);
+            for(std::size_t i = 0; i < max_bytes; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt byte = typecast_exprt{index_exprt{b_data, idx}, i64};
+              exprt new_result = plus_exprt{result, mult_exprt{byte, power}};
+              exprt cond =
+                binary_relation_exprt{b_length, ID_gt, from_integer(i, i64)};
+              result = if_exprt{cond, new_result, result};
+              power = mult_exprt{power, from_integer(256, i64)};
+            }
+          }
+          else
+          {
+            // big-endian: each step shifts left by 8 and
+            // adds the next byte if i < length.
+            for(std::size_t i = 0; i < max_bytes; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt byte = typecast_exprt{index_exprt{b_data, idx}, i64};
+              exprt new_result =
+                plus_exprt{mult_exprt{result, from_integer(256, i64)}, byte};
+              exprt cond =
+                binary_relation_exprt{b_length, ID_gt, from_integer(i, i64)};
+              result = if_exprt{cond, new_result, result};
+            }
+          }
+          return result;
+        }
+      }
       if(imported_modules.count(obj_name))
       {
         // Resolve module.func to the function symbol. If the
