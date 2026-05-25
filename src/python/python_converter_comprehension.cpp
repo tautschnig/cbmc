@@ -421,7 +421,24 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   }
 
   if(elements.empty())
-    return nil_exprt{};
+  {
+    // PLR §6.2.4: an empty comprehension yields an empty list,
+    // NOT nil. Returning nil_exprt caused the surrounding
+    // assignment / equality check to be silently dropped at
+    // conversion time, masking incorrect assertions like
+    // [x for x in []] == [0, 1, 4, 9].
+    typet elem_type = python_int_type();
+    struct_typet list_type = python_list_type(elem_type);
+    array_typet data_type{
+      elem_type, from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
+    exprt::operandst zeros;
+    while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
+      zeros.push_back(safe_zero(elem_type));
+    return struct_exprt{
+      {from_integer(0, signedbv_typet{64}),
+       array_exprt{std::move(zeros), data_type}},
+      list_type};
+  }
 
   // Build the result list
   typet elem_type = elements[0].type();
