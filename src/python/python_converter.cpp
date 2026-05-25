@@ -263,20 +263,18 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
       ieee_float_spect::double_precision(),
       ieee_floatt::rounding_modet::ROUND_TO_EVEN};
     fv.from_expr(to_constant_expr(*ce));
-    // Round-trip via to_ansi_c_string + strtod. We use strtod
-    // (exception-free) rather than std::stod because libstdc++'s
-    // stod throws std::out_of_range for very small denormals like
-    // 1e-308 that are technically representable as doubles, and any
-    // such throw would unwind out of the frontend with no caller
-    // catching it. ERANGE just rounds to the nearest representable
-    // value (which is what we want for a best-effort eval anyway).
-    const std::string s = fv.to_ansi_c_string();
-    errno = 0;
-    char *endp = nullptr;
-    const double v = std::strtod(s.c_str(), &endp);
-    if(endp != s.c_str() + s.size())
-      return std::nullopt;
-    return v;
+    // Convert to a host double directly via the IEEE-754
+    // bit-pattern. ieee_float_valuet::to_double preserves the
+    // full mantissa when the format spec matches double_precision
+    // (which it does here). We previously round-tripped via
+    // to_ansi_c_string + strtod, which used the formatter's
+    // default precision and silently truncated values like 1/3
+    // to ~6 significant digits — that was visible as 8 ** (1/3)
+    // being folded to 1.999999 instead of 2.0 (PLR §6.5).
+    // NaN and infinity round-trip cleanly via to_double too
+    // (std::pow handles them per IEEE-754).
+    const ieee_float_valuet &as_value = fv;
+    return as_value.to_double();
   }
   // Binary and comparison operations (all 2-operand cases). We only
   // evaluate the operands once per invocation, regardless of which
