@@ -346,6 +346,11 @@ private:
   /// assigned an inline tuple. Populated from convert_assign on
   /// any `name = (...)` whose RHS is a python_tuple struct_exprt.
   std::map<irep_idt, exprt> tuple_literals;
+  /// PLR §6.5: Track python_complex struct literals so the
+  /// constant-fold path for `complex_var ** N` and similar
+  /// can recover the (real, imag) components from a symbol
+  /// assigned via 'z = complex(re, im)'.
+  std::map<irep_idt, exprt> complex_literals;
   std::map<irep_idt, double> float_constants; // track float/int constant values
 
   /// PLR control-flow correctness: per-branch snapshot + merge for
