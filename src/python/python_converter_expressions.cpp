@@ -196,8 +196,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
       // KeyError if key not found — unless the dict has a
       // guaranteed-present key matching this slice (from the
-      // 'if K not in D: D[K] = ...' idiom tracked earlier).
+      // 'if K not in D: D[K] = ...' idiom tracked earlier), or
+      // unless the dict was constructed via defaultdict / Counter
+      // (in which case missing-key reads return the factory's
+      // zero value instead of raising — PLR §8.5).
       bool skip_key_check = false;
+      bool is_defaultdict = false;
+      std::string dd_factory;
       if(value.id() == ID_symbol)
       {
         irep_idt dict_id = to_symbol_expr(value).get_identifier();
@@ -218,6 +223,46 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           if(!slice_key.empty() && gki->second.count(slice_key) > 0)
             skip_key_check = true;
         }
+        auto ddi = defaultdict_factories.find(dict_id);
+        if(ddi != defaultdict_factories.end())
+        {
+          is_defaultdict = true;
+          dd_factory = ddi->second;
+          skip_key_check = true;
+        }
+      }
+      if(is_defaultdict)
+      {
+        // The earlier scan loop sets `result` to safe_zero on
+        // miss. For defaultdict(int) / Counter that's already
+        // 0 (the int factory's zero); for defaultdict(str) we
+        // need an empty string struct, defaultdict(list) an
+        // empty list, etc. Here we patch the on-miss path:
+        // result = found ? scanned_result : factory_zero.
+        exprt fz;
+        const typet &vt = vals_type.element_type();
+        if(dd_factory == "str" && is_python_string_type(vt))
+        {
+          // Empty string struct: { 0, NULL }
+          fz = struct_exprt(
+            {from_integer(0, signedbv_typet{64}),
+             from_integer(0, pointer_typet(unsignedbv_typet{8}, 64))},
+            vt);
+        }
+        else if(dd_factory == "list" && is_python_list_type(vt))
+        {
+          fz = safe_zero(vt);
+        }
+        else
+        {
+          // Default: 0 / safe_zero of the value type. Works for
+          // defaultdict(int), Counter, defaultdict(float).
+          fz = safe_zero(vt);
+        }
+        // result currently equals safe_zero on miss; replace
+        // with the explicit factory_zero for documentation /
+        // future divergence.
+        result = if_exprt{found, result, fz};
       }
       if(!skip_key_check)
       {

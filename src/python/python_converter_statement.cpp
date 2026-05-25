@@ -185,6 +185,11 @@ codet python_convertert::convert_statement(const jsont &stmt)
               fs.is_state_var = true;
               symbol_table.add(fs);
             }
+            // PLR §8.5: track collections.X bindings so the
+            // call site can route to the right constructor
+            // regardless of how the user imported it.
+            if(module == "collections")
+              collections_imports[asname] = name;
           }
         }
       }
