@@ -346,6 +346,23 @@ make_nondet_string(symbol_table_baset &symbol_table)
 {
   exprt result = make_nondet_string(symbol_table);
 
+  // PLR §6.5.6 (str.__add__) inside loops: the same output
+  // symbols (__string_len_N, __string_ptr_N) are emitted by the
+  // frontend once per AST node and reused across loop
+  // iterations. If we don't advance their SSA version
+  // explicitly between iterations, the string refinement
+  // backend emits conflicting constraints over a single SSA
+  // value (one constraint per iteration), resulting in
+  // UNSAT and any assertion verifying SUCCESSFUL
+  // (github_3127_1_fail). Havoc the output args before each
+  // call so SSA gives them fresh L2 indices.
+  pending_checks.push_back(code_frontend_assignt{
+    result.operands()[0],
+    side_effect_expr_nondett{result.operands()[0].type(), source_locationt{}}});
+  pending_checks.push_back(code_frontend_assignt{
+    result.operands()[1],
+    side_effect_expr_nondett{result.operands()[1].type(), source_locationt{}}});
+
   std::vector<typet> arg_types;
   arg_types.push_back(signedbv_typet{64});
   arg_types.push_back(pointer_typet(unsignedbv_typet{8}, 64));
