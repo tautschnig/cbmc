@@ -87,8 +87,56 @@ exprt python_convertert::convert_lambda(const jsont &expr)
       return false;
     };
     bool has_float = body_uses_float(body_expr);
+    // PLR §3.2: lambdas like `lambda s: s + " world"` have an
+    // unannotated string parameter. Detect a string Constant
+    // in the body the same way we detect floats; widen the
+    // default parameter type to python_string when found.
+    std::function<bool(const jsont &)> body_uses_string =
+      [&](const jsont &n) -> bool
+    {
+      if(!n.is_object())
+      {
+        if(n.is_array())
+        {
+          for(const auto &e : as_array(n))
+            if(body_uses_string(e))
+              return true;
+        }
+        return false;
+      }
+      if(is_node_type(n, "Constant"))
+      {
+        const jsont &cv = json_member(n, "value");
+        if(cv.is_string())
+          return true;
+      }
+      static const std::vector<std::string> sub_fields{
+        "left",
+        "right",
+        "operand",
+        "value",
+        "values",
+        "elts",
+        "args",
+        "body",
+        "test",
+        "comparators",
+        "func",
+        "slice"};
+      for(const auto &f : sub_fields)
+      {
+        const jsont &child = json_member(n, f);
+        if(!child.is_null() && body_uses_string(child))
+          return true;
+      }
+      return false;
+    };
+    bool has_string = body_uses_string(body_expr);
+    // Float beats string when both are present (prefer numeric
+    // semantics; rare in practice).
     typet default_param_type =
-      has_float ? double_type() : python_int_type();
+      has_float ? double_type()
+                : (has_string ? python_string_type() : python_int_type());
     for(const auto &param : as_array(params))
     {
       std::string param_name = json_string(json_member(param, "arg"));
