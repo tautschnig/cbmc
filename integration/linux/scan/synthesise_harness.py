@@ -95,6 +95,7 @@ MODULE_GHOST_BOOTSTRAP = {
         "ghost_init_decl":
             "void cred_lifetime_init(struct cred *c, unsigned int usage);",
         "forward_decls": ["struct cred;"],
+        "put_apis": ["put_cred", "abort_creds"],
         # Wrapper-struct pointer chains.  Each entry maps a
         # parameter type that the function might receive (a
         # wrapper struct) to the field path that contains a
@@ -164,6 +165,7 @@ MODULE_GHOST_BOOTSTRAP = {
         "ghost_init_decl":
             "void lock_state_lock(struct mutex *m);",
         "forward_decls": ["struct mutex;"],
+        "put_apis": ["mutex_unlock"],
         "wrapper_paths": [
             {
                 # __pipe_unlock(struct pipe_inode_info *) and
@@ -204,6 +206,7 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": [
             "typedef struct refcount_struct refcount_t;",
         ],
+        "put_apis": ["refcount_dec_and_test", "__refcount_dec_and_test"],
         "wrapper_paths": [
             {
                 # nlm_release_host etc. take the wrapper and
@@ -304,6 +307,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void kobject_lifetime_init(struct kobject *k, "
             "unsigned int usage);",
         "forward_decls": ["struct kobject;"],
+        "put_apis": ["kobject_put"],
         # Wrapper-paths can be added here once cross-version
         # corpus runs surface concrete wrapper struct → kobject
         # patterns (e.g. struct device, struct net_device).
@@ -323,6 +327,12 @@ MODULE_GHOST_BOOTSTRAP = {
             "void device_lifetime_init(struct device *dev, "
             "unsigned int usage);",
         "forward_decls": ["struct device;"],
+        # Put-style API call sites that the synthesiser can
+        # use for auto-discovery of wrapper paths.  When a
+        # function body contains `put_device(EXPR)` where
+        # EXPR is `param->field`, the synthesiser auto-adds
+        # a wrapper_path bootstrap for that field.
+        "put_apis": ["put_device"],
         "wrapper_paths": [
             {
                 # attribute_container_release(struct device *classdev)
@@ -345,6 +355,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void of_node_lifetime_init(struct device_node *node, "
             "unsigned int usage);",
         "forward_decls": ["struct device_node;"],
+        "put_apis": ["of_node_put"],
         "wrapper_paths": [],
     },
     "inode_lifetime": {
@@ -355,6 +366,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void inode_lifetime_init(struct inode *inode, "
             "unsigned int usage);",
         "forward_decls": ["struct inode;"],
+        "put_apis": ["iput"],
         "wrapper_paths": [
             {
                 # ext2_link, vfs_link, and many fs/ helpers extract
@@ -375,6 +387,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void dentry_lifetime_init(struct dentry *dentry, "
             "unsigned int usage);",
         "forward_decls": ["struct dentry;"],
+        "put_apis": ["dput"],
         "wrapper_paths": [
             {
                 # generic_shutdown_super and similar superblock-
@@ -393,6 +406,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void fput_lifetime_init(struct file *file, "
             "unsigned int usage);",
         "forward_decls": ["struct file;"],
+        "put_apis": ["fput"],
         "wrapper_paths": [],
     },
     "sock_lifetime": {
@@ -403,6 +417,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void sock_lifetime_init(struct sock *sk, "
             "unsigned int usage);",
         "forward_decls": ["struct sock;"],
+        "put_apis": ["sock_put"],
         "wrapper_paths": [],
     },
     "skb_lifetime": {
@@ -413,6 +428,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void skb_lifetime_init(struct sk_buff *skb, "
             "unsigned int usage);",
         "forward_decls": ["struct sk_buff;"],
+        "put_apis": ["kfree_skb"],
         "wrapper_paths": [],
     },
     "module_lifetime": {
@@ -423,6 +439,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void module_lifetime_init(struct module *module, "
             "unsigned int usage);",
         "forward_decls": ["struct module;"],
+        "put_apis": ["module_put"],
         "wrapper_paths": [],
     },
     "kref_lifetime": {
@@ -433,6 +450,7 @@ MODULE_GHOST_BOOTSTRAP = {
             "void kref_lifetime_init(struct kref *kref, "
             "unsigned int usage);",
         "forward_decls": ["struct kref;"],
+        "put_apis": ["kref_put"],
         "wrapper_paths": [],
     },
     "netlink_attr_validation": {
@@ -720,6 +738,138 @@ def _uses_current_macro(source: Path, function: str) -> bool:
     return False
 
 
+def _autodiscover_wrapper_paths(cfg: dict, source: Path,
+                                function: str,
+                                params: list) -> list[dict]:
+    """Scan the function body for `put_api(EXPR)` calls and
+    auto-discover wrapper-paths from EXPR shapes like
+    `param->field` or `&param->field`.
+
+    Returns NEW wrapper-path dicts to extend cfg["wrapper_paths"]
+    with.  Skips entries that duplicate an existing wrapper_path.
+
+    For the field access in the harness to type-check, the
+    parameter's struct layout must be visible.  We try to find
+    a likely header by scanning the source file's #include
+    lines for one that mentions the struct tag in its name.
+    If we can't, we skip auto-discovery for that param (rather
+    than emit a harness that won't compile).
+    """
+    put_apis = cfg.get("put_apis") or []
+    if not put_apis:
+        return []
+    try:
+        body = source.read_text(errors="replace")
+    except OSError:
+        return []
+    # Collect all #include <linux/...> lines from the source.
+    src_includes = re.findall(
+        r'^\s*#\s*include\s+(<[^>]+>)', body, re.MULTILINE)
+    # Find the function body.
+    pat = re.compile(r"\b" + re.escape(function) + r"\s*\(")
+    fn_body: str | None = None
+    for m in pat.finditer(body):
+        depth = 0
+        i = m.end() - 1
+        while i < len(body):
+            c = body[i]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    j = i + 1
+                    break
+            i += 1
+        else:
+            continue
+        while j < len(body) and body[j] in " \t\n\r":
+            j += 1
+        if j >= len(body) or body[j] != "{":
+            continue
+        bdepth = 1
+        end = j + 1
+        while end < len(body) and bdepth > 0:
+            c = body[end]
+            if c == "{":
+                bdepth += 1
+            elif c == "}":
+                bdepth -= 1
+            end += 1
+        fn_body = body[j:end]
+        break
+    if fn_body is None:
+        return []
+    param_type: dict[str, str] = {p.name: p.type_text for p in params}
+
+    def _guess_header(struct_tag: str) -> list[str]:
+        """Pick #include lines from the source whose stem
+        (filename without extension or directory) is an
+        EXACT match for the struct tag or its first/last
+        underscore-separated component.
+
+        Strict matching avoids false-positive picks like
+        `<drm/lima_drm.h>` for `struct lima_bo` (which is
+        actually defined in a private driver header).  When
+        no strict match is found we return [] and the caller
+        skips auto-discovery for that param — preferring an
+        empty-ghost successful verdict over an
+        uncompilable harness."""
+        candidates: list[str] = []
+        tag_lower = struct_tag.lower()
+        parts = tag_lower.split("_")
+        tokens: list[str] = [tag_lower]
+        if len(parts) > 1:
+            tokens.append(parts[0])
+            tokens.append(parts[-1])
+        for inc in src_includes:
+            stem = inc.strip("<>").rsplit("/", 1)[-1]
+            stem_no_ext = stem.split(".", 1)[0].lower()
+            for tok in tokens:
+                if tok and tok == stem_no_ext:
+                    if inc not in candidates:
+                        candidates.append(inc)
+                    break
+        return candidates
+
+    discovered: dict[tuple[str, str], dict] = {}
+    existing = {(wp["param_type"], wp["field_path"])
+                for wp in cfg.get("wrapper_paths", [])}
+    for api in put_apis:
+        api_pat = re.compile(
+            r"\b" + re.escape(api) + r"\s*\(\s*"
+            r"(&\s*)?([A-Za-z_]\w*)\s*->\s*(\w+)\b"
+        )
+        for m in api_pat.finditer(fn_body):
+            amp, var, fld = m.group(1), m.group(2), m.group(3)
+            if var not in param_type:
+                continue
+            ptype = param_type[var]
+            field_path = (f"&{{arg}}->{fld}" if amp else fld)
+            key = (ptype, field_path)
+            if key in existing or key in discovered:
+                continue
+            # Identify the struct tag from the param type.
+            tag_m = re.search(r"struct\s+(\w+)", ptype)
+            if not tag_m:
+                continue
+            tag = tag_m.group(1)
+            includes = _guess_header(tag)
+            if not includes:
+                # Couldn't find a header that declares this
+                # struct; skip — emitting a wrapper-path that
+                # accesses an opaque struct's fields would
+                # produce an uncompilable harness.
+                continue
+            discovered[key] = {
+                "param_type": ptype,
+                "field_path": field_path,
+                "kernel_includes": includes,
+                "auto_discovered": True,
+            }
+    return list(discovered.values())
+
+
 def synthesise(module: str, source: Path, function: str,
                out: Path) -> int:
     cfg = MODULE_GHOST_BOOTSTRAP.get(module)
@@ -734,6 +884,22 @@ def synthesise(module: str, source: Path, function: str,
         print(f"synthesise_harness: could not find function "
               f"{function!r} in {source}", file=sys.stderr)
         return 2
+
+    # Auto-discover wrapper-paths from put-API call sites in
+    # the function body.  This addresses the empty-ghost
+    # false-negative case: when the kernel function takes
+    # `struct most_interface *iface` and calls
+    # `put_device(iface->dev)`, the harness can't bootstrap
+    # the right ghost without knowing iface->dev is the
+    # tracked pointer.  Auto-discovery synthesises that
+    # wrapper path from the function body directly.
+    auto_paths = _autodiscover_wrapper_paths(
+        cfg, source, function, sig.params)
+    if auto_paths:
+        # Extend cfg with a copy that includes auto-paths.
+        cfg = dict(cfg)
+        cfg["wrapper_paths"] = list(cfg.get("wrapper_paths", [])) \
+            + auto_paths
 
     # Skip the aead transform-wrapper shape: per-file synthesis
     # has no way to model the freshly-allocated subreq's SGL
