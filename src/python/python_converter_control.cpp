@@ -1129,6 +1129,12 @@ codet python_convertert::convert_return(const jsont &stmt)
         tmp_sym.is_state_var = true;
         symbol_table.add(tmp_sym);
       }
+      else
+      {
+        // Idempotent re-call: refresh the temp's type from
+        // the (now fully populated) class_types entry.
+        symbol_table.get_writeable_ref(tmp_id).type = cls_type;
+      }
 
       const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
       code_blockt block;

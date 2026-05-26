@@ -1887,6 +1887,16 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           func_sym.is_lvalue = true;
           symbol_table.add(func_sym);
         }
+        else
+        {
+          // Idempotent re-call (sub-pass 1a-bis): the existing
+          // symbol may have been registered with a placeholder
+          // return type (e.g. when 'Bar' was only known as a
+          // pre-registered placeholder during the first 1a
+          // pass). Update the type now that all classes have
+          // been fully registered.
+          symbol_table.get_writeable_ref(func_id).type = func_type;
+        }
 
         // Create parameter symbols
         for(const auto &p : parameters)
@@ -1900,6 +1910,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             param_sym.is_state_var = true;
             param_sym.is_parameter = true;
             symbol_table.add(param_sym);
+          }
+          else
+          {
+            // Idempotent re-call: refresh type if it changed
+            // (placeholder class -> full class struct).
+            symbol_table.get_writeable_ref(p.get_identifier()).type = p.type();
           }
         }
 
