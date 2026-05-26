@@ -134,7 +134,53 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
     tag, source, expected = parse_desc(desc_file)
     expected_str = expected[0] if expected else ""
 
-    cmd = [cbmc, "--unwind", str(unwind), "--no-unwinding-assertions", str(main_py)]
+    # Extract CBMC-compatible flags from the args line (line 2).
+    # Most ESBMC flags aren't understood by CBMC, so we only pass
+    # through a safe-list of options that CBMC supports natively.
+    extra_flags: list[str] = []
+    text = desc_file.read_text(errors="replace").splitlines()
+    if len(text) > 2 and text[2].strip().startswith("--"):
+        SAFE_FLAGS_TAKES_VAL = {
+            "--function",
+            "--unwind",
+            "--object-bits",
+        }
+        SAFE_FLAGS_NO_VAL = {
+            "--overflow-check",
+            "--signed-overflow-check",
+            "--unsigned-overflow-check",
+            "--pointer-overflow-check",
+            "--float-overflow-check",
+            "--no-pointer-check",
+            "--no-bounds-check",
+            "--no-div-by-zero-check",
+            "--no-standard-checks",
+            "--no-signed-overflow-check",
+            "--no-unwinding-assertions",
+            "--unwinding-assertions",
+        }
+        toks = text[2].split()
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t in SAFE_FLAGS_TAKES_VAL and i + 1 < len(toks):
+                extra_flags.extend([t, toks[i + 1]])
+                i += 2
+            elif t in SAFE_FLAGS_NO_VAL:
+                extra_flags.append(t)
+                i += 1
+            else:
+                i += 1
+
+    # Default --unwind only when the test didn't override it.
+    cmd = [cbmc]
+    if "--unwind" not in extra_flags:
+        cmd += ["--unwind", str(unwind)]
+    if "--no-unwinding-assertions" not in extra_flags and \
+       "--unwinding-assertions" not in extra_flags:
+        cmd.append("--no-unwinding-assertions")
+    cmd.extend(extra_flags)
+    cmd.append(str(main_py))
     start = time.monotonic()
     try:
         cp = subprocess.run(
