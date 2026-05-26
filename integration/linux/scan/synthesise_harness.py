@@ -542,6 +542,16 @@ def find_function_signature(source: Path, name: str) -> Signature | None:
             return None
 
     return_type = m.group(1).strip()
+    # Reject matches where the "return type" is empty or
+    # doesn't look like a type — those usually came from the
+    # loose pattern matching a function CALL like
+    # `    foo(arg);` rather than a definition or
+    # declaration.  A real return type contains at least one
+    # type-like token (a keyword or a struct/typedef name).
+    # Empty-string return types or pure punctuation are
+    # rejected.
+    if not return_type or not re.search(r"[A-Za-z_]", return_type):
+        return None
     # Detect storage class before cleaning the leading keywords.
     is_static = bool(re.search(r"\bstatic\b", return_type))
     # Clean leading keywords.
@@ -945,9 +955,16 @@ def synthesise(module: str, source: Path, function: str,
     # static kernel helpers.  Use the mangled name in the
     # harness's forward declaration and call site so the link
     # resolves to the real body.
+    #
+    # NOTE: goto-cc replaces non-identifier characters (dashes,
+    # dots, etc.) in the stem with underscores so the mangled
+    # name is a legal C identifier.  Mirror that mapping here
+    # so files like `acp-es8336.c` yield
+    # `__CPROVER_file_local_acp_es8336_c_<name>`.
     if sig.is_static:
+        sanitised_stem = re.sub(r"[^A-Za-z0-9_]", "_", source.stem)
         callee = (
-            f"__CPROVER_file_local_{source.stem}_c_{function}"
+            f"__CPROVER_file_local_{sanitised_stem}_c_{function}"
         )
     else:
         callee = function

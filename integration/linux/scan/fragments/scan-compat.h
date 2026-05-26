@@ -194,4 +194,25 @@ void bpf_jit_fill_hole_with_zero(void *area, unsigned int size)
   (void)size;
 }
 
+/* BUFFER_FNS / TAS_BUFFER_FNS — defined in
+ * <linux/buffer_head.h> only under CONFIG_BLOCK.  Our
+ * x86_64 allnoconfig-derived scan trees often have
+ * CONFIG_BLOCK off, in which case BUFFER_FNS is left
+ * undefined and any header that uses it (jbd2.h is the
+ * common case for fs/ext4/ scans) raises "syntax error
+ * before 'BUFFER_FNS'".  Provide an empty no-op
+ * expansion so the using-header parses.  Sound for
+ * goto-cc scans: the resulting set_buffer_xxx /
+ * clear_buffer_xxx / test_buffer_xxx accessors are
+ * silently dropped — if the kernel TU's actual code
+ * paths reference them the link step will report an
+ * unresolved symbol, which we treat as a regular
+ * compile failure and report. */
+#ifndef BUFFER_FNS
+#define BUFFER_FNS(bit, name)
+#endif
+#ifndef TAS_BUFFER_FNS
+#define TAS_BUFFER_FNS(bit, name)
+#endif
+
 #endif /* INTEGRATION_LINUX_SCAN_FRAGMENTS_SCAN_COMPAT_H */

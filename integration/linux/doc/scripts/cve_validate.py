@@ -232,12 +232,45 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None,
         return (file_path, None, fix_hash)
     if not text:
         return (file_path, None, fix_hash)
-    # If file_path wasn't in the CVE JSON, take it from the
-    # first diff --git header.
-    if not file_path:
-        fm = re.search(r"^diff --git a/(\S+) ", text, re.MULTILINE)
-        if fm:
-            file_path = fm.group(1)
+    # Function names to reject as macro-expansion artefacts
+    # rather than real function definitions.  These appear in
+    # hunk context lines but aren't function names — they're
+    # invocations of definition-emitting macros at file scope.
+    BAD_FN_NAMES = {
+        "EXPORT_SYMBOL", "EXPORT_SYMBOL_GPL",
+        "EXPORT_SYMBOL_NS", "EXPORT_SYMBOL_NS_GPL",
+        "DEFINE_PER_CPU", "DEFINE_PER_CPU_PAGE_ALIGNED",
+        "DEFINE_PER_CPU_ALIGNED", "DEFINE_PER_CPU_SHARED_ALIGNED",
+        "DEFINE_MUTEX", "DEFINE_SPINLOCK", "DEFINE_RWLOCK",
+        "DEFINE_RATELIMIT_STATE", "DEFINE_SEMAPHORE",
+        "DEFINE_STATIC_KEY_FALSE", "DEFINE_STATIC_KEY_TRUE",
+        "DEFINE_SHOW_ATTRIBUTE", "DEFINE_PROC_SHOW_ATTRIBUTE",
+        "TRACE_EVENT", "DECLARE_TRACE", "DECLARE_EVENT_CLASS",
+        "DEFINE_EVENT", "TP_PROTO", "TP_ARGS", "TP_STRUCT",
+        "BUFFER_FNS", "TAS_BUFFER_FNS", "PAGEFLAG", "TESTPAGEFLAG",
+        "MODULE_AUTHOR", "MODULE_LICENSE", "MODULE_DESCRIPTION",
+        "MODULE_PARM_DESC", "module_init", "module_exit",
+        "module_param", "module_param_named",
+        "subsys_initcall", "fs_initcall", "device_initcall",
+        "late_initcall", "core_initcall",
+        "void", "int", "long", "short", "char", "static",
+        "extern", "struct", "union", "enum", "typedef",
+    }
+
+    def _is_real_function(name: str | None) -> bool:
+        """Reject all-caps macro-invocation names and other
+        false-positive matches of the function-extraction
+        regex."""
+        if not name:
+            return False
+        if name in BAD_FN_NAMES:
+            return False
+        # All-caps with at least 4 chars is almost certainly
+        # a macro.  Allow short all-caps to pass (e.g.
+        # function names like `ZERO`).
+        if len(name) >= 4 and name.isupper() and "_" in name:
+            return False
+        return True
     # Function from @@ hunk context.  Look for the FIRST hunk
     # in the modified file (not the entire patch's first
     # diff, which may be a header file).
@@ -256,23 +289,32 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None,
             end = sections[i+1][0]
             if fn_in_diff == file_path:
                 section = rest[start:end]
-                hm = re.search(
-                    r"^@@ [-0-9,+ ]+@@\s+(?:static\s+|extern\s+|const\s+|inline\s+)*"
+                # Try every @@ hunk header in this section
+                # until we find one whose context line yields
+                # a real function name.  Macro-invocation
+                # names (EXPORT_SYMBOL etc.) and reserved
+                # words are filtered out by _is_real_function.
+                fn_pat = re.compile(
+                    r"^@@ [-0-9,+ ]+@@\s+(?:static\s+|extern\s+|"
+                    r"const\s+|inline\s+)*"
                     r"(?:struct\s+\S+\s+\*?|\S+\s+\*?)?"
                     r"(\w+)\s*\(",
-                    section, re.MULTILINE,
-                )
-                if hm:
-                    return (file_path, hm.group(1), fix_hash)
-    # Fallback: first @@ in entire patch.
-    hm = re.search(
+                    re.MULTILINE)
+                for hm in fn_pat.finditer(section):
+                    cand = hm.group(1)
+                    if _is_real_function(cand):
+                        return (file_path, cand, fix_hash)
+    # Fallback: try every @@ hunk in the entire patch.
+    fn_pat = re.compile(
         r"^@@ [-0-9,+ ]+@@\s+(?:static\s+|extern\s+|const\s+|inline\s+)*"
         r"(?:struct\s+\S+\s+\*?|\S+\s+\*?)?"
         r"(\w+)\s*\(",
-        text, re.MULTILINE,
-    )
-    fn_name = hm.group(1) if hm else None
-    return (file_path, fn_name, fix_hash)
+        re.MULTILINE)
+    for hm in fn_pat.finditer(text):
+        cand = hm.group(1)
+        if _is_real_function(cand):
+            return (file_path, cand, fix_hash)
+    return (file_path, None, fix_hash)
 
 
 def _find_files_in_trees(file_path: str,
