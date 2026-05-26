@@ -7,14 +7,14 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 39, 2026-05-26)
+## Status snapshot (wave 40, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2579 | +90 |
-| Soundness gaps (raw DIFFs) | n/a | 56 | n/a |
+| ESBMC PASS | 2489 | 2601 | +112 |
+| Soundness gaps (raw DIFFs) | n/a | ~50 | n/a |
 | Soundness gaps (PLR-relevant) | 77 | 0 | −77 |
-| Precision gaps (PLR-relevant) | 435 | ~67 | −368 |
+| Precision gaps (PLR-relevant) | 435 | ~50 | −385 |
 | TIMEOUT | 26 | 10 | −16 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
@@ -318,6 +318,50 @@ to find the hot path. Track per test as a follow-up.
   `pick(): return Foo()`) keep the wrap_value temp
   materialisation because they're not stable across
   call sites. (Commit f7fc9b7b0e.)
+
+- **chr() ValueError + isinstance(x, type)** (4 tests) —
+  `github_3090`, `github_3520_2`, `_4_fail`, `_6`.
+  chr(i) on out-of-range i now raises ValueError through
+  __exception_active so try/except can catch it.
+  isinstance(x, type) where x is bound to a type object
+  (built-in or class) returns True; conversely
+  isinstance(x, T) for T != type when x holds a type
+  returns False. New `name_holds_type_binding` set
+  tracks per-symbol bindings to type objects.
+  (Commit 2305cb6bb8.)
+
+- **for-loop reversed(range())** (3 tests) —
+  `github_3804_1`, `_2`, `_4-nondet`. Special-case the
+  AST shape `for x in reversed(range(...)):` and lower
+  as a descending range loop. (Commit 7f6409551a.)
+
+- **list.__iter__() + tuple-unpack typed elt symbols**
+  (7 tests) — `github_3751` cluster (5 tests) +
+  `github_3647_3`, `_13`. list.__iter__() returns the
+  list itself; for-loop tuple unpack creates loop
+  variables with the tuple field type rather than the
+  default python_int_type. (Commit d936102a37.)
+
+- **nondet_X() module-global pre-registration** (2
+  tests) — `github_3701_9-nondet`,
+  `github_3701_if_else-nondet`. Pass 0's pre-registration
+  now recognises `flag = nondet_int()/bool()/float()/
+  str()` so functions converted in pass 1c can resolve
+  the global. Without this, function-body conversion
+  saw the Name lookup return nil and the entire
+  enclosing if/while/for body silently collapsed.
+  (Commit d05d1237db.)
+
+- **Strict-types call-site arg checks** (6 tests) —
+  `github_3020`, `_2`, `_6`, `_8`, `_9`, `_10`. Three
+  changes: narrow the boto3-style class-vs-int FP
+  suppression in annotation_types_incompatible (no
+  longer applies blanketly to string/list/dict/set
+  declared types); mirror the function-call path's
+  annotation-mismatch check at the method-call dispatch;
+  map ESBMC's --strict-types to our
+  --python-check-annotations in the sweep script.
+  (Commit c42c3fe06d.)
 
 **Remaining open clusters** (sample):
 - `github_3020_*` (7 tests): runtime arg-type-mismatch
