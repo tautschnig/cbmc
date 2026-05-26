@@ -2651,9 +2651,31 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
         return code_frontend_assignt{lhs, python_string_literal(result)};
       }
     }
-    // Non-constant: assign nondet
-    return code_frontend_assignt{
-      lhs, side_effect_expr_nondett{python_string_type(), source_locationt{}}};
+    // Non-constant: route through cprover_string_concat_func so
+    // the string solver tracks the runtime concatenation. Without
+    // this, `word += char` inside a loop would lose word's value
+    // and any post-loop assertion folded against word fails. The
+    // helper builds string-struct views of both operands when
+    // they aren't already in struct form, and havocs SSA outputs
+    // when called from inside a loop body.
+    auto to_string_struct = [&](const exprt &s)
+    {
+      if(s.id() == ID_struct && s.operands().size() == 2)
+        return s;
+      return exprt{struct_exprt{
+        {member_exprt{s, "length", signedbv_typet{64}},
+         member_exprt{s, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
+        s.type()}};
+    };
+    exprt concat = emit_string_function(
+      ID_cprover_string_concat_func,
+      {to_string_struct(lhs), to_string_struct(rhs)},
+      symbol_table,
+      pending_checks,
+      loop_depth > 0);
+    if(lhs.id() == ID_symbol)
+      string_constants.erase(to_symbol_expr(lhs).get_identifier());
+    return code_frontend_assignt{lhs, std::move(concat)};
     typet str_type = python_string_type();
     const auto &data_type = array_typet(
       unsignedbv_typet{8},
