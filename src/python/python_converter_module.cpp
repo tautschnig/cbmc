@@ -1349,17 +1349,24 @@ bool python_convertert::convert()
           }
         }
 
-        // Inspect Expr / Call statements for top-level calls.
-        if(is_node_type(s, "Expr"))
+        // Inspect any expression for nested Call sites: top-level
+        // Expr-Call, Assert(test=Call), Assign(value=Call),
+        // AnnAssign(value=Call), Return(value=Call), etc. The
+        // inner walk only descends until it finds a Call —
+        // arg-shape propagation is opportunistic and a missed
+        // call site only loses an optimisation, not soundness.
+        std::function<void(const jsont &)> scan_expr =
+          [&](const jsont &node) -> void
         {
-          const jsont &v = json_member(s, "value");
-          if(is_node_type(v, "Call"))
+          if(node.is_null() || !node.is_object())
+            return;
+          if(is_node_type(node, "Call"))
           {
-            const jsont &fn = json_member(v, "func");
+            const jsont &fn = json_member(node, "func");
             if(is_node_type(fn, "Name"))
             {
               std::string callee = json_string(json_member(fn, "id"));
-              const jsont &args = json_member(v, "args");
+              const jsont &args = json_member(node, "args");
               if(args.is_array())
               {
                 std::size_t i = 0;
@@ -1378,7 +1385,55 @@ bool python_convertert::convert()
                 }
               }
             }
+            // Recurse into args/func to find nested calls.
+            scan_expr(json_member(node, "func"));
+            const jsont &args = json_member(node, "args");
+            if(args.is_array())
+              for(const auto &a : as_array(args))
+                scan_expr(a);
           }
+          else
+          {
+            // Recurse into common AST node fields that may
+            // contain expressions.
+            for(const char *key :
+                {"value",
+                 "test",
+                 "left",
+                 "right",
+                 "operand",
+                 "values",
+                 "args",
+                 "elts",
+                 "keys",
+                 "comparators"})
+            {
+              const jsont &child = json_member(node, key);
+              if(child.is_null())
+                continue;
+              if(child.is_array())
+                for(const auto &c : as_array(child))
+                  scan_expr(c);
+              else
+                scan_expr(child);
+            }
+          }
+        };
+
+        // Inspect Expr / Call statements for top-level calls.
+        if(is_node_type(s, "Expr"))
+        {
+          scan_expr(json_member(s, "value"));
+        }
+        else if(is_node_type(s, "Assert"))
+        {
+          scan_expr(json_member(s, "test"));
+        }
+        else if(
+          is_node_type(s, "Assign") || is_node_type(s, "AnnAssign") ||
+          is_node_type(s, "AugAssign") || is_node_type(s, "Return"))
+        {
+          scan_expr(json_member(s, "value"));
         }
         // Recurse into nested control-flow / function bodies. We
         // use a fresh scope inside FunctionDef bodies (the local
