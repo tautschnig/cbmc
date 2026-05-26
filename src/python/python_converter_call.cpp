@@ -2655,9 +2655,41 @@ exprt python_convertert::convert_call(const jsont &expr)
                 list_t};
             }
           }
-          // Returns list of tuples — simplified to nondet for now
-          return side_effect_expr_nondett{
-            python_list_type(python_int_type()), get_location(expr)};
+          // Returns list of tuples — for non-literal dicts,
+          // construct a list whose i-th element is the tuple
+          // (obj.keys[i], obj.values[i]). The for-loop walks
+          // the resulting list using its own counter, so
+          // unwinds naturally bound by the dict's actual length.
+          {
+            const auto &dict_st = to_struct_type(obj_base_type);
+            const auto &keys_type =
+              to_array_type(dict_st.components()[1].type());
+            const auto &vals_type =
+              to_array_type(dict_st.components()[2].type());
+            const typet key_t = keys_type.element_type();
+            const typet val_t = vals_type.element_type();
+            struct_typet tuple_t = python_tuple_type({key_t, val_t});
+            tuple_t.set_tag("python_tuple");
+            struct_typet list_t = python_list_type(tuple_t);
+            const auto &list_data_type =
+              to_array_type(list_t.components()[1].type());
+
+            member_exprt obj_keys{obj, "keys", keys_type};
+            member_exprt obj_vals{obj, "values", vals_type};
+            member_exprt obj_len{obj, "length", signedbv_typet{64}};
+
+            exprt::operandst elems;
+            for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; ++i)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              elems.push_back(struct_exprt{
+                {index_exprt{obj_keys, idx}, index_exprt{obj_vals, idx}},
+                tuple_t});
+            }
+            return struct_exprt{
+              {obj_len, array_exprt{std::move(elems), list_data_type}},
+              list_t};
+          }
         }
         if(method_name == "clear")
         {
