@@ -7,14 +7,14 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 38, 2026-05-26)
+## Status snapshot (wave 39, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2576 | +87 |
+| ESBMC PASS | 2489 | 2579 | +90 |
 | Soundness gaps (raw DIFFs) | n/a | 56 | n/a |
 | Soundness gaps (PLR-relevant) | 77 | 0 | −77 |
-| Precision gaps (PLR-relevant) | 435 | ~70 | −365 |
+| Precision gaps (PLR-relevant) | 435 | ~67 | −368 |
 | TIMEOUT | 26 | 10 | −16 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
@@ -305,6 +305,20 @@ to find the hot path. Track per test as a follow-up.
       constants into many more tests' parameters as a
       side effect. (Commit b88ea3f003.)
 
+- **Class-instance args bind by reference** (3 tests) —
+  `github_3822`, `_2`, `_3-nondet`. `f(a)` where `a` is a
+  class-instance variable previously wrapped via
+  `wrap_value` made a temp copy; mutations in `f`
+  hit the copy. Special-cased the call-site arg-binding
+  in convert_call: when the argument is a Name whose
+  type is a `python_class_<Name>` struct AND the param
+  is `python_value`-typed, bind via
+  `make_python_value(CLASS, address_of(arg))` directly.
+  Function-local return temps (`__ret_tmp_<Class>` from
+  `pick(): return Foo()`) keep the wrap_value temp
+  materialisation because they're not stable across
+  call sites. (Commit f7fc9b7b0e.)
+
 **Remaining open clusters** (sample):
 - `github_3020_*` (7 tests): runtime arg-type-mismatch
   detection. Tests use `--strict-types` flag we don't
@@ -343,33 +357,28 @@ remains.
 
 ### 8. Architecture documentation
 
-**Status**: not started. Frontend has stabilised through the
-2026-05 session (nested-function naming, function-summary
-cache, argument propagation, loop invalidation, dict
-equality).
+**Status**: closed in wave 39. Wrote
+`doc/python-frontend-architecture.md` (commit
+`c852248711`) covering:
+- Top-level flow and pass structure (0 / 0.1 / 0.25 / 1a /
+  1a-bis / 1b / 1b.5 / 1c / 2)
+- Constant tracking maps and their invalidation drivers
+- Function summaries and synthetic-temp naming
+  conventions
+- Symbol naming conventions
+- Type system (CBMC types for int/float/bool/str/list/
+  dict/tuple/complex/set/None/Any/class instance)
+- Loop semantics, generator semantics (list-with-cursor),
+  annotation semantics, forward-class refs
+- Exception model
+- Method dispatch (incl. super() inline-vs-direct-call)
+- String-solver integration via `emit_string_function`
+- Key flags
+- "Where to make changes" lookup table
+- Tips for new contributors
 
-**Content to cover**:
-- Symbol naming conventions: module-level vs nested vs
-  parameter; scope qualification rules.
-- Constant tracking maps: `string_constants`,
-  `float_constants`, `dict_literals`, `list_literals`,
-  `tuple_literals`, `complex_literals` — what each holds,
-  when it's populated, when it's invalidated.
-- Function summaries: `function_returned_dict_keys`,
-  `function_returned_literal`, `function_return_count`,
-  `function_aliases`, `lambda_returning_functions`.
-- Closure captures: how nested functions see enclosing
-  scope variables.
-- Snapshot/restore for branch-local maps in if/match/try.
-- Pre-scan passes (Pass 0.1, 0.25, 0, 1a, 1b, 1b.5, 1c) and
-  what each populates.
-- `qualify_name` semantics including `global` and
-  `nonlocal`.
-
-**Scope estimate**: ~1 day.
-
-**Best done after**: one of items 1-2 lands so the docs
-reflect a stable design.
+Cross-referenced from `python-verification-guide.md` and
+`AGENTS.md` (Important Links section).
 
 ---
 
