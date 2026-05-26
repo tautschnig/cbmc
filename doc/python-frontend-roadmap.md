@@ -7,13 +7,13 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 34, 2026-05-26)
+## Status snapshot (wave 36, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2548 | +59 |
+| ESBMC PASS | 2489 | 2562 | +73 |
 | Soundness gaps (PLR-relevant) | 77 | ~2 | −75 |
-| Precision gaps (PLR-relevant) | 435 | ~92 | −343 |
+| Precision gaps (PLR-relevant) | 435 | ~78 | −357 |
 | TIMEOUT | 26 | 8 | −18 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
@@ -239,20 +239,60 @@ to find the hot path. Track per test as a follow-up.
 
 ### 6. github real-world cluster (~20 open tests)
 
-**Status**: open. Each test maps to a real-world Python
-program from a reported issue. Various shapes:
-- argument-propagation through complex flows (like
-  `github_2932`)
-- string operations (`github_2965_set_unique`)
-- arithmetic edge cases (`github_3041_*`)
-- format edge cases not yet covered
+**Status**: ~14 closed across waves 35-36. Open count
+~129 (down from 143). Sub-clusters fixed:
 
-**Fix shape**: depends on the test. Triage one cluster at a
-time. The closures from session 2025-2026 (waves 22-31)
-mostly came from this pool.
+- **Forward-class references** (5 tests) — `github_2997`,
+  `_4`, `_5`, `_6`, `_7`. Class A method returns 'B' where
+  B is defined later in source. Sub-pass 1a-bis re-runs
+  convert_class_def for affected classes; idempotent
+  symbol/temp type refresh; safe_typecast pointer-to-struct
+  dereference. (Commits c96c45d79c, 4f2a23ebe8.)
 
-**Scope estimate**: varies; many are 1-2 hours, some need
-deeper changes.
+- **Class fields are attributes** (1 test) — `github_3305`.
+  Any-arg attribute check used class_declared_methods,
+  missing class-level annotated fields. Extended to also
+  consult class_types[name].components(). (Commit
+  abed4795f4.)
+
+- **dict.items() runtime tuples** (5 tests) —
+  `github_3647`, `_2`, `_6`, `_7`, `_8`. items() on
+  non-literal dicts returned nondet; for-loops then bound
+  k/v to nondet. Construct a python_list of
+  python_tuple(keys[i], values[i]) of length obj.length.
+  (Commit db10df94e7.)
+
+- **super() value-returning methods** (3 tests) —
+  `github_3838_2`, `_3`, `_4-nondet`. super().method() was
+  unconditionally inlined as pending_checks; the inlined
+  base body's `return X` short-circuited the caller's
+  function. Replaced inlining with a direct CALL to
+  `<base>::<method>` for non-__init__ super calls.
+  (Commit bbb5b3cded.)
+
+**Remaining open clusters** (sample):
+- `github_3020_*` (7 tests): runtime arg-type-mismatch
+  detection. Tests use `--strict-types` flag we don't
+  support; closing requires implementing call-site
+  arg-type-mismatch property under the existing
+  `--python-check-annotations` flag.
+- `github_3041_*` (5 tests): int(string, base) conversion
+  edge cases.
+- `github_3313_*` (3 tests): isinstance narrowing inside
+  the function body for `str | datetime` union parameters
+  + datetime stub field accesses.
+- `github_3804_*` (4 tests): reversed(range(...))
+  iteration.
+- `github_3560_*` (4 tests): list index-out-of-range.
+- `github_3287_*_fail` (3 tests): expecting FAIL but
+  reporting SUCCESSFUL — soundness-shape tests we'd need
+  to investigate per-test.
+
+**Fix shape (for triage continuation)**: each remaining
+cluster maps to a different architectural area
+(call-site type checking, int parsing, union-narrowing,
+reversed iteration, etc.). Tractable but no shared root
+cause across them.
 
 ### 7. `lambda7` / `lambda18` body emission
 
