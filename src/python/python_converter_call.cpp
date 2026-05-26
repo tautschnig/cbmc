@@ -5240,23 +5240,30 @@ exprt python_convertert::convert_call(const jsont &expr)
         // Tagged union: dispatch on tag
         if(is_python_value_type(arg.type()))
           return unwrap_value(arg, python_int_type());
+
+        // PLR builtins: int(x, base=10). Parse the optional second
+        // positional `base` argument; supported bases are 0
+        // (auto-detect via 0x/0b/0o prefix) and 2..36.
+        int parse_base = 10;
+        bool have_base = as_array(args).size() >= 2;
+        if(have_base)
+        {
+          exprt b_arg = convert_expression(*std::next(as_array(args).begin()));
+          if(b_arg.is_constant() && b_arg.type().id() == ID_signedbv)
+          {
+            mp_integer bv;
+            if(!to_integer(to_constant_expr(b_arg), bv))
+              parse_base = bv.to_long();
+          }
+        }
         // int("60") — parse constant string to int.
-        // PLR builtins: int(x, base=10) parses the string
-        // representation, accepting leading/trailing
-        // whitespace and an optional sign.
         if(is_python_string_type(arg.type()))
         {
           auto sv = extract_string_value(arg);
           if(sv.has_value())
           {
-            // Use strtoll for exception-free parsing with full
-            // consumption check. PLR int(s) raises ValueError on
-            // any string that can't be parsed as a base-10 int
-            // (after stripping leading/trailing whitespace);
-            // surface that as a property check when the input is
-            // statically a non-numeric literal.
-            std::string trimmed = sv.value();
             // Strip ASCII whitespace from both ends per CPython.
+            std::string trimmed = sv.value();
             std::size_t a = 0;
             while(a < trimmed.size() &&
                   std::isspace(static_cast<unsigned char>(trimmed[a])))
@@ -5266,26 +5273,80 @@ exprt python_convertert::convert_call(const jsont &expr)
                   std::isspace(static_cast<unsigned char>(trimmed[b - 1])))
               b--;
             std::string body = trimmed.substr(a, b - a);
+            // Optional sign.
+            std::string sign;
+            if(!body.empty() && (body[0] == '+' || body[0] == '-'))
+            {
+              sign = body.substr(0, 1);
+              body = body.substr(1);
+            }
+            // PLR §6.4.4: int(x, 0) auto-detects the base from a
+            // prefix (0x/0X => 16, 0b/0B => 2, 0o/0O => 8) and
+            // falls back to base 10 when no prefix is present.
+            // For an explicit base, Python accepts the matching
+            // prefix and strips it before parsing.
+            int effective_base = parse_base;
+            if(effective_base == 0)
+            {
+              if(
+                body.size() >= 2 && body[0] == '0' &&
+                (body[1] == 'x' || body[1] == 'X'))
+              {
+                effective_base = 16;
+                body = body.substr(2);
+              }
+              else if(
+                body.size() >= 2 && body[0] == '0' &&
+                (body[1] == 'b' || body[1] == 'B'))
+              {
+                effective_base = 2;
+                body = body.substr(2);
+              }
+              else if(
+                body.size() >= 2 && body[0] == '0' &&
+                (body[1] == 'o' || body[1] == 'O'))
+              {
+                effective_base = 8;
+                body = body.substr(2);
+              }
+              else
+              {
+                effective_base = 10;
+              }
+            }
+            else if(
+              effective_base == 16 && body.size() >= 2 && body[0] == '0' &&
+              (body[1] == 'x' || body[1] == 'X'))
+              body = body.substr(2);
+            else if(
+              effective_base == 2 && body.size() >= 2 && body[0] == '0' &&
+              (body[1] == 'b' || body[1] == 'B'))
+              body = body.substr(2);
+            else if(
+              effective_base == 8 && body.size() >= 2 && body[0] == '0' &&
+              (body[1] == 'o' || body[1] == 'O'))
+              body = body.substr(2);
+
             errno = 0;
             char *endp = nullptr;
-            long long val = std::strtoll(body.c_str(), &endp, 10);
-            if(!body.empty() && endp == body.c_str() + body.size())
+            std::string full = sign + body;
+            long long val = std::strtoll(full.c_str(), &endp, effective_base);
+            if(!body.empty() && endp == full.c_str() + full.size())
               return from_integer(val, python_int_type());
             // Constant string that can't be parsed: surface a
-            // ValueError. This must precede the symbolic fallback
-            // below so the property check is emitted.
+            // ValueError.
             add_check(
               false_exprt{},
               "exception",
-              "ValueError: invalid literal for int() with base 10",
+              "ValueError: invalid literal for int() with base " +
+                std::to_string(parse_base),
               get_location(expr));
             return side_effect_expr_nondett{
               python_int_type(), get_location(expr)};
           }
           // Symbolic string: emit cprover_string_parse_int_func
           // so the solver knows the int's relationship to the
-          // string's characters. Inverse of str(n) / f"{n}" /
-          // "{}".format(n) which emit cprover_string_of_int_func.
+          // string's characters.
           exprt parsed = emit_string_int_function(
             ID_cprover_string_parse_int_func,
             arg,
