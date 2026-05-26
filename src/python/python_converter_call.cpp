@@ -2052,90 +2052,11 @@ exprt python_convertert::convert_call(const jsont &expr)
               result = true; // empty string is ASCII
             return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
           }
-          const auto &data_type = array_typet(
-            unsignedbv_typet{8},
-            from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-          // Pointer-based string: return nondet for non-constant
-          return side_effect_expr_nondett{
-            python_string_type(), source_locationt{}};
-          member_exprt data{obj, "data", data_type};
-          member_exprt length{obj, "length", signedbv_typet{64}};
-
-          // length > 0 AND for all i < length: char_predicate(data[i])
-          exprt result = binary_relation_exprt{
-            length, ID_gt, from_integer(0, signedbv_typet{64})};
-          for(std::size_t i = 0; i < PYTHON_MAX_STRING_LENGTH; i++)
-          {
-            exprt idx = from_integer(i, signedbv_typet{64});
-            exprt in_range = binary_relation_exprt{idx, ID_lt, length};
-            exprt ch = index_exprt{data, idx};
-            exprt pred;
-            if(
-              method_name == "isdigit" || method_name == "isdecimal" ||
-              method_name == "isnumeric")
-              pred = and_exprt{
-                binary_relation_exprt{
-                  ch, ID_ge, from_integer('0', unsignedbv_typet{8})},
-                binary_relation_exprt{
-                  ch, ID_le, from_integer('9', unsignedbv_typet{8})}};
-            else if(method_name == "isalpha")
-              pred = or_exprt{
-                or_exprt{
-                  and_exprt{
-                    binary_relation_exprt{
-                      ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
-                    binary_relation_exprt{
-                      ch, ID_le, from_integer('z', unsignedbv_typet{8})}},
-                  and_exprt{
-                    binary_relation_exprt{
-                      ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
-                    binary_relation_exprt{
-                      ch, ID_le, from_integer('Z', unsignedbv_typet{8})}}},
-                // UTF-8: first byte >= 0xC0 or continuation byte 0x80-0xBF
-                binary_relation_exprt{
-                  ch, ID_ge, from_integer(0x80, unsignedbv_typet{8})}};
-            else if(method_name == "isalnum")
-              pred = or_exprt{
-                and_exprt{
-                  binary_relation_exprt{
-                    ch, ID_ge, from_integer('0', unsignedbv_typet{8})},
-                  binary_relation_exprt{
-                    ch, ID_le, from_integer('9', unsignedbv_typet{8})}},
-                or_exprt{
-                  and_exprt{
-                    binary_relation_exprt{
-                      ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
-                    binary_relation_exprt{
-                      ch, ID_le, from_integer('z', unsignedbv_typet{8})}},
-                  and_exprt{
-                    binary_relation_exprt{
-                      ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
-                    binary_relation_exprt{
-                      ch, ID_le, from_integer('Z', unsignedbv_typet{8})}}}};
-            else if(method_name == "isupper")
-              pred = and_exprt{
-                binary_relation_exprt{
-                  ch, ID_ge, from_integer('A', unsignedbv_typet{8})},
-                binary_relation_exprt{
-                  ch, ID_le, from_integer('Z', unsignedbv_typet{8})}};
-            else if(method_name == "islower")
-              pred = and_exprt{
-                binary_relation_exprt{
-                  ch, ID_ge, from_integer('a', unsignedbv_typet{8})},
-                binary_relation_exprt{
-                  ch, ID_le, from_integer('z', unsignedbv_typet{8})}};
-            else if(method_name == "isspace")
-              pred = or_exprt{
-                equal_exprt{ch, from_integer(' ', unsignedbv_typet{8})},
-                or_exprt{
-                  equal_exprt{ch, from_integer('\t', unsignedbv_typet{8})},
-                  equal_exprt{ch, from_integer('\n', unsignedbv_typet{8})}}};
-            else // isascii
-              pred = binary_relation_exprt{
-                ch, ID_le, from_integer(127, unsignedbv_typet{8})};
-            result = and_exprt{result, or_exprt{not_exprt{in_range}, pred}};
-          }
-          return result;
+          // Non-constant string predicate: return nondet bool
+          // (the predicate's actual type — was python_string by
+          // mistake, which forced downstream truthy-conversion
+          // to compare struct.length != 0 and mis-evaluate).
+          return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
         }
         if(
           method_name == "startswith" || method_name == "endswith" ||
