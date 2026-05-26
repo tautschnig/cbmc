@@ -3008,6 +3008,74 @@ exprt python_convertert::convert_call(const jsont &expr)
       // PLib stdtypes: List methods (append, sort, reverse, pop, etc.)
       if(is_python_list_type(obj_base_type))
       {
+        // PLR §4.6: bytes are modelled as list[uint8]; expose
+        // bytes.decode(encoding) by repackaging the bytes' data
+        // pointer as a python_string struct. We don't translate
+        // multibyte encodings — for ascii / latin-1 / utf-8 of
+        // ASCII-only content the byte pattern is the same; for
+        // other content the verifier sees the raw bytes which
+        // are still sound for length and indexing checks.
+        if(method_name == "decode")
+        {
+          const auto &list_st = to_struct_type(obj_base_type);
+          const auto &data_type = to_array_type(list_st.components()[1].type());
+          if(
+            data_type.element_type().id() == ID_unsignedbv &&
+            to_unsignedbv_type(data_type.element_type()).get_width() == 8)
+          {
+            // PLR §4.6: if the bytes value is a compile-time
+            // constant (struct_exprt with constant length and
+            // data array), recover the content and return a
+            // python_string literal so subsequent string-solver
+            // operations have a known content. This covers
+            // 'b"hello".decode("utf-8")' and 'BS.decode(...)'
+            // when BS = b"...".
+            const exprt *src = nullptr;
+            if(
+              obj.id() == ID_struct && obj.operands().size() >= 2 &&
+              obj.operands()[0].is_constant() &&
+              obj.operands()[1].id() == ID_array)
+              src = &obj;
+            else if(obj.id() == ID_symbol)
+            {
+              auto it =
+                list_literals.find(to_symbol_expr(obj).get_identifier());
+              if(it != list_literals.end())
+                src = &it->second;
+            }
+            if(
+              src != nullptr && src->operands().size() >= 2 &&
+              src->operands()[0].is_constant() &&
+              src->operands()[1].id() == ID_array)
+            {
+              mp_integer blen;
+              if(!to_integer(to_constant_expr(src->operands()[0]), blen))
+              {
+                std::string content;
+                const exprt &data_arr = src->operands()[1];
+                std::size_t n = std::min<std::size_t>(
+                  blen.to_ulong(), data_arr.operands().size());
+                for(std::size_t i = 0; i < n; i++)
+                {
+                  mp_integer bv;
+                  if(!to_integer(to_constant_expr(data_arr.operands()[i]), bv))
+                    content.push_back(static_cast<char>(bv.to_ulong()));
+                }
+                return python_string_literal(content);
+              }
+            }
+            // Runtime bytes: repackage data pointer as a
+            // python_string. Sound for length and indexing
+            // queries; the string solver may still produce
+            // nondet content because there's no explicit
+            // array-to-pointer association.
+            member_exprt blen{obj, "length", signedbv_typet{64}};
+            member_exprt bdata{obj, "data", data_type};
+            exprt data_ptr = address_of_exprt{
+              index_exprt{bdata, from_integer(0, signedbv_typet{64})}};
+            return struct_exprt{{blen, data_ptr}, python_string_type()};
+          }
+        }
         const auto &list_st = to_struct_type(obj_base_type);
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt length{obj, "length", signedbv_typet{64}};

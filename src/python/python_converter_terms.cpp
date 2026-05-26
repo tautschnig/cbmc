@@ -134,15 +134,18 @@ exprt python_convertert::convert_constant(const jsont &expr)
         else
           bytes.push_back(static_cast<unsigned char>(raw[i]));
       }
-      // Model as list of integers
-      typet lt = python_list_type(python_int_type());
+      // Model as list of uint8 — matches the type produced by
+      // 'arg: bytes' annotations and lets bytes.decode/indexing
+      // work uniformly across literals and arguments.
+      typet u8 = unsignedbv_typet{8};
+      typet lt = python_list_type(u8);
       const auto &data_type =
         to_array_type(to_struct_type(lt).components()[1].type());
       exprt::operandst elems;
       for(unsigned char b : bytes)
-        elems.push_back(from_integer(b, python_int_type()));
+        elems.push_back(from_integer(b, u8));
       while(elems.size() < PYTHON_MAX_LIST_LENGTH)
-        elems.push_back(from_integer(0, python_int_type()));
+        elems.push_back(from_integer(0, u8));
       return struct_exprt{
         {from_integer(static_cast<long long>(bytes.size()), python_int_type()),
          array_exprt{std::move(elems), data_type}},
