@@ -4708,6 +4708,15 @@ exprt python_convertert::convert_call(const jsont &expr)
         // controls the semantics.
         if(is_python_string_type(arg.type()))
         {
+          // PLR §6.2.4 / §6.10.2: constant-fold len(s) when the
+          // string content is known (literal, tracked symbol via
+          // string_constants, or struct literal). Avoids a
+          // string-solver round-trip and lets downstream
+          // constant-fold paths (subscript, predicates) fire.
+          auto sv = extract_string_value(arg);
+          if(sv.has_value())
+            return from_integer(
+              static_cast<long long>(sv->size()), python_int_type());
           exprt result = emit_string_int_function(
             ID_cprover_string_length_func, arg, symbol_table, pending_checks);
           if(result.type() != python_int_type())

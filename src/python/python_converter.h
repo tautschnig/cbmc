@@ -493,6 +493,18 @@ private:
   void collect_escaped_mutables(const jsont &body);
   std::optional<std::string> extract_string_value(const exprt &e) const;
 
+  /// PLR §8.2 / §8.3: invalidate conversion-time constant tracking
+  /// for variables assigned inside a loop body. The frontend folds
+  /// `string_constants[x]`, `float_constants[x]`, etc. when converting
+  /// a statement at parse time, but loop iterations re-bind those
+  /// variables to values the converter doesn't know. Without
+  /// invalidation, the body's expressions get folded against the
+  /// stale pre-loop value, producing a body that's unsound for any
+  /// iteration past the first. Call this BEFORE converting a loop's
+  /// body to remove tracked constants for assignment / for-target /
+  /// AugAssign targets that appear anywhere in the body.
+  void invalidate_loop_writes(const jsont &body);
+
   /// Best-effort static category of an expression node directly
   /// from the Python AST (i.e. before any safe_typecast erases
   /// its original type). Returns one of {"str","int","float",

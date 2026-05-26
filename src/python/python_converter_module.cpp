@@ -1157,6 +1157,217 @@ bool python_convertert::convert()
       }
     }
   }
+  // Sub-pass 1b.5: argument-side constant propagation. For each
+  // Call site `func(arg)` where the arg is a string constant
+  // (either a Constant literal or a Name resolved to a literal
+  // in the local scope), record the value. After scanning the
+  // whole AST, for each (callee, param_index) pair where ALL
+  // call sites pass the SAME constant value, register that
+  // constant in `string_constants[<param_id>]` so the body
+  // conversion in pass 1c can fold expressions involving it.
+  //
+  // PLR §4.2.4: parameter binding. Each call binds the actual
+  // arguments to the corresponding formal parameters; if all
+  // call sites bind a parameter to the same constant string,
+  // the parameter is effectively constant for verification.
+  //
+  // Limitation: only string constants are propagated for now.
+  // Recursive functions, functions with no call sites, and
+  // functions with mixed constant / symbolic args don't
+  // populate any entry.
+  {
+    // (callee_bare_name, param_index) -> {observed string values}.
+    // A parameter with size==1 has a unique constant value at
+    // every observed call site. size==0 means no string constant
+    // was ever observed (don't propagate). We use a special
+    // sentinel value "" with size>=2 to mark "saw a non-string
+    // or differing value" — never propagate.
+    using key_t = std::pair<std::string, std::size_t>;
+    std::map<key_t, std::set<std::string>> seen_constants;
+    std::set<key_t> tainted; // any non-constant arg or differing values
+
+    auto extract_string_const =
+      [&](const jsont &node, const std::map<std::string, std::string> &scope)
+      -> std::optional<std::string>
+    {
+      if(is_node_type(node, "Constant"))
+      {
+        const jsont &v = json_member(node, "value");
+        if(v.is_string())
+          return v.value;
+      }
+      if(is_node_type(node, "Name"))
+      {
+        std::string n = json_string(json_member(node, "id"));
+        auto it = scope.find(n);
+        if(it != scope.end())
+          return it->second;
+      }
+      return std::nullopt;
+    };
+
+    std::function<void(const jsont &, std::map<std::string, std::string> &)>
+      walk =
+        [&](
+          const jsont &stmts, std::map<std::string, std::string> &scope) -> void
+    {
+      if(!stmts.is_array())
+        return;
+      for(const auto &s : as_array(stmts))
+      {
+        // Track local string-constant assignments so calls a few
+        // statements down can resolve `Name`-style args.
+        if(is_node_type(s, "Assign"))
+        {
+          const jsont &targets = json_member(s, "targets");
+          const jsont &value = json_member(s, "value");
+          if(targets.is_array() && as_array(targets).size() == 1)
+          {
+            const auto &t0 = *as_array(targets).begin();
+            if(is_node_type(t0, "Name"))
+            {
+              std::string n = json_string(json_member(t0, "id"));
+              if(is_node_type(value, "Constant"))
+              {
+                const jsont &v = json_member(value, "value");
+                if(v.is_string())
+                  scope[n] = v.value;
+                else
+                  scope.erase(n);
+              }
+              else
+                scope.erase(n);
+            }
+          }
+        }
+        if(is_node_type(s, "AnnAssign"))
+        {
+          const jsont &target = json_member(s, "target");
+          const jsont &value = json_member(s, "value");
+          if(is_node_type(target, "Name") && !value.is_null())
+          {
+            std::string n = json_string(json_member(target, "id"));
+            if(is_node_type(value, "Constant"))
+            {
+              const jsont &v = json_member(value, "value");
+              if(v.is_string())
+                scope[n] = v.value;
+              else
+                scope.erase(n);
+            }
+            else
+              scope.erase(n);
+          }
+        }
+
+        // Inspect Expr / Call statements for top-level calls.
+        if(is_node_type(s, "Expr"))
+        {
+          const jsont &v = json_member(s, "value");
+          if(is_node_type(v, "Call"))
+          {
+            const jsont &fn = json_member(v, "func");
+            if(is_node_type(fn, "Name"))
+            {
+              std::string callee = json_string(json_member(fn, "id"));
+              const jsont &args = json_member(v, "args");
+              if(args.is_array())
+              {
+                std::size_t i = 0;
+                for(const auto &a : as_array(args))
+                {
+                  key_t k{callee, i};
+                  if(tainted.count(k) == 0)
+                  {
+                    auto val = extract_string_const(a, scope);
+                    if(val.has_value())
+                      seen_constants[k].insert(val.value());
+                    else if(!seen_constants[k].empty())
+                      tainted.insert(k);
+                  }
+                  ++i;
+                }
+              }
+            }
+          }
+        }
+        // Recurse into nested control-flow / function bodies. We
+        // use a fresh scope inside FunctionDef bodies (the local
+        // variables of the inner function) but pass the outer
+        // scope through If/While/For/With/Try since those don't
+        // open a new local scope.
+        if(
+          is_node_type(s, "FunctionDef") ||
+          is_node_type(s, "AsyncFunctionDef") || is_node_type(s, "ClassDef"))
+        {
+          std::map<std::string, std::string> nested_scope;
+          walk(json_member(s, "body"), nested_scope);
+        }
+        else if(
+          is_node_type(s, "If") || is_node_type(s, "While") ||
+          is_node_type(s, "For") || is_node_type(s, "With") ||
+          is_node_type(s, "Try"))
+        {
+          walk(json_member(s, "body"), scope);
+          walk(json_member(s, "orelse"), scope);
+          walk(json_member(s, "finalbody"), scope);
+          const jsont &handlers = json_member(s, "handlers");
+          if(handlers.is_array())
+          {
+            for(const auto &h : as_array(handlers))
+              walk(json_member(h, "body"), scope);
+          }
+        }
+      }
+    };
+    std::map<std::string, std::string> top_scope;
+    walk(body, top_scope);
+
+    // Apply: register parameter string constants for each unambiguous
+    // (callee, param_index) entry. Look up the function's parameters
+    // by symbol; the parameter id is `python::<callee>::<param_name>`
+    // for module-level functions.
+    // Find the FunctionDef AST node for a given callee in the body.
+    // Module-scope only for now (matching the propagation scope).
+    auto find_function_def = [&](const std::string &name) -> const jsont *
+    {
+      if(!body.is_array())
+        return nullptr;
+      for(const auto &s : as_array(body))
+      {
+        if(
+          (is_node_type(s, "FunctionDef") ||
+           is_node_type(s, "AsyncFunctionDef")) &&
+          json_string(json_member(s, "name")) == name)
+          return &s;
+      }
+      return nullptr;
+    };
+
+    for(const auto &[k, vals] : seen_constants)
+    {
+      if(tainted.count(k) || vals.size() != 1)
+        continue;
+      const std::string &callee = k.first;
+      std::size_t idx = k.second;
+      const jsont *fdef = find_function_def(callee);
+      if(fdef == nullptr)
+        continue;
+      const jsont &args_node = json_member(*fdef, "args");
+      const jsont &params = json_member(args_node, "args");
+      if(!params.is_array())
+        continue;
+      const auto &arr = as_array(params);
+      if(idx >= arr.size())
+        continue;
+      auto it = arr.begin();
+      std::advance(it, idx);
+      const std::string param_name = json_string(json_member(*it, "arg"));
+      irep_idt pid{"python::" + callee + "::" + param_name};
+      string_constants[pid] = *vals.begin();
+    }
+  }
+
   // Sub-pass 1c: convert function bodies (signatures already registered)
   if(body.is_array())
   {

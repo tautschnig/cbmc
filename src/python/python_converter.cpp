@@ -930,6 +930,106 @@ void python_convertert::collect_escaped_mutables(const jsont &body)
   scan_stmts(body);
 }
 
+void python_convertert::invalidate_loop_writes(const jsont &body)
+{
+  // Walk the body recursively, collect names assigned via Assign /
+  // AnnAssign / AugAssign / For (target) / NamedExpr (walrus), then
+  // invalidate the corresponding entries in the constant-tracking
+  // maps so the body conversion doesn't fold against stale values.
+  std::set<std::string> assigned;
+
+  std::function<void(const jsont &)> scan = [&](const jsont &b)
+  {
+    if(!b.is_array())
+      return;
+    for(const auto &s : as_array(b))
+    {
+      if(is_node_type(s, "Assign"))
+      {
+        const jsont &targets = json_member(s, "targets");
+        if(targets.is_array())
+        {
+          for(const auto &t : as_array(targets))
+          {
+            if(is_node_type(t, "Name"))
+              assigned.insert(json_string(json_member(t, "id")));
+            else if(is_node_type(t, "Tuple") || is_node_type(t, "List"))
+            {
+              const jsont &elts = json_member(t, "elts");
+              if(elts.is_array())
+              {
+                for(const auto &e : as_array(elts))
+                {
+                  if(is_node_type(e, "Name"))
+                    assigned.insert(json_string(json_member(e, "id")));
+                  if(is_node_type(e, "Starred"))
+                  {
+                    const jsont &inner = json_member(e, "value");
+                    if(is_node_type(inner, "Name"))
+                      assigned.insert(json_string(json_member(inner, "id")));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      if(is_node_type(s, "AnnAssign") || is_node_type(s, "AugAssign"))
+      {
+        const jsont &t = json_member(s, "target");
+        if(is_node_type(t, "Name"))
+          assigned.insert(json_string(json_member(t, "id")));
+      }
+      if(is_node_type(s, "For"))
+      {
+        const jsont &t = json_member(s, "target");
+        if(is_node_type(t, "Name"))
+          assigned.insert(json_string(json_member(t, "id")));
+        else if(is_node_type(t, "Tuple") || is_node_type(t, "List"))
+        {
+          const jsont &elts = json_member(t, "elts");
+          if(elts.is_array())
+          {
+            for(const auto &e : as_array(elts))
+              if(is_node_type(e, "Name"))
+                assigned.insert(json_string(json_member(e, "id")));
+          }
+        }
+      }
+      // Recurse into nested control-flow.
+      if(
+        is_node_type(s, "If") || is_node_type(s, "While") ||
+        is_node_type(s, "For") || is_node_type(s, "With") ||
+        is_node_type(s, "Try"))
+      {
+        scan(json_member(s, "body"));
+        scan(json_member(s, "orelse"));
+        scan(json_member(s, "finalbody"));
+        const jsont &handlers = json_member(s, "handlers");
+        if(handlers.is_array())
+        {
+          for(const auto &h : as_array(handlers))
+            scan(json_member(h, "body"));
+        }
+      }
+      // Don't recurse into nested FunctionDef / ClassDef bodies —
+      // those have their own scopes.
+    }
+  };
+  scan(body);
+
+  for(const std::string &n : assigned)
+  {
+    irep_idt id{qualify_name(n)};
+    string_constants.erase(id);
+    float_constants.erase(id);
+    dict_literals.erase(id);
+    list_literals.erase(id);
+    tuple_literals.erase(id);
+    complex_literals.erase(id);
+  }
+}
+
 exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
 {
   if(!is_python_value_type(e.type()))
