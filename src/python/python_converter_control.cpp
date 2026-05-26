@@ -464,6 +464,159 @@ codet python_convertert::convert_for(const jsont &stmt)
   }
   std::string qualified_name = qualify_name(var_name);
 
+  // PLR §6.10: for x in reversed(range(...)) — a common idiom
+  // for descending iteration. Detect the call shape at the AST
+  // level and lower as a range loop with reversed bounds and
+  // negated step. Equivalent to:
+  //   reversed(range(stop))             == range(stop-1, -1, -1)
+  //   reversed(range(start, stop))      == range(stop-1, start-1, -1)
+  //   reversed(range(start, stop, step))
+  //                  step > 0           ==
+  //     range(start + ((stop-1-start)//step)*step, start-1, -step)
+  //                  step < 0           == similar with sign flip
+  // For a constant-step input we materialise the equivalent
+  // bounds at conversion time; for symbolic step we punt to the
+  // generic iter path below.
+  bool is_reversed_range =
+    is_node_type(iter, "Call") &&
+    is_node_type(json_member(iter, "func"), "Name") &&
+    json_string(json_member(json_member(iter, "func"), "id")) == "reversed" &&
+    json_member(iter, "args").is_array() &&
+    !as_array(json_member(iter, "args")).empty() &&
+    is_node_type(*as_array(json_member(iter, "args")).begin(), "Call") &&
+    json_string(json_member(
+      json_member(*as_array(json_member(iter, "args")).begin(), "func"),
+      "id")) == "range";
+  if(is_reversed_range)
+  {
+    const jsont &inner_range = *as_array(json_member(iter, "args")).begin();
+    const jsont &range_args = json_member(inner_range, "args");
+    if(!range_args.is_array() || as_array(range_args).empty())
+      return finalize_for(code_skipt{});
+
+    exprt rstart, rstop, rstep;
+    if(as_array(range_args).size() == 1)
+    {
+      rstart = from_integer(0, int_type);
+      rstop = convert_expression(*as_array(range_args).begin());
+      rstep = from_integer(1, int_type);
+    }
+    else if(as_array(range_args).size() >= 2)
+    {
+      rstart = convert_expression(*as_array(range_args).begin());
+      rstop = convert_expression(*std::next(as_array(range_args).begin(), 1));
+      if(as_array(range_args).size() >= 3)
+        rstep = convert_expression(*std::next(as_array(range_args).begin(), 2));
+      else
+        rstep = from_integer(1, int_type);
+    }
+    else
+    {
+      rstart = from_integer(0, int_type);
+      rstop = from_integer(0, int_type);
+      rstep = from_integer(1, int_type);
+    }
+    rstart = safe_typecast(rstart, int_type);
+    rstop = safe_typecast(rstop, int_type);
+    rstep = safe_typecast(rstep, int_type);
+
+    // Compute the last value the forward range would produce:
+    //   last = start + ((stop - start - 1) / step) * step  (step > 0)
+    //   last = start + ((stop - start + 1) / step) * step  (step < 0)
+    // Equivalent simpler form for constant step:
+    //   step == 1:  last = stop - 1
+    //   step == -1: last = stop + 1
+    // For other step, fall through to the generic path.
+    bool reversible = false;
+    exprt new_start, new_stop, new_step;
+    if(rstep.is_constant())
+    {
+      mp_integer sv;
+      if(!to_integer(to_constant_expr(rstep), sv))
+      {
+        if(sv == 1)
+        {
+          new_start = minus_exprt{rstop, from_integer(1, int_type)};
+          new_stop = minus_exprt{rstart, from_integer(1, int_type)};
+          new_step = from_integer(-1, int_type);
+          reversible = true;
+        }
+        else if(sv == -1)
+        {
+          new_start = plus_exprt{rstop, from_integer(1, int_type)};
+          new_stop = plus_exprt{rstart, from_integer(1, int_type)};
+          new_step = from_integer(1, int_type);
+          reversible = true;
+        }
+        else if(sv > 0)
+        {
+          // last = start + ((stop - start - 1) / step) * step
+          exprt diff_minus_1 =
+            minus_exprt{minus_exprt{rstop, rstart}, from_integer(1, int_type)};
+          // For an empty forward range (stop <= start), the
+          // reversed iteration is also empty; we'd build
+          // last < start which never matches. Sound.
+          exprt last = plus_exprt{
+            rstart, mult_exprt{div_exprt{diff_minus_1, rstep}, rstep}};
+          new_start = std::move(last);
+          new_stop = minus_exprt{rstart, from_integer(1, int_type)};
+          new_step = from_integer(-1, int_type);
+          reversible = true;
+        }
+        else if(sv < 0)
+        {
+          exprt diff_plus_1 =
+            plus_exprt{minus_exprt{rstop, rstart}, from_integer(1, int_type)};
+          exprt last = plus_exprt{
+            rstart, mult_exprt{div_exprt{diff_plus_1, rstep}, rstep}};
+          new_start = std::move(last);
+          new_stop = plus_exprt{rstart, from_integer(1, int_type)};
+          new_step = from_integer(1, int_type);
+          reversible = true;
+        }
+      }
+    }
+
+    if(reversible)
+    {
+      const jsont &body = json_member(stmt, "body");
+      irep_idt symbol_id{qualified_name};
+      if(symbol_table.lookup(symbol_id) == nullptr)
+      {
+        symbolt new_symbol{symbol_id, int_type, "python"};
+        new_symbol.base_name = var_name;
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        symbol_table.add(new_symbol);
+      }
+      symbol_exprt loop_sym = symbol_table.lookup_ref(symbol_id).symbol_expr();
+      code_frontend_assignt init{loop_sym, new_start};
+      init.add_source_location() = loc;
+      code_blockt body_block;
+      {
+        invalidate_loop_writes(body);
+        loop_depth++;
+        for(const auto &s : as_array(body))
+          body_block.add(convert_statement(s));
+        loop_depth--;
+      }
+      body_block.add(
+        code_frontend_assignt{loop_sym, plus_exprt{loop_sym, new_step}});
+      mp_integer ns_val;
+      to_integer(to_constant_expr(new_step), ns_val);
+      exprt cond = ns_val < 0
+                     ? binary_relation_exprt{loop_sym, ID_gt, new_stop}
+                     : binary_relation_exprt{loop_sym, ID_lt, new_stop};
+      code_whilet while_stmt{cond, std::move(body_block)};
+      while_stmt.add_source_location() = loc;
+      code_blockt result;
+      result.add(std::move(init));
+      result.add(std::move(while_stmt));
+      return finalize_for(std::move(result));
+    }
+  }
+
   // Check for range() call
   if(
     is_node_type(iter, "Call") &&
