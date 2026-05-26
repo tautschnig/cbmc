@@ -732,6 +732,39 @@ exprt python_convertert::convert_compare(const jsont &expr)
           }
           // Use string solver for content equality
           {
+            // PLR §6.10.1: when 's' is a side-effect-bearing
+            // expression (function call, comprehension, etc.),
+            // materialise it to a temp first. Otherwise the two
+            // member_exprt(s, "length") / member_exprt(s, "data")
+            // copies each independently re-evaluate the call,
+            // and the resulting struct mixes length-from-call-1
+            // with data-from-call-2 — almost-always wrong.
+            auto materialise_if_needed = [&](exprt &s) -> void
+            {
+              if(
+                s.id() == ID_side_effect &&
+                to_side_effect_expr(s).get_statement() == ID_function_call)
+              {
+                static unsigned se_temp_ctr = 0;
+                std::string tn =
+                  "__strcmp_tmp_" + std::to_string(se_temp_ctr++);
+                std::string tq = qualify_name(tn);
+                irep_idt tid{tq};
+                if(symbol_table.lookup(tid) == nullptr)
+                {
+                  symbolt sym{tid, s.type(), "python"};
+                  sym.base_name = tn;
+                  sym.is_lvalue = true;
+                  sym.is_state_var = true;
+                  symbol_table.add(sym);
+                }
+                symbol_exprt te = symbol_table.lookup_ref(tid).symbol_expr();
+                pending_checks.push_back(code_frontend_assignt{te, s});
+                s = std::move(te);
+              }
+            };
+            materialise_if_needed(current_left);
+            materialise_if_needed(right);
             auto to_str = [](const exprt &s) -> exprt
             {
               if(s.id() == ID_struct && s.operands().size() == 2)
