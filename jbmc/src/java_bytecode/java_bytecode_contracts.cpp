@@ -80,6 +80,10 @@ jverify_contract_kindt classify_jverify_call(const irep_idt &method_id)
     return jverify_contract_kindt::DECREASES;
   if(method_name == "assigns")
     return jverify_contract_kindt::ASSIGNS;
+  if(method_name == "forall")
+    return jverify_contract_kindt::FORALL;
+  if(method_name == "exists")
+    return jverify_contract_kindt::EXISTS;
 
   return jverify_contract_kindt::NOT_A_CONTRACT;
 }
@@ -1168,6 +1172,221 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
     }
   }
 
+  // §F12 follow-on: pre-pass rewrite of JVerify.forall(lambda) /
+  // JVerify.exists(lambda) calls into forall_exprt / exists_exprt
+  // values across every function body. Runs before the main
+  // contract-extraction loop so resulting universals appear directly
+  // in subsequent precondition / postcondition / check arguments.
+  //
+  // CFG pattern (javac-generated):
+  //
+  //   ... allocate + <init> for the lambda's synthetic class ...
+  //   CALL  jverify.forall:#return_value := JVerify.forall(lambda_obj)
+  //   ASSIGN tmp := jverify.forall:#return_value
+  //
+  // We rewrite by:
+  //
+  //   1. Tracing lambda_obj back to the synthetic class <init> that
+  //      constructed it, recovering the lambda's target method id
+  //      (`lambda$method$N`) — same machinery the postcondition
+  //      lambda extractor uses (trace_lambda_postcondition).
+  //   2. Looking up the target method's goto-body in
+  //      goto_model.goto_functions and extracting its single
+  //      return-value ASSIGN's RHS as the quantifier body
+  //      expression. This handles single-return one-line lambdas
+  //      like `(int m) -> implies(m > 0, 2 * m > 0)`.
+  //   3. Substituting the lambda's trailing parameter symbol (the
+  //      one bound by IntPredicate.test / Predicate.test / etc.)
+  //      with a fresh quantifier variable. Captures, if any, stay
+  //      free in the body and are bound to their captured values
+  //      via additional substitution.
+  //   4. Wrapping as forall_exprt / exists_exprt over the fresh
+  //      quantifier variable.
+  //   5. Replacing the subsequent return-value ASSIGN's RHS with
+  //      that quantifier expression and turning the CALL into SKIP.
+  //
+  // Lambdas whose body shape we can't extract (multi-statement
+  // bodies, side-effects, loops) are left as-is — the original
+  // CALL stays, and the stub will throw at runtime, surfacing as
+  // the same VERIFICATION FAILED that today's path produces. So
+  // adding this support is monotone over the existing behaviour.
+  {
+    for(auto &func_entry : goto_model.goto_functions.function_map)
+    {
+      auto &body = func_entry.second.body;
+      struct quant_call_info_t
+      {
+        goto_programt::targett call_it;
+        irep_idt callee_id;
+        bool is_forall;
+        exprt lambda_arg;
+      };
+      std::vector<quant_call_info_t> calls;
+      for(auto bi = body.instructions.begin(); bi != body.instructions.end();
+          ++bi)
+      {
+        if(!bi->is_function_call())
+          continue;
+        const exprt &fn = bi->call_function();
+        if(fn.id() != ID_symbol)
+          continue;
+        const irep_idt &cid = to_symbol_expr(fn).get_identifier();
+        const auto k = classify_jverify_call(cid);
+        if(
+          k != jverify_contract_kindt::FORALL &&
+          k != jverify_contract_kindt::EXISTS)
+          continue;
+        const auto &args = bi->call_arguments();
+        if(args.size() != 1)
+          continue;
+        calls.push_back(
+          {bi, cid, k == jverify_contract_kindt::FORALL, args[0]});
+      }
+      if(calls.empty())
+        continue;
+
+      for(const auto &c : calls)
+      {
+        // Step 1: trace the lambda obj back to its synthetic class
+        // <init> to recover the target method id + captures.
+        lambda_post_infot info =
+          trace_lambda_postcondition(body, c.call_it, c.lambda_arg, ns);
+        if(!info.valid)
+          continue;
+
+        // Step 2: pull the target method's goto-body and find its
+        // single return-value ASSIGN.
+        auto target_it =
+          goto_model.goto_functions.function_map.find(info.target_method_id);
+        if(target_it == goto_model.goto_functions.function_map.end())
+          continue;
+        auto &target_body = target_it->second.body;
+        const std::string ret_needle =
+          id2string(info.target_method_id) + "#return_value";
+        const exprt *body_rhs = nullptr;
+        goto_programt::const_targett ret_it = target_body.instructions.cend();
+        std::size_t return_assigns = 0;
+        for(auto ti = target_body.instructions.cbegin();
+            ti != target_body.instructions.cend();
+            ++ti)
+        {
+          if(!ti->is_assign())
+            continue;
+          const exprt &lhs = ti->assign_lhs();
+          if(lhs.id() != ID_symbol)
+            continue;
+          if(id2string(to_symbol_expr(lhs).get_identifier()) != ret_needle)
+            continue;
+          body_rhs = &ti->assign_rhs();
+          ret_it = ti;
+          ++return_assigns;
+        }
+        // Single-return single-expression lambdas only. Multi-return
+        // bodies (with control flow) need a more involved
+        // reconstructor — leave to a follow-up.
+        if(return_assigns != 1 || body_rhs == nullptr)
+          continue;
+
+        // Resolve stack temps in the lambda body's return RHS so
+        // the body expression references the lambda's parameter
+        // (and any captures) directly, not internal `tmp_N`
+        // identifiers. This mirrors what the postcondition lambda
+        // extractor does for caller-side preconditions.
+        exprt resolved_body = resolve_stack_temps(
+          *body_rhs, target_body, ret_it, info.target_method_id);
+
+        // Step 3: identify the lambda method's parameters. The
+        // target method is the user's lambda$ method whose
+        // parameters are: captures (leading) + the quantifier var
+        // (trailing IntPredicate.test / Predicate.test argument).
+        const auto &target_sym =
+          ns.get_symbol_table().lookup_ref(info.target_method_id);
+        const auto &target_type = to_code_type(target_sym.type);
+        const auto &target_params = target_type.parameters();
+        if(target_params.empty())
+          continue;
+        // The trailing parameter is the quantifier variable; the
+        // leading params (if any) are captures.
+        const auto &qv_param = target_params.back();
+        if(qv_param.get_identifier().empty())
+          continue;
+        const symbol_exprt qv_old(qv_param.get_identifier(), qv_param.type());
+
+        // Step 4: build a fresh quantifier symbol and substitute it
+        // in the body expression. Captures (leading params) are
+        // substituted with the corresponding capture exprt
+        // recorded by trace_lambda_postcondition.
+        symbol_exprt qv_new = get_fresh_aux_symbol(
+                                qv_param.type(),
+                                id2string(func_entry.first),
+                                "jverify_qvar",
+                                c.call_it->source_location(),
+                                ID_java,
+                                goto_model.symbol_table)
+                                .symbol_expr();
+
+        std::function<exprt(const exprt &)> substitute =
+          [&](const exprt &e) -> exprt
+        {
+          if(e.id() == ID_symbol)
+          {
+            const irep_idt &id = to_symbol_expr(e).get_identifier();
+            if(id == qv_old.get_identifier())
+              return qv_new;
+            // Captures: lambda$ method's leading params replaced
+            // by the capture values from <init>.
+            for(std::size_t k = 0; k < info.captures.size(); ++k)
+            {
+              if(k >= target_params.size() - 1)
+                break;
+              if(id == target_params[k].get_identifier())
+                return info.captures[k];
+            }
+            return e;
+          }
+          exprt out = e;
+          for(auto &op : out.operands())
+            op = substitute(op);
+          return out;
+        };
+
+        exprt qbody = substitute(resolved_body);
+        if(qbody.type() != bool_typet{})
+          qbody = typecast_exprt(qbody, bool_typet{});
+
+        exprt quantified = c.is_forall ? exprt(forall_exprt(qv_new, qbody))
+                                       : exprt(exists_exprt(qv_new, qbody));
+
+        // Step 5: find the subsequent ASSIGN of
+        // <callee>#return_value and replace its RHS.
+        const std::string rv_needle = id2string(c.callee_id) + "#return_value";
+        bool replaced = false;
+        for(auto bi = std::next(c.call_it); bi != body.instructions.end(); ++bi)
+        {
+          if(bi->is_function_call())
+            break;
+          if(!bi->is_assign())
+            continue;
+          const exprt &rhs = bi->assign_rhs();
+          if(rhs.id() != ID_symbol)
+            continue;
+          if(id2string(to_symbol_expr(rhs).get_identifier()) != rv_needle)
+            continue;
+          exprt to_assign = quantified;
+          if(to_assign.type() != bi->assign_lhs().type())
+            to_assign = typecast_exprt(to_assign, bi->assign_lhs().type());
+          *bi = goto_programt::make_assignment(
+            bi->assign_lhs(), to_assign, bi->source_location());
+          replaced = true;
+          break;
+        }
+        if(replaced)
+          c.call_it->turn_into_skip();
+      }
+      body.update();
+    }
+  }
+
   for(auto &func_entry : goto_model.goto_functions.function_map)
   {
     auto &body = func_entry.second.body;
@@ -1185,6 +1404,17 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 
       const auto kind = classify_jverify_call(callee_id);
       if(kind == jverify_contract_kindt::NOT_A_CONTRACT)
+        continue;
+      // FORALL / EXISTS are values, not contract statements. The
+      // pre-pass above rewrote the supported single-return-expression
+      // shape into forall_exprt / exists_exprt at the call site's
+      // result-ASSIGN. Any FORALL / EXISTS call that survives to here
+      // had a body shape we couldn't extract; leave it alone so the
+      // stub's throw surfaces as an honest failure rather than a
+      // silent unsoundness.
+      if(
+        kind == jverify_contract_kindt::FORALL ||
+        kind == jverify_contract_kindt::EXISTS)
         continue;
 
       const auto &args = it->call_arguments();
@@ -1867,6 +2097,8 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       case jverify_contract_kindt::CHECK:
       case jverify_contract_kindt::DECREASES:
       case jverify_contract_kindt::ASSIGNS:
+      case jverify_contract_kindt::FORALL:
+      case jverify_contract_kindt::EXISTS:
       case jverify_contract_kindt::NOT_A_CONTRACT:
         break;
       }
@@ -1906,6 +2138,8 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       }
       case jverify_contract_kindt::DECREASES:
       case jverify_contract_kindt::ASSIGNS:
+      case jverify_contract_kindt::FORALL:
+      case jverify_contract_kindt::EXISTS:
       case jverify_contract_kindt::NOT_A_CONTRACT:
         UNREACHABLE;
       }
