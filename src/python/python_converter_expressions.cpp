@@ -111,6 +111,40 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     exprt slice = convert_expression(json_member(expr, "slice"));
     if(!slice.is_nil())
     {
+      // PLR §3.1, §3.2: per-key runtime-value override. When a
+      // prior subscript-assign stored a value whose type didn't
+      // match the dict's declared element type, the override
+      // map holds the original RHS expression. Returning it
+      // here lets `isinstance(d[k], V)` reflect the actual
+      // stored value instead of the declared type.
+      if(
+        value.id() == ID_symbol &&
+        is_node_type(json_member(expr, "slice"), "Constant"))
+      {
+        const jsont &slice_node = json_member(expr, "slice");
+        const jsont &kv = json_member(slice_node, "value");
+        std::string key_repr;
+        if(kv.is_string())
+          key_repr = "s:" + kv.value;
+        else if(kv.is_number())
+          key_repr = "n:" + kv.value;
+        else if(kv.is_true())
+          key_repr = "b:1";
+        else if(kv.is_false())
+          key_repr = "b:0";
+        if(!key_repr.empty())
+        {
+          irep_idt did = to_symbol_expr(value).get_identifier();
+          auto it = dict_runtime_value_overrides.find(did);
+          if(it != dict_runtime_value_overrides.end())
+          {
+            auto kit = it->second.find(key_repr);
+            if(kit != it->second.end())
+              return kit->second;
+          }
+        }
+      }
+
       // Constant-key optimization: resolve at conversion time
       auto key_str = extract_string_value(slice);
       if(key_str.has_value())

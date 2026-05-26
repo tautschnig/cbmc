@@ -314,10 +314,40 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     }
   }
 
-  // If annotation gave a placeholder type (e.g., dict→int) but the RHS
-  // has a concrete struct type, use the RHS type instead.
+  // PLR §3.1, §3.2: annotations are documentation, not enforcement.
+  // When the RHS has a concrete type that differs from the declared
+  // annotation, the variable binds to the RHS type — Python's
+  // annotations don't coerce. Without this, `x: int = greet()` where
+  // greet returns str would safe_typecast the string to nondet int,
+  // losing the actual value.
+  //
+  // The pre-existing branch handles ID_struct rhs types (class
+  // instances, lists, dicts when those use struct_typet); this
+  // version also accepts ID_struct_tag (Python's refined-string
+  // representation, class tags, named tuple types) so that `x: int
+  // = "Hi"` and similar patterns also widen the symbol to the
+  // string type rather than coercing.
+  //
+  // Gated on `!python_check_annotations`: when the user has
+  // explicitly opted in to annotation-mismatch detection (via
+  // --python-check-annotations), we keep the previous behaviour so
+  // the mismatch property fires.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
+  bool rhs_struct_like =
+    rhs.type().id() == ID_struct || rhs.type().id() == ID_struct_tag;
   if(
+    !python_check_annotations && sym.type != rhs.type() && rhs_struct_like &&
+    !is_python_value_type(rhs.type()) &&
+    (sym.type == python_int_type() || sym.type.id() != ID_struct ||
+     (is_python_list_type(sym.type) && is_python_list_type(rhs.type())) ||
+     (is_python_dict_type(sym.type) && is_python_dict_type(rhs.type()))))
+  {
+    symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
+  }
+  // Pre-existing branch retained for the --python-check-annotations
+  // path: when annotation enforcement is on, widen only the
+  // ID_struct cases as before.
+  else if(
     sym.type != rhs.type() && rhs.type().id() == ID_struct &&
     (sym.type == python_int_type() || sym.type.id() != ID_struct ||
      (is_python_list_type(sym.type) && is_python_list_type(rhs.type())) ||
@@ -1552,6 +1582,63 @@ codet python_convertert::convert_assign(const jsont &stmt)
           const auto &dict_st = to_struct_type(obj.type());
           const auto &keys_type = to_array_type(dict_st.components()[1].type());
           const auto &vals_type = to_array_type(dict_st.components()[2].type());
+
+          // PLR §3.1, §3.2: when the stored value's type doesn't
+          // match the declared element type and both the dict
+          // and the key are statically resolvable, record the
+          // original RHS in `dict_runtime_value_overrides` so
+          // subsequent `d[<same constant>]` reads see the
+          // actual stored value, not a coerced nondet. When the
+          // key is non-constant, the assignment could affect any
+          // existing entry, so we conservatively clear all
+          // overrides for this dict.
+          if(obj.id() == ID_symbol)
+          {
+            irep_idt did = to_symbol_expr(obj).get_identifier();
+            bool key_is_constant = is_node_type(slice_node, "Constant");
+            if(!key_is_constant)
+            {
+              dict_runtime_value_overrides.erase(did);
+            }
+            else if(rhs.type() != vals_type.element_type())
+            {
+              const jsont &kv = json_member(slice_node, "value");
+              std::string key_repr;
+              if(kv.is_string())
+                key_repr = "s:" + kv.value;
+              else if(kv.is_number())
+                key_repr = "n:" + kv.value;
+              else if(kv.is_true())
+                key_repr = "b:1";
+              else if(kv.is_false())
+                key_repr = "b:0";
+              if(!key_repr.empty())
+                dict_runtime_value_overrides[did][key_repr] = rhs;
+            }
+            else
+            {
+              // Type matches: clear any prior override for this
+              // key (the runtime value now agrees with the
+              // declared type).
+              const jsont &kv = json_member(slice_node, "value");
+              std::string key_repr;
+              if(kv.is_string())
+                key_repr = "s:" + kv.value;
+              else if(kv.is_number())
+                key_repr = "n:" + kv.value;
+              else if(kv.is_true())
+                key_repr = "b:1";
+              else if(kv.is_false())
+                key_repr = "b:0";
+              if(!key_repr.empty())
+              {
+                auto it = dict_runtime_value_overrides.find(did);
+                if(it != dict_runtime_value_overrides.end())
+                  it->second.erase(key_repr);
+              }
+            }
+          }
+
           member_exprt length{obj, "length", signedbv_typet{64}};
           member_exprt keys_arr{obj, "keys", keys_type};
           member_exprt vals_arr{obj, "values", vals_type};
