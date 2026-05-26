@@ -7,13 +7,13 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 32, 2026-05-26)
+## Status snapshot (wave 33, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2535 | +46 |
-| Soundness gaps (PLR-relevant) | 77 | ~3 | −74 |
-| Precision gaps (PLR-relevant) | 435 | ~101 | −334 |
+| ESBMC PASS | 2489 | 2541 | +52 |
+| Soundness gaps (PLR-relevant) | 77 | ~2 | −75 |
+| Precision gaps (PLR-relevant) | 435 | ~96 | −339 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
 All three regression suites (`regression/python`,
@@ -102,64 +102,57 @@ type bound, which is currently
 ### 2. Annotations are documentation, not enforcement
 (PLR §3.1, §3.2)
 
-**Status**: open. ~5 precision gaps + 1 soundness gap.
+**Status**: closed in wave 33. Both variants implemented in
+a single commit. 6 tests close (5 scalar + 1 collection
+soundness). One scalar test (`github_3775_5`) remains open
+for an unrelated subclass-method-self-mutation issue.
 
-**Two symptoms, same root cause.** Both come from the
-converter treating annotations as runtime type assertions
-rather than informational hints. Best fixed together —
-splitting them risks two parallel mechanisms when the
-underlying invariant is shared.
+**What landed** (architectural shape, for reference):
 
-**Symptom A: scalar annotations** (`github_3775_{,2,3,4,5}`):
-```python
-def greet() -> str: return "Hi"
-x: int = greet()
-assert x == "Hi"      # Python: True. Us: False.
-```
-The converter casts the RHS to the annotation type, so
-`x` becomes a (numeric coercion of) the string instead of
-the actual `"Hi"`.
+Two related sites in the converter, sharing the principle
+that annotations are informational and don't coerce values
+at runtime.
 
-**Symptom B: collection-element annotations**
-(`dict_subscript_typed_assign_fail`):
-```python
-d: dict[int, float] = {1: 1.0}
-d[2] = "wrong-type"
-isinstance(d[2], float)   # Python: False. Us: True.
-```
-The dict's declared value-type drives the read-back type
-of `d[2]`; the actual stored string is lost.
+*Scalar variant — convert_ann_assign:*
 
-**Architectural shape (shared)**: separate the *binding*
-type from the *runtime* type. The annotation should drive:
-- `__annotations__` queries
-- type-completion / static-analysis surfaces
-- defaults for nondet shapes when the runtime value isn't
-  knowable at conversion time.
+When an `AnnAssign` `x: T = expr` has a concrete RHS whose
+type doesn't equal the annotation, the symbol's type is
+widened to the RHS's type instead of safe_typecasting the
+value. The pre-existing rule covered `ID_struct` RHS only;
+the fix extends it to `ID_struct_tag` so that
+refined-string and class-tag RHS types also widen. Gated
+on `!python_check_annotations` so the opt-in
+annotation-mismatch property still fires when the user
+asks for it.
 
-The annotation should NOT drive:
-- value coercion at assignment
-- the type of subsequent reads when the actual stored
-  value's type is known
-- `isinstance` / `type()` answers
+*Collection variant — convert_assign Subscript path +
+convert_subscript expressions:*
 
-**Concrete approach**: extend the existing constant-tracking
-maps (`string_constants`, `float_constants`, `dict_literals`,
-etc.) into a unified runtime-type map keyed by symbol id and,
-for collections, by `(symbol, key)`. Subscript stores update
-the entry; subscript reads / `isinstance` consult it before
-falling back to the declared type. Annotation-driven casts
-on plain assignment become no-ops when the RHS type is
-already concrete.
+A new per-key override map
+`dict_runtime_value_overrides[dict_id][key_repr] -> exprt`
+records the original RHS at typed-dict subscript-assign
+sites where the stored value's type doesn't match the
+declared element type and the key is a constant. The dict
+subscript-read path consults the map before the storage
+array, so `isinstance(d[k], V)` reflects the actual stored
+value's type.
 
-**Scope estimate**: ~3-4 days (combined). Splitting into A
-and B and doing only A would still leave B's compound
-problem and likely require a partial second rework.
+Cleared on:
+- non-constant subscript-assigns to the same dict
+  (conservative: any entry could be affected),
+- type-matching constant assigns (the runtime value now
+  agrees with the declared type so no override is needed).
 
-**Direct closures**: 5 precision gaps + 1 soundness gap.
-Compounding effect on correctness for any code that mixes
-typed annotations with runtime polymorphism — which is
-common in real Python code.
+**Closures** (wave 32 → wave 33):
+- `dict_subscript_typed_assign_fail` (the lone PLR-relevant
+  soundness gap remaining after wave 32)
+- `github_3772`, `github_3775`, `github_3775_2`,
+  `github_3775_3`, `github_3775_4`
+
+**Open follow-up**: `github_3775_5` involves a subclass
+method that mutates `self` while returning a string —
+unrelated to annotation semantics. Tracked under item #6
+(github real-world cluster).
 
 ---
 
