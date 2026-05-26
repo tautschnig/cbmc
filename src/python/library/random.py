@@ -24,7 +24,14 @@ def randrange(start: int, stop: int = 0, step: int = 1) -> int:
 
 
 def randint(a: int, b: int) -> int:
-    return a
+    # PLR / random module §6.3: randint returns a nondet int N
+    # with a <= N <= b. The previous under-approximation `return a`
+    # missed verification paths involving any intermediate value
+    # of the range (e.g. `if random.randint(0, 1): ...` was always
+    # entering the false branch).
+    n: int = nondet_int()
+    __ESBMC_assume(n >= a and n <= b)
+    return n
 
 
 def getrandbits(k: int) -> int:
