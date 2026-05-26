@@ -3295,6 +3295,104 @@ exprt python_convertert::convert_call(const jsont &expr)
 
         if(method_name == "sort")
         {
+          // PLR §6.10: when the list is a known literal whose
+          // elements are all constant ints or constant strings,
+          // sort at conversion time and rewrite the list. Avoids
+          // the O(n²) bubble-sort below which would emit one
+          // string-solver comparison per pass per pair and time
+          // out on string lists.
+          const exprt *lit = nullptr;
+          irep_idt list_sym;
+          if(obj.id() == ID_symbol)
+          {
+            list_sym = to_symbol_expr(obj).get_identifier();
+            auto it = list_literals.find(list_sym);
+            if(it != list_literals.end())
+              lit = &it->second;
+          }
+          if(
+            lit != nullptr && lit->operands().size() >= 2 &&
+            lit->operands()[0].is_constant())
+          {
+            mp_integer lv;
+            if(!to_integer(to_constant_expr(lit->operands()[0]), lv))
+            {
+              const exprt &data_arr = lit->operands()[1];
+              std::vector<std::pair<mp_integer, exprt>> int_pairs;
+              std::vector<std::pair<std::string, exprt>> str_pairs;
+              bool all_const_int = true;
+              bool all_const_str = true;
+              for(mp_integer i = 0; i < lv; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx >= data_arr.operands().size())
+                {
+                  all_const_int = false;
+                  all_const_str = false;
+                  break;
+                }
+                const exprt &e = data_arr.operands()[idx];
+                if(all_const_int)
+                {
+                  if(!e.is_constant() || e.type().id() != ID_signedbv)
+                    all_const_int = false;
+                  else
+                  {
+                    mp_integer val;
+                    if(to_integer(to_constant_expr(e), val))
+                      all_const_int = false;
+                    else
+                      int_pairs.emplace_back(val, e);
+                  }
+                }
+                if(all_const_str)
+                {
+                  auto sv = extract_string_value(e);
+                  if(!sv.has_value())
+                    all_const_str = false;
+                  else
+                    str_pairs.emplace_back(sv.value(), e);
+                }
+              }
+              if(
+                (all_const_int && !int_pairs.empty()) ||
+                (all_const_str && !str_pairs.empty()))
+              {
+                exprt::operandst sorted_elems;
+                if(all_const_int)
+                {
+                  std::sort(
+                    int_pairs.begin(),
+                    int_pairs.end(),
+                    [](const auto &a, const auto &b)
+                    { return a.first < b.first; });
+                  for(const auto &p : int_pairs)
+                    sorted_elems.push_back(p.second);
+                }
+                else
+                {
+                  std::sort(
+                    str_pairs.begin(),
+                    str_pairs.end(),
+                    [](const auto &a, const auto &b)
+                    { return a.first < b.first; });
+                  for(const auto &p : str_pairs)
+                    sorted_elems.push_back(p.second);
+                }
+                while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
+                  sorted_elems.push_back(safe_zero(data_type.element_type()));
+                exprt sorted_struct = struct_exprt{
+                  {lit->operands()[0],
+                   array_exprt{std::move(sorted_elems), data_type}},
+                  obj.type()};
+                pending_checks.push_back(
+                  code_frontend_assignt{obj, sorted_struct});
+                if(!list_sym.empty())
+                  list_literals[list_sym] = sorted_struct;
+                return from_integer(0, python_int_type()); // None
+              }
+            }
+          }
           // Bubble sort via pending_checks (correct for bounded lists)
           for(std::size_t pass = 0; pass < PYTHON_MAX_LIST_LENGTH; pass++)
           {
@@ -4530,21 +4628,25 @@ exprt python_convertert::convert_call(const jsont &expr)
     }
     else
     {
+      // ESBMC compatibility: --nondet-str-length defaults to 16
+      // (one char reserved for the implicit terminator), so the
+      // visible length is in [0, 15]. Bound likewise so tests
+      // that assert `len(s) < 16` after a default-call to
+      // nondet_str() pass.
       pending_checks.push_back(code_assumet{and_exprt{
         binary_relation_exprt{
           len_intr, ID_ge, from_integer(0, signedbv_typet{64})},
         binary_relation_exprt{
-          len_intr,
-          ID_le,
-          from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64})}}});
+          len_intr, ID_le, from_integer(15, signedbv_typet{64})}}});
     }
     return std::move(tmp);
   }
   else if(func_name == "nondet_list")
   {
-    // nondet_list(n) — constrain length to [0, n]
+    // nondet_list(n) — constrain length to [0, n].
+    // Default size matches ESBMC's --nondet-list-length=8.
     static unsigned nl_ctr = 0;
-    exprt max_len = from_integer(PYTHON_MAX_LIST_LENGTH, signedbv_typet{64});
+    exprt max_len = from_integer(8, signedbv_typet{64});
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
@@ -4577,7 +4679,8 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     typet dt = python_dict_type(python_string_type(), python_int_type());
     static unsigned nd_ctr = 0;
-    exprt max_len = from_integer(PYTHON_MAX_DICT_SIZE, signedbv_typet{64});
+    // Default size matches ESBMC's --nondet-dict-length=8.
+    exprt max_len = from_integer(8, signedbv_typet{64});
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
@@ -5890,49 +5993,95 @@ exprt python_convertert::convert_call(const jsont &expr)
           if(!to_integer(to_constant_expr(lit->operands()[0]), lv))
           {
             const exprt &data_arr = lit->operands()[1];
-            std::vector<std::pair<mp_integer, exprt>> pairs;
-            bool all_const = true;
+            // Try int elements first, fall back to string elements.
+            std::vector<std::pair<mp_integer, exprt>> int_pairs;
+            std::vector<std::pair<std::string, exprt>> str_pairs;
+            bool all_const_int = true;
+            bool all_const_str = true;
             for(mp_integer i = 0; i < lv; ++i)
             {
               auto idx = i.to_ulong();
               if(idx >= data_arr.operands().size())
               {
-                all_const = false;
+                all_const_int = false;
+                all_const_str = false;
                 break;
               }
               const exprt &e = data_arr.operands()[idx];
-              if(!e.is_constant() || e.type().id() != ID_signedbv)
+              if(all_const_int)
               {
-                all_const = false;
-                break;
+                if(!e.is_constant() || e.type().id() != ID_signedbv)
+                {
+                  all_const_int = false;
+                }
+                else
+                {
+                  mp_integer val;
+                  if(to_integer(to_constant_expr(e), val))
+                    all_const_int = false;
+                  else
+                    int_pairs.emplace_back(val, e);
+                }
               }
-              mp_integer val;
-              if(to_integer(to_constant_expr(e), val))
+              if(all_const_str)
               {
-                all_const = false;
-                break;
+                auto sv = extract_string_value(e);
+                if(!sv.has_value())
+                  all_const_str = false;
+                else
+                  str_pairs.emplace_back(sv.value(), e);
               }
-              pairs.emplace_back(val, e);
             }
-            if(all_const)
+            if(all_const_int && !int_pairs.empty())
             {
               if(sorted_reverse)
                 std::sort(
-                  pairs.begin(),
-                  pairs.end(),
+                  int_pairs.begin(),
+                  int_pairs.end(),
                   [](const auto &a, const auto &b)
                   { return a.first > b.first; });
               else
                 std::sort(
-                  pairs.begin(),
-                  pairs.end(),
+                  int_pairs.begin(),
+                  int_pairs.end(),
                   [](const auto &a, const auto &b)
                   { return a.first < b.first; });
               const auto &list_st = to_struct_type(arg.type());
               const auto &data_type =
                 to_array_type(list_st.components()[1].type());
               exprt::operandst sorted_elems;
-              for(const auto &p : pairs)
+              for(const auto &p : int_pairs)
+                sorted_elems.push_back(p.second);
+              while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
+                sorted_elems.push_back(safe_zero(data_type.element_type()));
+              return struct_exprt{
+                {lit->operands()[0],
+                 array_exprt{std::move(sorted_elems), data_type}},
+                arg.type()};
+            }
+            // PLR §6.10: when all elements are constant strings,
+            // sort lexicographically. Avoids the runtime
+            // bubble-sort that would emit O(n²) string-solver
+            // comparisons and time out.
+            if(all_const_str && !str_pairs.empty())
+            {
+              if(sorted_reverse)
+                std::sort(
+                  str_pairs.begin(),
+                  str_pairs.end(),
+                  [](const auto &a, const auto &b)
+                  { return a.first > b.first; });
+              else
+                std::sort(
+                  str_pairs.begin(),
+                  str_pairs.end(),
+                  [](const auto &a, const auto &b)
+                  { return a.first < b.first; });
+              const auto &list_st = to_struct_type(arg.type());
+              const auto &data_type =
+                to_array_type(list_st.components()[1].type());
+              exprt::operandst sorted_elems;
+              for(const auto &p : str_pairs)
                 sorted_elems.push_back(p.second);
               while(sorted_elems.size() < PYTHON_MAX_LIST_LENGTH)
                 sorted_elems.push_back(safe_zero(data_type.element_type()));
