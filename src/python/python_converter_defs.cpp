@@ -111,6 +111,18 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   std::string func_name = json_string(json_member(stmt, "name"));
   source_locationt loc = get_location(stmt);
 
+  // PLR §4.2.1: nested function definitions live in their
+  // enclosing function's scope, not the module scope. Two
+  // sibling functions can each contain `def f(...)` with
+  // different bodies — they must not collide. We qualify
+  // nested function names with the enclosing scope chain so
+  // the symbol identifier is unique. Module-scope functions
+  // keep their bare name for backwards-compat with module
+  // imports and call resolution.
+  std::string qualified_func_name = func_name;
+  if(!current_function.empty())
+    qualified_func_name = current_function + "::" + func_name;
+
   // Build parameter list
   const jsont &args_node = json_member(stmt, "args");
   const jsont &params = json_member(args_node, "args");
@@ -168,7 +180,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
 
     code_typet::parametert p{param_type};
-    p.set_identifier("python::" + func_name + "::" + param_name);
+    p.set_identifier("python::" + qualified_func_name + "::" + param_name);
     p.set_base_name(param_name);
     parameters.push_back(p);
   };
@@ -199,12 +211,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     varargs_name = json_string(json_member(vararg, "arg"));
     typet va_type = python_list_type(python_value_type());
     code_typet::parametert p{va_type};
-    p.set_identifier("python::" + func_name + "::" + varargs_name);
+    p.set_identifier("python::" + qualified_func_name + "::" + varargs_name);
     p.set_base_name(varargs_name);
     // PLR §8.7: record the index of the *args param so the call
     // site can locate it for packing/unpacking even when closure
     // captures are appended later.
-    function_vararg_index[irep_idt{"python::" + func_name}] =
+    function_vararg_index[irep_idt{"python::" + qualified_func_name}] =
       parameters.size();
     parameters.push_back(p);
   }
@@ -224,7 +236,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         else
           ptype = python_value_type();
         code_typet::parametert p{ptype};
-        p.set_identifier("python::" + func_name + "::" + param_name);
+        p.set_identifier("python::" + qualified_func_name + "::" + param_name);
         p.set_base_name(param_name);
         parameters.push_back(p);
       }
@@ -239,7 +251,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     kwargs_name = json_string(json_member(kwarg, "arg"));
     typet kw_type = python_dict_type(python_string_type(), python_value_type());
     code_typet::parametert p{kw_type};
-    p.set_identifier("python::" + func_name + "::" + kwargs_name);
+    p.set_identifier("python::" + qualified_func_name + "::" + kwargs_name);
     p.set_base_name(kwargs_name);
     parameters.push_back(p);
   }
@@ -305,7 +317,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(!returns.is_null())
   {
     return_type = convert_type_annotation(returns);
-    annotated_return_functions.insert(func_name);
+    annotated_return_functions.insert(qualified_func_name);
   }
   else
   {
@@ -414,7 +426,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                     // fall back to double_type — it can hold
                     // both ints and floats.
                     std::string nm = json_string(json_member(e, "id"));
-                    irep_idt nid{"python::" + func_name + "::" + nm};
+                    irep_idt nid{"python::" + qualified_func_name + "::" + nm};
                     const symbolt *ns = symbol_table.lookup(nid);
                     if(ns != nullptr && ns->type.id() != ID_empty)
                       et = ns->type;
@@ -536,14 +548,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   code_typet func_type{parameters, return_type};
 
   // Add closure captures as extra parameters
-  irep_idt func_qid{"python::" + func_name};
+  irep_idt func_qid{"python::" + qualified_func_name};
   auto cap_it = closure_captures.find(id2string(func_qid));
   if(cap_it != closure_captures.end())
   {
     for(const auto &[outer_id, name, type] : cap_it->second)
     {
       code_typet::parametert p{type};
-      std::string cap_param_id = "python::" + func_name + "::" + name;
+      std::string cap_param_id = "python::" + qualified_func_name + "::" + name;
       p.set_identifier(cap_param_id);
       p.set_base_name(name);
       parameters.push_back(p);
@@ -552,11 +564,11 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
 
   if(has_yield)
-    generator_functions.insert(func_name);
+    generator_functions.insert(qualified_func_name);
 
   // Create function symbol BEFORE converting the body
   // (so recursive calls can find it)
-  irep_idt symbol_id{"python::" + func_name};
+  irep_idt symbol_id{"python::" + qualified_func_name};
 
   if(symbol_table.lookup(symbol_id) == nullptr)
   {
@@ -614,7 +626,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   auto saved_globals = global_names;
   if(!current_function.empty())
     enclosing_functions.push_back(current_function);
-  current_function = func_name;
+  current_function = qualified_func_name;
   global_names.clear();
   nonlocal_names.clear();
 
@@ -640,18 +652,18 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       collect_param_attribute_uses(body_for_scan, param_names, per_param);
       for(const auto &kv : per_param)
       {
-        irep_idt key{"python::" + func_name + "::" + kv.first};
+        irep_idt key{"python::" + qualified_func_name + "::" + kv.first};
         function_param_attr_uses[key] = kv.second;
       }
     }
   }
 
   // For generator functions, create __gen_result list
-  bool is_generator = generator_functions.count(func_name) > 0;
+  bool is_generator = generator_functions.count(qualified_func_name) > 0;
   irep_idt gen_result_id;
   if(is_generator)
   {
-    std::string grn = "__gen_result_" + func_name;
+    std::string grn = "__gen_result_" + qualified_func_name;
     std::string grq = qualify_name(grn);
     gen_result_id = irep_idt{grq};
     if(symbol_table.lookup(gen_result_id) == nullptr)
@@ -737,7 +749,13 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     {
       if(is_node_type(s, "FunctionDef") || is_node_type(s, "AsyncFunctionDef"))
       {
-        std::string nested_name = json_string(json_member(s, "name"));
+        std::string nested_bare = json_string(json_member(s, "name"));
+        // PLR §4.2.1: nested function symbol ids are qualified
+        // by the enclosing scope chain (see top of
+        // convert_function_def). Mirror that when keying the
+        // closure_captures map so the inner conversion can find
+        // its captures.
+        std::string nested_name = current_function + "::" + nested_bare;
         std::set<std::string> nested_params = collect_param_names(s);
         // Collect names declared 'nonlocal' or 'global' inside the
         // nested function — these must not be captured by value;
@@ -771,7 +789,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           if(nested_nonlocal_global.count(ref))
             continue; // handled by qualify_name redirect at use site
           // Find the variable's symbol and type
-          std::string var_id = "python::" + func_name + "::" + ref;
+          std::string var_id = "python::" + qualified_func_name + "::" + ref;
           const symbolt *var_sym = symbol_table.lookup(irep_idt{var_id});
           if(var_sym == nullptr)
           {
@@ -1076,15 +1094,17 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         if(wrapper_sym != nullptr && wrapper_sym->type.id() == ID_code)
         {
           // Redirect calls to f to go through wrapper instead.
-          // Set the alias under BOTH the unqualified "python::f"
-          // key (for module-level callers) AND the qualified key
-          // "python::<current_function>::f" (for callers inside
-          // the same enclosing function), since the call-site
-          // lookup uses qualify_name() which differs by context.
+          // The qualified symbol_id covers callers using the
+          // qualified id directly. We additionally register an
+          // alias keyed by the BARE name `python::<func_name>`
+          // to support callers that haven't switched to qualified
+          // ids (e.g. module-level dispatch through a closure
+          // alias). For nested functions, callers inside the same
+          // enclosing function use `python::<enclosing>::<func>`,
+          // which equals symbol_id and is already covered.
           function_aliases[id2string(symbol_id)] = wrapper_id;
-          if(!current_function.empty())
-            function_aliases["python::" + current_function + "::" + func_name] =
-              wrapper_id;
+          if(!saved_function.empty() && saved_function != current_function)
+            function_aliases["python::" + func_name] = wrapper_id;
           // The wrapper's body calls `fn(*args)` where `fn` is a
           // closure-captured reference to the original function.
           // Bind `fn` (the decorator's parameter name) to the
@@ -1142,8 +1162,16 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           };
           std::string dec_short =
             id2string(to_symbol_expr(dec_expr).get_identifier()).substr(8);
+          // PLR §4.2.1: when the decorator itself is nested
+          // (e.g. `def block_0(): def my_dec(...): ...`), its
+          // qualified id is `python::block_0::my_dec`. The AST
+          // node has the bare name "my_dec" — extract the last
+          // `::` component to match against the AST.
+          std::string dec_short_bare = dec_short;
+          if(auto pos = dec_short.rfind("::"); pos != std::string::npos)
+            dec_short_bare = dec_short.substr(pos + 2);
           const jsont *dec_ast = find_decorator_ast(
-            json_member(parse_tree.ast_json, "body"), dec_short);
+            json_member(parse_tree.ast_json, "body"), dec_short_bare);
           if(dec_ast != nullptr)
           {
             const jsont &dec_body_ast = json_member(*dec_ast, "body");
@@ -1155,11 +1183,19 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                   continue;
                 std::string inner_name =
                   json_string(json_member(inner, "name"));
-                if(irep_idt{"python::" + inner_name} != wrapper_id)
+                // Build the qualified id of the inner function:
+                // it's a nested def inside the decorator, so its
+                // symbol id is `python::<dec_short>::<inner_name>`.
+                irep_idt inner_qid{"python::" + dec_short + "::" + inner_name};
+                if(inner_qid != wrapper_id)
                   continue;
                 // Re-convert the wrapper function body
                 std::string saved_fn = current_function;
-                current_function = inner_name;
+                // Use the wrapper's qualified id (without the
+                // "python::" prefix) so qualify_name() and the
+                // closure-capture mechanism resolve names against
+                // the right scope.
+                current_function = id2string(wrapper_id).substr(8);
                 const jsont &wrapper_body_ast = json_member(inner, "body");
                 code_blockt new_body;
                 if(wrapper_body_ast.is_array())
