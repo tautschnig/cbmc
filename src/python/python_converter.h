@@ -339,6 +339,23 @@ private:
   /// if the callee returns {'managed': ..., 'inline': ...},
   /// the caller's receiving variable can trust those keys.
   std::map<std::string, std::set<std::string>> function_returned_dict_keys;
+  /// Map from function name to a literal struct value the
+  /// function unconditionally returns. Stronger than
+  /// function_returned_dict_keys: when a function body is
+  /// effectively `return <constant struct>`, we cache the
+  /// full struct (keys *and* values, or list/tuple elements)
+  /// so call sites of the form `x = func()` can populate the
+  /// caller's dict_literals/list_literals/tuple_literals with
+  /// the full literal. Closes the dict-of-list / tuple-return
+  /// constant-fold gap. Populated by convert_return; consumed
+  /// by convert_assign.
+  std::map<std::string, exprt> function_returned_literal;
+  /// Per-function count of return statements seen during
+  /// conversion. Only when this is exactly 1 do we trust the
+  /// cached literal in function_returned_literal: a function
+  /// with multiple return paths could yield different values,
+  /// so the cached literal isn't safe to use unconditionally.
+  std::map<std::string, std::size_t> function_return_count;
   std::map<irep_idt, exprt> list_literals; // track list literal values
   /// Track tuple literal values keyed by symbol identifier. Same
   /// purpose as list_literals: lets the constant-fold path in

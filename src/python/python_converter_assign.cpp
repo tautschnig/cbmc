@@ -452,37 +452,62 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         std::string prefix = "python::";
         if(callee.substr(0, prefix.size()) == prefix)
           callee = callee.substr(prefix.size());
-        auto ki = function_returned_dict_keys.find(callee);
-        if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+        // PLR: if the callee has a single return statement
+        // returning a constant dict literal, use the *full*
+        // literal (keys and values). This generalises the
+        // keys-only sentinel below and lets dict subscripts
+        // recover the value at call sites.
+        bool used_full_literal = false;
+        auto fl_it = function_returned_literal.find(callee);
+        auto rc_it = function_return_count.find(callee);
+        if(
+          fl_it != function_returned_literal.end() &&
+          rc_it != function_return_count.end() && rc_it->second == 1 &&
+          fl_it->second.id() == ID_struct &&
+          is_python_dict_type(fl_it->second.type()) &&
+          fl_it->second.type() == rhs.type())
         {
-          // Build a sentinel dict-struct with the known keys
-          // (values nondet). Match rhs.type() so dict_literals
-          // entry stays consistent with the assigned var's
-          // type.
-          const auto &dt = to_struct_type(rhs.type());
-          const auto &keys_type = to_array_type(dt.components()[1].type());
-          const auto &vals_type = to_array_type(dt.components()[2].type());
-          exprt::operandst key_elems, val_elems;
-          for(const auto &k : ki->second)
-          {
-            key_elems.push_back(python_string_literal(k));
-            val_elems.push_back(safe_zero(vals_type.element_type()));
-          }
-          while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
-          {
-            key_elems.push_back(safe_zero(keys_type.element_type()));
-            val_elems.push_back(safe_zero(vals_type.element_type()));
-          }
-          exprt length = from_integer(
-            static_cast<long long>(ki->second.size()), signedbv_typet{64});
-          dict_literals[symbol_id] = struct_exprt{
-            {length,
-             array_exprt{std::move(key_elems), keys_type},
-             array_exprt{std::move(val_elems), vals_type}},
-            rhs.type()};
+          dict_literals[symbol_id] = fl_it->second;
+          used_full_literal = true;
+        }
+        if(used_full_literal)
+        {
+          // already populated dict_literals; nothing else to do
         }
         else
-          dict_literals.erase(symbol_id);
+        {
+          auto ki = function_returned_dict_keys.find(callee);
+          if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+          {
+            // Build a sentinel dict-struct with the known keys
+            // (values nondet). Match rhs.type() so dict_literals
+            // entry stays consistent with the assigned var's
+            // type.
+            const auto &dt = to_struct_type(rhs.type());
+            const auto &keys_type = to_array_type(dt.components()[1].type());
+            const auto &vals_type = to_array_type(dt.components()[2].type());
+            exprt::operandst key_elems, val_elems;
+            for(const auto &k : ki->second)
+            {
+              key_elems.push_back(python_string_literal(k));
+              val_elems.push_back(safe_zero(vals_type.element_type()));
+            }
+            while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+            {
+              key_elems.push_back(safe_zero(keys_type.element_type()));
+              val_elems.push_back(safe_zero(vals_type.element_type()));
+            }
+            exprt length = from_integer(
+              static_cast<long long>(ki->second.size()), signedbv_typet{64});
+            dict_literals[symbol_id] = struct_exprt{
+              {length,
+               array_exprt{std::move(key_elems), keys_type},
+               array_exprt{std::move(val_elems), vals_type}},
+              rhs.type()};
+          }
+          else
+            dict_literals.erase(symbol_id);
+        }
       }
       else
         dict_literals.erase(symbol_id);
@@ -494,6 +519,40 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   {
     if(rhs.id() == ID_struct && escaped_mutables.count(symbol_id) == 0)
       list_literals[symbol_id] = rhs;
+    else if(rhs.id() == ID_side_effect)
+    {
+      // PLR: inter-procedural list-literal propagation. If the
+      // RHS is a call to a single-return function whose return
+      // statement is a constant list literal, propagate the
+      // literal so callers can constant-fold subscripts/len.
+      const auto &se = to_side_effect_expr(rhs);
+      if(
+        se.get_statement() == ID_function_call && !se.operands().empty() &&
+        se.operands()[0].id() == ID_symbol &&
+        escaped_mutables.count(symbol_id) == 0)
+      {
+        std::string callee =
+          id2string(to_symbol_expr(se.operands()[0]).get_identifier());
+        std::string prefix = "python::";
+        if(callee.substr(0, prefix.size()) == prefix)
+          callee = callee.substr(prefix.size());
+        auto fl_it = function_returned_literal.find(callee);
+        auto rc_it = function_return_count.find(callee);
+        if(
+          fl_it != function_returned_literal.end() &&
+          rc_it != function_return_count.end() && rc_it->second == 1 &&
+          fl_it->second.id() == ID_struct &&
+          is_python_list_type(fl_it->second.type()) &&
+          fl_it->second.type() == rhs.type())
+        {
+          list_literals[symbol_id] = fl_it->second;
+        }
+        else
+          list_literals.erase(symbol_id);
+      }
+      else
+        list_literals.erase(symbol_id);
+    }
     else
       list_literals.erase(symbol_id);
   }
@@ -501,6 +560,36 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   {
     if(rhs.id() == ID_struct)
       tuple_literals[symbol_id] = rhs;
+    else if(rhs.id() == ID_side_effect)
+    {
+      // PLR: inter-procedural tuple-literal propagation.
+      const auto &se = to_side_effect_expr(rhs);
+      if(
+        se.get_statement() == ID_function_call && !se.operands().empty() &&
+        se.operands()[0].id() == ID_symbol)
+      {
+        std::string callee =
+          id2string(to_symbol_expr(se.operands()[0]).get_identifier());
+        std::string prefix = "python::";
+        if(callee.substr(0, prefix.size()) == prefix)
+          callee = callee.substr(prefix.size());
+        auto fl_it = function_returned_literal.find(callee);
+        auto rc_it = function_return_count.find(callee);
+        if(
+          fl_it != function_returned_literal.end() &&
+          rc_it != function_return_count.end() && rc_it->second == 1 &&
+          fl_it->second.id() == ID_struct &&
+          is_python_tuple_type(fl_it->second.type()) &&
+          fl_it->second.type() == rhs.type())
+        {
+          tuple_literals[symbol_id] = fl_it->second;
+        }
+        else
+          tuple_literals.erase(symbol_id);
+      }
+      else
+        tuple_literals.erase(symbol_id);
+    }
     else
       tuple_literals.erase(symbol_id);
   }
@@ -2151,33 +2240,51 @@ codet python_convertert::convert_assign(const jsont &stmt)
           std::string p = "python::";
           if(callee.substr(0, p.size()) == p)
             callee = callee.substr(p.size());
-          auto ki = function_returned_dict_keys.find(callee);
-          if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+          // PLR: prefer the full literal cache when the callee
+          // has a single return statement of a constant dict.
+          bool used_full = false;
+          auto fl_it = function_returned_literal.find(callee);
+          auto rc_it = function_return_count.find(callee);
+          if(
+            fl_it != function_returned_literal.end() &&
+            rc_it != function_return_count.end() && rc_it->second == 1 &&
+            fl_it->second.id() == ID_struct &&
+            is_python_dict_type(fl_it->second.type()) &&
+            fl_it->second.type() == typed_rhs.type())
           {
-            const auto &dt = to_struct_type(typed_rhs.type());
-            const auto &keys_type = to_array_type(dt.components()[1].type());
-            const auto &vals_type = to_array_type(dt.components()[2].type());
-            exprt::operandst key_elems, val_elems;
-            for(const auto &k : ki->second)
-            {
-              key_elems.push_back(python_string_literal(k));
-              val_elems.push_back(safe_zero(vals_type.element_type()));
-            }
-            while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
-            {
-              key_elems.push_back(safe_zero(keys_type.element_type()));
-              val_elems.push_back(safe_zero(vals_type.element_type()));
-            }
-            exprt length = from_integer(
-              static_cast<long long>(ki->second.size()), signedbv_typet{64});
-            dict_literals[sym.name] = struct_exprt{
-              {length,
-               array_exprt{std::move(key_elems), keys_type},
-               array_exprt{std::move(val_elems), vals_type}},
-              typed_rhs.type()};
+            dict_literals[sym.name] = fl_it->second;
+            used_full = true;
           }
-          else
-            dict_literals.erase(sym.name);
+          if(!used_full)
+          {
+            auto ki = function_returned_dict_keys.find(callee);
+            if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+            {
+              const auto &dt = to_struct_type(typed_rhs.type());
+              const auto &keys_type = to_array_type(dt.components()[1].type());
+              const auto &vals_type = to_array_type(dt.components()[2].type());
+              exprt::operandst key_elems, val_elems;
+              for(const auto &k : ki->second)
+              {
+                key_elems.push_back(python_string_literal(k));
+                val_elems.push_back(safe_zero(vals_type.element_type()));
+              }
+              while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
+              {
+                key_elems.push_back(safe_zero(keys_type.element_type()));
+                val_elems.push_back(safe_zero(vals_type.element_type()));
+              }
+              exprt length = from_integer(
+                static_cast<long long>(ki->second.size()), signedbv_typet{64});
+              dict_literals[sym.name] = struct_exprt{
+                {length,
+                 array_exprt{std::move(key_elems), keys_type},
+                 array_exprt{std::move(val_elems), vals_type}},
+                typed_rhs.type()};
+            }
+            else
+              dict_literals.erase(sym.name);
+          }
         }
         else
           dict_literals.erase(sym.name);
@@ -2189,6 +2296,36 @@ codet python_convertert::convert_assign(const jsont &stmt)
     {
       if(typed_rhs.id() == ID_struct)
         list_literals[sym.name] = typed_rhs;
+      else if(typed_rhs.id() == ID_side_effect)
+      {
+        // PLR: inter-procedural list-literal propagation.
+        const auto &se = to_side_effect_expr(typed_rhs);
+        if(
+          se.get_statement() == ID_function_call && !se.operands().empty() &&
+          se.operands()[0].id() == ID_symbol)
+        {
+          std::string callee =
+            id2string(to_symbol_expr(se.operands()[0]).get_identifier());
+          std::string p = "python::";
+          if(callee.substr(0, p.size()) == p)
+            callee = callee.substr(p.size());
+          auto fl_it = function_returned_literal.find(callee);
+          auto rc_it = function_return_count.find(callee);
+          if(
+            fl_it != function_returned_literal.end() &&
+            rc_it != function_return_count.end() && rc_it->second == 1 &&
+            fl_it->second.id() == ID_struct &&
+            is_python_list_type(fl_it->second.type()) &&
+            fl_it->second.type() == typed_rhs.type())
+          {
+            list_literals[sym.name] = fl_it->second;
+          }
+          else
+            list_literals.erase(sym.name);
+        }
+        else
+          list_literals.erase(sym.name);
+      }
       else
         list_literals.erase(sym.name);
     }
@@ -2196,6 +2333,36 @@ codet python_convertert::convert_assign(const jsont &stmt)
     {
       if(typed_rhs.id() == ID_struct)
         tuple_literals[sym.name] = typed_rhs;
+      else if(typed_rhs.id() == ID_side_effect)
+      {
+        // PLR: inter-procedural tuple-literal propagation.
+        const auto &se = to_side_effect_expr(typed_rhs);
+        if(
+          se.get_statement() == ID_function_call && !se.operands().empty() &&
+          se.operands()[0].id() == ID_symbol)
+        {
+          std::string callee =
+            id2string(to_symbol_expr(se.operands()[0]).get_identifier());
+          std::string p = "python::";
+          if(callee.substr(0, p.size()) == p)
+            callee = callee.substr(p.size());
+          auto fl_it = function_returned_literal.find(callee);
+          auto rc_it = function_return_count.find(callee);
+          if(
+            fl_it != function_returned_literal.end() &&
+            rc_it != function_return_count.end() && rc_it->second == 1 &&
+            fl_it->second.id() == ID_struct &&
+            is_python_tuple_type(fl_it->second.type()) &&
+            fl_it->second.type() == typed_rhs.type())
+          {
+            tuple_literals[sym.name] = fl_it->second;
+          }
+          else
+            tuple_literals.erase(sym.name);
+        }
+        else
+          tuple_literals.erase(sym.name);
+      }
       else
         tuple_literals.erase(sym.name);
     }
