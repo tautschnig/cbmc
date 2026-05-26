@@ -77,8 +77,8 @@ class EventLoop:
         return None
 
     def run_until_complete(self, future):
-        if callable(future):
-            return future()
+        # See `asyncio.run`: async-def calls are eagerly
+        # evaluated, so pass the value through.
         return future
 
     def stop(self) -> None:
@@ -107,11 +107,13 @@ class EventLoop:
 
 
 def run(coro, *, debug=None):
-    # Synchronous execution: evaluate the coroutine by
-    # invoking it like a regular function. Our frontend
-    # treats `async def` like `def`, so this works.
-    if callable(coro):
-        return coro()
+    # Synchronous execution: in CBMC's frontend an `async def`
+    # is converted exactly like a regular `def`, so by the
+    # time `asyncio.run(coro())` is reached the awaited result
+    # is already in `coro`. Return it directly. If user code
+    # passes the function reference (`asyncio.run(coro_func)`)
+    # rather than the result of calling it, the value is
+    # opaque to the verifier — return it untouched.
     return coro
 
 
@@ -134,24 +136,20 @@ async def wait(fs, *, timeout=None, return_when=None):
 
 
 async def wait_for(fut, timeout):
-    if callable(fut):
-        return fut()
+    # See `run` above: async-def calls are already evaluated
+    # by the time we get here, so just return the value.
     return fut
 
 
 async def gather(*coros_or_futures, return_exceptions: bool = False):
+    # Pass through: each entry has already been evaluated.
     results = []
     for c in coros_or_futures:
-        if callable(c):
-            results.append(c())
-        else:
-            results.append(c)
+        results.append(c)
     return results
 
 
 async def shield(aw):
-    if callable(aw):
-        return aw()
     return aw
 
 
