@@ -4744,21 +4744,40 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "nondet_list")
   {
-    // nondet_list(n) — constrain length to [0, n].
-    // Default size matches ESBMC's --nondet-list-length=8.
+    // nondet_list(n[, sample]) — constrain length to [0, n] and
+    // build a list whose element type matches the optional
+    // second positional sample expression. The sample can be
+    // any expression with a recognised concrete type (typical
+    // usage: nondet_list(8, nondet_int()) / nondet_bool() /
+    // nondet_float() / nondet_str()). Default size matches
+    // ESBMC's --nondet-list-length=8; default element type is
+    // python_int.
     static unsigned nl_ctr = 0;
     exprt max_len = from_integer(8, signedbv_typet{64});
-    if(args.is_array() && !as_array(args).empty())
+    typet elem_type = python_int_type();
+    if(args.is_array())
     {
-      exprt arg = convert_expression(*as_array(args).begin());
-      if(arg.type().id() != ID_signedbv)
-        arg = safe_typecast(arg, signedbv_typet{64});
-      max_len = arg;
+      auto it = as_array(args).begin();
+      auto end = as_array(args).end();
+      if(it != end)
+      {
+        exprt arg = convert_expression(*it);
+        if(arg.type().id() != ID_signedbv)
+          arg = safe_typecast(arg, signedbv_typet{64});
+        max_len = arg;
+        ++it;
+      }
+      if(it != end)
+      {
+        exprt sample = convert_expression(*it);
+        if(!sample.is_nil() && sample.type().id() != ID_empty)
+          elem_type = sample.type();
+      }
     }
     std::string tn = "__nondet_list_" + std::to_string(nl_ctr++);
     std::string tq = qualify_name(tn);
     irep_idt ti{tq};
-    typet lt = python_list_type(python_int_type());
+    typet lt = python_list_type(elem_type);
     if(symbol_table.lookup(ti) == nullptr)
     {
       symbolt ts{ti, lt, "python"};
@@ -4778,9 +4797,13 @@ exprt python_convertert::convert_call(const jsont &expr)
   }
   else if(func_name == "nondet_dict")
   {
-    typet dt = python_dict_type(python_string_type(), python_int_type());
+    // nondet_dict(n[, key_type=K, value_type=V]) — constrain
+    // length to [0, n] and use the keyword arguments' types
+    // for the key/value array element types when present.
+    // Default size matches ESBMC's --nondet-dict-length=8;
+    // default key type is python_string, default value type
+    // is python_int.
     static unsigned nd_ctr = 0;
-    // Default size matches ESBMC's --nondet-dict-length=8.
     exprt max_len = from_integer(8, signedbv_typet{64});
     if(args.is_array() && !as_array(args).empty())
     {
@@ -4789,6 +4812,26 @@ exprt python_convertert::convert_call(const jsont &expr)
         arg = safe_typecast(arg, signedbv_typet{64});
       max_len = arg;
     }
+    typet key_type = python_string_type();
+    typet val_type = python_int_type();
+    const jsont &kwargs = json_member(expr, "keywords");
+    if(kwargs.is_array())
+    {
+      for(const auto &kw : as_array(kwargs))
+      {
+        std::string kn = json_string(json_member(kw, "arg"));
+        if(kn != "key_type" && kn != "value_type")
+          continue;
+        exprt v = convert_expression(json_member(kw, "value"));
+        if(v.is_nil() || v.type().id() == ID_empty)
+          continue;
+        if(kn == "key_type")
+          key_type = v.type();
+        else
+          val_type = v.type();
+      }
+    }
+    typet dt = python_dict_type(key_type, val_type);
     std::string tn = "__nondet_dict_" + std::to_string(nd_ctr++);
     std::string tq = qualify_name(tn);
     irep_idt ti{tq};
