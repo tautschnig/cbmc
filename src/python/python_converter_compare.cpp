@@ -580,6 +580,85 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Eq")
     {
+      // PLR §6.10.1: dict equality is order-independent.
+      // d1 == d2 iff len(d1)==len(d2) AND for every key k in
+      // d1, k is also in d2 with d1[k] == d2[k]. The struct's
+      // raw `keys[]` / `values[]` arrays may store the same
+      // pairs in different orders, so a plain field-wise
+      // equal_exprt would return False on
+      // {"a":1,"b":2} == {"b":2,"a":1}.
+      if(
+        is_python_dict_type(current_left.type()) &&
+        is_python_dict_type(right.type()) &&
+        current_left.type() == right.type())
+      {
+        const auto &dt = to_struct_type(current_left.type());
+        const auto &keys_t = to_array_type(dt.components()[1].type());
+        const auto &vals_t = to_array_type(dt.components()[2].type());
+        member_exprt llen{current_left, "length", signedbv_typet{64}};
+        member_exprt rlen{right, "length", signedbv_typet{64}};
+        member_exprt lkeys{current_left, "keys", keys_t};
+        member_exprt rkeys{right, "keys", keys_t};
+        member_exprt lvals{current_left, "values", vals_t};
+        member_exprt rvals{right, "values", vals_t};
+
+        bool keys_are_strings = is_python_string_type(keys_t.element_type());
+        bool vals_are_strings = is_python_string_type(vals_t.element_type());
+
+        // Build: lengths match AND for each i in [0, llen):
+        //   exists j in [0, rlen): lkeys[i]==rkeys[j] AND lvals[i]==rvals[j]
+        exprt all_match = equal_exprt{llen, rlen};
+        for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        {
+          exprt iv = from_integer(i, signedbv_typet{64});
+          exprt i_in_range = binary_relation_exprt{iv, ID_lt, llen};
+          exprt l_key = index_exprt{lkeys, iv, keys_t.element_type()};
+          exprt l_val = index_exprt{lvals, iv, vals_t.element_type()};
+          exprt found_match = false_exprt{};
+          for(std::size_t j = 0; j < PYTHON_MAX_DICT_SIZE; j++)
+          {
+            exprt jv = from_integer(j, signedbv_typet{64});
+            exprt j_in_range = binary_relation_exprt{jv, ID_lt, rlen};
+            exprt r_key = index_exprt{rkeys, jv, keys_t.element_type()};
+            exprt r_val = index_exprt{rvals, jv, vals_t.element_type()};
+            exprt key_eq;
+            if(keys_are_strings)
+            {
+              key_eq = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                l_key,
+                r_key,
+                symbol_table,
+                pending_checks);
+              if(key_eq.type() != bool_typet{})
+                key_eq = typecast_exprt{std::move(key_eq), bool_typet{}};
+            }
+            else
+              key_eq = equal_exprt{l_key, r_key};
+            exprt val_eq;
+            if(vals_are_strings)
+            {
+              val_eq = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                l_val,
+                r_val,
+                symbol_table,
+                pending_checks);
+              if(val_eq.type() != bool_typet{})
+                val_eq = typecast_exprt{std::move(val_eq), bool_typet{}};
+            }
+            else
+              val_eq = equal_exprt{l_val, r_val};
+            exprt slot_match = and_exprt{j_in_range, and_exprt{key_eq, val_eq}};
+            found_match = or_exprt{found_match, slot_match};
+          }
+          // For slots i within range: must find a match. For slots
+          // out of range: trivially satisfied.
+          all_match =
+            and_exprt{all_match, or_exprt{not_exprt{i_in_range}, found_match}};
+        }
+        return all_match;
+      }
       // PLR §6.10.1: list[str] equality. Same-type list-of-strings
       // structural equality compares the data POINTERS in the
       // value arrays, which differ between a runtime-built str
@@ -792,6 +871,74 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "NotEq")
     {
+      // PLR §6.10.1: dict inequality is the negation of dict
+      // equality (order-independent).
+      if(
+        is_python_dict_type(current_left.type()) &&
+        is_python_dict_type(right.type()) &&
+        current_left.type() == right.type())
+      {
+        const auto &dt = to_struct_type(current_left.type());
+        const auto &keys_t = to_array_type(dt.components()[1].type());
+        const auto &vals_t = to_array_type(dt.components()[2].type());
+        member_exprt llen{current_left, "length", signedbv_typet{64}};
+        member_exprt rlen{right, "length", signedbv_typet{64}};
+        member_exprt lkeys{current_left, "keys", keys_t};
+        member_exprt rkeys{right, "keys", keys_t};
+        member_exprt lvals{current_left, "values", vals_t};
+        member_exprt rvals{right, "values", vals_t};
+        bool keys_are_strings = is_python_string_type(keys_t.element_type());
+        bool vals_are_strings = is_python_string_type(vals_t.element_type());
+        exprt all_match = equal_exprt{llen, rlen};
+        for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+        {
+          exprt iv = from_integer(i, signedbv_typet{64});
+          exprt i_in_range = binary_relation_exprt{iv, ID_lt, llen};
+          exprt l_key = index_exprt{lkeys, iv, keys_t.element_type()};
+          exprt l_val = index_exprt{lvals, iv, vals_t.element_type()};
+          exprt found_match = false_exprt{};
+          for(std::size_t j = 0; j < PYTHON_MAX_DICT_SIZE; j++)
+          {
+            exprt jv = from_integer(j, signedbv_typet{64});
+            exprt j_in_range = binary_relation_exprt{jv, ID_lt, rlen};
+            exprt r_key = index_exprt{rkeys, jv, keys_t.element_type()};
+            exprt r_val = index_exprt{rvals, jv, vals_t.element_type()};
+            exprt key_eq;
+            if(keys_are_strings)
+            {
+              key_eq = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                l_key,
+                r_key,
+                symbol_table,
+                pending_checks);
+              if(key_eq.type() != bool_typet{})
+                key_eq = typecast_exprt{std::move(key_eq), bool_typet{}};
+            }
+            else
+              key_eq = equal_exprt{l_key, r_key};
+            exprt val_eq;
+            if(vals_are_strings)
+            {
+              val_eq = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                l_val,
+                r_val,
+                symbol_table,
+                pending_checks);
+              if(val_eq.type() != bool_typet{})
+                val_eq = typecast_exprt{std::move(val_eq), bool_typet{}};
+            }
+            else
+              val_eq = equal_exprt{l_val, r_val};
+            exprt slot_match = and_exprt{j_in_range, and_exprt{key_eq, val_eq}};
+            found_match = or_exprt{found_match, slot_match};
+          }
+          all_match =
+            and_exprt{all_match, or_exprt{not_exprt{i_in_range}, found_match}};
+        }
+        return not_exprt{all_match};
+      }
       if(
         is_python_set_type(current_left.type()) &&
         is_python_set_type(right.type()))
