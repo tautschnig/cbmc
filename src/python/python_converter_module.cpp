@@ -1090,19 +1090,21 @@ bool python_convertert::convert()
                     const jsont &fn = json_member(val, "func");
                     if(is_node_type(fn, "Name"))
                     {
-                      std::string callee =
-                        json_string(json_member(fn, "id"));
-                      if(callee == "nondet_int" ||
-                         callee == "__VERIFIER_nondet_int")
+                      std::string callee = json_string(json_member(fn, "id"));
+                      if(
+                        callee == "nondet_int" ||
+                        callee == "__VERIFIER_nondet_int")
                         var_type = python_int_type();
-                      else if(callee == "nondet_float" ||
-                              callee == "__VERIFIER_nondet_float")
+                      else if(
+                        callee == "nondet_float" ||
+                        callee == "__VERIFIER_nondet_float")
                         var_type = double_type();
-                      else if(callee == "nondet_bool" ||
-                              callee == "__VERIFIER_nondet_bool")
+                      else if(
+                        callee == "nondet_bool" ||
+                        callee == "__VERIFIER_nondet_bool")
                         var_type = bool_typet{};
-                      else if(callee == "nondet_str" ||
-                              callee == "nondet_string")
+                      else if(
+                        callee == "nondet_str" || callee == "nondet_string")
                         var_type = python_string_type();
                       else
                         continue; // defer to pass 2

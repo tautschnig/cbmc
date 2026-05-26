@@ -163,6 +163,15 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
         i = 0
         while i < len(toks):
             t = toks[i]
+            # ESBMC flag aliases — translate to our equivalents.
+            if t == "--strict-types":
+                # ESBMC's --strict-types corresponds to our
+                # --python-check-annotations: emit a property
+                # whenever an AnnAssign or call-site argument's
+                # type doesn't match the declared annotation.
+                extra_flags.append("--python-check-annotations")
+                i += 1
+                continue
             if t in SAFE_FLAGS_TAKES_VAL and i + 1 < len(toks):
                 extra_flags.extend([t, toks[i + 1]])
                 i += 2
