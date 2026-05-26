@@ -1030,6 +1030,69 @@ void python_convertert::invalidate_loop_writes(const jsont &body)
   }
 }
 
+codet python_convertert::allocate_generator_cursor(
+  const irep_idt &symbol_id,
+  const jsont &value,
+  const source_locationt &loc)
+{
+  // Recognise `gen()` where `gen` is a known generator function
+  // (recorded in generator_functions when its def was processed).
+  // The list-with-cursor model: each generator instance has a
+  // hidden cursor symbol initialised to 0 here; next() consults
+  // and advances it.
+  if(!is_node_type(value, "Call"))
+    return code_skipt{};
+  const jsont &func = json_member(value, "func");
+  if(!is_node_type(func, "Name"))
+    return code_skipt{};
+  std::string callee = json_string(json_member(func, "id"));
+  // Try the qualified form (function defined in current scope)
+  // and the unqualified form (top-level / nested function).
+  std::string q_callee = qualify_name(callee);
+  bool is_gen = generator_functions.count(callee) > 0 ||
+                generator_functions.count(q_callee) > 0;
+  if(!is_gen)
+    return code_skipt{};
+
+  std::string base = id2string(symbol_id);
+  const std::string prefix{"python::"};
+  if(base.compare(0, prefix.size(), prefix) == 0)
+    base = base.substr(prefix.size());
+  // Replace '::' with '_' so the resulting id is a flat,
+  // human-readable identifier without nested scope syntax.
+  std::string flat;
+  flat.reserve(base.size());
+  for(std::size_t i = 0; i < base.size(); ++i)
+  {
+    if(i + 1 < base.size() && base[i] == ':' && base[i + 1] == ':')
+    {
+      flat += '_';
+      ++i;
+    }
+    else
+      flat += base[i];
+  }
+  std::string cursor_name = "__cursor_" + flat;
+  irep_idt cursor_id{prefix + cursor_name};
+
+  if(symbol_table.lookup(cursor_id) == nullptr)
+  {
+    symbolt cs{cursor_id, signedbv_typet{64}, "python"};
+    cs.base_name = cursor_name;
+    cs.is_lvalue = true;
+    cs.is_state_var = true;
+    cs.is_static_lifetime = current_function.empty();
+    symbol_table.add(cs);
+  }
+  generator_cursors[symbol_id] = cursor_id;
+
+  code_frontend_assignt init{
+    symbol_table.lookup_ref(cursor_id).symbol_expr(),
+    from_integer(0, signedbv_typet{64})};
+  init.add_source_location() = loc;
+  return std::move(init);
+}
+
 exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
 {
   if(!is_python_value_type(e.type()))

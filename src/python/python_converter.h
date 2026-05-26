@@ -505,6 +505,18 @@ private:
   /// AugAssign targets that appear anywhere in the body.
   void invalidate_loop_writes(const jsont &body);
 
+  /// PLR §6.2.9: when assigning `g = gen()` or `g: T = gen()`
+  /// where `gen` is a generator function, allocate the hidden
+  /// cursor symbol `__cursor_<g>` and register it in
+  /// `generator_cursors[g]`. Returns the initialisation code
+  /// (`__cursor_<g> = 0`) that the caller should append after
+  /// the symbol assignment, or `code_skipt` when the RHS is not
+  /// a recognised generator-function call.
+  codet allocate_generator_cursor(
+    const irep_idt &symbol_id,
+    const jsont &value,
+    const source_locationt &loc);
+
   /// Best-effort static category of an expression node directly
   /// from the Python AST (i.e. before any safe_typecast erases
   /// its original type). Returns one of {"str","int","float",
@@ -676,6 +688,16 @@ private:
   /// non-negative constant smaller than the recorded bound.
   std::map<irep_idt, mp_integer> string_min_lengths;
   std::set<std::string> generator_functions;
+
+  /// PLR §6.2.9: Map from a generator-instance symbol id (e.g. the
+  /// `g` in `g = gen()` where `gen` is a generator function) to the
+  /// id of its hidden cursor symbol (`__cursor_<g>`). The cursor
+  /// tracks how many `next(g)` calls have been issued. Allocated
+  /// in convert_assign / convert_ann_assign when the RHS is a call
+  /// to a function in `generator_functions`. Consulted by next()
+  /// in convert_call to advance the cursor and raise StopIteration
+  /// at the end of the eager-yield list.
+  std::map<irep_idt, irep_idt> generator_cursors;
 
   /// Map from variable name (qualified) to its current versioned symbol.
   /// Used for fresh variable renaming when a variable changes type.
