@@ -1703,8 +1703,11 @@ exprt python_convertert::convert_call(const jsont &expr)
                 placeholders.insert(name);
                 i = close;
               }
-              // Resolve the mapping keys when it's a literal.
+              // Resolve the mapping keys AND values when it's a
+              // literal. We capture each (key, AST-value) pair so
+              // we can substitute below.
               std::set<std::string> mapping_keys;
+              std::map<std::string, jsont> mapping_pairs;
               bool keys_known = false;
               auto a_it = as_array(args).begin();
               if(a_it != as_array(args).end())
@@ -1713,15 +1716,22 @@ exprt python_convertert::convert_call(const jsont &expr)
                 {
                   keys_known = true;
                   const jsont &kn = json_member(*a_it, "keys");
-                  if(kn.is_array())
+                  const jsont &vn = json_member(*a_it, "values");
+                  if(kn.is_array() && vn.is_array())
                   {
-                    for(const auto &k : as_array(kn))
+                    auto ki = as_array(kn).begin();
+                    auto vi = as_array(vn).begin();
+                    for(; ki != as_array(kn).end() && vi != as_array(vn).end();
+                        ++ki, ++vi)
                     {
-                      if(is_node_type(k, "Constant"))
+                      if(is_node_type(*ki, "Constant"))
                       {
-                        const jsont &v = json_member(k, "value");
+                        const jsont &v = json_member(*ki, "value");
                         if(v.is_string())
+                        {
                           mapping_keys.insert(v.value);
+                          mapping_pairs[v.value] = *vi;
+                        }
                       }
                     }
                   }
@@ -1729,10 +1739,12 @@ exprt python_convertert::convert_call(const jsont &expr)
               }
               if(keys_known)
               {
+                bool missing = false;
                 for(const auto &name : placeholders)
                 {
                   if(mapping_keys.count(name) == 0)
                   {
+                    missing = true;
                     const symbolt *exc_sym =
                       symbol_table.lookup("python::__exception_active");
                     const symbolt *exc_type_sym =
@@ -1751,6 +1763,78 @@ exprt python_convertert::convert_call(const jsont &expr)
                     }
                     break;
                   }
+                }
+                if(!missing)
+                {
+                  // PLR §6.1.4: substitute every {name} placeholder
+                  // with str(mapping[name]) when both the format
+                  // string and all referenced values are constants.
+                  std::string result;
+                  bool all_const = true;
+                  for(std::size_t i = 0; i < fmt.size(); i++)
+                  {
+                    if(fmt[i] == '{' && i + 1 < fmt.size() && fmt[i + 1] == '{')
+                    {
+                      result += '{';
+                      ++i;
+                      continue;
+                    }
+                    if(fmt[i] == '}' && i + 1 < fmt.size() && fmt[i + 1] == '}')
+                    {
+                      result += '}';
+                      ++i;
+                      continue;
+                    }
+                    if(fmt[i] == '{' && i + 1 < fmt.size())
+                    {
+                      auto close = fmt.find('}', i + 1);
+                      if(close == std::string::npos)
+                      {
+                        result += fmt[i];
+                        continue;
+                      }
+                      std::string spec = fmt.substr(i + 1, close - i - 1);
+                      i = close;
+                      auto colon = spec.find(':');
+                      std::string name = colon == std::string::npos
+                                           ? spec
+                                           : spec.substr(0, colon);
+                      auto pi = mapping_pairs.find(name);
+                      if(pi == mapping_pairs.end())
+                      {
+                        all_const = false;
+                        break;
+                      }
+                      const jsont &val_ast = pi->second;
+                      if(is_node_type(val_ast, "Constant"))
+                      {
+                        const jsont &v = json_member(val_ast, "value");
+                        if(v.is_string())
+                          result += v.value;
+                        else if(v.is_number())
+                        {
+                          // e.g. "{x}".format_map({"x": 1}) -> "1"
+                          double d = std::stod(v.value);
+                          if(d == std::floor(d) && std::abs(d) < 1e15)
+                            result += std::to_string(static_cast<long long>(d));
+                          else
+                            result += v.value;
+                        }
+                        else if(v.is_true())
+                          result += "True";
+                        else if(v.is_false())
+                          result += "False";
+                        else
+                          all_const = false;
+                      }
+                      else
+                        all_const = false;
+                    }
+                    else
+                      result += fmt[i];
+                  }
+                  if(all_const)
+                    return python_string_literal(result);
                 }
               }
             }
@@ -1776,6 +1860,20 @@ exprt python_convertert::convert_call(const jsont &expr)
               bool all_const = true;
               for(std::size_t i = 0; i < fmt.size(); i++)
               {
+                // PLR §6.1.3: '{{' is an escape for a literal '{',
+                // and '}}' is an escape for a literal '}'.
+                if(fmt[i] == '{' && i + 1 < fmt.size() && fmt[i + 1] == '{')
+                {
+                  result += '{';
+                  ++i;
+                  continue;
+                }
+                if(fmt[i] == '}' && i + 1 < fmt.size() && fmt[i + 1] == '}')
+                {
+                  result += '}';
+                  ++i;
+                  continue;
+                }
                 if(fmt[i] == '{' && i + 1 < fmt.size())
                 {
                   // Find closing }
@@ -1889,6 +1987,16 @@ exprt python_convertert::convert_call(const jsont &expr)
                   if(sv.has_value())
                   {
                     result += sv.value();
+                  }
+                  else if(
+                    arg_exprs[use_idx].type().id() == ID_bool &&
+                    arg_exprs[use_idx].is_constant())
+                  {
+                    // PLR §6.1.4: format() of a bool yields its
+                    // str() spelling ("True" / "False"), not the
+                    // numeric value 1 / 0.
+                    bool bv = to_constant_expr(arg_exprs[use_idx]).is_true();
+                    result += bv ? "True" : "False";
                   }
                   else
                   {
