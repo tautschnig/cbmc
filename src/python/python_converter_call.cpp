@@ -2687,8 +2687,7 @@ exprt python_convertert::convert_call(const jsont &expr)
                 tuple_t});
             }
             return struct_exprt{
-              {obj_len, array_exprt{std::move(elems), list_data_type}},
-              list_t};
+              {obj_len, array_exprt{std::move(elems), list_data_type}}, list_t};
           }
         }
         if(method_name == "clear")
