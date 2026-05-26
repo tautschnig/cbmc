@@ -346,6 +346,12 @@ codet python_convertert::convert_while(const jsont &stmt)
   const jsont &body = json_member(stmt, "body");
   if(body.is_array())
   {
+    // PLR §8.2: invalidate constant tracking for variables
+    // assigned inside the loop body. See
+    // invalidate_loop_writes — without this, a body expression
+    // referencing a loop-mutated variable folds against its
+    // pre-loop value.
+    invalidate_loop_writes(body);
     loop_depth++;
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
@@ -515,6 +521,8 @@ codet python_convertert::convert_for(const jsont &stmt)
     const jsont &body = json_member(stmt, "body");
     if(body.is_array())
     {
+      // PLR §8.3: see invalidate_loop_writes.
+      invalidate_loop_writes(body);
       loop_depth++;
       for(const auto &s : as_array(body))
         body_block.add(convert_statement(s));
@@ -642,6 +650,7 @@ codet python_convertert::convert_for(const jsont &stmt)
     const jsont &body_stmts = json_member(stmt, "body");
     if(body_stmts.is_array())
     {
+      invalidate_loop_writes(body_stmts);
       loop_depth++;
       for(const auto &s : as_array(body_stmts))
         body_block.add(convert_statement(s));
@@ -736,6 +745,7 @@ codet python_convertert::convert_for(const jsont &stmt)
         const jsont &body_j = json_member(stmt, "body");
         if(body_j.is_array())
         {
+          invalidate_loop_writes(body_j);
           loop_depth++;
           for(const auto &s : as_array(body_j))
             body_block.add(convert_statement(s));
@@ -865,6 +875,7 @@ codet python_convertert::convert_for(const jsont &stmt)
       const jsont &body = json_member(stmt, "body");
       if(body.is_array())
       {
+        invalidate_loop_writes(body);
         loop_depth++;
         for(const auto &s : as_array(body))
           body_once.add(convert_statement(s));
