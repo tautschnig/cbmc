@@ -8920,6 +8920,46 @@ exprt python_convertert::convert_call(const jsont &expr)
             }
           }
         }
+        // PLR §3.1: when binding a class-instance Name argument
+        // to a python_value parameter, pass the address of the
+        // caller's storage rather than wrapping a fresh copy.
+        // Otherwise mutations the callee performs through the
+        // parameter (`p.attr = X`) hit the copy and are
+        // invisible to the caller. Restricted to symbol-typed
+        // argument expressions (i.e. plain Names) so that
+        // expression results from method returns continue to
+        // materialise their own backing storage.
+        if(
+          arguments[i].id() == ID_symbol &&
+          is_python_value_type(params[i].type()) &&
+          (arguments[i].type().id() == ID_struct ||
+           arguments[i].type().id() == ID_struct_tag))
+        {
+          std::string atag;
+          if(arguments[i].type().id() == ID_struct)
+            atag = id2string(to_struct_type(arguments[i].type()).get_tag());
+          else
+            atag = id2string(
+              to_struct_tag_type(arguments[i].type()).get_identifier());
+          if(atag.compare(0, 13, "python_class_") == 0)
+          {
+            // Resolve through any class_tag we recorded for this
+            // class so the CLASS-tagged python_value carries a
+            // valid runtime tag. Set the tag on the storage
+            // first so isinstance dispatches correctly.
+            std::string cname = atag.substr(13);
+            auto ti = class_tag_ids.find(cname);
+            if(ti != class_tag_ids.end())
+            {
+              pending_checks.push_back(code_frontend_assignt{
+                member_exprt{arguments[i], "__class_tag", signedbv_typet{32}},
+                from_integer(ti->second, signedbv_typet{32})});
+            }
+            arguments[i] = make_python_value(
+              python_type_tagt::CLASS, address_of_exprt{arguments[i]});
+            continue;
+          }
+        }
         arguments[i] = safe_typecast(arguments[i], params[i].type());
       }
     }
