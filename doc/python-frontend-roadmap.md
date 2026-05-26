@@ -7,13 +7,14 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 33, 2026-05-26)
+## Status snapshot (wave 34, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2541 | +52 |
+| ESBMC PASS | 2489 | 2548 | +59 |
 | Soundness gaps (PLR-relevant) | 77 | ~2 | −75 |
-| Precision gaps (PLR-relevant) | 435 | ~96 | −339 |
+| Precision gaps (PLR-relevant) | 435 | ~92 | −343 |
+| TIMEOUT | 26 | 8 | −18 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
 All three regression suites (`regression/python`,
@@ -160,57 +161,77 @@ unrelated to annotation semantics. Tracked under item #6
 
 ### 3. `string-concat` in loop (4 tests)
 
-**Status**: open.
+**Status**: partial — `string-concat4` closed in wave 34
+via the AugAssign string-solver routing. The remaining 3
+tests in the cluster fail for orthogonal reasons:
+- `string-concat5`: `assert word[0] == "a"` — indexing into
+  the cprover-string-concat result. The string solver
+  currently exposes the result opaquely, so word[0] reads
+  as nondet.
+- `string-concat6`: `for char in s: if char == ",": result.append(word) else: word += char`
+  — list.append of a mutated string + multi-iteration
+  reasoning.
+- `string-concat13`: `s = ""; alphabet = string.digits +
+  string.ascii_uppercase; s = alphabet[0] + s`. Misses the
+  literal value of `string.digits` from the imports
+  pipeline.
 
-**Symptom**: `string-concat{4,5,6,13}`. Pattern: `s = ""; for x in xs: s += str(x); assert s == "..."`.
-The loop-write invalidation now correctly clears
-`string_constants[s]` on entering the loop, so the
-concatenation can't fold.
-
-**Fix shape**: post-loop reasoning — when a loop body's
-augmented-assign sequence is bounded and the iterable is
-known, fold to the unrolled concatenation. Or model the
-string-solver loop primitive.
-
-**Scope estimate**: 1-2 hours.
-
-**Direct closures**: 4 tests.
+**Fix shape (to close 5/6/13)**: extend the string-solver
+glue so word[i] reads on a concat result are resolvable at
+the cprover-string layer; populate `string.digits` /
+`string.ascii_uppercase` constants in the library hooks.
 
 ### 4. ESBMC-nondet primitives (12-13 tests)
 
-**Status**: open. Marked "ESBMC-only" but several are
-PLR-aligned semantically and could be modelled.
+**Status**: partial. Default bounds for nondet_str /
+nondet_list / nondet_dict aligned with ESBMC's
+--nondet-*-length defaults (15/8/8) in wave 34. Closes
+`nondet_str`, `nondet_dict6`. Other tests in the cluster
+fail for orthogonal reasons:
+- `nondet_dict14`, `nondet_dict13_fail`: kwargs
+  `key_type=`, `value_type=` not supported; falls through
+  to int->int default which doesn't match the test shape.
+- `nondet_list14`-`18`: typed list elements
+  `nondet_list(N, nondet_float())`; element-type kwarg
+  not modelled.
+- `nondet_list4`, `_5`: complex iteration patterns over
+  the bounded list.
+- `nondet_dict`: function-summary inter-procedural lookup
+  loses the dict's keys (KeyError on a constant access).
 
-**Symptom**: `nondet_dict`, `nondet_list*`, `nondet_string`,
-`list_pop11_nondet_fail`. ESBMC has built-in primitives we
-don't expose.
-
-**Fix shape**: stubs in `src/python/library/` (or builtins)
-that produce nondet structs of the requested shape. Use the
-existing `nondet_*` symbol-table conventions where possible.
-
-**Scope estimate**: ~3-4 hours per primitive type, but
-multiple tests close per stub.
-
-**Direct closures**: ~12 tests.
+**Fix shape**: extend the parser for nondet_dict's
+`key_type=`/`value_type=` and nondet_list's element-type
+positional argument. Track function-returned-dict-with-vars
+better.
 
 ### 5. Profile and address TIMEOUT tests (12 tests)
 
-**Status**: open. 12 tests time out at 60s with `--unwind 10`.
+**Status**: partial. Sort fast-path closed 4 in wave 34
+(sorted4, sorted4_fail, list-sort9, list-sort10). 8 remain
+TIMEOUT:
+- `dict65`, `github_3626`, `github_3667_2`, `github_3684`,
+  `list31`, `nondet_list6`, `shedskin`,
+  `string-nondet-in-success`.
 
-**Symptom**: tests that may verify correctly but slowly. Run
-`scripts/profile_cbmc.py` on representative samples to see
-if a hot path is the bottleneck.
+**Why 4 closed**: sorted() and .sort() previously emitted
+an O(n²) bubble sort that issued a string-solver
+comparison per pair per pass. Added a constant-fold path
+that sorts at conversion time when all elements are
+constants (int or string).
 
-**Fix shape**: depends on findings — could be loop-unwinding
-explosion, string-solver thrashing, or O(n²) constant
-tracking. The fix may be a single optimization that closes
-several tests.
+**Fix shape (for the 8 remaining)**: each is a different
+shape:
+- `github_3684`: dict iteration over `.items()` of a typed
+  literal dict — symex paths through the schema-walking
+  code blow up.
+- `list31`: long sequence of function calls returning
+  varied list/dict/tuple shapes; type-promotion paths
+  multiply.
+- `dict65`, `nondet_list6`, `string-nondet-in-success`:
+  symbolic sizes interacting with bounded loop unrolling.
 
-**Scope estimate**: 1-2 hours per representative test for
-investigation; fix scope varies.
-
-**Direct closures**: variable, potentially 5-12 tests.
+These are not single-fold candidates; each needs a profile
+to find the hot path. Track per test as a follow-up.
 
 ---
 
