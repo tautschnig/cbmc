@@ -8654,6 +8654,28 @@ exprt python_convertert::convert_call(const jsont &expr)
                 cdm != class_declared_methods.end() &&
                 cdm->second.count(attr_name) > 0)
                 found = true;
+              // Also accept class-level fields declared in
+              // the class's struct (e.g. `year: int` on
+              // datetime). The Any-typed-parameter analysis
+              // only collected attribute names without
+              // distinguishing field-vs-method use, so a
+              // bare `obj.year` would erroneously land in
+              // the "missing method" path.
+              if(!found)
+              {
+                auto ct = class_types.find(class_name);
+                if(ct != class_types.end())
+                {
+                  for(const auto &comp : ct->second.components())
+                  {
+                    if(id2string(comp.get_name()) == attr_name)
+                    {
+                      found = true;
+                      break;
+                    }
+                  }
+                }
+              }
               if(!found)
               {
                 add_check(
