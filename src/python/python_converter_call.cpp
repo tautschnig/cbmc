@@ -4791,11 +4791,84 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     if(args.is_array() && !as_array(args).empty())
     {
-      exprt arg = convert_expression(*as_array(args).begin());
+      const jsont &arg_ast = *as_array(args).begin();
+      exprt arg = convert_expression(arg_ast);
       if(!arg.is_nil() && is_python_list_type(arg.type()))
       {
         const auto &data_type =
           to_array_type(to_struct_type(arg.type()).components()[1].type());
+
+        // PLR §6.2.9: when the argument is a known generator
+        // instance (Name bound to a `gen()` call), advance its
+        // hidden cursor and raise StopIteration once the cursor
+        // reaches the eager-yield list's length. Otherwise fall
+        // back to the conservative "return data[0]" approximation
+        // so existing list-as-iterator usages keep working.
+        irep_idt cursor_id;
+        if(is_node_type(arg_ast, "Name"))
+        {
+          std::string nm = json_string(json_member(arg_ast, "id"));
+          irep_idt sid{qualify_name(nm)};
+          auto it = generator_cursors.find(sid);
+          if(it != generator_cursors.end())
+            cursor_id = it->second;
+        }
+        if(!cursor_id.empty() && symbol_table.lookup(cursor_id) != nullptr)
+        {
+          symbol_exprt cursor =
+            symbol_table.lookup_ref(cursor_id).symbol_expr();
+          member_exprt length{arg, "length", signedbv_typet{64}};
+          member_exprt data{arg, "data", data_type};
+
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+
+          // Pre-action: if(cursor >= length) raise StopIteration;
+          // else cursor++.
+          if(exc_sym != nullptr && exc_type_sym != nullptr)
+          {
+            exprt cond = binary_relation_exprt{cursor, ID_ge, length};
+            code_blockt then_block;
+            then_block.add(
+              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+            long h = exception_type_hash("StopIteration");
+            then_block.add(code_frontend_assignt{
+              exc_type_sym->symbol_expr(), from_integer(h, python_int_type())});
+            code_blockt else_block;
+            else_block.add(code_frontend_assignt{
+              cursor, plus_exprt{cursor, from_integer(1, signedbv_typet{64})}});
+            code_ifthenelset advance{
+              cond, std::move(then_block), std::move(else_block)};
+            advance.add_source_location() = get_location(expr);
+            pending_checks.push_back(std::move(advance));
+          }
+          else
+          {
+            // Exception infra missing — at least advance the
+            // cursor so two next() calls return distinct slots.
+            pending_checks.push_back(code_frontend_assignt{
+              cursor, plus_exprt{cursor, from_integer(1, signedbv_typet{64})}});
+          }
+
+          // The yielded value is the element at the cursor's
+          // pre-increment position. Index by (cursor - 1) so the
+          // increment that just ran resolves to the right slot.
+          // When the StopIteration branch fires, the returned
+          // value is unused; (cursor-1) clamps to the last
+          // populated slot which is sound for verification.
+          exprt prev = minus_exprt{cursor, from_integer(1, signedbv_typet{64})};
+          // Guard against negative indexing on the first nondet
+          // path: max(cursor - 1, 0).
+          if_exprt safe_idx{
+            binary_relation_exprt{
+              prev, ID_lt, from_integer(0, signedbv_typet{64})},
+            from_integer(0, signedbv_typet{64}),
+            prev};
+          return index_exprt{data, safe_idx};
+        }
+
         return index_exprt{
           member_exprt{arg, "data", data_type},
           from_integer(0, signedbv_typet{64})};

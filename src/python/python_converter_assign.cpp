@@ -2384,6 +2384,14 @@ codet python_convertert::convert_assign(const jsont &stmt)
         float_constants.erase(sym.name);
     }
     block.add(std::move(assign));
+
+    // PLR §6.2.9: if the RHS is a call to a generator function,
+    // allocate the hidden cursor so subsequent next(g) calls can
+    // advance through the eager-yield list and raise
+    // StopIteration when exhausted.
+    codet gen_init = allocate_generator_cursor(sym.name, value, loc);
+    if(gen_init.get_statement() != ID_skip)
+      block.add(std::move(gen_init));
   }
 
   if(block.statements().size() == 1)
