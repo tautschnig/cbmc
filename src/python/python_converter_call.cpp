@@ -300,6 +300,76 @@ exprt python_convertert::convert_call(const jsont &expr)
           base_class = class_bases[current_class][0];
         if(!base_class.empty())
         {
+          // PLR §3.3.2.1: for value-returning super().method(),
+          // emit a direct call to <base>::<method> with the
+          // current self pointer. Inlining the body (used
+          // unconditionally before) early-returns from the
+          // CALLER's function via the inlined `return X` —
+          // wrong for `super().get_value() + 1`, where the
+          // caller wants the value, not the early return.
+          //
+          // The original inlining strategy is retained for
+          // __init__ where it's needed: __init__ has no useful
+          // return value but DOES rely on running in the
+          // caller's scope (so self refers to the Derived
+          // instance, not a fresh Base).
+          if(method_name != "__init__")
+          {
+            irep_idt base_method_id{
+              "python::" + base_class + "::" + method_name};
+            const symbolt *base_method = symbol_table.lookup(base_method_id);
+            if(
+              base_method != nullptr && base_method->type.id() == ID_code &&
+              !current_function.empty())
+            {
+              const auto &mt = to_code_type(base_method->type);
+              const auto &mparams = mt.parameters();
+              exprt::operandst arguments;
+              if(!mparams.empty())
+              {
+                // Pass the caller's self as the base method's
+                // self. The caller's self is a parameter of the
+                // current method; look it up by id.
+                irep_idt caller_self{"python::" + current_function + "::self"};
+                const symbolt *self_sym = symbol_table.lookup(caller_self);
+                if(self_sym != nullptr)
+                {
+                  exprt self_arg = self_sym->symbol_expr();
+                  if(self_arg.type() != mparams[0].type())
+                    self_arg = safe_typecast(self_arg, mparams[0].type());
+                  arguments.push_back(std::move(self_arg));
+                }
+                else
+                {
+                  arguments.push_back(side_effect_expr_nondett{
+                    mparams[0].type(), get_location(expr)});
+                }
+              }
+              const jsont &super_args = json_member(expr, "args");
+              if(super_args.is_array())
+              {
+                for(const auto &a : as_array(super_args))
+                {
+                  exprt av = convert_expression(a);
+                  arguments.push_back(std::move(av));
+                }
+              }
+              for(std::size_t ai = 0;
+                  ai < arguments.size() && ai < mparams.size();
+                  ++ai)
+              {
+                if(arguments[ai].type() != mparams[ai].type())
+                  arguments[ai] =
+                    safe_typecast(arguments[ai], mparams[ai].type());
+              }
+              return side_effect_expr_function_callt{
+                base_method->symbol_expr(),
+                std::move(arguments),
+                mt.return_type(),
+                get_location(expr)};
+            }
+          }
+
           // Inline super().__init__() by re-converting the base class's
           // __init__ body with the current self pointer. This avoids
           // pointer type mismatches (Derived* vs Base*).
