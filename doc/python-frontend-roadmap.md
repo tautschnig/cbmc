@@ -7,13 +7,13 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 31, 2026-05-26)
+## Status snapshot (wave 32, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2529 | +40 |
+| ESBMC PASS | 2489 | 2535 | +46 |
 | Soundness gaps (PLR-relevant) | 77 | ~3 | −74 |
-| Precision gaps (PLR-relevant) | 435 | ~107 | −328 |
+| Precision gaps (PLR-relevant) | 435 | ~101 | −334 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
 All three regression suites (`regression/python`,
@@ -26,26 +26,78 @@ All three regression suites (`regression/python`,
 
 ### 1. Generators / `yield` (PLR §6.2.9)
 
-**Status**: deferred since wave 19; the largest remaining
-PLR-correctness gap.
+**Status**: partial — 6 of 11 failing tests in the cluster
+closed by the list-with-cursor model (commit
+`cbmc-on-esbmc-python` HEAD as of 2026-05-26). 5 remain open
+for unrelated reasons.
 
-**Symptom**: `github_3701_*` cluster (5-6 tests). Generator
-expressions and `yield` statements are partially modelled —
-yield in a function makes it a "generator" but the resumable
-execution semantics are not properly represented.
+**Closed by the list-with-cursor commit**:
+- `github_3701` (return-before-yield → next raises
+  StopIteration)
+- `github_3701_6` (sequential nexts return successive yields)
+- `github_3701_7` (next + StopIteration handler)
+- `github_3701_8` (conditional return before yield)
+- `github_3701_10` (yield in while loop)
+- `github_3701_12` (yield in while with if/else inside)
 
-**Why deeper**: generators underpin generator expressions,
-`itertools.*`, async generators, and lazy iteration patterns.
-Closing this unlocks more than the immediate cluster.
+**Still open** — pre-existing issues, surfaced by the
+generator tests but not generator-specific:
+- `github_3701_9-nondet`, `github_3701_if_else-nondet` —
+  module-global `flag` referenced inside the generator's
+  `if flag:` condition causes the entire if/else body to
+  drop. Not a generator bug; reproduces with any function
+  that reads a module global. (`if True` works, parameter
+  works, local nondet works.) **Fix shape**: free-variable
+  resolution for if-conditions inside non-closure functions.
+- `github_3701_2`, `github_3701_4`, `github_3701_5-nondet`,
+  `github_3701_11` — `for x in g` over a generator + complex
+  shape (assertions inside generator body using `rand[0]`,
+  `len(l1)` etc.). Index-out-of-bounds on indirect list
+  reads. **Fix shape**: list-shape propagation across
+  function boundaries (we already do this for return-list
+  literals; need to extend to bound-symbol shapes).
+- `github_3701_14` — TOERR. Recursive function with
+  `extend([1] + r)`; doesn't even use `yield`. Unrelated
+  to generators.
 
-**Architectural shape**: state-machine encoding for resumable
-functions. Each yield point becomes a state. The function
-body is rewritten to dispatch on a hidden state variable.
+**Architectural model implemented** (list-with-cursor):
+- The generator function's body is rewritten so that each
+  `yield X` becomes `__gen_result.append(X)`. The function
+  returns the eager-collected list. (Pre-existing model,
+  retained.)
+- Each `g = gen()` call site allocates a hidden int cursor
+  `__cursor_<flat_name>` initialised to 0.
+- `next(g)` emits a pending check `if(cursor >= length)
+  raise StopIteration; else cursor++` and returns
+  `data[max(cursor-1, 0)]`.
+- StopIteration is raised through the existing
+  `__exception_active` / `__exception_type` infrastructure,
+  so try/except handles it without further changes.
 
-**Scope estimate**: ~1 week of focused work.
+**Why list-with-cursor instead of state-machine**: a true
+state-machine encoding would resume the generator's body at
+each yield with restored locals. The list-with-cursor model
+trades execution faithfulness for a much simpler encoding
+that suffices for the verification properties the cluster
+checks. It is sound for the eager model: if the body has no
+side effects beyond yields, the list is the same as what
+true Python would produce on full enumeration. Side effects
+in the body (e.g. external `print()` calls) appear earlier
+than true Python would emit them, but this is acceptable
+for our verification purposes.
 
-**Direct closures**: 5-6 tests (github_3701_*); plus likely
-unblocks downstream `itertools` test cases.
+**Scope estimate (remaining)**: ~2-3 days for the
+free-variable + list-shape work, which would close the rest
+of the cluster.
+
+**Architectural shape** (for follow-up): track free
+variables read by a function's body during pre-scan; ensure
+they resolve to the module-global symbol's value (or
+nondet) at call time. Separately, for `for x in g` over a
+known-generator-instance, the loop should iterate `g.data`
+up to `g.length` (instead of using the symbol's declared
+type bound, which is currently
+`PYTHON_MAX_LIST_LENGTH`).
 
 ### 2. Annotations are documentation, not enforcement
 (PLR §3.1, §3.2)
