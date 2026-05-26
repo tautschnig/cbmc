@@ -1078,8 +1078,46 @@ bool python_convertert::convert()
                   is_node_type(val, "Compare") || is_node_type(val, "BoolOp") ||
                   is_node_type(val, "IfExp"))
                 {
-                  // Complex RHS — skip pre-registration, let pass 2 handle it
-                  continue;
+                  // Recognise the common ``flag = nondet_X()`` /
+                  // ``n = random.randint(...)`` shapes so functions
+                  // converted in pass 1c can resolve the global.
+                  // Without this, function-body conversion in pass
+                  // 1c sees the Name lookup return nil and the
+                  // entire enclosing if/while/for body silently
+                  // collapses.
+                  if(is_node_type(val, "Call"))
+                  {
+                    const jsont &fn = json_member(val, "func");
+                    if(is_node_type(fn, "Name"))
+                    {
+                      std::string callee =
+                        json_string(json_member(fn, "id"));
+                      if(callee == "nondet_int" ||
+                         callee == "__VERIFIER_nondet_int")
+                        var_type = python_int_type();
+                      else if(callee == "nondet_float" ||
+                              callee == "__VERIFIER_nondet_float")
+                        var_type = double_type();
+                      else if(callee == "nondet_bool" ||
+                              callee == "__VERIFIER_nondet_bool")
+                        var_type = bool_typet{};
+                      else if(callee == "nondet_str" ||
+                              callee == "nondet_string")
+                        var_type = python_string_type();
+                      else
+                        continue; // defer to pass 2
+                    }
+                    else
+                    {
+                      continue; // defer to pass 2
+                    }
+                  }
+                  else
+                  {
+                    // Complex RHS — skip pre-registration, let
+                    // pass 2 handle it
+                    continue;
+                  }
                 }
                 symbolt new_sym{sym_id, var_type, "python"};
                 new_sym.base_name = var_name;
