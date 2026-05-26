@@ -3751,9 +3751,33 @@ exprt python_convertert::convert_call(const jsont &expr)
           return from_integer(0, python_int_type());
         }
 
-        // PLib stdtypes: list.copy()
+        // PLib stdtypes: list.copy().
+        // PLR §6.10.4: must produce a fresh list. Returning
+        // `obj` directly aliases — subsequent mutations on the
+        // chained result (e.g. `x.copy().append(99)`) would
+        // mutate the original `x`. Allocate a temp symbol,
+        // assign a struct-copy of obj to it, and return the
+        // temp's symbol_expr. The caller chain then targets
+        // the temp's storage.
         if(method_name == "copy")
-          return obj; // struct copy
+        {
+          static unsigned copy_ctr = 0;
+          std::string tn = "__list_copy_" + std::to_string(copy_ctr++);
+          std::string tq = qualify_name(tn);
+          irep_idt ti{tq};
+          if(symbol_table.lookup(ti) == nullptr)
+          {
+            symbolt ts{ti, obj.type(), "python"};
+            ts.base_name = tn;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            ts.is_static_lifetime = current_function.empty();
+            symbol_table.add(ts);
+          }
+          symbol_exprt tmp = symbol_table.lookup_ref(ti).symbol_expr();
+          pending_checks.push_back(code_frontend_assignt{tmp, obj});
+          return tmp;
+        }
       }
 
       if(obj_base_type.id() != ID_struct)

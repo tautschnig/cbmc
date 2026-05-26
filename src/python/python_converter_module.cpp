@@ -1166,6 +1166,9 @@ bool python_convertert::convert()
       if(!cbody.is_array())
         continue;
       bool needs_repass = false;
+      // First sub-condition: a method's return-type annotation
+      // is a string forward reference to a class OTHER than
+      // the enclosing one.
       for(const auto &item : as_array(cbody))
       {
         if(
@@ -1175,10 +1178,6 @@ bool python_convertert::convert()
         const jsont &returns = json_member(item, "returns");
         if(returns.is_null())
           continue;
-        // Strip the self-reference case: if the annotation is
-        // exactly the string-form of the enclosing class name,
-        // pass 1a's placeholder would have matched the actual
-        // class definition fine.
         bool fr = false;
         if(is_node_type(returns, "Constant"))
         {
@@ -1194,6 +1193,110 @@ bool python_convertert::convert()
         {
           needs_repass = true;
           break;
+        }
+      }
+      // Second sub-condition: a method's body calls another
+      // method of the same class whose source-order position
+      // is AFTER this one. Without a re-pass, the earlier
+      // method's body conversion sees only an empty
+      // method-symbol entry and falls through to the missing-
+      // method nondet. The cheap detection below scans each
+      // method's body for `self.<name>()` calls and flags
+      // when <name> is a method declared later in the class
+      // body.
+      if(!needs_repass)
+      {
+        std::vector<std::string> method_order;
+        for(const auto &item : as_array(cbody))
+        {
+          if(
+            is_node_type(item, "FunctionDef") ||
+            is_node_type(item, "AsyncFunctionDef"))
+            method_order.push_back(json_string(json_member(item, "name")));
+        }
+        std::function<bool(const jsont &, const std::set<std::string> &)>
+          calls_later =
+            [&](const jsont &node, const std::set<std::string> &later) -> bool
+        {
+          if(node.is_null() || !node.is_object())
+            return false;
+          if(is_node_type(node, "Call"))
+          {
+            const jsont &fn = json_member(node, "func");
+            if(is_node_type(fn, "Attribute"))
+            {
+              const jsont &obj = json_member(fn, "value");
+              if(
+                is_node_type(obj, "Name") &&
+                json_string(json_member(obj, "id")) == "self")
+              {
+                std::string name = json_string(json_member(fn, "attr"));
+                if(later.count(name))
+                  return true;
+              }
+            }
+          }
+          for(const char *key :
+              {"value",
+               "test",
+               "left",
+               "right",
+               "operand",
+               "values",
+               "args",
+               "elts",
+               "keys",
+               "comparators",
+               "body",
+               "orelse",
+               "finalbody"})
+          {
+            const jsont &child = json_member(node, key);
+            if(child.is_null())
+              continue;
+            if(child.is_array())
+              for(const auto &c : as_array(child))
+                if(calls_later(c, later))
+                  return true;
+            if(calls_later(child, later))
+              return true;
+          }
+          return false;
+        };
+        std::set<std::string> seen_methods;
+        for(const auto &item : as_array(cbody))
+        {
+          if(
+            !is_node_type(item, "FunctionDef") &&
+            !is_node_type(item, "AsyncFunctionDef"))
+            continue;
+          std::string mname = json_string(json_member(item, "name"));
+          // 'later' = methods declared after this one.
+          std::set<std::string> later;
+          bool past = false;
+          for(const auto &mn : method_order)
+          {
+            if(past)
+              later.insert(mn);
+            if(mn == mname)
+              past = true;
+          }
+          if(later.empty())
+            continue;
+          const jsont &mbody = json_member(item, "body");
+          if(mbody.is_array())
+          {
+            for(const auto &s : as_array(mbody))
+            {
+              if(calls_later(s, later))
+              {
+                needs_repass = true;
+                break;
+              }
+            }
+          }
+          if(needs_repass)
+            break;
         }
       }
       if(needs_repass)

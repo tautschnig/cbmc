@@ -399,8 +399,22 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
             rr_v = 0.0;
             ii_v = 0.0;
           }
+          else if(dd == 0.0 && cc == 0.0)
+          {
+            // (0+0j) ** 0 == (1+0j) per Python.
+            rr_v = 1.0;
+            ii_v = 0.0;
+          }
           else
           {
+            // PLR §6.5: (0+0j) ** w raises ZeroDivisionError
+            // when w has negative real part (1/(0+0j) is
+            // zero division) or any non-zero imaginary part.
+            add_check(
+              false_exprt{},
+              "exception",
+              "ZeroDivisionError: 0.0 to a negative or complex power",
+              source_locationt{});
             return side_effect_expr_nondett{ct, source_locationt{}};
           }
         }
