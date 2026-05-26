@@ -2479,6 +2479,51 @@ codet python_convertert::convert_assign(const jsont &stmt)
     codet gen_init = allocate_generator_cursor(sym.name, value, loc);
     if(gen_init.get_statement() != ID_skip)
       block.add(std::move(gen_init));
+
+    // PLR §6.10.2: track when a name is bound to a type object
+    // (e.g. `x = int`). isinstance(x, type) consults this set
+    // to return True without inspecting the symbol's runtime
+    // int value (which is the type-tag, not a real instance).
+    if(is_node_type(value, "Name"))
+    {
+      std::string rhs_id = json_string(json_member(value, "id"));
+      static const std::set<std::string> type_names = {
+        "int",
+        "float",
+        "bool",
+        "str",
+        "list",
+        "tuple",
+        "dict",
+        "set",
+        "frozenset",
+        "bytes",
+        "bytearray",
+        "object",
+        "type",
+        "Exception",
+        "BaseException",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "StopIteration",
+        "AttributeError",
+        "ArithmeticError",
+        "ZeroDivisionError",
+        "NotImplementedError",
+        "RuntimeError",
+        "OSError",
+        "FileNotFoundError"};
+      if(type_names.count(rhs_id) > 0 || class_types.count(rhs_id) > 0)
+        name_holds_type_binding.insert(sym.name);
+      else
+        name_holds_type_binding.erase(sym.name);
+    }
+    else
+    {
+      name_holds_type_binding.erase(sym.name);
+    }
   }
 
   if(block.statements().size() == 1)

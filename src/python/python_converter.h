@@ -644,6 +644,15 @@ private:
   /// longer be sound).
   std::map<irep_idt, std::map<std::string, exprt>> dict_runtime_value_overrides;
 
+  /// PLR §6.10.2: per-symbol marker that a name has been bound
+  /// to a type object (e.g. `x = int`). Used by isinstance(x,
+  /// type) to return True without inspecting the symbol's
+  /// runtime int value (which is the type-tag rather than a
+  /// real instance). Populated in convert_assign when the RHS
+  /// is a Name resolving to a built-in type name or a
+  /// registered class name.
+  std::set<irep_idt> name_holds_type_binding;
+
   /// Stage 1 of the re-precision plan, second part: recorded
   /// regex assertions found inside class method bodies of the
   /// shape

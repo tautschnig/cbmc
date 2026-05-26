@@ -5649,16 +5649,36 @@ exprt python_convertert::convert_call(const jsont &expr)
           "TypeError: an integer is required",
           get_location(expr));
       }
-      // Range check: chr() requires 0 <= arg <= 0x10ffff
-      add_check(
-        and_exprt{
-          binary_relation_exprt{
-            code_point, ID_ge, from_integer(0, code_point.type())},
-          binary_relation_exprt{
-            code_point, ID_le, from_integer(0x10ffff, code_point.type())}},
-        "value-error",
-        "chr() arg not in range(0x110000)",
-        get_location(expr));
+      // PLR §builtins: chr(i) raises ValueError when i is
+      // outside [0, 0x10ffff]. Route through the
+      // __exception_active model so try/except can catch it
+      // (matches the test pattern `try: chr(-1); except
+      // ValueError: pass`). Previously emitted as a property
+      // check, which made the test report verification failed
+      // even when the user explicitly handled the exception.
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr && exc_type_sym != nullptr)
+        {
+          exprt out_of_range = or_exprt{
+            binary_relation_exprt{
+              code_point, ID_lt, from_integer(0, code_point.type())},
+            binary_relation_exprt{
+              code_point, ID_gt, from_integer(0x10ffff, code_point.type())}};
+          code_blockt set_exc;
+          set_exc.add(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          long h = exception_type_hash("ValueError");
+          set_exc.add(code_frontend_assignt{
+            exc_type_sym->symbol_expr(), from_integer(h, python_int_type())});
+          code_ifthenelset cond_raise{out_of_range, std::move(set_exc)};
+          cond_raise.add_source_location() = get_location(expr);
+          pending_checks.push_back(std::move(cond_raise));
+        }
+      }
       typet str_type = python_string_type();
       const auto &data_type = array_typet(
         unsignedbv_typet{8},
@@ -7322,6 +7342,108 @@ exprt python_convertert::convert_call(const jsont &expr)
 
       if(!obj.is_nil() && !cls_name.empty())
       {
+        // PLR §6.10.2: if the first argument is a Name bound to
+        // a type object, isinstance(<type-name>, T) is true
+        // ONLY when T == 'type' (which is handled below as a
+        // special case). Other isinstance checks against
+        // type-bound names are False — `int` is not an int
+        // instance, str is not a str instance, etc. Without
+        // this gate, the standard dispatch below would see x's
+        // CBMC type (python_int, since type-tags are stored as
+        // ints) and answer isinstance(x, int) as True.
+        {
+          auto first_arg_it = as_array(args).begin();
+          if(is_node_type(*first_arg_it, "Name"))
+          {
+            std::string nm = json_string(json_member(*first_arg_it, "id"));
+            std::string qn = qualify_name(nm);
+            static const std::set<std::string> type_names = {
+              "int",
+              "float",
+              "bool",
+              "str",
+              "list",
+              "tuple",
+              "dict",
+              "set",
+              "frozenset",
+              "bytes",
+              "bytearray",
+              "object",
+              "type",
+              "Exception",
+              "BaseException",
+              "ValueError",
+              "TypeError",
+              "KeyError",
+              "IndexError",
+              "StopIteration",
+              "AttributeError",
+              "ArithmeticError",
+              "ZeroDivisionError",
+              "NotImplementedError",
+              "RuntimeError",
+              "OSError",
+              "FileNotFoundError"};
+            bool name_is_type = type_names.count(nm) > 0 ||
+                                class_types.count(nm) > 0 ||
+                                name_holds_type_binding.count(irep_idt{qn}) > 0;
+            if(name_is_type && cls_name != "type")
+              return false_exprt{};
+          }
+        }
+        // PLR §6.10.2: isinstance(x, type) — checks whether x
+        // is itself a type. Built-in type names (int, str,
+        // etc.) and user-class names ARE types in Python; their
+        // type-tag value (or class-tag value) is statically
+        // known. Detect the AST-level shape: if the first
+        // argument is a Name whose id is one of the type-tag
+        // table entries OR a registered class name, return True.
+        // For a variable `x = int`, look up x in
+        // `name_holds_type_binding` to see if it was bound to
+        // a type-name.
+        if(cls_name == "type")
+        {
+          auto first_arg_it = as_array(args).begin();
+          if(is_node_type(*first_arg_it, "Name"))
+          {
+            std::string nm = json_string(json_member(*first_arg_it, "id"));
+            static const std::set<std::string> type_names = {
+              "int",
+              "float",
+              "bool",
+              "str",
+              "list",
+              "tuple",
+              "dict",
+              "set",
+              "frozenset",
+              "bytes",
+              "bytearray",
+              "object",
+              "type",
+              "Exception",
+              "BaseException",
+              "ValueError",
+              "TypeError",
+              "KeyError",
+              "IndexError",
+              "StopIteration",
+              "AttributeError",
+              "ArithmeticError",
+              "ZeroDivisionError",
+              "NotImplementedError",
+              "RuntimeError",
+              "OSError",
+              "FileNotFoundError"};
+            if(type_names.count(nm) > 0 || class_types.count(nm) > 0)
+              return true_exprt{};
+            std::string qn = qualify_name(nm);
+            if(name_holds_type_binding.count(irep_idt{qn}) > 0)
+              return true_exprt{};
+            return false_exprt{};
+          }
+        }
         // Tagged union: isinstance checks the tag field
         if(is_python_value_type(obj.type()))
         {
