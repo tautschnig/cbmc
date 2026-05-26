@@ -1664,6 +1664,18 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
   if(e.type().id() == ID_struct && tgt_scalar)
     return from_integer(0, target);
 
+  // PLR §3.3 / §4: pointer-to-struct passed where the same
+  // struct is expected → dereference. Common for class
+  // methods passing `self` (Foo*) to a constructor that
+  // expects a Foo by value.
+  if(
+    e.type().id() == ID_pointer &&
+    to_pointer_type(e.type()).base_type() == target &&
+    (target.id() == ID_struct || target.id() == ID_struct_tag))
+  {
+    return dereference_exprt{e};
+  }
+
   // Struct-to-scalar or other incompatible: return a nondet value
   // of the target type (overapproximation, avoids crash)
   return side_effect_expr_nondett{target, source_locationt{}};

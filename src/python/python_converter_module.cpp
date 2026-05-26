@@ -1111,6 +1111,23 @@ bool python_convertert::convert()
         convert_class_def(stmt);
     }
   }
+  // Sub-pass 1a-bis: re-convert classes so method bodies that
+  // reference classes defined later in the source file (e.g.
+  // `class Foo: def bar() -> 'Bar': return Bar(self); class Bar: ...`)
+  // are processed with the full class registry available. The
+  // first sub-pass registered all class types and their
+  // __init__ signatures; this one re-emits method bodies with
+  // forward-class references resolvable. convert_class_def is
+  // idempotent — class_mro / class_bases dedup, and method
+  // symbols are overwritten with the corrected body.
+  if(body.is_array())
+  {
+    for(const auto &stmt : as_array(body))
+    {
+      if(is_node_type(stmt, "ClassDef"))
+        convert_class_def(stmt);
+    }
+  }
   // Sub-pass 1b: register all function signatures (without bodies)
   // so forward references between functions work
   if(body.is_array())
