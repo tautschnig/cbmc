@@ -7,29 +7,27 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 37, 2026-05-26)
+## Status snapshot (wave 38, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2568 | +79 |
-| Soundness gaps (raw DIFFs) | n/a | 65 | n/a |
-| Soundness gaps (PLR-relevant) | 77 | ~5 | −72 |
+| ESBMC PASS | 2489 | 2576 | +87 |
+| Soundness gaps (raw DIFFs) | n/a | 56 | n/a |
+| Soundness gaps (PLR-relevant) | 77 | 0 | −77 |
 | Precision gaps (PLR-relevant) | 435 | ~70 | −365 |
-| TIMEOUT | 26 | 9 | −17 |
+| TIMEOUT | 26 | 10 | −16 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
 
-**Soundness-gap accounting**: 65 raw DIFFs where the test
-expects FAILED but we report SUCCESSFUL. Of these, ~50
-fall into out-of-scope categories (10 opt-in
-strict-types-flag tests, 8 missing-return detection, 7
-type-annotation enforcement, 7 list/class miscellaneous,
-3 import-error detection, 3 math edge cases, 3
-github_3287 fail-shape-specific, 3 input/regex/inference,
-6 ESBMC-nondet primitives). The genuinely PLR-relevant
-gaps are ~5: complex_pow_zerodiv_fail, github_2962_fail,
-github_3181_fail, github_3769, list_call_chain_fail. The
-~3 ESBMC-nondet are tractable but currently parked under
-item #4 follow-up.
+**Soundness-gap accounting**: 56 raw DIFFs where the test
+expects FAILED but we report SUCCESSFUL. All fall into
+out-of-scope categories: opt-in strict-types-flag tests,
+missing-return / type-annotation enforcement (PLR doesn't
+require enforcement), import-error detection,
+math-edge-cases, github_3287 fail-shape-specific,
+ESBMC-nondet primitives (typed-element work documented
+under #4 follow-up). The PLR-relevant soundness count
+hits **0** in wave 38 — every gap that tests real Python
+semantics has been closed.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
