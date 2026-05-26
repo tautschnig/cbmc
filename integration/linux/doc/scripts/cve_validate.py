@@ -93,6 +93,23 @@ _MODULE_API_PATTERNS = [
     ("lock_state",         r"\b(?:mutex_lock|mutex_unlock|"
                            r"spin_lock|spin_unlock)\b"),
     ("pipe_buffer",        r"\bpipe_buf_(?:release|get)\b"),
+    # Synthetic-checkpoint modules — match on the kmalloc-
+    # family allocation pattern that cocci instrumentation
+    # then targets.  These modules have no per-pointer
+    # ghost; the bootstrap is inserted into the kernel TU
+    # by Coccinelle when INSTRUMENT=<module> is set.
+    ("resource_leak_on_error_path",
+                           r"\b(?:kmalloc|kzalloc|kcalloc|"
+                           r"kmalloc_array|kvmalloc|kvzalloc|"
+                           r"kvmalloc_array|alloc_skb|"
+                           r"kmem_cache_alloc)\b"),
+    ("null_after_alloc",
+                           r"\b(?:kmalloc|kzalloc|kcalloc|"
+                           r"kmalloc_array|kvmalloc|kvzalloc|"
+                           r"kvmalloc_array|alloc_skb|"
+                           r"kmem_cache_alloc)\b"),
+    ("use_after_free_generic",
+                           r"\b(?:kfree|kvfree|kfree_skb)\b"),
 ]
 
 
@@ -699,6 +716,18 @@ def _run_scan(case: CveCase, timeout: int = 240,
     env = os.environ.copy()
     env["LINUX_TREE"] = case.kernel_tree
     env["UNWIND"] = env.get("UNWIND", "2")
+    # If the module relies on cocci-inserted bootstrap (the
+    # synthetic-checkpoint family — resource_leak_on_error_path,
+    # null_after_alloc, use_after_free_generic), turn on
+    # cocci instrumentation when the validator's caller hasn't
+    # set INSTRUMENT explicitly.  This makes the per-file
+    # harness meaningful for those modules; without
+    # instrumentation the verdict is always vacuous.
+    cfg = synthesise_harness.MODULE_GHOST_BOOTSTRAP.get(
+        case.module, {}) if case.module else {}
+    if (cfg.get("uses_cocci_instrumentation")
+            and not env.get("INSTRUMENT")):
+        env["INSTRUMENT"] = case.module
     try:
         r = subprocess.run(
             cmd, env=env, timeout=timeout,

@@ -213,6 +213,29 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
         nla_get_u64
       )
       ;;
+    resource_leak_on_error_path)
+      # The cocci instrumentation inserts
+      # __assert_no_leak_at_exit(x); before each early return
+      # reached from a kmalloc-tracked allocation.  The
+      # adapter declares this as a contract function.
+      CONTRACT_TARGETS=(
+        __assert_no_leak_at_exit
+      )
+      ;;
+    null_after_alloc)
+      # Cocci inserts __assert_safe_to_deref(x); before
+      # each x->field deref reached from a kmalloc.
+      CONTRACT_TARGETS=(
+        __assert_safe_to_deref
+      )
+      ;;
+    use_after_free_generic)
+      # Cocci inserts __assert_not_freed(x); before each
+      # x->field deref reached after kfree(x).
+      CONTRACT_TARGETS=(
+        __assert_not_freed
+      )
+      ;;
     *)
       echo "no default contract targets for '$MODULE'; pass explicitly" >&2
       exit 2

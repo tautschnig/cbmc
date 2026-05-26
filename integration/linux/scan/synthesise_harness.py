@@ -470,6 +470,55 @@ MODULE_GHOST_BOOTSTRAP = {
         "forward_decls": ["struct nlattr;"],
         "wrapper_paths": [],
     },
+    "resource_leak_on_error_path": {
+        # No parameter-typed ghost-init at harness entry —
+        # the bug-class semantics live entirely inside the
+        # function body (allocation here, missing free on
+        # error exit there).  When INSTRUMENT=cocci is
+        # active, the cocci-instrumenter inserts
+        # leak_alloc_track(x); right after each
+        # kmalloc-family allocation and __assert_no_leak_at_exit(x);
+        # before each return.  The harness just needs to
+        # invoke the kernel function so those instrumented
+        # call sites get exercised.
+        "types": [],
+        "ghost_init_call": None,
+        "ghost_init_args_template": None,
+        "ghost_init_decl": "",
+        "forward_decls": [],
+        "wrapper_paths": [],
+        # Marker for the synthesizer: empty-ghost is
+        # EXPECTED for this module; suppress the
+        # low-confidence warning that other modules emit
+        # when their ghost-bootstrap is empty.
+        "uses_cocci_instrumentation": True,
+    },
+    "null_after_alloc": {
+        # Same shape as resource_leak_on_error_path: the
+        # bug class's state is in the function body, not
+        # in any parameter.  Cocci-instrumented kernel TUs
+        # carry __assert_safe_to_deref(x) checks before
+        # each x->field deref.
+        "types": [],
+        "ghost_init_call": None,
+        "ghost_init_args_template": None,
+        "ghost_init_decl": "",
+        "forward_decls": [],
+        "wrapper_paths": [],
+        "uses_cocci_instrumentation": True,
+    },
+    "use_after_free_generic": {
+        # Same shape as the other cocci-driven modules:
+        # __assert_not_freed(x) is inserted by cocci before
+        # each x->field deref reached after kfree(x).
+        "types": [],
+        "ghost_init_call": None,
+        "ghost_init_args_template": None,
+        "ghost_init_decl": "",
+        "forward_decls": [],
+        "wrapper_paths": [],
+        "uses_cocci_instrumentation": True,
+    },
 }
 
 
@@ -1270,24 +1319,40 @@ def synthesise(module: str, source: Path, function: str,
         for w in warnings:
             print(f"  warning: {w}", file=sys.stderr)
     if not bootstrapped_any:
-        # Surface the empty-ghost case to the caller via a
-        # marker in the print stream.  scan-per-file.sh
-        # propagates this into the verdict notes so corpus-scan
-        # can segment "FAILED-with-bootstrap" (high-confidence
-        # candidate) from "FAILED-empty-bootstrap" (lower
-        # confidence — the contract precondition fires by
-        # default on empty-ghost lookups).  Genuine bug-class
-        # patterns can still be caught when no parameter type
-        # matches: e.g. nfsd_setuser(struct svc_rqst *) has no
-        # cred parameter but its body's back-to-back put_cred
-        # pattern is real signal.  We do NOT reclassify the
-        # verdict.
-        print(
-            f"  no parameter matched {module}'s ghost-bootstrap "
-            "config; harness ghost is empty (lower-confidence "
-            "verdict)",
-            file=sys.stderr,
-        )
+        if cfg.get("uses_cocci_instrumentation"):
+            # This module's ghost state is bootstrapped by
+            # cocci-inserted calls in the kernel TU, not by
+            # parameter-based init at harness entry.  Empty
+            # ghost is the expected state of the harness
+            # itself; the verdict is full confidence as long
+            # as the cocci instrumentation actually fired
+            # (caller signals this via INSTRUMENT=...).
+            print(
+                f"  module {module} relies on cocci-inserted "
+                "ghost bootstrap inside the kernel TU "
+                "(INSTRUMENT=... required for meaningful "
+                "verdict)",
+                file=sys.stderr,
+            )
+        else:
+            # Surface the empty-ghost case to the caller via a
+            # marker in the print stream.  scan-per-file.sh
+            # propagates this into the verdict notes so corpus-scan
+            # can segment "FAILED-with-bootstrap" (high-confidence
+            # candidate) from "FAILED-empty-bootstrap" (lower
+            # confidence — the contract precondition fires by
+            # default on empty-ghost lookups).  Genuine bug-class
+            # patterns can still be caught when no parameter type
+            # matches: e.g. nfsd_setuser(struct svc_rqst *) has no
+            # cred parameter but its body's back-to-back put_cred
+            # pattern is real signal.  We do NOT reclassify the
+            # verdict.
+            print(
+                f"  no parameter matched {module}'s ghost-bootstrap "
+                "config; harness ghost is empty (lower-confidence "
+                "verdict)",
+                file=sys.stderr,
+            )
     return 0
 
 
