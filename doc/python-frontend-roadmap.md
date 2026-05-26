@@ -7,15 +7,29 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 36, 2026-05-26)
+## Status snapshot (wave 37, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
 |---|---:|---:|---:|
-| ESBMC PASS | 2489 | 2562 | +73 |
-| Soundness gaps (PLR-relevant) | 77 | ~2 | −75 |
-| Precision gaps (PLR-relevant) | 435 | ~78 | −357 |
-| TIMEOUT | 26 | 8 | −18 |
+| ESBMC PASS | 2489 | 2568 | +79 |
+| Soundness gaps (raw DIFFs) | n/a | 65 | n/a |
+| Soundness gaps (PLR-relevant) | 77 | ~5 | −72 |
+| Precision gaps (PLR-relevant) | 435 | ~70 | −365 |
+| TIMEOUT | 26 | 9 | −17 |
 | Hypothesmith --unrestricted failures | 4 | 0 | −4 |
+
+**Soundness-gap accounting**: 65 raw DIFFs where the test
+expects FAILED but we report SUCCESSFUL. Of these, ~50
+fall into out-of-scope categories (10 opt-in
+strict-types-flag tests, 8 missing-return detection, 7
+type-annotation enforcement, 7 list/class miscellaneous,
+3 import-error detection, 3 math edge cases, 3
+github_3287 fail-shape-specific, 3 input/regex/inference,
+6 ESBMC-nondet primitives). The genuinely PLR-relevant
+gaps are ~5: complex_pow_zerodiv_fail, github_2962_fail,
+github_3181_fail, github_3769, list_call_chain_fail. The
+~3 ESBMC-nondet are tractable but currently parked under
+item #4 follow-up.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
@@ -183,26 +197,36 @@ the cprover-string layer; populate `string.digits` /
 
 ### 4. ESBMC-nondet primitives (12-13 tests)
 
-**Status**: partial. Default bounds for nondet_str /
-nondet_list / nondet_dict aligned with ESBMC's
---nondet-*-length defaults (15/8/8) in wave 34. Closes
-`nondet_str`, `nondet_dict6`. Other tests in the cluster
-fail for orthogonal reasons:
-- `nondet_dict14`, `nondet_dict13_fail`: kwargs
-  `key_type=`, `value_type=` not supported; falls through
-  to int->int default which doesn't match the test shape.
-- `nondet_list14`-`18`: typed list elements
-  `nondet_list(N, nondet_float())`; element-type kwarg
-  not modelled.
-- `nondet_list4`, `_5`: complex iteration patterns over
-  the bounded list.
-- `nondet_dict`: function-summary inter-procedural lookup
-  loses the dict's keys (KeyError on a constant access).
+**Status**: substantially closed. Default bounds (15/8/8)
+in wave 34; typed-element kwargs in wave 37.
 
-**Fix shape**: extend the parser for nondet_dict's
-`key_type=`/`value_type=` and nondet_list's element-type
-positional argument. Track function-returned-dict-with-vars
-better.
+**Closures (wave 34)**: nondet_str (default bound 15),
+nondet_dict6, nondet_dict13_fail (closed via default
+bound 8).
+
+**Closures (wave 37)** — typed-element parsing in
+convert_call:
+- `nondet_list(N, sample)`: second positional arg's type
+  becomes the list element type.
+- `nondet_dict(N, key_type=K, value_type=V)`: kwargs name
+  the key/value sample types.
+- nondet_list11, nondet_list13, nondet_list14, nondet_dict10,
+  nondet_dict10_fail, nondet_dict12, nondet_dict12_fail,
+  nondet_dict13.
+
+**Open follow-up**:
+- `nondet_list4`: `assert x[0] is not None` — typed-int
+  nondet element can take the None-sentinel value (-2^62);
+  fix would exclude that value from typed nondets, which
+  is an under-approximation.
+- `nondet_list17/18`: append-then-index of strings; the
+  string-solver / list-write-read interaction is a
+  separate issue.
+- `nondet_list5`: complex iteration over bounded nondet
+  list; loop-unwinding sensitivity.
+- `nondet_dict14`: `k in x` membership on string keys
+  with nondet content; needs richer string-solver
+  modelling.
 
 ### 5. Profile and address TIMEOUT tests (12 tests)
 
@@ -269,6 +293,19 @@ to find the hot path. Track per test as a follow-up.
   function. Replaced inlining with a direct CALL to
   `<base>::<method>` for non-__init__ super calls.
   (Commit bbb5b3cded.)
+
+- **int(s, base) + arg-prop walker** (5 tests) —
+  `github_3041_2_*`. Two-part fix:
+  (a) extended `int()` to handle the optional base
+      argument (0/2..36 with prefix detection); fixed
+      a use-after-free on the temporary string;
+  (b) sub-pass 1b.5's argument-propagation walker only
+      inspected statement-level `Expr -> Call`, missing
+      calls inside Assert/Assign/Return/etc. Replaced
+      with a recursive scan_expr that traverses common
+      AST node fields. The walker fix likely propagates
+      constants into many more tests' parameters as a
+      side effect. (Commit b88ea3f003.)
 
 **Remaining open clusters** (sample):
 - `github_3020_*` (7 tests): runtime arg-type-mismatch
