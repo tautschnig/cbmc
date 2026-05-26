@@ -626,6 +626,24 @@ private:
   std::map<irep_idt, std::map<std::string, std::string>>
     dict_literal_value_string_consts;
 
+  /// PLR §3.1, §3.2: per-key runtime-value overrides for typed
+  /// dicts. When `d: dict[K, V] = {...}; d[k] = v` stores a value
+  /// `v` whose runtime type doesn't match the declared `V`, the
+  /// dict's storage array (typed `V[]`) coerces it via
+  /// safe_typecast, losing the actual value. To keep
+  /// PLR-correct read-back semantics — `d[k]` returns the
+  /// runtime value, not a nondet of the declared type — we
+  /// record the original RHS expression here keyed by the
+  /// stringified constant key. The dict subscript read path
+  /// returns the override directly when present, so
+  /// `isinstance(d[k], V)` correctly reflects the stored
+  /// value's actual type.
+  ///
+  /// Cleared on any non-constant subscript-assign to the same
+  /// dict (because subsequent constant-key reads would no
+  /// longer be sound).
+  std::map<irep_idt, std::map<std::string, exprt>> dict_runtime_value_overrides;
+
   /// Stage 1 of the re-precision plan, second part: recorded
   /// regex assertions found inside class method bodies of the
   /// shape
