@@ -522,6 +522,48 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return std::move(tmp);
   }
 
+  // PLR §6.7: string repeat. `s * n` and `n * s` produce a new
+  // string consisting of `n` copies of `s`. We constant-fold the
+  // common case where both operands are known at conversion time
+  // (via extract_string_value + try_eval_double).
+  if(
+    op == "Mult" &&
+    ((is_python_string_type(left.type()) &&
+      (right.type().id() == ID_signedbv || right.type().id() == ID_bool)) ||
+     (is_python_string_type(right.type()) &&
+      (left.type().id() == ID_signedbv || left.type().id() == ID_bool))))
+  {
+    exprt &str_op = is_python_string_type(left.type()) ? left : right;
+    exprt &num_op = is_python_string_type(left.type()) ? right : left;
+    auto sv = extract_string_value(str_op);
+    if(!sv.has_value() && str_op.id() == ID_symbol)
+    {
+      auto it = string_constants.find(to_symbol_expr(str_op).get_identifier());
+      if(it != string_constants.end())
+        sv = it->second;
+    }
+    auto nv = try_eval_double(num_op);
+    if(sv.has_value() && nv.has_value())
+    {
+      long long n = static_cast<long long>(nv.value());
+      if(n <= 0)
+        return python_string_literal(std::string{});
+      // Bail out (return nondet via fall-through to the rest of the
+      // BinOp dispatcher) when the result would exceed
+      // PYTHON_MAX_STRING_LENGTH; the runtime path then governs.
+      if(
+        static_cast<long long>(sv->size()) * n <=
+        static_cast<long long>(PYTHON_MAX_STRING_LENGTH))
+      {
+        std::string result;
+        result.reserve(sv->size() * static_cast<std::size_t>(n));
+        for(long long i = 0; i < n; ++i)
+          result += sv.value();
+        return python_string_literal(result);
+      }
+    }
+  }
+
   // PLR §6.7: Type-dispatched arithmetic on tagged unions
   // When both operands are tagged unions, dispatch on types:
   // if either is FLOAT, use float arithmetic; else use int

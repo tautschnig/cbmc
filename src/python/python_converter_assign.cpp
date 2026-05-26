@@ -2613,6 +2613,63 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     }
   }
 
+  // PLR §6.7: string repetition `s *= n`. Handle BEFORE type
+  // promotion / unwrap_value, which would coerce the int n into
+  // a string and lose its value. We constant-fold when both s
+  // (or its tracked content) and n are known.
+  if(
+    op == "Mult" && is_python_string_type(lhs.type()) &&
+    !is_python_string_type(rhs.type()))
+  {
+    auto sv = extract_string_value(lhs);
+    if(!sv.has_value() && lhs.id() == ID_symbol)
+    {
+      auto it = string_constants.find(to_symbol_expr(lhs).get_identifier());
+      if(it != string_constants.end())
+        sv = it->second;
+    }
+    exprt n_expr = rhs;
+    if(is_python_value_type(n_expr.type()))
+      n_expr = unwrap_value(n_expr, signedbv_typet{64});
+    auto nv = try_eval_double(n_expr);
+    if(sv.has_value() && nv.has_value())
+    {
+      long long n = static_cast<long long>(nv.value());
+      // Don't fold if the result wouldn't fit in
+      // PYTHON_MAX_STRING_LENGTH — let the runtime path
+      // (nondet) take over so out-of-bounds accesses are
+      // properly reported.
+      if(
+        static_cast<long long>(sv->size()) * std::max<long long>(n, 0) >
+        static_cast<long long>(PYTHON_MAX_STRING_LENGTH))
+      {
+        // fall through to nondet
+      }
+      else
+      {
+        std::string result;
+        if(n > 0)
+        {
+          result.reserve(sv->size() * static_cast<std::size_t>(n));
+          for(long long i = 0; i < n; ++i)
+            result += sv.value();
+        }
+        exprt str_lit = python_string_literal(result);
+        if(is_node_type(target, "Name"))
+        {
+          std::string var_name = json_string(json_member(target, "id"));
+          std::string qname = qualify_name(var_name);
+          const symbolt *sym = symbol_table.lookup(irep_idt{qname});
+          if(sym != nullptr)
+          {
+            string_constants[sym->name] = result;
+            return code_frontend_assignt{sym->symbol_expr(), str_lit};
+          }
+        }
+      }
+    }
+  }
+
   // Type promotion
   if(lhs.type() != rhs.type())
   {
@@ -2689,8 +2746,45 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     else
     {
       // String/list repetition: s *= n
-      // For now, return nondet (proper repetition needs unrolling)
-      new_rhs = side_effect_expr_nondett{lhs.type(), loc};
+      // PLR §6.7: when both s (or its tracked content) and n are
+      // constants, fold to a literal so subsequent reads see the
+      // expanded value.
+      if(op == "Mult" && is_python_string_type(lhs.type()))
+      {
+        auto sv = extract_string_value(lhs);
+        if(!sv.has_value() && lhs.id() == ID_symbol)
+        {
+          auto it = string_constants.find(to_symbol_expr(lhs).get_identifier());
+          if(it != string_constants.end())
+            sv = it->second;
+        }
+        auto nv = try_eval_double(rhs);
+        if(sv.has_value() && nv.has_value())
+        {
+          long long n = static_cast<long long>(nv.value());
+          if(n <= 0)
+            new_rhs = python_string_literal(std::string{});
+          else if(
+            static_cast<long long>(sv->size()) * n <=
+            static_cast<long long>(PYTHON_MAX_STRING_LENGTH))
+          {
+            std::string result;
+            result.reserve(sv->size() * static_cast<std::size_t>(n));
+            for(long long i = 0; i < n; ++i)
+              result += sv.value();
+            new_rhs = python_string_literal(result);
+          }
+          else
+            new_rhs = side_effect_expr_nondett{lhs.type(), loc};
+        }
+        else
+          new_rhs = side_effect_expr_nondett{lhs.type(), loc};
+      }
+      else
+      {
+        // For now, return nondet (proper repetition needs unrolling)
+        new_rhs = side_effect_expr_nondett{lhs.type(), loc};
+      }
     }
   }
   else if(op == "Add")
