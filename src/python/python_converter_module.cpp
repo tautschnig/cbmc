@@ -696,84 +696,121 @@ bool python_convertert::convert()
     symbol_table.add(exc_type_sym);
   }
 
-  // Pass 0.1: resolve imports so module symbols are available
-  if(body.is_array())
+  // Pass 0.1: resolve imports so module symbols are available.
+  // Note: Python allows import statements inside function bodies
+  // (`def f(): import asyncio`). We collect imports from the whole
+  // module tree — including nested function and class bodies —
+  // so library models are loaded regardless of where the import
+  // appears. References to these modules from anywhere in the file
+  // share the same library-backed symbol table.
+  std::vector<jsont> all_imports;
+  std::function<void(const jsont &)> collect_imports = [&](const jsont &b)
   {
-    for(const auto &stmt : as_array(body))
+    if(!b.is_array())
+      return;
+    for(const auto &stmt : as_array(b))
     {
-      if(is_node_type(stmt, "Import"))
+      if(is_node_type(stmt, "Import") || is_node_type(stmt, "ImportFrom"))
+        all_imports.push_back(stmt);
+      // Recurse into bodies that may contain nested imports.
+      if(
+        is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef") ||
+        is_node_type(stmt, "ClassDef"))
+        collect_imports(json_member(stmt, "body"));
+      else if(
+        is_node_type(stmt, "If") || is_node_type(stmt, "While") ||
+        is_node_type(stmt, "For") || is_node_type(stmt, "With") ||
+        is_node_type(stmt, "Try"))
       {
-        const jsont &names = json_member(stmt, "names");
-        if(names.is_array())
+        collect_imports(json_member(stmt, "body"));
+        collect_imports(json_member(stmt, "orelse"));
+        collect_imports(json_member(stmt, "finalbody"));
+        const jsont &handlers = json_member(stmt, "handlers");
+        if(handlers.is_array())
         {
-          for(const auto &alias : as_array(names))
+          for(const auto &h : as_array(handlers))
+            collect_imports(json_member(h, "body"));
+        }
+      }
+    }
+  };
+  collect_imports(body);
+
+  // Process collected imports via the same machinery as before.
+  for(const auto &stmt : all_imports)
+  {
+    if(is_node_type(stmt, "Import"))
+    {
+      const jsont &names = json_member(stmt, "names");
+      if(names.is_array())
+      {
+        for(const auto &alias : as_array(names))
+        {
+          std::string name = json_string(json_member(alias, "name"));
+          std::string asname = json_string(json_member(alias, "asname"));
+          if(asname.empty())
+            asname = name;
+          imported_modules.insert(asname);
+          // Bind the imported module's name as a module symbol so
+          // that attribute accesses and calls on it don't resolve
+          // as 'Unknown variable'. Under-approximated as a nondet
+          // value; proper modelling belongs to Step 2.
+          irep_idt mod_sym_id{"python::" + asname};
+          if(symbol_table.lookup(mod_sym_id) == nullptr)
           {
-            std::string name = json_string(json_member(alias, "name"));
-            std::string asname = json_string(json_member(alias, "asname"));
-            if(asname.empty())
-              asname = name;
-            imported_modules.insert(asname);
-            // Bind the imported module's name as a module symbol so
-            // that attribute accesses and calls on it don't resolve
-            // as 'Unknown variable'. Under-approximated as a nondet
-            // value; proper modelling belongs to Step 2.
-            irep_idt mod_sym_id{"python::" + asname};
-            if(symbol_table.lookup(mod_sym_id) == nullptr)
+            symbolt mod_sym{mod_sym_id, python_value_type(), "python"};
+            mod_sym.base_name = asname;
+            mod_sym.is_lvalue = true;
+            mod_sym.is_state_var = true;
+            mod_sym.is_static_lifetime = true;
+            symbol_table.add(mod_sym);
+          }
+          // Also process the library file so its decorators
+          // populate c_intrinsic_{fold,domain,range,int_width}_map.
+          // Previously only ImportFrom triggered library
+          // loading, which meant 'import math; math.sqrt(x)'
+          // didn't reach the decorator semantics. The
+          // attribute-style handler uses these maps, so both
+          // import forms now share the same source of truth.
+          if(module_resolver && name != "typing")
+          {
+            const jsont *mod_ast = module_resolver(name);
+            if(mod_ast != nullptr && !mod_ast->is_null())
+              process_imported_module(name, *mod_ast);
+            else
             {
-              symbolt mod_sym{mod_sym_id, python_value_type(), "python"};
-              mod_sym.base_name = asname;
-              mod_sym.is_lvalue = true;
-              mod_sym.is_state_var = true;
-              mod_sym.is_static_lifetime = true;
-              symbol_table.add(mod_sym);
-            }
-            // Also process the library file so its decorators
-            // populate c_intrinsic_{fold,domain,range,int_width}_map.
-            // Previously only ImportFrom triggered library
-            // loading, which meant 'import math; math.sqrt(x)'
-            // didn't reach the decorator semantics. The
-            // attribute-style handler uses these maps, so both
-            // import forms now share the same source of truth.
-            if(module_resolver && name != "typing")
-            {
-              const jsont *mod_ast = module_resolver(name);
-              if(mod_ast != nullptr && !mod_ast->is_null())
-                process_imported_module(name, *mod_ast);
-              else
-              {
-                // Import failed to resolve — mark the import
-                // alias (or module name) so subsequent calls
-                // to it skip the no-body property.
-                std::string alias_name =
-                  json_string(json_member(alias, "asname"));
-                unresolved_imports.insert(
-                  alias_name.empty() ? name : alias_name);
-              }
+              // Import failed to resolve — mark the import
+              // alias (or module name) so subsequent calls
+              // to it skip the no-body property.
+              std::string alias_name =
+                json_string(json_member(alias, "asname"));
+              unresolved_imports.insert(alias_name.empty() ? name : alias_name);
             }
           }
         }
       }
-      else if(is_node_type(stmt, "ImportFrom"))
+    }
+    else if(is_node_type(stmt, "ImportFrom"))
+    {
+      std::string module = json_string(json_member(stmt, "module"));
+      if(module_resolver && module != "typing")
       {
-        std::string module = json_string(json_member(stmt, "module"));
-        if(module_resolver && module != "typing")
+        const jsont *mod_ast = module_resolver(module);
+        if(mod_ast != nullptr && !mod_ast->is_null())
+          process_imported_module(module, *mod_ast);
+        else
         {
-          const jsont *mod_ast = module_resolver(module);
-          if(mod_ast != nullptr && !mod_ast->is_null())
-            process_imported_module(module, *mod_ast);
-          else
+          // 'from <module> import X, Y': register X and Y
+          // (or asnames) as unresolved names.
+          const jsont &names_arr = json_member(stmt, "names");
+          if(names_arr.is_array())
           {
-            // 'from <module> import X, Y': register X and Y
-            // (or asnames) as unresolved names.
-            const jsont &names_arr = json_member(stmt, "names");
-            if(names_arr.is_array())
+            for(const auto &alias : as_array(names_arr))
             {
-              for(const auto &alias : as_array(names_arr))
-              {
-                std::string imp_name = json_string(json_member(alias, "name"));
-                std::string asn = json_string(json_member(alias, "asname"));
-                unresolved_imports.insert(asn.empty() ? imp_name : asn);
-              }
+              std::string imp_name = json_string(json_member(alias, "name"));
+              std::string asn = json_string(json_member(alias, "asname"));
+              unresolved_imports.insert(asn.empty() ? imp_name : asn);
             }
           }
         }
