@@ -1604,7 +1604,9 @@ exprt python_convertert::convert_call(const jsont &expr)
             return std::move(tv);
           }
         }
-        if(method_name == "replace" || method_name == "format")
+        if(
+          method_name == "replace" || method_name == "format" ||
+          method_name == "format_map")
         {
           // PLib stdtypes: str.replace(old, new[, count]) for constant strings
           if(
@@ -1669,6 +1671,92 @@ exprt python_convertert::convert_call(const jsont &expr)
             // a new multi-char solver intrinsic. Falls through
             // to nondet for now.
           }
+          // PLib stdtypes: str.format_map(mapping) — raise
+          // KeyError when a {name} placeholder isn't a key in
+          // the mapping. We handle the common case where the
+          // mapping argument is a dict literal whose keys are
+          // resolvable at conversion time.
+          if(method_name == "format_map" && args.is_array())
+          {
+            auto fmt_sv = extract_string_value(obj);
+            if(fmt_sv.has_value())
+            {
+              std::string fmt = fmt_sv.value();
+              // Collect named placeholders.
+              std::set<std::string> placeholders;
+              for(std::size_t i = 0; i + 1 < fmt.size(); i++)
+              {
+                if(fmt[i] != '{' || fmt[i + 1] == '{')
+                  continue;
+                auto close = fmt.find('}', i + 1);
+                if(close == std::string::npos)
+                  continue;
+                std::string spec = fmt.substr(i + 1, close - i - 1);
+                if(spec.empty() || std::isdigit(spec[0]) || spec[0] == ':')
+                {
+                  i = close;
+                  continue;
+                }
+                auto colon = spec.find(':');
+                std::string name =
+                  colon == std::string::npos ? spec : spec.substr(0, colon);
+                placeholders.insert(name);
+                i = close;
+              }
+              // Resolve the mapping keys when it's a literal.
+              std::set<std::string> mapping_keys;
+              bool keys_known = false;
+              auto a_it = as_array(args).begin();
+              if(a_it != as_array(args).end())
+              {
+                if(is_node_type(*a_it, "Dict"))
+                {
+                  keys_known = true;
+                  const jsont &kn = json_member(*a_it, "keys");
+                  if(kn.is_array())
+                  {
+                    for(const auto &k : as_array(kn))
+                    {
+                      if(is_node_type(k, "Constant"))
+                      {
+                        const jsont &v = json_member(k, "value");
+                        if(v.is_string())
+                          mapping_keys.insert(v.value);
+                      }
+                    }
+                  }
+                }
+              }
+              if(keys_known)
+              {
+                for(const auto &name : placeholders)
+                {
+                  if(mapping_keys.count(name) == 0)
+                  {
+                    const symbolt *exc_sym =
+                      symbol_table.lookup("python::__exception_active");
+                    const symbolt *exc_type_sym =
+                      symbol_table.lookup("python::__exception_type");
+                    if(exc_sym != nullptr)
+                    {
+                      pending_checks.push_back(code_frontend_assignt{
+                        exc_sym->symbol_expr(), true_exprt{}});
+                      if(exc_type_sym != nullptr)
+                      {
+                        long h = exception_type_hash("KeyError");
+                        pending_checks.push_back(code_frontend_assignt{
+                          exc_type_sym->symbol_expr(),
+                          from_integer(h, python_int_type())});
+                      }
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+            return side_effect_expr_nondett{
+              python_string_type(), get_location(expr)};
+          }
           // PLib stdtypes: str.format() — substitute {} placeholders
           if(method_name == "format")
           {
@@ -1725,12 +1813,73 @@ exprt python_convertert::convert_call(const jsont &expr)
                   }
                   else
                   {
+                    // PLR §6.1.4: format with a named placeholder
+                    // like '{name}'. If no keyword arg with this
+                    // name is provided, raise KeyError. We check
+                    // the call's 'keywords' field for a matching
+                    // arg name; missing → KeyError.
+                    std::string key_name = spec;
+                    auto colon_pos = key_name.find(':');
+                    if(colon_pos != std::string::npos)
+                      key_name = key_name.substr(0, colon_pos);
+                    bool found_kw = false;
+                    const jsont &kws = json_member(expr, "keywords");
+                    if(kws.is_array())
+                    {
+                      for(const auto &kw : as_array(kws))
+                      {
+                        if(json_string(json_member(kw, "arg")) == key_name)
+                        {
+                          found_kw = true;
+                          break;
+                        }
+                      }
+                    }
+                    if(!found_kw)
+                    {
+                      const symbolt *exc_sym =
+                        symbol_table.lookup("python::__exception_active");
+                      const symbolt *exc_type_sym =
+                        symbol_table.lookup("python::__exception_type");
+                      if(exc_sym != nullptr)
+                      {
+                        pending_checks.push_back(code_frontend_assignt{
+                          exc_sym->symbol_expr(), true_exprt{}});
+                        if(exc_type_sym != nullptr)
+                        {
+                          long h = exception_type_hash("KeyError");
+                          pending_checks.push_back(code_frontend_assignt{
+                            exc_type_sym->symbol_expr(),
+                            from_integer(h, python_int_type())});
+                        }
+                      }
+                    }
                     all_const = false;
                     continue;
                   }
 
                   if(use_idx >= arg_exprs.size())
                   {
+                    // PLR §6.1.4: format() raises IndexError
+                    // when a positional placeholder index has
+                    // no matching argument (e.g. '{1}'.format('a')
+                    // or '{} {}'.format('a')).
+                    const symbolt *exc_sym =
+                      symbol_table.lookup("python::__exception_active");
+                    const symbolt *exc_type_sym =
+                      symbol_table.lookup("python::__exception_type");
+                    if(exc_sym != nullptr)
+                    {
+                      pending_checks.push_back(code_frontend_assignt{
+                        exc_sym->symbol_expr(), true_exprt{}});
+                      if(exc_type_sym != nullptr)
+                      {
+                        long h = exception_type_hash("IndexError");
+                        pending_checks.push_back(code_frontend_assignt{
+                          exc_type_sym->symbol_expr(),
+                          from_integer(h, python_int_type())});
+                      }
+                    }
                     all_const = false;
                     continue;
                   }
