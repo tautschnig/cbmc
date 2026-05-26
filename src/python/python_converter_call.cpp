@@ -7492,8 +7492,52 @@ exprt python_convertert::convert_call(const jsont &expr)
     return tmp_sym.symbol_expr();
   }
 
-  irep_idt symbol_id{"python::" + func_name};
-  const symbolt *sym = symbol_table.lookup(symbol_id);
+  // PLR §4.2.1: nested function definitions live in their
+  // enclosing function's scope. Look up the callee in the
+  // current function scope first, then walk outward through
+  // enclosing_functions, then fall back to module scope.
+  // This lets two sibling functions each define `def f(...)`
+  // without colliding (the symbol id encodes the parent
+  // chain — see python_converter_defs.cpp).
+  auto try_function_scope = [&](const std::string &scope) -> const symbolt *
+  {
+    irep_idt sid{
+      scope.empty() ? std::string{"python::" + func_name}
+                    : std::string{"python::" + scope + "::" + func_name}};
+    const symbolt *s = symbol_table.lookup(sid);
+    if(s != nullptr && s->type.id() == ID_code)
+      return s;
+    return nullptr;
+  };
+  irep_idt symbol_id;
+  const symbolt *sym = nullptr;
+  if(!current_function.empty())
+  {
+    if((sym = try_function_scope(current_function)) != nullptr)
+      symbol_id = irep_idt{"python::" + current_function + "::" + func_name};
+  }
+  if(sym == nullptr)
+  {
+    for(auto it = enclosing_functions.rbegin();
+        sym == nullptr && it != enclosing_functions.rend();
+        ++it)
+    {
+      if((sym = try_function_scope(*it)) != nullptr)
+        symbol_id = irep_idt{"python::" + *it + "::" + func_name};
+    }
+  }
+  if(sym == nullptr)
+  {
+    if((sym = try_function_scope(std::string{})) != nullptr)
+      symbol_id = irep_idt{"python::" + func_name};
+  }
+  // If no code symbol was found, fall back to the bare name
+  // for the existing variable / class-instance / no-body paths.
+  if(sym == nullptr)
+  {
+    symbol_id = irep_idt{"python::" + func_name};
+    sym = symbol_table.lookup(symbol_id);
+  }
   // The former ad-hoc math-function block has been retired.
   // math.py declares each function with @c_intrinsic('name',
   // fold='op', domain='kind', range='kind').
