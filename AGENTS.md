@@ -910,6 +910,11 @@ To understand how data flows through CBMC:
 - [doc/architectural/goto-program-transformations.md](doc/architectural/goto-program-transformations.md) - Instrumentation passes
 - [doc/architectural/compilation-and-development.md](doc/architectural/compilation-and-development.md) - Development guide
 
+### Python Frontend
+- [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs
+- [doc/python-frontend-architecture.md](doc/python-frontend-architecture.md) - Frontend internals: passes, type system, generator/annotation semantics, symbol naming, where to add features
+- [doc/python-frontend-roadmap.md](doc/python-frontend-roadmap.md) - Open-work backlog: items partially closed in waves 22-38, sub-clusters with fix shapes, and remaining work
+
 ### Architecture Decision Records (ADRs)
 - [doc/ADR/](doc/ADR/) - Design decisions
 - [doc/ADR/cpp_api_modularisation.md](doc/ADR/cpp_api_modularisation.md) - API design
