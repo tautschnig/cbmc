@@ -1131,17 +1131,37 @@ codet python_convertert::convert_for(const jsont &stmt)
           std::string elt_name = json_string(json_member(elt, "id"));
           std::string elt_qname = qualify_name(elt_name);
           irep_idt elt_id{elt_qname};
+
+          // Compute the loop variable's type from the tuple
+          // field type so we don't lose precision when the
+          // declared dict has typed keys/values (e.g. for
+          // `dict[str, int]` items the unpacked k must be a
+          // python_string, not the default python_int).
+          typet elt_type = python_int_type();
+          std::string field = "_" + std::to_string(tidx);
+          if(
+            elem_val.type().id() == ID_struct &&
+            to_struct_type(elem_val.type()).has_component(field))
+          {
+            elt_type =
+              to_struct_type(elem_val.type()).get_component(field).type();
+          }
           if(symbol_table.lookup(elt_id) == nullptr)
           {
-            symbolt elt_sym{elt_id, python_int_type(), "python"};
+            symbolt elt_sym{elt_id, elt_type, "python"};
             elt_sym.base_name = elt_name;
             elt_sym.is_lvalue = true;
             elt_sym.is_state_var = true;
             symbol_table.add(elt_sym);
           }
+          else
+          {
+            // Refresh existing symbol type when the tuple
+            // shape has narrowed since the previous pass.
+            symbol_table.get_writeable_ref(elt_id).type = elt_type;
+          }
           symbol_exprt elt_var = symbol_table.lookup_ref(elt_id).symbol_expr();
           // Access tuple field: elem._0, elem._1, etc.
-          std::string field = "_" + std::to_string(tidx);
           if(
             elem_val.type().id() == ID_struct &&
             to_struct_type(elem_val.type()).has_component(field))

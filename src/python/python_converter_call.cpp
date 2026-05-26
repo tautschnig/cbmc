@@ -3287,6 +3287,12 @@ exprt python_convertert::convert_call(const jsont &expr)
       // PLib stdtypes: List methods (append, sort, reverse, pop, etc.)
       if(is_python_list_type(obj_base_type))
       {
+        // PLR §3.3.1: list.__iter__() returns the list itself,
+        // which is sufficient for our list-as-iterator model.
+        // The for-loop iter path expects the same shape and
+        // walks .data[0..length-1] via its own counter.
+        if(method_name == "__iter__")
+          return obj;
         // PLR §4.6: bytes are modelled as list[uint8]; expose
         // bytes.decode(encoding) by repackaging the bytes' data
         // pointer as a python_string struct. We don't translate
