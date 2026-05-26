@@ -1120,11 +1120,83 @@ bool python_convertert::convert()
   // forward-class references resolvable. convert_class_def is
   // idempotent — class_mro / class_bases dedup, and method
   // symbols are overwritten with the corrected body.
+  // Sub-pass 1a-bis: re-convert classes whose method bodies
+  // reference forward-class names that were only registered as
+  // placeholders during the first 1a pass. Re-running every
+  // class is correct but expensive — for self-referential
+  // classes (e.g. recursive linked-list / tree shapes) the
+  // method bodies cite the class itself and re-running them
+  // forces a re-walk of nested calls. Restrict this pass to
+  // classes that contain at least one method with a return-
+  // type annotation that is a string forward reference (or
+  // a Subscript whose slice is one) — those are the only
+  // shapes that benefit. Self-referential classes whose
+  // forward refs resolve to themselves would have produced
+  // the correct type on the first pass already; skipping
+  // them here keeps that case fast.
   if(body.is_array())
   {
+    std::function<bool(const jsont &)> mentions_forward_string =
+      [&](const jsont &node) -> bool
+    {
+      if(node.is_null())
+        return false;
+      if(is_node_type(node, "Constant"))
+      {
+        const jsont &cv = json_member(node, "value");
+        if(cv.is_string())
+        {
+          // Treat as a forward reference only when the string
+          // names a class that DIDN'T resolve to the same
+          // class being processed (e.g. 'Bar' inside Foo's
+          // method body, not 'Task' inside Task itself).
+          return true;
+        }
+      }
+      if(is_node_type(node, "Subscript"))
+        return mentions_forward_string(json_member(node, "slice"));
+      return false;
+    };
     for(const auto &stmt : as_array(body))
     {
-      if(is_node_type(stmt, "ClassDef"))
+      if(!is_node_type(stmt, "ClassDef"))
+        continue;
+      std::string class_name = json_string(json_member(stmt, "name"));
+      const jsont &cbody = json_member(stmt, "body");
+      if(!cbody.is_array())
+        continue;
+      bool needs_repass = false;
+      for(const auto &item : as_array(cbody))
+      {
+        if(
+          !is_node_type(item, "FunctionDef") &&
+          !is_node_type(item, "AsyncFunctionDef"))
+          continue;
+        const jsont &returns = json_member(item, "returns");
+        if(returns.is_null())
+          continue;
+        // Strip the self-reference case: if the annotation is
+        // exactly the string-form of the enclosing class name,
+        // pass 1a's placeholder would have matched the actual
+        // class definition fine.
+        bool fr = false;
+        if(is_node_type(returns, "Constant"))
+        {
+          const jsont &cv = json_member(returns, "value");
+          if(cv.is_string() && cv.value != class_name)
+            fr = true;
+        }
+        else if(is_node_type(returns, "Subscript"))
+        {
+          fr = mentions_forward_string(json_member(returns, "slice"));
+        }
+        if(fr)
+        {
+          needs_repass = true;
+          break;
+        }
+      }
+      if(needs_repass)
         convert_class_def(stmt);
     }
   }
