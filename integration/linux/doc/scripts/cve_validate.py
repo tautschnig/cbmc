@@ -272,6 +272,23 @@ def _parse_patch(cve: str) -> tuple[str | None, str | None,
         "late_initcall", "core_initcall",
         "void", "int", "long", "short", "char", "static",
         "extern", "struct", "union", "enum", "typedef",
+        # Logging / driver-helper macros that look like
+        # function calls in patch hunks.
+        "dev_err", "dev_warn", "dev_info", "dev_dbg",
+        "dev_notice", "dev_emerg", "dev_alert", "dev_crit",
+        "pr_err", "pr_warn", "pr_info", "pr_debug",
+        "pr_notice", "pr_emerg", "pr_alert", "pr_crit",
+        "netdev_err", "netdev_warn", "netdev_info",
+        "WARN", "WARN_ON", "WARN_ON_ONCE", "WARN_ONCE",
+        "BUG", "BUG_ON", "BUILD_BUG_ON", "BUILD_BUG_ON_ZERO",
+        "trace", "raw_spin_lock", "raw_spin_unlock",
+        # DRM-specific helpers commonly seen in hunk context.
+        "drm_modeset_unlock", "drm_modeset_lock",
+        "drm_dev_alloc", "drm_dev_put",
+        # Generic kernel helpers.
+        "list_for_each_entry", "list_for_each",
+        "for_each_possible_cpu", "for_each_online_cpu",
+        "rcu_read_lock", "rcu_read_unlock",
     }
 
     def _is_real_function(name: str | None) -> bool:

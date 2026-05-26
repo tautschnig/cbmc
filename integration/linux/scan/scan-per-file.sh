@@ -344,6 +344,18 @@ if [[ $synth_rc -eq 4 ]]; then
   echo "  verdict: SKIPPED (known unverifiable shape; harness cannot validate)"
   exit 13
 fi
+if [[ $synth_rc -eq 5 ]]; then
+  # Function not found in this TU — typically because the
+  # patch's hunk header named a macro / library helper that
+  # isn't actually defined in the file (e.g. dev_err,
+  # drm_modeset_unlock).  Treat as 'skipped' rather than
+  # 'error': there's no harness to run because the target
+  # function isn't here.
+  echo
+  echo "=== $KERNEL_FILE: $TARGET_FUNC ==="
+  echo "  verdict: SKIPPED (target function not defined in this TU)"
+  exit 13
+fi
 if [[ $synth_rc -ne 0 ]]; then
   echo "  FAIL: synthesise_harness.py could not generate harness" >&2
   exit 3

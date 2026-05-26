@@ -951,3 +951,78 @@ in place, `goto-instrument --replace-call-with-contract`
 succeeds cleanly on the per-file-harness path: goto-harness
 synthesises a harness, the contract installs, and cbmc runs
 per-function verdicts.
+
+
+## LIM-017 — CBMC goto-symex aborts on overflow side-effect inside statement-expression — **WORKAROUND APPLIED**
+
+**First hit:** path-2(b) per-file synthesis trying to scan
+`lib/argv_split.c::argv_split` (and other files using
+`kmalloc_array`) with `INSTRUMENT=resource_leak_on_error_path`.
+
+CBMC's `goto-symex` aborts with:
+
+```
+Invariant check failed
+File: src/goto-symex/goto_symex.cpp:85 function: symex_assign
+Condition: false
+Reason: Unreachable
+```
+
+**Cause.** The kernel's `kmalloc_array` (and `check_mul_overflow`
+in `<linux/overflow.h>`) wrap `__builtin_mul_overflow` in a
+GNU statement-expression `({ ... ; result; })`.  CBMC's
+`goto_convert_side_effect.cpp::remove_overflow` correctly
+lowers `__builtin_mul_overflow` for top-level uses, but
+when the same expression is buried inside a
+statement-expression that's itself stored in a temporary,
+the side-effect's `ID_overflow_mult` survives all the way
+to `goto-symex`.  `symex_assign` recognises `ID_cpp_new`,
+`ID_cpp_new_array`, `ID_java_new_array_data`, `ID_allocate`,
+and `ID_va_start`; everything else hits an `UNREACHABLE`.
+
+**Workaround (mitigates).** Override `check_mul_overflow`,
+`check_add_overflow`, and `check_sub_overflow` in
+`scan/fragments/scan-compat.h` to skip the overflow
+detection: the multiplication still happens but
+`__builtin_*_overflow` is never instantiated.  Sound under
+our usual scan interpretation: integer-overflow tracking
+is a separate property module
+(`integer_overflow_in_alloc_size`); the leak / null-deref
+analyses don't need the overflow detection here.
+
+This eliminates the symex_assign abort but unmasks a
+separate CBMC bug (LIM-018 below).
+
+## LIM-018 — CBMC bv_pointers map-entry width mismatch on linked kernel TUs — **OPEN**
+
+**First hit:** same path as LIM-017, on the same file
+after LIM-017 was worked around.
+
+CBMC's bit-blasting front-end aborts with:
+
+```
+Invariant check failed
+File: src/solvers/flattening/boolbv_map.cpp:68 function: get_literals
+Condition: map_entry.literal_map.size() == width
+Reason: number of literals in the literal map shall equal the bitvector width
+```
+
+**Cause.** Some symbol identifier is cached in `boolbv_map`
+with one bit-width, then later looked up at a different
+width.  In an LTS-kernel TU linked with the property module
++ adapter + harness, this can happen when two link partners
+disagree on a struct field width — e.g. via differing
+`__attribute__((packed))` annotations or via incompatible
+typedef chains for kernel-private types.
+
+**No workaround yet.**  The validator catches the abort as
+`error` verdict and the rest of the corpus continues, so the
+bug is contained — it just blocks per-file scans on the
+affected files.
+
+**Reproducer:** `lib/argv_split.c::argv_split` with
+`INSTRUMENT=resource_leak_on_error_path`.  Captured `.gb` at
+`/tmp/argv-keep2/argv_split.instr.gb` (in this session's
+work tree).  Reduces to a `check_mul_overflow`-using inline
+function once LIM-017's workaround is in place.
+

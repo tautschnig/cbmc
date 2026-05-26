@@ -215,4 +215,37 @@ void bpf_jit_fill_hole_with_zero(void *area, unsigned int size)
 #define TAS_BUFFER_FNS(bit, name)
 #endif
 
+/* `check_mul_overflow` and friends in <linux/overflow.h>
+ * expand to statement-expressions that wrap
+ * `__builtin_mul_overflow`.  CBMC's goto-conversion stage
+ * (LIM-019) doesn't fully lower the overflow side-effect
+ * inside the statement-expression, and goto-symex aborts
+ * with an "Unreachable" invariant in symex_assign at
+ * goto_symex.cpp:85.
+ *
+ * Override the macros to skip the overflow check entirely
+ * — the multiplication is still performed; only the
+ * overflow detection is dropped.  This loses the
+ * overflow-induced NULL-return path but keeps the
+ * allocation behaviour intact, which is what the
+ * resource-leak / null-after-alloc analyses care about.
+ *
+ * Sound under our scan interpretation: tracking integer-
+ * overflow in alloc-size is a separate property module
+ * (integer_overflow_in_alloc_size); the leak / null-deref
+ * analyses don't need the overflow detection here. */
+#include <linux/overflow.h>
+#ifdef check_mul_overflow
+#  undef check_mul_overflow
+#endif
+#define check_mul_overflow(a, b, d) ({ *(d) = (a) * (b); 0; })
+#ifdef check_add_overflow
+#  undef check_add_overflow
+#endif
+#define check_add_overflow(a, b, d) ({ *(d) = (a) + (b); 0; })
+#ifdef check_sub_overflow
+#  undef check_sub_overflow
+#endif
+#define check_sub_overflow(a, b, d) ({ *(d) = (a) - (b); 0; })
+
 #endif /* INTEGRATION_LINUX_SCAN_FRAGMENTS_SCAN_COMPAT_H */

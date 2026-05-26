@@ -942,7 +942,11 @@ def synthesise(module: str, source: Path, function: str,
     if sig is None:
         print(f"synthesise_harness: could not find function "
               f"{function!r} in {source}", file=sys.stderr)
-        return 2
+        # Exit 5: function not found in this TU.  Different from
+        # exit 2 (real synth failure) so scan-per-file.sh can
+        # surface this as a "skipped" verdict rather than an
+        # error — we can't verify what isn't there.
+        return 5
 
     # Auto-discover wrapper-paths from put-API call sites in
     # the function body.  This addresses the empty-ghost
