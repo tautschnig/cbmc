@@ -4460,7 +4460,28 @@ exprt python_convertert::convert_call(const jsont &expr)
               if(arguments[i].is_nil())
                 arguments[i] = safe_zero(mparams[i].type());
               else if(arguments[i].type() != mparams[i].type())
+              {
+                // PLR §3.1: emit annotation-mismatch property
+                // for method-call args, paralleling the
+                // function-call path. Skip self (i == 0 with a
+                // pointer param) so calling Foo's method on a
+                // Foo instance doesn't fire.
+                bool is_self = i == 0 && mparams[i].type().id() == ID_pointer;
+                if(
+                  !is_self && python_check_annotations &&
+                  annotation_types_incompatible(
+                    mparams[i].type(), arguments[i].type()))
+                {
+                  add_check(
+                    false_exprt{},
+                    "annotation-mismatch",
+                    "argument " + std::to_string(i) +
+                      "'s type does not match declared parameter type of '" +
+                      method_name + "'",
+                    get_location(expr));
+                }
                 arguments[i] = safe_typecast(arguments[i], mparams[i].type());
+              }
             }
           }
 
@@ -4482,7 +4503,26 @@ exprt python_convertert::convert_call(const jsont &expr)
               if(arguments[i].is_nil())
                 arguments[i] = safe_zero(fp[i].type());
               else if(arguments[i].type() != fp[i].type())
+              {
+                // PLR §3.1: emit annotation-mismatch property
+                // for method-call args that don't match
+                // declared parameter types. Skip self.
+                bool is_self = i == 0 && fp[i].type().id() == ID_pointer;
+                if(
+                  !is_self && python_check_annotations &&
+                  annotation_types_incompatible(
+                    fp[i].type(), arguments[i].type()))
+                {
+                  add_check(
+                    false_exprt{},
+                    "annotation-mismatch",
+                    "argument " + std::to_string(i) +
+                      "'s type does not match declared parameter type of '" +
+                      method_name + "'",
+                    get_location(expr));
+                }
                 arguments[i] = safe_typecast(arguments[i], fp[i].type());
+              }
             }
           }
 

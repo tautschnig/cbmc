@@ -200,9 +200,13 @@ bool python_convertert::annotation_types_incompatible(
   // precision (e.g., 'x: SomeClass = 42' won't be flagged) for
   // suppressing the systematic FP on `cloudwatch: CloudWatch =
   // boto3.client('cloudwatch')`-shaped patterns.
-  if(
-    (dc == 6 || dc == 4 || dc == 2 || dc == 3 || dc == 1) &&
-    actual.id() == ID_signedbv)
+  //
+  // Restricted to the class category (dc == 6). String / list /
+  // dict / set declared types stay strictly typed against
+  // signedbv arguments — `x: str = 42` and `foo(s: str)` called
+  // as `foo(42)` are real annotation mismatches that PLR §3.1
+  // soundness requires us to flag.
+  if(dc == 6 && actual.id() == ID_signedbv)
     return false;
   if(dc == 0 || ac == 0)
     return false; // unknown category — don't flag
