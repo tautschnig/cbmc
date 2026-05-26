@@ -1248,11 +1248,14 @@ codet python_convertert::convert_return(const jsont &stmt)
     if(all_constant && !keys.empty())
       function_returned_dict_keys[current_function] = std::move(keys);
   };
+  if(!current_function.empty())
+    ++function_return_count[current_function];
   if(
     !current_function.empty() && ret_val.id() == ID_struct &&
     is_python_dict_type(ret_val.type()))
   {
     record_function_returned_keys(ret_val);
+    function_returned_literal[current_function] = ret_val;
   }
   else if(
     !current_function.empty() && ret_val.id() == ID_symbol &&
@@ -1260,7 +1263,33 @@ codet python_convertert::convert_return(const jsont &stmt)
   {
     auto it = dict_literals.find(to_symbol_expr(ret_val).get_identifier());
     if(it != dict_literals.end())
+    {
       record_function_returned_keys(it->second);
+      function_returned_literal[current_function] = it->second;
+    }
+  }
+  else if(
+    !current_function.empty() && ret_val.id() == ID_struct &&
+    (is_python_list_type(ret_val.type()) ||
+     is_python_tuple_type(ret_val.type())))
+  {
+    function_returned_literal[current_function] = ret_val;
+  }
+  else if(
+    !current_function.empty() && ret_val.id() == ID_symbol &&
+    is_python_list_type(ret_val.type()))
+  {
+    auto it = list_literals.find(to_symbol_expr(ret_val).get_identifier());
+    if(it != list_literals.end())
+      function_returned_literal[current_function] = it->second;
+  }
+  else if(
+    !current_function.empty() && ret_val.id() == ID_symbol &&
+    is_python_tuple_type(ret_val.type()))
+  {
+    auto it = tuple_literals.find(to_symbol_expr(ret_val).get_identifier());
+    if(it != tuple_literals.end())
+      function_returned_literal[current_function] = it->second;
   }
 
   if(ret_val.is_nil())
