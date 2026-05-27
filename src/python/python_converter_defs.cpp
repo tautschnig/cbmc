@@ -3080,6 +3080,237 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       }
     }
 
+    // Phase 7 (icontract): when this class has invariants and
+    // inherits methods that aren't overridden here, synthesise
+    // wrapper methods that delegate to the parent's body but
+    // assert this class's invariants at entry and exit. Without
+    // wrappers, `child.parent_method()` reaches the parent body
+    // via the MRO dispatch but the child's own invariants never
+    // fire — a soundness gap when the child's invariant
+    // constrains a field the parent's method mutates.
+    //
+    // For __init__ specifically we skip the entry assertion
+    // (the object's fields haven't been initialised yet) but
+    // still emit the exit assertion so the child sees the
+    // post-construction state.
+    //
+    // The synthesised wrapper has the same signature as the
+    // parent's method, but `self` becomes a pointer to the
+    // child's struct type. The body casts self to the parent
+    // type before the inherited call.
+    if(!icontract_invariant_lambdas.empty())
+    {
+      auto mro_it = class_mro.find(class_name);
+      if(mro_it != class_mro.end() && class_types.count(class_name) > 0)
+      {
+        const struct_typet &child_struct = class_types[class_name];
+        // class_declared_methods[class_name] also includes
+        // inherited names (populated by the missing-method
+        // detector). For wrapper synthesis we need names
+        // declared DIRECTLY on this class, so walk the body to
+        // compute the own set.
+        std::set<std::string> own_methods;
+        for(const auto &item : as_array(body))
+        {
+          if(
+            is_node_type(item, "FunctionDef") ||
+            is_node_type(item, "AsyncFunctionDef"))
+            own_methods.insert(json_string(json_member(item, "name")));
+        }
+        std::set<std::string> already_wrapped;
+        for(std::size_t mi = 1; mi < mro_it->second.size(); ++mi)
+        {
+          const std::string &ancestor = mro_it->second[mi];
+          auto adm_it = class_declared_methods.find(ancestor);
+          if(adm_it == class_declared_methods.end())
+            continue;
+          for(const std::string &mname : adm_it->second)
+          {
+            if(own_methods.count(mname))
+              continue;
+            if(already_wrapped.count(mname))
+              continue;
+            already_wrapped.insert(mname);
+            // staticmethod / property / classmethod methods need
+            // bespoke handling — skip wrapping for now.
+            if(class_property_methods[ancestor].count(mname))
+              continue;
+            irep_idt parent_method_id{"python::" + ancestor + "::" + mname};
+            const symbolt *parent_sym = symbol_table.lookup(parent_method_id);
+            if(parent_sym == nullptr || parent_sym->type.id() != ID_code)
+              continue;
+            const code_typet &parent_ct = to_code_type(parent_sym->type);
+            const code_typet::parameterst &parent_params =
+              parent_ct.parameters();
+            if(parent_params.empty())
+              continue; // no self -> not an instance method
+            const typet &parent_self_t = parent_params[0].type();
+            if(parent_self_t.id() != ID_pointer)
+              continue;
+            // Build wrapper signature with self as ptr-to-child.
+            code_typet::parameterst wrapper_params;
+            std::vector<symbol_exprt> wrapper_param_exprs;
+            std::string wrapper_qfn = class_name + "::" + mname;
+            // self comes first.
+            {
+              typet child_self_ptr =
+                pointer_typet{child_struct, config.ansi_c.pointer_width};
+              code_typet::parametert p{child_self_ptr};
+              std::string id_str = "python::" + wrapper_qfn + "::self";
+              p.set_identifier(id_str);
+              p.set_base_name("self");
+              wrapper_params.push_back(p);
+              irep_idt sid{id_str};
+              if(!symbol_table.has_symbol(sid))
+              {
+                symbolt s{sid, child_self_ptr, "python"};
+                s.base_name = "self";
+                s.location = loc;
+                s.is_lvalue = true;
+                s.is_state_var = true;
+                s.is_parameter = true;
+                symbol_table.add(s);
+              }
+              wrapper_param_exprs.push_back(
+                symbol_table.lookup_ref(sid).symbol_expr());
+            }
+            // Remaining params: copy from parent's signature with
+            // wrapper-scoped identifiers.
+            for(std::size_t pi = 1; pi < parent_params.size(); ++pi)
+            {
+              const auto &pp = parent_params[pi];
+              std::string pname = id2string(pp.get_base_name());
+              code_typet::parametert wp{pp.type()};
+              std::string id_str = "python::" + wrapper_qfn + "::" + pname;
+              wp.set_identifier(id_str);
+              wp.set_base_name(pname);
+              wrapper_params.push_back(wp);
+              irep_idt sid{id_str};
+              if(!symbol_table.has_symbol(sid))
+              {
+                symbolt s{sid, pp.type(), "python"};
+                s.base_name = pname;
+                s.location = loc;
+                s.is_lvalue = true;
+                s.is_state_var = true;
+                s.is_parameter = true;
+                symbol_table.add(s);
+              }
+              wrapper_param_exprs.push_back(
+                symbol_table.lookup_ref(sid).symbol_expr());
+            }
+            typet wrapper_return = parent_ct.return_type();
+            code_typet wrapper_type{wrapper_params, wrapper_return};
+            irep_idt wrapper_func_id{"python::" + wrapper_qfn};
+            if(!symbol_table.has_symbol(wrapper_func_id))
+            {
+              symbolt fsym{wrapper_func_id, wrapper_type, "python"};
+              fsym.base_name = mname;
+              fsym.location = loc;
+              fsym.is_lvalue = true;
+              symbol_table.add(fsym);
+            }
+            else
+            {
+              symbol_table.get_writeable_ref(wrapper_func_id).type =
+                wrapper_type;
+            }
+            // Translate child invariants in the wrapper's scope
+            // so Name(self) resolves to the wrapper's self
+            // parameter.
+            std::string saved_cf = current_function;
+            current_function = wrapper_qfn;
+            std::vector<exprt> wrapper_invariants;
+            for(const jsont *lam : icontract_invariant_lambdas)
+            {
+              const jsont &lam_body = json_member(*lam, "body");
+              exprt cond;
+              try
+              {
+                cond = convert_expression(lam_body);
+              }
+              catch(...)
+              {
+                cond = nil_exprt{};
+              }
+              if(cond.is_nil() || cond.type().id() == ID_empty)
+                continue;
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              wrapper_invariants.push_back(cond);
+            }
+            current_function = saved_cf;
+            // Build wrapper body.
+            code_blockt wrapper_body;
+            // Entry assertions (skip for __init__).
+            if(mname != "__init__")
+            {
+              for(const exprt &cond : wrapper_invariants)
+                wrapper_body.add(code_assertt{cond});
+            }
+            // Build call to parent's method.
+            // self is passed cast to the parent's pointer type
+            // (the underlying struct shape is compatible because
+            // child is a structural extension).
+            exprt::operandst call_args;
+            exprt self_arg = wrapper_param_exprs[0];
+            if(self_arg.type() != parent_self_t)
+              self_arg = typecast_exprt{self_arg, parent_self_t};
+            call_args.push_back(self_arg);
+            for(std::size_t pi = 1; pi < wrapper_param_exprs.size(); ++pi)
+            {
+              exprt arg = wrapper_param_exprs[pi];
+              const typet &want = parent_params[pi].type();
+              if(arg.type() != want)
+                arg = typecast_exprt{arg, want};
+              call_args.push_back(arg);
+            }
+            side_effect_expr_function_callt parent_call{
+              parent_sym->symbol_expr(),
+              std::move(call_args),
+              wrapper_return,
+              loc};
+            if(wrapper_return.id() == ID_empty)
+            {
+              wrapper_body.add(code_expressiont{std::move(parent_call)});
+              for(const exprt &cond : wrapper_invariants)
+                wrapper_body.add(code_assertt{cond});
+            }
+            else
+            {
+              // Capture the return value in a temp so we can
+              // assert invariants AFTER the body's effects but
+              // BEFORE returning. The temp is per-class-method
+              // so it's stable across re-conversion.
+              std::string tmp_name =
+                "__icontract_wrap_ret_" + class_name + "_" + mname;
+              std::string tmp_qname = "python::" + tmp_name;
+              irep_idt tmp_id{tmp_qname};
+              if(!symbol_table.has_symbol(tmp_id))
+              {
+                symbolt tmp_sym{tmp_id, wrapper_return, "python"};
+                tmp_sym.base_name = tmp_name;
+                tmp_sym.is_lvalue = true;
+                tmp_sym.is_state_var = true;
+                symbol_table.add(tmp_sym);
+              }
+              const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+              wrapper_body.add(code_frontend_assignt{
+                tmp_sym.symbol_expr(), std::move(parent_call)});
+              for(const exprt &cond : wrapper_invariants)
+                wrapper_body.add(code_assertt{cond});
+              wrapper_body.add(code_frontend_returnt{tmp_sym.symbol_expr()});
+            }
+            symbol_table.get_writeable_ref(wrapper_func_id).value =
+              wrapper_body;
+            // Record the synthesised wrapper so future
+            // reconversion / dispatch sees the method.
+            class_declared_methods[class_name].insert(mname);
+          }
+        }
+      }
+    }
+
     current_class = saved_class;
   }
 

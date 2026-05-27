@@ -1,19 +1,16 @@
 # Phase 7: Liskov inheritance composition for icontract.
 #
-# Tests the three composition rules at single-level inheritance:
+# Tests the composition rules at single-level inheritance:
 #  1. Class invariants merge: child invariants AND parent's
 #     are asserted on every method of the child.
-#  2. Method preconditions weaken: effective precondition is
+#  2. Inherited methods get wrapped with the child's invariants:
+#     calling a parent's method on a subclass instance asserts
+#     the child's invariants at entry and exit.
+#  3. Method preconditions weaken: effective precondition is
 #     `parent_pre OR child_pre` so a child can accept inputs
 #     the parent rejected.
-#  3. Method postconditions strengthen: child must satisfy
+#  4. Method postconditions strengthen: child must satisfy
 #     BOTH its own ensure and the parent's.
-#
-# This test exercises both methods declared directly on a
-# subclass AND methods inherited from the parent (the latter
-# was previously broken — the inherited body wasn't reached
-# from a subclass instance — and is now fixed by walking the
-# C3 MRO at the call site).
 
 import icontract
 
@@ -80,14 +77,16 @@ def main():
     # __init__ inherited from Account — MRO walk resolves it.
     a = CappedAccount(100)
 
-    # Inherited method invocation — Account.deposit reached
-    # via the MRO walk on a subclass instance.
+    # Inherited method invocation through the synthesised
+    # wrapper: CappedAccount.deposit doesn't exist directly,
+    # but a wrapper was synthesised that asserts both
+    # invariants (balance >= 0 from Account, balance <= 1M
+    # from CappedAccount) and delegates to Account.deposit.
     a.deposit(50)
     assert a.balance == 150
 
     # Method declared directly on the subclass.
     a.deposit_capped(2000000)
-    # Capped at 1M; both invariants hold.
     assert a.balance == 1000000
 
     # Postcondition strengthening.
@@ -98,7 +97,7 @@ def main():
 
     # Precondition weakening.
     le = Lenient()
-    le.proc(0)  # Allowed under weakened precondition.
+    le.proc(0)
     le.proc(5)
 
 
