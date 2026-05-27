@@ -230,20 +230,27 @@ def erfc(x: float) -> float: ...
 def lgamma(x: float) -> float: ...
 
 
-@c_intrinsic("tgamma")
+@c_intrinsic("tgamma", fold="tgamma")
 def tgamma(x: float) -> float: ...
+
+
+# CPython exposes the gamma function as `math.gamma`, not
+# `math.tgamma`. Add an alias so `from math import gamma`
+# resolves correctly.
+@c_intrinsic("gamma", fold="tgamma")
+def gamma(x: float) -> float: ...
 
 
 # ---------------------------------------------------------------
 # Degree / radian conversion. These have simple closed forms and
 # are folded by the inline path when the argument is constant.
 # ---------------------------------------------------------------
-def degrees(x: float) -> float:
-    return x * 180.0 / pi
+@c_intrinsic("degrees", fold="degrees")
+def degrees(x: float) -> float: ...
 
 
-def radians(x: float) -> float:
-    return x * pi / 180.0
+@c_intrinsic("radians", fold="radians")
+def radians(x: float) -> float: ...
 
 
 # ---------------------------------------------------------------

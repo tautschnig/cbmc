@@ -20,6 +20,8 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+#include <cmath>
+
 // --- Statement conversion ---
 
 codet python_convertert::convert_statement(const jsont &stmt)
@@ -64,6 +66,13 @@ codet python_convertert::convert_statement(const jsont &stmt)
     // Handle imports by registering known standard library functions.
     // Unknown imports are silently ignored (functions will get no-body
     // warnings when called).
+    // Block to collect explicit ASSIGNs for module constants
+    // imported via `from X import Y` (e.g. pi/e/tau/inf/nan from
+    // math). Without an explicit ASSIGN here the symbol's
+    // static-init value may be missed by __CPROVER_initialize
+    // when the symbol was added late (after module pass).
+    code_blockt import_block;
+    bool has_assigns = false;
     // Handle 'import MODULE' — register module name for MODULE.func() calls
     if(node_type == "Import")
     {
@@ -103,13 +112,42 @@ codet python_convertert::convert_statement(const jsont &stmt)
             // library/math.py is loaded via the ImportFrom
             // library-resolve path (see Pass 0.2 at the top of
             // this function). Here we only handle the module
-            // constants (pi, e) as static double symbols; the
-            // function entries are populated by the library's
-            // @c_intrinsic decorators.
-            // Constants: register as global variables
-            if(name == "pi" || name == "e")
+            // constants (pi, e, tau, inf, nan) as static double
+            // symbols; the function entries are populated by
+            // the library's @c_intrinsic decorators.
+            if(
+              name == "pi" || name == "e" || name == "tau" || name == "inf" ||
+              name == "nan")
             {
               irep_idt sym_id{"python::" + asname};
+              // Build the IEEE-754 value once; bind on whichever
+              // symbol-creation path applies (new add OR existing
+              // entry whose value is currently nondet because the
+              // library's module-level annotated assignment got
+              // converted before we knew it was a constant).
+              exprt const_val;
+              if(name == "pi")
+                const_val = double_to_floatbv(M_PI);
+              else if(name == "e")
+                const_val = double_to_floatbv(M_E);
+              else if(name == "tau")
+                const_val = double_to_floatbv(2.0 * M_PI);
+              else if(name == "inf")
+              {
+                ieee_floatt v{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                v.make_plus_infinity();
+                const_val = v.to_expr();
+              }
+              else // nan
+              {
+                ieee_floatt v{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                v.make_NaN();
+                const_val = v.to_expr();
+              }
               if(symbol_table.lookup(sym_id) == nullptr)
               {
                 symbolt sym{sym_id, double_type(), "python"};
@@ -117,11 +155,27 @@ codet python_convertert::convert_statement(const jsont &stmt)
                 sym.is_lvalue = true;
                 sym.is_state_var = true;
                 sym.is_static_lifetime = true;
-                // pi ≈ 3.14159, e ≈ 2.71828 — use nondet with constraints
-                sym.value =
-                  side_effect_expr_nondett{double_type(), source_locationt{}};
+                sym.value = const_val;
                 symbol_table.add(sym);
               }
+              else
+              {
+                // Symbol exists (likely from the library's
+                // module-level assignment which converts to a
+                // nondet at the time it's encountered) — patch
+                // its value to the IEEE-754 constant so user
+                // code that reads it sees the correct value.
+                symbolt &sym = *symbol_table.get_writeable(sym_id);
+                sym.value = const_val;
+              }
+              // Emit an explicit ASSIGN so the binding is
+              // visible to symex regardless of whether
+              // __CPROVER_initialize picks up the static-init
+              // value (which depends on when the symbol was
+              // first added to the symbol table).
+              import_block.add(code_frontend_assignt{
+                symbol_table.lookup_ref(sym_id).symbol_expr(), const_val});
+              has_assigns = true;
               continue;
             }
             // Other math functions: handled by the library's
@@ -194,7 +248,10 @@ codet python_convertert::convert_statement(const jsont &stmt)
         }
       }
     }
-    result = code_skipt{};
+    if(has_assigns)
+      result = std::move(import_block);
+    else
+      result = code_skipt{};
   }
   else if(node_type == "Raise")
     result = convert_raise(stmt);

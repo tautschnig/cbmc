@@ -986,7 +986,9 @@ std::optional<exprt> python_convertert::try_method_call(
                 res = std::erf(val);
               else if(func_name == "erfc")
                 res = std::erfc(val);
-              else if(func_name == "gamma" || func_name == "lgamma")
+              else if(func_name == "gamma" || func_name == "tgamma")
+                res = std::tgamma(val);
+              else if(func_name == "lgamma")
                 res = std::lgamma(val);
               else if(func_name == "cbrt")
                 res = std::cbrt(val);
