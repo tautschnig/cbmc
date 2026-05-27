@@ -738,6 +738,13 @@ private:
   /// declared return annotation — otherwise our inferred default
   /// (int) produces spurious mismatches.
   std::set<std::string> annotated_return_functions;
+  /// Per-variable type annotation, keyed by qualified symbol id.
+  /// Populated by convert_ann_assign with the original
+  /// annotation type (before any subsequent widening). Consulted
+  /// by convert_assign under --python-check-annotations to flag
+  /// reassignments that violate the original annotation (e.g.
+  /// `count: int = 10; count = "wrong"`).
+  std::map<irep_idt, typet> variable_annotations;
   /// Path-sensitive dict-key tracking: after an 'if K not in D:
   /// D[K] = default' idiom, K is guaranteed to be in D (either
   /// added by the body or already present). We record the

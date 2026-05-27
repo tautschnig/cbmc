@@ -125,6 +125,11 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     new_symbol.is_static_lifetime = current_function.empty();
     symbol_table.add(new_symbol);
   }
+  // Track the original annotation for later
+  // --python-check-annotations checks on plain Assigns to the
+  // same variable. Without this, the assign's widening overwrites
+  // the symbol's type and the mismatch goes undetected.
+  variable_annotations[symbol_id] = var_type;
 
   if(value.is_null())
     return code_skipt{};
@@ -333,6 +338,26 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   // --python-check-annotations), we keep the previous behaviour so
   // the mismatch property fires.
   const symbolt &sym = symbol_table.lookup_ref(symbol_id);
+  // Reassignment annotation check (for `x: int = 10; x =
+  // "wrong"`-shaped bugs): if x has a recorded annotation
+  // and rhs's type is incompatible with that annotation,
+  // emit a property BEFORE the type-widening logic below
+  // overwrites the symbol's tracked type.
+  if(python_check_annotations)
+  {
+    auto va = variable_annotations.find(symbol_id);
+    if(
+      va != variable_annotations.end() &&
+      annotation_types_incompatible(va->second, rhs.type()))
+    {
+      add_check(
+        false_exprt{},
+        "annotation-mismatch",
+        "assigned value's type does not match declared annotation of '" +
+          var_name + "'",
+        loc);
+    }
+  }
   bool rhs_struct_like =
     rhs.type().id() == ID_struct || rhs.type().id() == ID_struct_tag;
   if(
@@ -2007,6 +2032,30 @@ codet python_convertert::convert_assign(const jsont &stmt)
     auto ver_it = variable_versions.find(qualified_name);
     if(ver_it != variable_versions.end())
       existing = symbol_table.lookup(ver_it->second);
+
+    // PLR §3.1: --python-check-annotations reassignment check.
+    // When the variable was previously annotated (count: int =
+    // 10) and a subsequent plain assign rebinds it to an
+    // incompatible type (count = "wrong"), emit an
+    // annotation-mismatch property. Performed BEFORE the
+    // type-promotion / widening below so we see the original
+    // annotation rather than whatever the symbol has been
+    // widened to.
+    if(python_check_annotations)
+    {
+      auto va = variable_annotations.find(symbol_id);
+      if(
+        va != variable_annotations.end() &&
+        annotation_types_incompatible(va->second, rhs.type()))
+      {
+        add_check(
+          false_exprt{},
+          "annotation-mismatch",
+          "assigned value's type does not match declared annotation of '" +
+            var_name + "'",
+          loc);
+      }
+    }
 
     bool rhs_has_side_effect = rhs.id() == ID_side_effect;
 
