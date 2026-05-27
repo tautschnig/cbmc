@@ -172,6 +172,16 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
                 extra_flags.append("--python-check-annotations")
                 i += 1
                 continue
+            if t == "--is-instance-check":
+                # ESBMC's --is-instance-check is structurally
+                # the same as --strict-types: it asks the
+                # frontend to emit a property whenever a value's
+                # runtime shape doesn't match the declared
+                # type annotation. Maps to our
+                # --python-check-annotations.
+                extra_flags.append("--python-check-annotations")
+                i += 1
+                continue
             if t in SAFE_FLAGS_TAKES_VAL and i + 1 < len(toks):
                 extra_flags.extend([t, toks[i + 1]])
                 i += 2
