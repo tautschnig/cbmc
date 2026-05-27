@@ -457,3 +457,111 @@ T x = alloc_workqueue(e1, e2, e3, list);
     when != x = e1
 + __assert_no_leak_at_exit(x);
 return ...;
+
+// =====================================================
+// devm_* family — devres-managed, explicit free with
+// devm_kfree on error paths before device init.  We
+// model them as kfree-freed, because the cocci match
+// fires on functions where the explicit free path is
+// what we want to see.
+// =====================================================
+
+@ devm_kmalloc_assign @
+expression x;
+expression e1, e2, e3;
+@@
+x = devm_kmalloc(e1, e2, e3);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kmalloc_decl @
+type T;
+identifier x;
+expression e1, e2, e3;
+@@
+T x = devm_kmalloc(e1, e2, e3);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kzalloc_assign @
+expression x;
+expression e1, e2, e3;
+@@
+x = devm_kzalloc(e1, e2, e3);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kzalloc_decl @
+type T;
+identifier x;
+expression e1, e2, e3;
+@@
+T x = devm_kzalloc(e1, e2, e3);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kcalloc_assign @
+expression x;
+expression e1, e2, e3, e4;
+@@
+x = devm_kcalloc(e1, e2, e3, e4);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kcalloc_decl @
+type T;
+identifier x;
+expression e1, e2, e3, e4;
+@@
+T x = devm_kcalloc(e1, e2, e3, e4);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kmemdup_assign @
+expression x;
+expression e1, e2, e3, e4;
+@@
+x = devm_kmemdup(e1, e2, e3, e4);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;
+
+@ devm_kmemdup_decl @
+type T;
+identifier x;
+expression e1, e2, e3, e4;
+@@
+T x = devm_kmemdup(e1, e2, e3, e4);
++ leak_alloc_track(x);
+... when != devm_kfree(...)
+    when != kfree(x)
+    when != x = e1
++ __assert_no_leak_at_exit(x);
+return ...;

@@ -272,3 +272,62 @@ T x = kmemdup(e1, e2, e3);
 ... when != x = e1
 + __assert_safe_to_deref(x);
 x->fld = e4;
+
+// ---- devm_* family ----
+
+@ devm_kmalloc_assign @
+expression x, e1, e2, e3, e4;
+identifier fld;
+@@
+x = devm_kmalloc(e1, e2, e3);
+... when != x = e1
++ __assert_safe_to_deref(x);
+x->fld = e4;
+
+@ devm_kmalloc_decl @
+type T;
+identifier x, fld;
+expression e1, e2, e3, e4;
+@@
+T x = devm_kmalloc(e1, e2, e3);
+... when != x = e1
++ __assert_safe_to_deref(x);
+x->fld = e4;
+
+@ devm_kzalloc_assign @
+expression x, e1, e2, e3, e4;
+identifier fld;
+@@
+x = devm_kzalloc(e1, e2, e3);
+... when != x = e1
++ __assert_safe_to_deref(x);
+x->fld = e4;
+
+@ devm_kzalloc_decl @
+type T;
+identifier x, fld;
+expression e1, e2, e3, e4;
+@@
+T x = devm_kzalloc(e1, e2, e3);
+... when != x = e1
++ __assert_safe_to_deref(x);
+x->fld = e4;
+
+@ devm_kcalloc_assign @
+expression x, e1, e2, e3, e4, e5;
+identifier fld;
+@@
+x = devm_kcalloc(e1, e2, e3, e4);
+... when != x = e1
++ __assert_safe_to_deref(x);
+x->fld = e5;
+
+@ devm_kcalloc_decl @
+type T;
+identifier x, fld;
+expression e1, e2, e3, e4, e5;
+@@
+T x = devm_kcalloc(e1, e2, e3, e4);
+... when != x = e1
++ __assert_safe_to_deref(x);
+x->fld = e5;

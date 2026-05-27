@@ -101,15 +101,23 @@ _MODULE_API_PATTERNS = [
     ("resource_leak_on_error_path",
                            r"\b(?:kmalloc|kzalloc|kcalloc|"
                            r"kmalloc_array|kvmalloc|kvzalloc|"
-                           r"kvmalloc_array|alloc_skb|"
-                           r"kmem_cache_alloc)\b"),
+                           r"kvmalloc_array|kvcalloc|vmalloc|"
+                           r"vzalloc|alloc_skb|kmem_cache_alloc|"
+                           r"kmem_cache_zalloc|kmemdup|kstrdup|"
+                           r"kasprintf|alloc_workqueue|"
+                           r"devm_kmalloc|devm_kzalloc|"
+                           r"devm_kcalloc|devm_kmemdup)\b"),
     ("null_after_alloc",
                            r"\b(?:kmalloc|kzalloc|kcalloc|"
                            r"kmalloc_array|kvmalloc|kvzalloc|"
-                           r"kvmalloc_array|alloc_skb|"
-                           r"kmem_cache_alloc)\b"),
+                           r"kvmalloc_array|kvcalloc|vmalloc|"
+                           r"vzalloc|alloc_skb|kmem_cache_alloc|"
+                           r"kmem_cache_zalloc|kmemdup|"
+                           r"devm_kmalloc|devm_kzalloc|"
+                           r"devm_kcalloc)\b"),
     ("use_after_free_generic",
-                           r"\b(?:kfree|kvfree|kfree_skb)\b"),
+                           r"\b(?:kfree|kvfree|kfree_skb|"
+                           r"devm_kfree)\b"),
 ]
 
 
