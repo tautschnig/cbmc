@@ -15,13 +15,15 @@
 >   `builtin_all_genexp_short_circuit`. The
 >   `builtin_all_genexp_inner_iter_shadow` test (var shadowing)
 >   remains as a known limitation.
-> - **Complex tag** (item 3) — investigated; would close 2
->   regressions but requires extending `python_type_tagt` and
->   `python_truthiness` to recognise complex values stored in
->   tagged unions. Substantial refactor; deferred. The all/any
->   change that regressed those 2 tests was reverted.
+> - **Complex tag** (item 3) — landed in `90a76669ba`. Adds
+>   COMPLEX = 8 to `python_type_tagt`, dispatch in
+>   `python_truthiness` and `unwrap_value`, special-case in the
+>   wrap path. With COMPLEX in place, the all/any non-generator
+>   list path now uses `python_truthiness(elem)` instead of
+>   `safe_typecast(elem, bool_t)` — closes `builtin_all` and
+>   `any` (+2 PASS) without regressing the complex tests.
 >
-> Cumulative result: **PASS 2605 → 2636** (+31) from the day's
+> Cumulative result: **PASS 2605 → 2638** (+33) from the day's
 > work.
 
 Snapshot: 2026-05-27 wave 41 sweep. **2605 PASS, 399 DIFF, 71
