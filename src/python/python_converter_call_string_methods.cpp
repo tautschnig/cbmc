@@ -1344,7 +1344,60 @@ std::optional<exprt> python_convertert::try_string_method(
   }
   if(method_name == "partition" || method_name == "rpartition")
   {
-    return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+    // Constant-string-receiver constant-fold: produce the
+    // 3-tuple (head, sep_or_empty, tail) per Python's
+    // str.partition / str.rpartition semantics.
+    auto sv = extract_string_value(obj);
+    if(sv.has_value() && args.is_array() && !as_array(args).empty())
+    {
+      exprt sep_expr = convert_expression(*as_array(args).begin());
+      auto sep_v = extract_string_value(sep_expr);
+      if(sep_v.has_value() && !sep_v->empty())
+      {
+        const std::string &s = sv.value();
+        const std::string &sep = sep_v.value();
+        std::string head, mid, tail;
+        std::size_t pos =
+          (method_name == "partition") ? s.find(sep) : s.rfind(sep);
+        if(pos == std::string::npos)
+        {
+          // Not found: per Python, partition returns
+          // (whole, "", "") and rpartition returns
+          // ("", "", whole).
+          if(method_name == "partition")
+          {
+            head = s;
+            mid = "";
+            tail = "";
+          }
+          else
+          {
+            head = "";
+            mid = "";
+            tail = s;
+          }
+        }
+        else
+        {
+          head = s.substr(0, pos);
+          mid = sep;
+          tail = s.substr(pos + sep.size());
+        }
+        // Build a python_tuple (struct with three string
+        // components).
+        struct_typet ttype = python_tuple_type(
+          {python_string_type(), python_string_type(), python_string_type()});
+        return struct_exprt{
+          {python_string_literal(head),
+           python_string_literal(mid),
+           python_string_literal(tail)},
+          ttype};
+      }
+    }
+    // Non-constant fallback: nondet 3-tuple.
+    struct_typet ttype = python_tuple_type(
+      {python_string_type(), python_string_type(), python_string_type()});
+    return side_effect_expr_nondett{ttype, get_location(expr)};
   }
 
   return std::nullopt;
