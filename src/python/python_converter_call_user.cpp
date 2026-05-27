@@ -1098,6 +1098,10 @@ exprt python_convertert::convert_user_call(
             r = na - ax;
           }
         }
+        else if(op == "degrees")
+          r = x * 180.0 / M_PI;
+        else if(op == "radians")
+          r = x * M_PI / 180.0;
         else
           computed = false;
         if(computed && std::isfinite(r))
