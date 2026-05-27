@@ -839,6 +839,23 @@ private:
     const std::string &func_name,
     const jsont &args);
 
+  /// Dispatch the built-in free-function group (handled by
+  /// python_converter_call_builtins.cpp): map / zip / filter /
+  /// iter / next / len / int / float / bool / print / input /
+  /// hex / oct / bin / repr / ascii / hash / chr / ord /
+  /// complex / dict / set / list / reversed / enumerate /
+  /// sorted / sum / range / round / divmod / str / all / any /
+  /// hasattr / callable / type / isinstance / abs / min / max.
+  /// Returns nullopt if func_name isn't one of the recognised
+  /// builtins (so convert_call can try class instantiation /
+  /// user-call fallback next). May return std::optional{nil_exprt{}}
+  /// when the builtin matched but the receiver/args don't fit
+  /// any of the supported patterns.
+  std::optional<exprt> try_builtin_call(
+    const jsont &expr,
+    const std::string &func_name,
+    const jsont &args);
+
   exprt convert_if_exp(const jsont &expr);
   exprt convert_subscript(const jsont &expr);
   exprt convert_tuple(const jsont &expr);
