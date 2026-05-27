@@ -1375,7 +1375,36 @@ static bool traverse_paths(
           };
           if(auto rebuilt = rebuild_with_heap(rhs))
             rhs = *rebuilt;
-          results.emplace_back(state.pc, rhs);
+          // Substitute heap-tracked symbols in the path
+          // condition with address_of(heap[id]). This is
+          // necessary because the path condition may include
+          // ASSUMEs / dynamic-cast checks emitted during
+          // construction (e.g. ASSUME new_tmp != NULL after
+          // ALLOCATE). After inlining, the bare `new_tmp`
+          // symbol has no binding in the caller's context;
+          // CBMC's SAT solver picks an arbitrary value, often
+          // making the path condition spuriously false. By
+          // substituting through the heap we replace the symbol
+          // with `address_of(struct_literal)`, which simplifies
+          // null/cast checks to `true` as intended.
+          exprt fixed_pc = state.pc;
+          std::function<void(exprt &)> sub_heap = [&](exprt &e) {
+            if(e.id() == ID_symbol)
+            {
+              const irep_idt sid =
+                to_symbol_expr(e).get_identifier();
+              auto h = state.heap.find(sid);
+              if(h != state.heap.end())
+              {
+                e = address_of_exprt(h->second);
+                return;
+              }
+            }
+            for(auto &op : e.operands())
+              sub_heap(op);
+          };
+          sub_heap(fixed_pc);
+          results.emplace_back(fixed_pc, rhs);
           return true;
         }
         // Track the local's current symbolic value.
