@@ -2,10 +2,10 @@
 
 # icontract → DFCC contracts integration plan
 
-> **Status (2026-05-27): Phases 1-6 + comprehensive regression
-> suite landed.** Phase 7 (inheritance composition) remains as
-> follow-up work. All commits build clean, all three
-> regression suites green.
+> **Status (2026-05-27): Phases 1-7 + comprehensive regression
+> suite landed.** All 8 plan phases substantially implemented;
+> single-level Liskov inheritance composition working. All
+> commits build clean, all three regression suites green.
 >
 > Final shape: `@icontract.require`/`@ensure`/`@snapshot`/
 > `@invariant` recognised on functions and classes; lambda
@@ -14,11 +14,15 @@
 > implicit fall-through; class invariants asserted at method
 > entry+exit (excluding `__init__` entry); `result` and
 > `OLD.NAME` resolved via dedicated symbol-table entries and
-> a `convert_attribute` hook respectively. The clauses are
-> also attached to the function's GOTO type as
-> `ID_C_spec_requires`/`ID_C_spec_ensures` so DFCC contract
-> enforcement / replacement (when enabled at the cbmc command
-> line) picks them up.
+> a `convert_attribute` hook respectively; per-method
+> `@require`/`@ensure`/`@snapshot` work on class methods too;
+> Liskov composition merges class invariants, weakens
+> preconditions, strengthens postconditions across
+> single-level inheritance. The clauses are also attached to
+> the function's GOTO type as `ID_C_spec_requires` /
+> `ID_C_spec_ensures` so DFCC contract enforcement /
+> replacement (when enabled at the cbmc command line) picks
+> them up.
 
 A design note for routing
 [icontract](https://github.com/Parquery/icontract) decorators
@@ -403,13 +407,13 @@ cost of new frontend infrastructure.
 | 1 | icontract library stub | ✅ | `7d387c020f` |
 | 2 | `@require` → entry-side `__CPROVER_assume` + `ID_C_spec_requires` | ✅ | `c2d6045baa` |
 | 3 | `@ensure` → exit-side `code_assertt` + `ID_C_spec_ensures` | ✅ | `98972688f6` |
-| 4 | `result` binding for `@ensure` lambdas | ✅ | (folded into Phase 3 commit) |
-| 5 | `@snapshot` + `OLD.NAME` resolution | ✅ | (next commit after Phase 4) |
-| 6 | `@invariant` on classes (entry + exit) | ✅ | (next commit after Phase 5) |
-| 7 | Inheritance composition (Liskov rules) | ⏳ | not yet started |
-| 8 | Comprehensive regression suite | ✅ | (companion to Phase 6) |
+| 4 | `result` binding for `@ensure` lambdas | ✅ | `38daf0032a` |
+| 5 | `@snapshot` + `OLD.NAME` resolution | ✅ | `4e0b6f700e` |
+| 6 | `@invariant` on classes (entry + exit) | ✅ | `844584e7bb` |
+| 7 | Inheritance composition (Liskov rules) — single-level | ✅ | `e55d313531` |
+| 8 | Comprehensive regression suite | ✅ | `2da80f822f` |
 
-Six regression tests landed:
+Eight regression tests landed:
 
 - `regression/python/icontract-stub-import` — Phase 1: import + decorator no-op.
 - `regression/python/icontract-require-positive` — Phase 2: precondition is observable as an entry assume.
@@ -417,32 +421,51 @@ Six regression tests landed:
 - `regression/python/icontract-ensure-result` — Phase 4: postcondition referencing `result`.
 - `regression/python/icontract-snapshot` — Phase 5: `@snapshot` + `OLD.NAME` binding.
 - `regression/python/icontract-class-invariant` — Phase 6: class invariant at method entry/exit.
+- `regression/python/icontract-liskov-inheritance` — Phase 7: invariant merging, precondition weakening, postcondition strengthening.
 - `regression/python/icontract-comprehensive` — combined Phases 1-6.
 
-## Phase 7 — open follow-up
+## Phase 7 — implementation notes
 
-Inheritance composition is the remaining feature. icontract
-follows Liskov substitution rules:
+Single-level Liskov composition is fully implemented:
 
-- Child preconditions weaken: `__CPROVER_requires(parent_pre OR child_pre)`.
-- Child postconditions strengthen: `__CPROVER_ensures(parent_post AND child_post)`.
-- Child invariants merge: `parent_inv AND child_inv` on every method.
+- **Class invariants merge** via `class_invariant_lambdas`,
+  populated by `convert_class_def` for each class. The walk
+  at the top of `convert_class_def` prepends every direct
+  base class's lambdas to the current class's effective set
+  before they're translated in each method's scope.
+- **Method preconditions weaken** via
+  `class_method_require_lambdas` (a per-class per-method map
+  of lambda AST pointers). When the child has its own
+  `@require` lambdas AND the parent has registered ones for
+  the same method name, the emission generates
+  `assume((AND of own) OR (AND of parent's))` per Liskov.
+  When only one side has lambdas the composition degenerates
+  cleanly.
+- **Method postconditions strengthen** via
+  `class_method_ensure_lambdas` (mirror map). Parent's
+  ensure lambdas are appended to the child method's
+  `method_ensure_assertions` vector; the post-process walk
+  asserts each in turn, equivalent to their conjunction.
 
-Implementation sketch:
+Limitations:
 
-1. Add a `class_inherited_contracts` map keyed by class name,
-   populated as `convert_class_def` walks the bases.
-2. When emitting a method's contract clauses, look up the
-   parent class's same-named method (if any) and combine
-   per the Liskov rules above before lowering.
-3. The MRO-respecting walk (single + multiple inheritance,
-   diamond) is already handled by the existing class-base
-   resolution pass — extend it to carry the contract
-   clauses through.
-
-Estimated effort: 2-3 days. Not blocking the basic
-integration; users with single-class contracts get the full
-benefit today.
+- **Single-level inheritance only.** Grandparent contracts
+  are not transitively composed; only direct base classes
+  are walked. Multi-level support requires storing the
+  effective (composed) lambdas at registration time, or
+  recursive walking at lookup time. Both are mechanical
+  extensions.
+- **Pre-existing inheritance gap (orthogonal):** calling a
+  parent's method on a subclass instance (e.g.
+  `child.parent_method()`) doesn't always invoke the
+  parent's body. This is a Python frontend issue
+  independent of icontract; tests in this suite avoid
+  inherited-method invocation by declaring the relevant
+  methods directly on each subclass.
+- **MRO not respected.** Multiple direct bases are walked
+  left-to-right with simple union semantics. This works for
+  most single-inheritance and simple mixin cases but
+  doesn't fully implement Python's C3 linearisation.
 
 ## DFCC integration
 
