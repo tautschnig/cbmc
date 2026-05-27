@@ -83,6 +83,7 @@ class optionst;
   "(python-check-typeddict-fields)" \
   "(python-check-annotations)" \
   "(python-check-any-arg-attrs)" \
+  "(python-missing-return-check)" \
   "(claim):(show-claims)(floatbv)(all-claims)(all-properties)" // legacy, and will eventually disappear // NOLINT(whitespace/line_length)
 // clang-format on
 

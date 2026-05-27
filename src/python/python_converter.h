@@ -253,6 +253,11 @@ public:
     python_check_any_arg_attrs = v;
   }
 
+  void set_python_missing_return_check(bool v)
+  {
+    python_missing_return_check = v;
+  }
+
 private:
   /// Lazy-stubs mode: imported modules get symbol-table entries
   /// (types, classes, function signatures) but no function
@@ -298,6 +303,15 @@ private:
   /// pattern (e.g. `bedrock_data_automation_example`).
   /// Off-by-default (opt-in via --python-check-any-arg-attrs).
   bool python_check_any_arg_attrs = false;
+  /// When true, every function with a non-empty annotated
+  /// return type gets a missing-return property at its
+  /// implicit fall-through point. The property fires only if
+  /// a control-flow path reaches the implicit return without
+  /// having executed an explicit return statement — which is
+  /// a Python bug since the function returns None despite
+  /// declaring a non-None return type. Off-by-default
+  /// (opt-in via --python-missing-return-check).
+  bool python_missing_return_check = false;
   /// Map from `python::<func-id>::<param-name>` → set of
   /// attribute names referenced via `param.<name>` (or
   /// `param.<name>(...)`) in the function body. Populated by

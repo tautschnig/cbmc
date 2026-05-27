@@ -182,6 +182,15 @@ def run_one(test_dir: Path, cbmc: str, timeout_s: int, unwind: int):
                 extra_flags.append("--python-check-annotations")
                 i += 1
                 continue
+            if t == "--incremental-bmc":
+                # ESBMC's incremental-BMC mode catches
+                # functions that fall off the end without
+                # returning a value when an annotated return
+                # type was promised. Our equivalent is the
+                # --python-missing-return-check flag.
+                extra_flags.append("--python-missing-return-check")
+                i += 1
+                continue
             if t in SAFE_FLAGS_TAKES_VAL and i + 1 < len(toks):
                 extra_flags.extend([t, toks[i + 1]])
                 i += 2

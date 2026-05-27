@@ -189,6 +189,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-check-annotations", true);
   if(cmdline.isset("python-check-any-arg-attrs"))
     options.set_option("python-check-any-arg-attrs", true);
+  if(cmdline.isset("python-missing-return-check"))
+    options.set_option("python-missing-return-check", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
