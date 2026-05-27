@@ -891,6 +891,18 @@ private:
     const std::string &method_name,
     const jsont &args);
 
+  /// Set-method dispatch (handled by
+  /// python_converter_call_set_methods.cpp): add / remove /
+  /// discard / union / intersection / difference / clear /
+  /// __contains__ on the 64-bit bitmap representation.
+  /// Returns nullopt if method_name doesn't match.
+  std::optional<exprt> try_set_method(
+    const jsont &expr,
+    const exprt &obj,
+    const typet &obj_base_type,
+    const std::string &method_name,
+    const jsont &args);
+
   /// Final user-function-call fallback (handled by
   /// python_converter_call_user.cpp): nested-function lookup,
   /// lambdas, function_aliases, @c_intrinsic redirection,
