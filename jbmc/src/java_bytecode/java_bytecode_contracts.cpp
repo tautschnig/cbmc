@@ -1063,6 +1063,212 @@ static exprt resolve_stack_temps(
 
 } // namespace
 
+/// Inline call-return references in a forall/exists body expression
+/// so the universal's body is a pure expression, not opaque
+/// `<callee>#return_value` symbols.
+///
+/// Approach:
+///   1. Walk `expr` for any ID_symbol of the form `<X>#return_value`.
+///   2. For each, find the CALL instruction in `target_body` that
+///      assigns to that slot. Look up the callee's GOTO body in
+///      `goto_functions`, extract its single-return-value RHS,
+///      resolve stack temps within the callee's body, then
+///      substitute the callee's parameters with the actual call-
+///      site arguments.
+///   3. Replace the `#return_value` symbol with the substituted
+///      expression. If the substituted expression itself contains
+///      more `#return_value` symbols, recurse (bounded by
+///      `max_depth`).
+///
+/// Restricted to "pure functions": single-ASSIGN-to-return-value
+/// callees with no side effects. Multi-return callees (control
+/// flow with multiple returns) are left as-is — that's task 1.1c.
+/// Methods whose body we can't inspect (intrinsics, native methods,
+/// JDK code we don't ship goto-bodies for) are also left as-is —
+/// 1.1b will model `List.size()` / `Map.size()` separately.
+///
+/// `max_depth` bounds recursion to avoid infinite loops on
+/// recursive callees.
+static exprt inline_pure_calls(
+  const exprt &expr,
+  goto_programt &target_body,
+  const irep_idt &target_function_id,
+  const goto_functionst &goto_functions,
+  const namespacet &ns,
+  int max_depth);
+
+namespace
+{
+/// Find the CALL instruction in `body` that assigns into
+/// `<callee_id>#return_value` and returns:
+///   1. The callee's symbol id.
+///   2. The actual call-site arguments.
+///   3. The position of the CALL (for source location).
+///
+/// Walks backward from the end so the most recent CALL wins
+/// (matches Java's left-to-right evaluation order).
+struct find_call_resultt
+{
+  bool valid{false};
+  irep_idt callee_id;
+  exprt::operandst args;
+};
+
+find_call_resultt find_call_for_return_slot(
+  const goto_programt &body, const irep_idt &slot_id)
+{
+  find_call_resultt result;
+  const std::string slot_str = id2string(slot_id);
+  // Walk forward; return the last matching CALL we see.
+  // (Two CALLs to the same callee occupy the slot sequentially;
+  // the body's expression references them via separate temps,
+  // so each CALL is paired with the next ASSIGN that reads
+  // <slot> and writes a temp. For our purposes, simple forward
+  // walk + last-match works because the lambda body extracts
+  // the slot just-after each CALL.)
+  for(const auto &i : body.instructions)
+  {
+    if(!i.is_function_call())
+      continue;
+    const exprt &fn = i.call_function();
+    if(fn.id() != ID_symbol)
+      continue;
+    const irep_idt callee = to_symbol_expr(fn).get_identifier();
+    if(id2string(callee) + "#return_value" != slot_str)
+      continue;
+    result.valid = true;
+    result.callee_id = callee;
+    result.args = i.call_arguments();
+  }
+  return result;
+}
+
+} // namespace
+
+static exprt inline_pure_calls(
+  const exprt &expr,
+  goto_programt &target_body,
+  const irep_idt &target_function_id,
+  const goto_functionst &goto_functions,
+  const namespacet &ns,
+  int max_depth)
+{
+  if(max_depth <= 0)
+    return expr;
+
+  std::function<exprt(const exprt &)> visit = [&](const exprt &e) -> exprt {
+    if(e.id() == ID_symbol)
+    {
+      const irep_idt id = to_symbol_expr(e).get_identifier();
+      const std::string id_str = id2string(id);
+      // Only match "<X>#return_value" suffix.
+      const std::string suffix = "#return_value";
+      if(
+        id_str.size() <= suffix.size() ||
+        id_str.compare(
+          id_str.size() - suffix.size(), suffix.size(), suffix) != 0)
+        return e;
+
+      // Find the CALL that produced this slot.
+      auto found = find_call_for_return_slot(target_body, id);
+      if(!found.valid)
+        return e;
+
+      // Look up the callee's body.
+      auto it = goto_functions.function_map.find(found.callee_id);
+      if(it == goto_functions.function_map.end())
+        return e;
+      auto &callee_body = const_cast<goto_programt &>(it->second.body);
+
+      // Find the callee's single-return-value ASSIGN.
+      const std::string callee_ret_needle =
+        id2string(found.callee_id) + "#return_value";
+      const exprt *callee_rhs = nullptr;
+      goto_programt::const_targett callee_ret_it = callee_body.instructions.cend();
+      std::size_t return_assigns = 0;
+      for(auto ti = callee_body.instructions.cbegin();
+          ti != callee_body.instructions.cend(); ++ti)
+      {
+        if(!ti->is_assign())
+          continue;
+        const exprt &lhs = ti->assign_lhs();
+        if(lhs.id() != ID_symbol)
+          continue;
+        if(id2string(to_symbol_expr(lhs).get_identifier()) != callee_ret_needle)
+          continue;
+        callee_rhs = &ti->assign_rhs();
+        callee_ret_it = ti;
+        ++return_assigns;
+      }
+      // Only inline single-return single-expression callees
+      // ("pure" in the structural sense). Multi-return is 1.1c.
+      if(return_assigns != 1 || callee_rhs == nullptr)
+        return e;
+
+      // Resolve stack temps inside the callee.
+      exprt callee_body_expr = resolve_stack_temps(
+        *callee_rhs, callee_body, callee_ret_it, found.callee_id);
+
+      // Substitute callee parameters with the call-site arguments.
+      const auto *callee_sym = ns.get_symbol_table().lookup(found.callee_id);
+      if(callee_sym == nullptr)
+        return e;
+      const auto &callee_params = to_code_type(callee_sym->type).parameters();
+      // Both lists may be misaligned if `this` is implicit;
+      // align the trailing N args with the trailing N params.
+      const std::size_t n_args = found.args.size();
+      const std::size_t n_params = callee_params.size();
+      const std::size_t aligned = std::min(n_args, n_params);
+      const std::size_t arg_offset = n_args - aligned;
+      const std::size_t param_offset = n_params - aligned;
+
+      std::function<exprt(const exprt &)> param_sub =
+        [&](const exprt &x) -> exprt {
+        if(x.id() == ID_symbol)
+        {
+          const irep_idt &xid = to_symbol_expr(x).get_identifier();
+          for(std::size_t k = 0; k < aligned; ++k)
+          {
+            const auto &p = callee_params[param_offset + k];
+            if(xid == p.get_identifier())
+              return found.args[arg_offset + k];
+          }
+          return x;
+        }
+        exprt out = x;
+        for(auto &op : out.operands())
+          op = param_sub(op);
+        return out;
+      };
+      exprt substituted = param_sub(callee_body_expr);
+
+      // Re-resolve stack temps in the substituted expression: the
+      // call-site arguments may reference lambda-local temps
+      // (`<lambda>:#return_tmp_N`) that themselves alias other
+      // `<X>#return_value` slots from earlier CALLs in the
+      // lambda body. resolve_stack_temps chases those aliases
+      // back into the body so the recursive inliner can pick
+      // them up.
+      substituted = resolve_stack_temps(
+        substituted, target_body, target_body.instructions.cend(),
+        target_function_id);
+
+      // Recurse: the inlined+resolved expression may itself
+      // reference other #return_value symbols from earlier
+      // CALLs in target_body.
+      return inline_pure_calls(
+        substituted, target_body, target_function_id,
+        goto_functions, ns, max_depth - 1);
+    }
+    exprt out = e;
+    for(auto &op : out.operands())
+      op = visit(op);
+    return out;
+  };
+
+  return visit(expr);
+}
+
 std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 {
   std::set<irep_idt> annotated_functions;
@@ -1294,6 +1500,19 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         // extractor does for caller-side preconditions.
         exprt resolved_body = resolve_stack_temps(
           *body_rhs, target_body, ret_it, info.target_method_id);
+
+        // 1.1a: inline pure-function call returns inside the
+        // lambda body. After resolve_stack_temps, the body may
+        // reference `<callee>#return_value` symbols (the result
+        // slots of helper-method CALLs in the lambda's own
+        // GOTO body). Walk those references and inline the
+        // callees' single-return RHS expressions, substituting
+        // parameters with the call-site arguments. Recurse up
+        // to a bounded depth.
+        resolved_body = inline_pure_calls(
+          resolved_body, target_body, info.target_method_id,
+          goto_model.goto_functions,
+          ns, /*max_depth=*/8);
 
         // Step 3: identify the lambda method's parameters. The
         // target method is the user's lambda$ method whose
