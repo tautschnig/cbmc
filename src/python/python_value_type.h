@@ -49,6 +49,13 @@ enum class python_type_tagt
   /// offset 0) without risking confusion with user-class
   /// instances whose first field is __class_tag.
   DICT = 7,
+  /// Complex number stored via __class_ptr pointing at a
+  /// python_complex struct (real, imag : double). Separated
+  /// from CLASS so python_truthiness and unwrap_value can
+  /// dereference as a python_complex struct (which has
+  /// .real / .imag at known offsets) and apply PLR §6.10.1
+  /// truth-value semantics (0+0j is falsy).
+  COMPLEX = 8,
 };
 
 /// Tag name for the python_value type in the symbol table.
@@ -163,6 +170,16 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
     // Dicts use the class_ptr slot to store the dict-struct
     // address. len() and unwrap_value read back via DICT tag
     // to distinguish from user class instances.
+    class_ptr =
+      value.type().id() == ID_pointer
+        ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+        : typecast_exprt{
+            address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
+    break;
+  case python_type_tagt::COMPLEX:
+    // Complex stored via class_ptr -> python_complex struct.
+    // Truthiness and unwrap_value dispatch on COMPLEX to
+    // dereference and read real / imag fields.
     class_ptr =
       value.type().id() == ID_pointer
         ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}

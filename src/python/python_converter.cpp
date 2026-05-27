@@ -1338,10 +1338,31 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
       notequal_exprt{
         member_exprt{python_value_list(e), "length", signedbv_typet{64}},
         from_integer(0, signedbv_typet{64})}};
+    // COMPLEX-tagged: dereference __class_ptr as a python_complex
+    // struct; truthy iff real != 0 OR imag != 0 (PLR §6.10.1).
+    struct_typet::componentst cplx_comps;
+    cplx_comps.push_back(struct_typet::componentt{"real", double_type()});
+    cplx_comps.push_back(struct_typet::componentt{"imag", double_type()});
+    struct_typet cplx_struct_type{cplx_comps};
+    cplx_struct_type.set_tag("python_complex");
+    pointer_typet cplx_ptr_type{cplx_struct_type, 64};
+    dereference_exprt cplx_deref{
+      typecast_exprt{python_value_class_ptr(e), cplx_ptr_type},
+      cplx_struct_type};
+    exprt complex_true = and_exprt{
+      python_value_is(e, python_type_tagt::COMPLEX),
+      or_exprt{
+        notequal_exprt{
+          member_exprt{cplx_deref, "real", double_type()},
+          safe_zero(double_type())},
+        notequal_exprt{
+          member_exprt{cplx_deref, "imag", double_type()},
+          safe_zero(double_type())}}};
     // NONE tag → false (not in any of the above)
     return or_exprt{
       or_exprt{bool_true, int_true},
-      or_exprt{float_true, or_exprt{str_true, list_true}}};
+      or_exprt{
+        float_true, or_exprt{or_exprt{str_true, list_true}, complex_true}}};
   }
   else if(is_python_string_type(target_type))
     return python_value_str(e);
@@ -1376,6 +1397,16 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
       return dereference_exprt{
         typecast_exprt{python_value_class_ptr(e), cls_ptr_type},
         target_type};
+    }
+    // python_complex unwrap: dereference __class_ptr as a
+    // python_complex struct. Used when an annotated assignment
+    // 'z: complex = ...' or `complex(...)` argument propagation
+    // pulls a tagged-union back to its underlying struct.
+    if(ttag == "python_complex")
+    {
+      pointer_typet cplx_ptr_type{target_type, 64};
+      return dereference_exprt{
+        typecast_exprt{python_value_class_ptr(e), cplx_ptr_type}, target_type};
     }
     return side_effect_expr_nondett{target_type, source_locationt{}};
   }
@@ -1508,6 +1539,27 @@ exprt python_convertert::python_truthiness(const exprt &e)
     // is True per PLR). Conservative; per-class dispatch is done
     // by callers when they have struct context.
     auto class_truthy = python_value_is(e, python_type_tagt::CLASS);
+    // COMPLEX-tagged python_value: dereference __class_ptr as a
+    // python_complex struct and apply PLR §6.10.1: 0+0j is
+    // falsy, anything else is truthy.
+    struct_typet::componentst complex_comps;
+    complex_comps.push_back(struct_typet::componentt{"real", double_type()});
+    complex_comps.push_back(struct_typet::componentt{"imag", double_type()});
+    struct_typet complex_struct_type{complex_comps};
+    complex_struct_type.set_tag("python_complex");
+    pointer_typet complex_ptr_type{complex_struct_type, 64};
+    dereference_exprt complex_deref{
+      typecast_exprt{python_value_class_ptr(e), complex_ptr_type},
+      complex_struct_type};
+    auto complex_truthy = and_exprt{
+      python_value_is(e, python_type_tagt::COMPLEX),
+      or_exprt{
+        notequal_exprt{
+          member_exprt{complex_deref, "real", double_type()},
+          safe_zero(double_type())},
+        notequal_exprt{
+          member_exprt{complex_deref, "imag", double_type()},
+          safe_zero(double_type())}}};
     // DICT-tagged python_value: __class_ptr points at a dict; deref
     // and read length. Use canonical dict[str, python_value] type.
     typet dict_type =
@@ -1523,7 +1575,7 @@ exprt python_convertert::python_truthiness(const exprt &e)
     return or_exprt{
       or_exprt{or_exprt{bool_truthy, int_truthy}, float_truthy},
       or_exprt{
-        or_exprt{str_truthy, list_truthy},
+        or_exprt{or_exprt{str_truthy, list_truthy}, complex_truthy},
         or_exprt{dict_truthy, class_truthy}}};
   }
 
@@ -1723,6 +1775,14 @@ exprt python_convertert::wrap_value(const exprt &e)
     {
       return make_python_value(
         python_type_tagt::DICT, address_of_exprt{tmp_sym.symbol_expr()});
+    }
+    // python_complex struct: use COMPLEX tag (not CLASS).
+    // Lets python_truthiness / unwrap_value dereference and
+    // apply PLR §6.10.1 (0+0j is falsy).
+    if(stag == "python_complex")
+    {
+      return make_python_value(
+        python_type_tagt::COMPLEX, address_of_exprt{tmp_sym.symbol_expr()});
     }
     if(stag.compare(0, prefix.size(), prefix) == 0)
     {
