@@ -11,8 +11,8 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2636** | +35 |
-| Soundness gaps (raw DIFFs) | n/a | ~50 | ~30 | −20 |
+| ESBMC PASS | 2489 | 2601 | **2638** | +37 |
+| Soundness gaps (raw DIFFs) | n/a | ~50 | ~28 | −22 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
 | TIMEOUT | 26 | 10 | 10 | 0 |
@@ -21,7 +21,8 @@ lands.
 
 **Wave 41 work (2026-05-27):**
 
-Inheritance fix + DIFF cluster pass closed **+35 tests**:
+Inheritance fix + DIFF cluster pass + COMPLEX tag closed
+**+37 tests**:
 
 - Inheritance MRO walk for method dispatch and `__init__` —
   +4 tests where subclass instances correctly route to
@@ -44,19 +45,18 @@ Inheritance fix + DIFF cluster pass closed **+35 tests**:
   union-check DIFF (`e11911c837`).
 - 2-level nested generator-expression unrolling for
   `all`/`any`; closes 2 nested-genexp DIFFs (`089a695a29`).
+- COMPLEX tag in `python_type_tagt` (=8) with full
+  truthiness / unwrap dispatch; enables universal
+  `python_truthiness` in the all/any list path. Closes
+  `builtin_all` and `any` (+2) without regressing
+  `builtin_all_complex` / `builtin_all_complex_fail`
+  (`90a76669ba`).
 
 **Hypothesmith --unrestricted at 0 fails (200 semantic + 24
 syntax programs verified).**
 
 **Documented limitations (deferred):**
 
-- `python_type_tagt::COMPLEX` not implemented; non-zero
-  complex values stored in tagged unions (e.g. mixed list
-  `[0j, 1]`) reach `python_truthiness` via the CLASS tag and
-  are unconditionally truthy. Closing this requires
-  extending the enum + adding `__complex_imag` field +
-  dispatch case in `python_truthiness`. Documented in
-  `doc/python-frontend-diff-cluster-2026-05-27.md`.
 - `builtin_all_genexp_inner_iter_shadow` (var shadow `for x
   in xs for x in range(x)`) — needs proper Python generator
   scoping; current impl punts to single-generator path.
