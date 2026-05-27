@@ -1,5 +1,12 @@
 # Refactoring plan: `python_converter_call.cpp`
 
+# Refactoring plan: `python_converter_call.cpp`
+
+> **Status (2026-05-27): COMPLETE.** All eight extraction phases
+> landed in commits `77aaee95d6` (nondet) → `1a430b5662` (set
+> methods). Final layout — see "Actual final structure" at the
+> bottom of this document.
+
 `python_converter_call.cpp` is currently **9,557 lines**, the
 single largest file in the Python frontend. It contains the
 implementation of `python_convertert::convert_call`, a
@@ -205,3 +212,47 @@ Each move must preserve:
   added.
 - **Extracting helpers from `python_converter.cpp`.** That file's size is
   driven by helper utilities, not a single mega-method.
+
+
+## Actual final structure (2026-05-27)
+
+| File | Lines | Responsibility |
+|---|---:|---|
+| `python_converter_call.cpp` | 303 | Top-level `convert_call` dispatcher. AST regex-no-match prologue + the `try_method_call` / `try_nondet_call` / `try_builtin_call` chain + class constructor + `convert_user_call` tail. |
+| `python_converter_call_method.cpp` | 1,949 | Method dispatch shell: receiver type extraction, super(), virtual dispatch via class-tag, math/random/re module receivers, generators, iterators, regex-stub fallback. Delegates to per-type method files for string / list / dict / set methods. |
+| `python_converter_call_string_methods.cpp` | 1,331 | str methods (split, replace, format, isXxx, upper/lower, find/rfind, startswith/endswith, encode/decode, join, strip, count, partition, ljust/rjust/center, zfill). |
+| `python_converter_call_dict_methods.cpp` | 693 | dict methods (get, setdefault, pop, popitem, update, clear, keys, values, items, fromkeys, copy, __contains__). |
+| `python_converter_call_list_methods.cpp` | 525 | list methods (append, sort, reverse, pop, copy, extend, remove, index, count, __iter__, __contains__, clear, bytes-as-list[uint8] decode/encode). |
+| `python_converter_call_set_methods.cpp` | 144 | set methods on the bitmap representation (add, remove, discard, union, intersection, difference, clear, __contains__). |
+| `python_converter_call_builtins.cpp` | 3,246 | Free-function builtins (map, zip, filter, iter, next, len, range, sorted, sum, round, divmod, int, float, bool, complex, str, print, input, hex, oct, bin, repr, ascii, hash, chr, ord, dict, set, list, reversed, enumerate, all, any, hasattr, callable, type, isinstance, abs, min, max). |
+| `python_converter_call_nondet.cpp` | 304 | Verification primitives (nondet_*, __VERIFIER_nondet_*, randint, the assume family, the `__cbmc_re_*` regex frontend hooks). |
+| `python_converter_call_user.cpp` | 1,377 | User-function-call fallback: nested-function lookup, lambdas, function_aliases, @c_intrinsic redirection, callable-instance __call__ dispatch, keyword/vararg/default binding, the final `side_effect_expr_function_callt` emission. |
+| **Total** | **9,872** | (vs the 9,557 monolith — small overhead from per-file boilerplate.) |
+
+## Deviations from the original plan
+
+- **Phases 3.7 (`call_args`) and 3.8 (`user_call`) merged.** The plan
+  envisaged separate files for arg processing and user-call resolution,
+  but the keyword binding / type-fixup / call construction are
+  intermingled with symbol resolution in a single linear flow.
+  Splitting them would have needed a parameter-pack struct shared
+  between two methods. The cleaner result keeps them together as
+  `convert_user_call`.
+- **Set methods got their own file (`_set_methods.cpp`).** The plan
+  grouped sets under list, but the bitmap-based logic is sufficiently
+  distinct that a separate file is clearer.
+- **Class constructor stayed in the dispatcher.** ~85 lines of
+  constructor-call code remain inline in `python_converter_call.cpp`
+  rather than being moved to `_user.cpp`. This keeps the top-level
+  `convert_call` self-explanatory: the dispatch comments tell you
+  exactly which file each remaining sub-shape lives in.
+
+## Verification
+
+After every move:
+
+- `cmake --build build --target cbmc -j$(nproc)` clean.
+- `regression/python` — all green (18 skipped).
+- `regression/python-strata-tests` — all green (45 skipped).
+- `regression/python-strata-tests-pending` — all green (24 skipped).
+- `git-clang-format --binary clang-format-15 HEAD^` clean.
