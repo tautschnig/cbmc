@@ -2434,7 +2434,12 @@ std::optional<exprt> python_convertert::try_builtin_call(
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
           exprt elem = index_exprt{data, idx};
-          exprt truthy = safe_typecast(elem, bool_typet{});
+          // PLR §4.4: use python_truthiness so None / 0 / 0.0 /
+          // empty containers / 0+0j are all correctly recognised
+          // as falsy. safe_typecast(..., bool) routes through
+          // unwrap_value which doesn't recognise the None
+          // sentinel for INT-tagged python_value entries.
+          exprt truthy = python_truthiness(elem);
 
           if(func_name == "all")
             result = and_exprt{result, or_exprt{not_exprt{in_range}, truthy}};
