@@ -1583,6 +1583,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   // the lambda body pointers here; the actual translation
   // happens inside each method's conversion scope further down,
   // where `self` resolves to the method's first parameter.
+  //
+  // Phase 7 (Liskov inheritance composition): walk the bases
+  // and prepend the parent classes' invariants. Per Liskov
+  // substitution, child invariants merge with parents' via
+  // AND — the child must satisfy every invariant the parent
+  // declared. We achieve this by including the parent's
+  // lambdas in the child's effective set; each method's body
+  // then asserts all of them. The walk uses
+  // class_invariant_lambdas which is populated as each class
+  // is processed (parent before child by Python's source-order
+  // requirement).
   std::vector<const jsont *> icontract_invariant_lambdas;
   {
     const jsont &cls_decorators = json_member(stmt, "decorator_list");
@@ -1618,6 +1629,43 @@ codet python_convertert::convert_class_def(const jsont &stmt)
       }
     }
   }
+  // Phase 7: prepend parent classes' invariants. We walk the
+  // explicit bases in source order; each base's effective
+  // invariants are already composed (recursive merge happened
+  // when the base was processed) so we don't need to re-walk
+  // grandparents.
+  {
+    const jsont &cls_bases = json_member(stmt, "bases");
+    if(cls_bases.is_array())
+    {
+      std::vector<const jsont *> inherited;
+      for(const auto &base : as_array(cls_bases))
+      {
+        if(!is_node_type(base, "Name"))
+          continue;
+        std::string base_name = json_string(json_member(base, "id"));
+        auto it = class_invariant_lambdas.find(base_name);
+        if(it == class_invariant_lambdas.end())
+          continue;
+        for(const jsont *lam : it->second)
+          inherited.push_back(lam);
+      }
+      // Inherited invariants come first so they appear in a
+      // predictable order in the generated assertions.
+      if(!inherited.empty())
+      {
+        inherited.insert(
+          inherited.end(),
+          icontract_invariant_lambdas.begin(),
+          icontract_invariant_lambdas.end());
+        icontract_invariant_lambdas = std::move(inherited);
+      }
+    }
+  }
+  // Register this class's effective invariant lambdas (own +
+  // inherited) so future subclasses can inherit them.
+  if(!icontract_invariant_lambdas.empty())
+    class_invariant_lambdas[class_name] = icontract_invariant_lambdas;
 
   // Analyze __init__ to determine instance attributes
   struct_typet::componentst components;
@@ -2134,6 +2182,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         // PLR §8.7: Check for @classmethod/@staticmethod decorator
         bool is_classmethod = false;
         bool is_staticmethod = false;
+        // Phase 7 of the icontract integration plan: collect
+        // per-method @require / @ensure / @snapshot decorators
+        // so class methods get the same treatment as top-level
+        // functions. Phase 6 already handles class @invariant
+        // separately; per-method contracts compose with the
+        // class invariants below.
+        std::vector<const jsont *> method_require_lambdas;
+        std::vector<const jsont *> method_ensure_lambdas;
+        std::vector<std::pair<std::string, const jsont *>> method_snapshots;
         const jsont &decorators = json_member(item, "decorator_list");
         if(decorators.is_array())
         {
@@ -2153,8 +2210,86 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 class_property_methods[class_name].insert(m);
               }
             }
+            // icontract decorators (Call form):
+            //   @icontract.X(lambda ...) or @X(lambda ...)
+            if(is_node_type(dec, "Call"))
+            {
+              const jsont &dec_func = json_member(dec, "func");
+              bool is_require = false;
+              bool is_ensure = false;
+              bool is_snapshot = false;
+              if(is_node_type(dec_func, "Attribute"))
+              {
+                const jsont &v = json_member(dec_func, "value");
+                if(
+                  is_node_type(v, "Name") &&
+                  json_string(json_member(v, "id")) == "icontract")
+                {
+                  std::string attr = json_string(json_member(dec_func, "attr"));
+                  if(attr == "require")
+                    is_require = true;
+                  else if(attr == "ensure")
+                    is_ensure = true;
+                  else if(attr == "snapshot")
+                    is_snapshot = true;
+                }
+              }
+              else if(is_node_type(dec_func, "Name"))
+              {
+                std::string nm = json_string(json_member(dec_func, "id"));
+                if(nm == "require")
+                  is_require = true;
+                else if(nm == "ensure")
+                  is_ensure = true;
+                else if(nm == "snapshot")
+                  is_snapshot = true;
+              }
+              if(!is_require && !is_ensure && !is_snapshot)
+                continue;
+              const jsont &dec_args = json_member(dec, "args");
+              if(!dec_args.is_array() || as_array(dec_args).empty())
+                continue;
+              const jsont &first = *as_array(dec_args).begin();
+              if(!is_node_type(first, "Lambda"))
+                continue;
+              if(is_require)
+                method_require_lambdas.push_back(&first);
+              else if(is_ensure)
+                method_ensure_lambdas.push_back(&first);
+              else
+              {
+                std::string snap_name;
+                const jsont &dec_kws = json_member(dec, "keywords");
+                if(dec_kws.is_array())
+                {
+                  for(const auto &kw : as_array(dec_kws))
+                  {
+                    if(json_string(json_member(kw, "arg")) != "name")
+                      continue;
+                    const jsont &val = json_member(kw, "value");
+                    if(is_node_type(val, "Constant"))
+                    {
+                      const jsont &v = json_member(val, "value");
+                      if(v.is_string())
+                        snap_name = v.value;
+                    }
+                  }
+                }
+                if(!snap_name.empty())
+                  method_snapshots.emplace_back(std::move(snap_name), &first);
+              }
+            }
           }
         }
+        // Phase 7 (Liskov inheritance composition): record this
+        // method's own contracts so subclasses overriding the
+        // method can compose with them.
+        if(!method_require_lambdas.empty())
+          class_method_require_lambdas[class_name][method_name] =
+            method_require_lambdas;
+        if(!method_ensure_lambdas.empty())
+          class_method_ensure_lambdas[class_name][method_name] =
+            method_ensure_lambdas;
 
         // Build method with class-qualified name
         const jsont &args_node = json_member(item, "args");
@@ -2354,6 +2489,273 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 method_body.add(code_assertt{cond});
             }
           }
+
+          // Phase 7 of the icontract integration plan: translate
+          // per-method @require / @snapshot / @ensure lambdas
+          // (collected in the decorator inspection above) within
+          // the method's scope so Name lookups resolve to method
+          // parameters and self. require lambdas are emitted as
+          // entry assumes; snapshots are emitted as entry-state
+          // captures stored in synthesised __icontract_old_<name>
+          // symbols and exposed via active_old_snapshots; ensure
+          // lambdas are translated into a per-method
+          // method_ensure_assertions vector that the
+          // post-process walk further down injects before each
+          // return + at the implicit fall-through.
+          //
+          // Phase 7 (Liskov inheritance composition): collect
+          // inherited contracts from direct base classes here
+          // FIRST so the result-symbol decision below knows
+          // whether ANY ensures (own or inherited) will be
+          // emitted. Walks direct bases left-to-right and
+          // looks up class_method_*_lambdas for the same
+          // method name.
+          std::vector<const jsont *> inherited_requires;
+          std::vector<const jsont *> inherited_ensures;
+          {
+            const jsont &cls_bases_node = json_member(stmt, "bases");
+            if(cls_bases_node.is_array())
+            {
+              for(const auto &base : as_array(cls_bases_node))
+              {
+                if(!is_node_type(base, "Name"))
+                  continue;
+                std::string base_name = json_string(json_member(base, "id"));
+                auto rit = class_method_require_lambdas.find(base_name);
+                if(rit != class_method_require_lambdas.end())
+                {
+                  auto mit = rit->second.find(method_name);
+                  if(mit != rit->second.end())
+                    for(const jsont *lam : mit->second)
+                      inherited_requires.push_back(lam);
+                }
+                auto eit = class_method_ensure_lambdas.find(base_name);
+                if(eit != class_method_ensure_lambdas.end())
+                {
+                  auto mit = eit->second.find(method_name);
+                  if(mit != eit->second.end())
+                    for(const jsont *lam : mit->second)
+                      inherited_ensures.push_back(lam);
+                }
+              }
+            }
+          }
+          irep_idt method_result_symbol_id;
+          if(!method_ensure_lambdas.empty() || !inherited_ensures.empty())
+          {
+            typet rsym_type =
+              return_type.id() == ID_empty ? python_int_type() : return_type;
+            std::string rsym_name =
+              "python::" + class_name + "::" + method_name + "::result";
+            method_result_symbol_id = irep_idt{rsym_name};
+            if(!symbol_table.has_symbol(method_result_symbol_id))
+            {
+              symbolt rsym{method_result_symbol_id, rsym_type, "python"};
+              rsym.base_name = "result";
+              rsym.is_lvalue = true;
+              rsym.is_state_var = true;
+              symbol_table.add(rsym);
+            }
+          }
+          // Phase 7 (Liskov inheritance composition): if this
+          // method overrides a base-class method, compose the
+          // preconditions weakening (parent_pre OR child_pre)
+          // and the postconditions strengthening (parent_post
+          // AND child_post). Walk direct bases left-to-right
+          // and look up class_method_*_lambdas for the same
+          // method name.
+          //
+          // Translates each lambda body in the method's scope
+          // (so `self` resolves to the current method's self
+          // pointer; the lambda body's references to fields
+          // resolve via the inherited struct layout). For
+          // multiple parent bases we OR/AND across all of them
+          // — common in mixin scenarios.
+          //
+          // This is single-level inheritance only. For
+          // grandparent contracts, the parent's recorded set
+          // already reflects ITS own contracts only (not its
+          // own ancestors'); a follow-up commit can extend this
+          // to walk transitively.
+          // (inherited_requires / inherited_ensures already
+          // populated above, before result-symbol creation.)
+          // Helper: translate a list of lambdas into a list of
+          // bool exprts in the current scope.
+          auto translate_lambdas =
+            [&](const std::vector<const jsont *> &lams) -> std::vector<exprt>
+          {
+            std::vector<exprt> out;
+            for(const jsont *lam : lams)
+            {
+              const jsont &lb = json_member(*lam, "body");
+              exprt c;
+              try
+              {
+                c = convert_expression(lb);
+              }
+              catch(...)
+              {
+                c = nil_exprt{};
+              }
+              if(c.is_nil() || c.type().id() == ID_empty)
+                continue;
+              if(c.type().id() != ID_bool)
+                c = typecast_exprt{c, bool_typet{}};
+              out.push_back(c);
+            }
+            return out;
+          };
+          std::vector<exprt> own_require_exprs =
+            translate_lambdas(method_require_lambdas);
+          std::vector<exprt> parent_require_exprs =
+            translate_lambdas(inherited_requires);
+          // Compose effective precondition (Liskov weakening):
+          //   if both own and parent: assume(AND(own) OR AND(parent))
+          //   if only own: assume each
+          //   if only parent: assume each
+          if(!own_require_exprs.empty() && !parent_require_exprs.empty())
+          {
+            auto build_and = [&](const std::vector<exprt> &v) -> exprt
+            {
+              if(v.empty())
+                return true_exprt{};
+              if(v.size() == 1)
+                return v.front();
+              and_exprt::operandst ops;
+              for(const exprt &e : v)
+                ops.push_back(e);
+              return and_exprt{ops};
+            };
+            exprt own_pre = build_and(own_require_exprs);
+            exprt par_pre = build_and(parent_require_exprs);
+            method_body.add(code_assumet{or_exprt{own_pre, par_pre}});
+            if(symbol_table.has_symbol(func_id))
+            {
+              typet &t = symbol_table.get_writeable_ref(func_id).type;
+              static_cast<exprt &>(t.add(ID_C_spec_requires))
+                .operands()
+                .push_back(or_exprt{own_pre, par_pre});
+            }
+          }
+          else
+          {
+            for(const exprt &cond : own_require_exprs)
+            {
+              method_body.add(code_assumet{cond});
+              if(symbol_table.has_symbol(func_id))
+              {
+                typet &t = symbol_table.get_writeable_ref(func_id).type;
+                static_cast<exprt &>(t.add(ID_C_spec_requires))
+                  .operands()
+                  .push_back(cond);
+              }
+            }
+            for(const exprt &cond : parent_require_exprs)
+            {
+              method_body.add(code_assumet{cond});
+              if(symbol_table.has_symbol(func_id))
+              {
+                typet &t = symbol_table.get_writeable_ref(func_id).type;
+                static_cast<exprt &>(t.add(ID_C_spec_requires))
+                  .operands()
+                  .push_back(cond);
+              }
+            }
+          }
+          // Translate snapshots and emit capture assignments.
+          std::map<std::string, exprt> saved_method_old_snapshots;
+          saved_method_old_snapshots.swap(active_old_snapshots);
+          for(const auto &snap : method_snapshots)
+          {
+            const std::string &name = snap.first;
+            const jsont &lam = *snap.second;
+            const jsont &lam_body = json_member(lam, "body");
+            exprt cap;
+            try
+            {
+              cap = convert_expression(lam_body);
+            }
+            catch(...)
+            {
+              cap = nil_exprt{};
+            }
+            if(cap.is_nil() || cap.type().id() == ID_empty)
+              continue;
+            std::string old_id_str = "python::" + class_name +
+                                     "::" + method_name + "::__icontract_old_" +
+                                     name;
+            irep_idt old_id{old_id_str};
+            if(!symbol_table.has_symbol(old_id))
+            {
+              symbolt old_sym{old_id, cap.type(), "python"};
+              old_sym.base_name = "__icontract_old_" + name;
+              old_sym.is_lvalue = true;
+              old_sym.is_state_var = true;
+              symbol_table.add(old_sym);
+            }
+            const symbolt &old_sym = symbol_table.lookup_ref(old_id);
+            method_body.add(code_frontend_assignt{old_sym.symbol_expr(), cap});
+            active_old_snapshots[name] = old_sym.symbol_expr();
+          }
+          // Translate ensure lambdas (with `result` and OLD.NAME
+          // bindings now in scope).
+          std::vector<exprt> method_ensure_assertions;
+          for(const jsont *lam : method_ensure_lambdas)
+          {
+            const jsont &lam_body = json_member(*lam, "body");
+            exprt cond;
+            try
+            {
+              cond = convert_expression(lam_body);
+            }
+            catch(...)
+            {
+              cond = nil_exprt{};
+            }
+            if(cond.is_nil() || cond.type().id() == ID_empty)
+              continue;
+            if(cond.type().id() != ID_bool)
+              cond = typecast_exprt{cond, bool_typet{}};
+            method_ensure_assertions.push_back(cond);
+            if(symbol_table.has_symbol(func_id))
+            {
+              typet &t = symbol_table.get_writeable_ref(func_id).type;
+              static_cast<exprt &>(t.add(ID_C_spec_ensures))
+                .operands()
+                .push_back(cond);
+            }
+          }
+          // Phase 7 Liskov: parent's postconditions are
+          // strengthened (AND-composed) with child's. We
+          // simply translate inherited_ensures into the same
+          // method_ensure_assertions list — the post-process
+          // walk asserts each in turn, which is equivalent to
+          // their conjunction.
+          for(const jsont *lam : inherited_ensures)
+          {
+            const jsont &lam_body = json_member(*lam, "body");
+            exprt cond;
+            try
+            {
+              cond = convert_expression(lam_body);
+            }
+            catch(...)
+            {
+              cond = nil_exprt{};
+            }
+            if(cond.is_nil() || cond.type().id() == ID_empty)
+              continue;
+            if(cond.type().id() != ID_bool)
+              cond = typecast_exprt{cond, bool_typet{}};
+            method_ensure_assertions.push_back(cond);
+            if(symbol_table.has_symbol(func_id))
+            {
+              typet &t = symbol_table.get_writeable_ref(func_id).type;
+              static_cast<exprt &>(t.add(ID_C_spec_ensures))
+                .operands()
+                .push_back(cond);
+            }
+          }
           // Under --python-lazy-stubs AND while processing an
           // imported module, skip the method body. The stub
           // becomes a pure type surface: method signature only,
@@ -2540,8 +2942,18 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // Phase 6 of the icontract integration plan: inject
           // invariant assertions before every return in the
           // method body, plus a final assertion at the end so
-          // fall-through paths see it too.
-          if(!invariant_assertions.empty())
+          // fall-through paths see it too. Phase 7 unifies the
+          // class invariant + per-method ensure assertions into
+          // a single walk: invariants come first (entry-vs-exit
+          // semantics for the class), then ensures (postcondition
+          // semantics for the method). When the method has
+          // ensures clauses, we also bind `result` to the return
+          // value before asserting so postconditions can
+          // reference it.
+          std::vector<exprt> exit_assertions = invariant_assertions;
+          for(const exprt &cond : method_ensure_assertions)
+            exit_assertions.push_back(cond);
+          if(!exit_assertions.empty())
           {
             std::function<void(codet &)> inject_at_returns =
               [&](codet &c) -> void
@@ -2553,8 +2965,25 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 codet &inner = static_cast<codet &>(op);
                 if(inner.get_statement() == ID_return)
                 {
+                  const code_frontend_returnt &ret =
+                    static_cast<const code_frontend_returnt &>(inner);
                   code_blockt blk;
-                  for(const exprt &cond : invariant_assertions)
+                  // Bind result symbol if there are ensures and
+                  // the return carries a value.
+                  if(
+                    !method_ensure_assertions.empty() &&
+                    ret.has_return_value() &&
+                    !method_result_symbol_id.empty() &&
+                    symbol_table.has_symbol(method_result_symbol_id))
+                  {
+                    const symbolt &rsym =
+                      symbol_table.lookup_ref(method_result_symbol_id);
+                    exprt rv = ret.return_value();
+                    if(rv.type() != rsym.type)
+                      rv = safe_typecast(rv, rsym.type);
+                    blk.add(code_frontend_assignt{rsym.symbol_expr(), rv});
+                  }
+                  for(const exprt &cond : exit_assertions)
                     blk.add(code_assertt{cond});
                   blk.add(static_cast<const codet &>(inner));
                   op = std::move(blk);
@@ -2566,13 +2995,15 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               }
             };
             inject_at_returns(method_body);
-            // Fall-through: append the invariant assertions at
-            // the end. If the last statement was a return, this
-            // is unreachable (no harm). Otherwise it covers the
+            // Fall-through: append the assertions at the end. If
+            // the last statement was a return, this is
+            // unreachable (no harm). Otherwise it covers the
             // implicit return case.
-            for(const exprt &cond : invariant_assertions)
+            for(const exprt &cond : exit_assertions)
               method_body.add(code_assertt{cond});
           }
+          // Restore the parent's @snapshot scope.
+          active_old_snapshots.swap(saved_method_old_snapshots);
 
           // Tier 1B: selective precondition processing. When we
           // skip the stub body due to Unpack detection, emit
