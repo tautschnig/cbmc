@@ -804,7 +804,9 @@ exprt python_convertert::convert_user_call(
           !is_python_list_type(arguments[i].type());
         if(
           python_check_annotations && !is_likely_vararg_collect &&
-          annotation_types_incompatible(params[i].type(), arguments[i].type()))
+          (annotation_types_incompatible(
+             params[i].type(), arguments[i].type()) ||
+           union_annotation_violated(params[i].get_identifier(), arguments[i])))
         {
           add_check(
             false_exprt{},
