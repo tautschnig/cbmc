@@ -913,7 +913,17 @@ To understand how data flows through CBMC:
 ### Python Frontend
 - [doc/python-verification-guide.md](doc/python-verification-guide.md) - User-facing guide for verifying Python programs
 - [doc/python-frontend-architecture.md](doc/python-frontend-architecture.md) - Frontend internals: passes, type system, generator/annotation semantics, symbol naming, where to add features
-- [doc/python-frontend-roadmap.md](doc/python-frontend-roadmap.md) - Open-work backlog: items partially closed in waves 22-38, sub-clusters with fix shapes, and remaining work
+- [doc/python-frontend-roadmap.md](doc/python-frontend-roadmap.md) - Open-work backlog: status snapshot through wave 41, sub-clusters with fix shapes, remaining work
+- [doc/python-frontend-call-refactor-plan.md](doc/python-frontend-call-refactor-plan.md) - Layout of `python_converter_call.cpp` after the 9-file split (string / list / dict / set methods, builtins, nondet, user-call dispatchers)
+- [doc/python-frontend-regex-story.md](doc/python-frontend-regex-story.md) - Current regex support (shallow stub + `__cbmc_re_*` SMT intrinsics) and the deferred Wave 2 subject-at-SMT-time refactor
+- [doc/python-frontend-icontract-plan.md](doc/python-frontend-icontract-plan.md) - icontract → DFCC integration, all 8 phases including multi-level Liskov + inherited-method invariant wrappers
+- [doc/python-frontend-diff-cluster-2026-05-27.md](doc/python-frontend-diff-cluster-2026-05-27.md) - DIFF cluster analysis snapshot with closed/deferred items per cluster
+
+CLI flags worth knowing about:
+- `--python-check-annotations` — emit annotation-mismatch properties when value/return/argument types don't match declared annotations. Includes class-vs-class via MRO, reassignment after AnnAssign, and `Union[...]` member checking.
+- `--python-missing-return-check` — emit a property at the implicit fall-through of any function with a non-None return-type annotation. Fires only when the path is actually reachable.
+- `--python-required-kwarg-checks` — flag missing `Required[...]` TypedDict keys at call sites.
+- `--python-check-typeddict-fields` — flag unknown keys when constructing a TypedDict.
 
 ### Architecture Decision Records (ADRs)
 - [doc/ADR/](doc/ADR/) - Design decisions
