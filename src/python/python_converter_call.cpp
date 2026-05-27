@@ -242,6 +242,31 @@ exprt python_convertert::convert_call(const jsont &expr)
 
     irep_idt init_id{"python::" + func_name + "::__init__"};
     const symbolt *init_sym = symbol_table.lookup(init_id);
+    // Inheritance fallback: if this class doesn't define
+    // __init__ itself, walk its C3 MRO to find the inherited
+    // constructor on a base class. Without this, subclasses
+    // that rely on the parent's __init__ (a common pattern)
+    // would silently skip initialisation, leaving instance
+    // fields zero.
+    if(init_sym == nullptr)
+    {
+      auto mro_it = class_mro.find(func_name);
+      if(mro_it != class_mro.end())
+      {
+        for(std::size_t i = 1; i < mro_it->second.size(); ++i)
+        {
+          const std::string &ancestor = mro_it->second[i];
+          irep_idt ancestor_init_id{"python::" + ancestor + "::__init__"};
+          const symbolt *ancestor_sym = symbol_table.lookup(ancestor_init_id);
+          if(ancestor_sym != nullptr)
+          {
+            init_id = ancestor_init_id;
+            init_sym = ancestor_sym;
+            break;
+          }
+        }
+      }
+    }
     if(init_sym != nullptr)
     {
       exprt::operandst init_args;
