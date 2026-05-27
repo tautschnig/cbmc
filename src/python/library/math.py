@@ -275,8 +275,13 @@ def isclose(
 
 
 # ---------------------------------------------------------------
-# Integer-valued. The frontend's inline path handles factorial/comb
-# with non-negative nondet returns.
+# Integer-valued. The frontend's inline path constant-folds these
+# when arguments are int constants (see the int-math fold block in
+# python_converter_call_method.cpp ahead of the imported-module
+# dispatch). Non-constant args fall through to the library
+# placeholders below (which return 0). The placeholders are
+# intentionally simple — symbolic combinatoric values would
+# require full integer reasoning that's outside the model's scope.
 # ---------------------------------------------------------------
 def factorial(n: int) -> int:
     if n < 0:

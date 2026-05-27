@@ -523,6 +523,174 @@ std::optional<exprt> python_convertert::try_method_call(
           return result;
         }
       }
+      // PLR §math: int-math functions (factorial / comb / perm /
+      // gcd / lcm / isqrt) — when called as math.X(...) with
+      // int-constant arguments, constant-fold to the precise
+      // result. This path runs BEFORE the imported_modules
+      // dispatch so it intercepts the library's placeholder
+      // body (which returns 0) for the constant case while
+      // leaving the symbolic case to fall through unchanged.
+      if(
+        obj_name == "math" &&
+        (method_name == "factorial" || method_name == "comb" ||
+         method_name == "perm" || method_name == "gcd" ||
+         method_name == "lcm" || method_name == "isqrt"))
+      {
+        // Helper: extract all int-constant arguments. If any
+        // arg is non-constant or non-int, return nullopt.
+        // Handles plain integer literals AND UnaryOp(USub,
+        // Constant(int)) for negative literals like -1.
+        auto get_int_args = [&]() -> std::optional<std::vector<long long>>
+        {
+          std::vector<long long> out;
+          if(!args.is_array())
+            return std::nullopt;
+          for(const auto &a : as_array(args))
+          {
+            exprt e = convert_expression(a);
+            // Strip a top-level unary minus over an int constant.
+            bool negate = false;
+            if(e.id() == ID_unary_minus && e.operands().size() == 1)
+            {
+              e = e.operands()[0];
+              negate = true;
+            }
+            // Strip outer typecast(int).
+            if(
+              e.id() == ID_typecast && e.operands().size() == 1 &&
+              e.operands()[0].is_constant() &&
+              e.operands()[0].type().id() == ID_signedbv)
+              e = e.operands()[0];
+            if(!e.is_constant() || e.type().id() != ID_signedbv)
+              return std::nullopt;
+            mp_integer iv;
+            if(to_integer(to_constant_expr(e), iv))
+              return std::nullopt;
+            long long val = iv.to_long();
+            if(negate)
+              val = -val;
+            out.push_back(val);
+          }
+          return out;
+        };
+        auto iargs = get_int_args();
+        if(iargs.has_value())
+        {
+          const auto &v = iargs.value();
+          auto make_int = [this](long long x)
+          { return from_integer(x, python_int_type()); };
+          if(method_name == "factorial" && v.size() == 1)
+          {
+            if(v[0] < 0)
+            {
+              emit_value_error(false_exprt{});
+              return side_effect_expr_nondett{
+                python_int_type(), get_location(expr)};
+            }
+            long long r = 1;
+            for(long long i = 2; i <= v[0]; ++i)
+              r *= i;
+            return make_int(r);
+          }
+          if(method_name == "isqrt" && v.size() == 1)
+          {
+            if(v[0] < 0)
+            {
+              emit_value_error(false_exprt{});
+              return side_effect_expr_nondett{
+                python_int_type(), get_location(expr)};
+            }
+            long long n = v[0];
+            long long r = 0;
+            while((r + 1) * (r + 1) <= n)
+              ++r;
+            return make_int(r);
+          }
+          if(method_name == "comb" && v.size() == 2)
+          {
+            long long n = v[0], k = v[1];
+            if(n < 0 || k < 0)
+            {
+              emit_value_error(false_exprt{});
+              return side_effect_expr_nondett{
+                python_int_type(), get_location(expr)};
+            }
+            if(k > n)
+              return make_int(0);
+            if(k > n - k)
+              k = n - k;
+            long long r = 1;
+            for(long long i = 0; i < k; ++i)
+            {
+              r *= (n - i);
+              r /= (i + 1);
+            }
+            return make_int(r);
+          }
+          if(method_name == "perm")
+          {
+            long long n = v[0];
+            long long k = v.size() == 1 ? n : v[1];
+            if(n < 0 || k < 0)
+            {
+              emit_value_error(false_exprt{});
+              return side_effect_expr_nondett{
+                python_int_type(), get_location(expr)};
+            }
+            if(k > n)
+              return make_int(0);
+            long long r = 1;
+            for(long long i = 0; i < k; ++i)
+              r *= (n - i);
+            return make_int(r);
+          }
+          if(method_name == "gcd")
+          {
+            long long g = 0;
+            for(long long x : v)
+            {
+              long long ax = x < 0 ? -x : x;
+              long long a = g, b = ax;
+              while(b)
+              {
+                long long t = a % b;
+                a = b;
+                b = t;
+              }
+              g = a;
+            }
+            return make_int(g);
+          }
+          if(method_name == "lcm")
+          {
+            long long l = 1;
+            bool zero = false;
+            for(long long x : v)
+            {
+              long long ax = x < 0 ? -x : x;
+              if(ax == 0)
+              {
+                zero = true;
+                break;
+              }
+              long long a = l, b = ax;
+              while(b)
+              {
+                long long t = a % b;
+                a = b;
+                b = t;
+              }
+              long long g = a;
+              l = (l / g) * ax;
+            }
+            if(zero)
+              return make_int(0);
+            return make_int(l);
+          }
+        }
+        // Non-constant args: fall through to imported_modules
+        // dispatch below, which calls the library placeholder.
+      }
       if(imported_modules.count(obj_name))
       {
         // Resolve module.func to the function symbol. If the
