@@ -852,6 +852,18 @@ private:
   std::optional<exprt>
   try_method_call(const jsont &expr, std::string &func_name, const jsont &args);
 
+  /// Final user-function-call fallback (handled by
+  /// python_converter_call_user.cpp): nested-function lookup,
+  /// lambdas, function_aliases, @c_intrinsic redirection,
+  /// callable-instance __call__ dispatch, and the keyword /
+  /// vararg / default binding that emits the final
+  /// side_effect_expr_function_callt. Always returns an
+  /// expression (may be nil_exprt if everything fails).
+  exprt convert_user_call(
+    const jsont &expr,
+    const std::string &func_name,
+    const jsont &args);
+
   /// Dispatch the built-in free-function group (handled by
   /// python_converter_call_builtins.cpp): map / zip / filter /
   /// iter / next / len / int / float / bool / print / input /
