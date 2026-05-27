@@ -210,11 +210,42 @@ bool python_convertert::annotation_types_incompatible(
     return false;
   if(dc == 0 || ac == 0)
     return false; // unknown category — don't flag
-  // Same category but different exact type is usually benign
-  // (e.g. python_class_X vs python_class_Y is handled by
-  // isinstance checks, not flagged as annotation mismatch).
+  // Same category but different exact type — refine for the
+  // class case using class hierarchy.
   if(dc == ac)
+  {
+    // For classes, check the inheritance relationship: an
+    // assignment `pet: Animal = Dog()` where Dog extends Animal
+    // is compatible (Liskov substitution); `pet: Animal =
+    // Car()` is not. Walk class_mro of the actual class; if
+    // the declared class appears in the chain, it's compatible.
+    if(dc == 6 && declared.id() == ID_struct && actual.id() == ID_struct)
+    {
+      auto strip_prefix = [](const std::string &tag) -> std::string
+      {
+        const std::string prefix{"python_class_"};
+        if(tag.compare(0, prefix.size(), prefix) == 0)
+          return tag.substr(prefix.size());
+        return tag;
+      };
+      std::string declared_tag =
+        strip_prefix(id2string(to_struct_type(declared).get_tag()));
+      std::string actual_tag =
+        strip_prefix(id2string(to_struct_type(actual).get_tag()));
+      if(declared_tag == actual_tag)
+        return false;
+      auto it = class_mro.find(actual_tag);
+      if(it != class_mro.end())
+      {
+        for(const std::string &ancestor : it->second)
+          if(ancestor == declared_tag)
+            return false;
+      }
+      // Different classes, no inheritance link → incompatible.
+      return true;
+    }
     return false;
+  }
   // Different categories → incompatible.
   return true;
 }
