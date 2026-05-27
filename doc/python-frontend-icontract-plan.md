@@ -1,5 +1,25 @@
 # icontract → DFCC contracts integration plan
 
+# icontract → DFCC contracts integration plan
+
+> **Status (2026-05-27): Phases 1-6 + comprehensive regression
+> suite landed.** Phase 7 (inheritance composition) remains as
+> follow-up work. All commits build clean, all three
+> regression suites green.
+>
+> Final shape: `@icontract.require`/`@ensure`/`@snapshot`/
+> `@invariant` recognised on functions and classes; lambda
+> bodies translated via `convert_expression` in the function
+> scope; assertions injected at every return point and at the
+> implicit fall-through; class invariants asserted at method
+> entry+exit (excluding `__init__` entry); `result` and
+> `OLD.NAME` resolved via dedicated symbol-table entries and
+> a `convert_attribute` hook respectively. The clauses are
+> also attached to the function's GOTO type as
+> `ID_C_spec_requires`/`ID_C_spec_ensures` so DFCC contract
+> enforcement / replacement (when enabled at the cbmc command
+> line) picks them up.
+
 A design note for routing
 [icontract](https://github.com/Parquery/icontract) decorators
 (`@require` / `@ensure` / `@invariant` / `@snapshot`) into
@@ -374,3 +394,70 @@ cost of new frontend infrastructure.
 - DFCC user manual: `src/goto-instrument/contracts/doc/user/`
 - DFCC dev spec: `src/goto-instrument/contracts/doc/developer/`
 - CBMC contracts API: `src/goto-instrument/contracts/contracts.h`
+
+
+## Implementation status (2026-05-27)
+
+| Phase | Description | Status | Commit |
+|---|---|---|---|
+| 1 | icontract library stub | ✅ | `7d387c020f` |
+| 2 | `@require` → entry-side `__CPROVER_assume` + `ID_C_spec_requires` | ✅ | `c2d6045baa` |
+| 3 | `@ensure` → exit-side `code_assertt` + `ID_C_spec_ensures` | ✅ | `98972688f6` |
+| 4 | `result` binding for `@ensure` lambdas | ✅ | (folded into Phase 3 commit) |
+| 5 | `@snapshot` + `OLD.NAME` resolution | ✅ | (next commit after Phase 4) |
+| 6 | `@invariant` on classes (entry + exit) | ✅ | (next commit after Phase 5) |
+| 7 | Inheritance composition (Liskov rules) | ⏳ | not yet started |
+| 8 | Comprehensive regression suite | ✅ | (companion to Phase 6) |
+
+Six regression tests landed:
+
+- `regression/python/icontract-stub-import` — Phase 1: import + decorator no-op.
+- `regression/python/icontract-require-positive` — Phase 2: precondition is observable as an entry assume.
+- `regression/python/icontract-ensure-no-result` — Phase 3: postcondition referencing module state.
+- `regression/python/icontract-ensure-result` — Phase 4: postcondition referencing `result`.
+- `regression/python/icontract-snapshot` — Phase 5: `@snapshot` + `OLD.NAME` binding.
+- `regression/python/icontract-class-invariant` — Phase 6: class invariant at method entry/exit.
+- `regression/python/icontract-comprehensive` — combined Phases 1-6.
+
+## Phase 7 — open follow-up
+
+Inheritance composition is the remaining feature. icontract
+follows Liskov substitution rules:
+
+- Child preconditions weaken: `__CPROVER_requires(parent_pre OR child_pre)`.
+- Child postconditions strengthen: `__CPROVER_ensures(parent_post AND child_post)`.
+- Child invariants merge: `parent_inv AND child_inv` on every method.
+
+Implementation sketch:
+
+1. Add a `class_inherited_contracts` map keyed by class name,
+   populated as `convert_class_def` walks the bases.
+2. When emitting a method's contract clauses, look up the
+   parent class's same-named method (if any) and combine
+   per the Liskov rules above before lowering.
+3. The MRO-respecting walk (single + multiple inheritance,
+   diamond) is already handled by the existing class-base
+   resolution pass — extend it to carry the contract
+   clauses through.
+
+Estimated effort: 2-3 days. Not blocking the basic
+integration; users with single-class contracts get the full
+benefit today.
+
+## DFCC integration
+
+Phases 1-6 attach `__CPROVER_requires` and `__CPROVER_ensures`
+clauses to the function symbol type alongside the inline
+assume/assert lowering. To use the DFCC contract pipeline:
+
+```bash
+# Replace mode: callers see the contract instead of the body.
+cbmc --replace-call-with-contract <funcname> ...
+
+# Enforce mode: verify the body satisfies the contract.
+cbmc --enforce-contract <funcname> ...
+```
+
+Without these flags, the inline assume/assert lowering is
+what's checked. With them, the GOTO contract machinery takes
+over — both modes work.
