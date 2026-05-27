@@ -1731,6 +1731,101 @@ static exprt inline_pure_calls(
   return visit(expr);
 }
 
+/// 1.1c-bodyrewrite: scan a goto-program body for the
+/// `CALL X(args); ASSIGN tmp := X#return_value` pattern at
+/// caller-side (non-forall) call sites, and replace each pair
+/// with `SKIP; ASSIGN tmp := <inlined X(args)>` where the
+/// inlined expression comes from extract_multi_return_body /
+/// inline_one_call.
+///
+/// Why this is necessary
+/// ---------------------
+/// Without this rewrite, two CALLs to the same callee with
+/// different arguments share the global slot `<X>#return_value`
+/// in the goto-program. resolve_stack_temps walks back from
+/// each tmp and replaces it with the slot symbol — collapsing
+/// distinct call results to the same value. This is the
+/// fundamental source of unsoundness for lemmas like
+/// `coverBestApproximationForall` whose preconditions and
+/// assertions both call `rangeContains` with different range
+/// arguments at the same query value.
+///
+/// Filtering
+/// ---------
+/// We skip:
+///   - Constructors (`<init>`, `<clinit>`) — no return.
+///   - JVerify.* methods — handled by the §F12 pre-pass.
+///   - Lambda methods (`lambda$...`) — already extracted.
+///   - JDK collection / Object methods — opaque, not inlinable.
+/// Conservative: if `inline_one_call` returns nullopt, we leave
+/// the original CALL+ASSIGN intact.
+static bool inline_pure_call_chains(
+  goto_programt &body,
+  const goto_functionst &goto_functions,
+  const namespacet &ns)
+{
+  bool any_changed = false;
+  for(auto it = body.instructions.begin(); it != body.instructions.end();
+      ++it)
+  {
+    if(!it->is_function_call())
+      continue;
+    auto next_it = std::next(it);
+    if(next_it == body.instructions.end())
+      continue;
+    if(!next_it->is_assign())
+      continue;
+    const auto &call_func = it->call_function();
+    if(call_func.id() != ID_symbol)
+      continue;
+    const irep_idt callee_id = to_symbol_expr(call_func).get_identifier();
+    const std::string callee_str = id2string(callee_id);
+
+    // Skip method shapes we don't want to inline at the body level.
+    if(
+      callee_str.find(".<init>:") != std::string::npos ||
+      callee_str.find(".<clinit>:") != std::string::npos ||
+      callee_str.find("java::org.strata.jverify.JVerify.") == 0 ||
+      callee_str.find(".lambda$") != std::string::npos ||
+      callee_str.find("java::java.util.") == 0 ||
+      callee_str.find("java::java.lang.Object.") == 0)
+    {
+      continue;
+    }
+
+    // The next ASSIGN must read from <callee>#return_value.
+    const std::string callee_ret = callee_str + "#return_value";
+    const exprt &assign_rhs = next_it->assign_rhs();
+    if(assign_rhs.id() != ID_symbol)
+      continue;
+    if(id2string(to_symbol_expr(assign_rhs).get_identifier()) != callee_ret)
+      continue;
+
+    // Try to inline the callee's body via the existing
+    // multi-return / single-return extractor.
+    auto inlined = inline_one_call(
+      callee_id, it->call_arguments(), goto_functions, ns,
+      /*depth=*/8);
+    if(!inlined.has_value())
+      continue;
+
+    // Type-cast if necessary so the ASSIGN remains well-typed.
+    exprt inlined_expr = *inlined;
+    if(inlined_expr.type() != next_it->assign_lhs().type())
+    {
+      inlined_expr = typecast_exprt(inlined_expr, next_it->assign_lhs().type());
+    }
+
+    *next_it = goto_programt::make_assignment(
+      next_it->assign_lhs(), inlined_expr, next_it->source_location());
+    it->turn_into_skip();
+    any_changed = true;
+  }
+  if(any_changed)
+    body.update();
+  return any_changed;
+}
+
 std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
 {
   std::set<irep_idt> annotated_functions;
@@ -1838,6 +1933,25 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
       }
       body.update();
     }
+  }
+
+  // 1.1c-bodyrewrite: pre-pass that inlines `CALL X(args);
+  // ASSIGN tmp := X#return_value` chains in every function body
+  // BEFORE the forall pre-pass below. After this pass, calls to
+  // multi-return helpers (rangeContains, isPrefix, …) appearing
+  // in non-forall preconditions / checks are replaced by their
+  // ITE-chained body expressions, eliminating the global-slot
+  // aliasing that was the core unsoundness for the
+  // coverBestApproximation / addBestApproximation /
+  // isPrefixCheck / isSuffixCheck lemmas.
+  //
+  // The rewrite is bounded (depth=8 inside inline_one_call),
+  // best-effort (returns nullopt for unrecognised shapes), and
+  // skips JVerify.* / lambda$ / JDK methods so it doesn't
+  // interfere with the §F12 forall pre-pass that follows.
+  for(auto &fp : goto_model.goto_functions.function_map)
+  {
+    inline_pure_call_chains(fp.second.body, goto_model.goto_functions, ns);
   }
 
   // §F12 follow-on: pre-pass rewrite of JVerify.forall(lambda) /
