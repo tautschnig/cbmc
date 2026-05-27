@@ -745,6 +745,18 @@ private:
   /// reassignments that violate the original annotation (e.g.
   /// `count: int = 10; count = "wrong"`).
   std::map<irep_idt, typet> variable_annotations;
+
+  /// Per-symbol Union[X, Y, ...] component types, keyed by
+  /// qualified symbol id. Populated when a parameter or
+  /// variable's annotation is `Union[T1, T2, ...]` (or the
+  /// equivalent `T1 | T2 | ...` PEP 604 syntax). Consulted by
+  /// the call-site / assignment annotation-mismatch check
+  /// under --python-check-annotations: when the parameter type
+  /// is python_value (the catch-all that Union maps to) and
+  /// the symbol has registered components, we additionally
+  /// require the actual value's type to be category-compatible
+  /// with at least one component.
+  std::map<irep_idt, std::vector<typet>> union_annotation_components;
   /// Path-sensitive dict-key tracking: after an 'if K not in D:
   /// D[K] = default' idiom, K is guaranteed to be in D (either
   /// added by the body or already present). We record the
@@ -1051,6 +1063,24 @@ private:
   /// Tagged-union (Any) on either side returns false (duck-typed).
   bool annotation_types_incompatible(const typet &declared, const typet &actual)
     const;
+
+  /// Walk a type-annotation AST and return the component types
+  /// of a `Union[T1, T2, ...]` (or PEP 604 `T1 | T2 | ...`)
+  /// shape. Returns an empty vector if the annotation isn't a
+  /// union. Used to populate union_annotation_components for
+  /// parameters / variables.
+  std::vector<typet> extract_union_components(const jsont &annotation);
+
+  /// Check whether a value's type violates a recorded Union
+  /// annotation for `sym_id`. Returns true if the symbol has
+  /// union components and the actual type is incompatible with
+  /// every component (i.e. the value isn't covered by any
+  /// member of the union). Returns false when there are no
+  /// components recorded, or when at least one component is
+  /// compatible.
+  bool union_annotation_violated(
+    const irep_idt &sym_id,
+    const exprt &actual_value) const;
 
   /// Get the qualified symbol name for a variable, respecting
   /// function scope and 'global' declarations.

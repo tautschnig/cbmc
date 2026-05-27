@@ -247,6 +247,21 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     typet param_type = annotation.is_null()
                          ? python_value_type()
                          : convert_type_annotation(annotation);
+    // Phase 7 type-annotation check: if the annotation is a
+    // Union[X, Y, ...], extract its component types and
+    // record under the parameter's symbol id so call-site
+    // checks can detect arguments that don't match any
+    // component.
+    if(!annotation.is_null())
+    {
+      auto components = extract_union_components(annotation);
+      if(!components.empty())
+      {
+        std::string param_id =
+          "python::" + qualified_func_name + "::" + param_name;
+        union_annotation_components[irep_idt{param_id}] = std::move(components);
+      }
+    }
 
     // PLR §4.2.1: Class instances are passed by reference.
     if(

@@ -140,6 +140,175 @@ void python_convertert::add_check(
 /// trusts annotations, so without this check we'd miss those
 /// TypeErrors — emitting an explicit annotation-mismatch
 /// property at the site of declaration restores soundness.
+
+/// Walk a type-annotation AST and extract the component types
+/// of a Union shape. Recognises:
+///   - Subscript(Name("Union"), Tuple(T1, T2, ...))
+///   - Subscript(Attribute(_, "Union"), Tuple(T1, T2, ...))
+///   - BinOp(left, BitOr, right) — PEP 604 `T1 | T2`
+/// Returns empty vector for non-union annotations.
+std::vector<typet>
+python_convertert::extract_union_components(const jsont &annotation)
+{
+  std::vector<typet> components;
+  if(is_node_type(annotation, "Subscript"))
+  {
+    const jsont &val = json_member(annotation, "value");
+    bool is_union = false;
+    if(is_node_type(val, "Name"))
+      is_union = json_string(json_member(val, "id")) == "Union";
+    else if(is_node_type(val, "Attribute"))
+      is_union = json_string(json_member(val, "attr")) == "Union";
+    if(is_union)
+    {
+      const jsont &slice = json_member(annotation, "slice");
+      if(is_node_type(slice, "Tuple"))
+      {
+        const jsont &elts = json_member(slice, "elts");
+        if(elts.is_array())
+        {
+          for(const auto &e : as_array(elts))
+            components.push_back(convert_type_annotation(e));
+        }
+      }
+      else
+      {
+        // Single-element Union[T] — degenerate, but accept.
+        components.push_back(convert_type_annotation(slice));
+      }
+    }
+  }
+  else if(is_node_type(annotation, "BinOp"))
+  {
+    // PEP 604: T1 | T2  → BinOp(left, BitOr, right). Walk both
+    // sides recursively to flatten chains like T1 | T2 | T3.
+    std::string op =
+      json_string(json_member(json_member(annotation, "op"), "_type"));
+    if(op == "BitOr")
+    {
+      auto left = extract_union_components(json_member(annotation, "left"));
+      auto right = extract_union_components(json_member(annotation, "right"));
+      if(!left.empty())
+        components.insert(components.end(), left.begin(), left.end());
+      else
+        components.push_back(
+          convert_type_annotation(json_member(annotation, "left")));
+      if(!right.empty())
+        components.insert(components.end(), right.begin(), right.end());
+      else
+        components.push_back(
+          convert_type_annotation(json_member(annotation, "right")));
+    }
+  }
+  return components;
+}
+
+bool python_convertert::union_annotation_violated(
+  const irep_idt &sym_id,
+  const exprt &actual_value) const
+{
+  auto it = union_annotation_components.find(sym_id);
+  if(it == union_annotation_components.end())
+    return false;
+  const std::vector<typet> &components = it->second;
+  if(components.empty())
+    return false;
+  // Determine the "effective" actual type. If the argument is
+  // a struct literal of python_value form (e.g. result of
+  // make_python_value(FLOAT, 3.14) — a struct_exprt with the
+  // tag in operand[0]), unwrap it to the underlying type so the
+  // category check below can detect a mismatch. Otherwise use
+  // the value's static type.
+  typet effective = actual_value.type();
+  if(
+    is_python_value_type(actual_value.type()) &&
+    actual_value.id() == ID_struct && actual_value.operands().size() >= 4 &&
+    actual_value.operands()[0].is_constant())
+  {
+    mp_integer tag_val;
+    if(!to_integer(to_constant_expr(actual_value.operands()[0]), tag_val))
+    {
+      auto tag = static_cast<int>(tag_val.to_long());
+      if(tag == static_cast<int>(python_type_tagt::INT))
+        effective = python_int_type();
+      else if(tag == static_cast<int>(python_type_tagt::FLOAT))
+        effective = double_type();
+      else if(tag == static_cast<int>(python_type_tagt::BOOL))
+        effective = bool_typet{};
+      else if(tag == static_cast<int>(python_type_tagt::STR))
+        effective = python_string_type();
+    }
+  }
+  if(is_python_value_type(effective))
+    return false;
+  // Union compatibility uses STRICT category matching — float
+  // does NOT coerce to int, bool does NOT coerce to int — so
+  // we don't accept Union[int, str] against a float arg as
+  // compatible (which annotation_types_incompatible would,
+  // because of Python's general numeric-coercion semantics).
+  // PLR §3.2 / typing.Union explicitly enumerates the allowed
+  // types; passing a non-listed type is a TypeError-equivalent.
+  auto strict_category = [](const typet &t) -> int
+  {
+    if(t.id() == ID_bool)
+      return 1; // bool is its own category for Union purposes
+    if(t.id() == ID_signedbv || t.id() == ID_unsignedbv || t.id() == ID_integer)
+      return 2; // int
+    if(t.id() == ID_floatbv)
+      return 3; // float
+    if(is_python_string_type(t))
+      return 4;
+    if(is_python_list_type(t))
+      return 5;
+    if(is_python_dict_type(t))
+      return 6;
+    if(is_python_set_type(t))
+      return 7;
+    if(t.id() == ID_struct || t.id() == ID_struct_tag)
+      return 8; // class
+    return 0;
+  };
+  int actual_cat = strict_category(effective);
+  if(actual_cat == 0)
+    return false; // unknown — don't flag
+  // Match against each component. If any component shares the
+  // strict category, the union is satisfied.
+  for(const typet &c : components)
+  {
+    int comp_cat = strict_category(c);
+    if(comp_cat == actual_cat)
+      return false;
+    // Special case: bool is acceptable wherever int is
+    // expected (bool subtypes int in Python). So
+    // Union[int, str] accepts True / False.
+    if(comp_cat == 2 && actual_cat == 1)
+      return false;
+    // Class types share the broad category but may have
+    // different specific tags; defer to MRO walk.
+    if(comp_cat == 8 && actual_cat == 8)
+    {
+      auto strip = [](const std::string &tag) -> std::string
+      {
+        const std::string p{"python_class_"};
+        return tag.compare(0, p.size(), p) == 0 ? tag.substr(p.size()) : tag;
+      };
+      std::string c_tag, a_tag;
+      if(c.id() == ID_struct)
+        c_tag = strip(id2string(to_struct_type(c).get_tag()));
+      if(effective.id() == ID_struct)
+        a_tag = strip(id2string(to_struct_type(effective).get_tag()));
+      if(c_tag == a_tag)
+        return false;
+      auto mro_it_c = class_mro.find(a_tag);
+      if(mro_it_c != class_mro.end())
+        for(const auto &anc : mro_it_c->second)
+          if(anc == c_tag)
+            return false;
+    }
+  }
+  return true;
+}
+
 bool python_convertert::annotation_types_incompatible(
   const typet &declared,
   const typet &actual) const
