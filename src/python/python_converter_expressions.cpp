@@ -885,6 +885,22 @@ exprt python_convertert::convert_attribute(const jsont &expr)
 {
   std::string attr = json_string(json_member(expr, "attr"));
 
+  // icontract Phase 5: resolve OLD.<name> to the captured
+  // snapshot symbol while translating an ensure lambda body.
+  // active_old_snapshots is populated by convert_function_def
+  // for the duration of ensure-lambda translation only;
+  // outside that scope, OLD is treated as an ordinary name
+  // and Python's normal resolution applies.
+  if(
+    !active_old_snapshots.empty() &&
+    is_node_type(json_member(expr, "value"), "Name") &&
+    json_string(json_member(json_member(expr, "value"), "id")) == "OLD")
+  {
+    auto it = active_old_snapshots.find(attr);
+    if(it != active_old_snapshots.end())
+      return it->second;
+  }
+
   // Math module constants: math.pi, math.e, etc.
   // Check BEFORE converting value (which would fail for module names)
   if(

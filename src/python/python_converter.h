@@ -76,6 +76,17 @@ private:
   /// postconditions.
   std::vector<exprt> active_ensures;
 
+  /// icontract @snapshot bindings active while translating an
+  /// ensure lambda body. Maps snapshot name → captured
+  /// expression (typically a symbol_exprt for the synthesised
+  /// per-function snapshot variable). When convert_attribute
+  /// sees an Attribute node with value = Name("OLD") and the
+  /// attr is in this map, it returns the captured expression
+  /// directly instead of going through the normal
+  /// attribute-resolution path. Save/restored across nested
+  /// function definitions.
+  std::map<std::string, exprt> active_old_snapshots;
+
   /// Stack of enclosing function names (outermost first). A nested
   /// 'def' pushes the new function onto the stack. When a name is
   /// not found in the current function's scope, we fall back to
