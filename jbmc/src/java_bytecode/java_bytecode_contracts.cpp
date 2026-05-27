@@ -1145,6 +1145,262 @@ find_call_resultt find_call_for_return_slot(
   return result;
 }
 
+/// 1.1c: forward symbolic-execution of a callee's GOTO body to
+/// reconstruct its return value as a path-conditional expression.
+///
+/// For "chain of early returns" shapes (the typical
+/// instanceof-pattern method like `rangeContains`), each branch
+/// terminates with `ASSIGN <callee>#return_value := rhs_i;
+/// GOTO end`. We enumerate all paths from entry to each such
+/// ASSIGN, computing a per-path condition `pc_i` and substituting
+/// local variables with their current symbolic values. The result
+/// is built as an ITE chain `pc_1 ? rhs_1 : (pc_2 ? rhs_2 : ...
+/// : rhs_default)`.
+///
+/// Returns nullopt when:
+///   - the body has backward jumps (loops),
+///   - a CALL instruction is encountered (opaque, not modelled),
+///   - the path explosion exceeds the budget,
+///   - any other shape we don't recognise.
+struct multi_return_resultt
+{
+  bool valid{false};
+  exprt expr;
+};
+
+/// Substitute local-variable references in `e` with their values
+/// from `locals`. Only string-keyed identifier substitution.
+static exprt subst_locals(
+  const exprt &e, const std::map<irep_idt, exprt> &locals)
+{
+  if(e.id() == ID_symbol)
+  {
+    auto it = locals.find(to_symbol_expr(e).get_identifier());
+    if(it != locals.end())
+      return it->second;
+    return e;
+  }
+  exprt out = e;
+  for(auto &op : out.operands())
+    op = subst_locals(op, locals);
+  return out;
+}
+
+/// Recursive depth-first traversal collecting (pc, rhs) pairs.
+/// `state` is mutated by side-effect for the current path; copies
+/// are made at branch points.
+struct path_state_t
+{
+  exprt pc;
+  std::map<irep_idt, exprt> locals;
+};
+
+/// Forward-declare for mutual recursion: traverse_paths calls
+/// inline_one_call when it encounters a CALL inside a multi-return
+/// body, and inline_one_call may call extract_multi_return_body
+/// which calls traverse_paths.
+static std::optional<exprt> inline_one_call(
+  const irep_idt &callee_id,
+  const exprt::operandst &args,
+  const goto_functionst &goto_functions,
+  const namespacet &ns,
+  int depth);
+
+static bool traverse_paths(
+  const goto_programt &body,
+  goto_programt::const_targett it,
+  path_state_t state,
+  const std::string &ret_needle,
+  std::vector<std::pair<exprt, exprt>> &results,
+  int &budget,
+  const goto_functionst &goto_functions,
+  const namespacet &ns,
+  int depth)
+{
+  while(it != body.instructions.cend())
+  {
+    if(--budget < 0)
+      return false;
+    if(it->is_assign())
+    {
+      const exprt &lhs = it->assign_lhs();
+      if(lhs.id() == ID_symbol)
+      {
+        const irep_idt id = to_symbol_expr(lhs).get_identifier();
+        exprt rhs = subst_locals(it->assign_rhs(), state.locals);
+        if(id2string(id) == ret_needle)
+        {
+          results.emplace_back(state.pc, rhs);
+          return true;
+        }
+        state.locals[id] = rhs;
+      }
+      ++it;
+      continue;
+    }
+    if(it->is_goto())
+    {
+      const exprt &cond = it->condition();
+      auto target = it->get_target();
+      bool is_forward = false;
+      for(auto check = it; check != body.instructions.cend(); ++check)
+      {
+        if(check == target)
+        {
+          is_forward = true;
+          break;
+        }
+      }
+      if(!is_forward)
+        return false;
+      if(cond.is_true())
+      {
+        it = target;
+        continue;
+      }
+      const exprt sub_cond = subst_locals(cond, state.locals);
+      path_state_t taken = state;
+      taken.pc = and_exprt(taken.pc, sub_cond);
+      if(!traverse_paths(
+           body, target, taken, ret_needle, results, budget,
+           goto_functions, ns, depth))
+        return false;
+      state.pc = and_exprt(state.pc, not_exprt(sub_cond));
+      ++it;
+      continue;
+    }
+    if(it->is_assume())
+    {
+      state.pc = and_exprt(
+        state.pc, subst_locals(it->condition(), state.locals));
+      ++it;
+      continue;
+    }
+    if(it->is_function_call())
+    {
+      // 1.1c recursion: try to inline the callee inline. The
+      // result is stored in the local slot `<callee>#return_value`;
+      // the next ASSIGN reading that slot picks it up. If we
+      // can't inline (recursion bottom, unknown callee, complex
+      // body), bail.
+      const auto &call_func = it->call_function();
+      if(call_func.id() != ID_symbol)
+        return false;
+      irep_idt callee_id = to_symbol_expr(call_func).get_identifier();
+      // Substitute locals into call args.
+      exprt::operandst sub_args;
+      sub_args.reserve(it->call_arguments().size());
+      for(const auto &a : it->call_arguments())
+        sub_args.push_back(subst_locals(a, state.locals));
+      auto inlined = inline_one_call(
+        callee_id, sub_args, goto_functions, ns, depth - 1);
+      if(!inlined.has_value())
+        return false;
+      // Bind <callee>#return_value to the inlined expression.
+      const std::string callee_ret =
+        id2string(callee_id) + "#return_value";
+      state.locals[callee_ret] = *inlined;
+      ++it;
+      continue;
+    }
+    if(
+      it->is_decl() || it->is_dead() || it->is_skip() ||
+      it->is_other() || it->is_location() || it->is_assert())
+    {
+      ++it;
+      continue;
+    }
+    return true;
+  }
+  return true;
+}
+
+static multi_return_resultt extract_multi_return_body(
+  const goto_programt &body, const std::string &ret_needle,
+  const goto_functionst &goto_functions, const namespacet &ns,
+  int depth)
+{
+  multi_return_resultt out;
+  if(body.instructions.empty())
+    return out;
+  std::vector<std::pair<exprt, exprt>> branches;
+  int budget = 4096;
+  path_state_t init;
+  init.pc = true_exprt();
+  if(!traverse_paths(
+       body, body.instructions.cbegin(), init,
+       ret_needle, branches, budget,
+       goto_functions, ns, depth))
+    return out;
+  if(branches.empty())
+    return out;
+  exprt result = branches.back().second;
+  for(auto rit = std::next(branches.rbegin()); rit != branches.rend(); ++rit)
+  {
+    result = if_exprt(rit->first, rit->second, result);
+  }
+  out.valid = true;
+  out.expr = result;
+  return out;
+}
+
+/// Inline a single call: substitute the callee's body
+/// (single-return rhs OR multi-return ITE) with the call args.
+/// Returns nullopt if the callee can't be inlined (no body,
+/// recursion bottom, etc.).
+static std::optional<exprt> inline_one_call(
+  const irep_idt &callee_id,
+  const exprt::operandst &args,
+  const goto_functionst &goto_functions,
+  const namespacet &ns,
+  int depth)
+{
+  if(depth <= 0)
+    return std::nullopt;
+  auto fn_it = goto_functions.function_map.find(callee_id);
+  if(fn_it == goto_functions.function_map.end())
+    return std::nullopt;
+  const goto_programt &cb = fn_it->second.body;
+  if(cb.instructions.empty())
+    return std::nullopt;
+
+  const std::string ret_needle = id2string(callee_id) + "#return_value";
+  // Try multi-return extraction first (handles single-return as
+  // a degenerate case of "one path").
+  multi_return_resultt mr = extract_multi_return_body(
+    cb, ret_needle, goto_functions, ns, depth - 1);
+  if(!mr.valid)
+    return std::nullopt;
+
+  // Substitute the callee's parameters with `args`.
+  const auto *cs = ns.get_symbol_table().lookup(callee_id);
+  if(cs == nullptr)
+    return std::nullopt;
+  const auto &cps = to_code_type(cs->type).parameters();
+  const std::size_t n_args = args.size();
+  const std::size_t n_params = cps.size();
+  const std::size_t aligned = std::min(n_args, n_params);
+  const std::size_t arg_off = n_args - aligned;
+  const std::size_t param_off = n_params - aligned;
+  std::function<exprt(const exprt &)> psub = [&](const exprt &x) -> exprt {
+    if(x.id() == ID_symbol)
+    {
+      const irep_idt &xid = to_symbol_expr(x).get_identifier();
+      for(std::size_t k = 0; k < aligned; ++k)
+      {
+        if(xid == cps[param_off + k].get_identifier())
+          return args[arg_off + k];
+      }
+      return x;
+    }
+    exprt o = x;
+    for(auto &op : o.operands())
+      op = psub(op);
+    return o;
+  };
+  return psub(mr.expr);
+}
+
 } // namespace
 
 static exprt inline_pure_calls(
@@ -1352,9 +1608,63 @@ static exprt inline_pure_calls(
         ++return_assigns;
       }
       // Only inline single-return single-expression callees
-      // ("pure" in the structural sense). Multi-return is 1.1c.
-      if(return_assigns != 1 || callee_rhs == nullptr)
-        return e;
+      // ("pure" in the structural sense). Multi-return is 1.1c
+      // — handled below as a fallback.
+      const exprt *single_callee_rhs = (return_assigns == 1) ? callee_rhs : nullptr;
+      if(single_callee_rhs == nullptr)
+      {
+        // 1.1c: try to reconstruct the callee's return value as a
+        // path-conditional ITE chain over its early-return paths.
+        multi_return_resultt mr = extract_multi_return_body(
+          callee_body, callee_ret_needle, goto_functions, ns,
+          /*depth=*/8);
+        if(!mr.valid)
+          return e;
+        callee_rhs = nullptr;
+        // Replace the body expression we substitute below.
+        single_callee_rhs = &mr.expr;
+        // The mr.expr already has its locals substituted, so we
+        // can short-circuit the resolve_stack_temps call below
+        // by feeding it directly. We still need to substitute
+        // parameters with call-site arguments.
+        const auto *callee_sym2 =
+          ns.get_symbol_table().lookup(found.callee_id);
+        if(callee_sym2 == nullptr)
+          return e;
+        const auto &callee_params2 =
+          to_code_type(callee_sym2->type).parameters();
+        const std::size_t n_args2 = found.args.size();
+        const std::size_t n_params2 = callee_params2.size();
+        const std::size_t aligned2 = std::min(n_args2, n_params2);
+        const std::size_t arg_off2 = n_args2 - aligned2;
+        const std::size_t param_off2 = n_params2 - aligned2;
+        std::function<exprt(const exprt &)> psub =
+          [&](const exprt &x) -> exprt {
+          if(x.id() == ID_symbol)
+          {
+            const irep_idt &xid = to_symbol_expr(x).get_identifier();
+            for(std::size_t k = 0; k < aligned2; ++k)
+            {
+              const auto &p = callee_params2[param_off2 + k];
+              if(xid == p.get_identifier())
+                return found.args[arg_off2 + k];
+            }
+            return x;
+          }
+          exprt o = x;
+          for(auto &op : o.operands())
+            op = psub(op);
+          return o;
+        };
+        exprt sub_mr = psub(mr.expr);
+        sub_mr = resolve_stack_temps(
+          sub_mr, target_body, target_body.instructions.cend(),
+          target_function_id);
+        return inline_pure_calls(
+          sub_mr, target_body, target_function_id,
+          goto_functions, ns, symbol_table,
+          intrinsic_symbol_cache, max_depth - 1);
+      }
 
       // Resolve stack temps inside the callee.
       exprt callee_body_expr = resolve_stack_temps(
