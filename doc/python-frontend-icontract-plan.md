@@ -455,13 +455,6 @@ Limitations:
   effective (composed) lambdas at registration time, or
   recursive walking at lookup time. Both are mechanical
   extensions.
-- **Pre-existing inheritance gap (orthogonal):** calling a
-  parent's method on a subclass instance (e.g.
-  `child.parent_method()`) doesn't always invoke the
-  parent's body. This is a Python frontend issue
-  independent of icontract; tests in this suite avoid
-  inherited-method invocation by declaring the relevant
-  methods directly on each subclass.
 - **MRO not respected.** Multiple direct bases are walked
   left-to-right with simple union semantics. This works for
   most single-inheritance and simple mixin cases but
