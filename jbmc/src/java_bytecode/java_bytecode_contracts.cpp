@@ -1203,7 +1203,16 @@ static exprt subst_locals(
   }
   if(e.id() == ID_symbol)
   {
-    auto it = locals.find(to_symbol_expr(e).get_identifier());
+    const irep_idt &sid = to_symbol_expr(e).get_identifier();
+    // If the symbol has a heap entry, leave it bare so callers
+    // can recognise the heap-tracked pointer (e.g. for
+    // synthesising the multi-return value as
+    // address_of(heap[id])). Substituting via `locals` here
+    // would replace `new_tmp0` with `side_effect("allocate")`,
+    // losing the symbol reference.
+    if(heap.find(sid) != heap.end())
+      return e;
+    auto it = locals.find(sid);
     if(it != locals.end())
       return it->second;
     return e;
@@ -1288,12 +1297,20 @@ static bool traverse_paths(
         const irep_idt ptr_id =
           to_symbol_expr(lhs.operands()[0].operands()[0]).get_identifier();
         auto hit = state.heap.find(ptr_id);
-        if(hit != state.heap.end() && hit->second.id() == ID_struct &&
-          hit->second.type().id() == ID_struct)
+        bool heap_struct_ok =
+          hit != state.heap.end() && hit->second.id() == ID_struct &&
+          (hit->second.type().id() == ID_struct ||
+           hit->second.type().id() == ID_struct_tag);
+        if(heap_struct_ok)
         {
+          typet st_t = hit->second.type();
+          if(st_t.id() == ID_struct_tag)
+            st_t = ns.follow_tag(to_struct_tag_type(st_t));
+          if(st_t.id() != ID_struct)
+            return false;
           const irep_idt field_name =
             to_member_expr(lhs).get_component_name();
-          const auto &struct_t = to_struct_type(hit->second.type());
+          const auto &struct_t = to_struct_type(st_t);
           const auto &components = struct_t.components();
           for(std::size_t i = 0; i < components.size(); ++i)
           {
@@ -1322,24 +1339,42 @@ static bool traverse_paths(
           // of one) that we've heap-tracked, surface the
           // synthesized struct via address_of so the caller can
           // resolve `(*receiver).field` accesses through CBMC's
-          // standard *&x = x simplification.
-          auto unwrap_ptr_id = [](const exprt &e) -> irep_idt {
-            const exprt *cur = &e;
+          // standard *&x = x simplification. We must preserve
+          // the original RHS's typecast wrapping so that all
+          // multi-return branches share the same declared type
+          // (e.g. struct PathLengthRange*) — otherwise the
+          // ITE-fold in extract_multi_return_body produces
+          // type-mismatched branches like
+          //   if cond1 then cast(arg0, PLR*) else address_of(struct AtLeast)
+          // which CBMC's if_exprt rejects.
+          auto rebuild_with_heap =
+            [&](const exprt &orig) -> std::optional<exprt> {
+            std::vector<typet> cast_chain;
+            const exprt *cur = &orig;
             while(cur->id() == ID_typecast && cur->operands().size() == 1)
-              cur = &cur->operands()[0];
-            if(cur->id() == ID_symbol)
-              return to_symbol_expr(*cur).get_identifier();
-            return irep_idt();
-          };
-          irep_idt rhs_ptr = unwrap_ptr_id(rhs);
-          if(!rhs_ptr.empty())
-          {
-            auto hit = state.heap.find(rhs_ptr);
-            if(hit != state.heap.end())
             {
-              rhs = address_of_exprt(hit->second);
+              cast_chain.push_back(cur->type());
+              cur = &cur->operands()[0];
             }
-          }
+            if(cur->id() != ID_symbol)
+              return std::nullopt;
+            const irep_idt sid = to_symbol_expr(*cur).get_identifier();
+            auto hit = state.heap.find(sid);
+            if(hit == state.heap.end())
+              return std::nullopt;
+            // Wrap the synthesized struct in address_of, then
+            // replay the typecast chain in reverse so the result
+            // has the same type as the original rhs.
+            exprt res = address_of_exprt(hit->second);
+            for(auto rit = cast_chain.rbegin(); rit != cast_chain.rend();
+                ++rit)
+            {
+              res = typecast_exprt(res, *rit);
+            }
+            return res;
+          };
+          if(auto rebuilt = rebuild_with_heap(rhs))
+            rhs = *rebuilt;
           results.emplace_back(state.pc, rhs);
           return true;
         }
@@ -1443,8 +1478,18 @@ static bool traverse_paths(
         const irep_idt this_ptr =
           to_symbol_expr(sub_args[0]).get_identifier();
         auto hit = state.heap.find(this_ptr);
-        if(hit != state.heap.end() && hit->second.id() == ID_struct &&
-          hit->second.type().id() == ID_struct)
+        // Resolve struct_tag references to the underlying
+        // struct type so we can iterate components below.
+        auto resolved_type = [&](const typet &t) -> typet {
+          if(t.id() == ID_struct_tag)
+            return ns.follow_tag(to_struct_tag_type(t));
+          return t;
+        };
+        bool heap_struct_ok =
+          hit != state.heap.end() && hit->second.id() == ID_struct &&
+          (hit->second.type().id() == ID_struct ||
+           hit->second.type().id() == ID_struct_tag);
+        if(heap_struct_ok)
         {
           // Walk the constructor's body for ASSIGN
           // *this.field := param patterns and apply them to the
@@ -1506,8 +1551,10 @@ static bool traverse_paths(
                     continue;
                   const irep_idt field_name =
                     to_member_expr(lhs).get_component_name();
-                  const auto &struct_t =
-                    to_struct_type(hit->second.type());
+                  const typet st_t = resolved_type(hit->second.type());
+                  if(st_t.id() != ID_struct)
+                    continue;
+                  const auto &struct_t = to_struct_type(st_t);
                   const auto &components = struct_t.components();
                   for(std::size_t k = 0; k < components.size(); ++k)
                   {
@@ -1574,10 +1621,30 @@ static multi_return_resultt extract_multi_return_body(
     return out;
   if(branches.empty())
     return out;
-  exprt result = branches.back().second;
+  // Determine the unifying result type. We pick the type of the
+  // last branch (the default fall-through) as the canonical type
+  // and cast every other branch to it. This is a conservative
+  // type-coercion strategy: in well-typed Java sources, all
+  // return paths share a declared return type, so the casts are
+  // either no-ops or pointer up-casts that CBMC's simplifier
+  // collapses. Without this, multi-return bodies that mix
+  // different concrete types per path (e.g.
+  //   path A: return arg1a;                    // PathLengthRange*
+  //   path B: return new Undefined();          // becomes
+  //                  cast(address_of(struct Undefined), PLR*)
+  //   path C: return new AtLeast(min);         // becomes
+  //                  cast(address_of(struct AtLeast), PLR*)
+  // ) would produce if_exprts with mismatched branch types.
+  const typet &result_type = branches.back().second.type();
+  auto coerce = [&](const exprt &x) -> exprt {
+    if(x.type() == result_type)
+      return x;
+    return typecast_exprt(x, result_type);
+  };
+  exprt result = coerce(branches.back().second);
   for(auto rit = std::next(branches.rbegin()); rit != branches.rend(); ++rit)
   {
-    result = if_exprt(rit->first, rit->second, result);
+    result = if_exprt(rit->first, coerce(rit->second), result);
   }
   out.valid = true;
   out.expr = result;
@@ -1971,6 +2038,113 @@ static exprt inline_pure_calls(
   return visit(expr);
 }
 
+/// 1.1c-math-intrinsics: rewrite the post-inlined Java
+/// `Math.min(int,int)` / `Math.max(int,int)` / `Math.abs(int)`
+/// patterns in a goto-program body to clean if-expressions.
+///
+/// JBMC's java-models-library substitutes Math.min/max with a
+/// stub whose lowered form returns nondet — so callers see
+/// Math.min(a, b) as effectively unconstrained. For our
+/// cover()-using lemmas this destroys the `min(a,b) <= max(a,b)`
+/// semantics that the lemma relies on after inlining.
+///
+/// Pattern recognised (when running inside lower_jverify_contracts,
+/// before remove_returns has lowered the CALL to its model body):
+///
+///   CALL    java.lang.Math.{min,max,abs}(arg0, arg1, ...)
+///   ASSIGN  result := java.lang.Math.{min,max,abs}#return_value
+///   DEAD    java.lang.Math.{min,max,abs}#return_value
+///
+/// Rewrite:
+///
+///   SKIP                              ; was the CALL
+///   ASSIGN  result := if(a <op> b, a, b)
+///   <DEAD preserved>
+///
+/// where <op> is `<` for min, `>` for max. For abs(x):
+/// `if(x < 0, -x, x)`.
+static bool rewrite_math_intrinsics(goto_programt &body)
+{
+  bool any_changed = false;
+  using it_t = goto_programt::instructionst::iterator;
+  for(it_t it = body.instructions.begin(); it != body.instructions.end();
+      ++it)
+  {
+    if(!it->is_function_call())
+      continue;
+    const exprt &cf = it->call_function();
+    if(cf.id() != ID_symbol)
+      continue;
+    const std::string cf_id = id2string(to_symbol_expr(cf).get_identifier());
+    bool is_min =
+      cf_id.find("java::java.lang.Math.min:") != std::string::npos;
+    bool is_max =
+      cf_id.find("java::java.lang.Math.max:") != std::string::npos;
+    bool is_abs =
+      cf_id.find("java::java.lang.Math.abs:") != std::string::npos;
+    if(!is_min && !is_max && !is_abs)
+      continue;
+    // Only handle integer overloads (signature ends in (II)I, (I)I).
+    if(
+      cf_id.find("(II)I") == std::string::npos &&
+      cf_id.find("(I)I") == std::string::npos)
+      continue;
+    // Get the call arguments.
+    const auto &args = it->call_arguments();
+    const std::size_t n_args = is_abs ? 1 : 2;
+    if(args.size() < n_args)
+      continue;
+    // Build the clean min/max/abs expression.
+    exprt clean;
+    if(is_abs)
+    {
+      const exprt &x = args[0];
+      // if(x < 0, -x, x)
+      clean = if_exprt(
+        less_than_exprt(x, from_integer(0, x.type())),
+        unary_minus_exprt(x, x.type()),
+        x);
+    }
+    else
+    {
+      const exprt &a = args[0];
+      const exprt &b = args[1];
+      // min: if(a < b, a, b);  max: if(a > b, a, b)
+      if(is_min)
+        clean = if_exprt(less_than_exprt(a, b), a, b);
+      else
+        clean = if_exprt(greater_than_exprt(a, b), a, b);
+    }
+    // Find the immediately-following ASSIGN that reads from
+    // <method>#return_value and replace its rhs with `clean`.
+    auto next_it = std::next(it);
+    while(next_it != body.instructions.end() &&
+          (next_it->is_location() || next_it->is_decl() ||
+           next_it->is_other() || next_it->is_skip()))
+      ++next_it;
+    if(next_it == body.instructions.end())
+      continue;
+    if(!next_it->is_assign())
+      continue;
+    const exprt &nrhs = next_it->assign_rhs();
+    if(nrhs.id() != ID_symbol)
+      continue;
+    const std::string nrhs_id =
+      id2string(to_symbol_expr(nrhs).get_identifier());
+    if(nrhs_id != cf_id + "#return_value")
+      continue;
+    // Type-coerce clean to match the LHS type.
+    if(clean.type() != next_it->assign_lhs().type())
+      clean = typecast_exprt(clean, next_it->assign_lhs().type());
+    next_it->assign_rhs_nonconst() = clean;
+    it->turn_into_skip();
+    any_changed = true;
+  }
+  if(any_changed)
+    body.update();
+  return any_changed;
+}
+
 /// 1.1c-bodyrewrite: scan a goto-program body for the
 /// `CALL X(args); ASSIGN tmp := X#return_value` pattern at
 /// caller-side (non-forall) call sites, and replace each pair
@@ -2001,9 +2175,79 @@ static exprt inline_pure_calls(
 /// the original CALL+ASSIGN intact.
 static bool inline_pure_call_chains(
   goto_programt &body,
+  const irep_idt &enclosing_function_id,
   const goto_functionst &goto_functions,
+  symbol_tablet &symbol_table,
   const namespacet &ns)
 {
+  // Counter for fresh aux-symbol generation per body. Each
+  // synthesized struct value (from cover()-style record returns)
+  // needs a backing lvalue symbol because CBMC's symex rejects
+  // `address_of(<struct literal>)` ("address_arithmetic does not
+  // handle struct").
+  std::size_t aux_counter = 0;
+  auto materialize_struct_in_addresses =
+    [&](exprt &e, goto_programt &target,
+        goto_programt::targett insert_before,
+        const source_locationt &loc) {
+      // Recursive walk: any address_of(struct_exprt) is replaced
+      // by address_of(<fresh aux symbol of that struct's type>),
+      // and an ASSIGN aux := struct_exprt is inserted before
+      // `insert_before`. The aux symbol is added to symbol_table
+      // as a function-local for `enclosing_function_id`.
+      std::function<void(exprt &)> rec = [&](exprt &x) {
+        if(
+          x.id() == ID_address_of && x.operands().size() == 1 &&
+          x.operands()[0].id() == ID_struct)
+        {
+          exprt struct_val = x.operands()[0];
+          // Build a fresh symbol.
+          const std::string base = "1.1c::aux_struct_";
+          irep_idt sid =
+            id2string(enclosing_function_id) + "::" + base +
+            std::to_string(aux_counter++);
+          symbolt aux;
+          aux.name = sid;
+          aux.base_name = base + std::to_string(aux_counter - 1);
+          aux.pretty_name = aux.base_name;
+          aux.type = struct_val.type();
+          aux.value = nil_exprt{};
+          aux.mode = ID_java;
+          aux.is_lvalue = true;
+          aux.is_static_lifetime = false;
+          aux.is_thread_local = true;
+          aux.is_file_local = true;
+          aux.is_auxiliary = true;
+          aux.location = loc;
+          // Best-effort insertion; if a clashing symbol exists,
+          // fall back to a numeric suffix bump.
+          while(symbol_table.has_symbol(aux.name))
+          {
+            aux.name =
+              id2string(enclosing_function_id) + "::" + base +
+              std::to_string(aux_counter++);
+            aux.base_name = base + std::to_string(aux_counter - 1);
+            aux.pretty_name = aux.base_name;
+          }
+          symbol_table.add(aux);
+          symbol_exprt aux_sym(aux.name, aux.type);
+          // Insert: DECL aux; ASSIGN aux := struct_val;
+          auto decl_it = target.insert_before(
+            insert_before,
+            goto_programt::make_decl(aux_sym, loc));
+          (void)decl_it;
+          target.insert_before(
+            insert_before,
+            goto_programt::make_assignment(aux_sym, struct_val, loc));
+          // Replace this node with address_of(aux_sym).
+          x = address_of_exprt(aux_sym);
+          return;
+        }
+        for(auto &op : x.operands())
+          rec(op);
+      };
+      rec(e);
+    };
   bool any_changed = false;
   for(auto it = body.instructions.begin(); it != body.instructions.end();
       ++it)
@@ -2055,6 +2299,14 @@ static bool inline_pure_call_chains(
     {
       inlined_expr = typecast_exprt(inlined_expr, next_it->assign_lhs().type());
     }
+    // Materialize any synthetic struct values: replace
+    // `address_of(<struct literal>)` subexpressions with
+    // `address_of(<fresh aux symbol>)` and inject the struct's
+    // initialization before the (now-SKIP'd) call site. This is
+    // required because CBMC's symex rejects taking the address
+    // of a struct constant.
+    materialize_struct_in_addresses(
+      inlined_expr, body, it, it->source_location());
 
     *next_it = goto_programt::make_assignment(
       next_it->assign_lhs(), inlined_expr, next_it->source_location());
@@ -2189,9 +2441,20 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
   // best-effort (returns nullopt for unrecognised shapes), and
   // skips JVerify.* / lambda$ / JDK methods so it doesn't
   // interfere with the §F12 forall pre-pass that follows.
+  // First pass: rewrite Math intrinsics in every function body.
+  // This must complete before inline_pure_call_chains so that
+  // when a caller's body-rewrite tries to inline a callee
+  // (e.g. coverContainsLeft inlining cover()), the callee's
+  // body has already had its Math.min/max patterns cleaned up.
   for(auto &fp : goto_model.goto_functions.function_map)
   {
-    inline_pure_call_chains(fp.second.body, goto_model.goto_functions, ns);
+    rewrite_math_intrinsics(fp.second.body);
+  }
+  for(auto &fp : goto_model.goto_functions.function_map)
+  {
+    inline_pure_call_chains(
+      fp.second.body, fp.first, goto_model.goto_functions,
+      goto_model.symbol_table, ns);
   }
 
   // §F12 follow-on: pre-pass rewrite of JVerify.forall(lambda) /
