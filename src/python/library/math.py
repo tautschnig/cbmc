@@ -180,14 +180,23 @@ def modf(x: float):
     return fractional_part, integer_part
 
 
-# Note: frexp and ldexp are intentionally NOT modelled here.
-# Modeling them as nondet floats would expose them to assertions
-# in user code (e.g. 'm == 0.5' after 'm, e = frexp(8.0)') that
-# can't hold for arbitrary nondet, regressing tests that
-# previously passed because the unmodeled function silently
-# dropped its tuple-unpacking. Modeling them precisely would
-# require constant-folding at the call site for the common
-# 'frexp(constant)' pattern; that is tracked as a separate gap.
+# Note: frexp is intentionally NOT modelled here as a
+# c_intrinsic — it returns a tuple. ldexp / nextafter /
+# ulp ARE folded via the math intrinsic dispatch when
+# called with constant arguments; for non-constant args
+# they fall back to nondet float.
+
+
+@c_intrinsic("ldexp", fold="ldexp")
+def ldexp(x: float, i: int) -> float: ...
+
+
+@c_intrinsic("nextafter", fold="nextafter")
+def nextafter(x: float, y: float) -> float: ...
+
+
+@c_intrinsic("ulp", fold="ulp")
+def ulp(x: float) -> float: ...
 
 
 @c_intrinsic("remainder", fold="remainder")
