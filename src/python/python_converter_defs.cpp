@@ -695,46 +695,47 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   global_names.clear();
   nonlocal_names.clear();
 
+  // Phase 4 of the icontract integration plan: create the
+  // `result` symbol that lambda bodies can reference to mean
+  // the function's return value. Adding the symbol to the
+  // function's scope lets convert_expression resolve
+  // Name("result") to it during ensure-lambda translation
+  // below. The post-process walk on body_block (further
+  // down) assigns the actual return value to this symbol
+  // before each assertion fires, so the postcondition sees
+  // the right value. For void-like return types we still
+  // create the symbol with python_int_type as a placeholder
+  // — those ensures shouldn't reference result anyway.
+  irep_idt result_symbol_id;
+  if(!icontract_ensure_lambdas.empty())
+  {
+    typet rsym_type =
+      return_type.id() == ID_empty ? python_int_type() : return_type;
+    std::string rsym_name = "python::" + qualified_func_name + "::result";
+    result_symbol_id = irep_idt{rsym_name};
+    if(!symbol_table.has_symbol(result_symbol_id))
+    {
+      symbolt rsym{result_symbol_id, rsym_type, "python"};
+      rsym.base_name = "result";
+      rsym.is_lvalue = true;
+      rsym.is_state_var = true;
+      symbol_table.add(rsym);
+    }
+  }
+
   // Phase 3 of the icontract integration plan: translate the
   // @ensure lambdas now that current_function is set so Name
-  // lookups in the lambda body resolve to function parameters.
-  // Lambdas referencing `result` are deferred (Phase 4 will
-  // wire up the result-binding mechanism) — recognise them
-  // textually and skip. Successfully translated postconditions
-  // get pushed onto active_ensures so convert_return can emit
-  // the assertion before each return statement, and onto the
-  // ID_C_spec_ensures slot on the function type for DFCC.
+  // lookups in the lambda body resolve to function parameters
+  // (Phase 3) and to the `result` symbol just registered above
+  // (Phase 4). Successfully translated postconditions get
+  // pushed onto active_ensures so the post-process walk can
+  // emit the assertion before each return statement, and onto
+  // the ID_C_spec_ensures slot on the function type for DFCC.
   std::vector<exprt> saved_ensures;
   saved_ensures.swap(active_ensures);
   for(const jsont *lam : icontract_ensure_lambdas)
   {
-    // Phase 3 limitation: skip lambdas that reference `result`.
-    // Detect by walking the AST looking for Name("result").
-    std::function<bool(const jsont &)> refs_result = [&](const jsont &n) -> bool
-    {
-      if(
-        is_node_type(n, "Name") &&
-        json_string(json_member(n, "id")) == "result")
-        return true;
-      // Walk all sub-nodes (object members and array elements).
-      if(n.is_object())
-      {
-        const auto &obj = static_cast<const json_objectt &>(n);
-        for(const auto &kv : obj)
-          if(refs_result(kv.second))
-            return true;
-      }
-      if(n.is_array())
-      {
-        for(const auto &e : as_array(n))
-          if(refs_result(e))
-            return true;
-      }
-      return false;
-    };
     const jsont &lam_body = json_member(*lam, "body");
-    if(refs_result(lam_body))
-      continue; // deferred to Phase 4
     exprt cond;
     try
     {
@@ -1025,36 +1026,55 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       body_block.add(convert_statement(s));
   }
 
-  // Phase 3 of the icontract integration plan: walk the body
-  // recursively and replace each code_frontend_returnt with a
-  // code_blockt that asserts every active_ensures clause before
-  // returning. This catches all return statements no matter how
-  // deeply nested (inside if / for / while / try blocks). The
-  // implicit fall-through return below is handled separately.
+  // Phase 3 + 4 of the icontract integration plan: walk the
+  // body recursively and replace each code_frontend_returnt
+  // with:
+  //   { result = X; assert(ensures); return X; }
+  // so the postcondition assertions see the return value
+  // bound to the `result` symbol. For bare returns (no
+  // value) we just prepend the assertions. This catches all
+  // return statements no matter how deeply nested (inside
+  // if / for / while / try blocks). The implicit fall-through
+  // return below is handled separately.
   if(!active_ensures.empty())
   {
     std::function<void(codet &)> inject_at_returns = [&](codet &c) -> void
     {
       // Walk operands; if an operand is a code_frontend_returnt,
-      // replace it with a code_blockt(asserts + original return).
+      // replace it with a code_blockt(assign-result + asserts + return).
       // Otherwise recurse into operands that are codet.
       for(auto &op : c.operands())
       {
-        if(op.id() == ID_code)
+        if(op.id() != ID_code)
+          continue;
+        codet &inner = static_cast<codet &>(op);
+        if(inner.get_statement() == ID_return)
         {
-          codet &inner = static_cast<codet &>(op);
-          if(inner.get_statement() == ID_return)
+          const code_frontend_returnt &ret =
+            static_cast<const code_frontend_returnt &>(inner);
+          code_blockt blk;
+          // Assign return value to `result` symbol so postcondition
+          // assertions can reference it. Skip for bare returns
+          // (no return value) and when the result symbol wasn't
+          // registered (no ensure decorator collected one).
+          if(
+            ret.has_return_value() && !result_symbol_id.empty() &&
+            symbol_table.has_symbol(result_symbol_id))
           {
-            code_blockt blk;
-            for(const exprt &cond : active_ensures)
-              blk.add(code_assertt{cond});
-            blk.add(static_cast<const codet &>(inner));
-            op = std::move(blk);
+            const symbolt &rsym = symbol_table.lookup_ref(result_symbol_id);
+            exprt rv = ret.return_value();
+            if(rv.type() != rsym.type)
+              rv = safe_typecast(rv, rsym.type);
+            blk.add(code_frontend_assignt{rsym.symbol_expr(), rv});
           }
-          else
-          {
-            inject_at_returns(inner);
-          }
+          for(const exprt &cond : active_ensures)
+            blk.add(code_assertt{cond});
+          blk.add(static_cast<const codet &>(inner));
+          op = std::move(blk);
+        }
+        else
+        {
+          inject_at_returns(inner);
         }
       }
     };
