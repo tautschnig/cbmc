@@ -866,6 +866,18 @@ private:
     const std::string &method_name,
     const jsont &args);
 
+  /// Dict-method dispatch (handled by
+  /// python_converter_call_dict_methods.cpp): get / setdefault /
+  /// pop / popitem / update / clear / keys / values / items /
+  /// fromkeys / copy / __contains__. Returns nullopt if
+  /// method_name doesn't match any recognised dict method.
+  std::optional<exprt> try_dict_method(
+    const jsont &expr,
+    const exprt &obj,
+    const typet &obj_base_type,
+    const std::string &method_name,
+    const jsont &args);
+
   /// Final user-function-call fallback (handled by
   /// python_converter_call_user.cpp): nested-function lookup,
   /// lambdas, function_aliases, @c_intrinsic redirection,
