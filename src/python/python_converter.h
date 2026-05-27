@@ -852,6 +852,20 @@ private:
   std::optional<exprt>
   try_method_call(const jsont &expr, std::string &func_name, const jsont &args);
 
+  /// String-method dispatch (handled by
+  /// python_converter_call_string_methods.cpp): split, replace,
+  /// format, isalpha/isdigit/etc., upper/lower, find/rfind,
+  /// startswith/endswith, encode/decode, join, strip variants,
+  /// count, partition, ljust/rjust/center, zfill. Returns
+  /// nullopt if method_name doesn't match any of the recognised
+  /// string methods.
+  std::optional<exprt> try_string_method(
+    const jsont &expr,
+    const exprt &obj,
+    const typet &obj_base_type,
+    const std::string &method_name,
+    const jsont &args);
+
   /// Final user-function-call fallback (handled by
   /// python_converter_call_user.cpp): nested-function lookup,
   /// lambdas, function_aliases, @c_intrinsic redirection,
