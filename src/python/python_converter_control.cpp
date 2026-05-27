@@ -1314,6 +1314,26 @@ codet python_convertert::convert_return(const jsont &stmt)
 
       irep_idt init_id{"python::" + call_name + "::__init__"};
       const symbolt *init_sym = symbol_table.lookup(init_id);
+      // Inheritance fallback: walk MRO if class doesn't
+      // define __init__ itself.
+      if(init_sym == nullptr)
+      {
+        auto mro_it = class_mro.find(call_name);
+        if(mro_it != class_mro.end())
+        {
+          for(std::size_t i = 1; i < mro_it->second.size(); ++i)
+          {
+            irep_idt aid{"python::" + mro_it->second[i] + "::__init__"};
+            const symbolt *as = symbol_table.lookup(aid);
+            if(as != nullptr)
+            {
+              init_id = aid;
+              init_sym = as;
+              break;
+            }
+          }
+        }
+      }
       if(init_sym != nullptr)
       {
         exprt::operandst args;

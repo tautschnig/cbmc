@@ -1246,10 +1246,42 @@ std::optional<exprt> python_convertert::try_method_call(
         {
           irep_idt method_id{"python::" + class_name + "::" + method_name};
           const symbolt *method_sym = symbol_table.lookup(method_id);
+          // Inheritance fallback: if the class doesn't define
+          // the method itself, walk its C3 MRO to look for the
+          // method on each ancestor in resolution order. The
+          // first match wins (single-inheritance: the immediate
+          // parent; multiple-inheritance: per Python's MRO).
+          // class_mro is populated by compute_c3_mro() in
+          // convert_class_def. mro_it->second[0] is the class
+          // itself (already checked above); skip it.
+          if(method_sym == nullptr)
+          {
+            auto mro_it = class_mro.find(class_name);
+            if(mro_it != class_mro.end())
+            {
+              for(std::size_t i = 1; i < mro_it->second.size(); ++i)
+              {
+                const std::string &ancestor = mro_it->second[i];
+                irep_idt ancestor_method_id{
+                  "python::" + ancestor + "::" + method_name};
+                const symbolt *ancestor_sym =
+                  symbol_table.lookup(ancestor_method_id);
+                if(ancestor_sym != nullptr)
+                {
+                  // Resolved on an ancestor — rebind for the
+                  // dispatch logic below.
+                  class_name = ancestor;
+                  method_id = ancestor_method_id;
+                  method_sym = ancestor_sym;
+                  break;
+                }
+              }
+            }
+          }
           // Strict missing-method detection: if the class is in
           // class_types (we know its structure) but the method
-          // isn't declared, raise AttributeError rather than
-          // silently over-approximating.
+          // isn't declared (and isn't inherited via MRO), raise
+          // AttributeError rather than silently over-approximating.
           if(
             method_sym == nullptr && method_name.substr(0, 2) != "__" &&
             !python_lazy_stubs)
@@ -1350,6 +1382,31 @@ std::optional<exprt> python_convertert::try_method_call(
         std::string class_name = tag.substr(13);
         irep_idt method_id{"python::" + class_name + "::" + method_name};
         const symbolt *method_sym = symbol_table.lookup(method_id);
+        // Inheritance fallback: walk MRO if not found on the
+        // class itself (mirrors the resolution above for the
+        // first dispatch path).
+        if(method_sym == nullptr)
+        {
+          auto mro_it = class_mro.find(class_name);
+          if(mro_it != class_mro.end())
+          {
+            for(std::size_t i = 1; i < mro_it->second.size(); ++i)
+            {
+              const std::string &ancestor = mro_it->second[i];
+              irep_idt ancestor_method_id{
+                "python::" + ancestor + "::" + method_name};
+              const symbolt *ancestor_sym =
+                symbol_table.lookup(ancestor_method_id);
+              if(ancestor_sym != nullptr)
+              {
+                class_name = ancestor;
+                method_id = ancestor_method_id;
+                method_sym = ancestor_sym;
+                break;
+              }
+            }
+          }
+        }
         if(method_sym != nullptr)
         {
           const code_typet &method_type = to_code_type(method_sym->type);
