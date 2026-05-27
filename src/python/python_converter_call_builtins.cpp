@@ -2046,6 +2046,164 @@ std::optional<exprt> python_convertert::try_builtin_call(
       {
         const jsont &elt = json_member(arg, "elt");
         const jsont &generators = json_member(arg, "generators");
+        // 2-level nested generator: `all(EXPR for x in xs for y in ys)`.
+        // Both iter sources may be literal lists or Name
+        // references that bind to list literals; no var
+        // shadowing (xs's loop var != ys's loop var). Unrolls
+        // the cartesian product, substitutes both vars in EXPR,
+        // and accumulates via AND/OR. Higher-arity nesting and
+        // var-shadowing fall through to the single-generator
+        // path below.
+        if(
+          generators.is_array() && as_array(generators).size() == 2 &&
+          !as_array(generators).empty())
+        {
+          // Helper: extract list elements as exprts when iter is
+          // a Name binding to a list literal.
+          auto fetch_struct_elements =
+            [&](const jsont &iter_node) -> std::vector<exprt>
+          {
+            std::vector<exprt> out;
+            if(is_node_type(iter_node, "Name"))
+            {
+              std::string nm = json_string(json_member(iter_node, "id"));
+              irep_idt sid{qualify_name(nm)};
+              auto it = list_literals.find(sid);
+              if(
+                it != list_literals.end() && it->second.id() == ID_struct &&
+                it->second.operands().size() >= 2)
+              {
+                const exprt &len_e = it->second.operands()[0];
+                const exprt &data = it->second.operands()[1];
+                if(len_e.is_constant() && data.id() == ID_array)
+                {
+                  mp_integer len_v;
+                  if(!to_integer(to_constant_expr(len_e), len_v))
+                  {
+                    auto n = static_cast<std::size_t>(len_v.to_long());
+                    for(std::size_t k = 0; k < n && k < data.operands().size();
+                        ++k)
+                      out.push_back(data.operands()[k]);
+                  }
+                }
+              }
+            }
+            return out;
+          };
+          auto gens_it = as_array(generators).begin();
+          const jsont &gen_outer = *gens_it++;
+          const jsont &gen_inner = *gens_it;
+          const jsont &outer_iter = json_member(gen_outer, "iter");
+          const jsont &inner_iter = json_member(gen_inner, "iter");
+          std::string outer_var =
+            json_string(json_member(json_member(gen_outer, "target"), "id"));
+          std::string inner_var =
+            json_string(json_member(json_member(gen_inner, "target"), "id"));
+          if(outer_var != inner_var)
+          {
+            // Build the outer / inner element vectors.
+            std::vector<exprt> outer_vals;
+            std::vector<exprt> inner_vals;
+            if(is_node_type(outer_iter, "List"))
+            {
+              const jsont &el = json_member(outer_iter, "elts");
+              if(el.is_array())
+                for(const auto &e : as_array(el))
+                  outer_vals.push_back(convert_expression(e));
+            }
+            else
+            {
+              outer_vals = fetch_struct_elements(outer_iter);
+            }
+            if(is_node_type(inner_iter, "List"))
+            {
+              const jsont &el = json_member(inner_iter, "elts");
+              if(el.is_array())
+                for(const auto &e : as_array(el))
+                  inner_vals.push_back(convert_expression(e));
+            }
+            else
+            {
+              inner_vals = fetch_struct_elements(inner_iter);
+            }
+            if(!outer_vals.empty() && !inner_vals.empty())
+            {
+              irep_idt o_id{qualify_name(outer_var)};
+              irep_idt i_id{qualify_name(inner_var)};
+              if(symbol_table.lookup(o_id) == nullptr)
+              {
+                symbolt s{o_id, python_int_type(), "python"};
+                s.base_name = outer_var;
+                s.is_lvalue = true;
+                s.is_state_var = true;
+                symbol_table.add(s);
+              }
+              if(symbol_table.lookup(i_id) == nullptr)
+              {
+                symbolt s{i_id, python_int_type(), "python"};
+                s.base_name = inner_var;
+                s.is_lvalue = true;
+                s.is_state_var = true;
+                symbol_table.add(s);
+              }
+              exprt result = (func_name == "all") ? exprt{true_exprt{}}
+                                                  : exprt{false_exprt{}};
+              const jsont &outer_ifs = json_member(gen_outer, "ifs");
+              const jsont &inner_ifs = json_member(gen_inner, "ifs");
+              auto subst_pair =
+                [&](exprt &e, const exprt &outer_v, const exprt &inner_v)
+              {
+                std::function<void(exprt &)> sub = [&](exprt &x)
+                {
+                  if(x.id() == ID_symbol)
+                  {
+                    auto sid = to_symbol_expr(x).get_identifier();
+                    if(sid == o_id)
+                      x = outer_v;
+                    else if(sid == i_id)
+                      x = inner_v;
+                    return;
+                  }
+                  for(auto &op : x.operands())
+                    sub(op);
+                };
+                sub(e);
+              };
+              for(const exprt &outer_val : outer_vals)
+              {
+                for(const exprt &inner_val : inner_vals)
+                {
+                  exprt elt_expr = convert_expression(elt);
+                  subst_pair(elt_expr, outer_val, inner_val);
+                  if(elt_expr.type() != bool_typet{})
+                    elt_expr = typecast_exprt{elt_expr, bool_typet{}};
+                  exprt filter = true_exprt{};
+                  auto add_filter = [&](const jsont &ifs_node)
+                  {
+                    if(!ifs_node.is_array())
+                      return;
+                    for(const auto &fn : as_array(ifs_node))
+                    {
+                      exprt fp = convert_expression(fn);
+                      subst_pair(fp, outer_val, inner_val);
+                      if(fp.type() != bool_typet{})
+                        fp = safe_typecast(fp, bool_typet{});
+                      filter = and_exprt{filter, fp};
+                    }
+                  };
+                  add_filter(outer_ifs);
+                  add_filter(inner_ifs);
+                  if(func_name == "all")
+                    result =
+                      and_exprt{result, or_exprt{not_exprt{filter}, elt_expr}};
+                  else
+                    result = or_exprt{result, and_exprt{filter, elt_expr}};
+                }
+              }
+              return result;
+            }
+          }
+        }
         if(generators.is_array() && !as_array(generators).empty())
         {
           const jsont &gen = *as_array(generators).begin();
