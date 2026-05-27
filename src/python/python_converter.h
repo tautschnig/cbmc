@@ -66,6 +66,16 @@ private:
   /// Current function name (empty for top-level code)
   std::string current_function;
 
+  /// icontract postcondition expressions for the function we
+  /// are currently converting. Populated by convert_function_def
+  /// when @icontract.ensure decorators are recognised; consumed
+  /// by convert_return to emit the assertion before each return
+  /// statement, and by convert_function_def itself for the
+  /// implicit fall-through return. Save/restored across nested
+  /// function definitions so each function sees its own
+  /// postconditions.
+  std::vector<exprt> active_ensures;
+
   /// Stack of enclosing function names (outermost first). A nested
   /// 'def' pushes the new function onto the stack. When a name is
   /// not found in the current function's scope, we fall back to
