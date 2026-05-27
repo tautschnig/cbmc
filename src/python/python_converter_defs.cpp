@@ -117,6 +117,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // decorator AST owned by `stmt`, so it remains valid for the
   // duration of convert_function_def.
   std::vector<const jsont *> icontract_require_lambdas;
+  // Phase 3 (companion): collect @icontract.ensure / bare
+  // @ensure decorator lambdas. Lambdas that reference `result`
+  // are deferred until Phase 4 wires up the result-binding
+  // mechanism — they're collected here but skipped during
+  // emission below.
+  std::vector<const jsont *> icontract_ensure_lambdas;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -125,31 +131,45 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         continue;
       const jsont &dec_func = json_member(dec, "func");
       bool is_require = false;
-      // @icontract.require(lambda ...): Attribute(Name("icontract"), "require")
-      if(
-        is_node_type(dec_func, "Attribute") &&
-        json_string(json_member(dec_func, "attr")) == "require")
+      bool is_ensure = false;
+      // @icontract.require / @icontract.ensure:
+      //   Attribute(Name("icontract"), "require"|"ensure")
+      if(is_node_type(dec_func, "Attribute"))
       {
+        std::string attr = json_string(json_member(dec_func, "attr"));
         const jsont &v = json_member(dec_func, "value");
         if(
           is_node_type(v, "Name") &&
           json_string(json_member(v, "id")) == "icontract")
-          is_require = true;
+        {
+          if(attr == "require")
+            is_require = true;
+          else if(attr == "ensure")
+            is_ensure = true;
+        }
       }
-      // @require(lambda ...): Name("require") — when imported as
-      // `from icontract import require`.
-      else if(
-        is_node_type(dec_func, "Name") &&
-        json_string(json_member(dec_func, "id")) == "require")
-        is_require = true;
-      if(!is_require)
+      // @require / @ensure (when imported as
+      // `from icontract import require, ensure`).
+      else if(is_node_type(dec_func, "Name"))
+      {
+        std::string nm = json_string(json_member(dec_func, "id"));
+        if(nm == "require")
+          is_require = true;
+        else if(nm == "ensure")
+          is_ensure = true;
+      }
+      if(!is_require && !is_ensure)
         continue;
       const jsont &dec_args = json_member(dec, "args");
       if(!dec_args.is_array() || as_array(dec_args).empty())
         continue;
       const jsont &first = *as_array(dec_args).begin();
-      if(is_node_type(first, "Lambda"))
+      if(!is_node_type(first, "Lambda"))
+        continue;
+      if(is_require)
         icontract_require_lambdas.push_back(&first);
+      else
+        icontract_ensure_lambdas.push_back(&first);
     }
   }
 
@@ -675,6 +695,67 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   global_names.clear();
   nonlocal_names.clear();
 
+  // Phase 3 of the icontract integration plan: translate the
+  // @ensure lambdas now that current_function is set so Name
+  // lookups in the lambda body resolve to function parameters.
+  // Lambdas referencing `result` are deferred (Phase 4 will
+  // wire up the result-binding mechanism) — recognise them
+  // textually and skip. Successfully translated postconditions
+  // get pushed onto active_ensures so convert_return can emit
+  // the assertion before each return statement, and onto the
+  // ID_C_spec_ensures slot on the function type for DFCC.
+  std::vector<exprt> saved_ensures;
+  saved_ensures.swap(active_ensures);
+  for(const jsont *lam : icontract_ensure_lambdas)
+  {
+    // Phase 3 limitation: skip lambdas that reference `result`.
+    // Detect by walking the AST looking for Name("result").
+    std::function<bool(const jsont &)> refs_result = [&](const jsont &n) -> bool
+    {
+      if(
+        is_node_type(n, "Name") &&
+        json_string(json_member(n, "id")) == "result")
+        return true;
+      // Walk all sub-nodes (object members and array elements).
+      if(n.is_object())
+      {
+        const auto &obj = static_cast<const json_objectt &>(n);
+        for(const auto &kv : obj)
+          if(refs_result(kv.second))
+            return true;
+      }
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          if(refs_result(e))
+            return true;
+      }
+      return false;
+    };
+    const jsont &lam_body = json_member(*lam, "body");
+    if(refs_result(lam_body))
+      continue; // deferred to Phase 4
+    exprt cond;
+    try
+    {
+      cond = convert_expression(lam_body);
+    }
+    catch(...)
+    {
+      cond = nil_exprt{};
+    }
+    if(cond.is_nil() || cond.type().id() == ID_empty)
+      continue;
+    if(cond.type().id() != ID_bool)
+      cond = typecast_exprt{cond, bool_typet{}};
+    active_ensures.push_back(cond);
+    if(symbol_table.has_symbol(symbol_id))
+    {
+      typet &t = symbol_table.get_writeable_ref(symbol_id).type;
+      static_cast<exprt &>(t.add(ID_C_spec_ensures)).operands().push_back(cond);
+    }
+  }
+
   // Pre-scan the body to collect parameter attribute uses.
   // Used by --python-check-any-arg-attrs at call sites to detect
   // Any-erasure bugs (cross-function flow where the caller has a
@@ -944,6 +1025,42 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       body_block.add(convert_statement(s));
   }
 
+  // Phase 3 of the icontract integration plan: walk the body
+  // recursively and replace each code_frontend_returnt with a
+  // code_blockt that asserts every active_ensures clause before
+  // returning. This catches all return statements no matter how
+  // deeply nested (inside if / for / while / try blocks). The
+  // implicit fall-through return below is handled separately.
+  if(!active_ensures.empty())
+  {
+    std::function<void(codet &)> inject_at_returns = [&](codet &c) -> void
+    {
+      // Walk operands; if an operand is a code_frontend_returnt,
+      // replace it with a code_blockt(asserts + original return).
+      // Otherwise recurse into operands that are codet.
+      for(auto &op : c.operands())
+      {
+        if(op.id() == ID_code)
+        {
+          codet &inner = static_cast<codet &>(op);
+          if(inner.get_statement() == ID_return)
+          {
+            code_blockt blk;
+            for(const exprt &cond : active_ensures)
+              blk.add(code_assertt{cond});
+            blk.add(static_cast<const codet &>(inner));
+            op = std::move(blk);
+          }
+          else
+          {
+            inject_at_returns(inner);
+          }
+        }
+      }
+    };
+    inject_at_returns(body_block);
+  }
+
   current_function = saved_function;
   global_names = saved_globals;
   if(
@@ -955,6 +1072,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // For generators: return __gen_result list
   if(is_generator)
   {
+    // Phase 3 icontract: assert ensures before the implicit
+    // generator-result return.
+    for(const exprt &cond : active_ensures)
+      body_block.add(code_assertt{cond});
     body_block.add(code_frontend_returnt{
       symbol_table.lookup_ref(gen_result_id).symbol_expr()});
   }
@@ -971,13 +1092,29 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       none_expr =
         safe_typecast(from_integer(none_val, python_int_type()), return_type);
     }
+    // Phase 3 icontract: assert ensures before the implicit
+    // None return.
+    for(const exprt &cond : active_ensures)
+      body_block.add(code_assertt{cond});
     body_block.add(code_frontend_returnt{none_expr});
+  }
+  else
+  {
+    // Empty return type (void-like). Still emit ensures
+    // assertions before the implicit fall-through.
+    for(const exprt &cond : active_ensures)
+      body_block.add(code_assertt{cond});
   }
 
   // Update the symbol with the body
   symbolt *sym_ptr = symbol_table.get_writeable(symbol_id);
   if(sym_ptr != nullptr)
     sym_ptr->value = body_block;
+
+  // Restore the parent function's icontract ensures (Phase 3 of
+  // the integration plan). Done AFTER body assembly because the
+  // implicit-return injection above reads from active_ensures.
+  active_ensures.swap(saved_ensures);
 
   // PLR §8.7: if the AST body is a single \`return <constant>\`, record
   // the constant for downstream propagation. Only the simplest shape
