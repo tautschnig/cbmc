@@ -7,6 +7,66 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
+## Status snapshot (wave 41+, 2026-05-27)
+
+| Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
+|---|---:|---:|---:|---:|
+| ESBMC PASS | 2489 | 2601 | **2636** | +35 |
+| Soundness gaps (raw DIFFs) | n/a | ~50 | ~30 | −20 |
+| Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
+| Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
+| TIMEOUT | 26 | 10 | 10 | 0 |
+| Hypothesmith --unrestricted failures | 4 | 0 | 0 | 0 |
+| AWS benchmark pass rate | n/a | 86.3% / 94.1% | 86.3% / 94.1% | 0 |
+
+**Wave 41 work (2026-05-27):**
+
+Inheritance fix + DIFF cluster pass closed **+35 tests**:
+
+- Inheritance MRO walk for method dispatch and `__init__` —
+  +4 tests where subclass instances correctly route to
+  inherited bodies (`a12746cd7f`).
+- New CLI flag `--python-missing-return-check` + ESBMC
+  `--incremental-bmc` alias; closes 6 missing-return
+  soundness DIFFs (`9e86eb0deb`).
+- ESBMC `--is-instance-check` alias for
+  `--python-check-annotations`; closes 4 type-annotation
+  soundness DIFFs (`7202c01f89`).
+- `str.isidentifier` / `str.isnumeric` constant-fold;
+  closes 11 string predicate DIFFs (`e8cb784c3b`).
+- `str.partition` / `str.rpartition` constant-fold returning
+  proper 3-tuple; closes 5 partition DIFFs (`817c3d1d4c`).
+- Class-vs-class annotation check (Liskov MRO walk) +
+  reassignment check; closes 2 type-annotation soundness
+  DIFFs (`6ce20e9780`).
+- `Union[X, Y, ...]` annotation check at call sites with
+  strict category matching + class MRO walk; closes 1
+  union-check DIFF (`e11911c837`).
+- 2-level nested generator-expression unrolling for
+  `all`/`any`; closes 2 nested-genexp DIFFs (`089a695a29`).
+
+**Hypothesmith --unrestricted at 0 fails (200 semantic + 24
+syntax programs verified).**
+
+**Documented limitations (deferred):**
+
+- `python_type_tagt::COMPLEX` not implemented; non-zero
+  complex values stored in tagged unions (e.g. mixed list
+  `[0j, 1]`) reach `python_truthiness` via the CLASS tag and
+  are unconditionally truthy. Closing this requires
+  extending the enum + adding `__complex_imag` field +
+  dispatch case in `python_truthiness`. Documented in
+  `doc/python-frontend-diff-cluster-2026-05-27.md`.
+- `builtin_all_genexp_inner_iter_shadow` (var shadow `for x
+  in xs for x in range(x)`) — needs proper Python generator
+  scoping; current impl punts to single-generator path.
+- icontract MRO precedence for mixin override conflicts uses
+  first-found-wins rather than strict C3.
+
+All three regression suites (`regression/python`,
+`regression/python-strata-tests`,
+`regression/python-strata-tests-pending`) green.
+
 ## Status snapshot (wave 40, 2026-05-26)
 
 | Metric | Wave 21 baseline | Current | Δ |
