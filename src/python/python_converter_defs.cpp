@@ -1574,6 +1574,51 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   std::string class_name = json_string(json_member(stmt, "name"));
   source_locationt loc = get_location(stmt);
 
+  // Phase 6 of the icontract integration plan
+  // (doc/python-frontend-icontract-plan.md): collect class-level
+  // @icontract.invariant decorators. Each invariant lambda is
+  // asserted at the entry and exit of every public method (with
+  // a special exception for __init__ which only gets the exit
+  // assertion since the object doesn't exist at entry). We store
+  // the lambda body pointers here; the actual translation
+  // happens inside each method's conversion scope further down,
+  // where `self` resolves to the method's first parameter.
+  std::vector<const jsont *> icontract_invariant_lambdas;
+  {
+    const jsont &cls_decorators = json_member(stmt, "decorator_list");
+    if(cls_decorators.is_array())
+    {
+      for(const auto &dec : as_array(cls_decorators))
+      {
+        if(!is_node_type(dec, "Call"))
+          continue;
+        const jsont &dec_func = json_member(dec, "func");
+        bool is_inv = false;
+        if(is_node_type(dec_func, "Attribute"))
+        {
+          const jsont &v = json_member(dec_func, "value");
+          if(
+            is_node_type(v, "Name") &&
+            json_string(json_member(v, "id")) == "icontract" &&
+            json_string(json_member(dec_func, "attr")) == "invariant")
+            is_inv = true;
+        }
+        else if(
+          is_node_type(dec_func, "Name") &&
+          json_string(json_member(dec_func, "id")) == "invariant")
+          is_inv = true;
+        if(!is_inv)
+          continue;
+        const jsont &dec_args = json_member(dec, "args");
+        if(!dec_args.is_array() || as_array(dec_args).empty())
+          continue;
+        const jsont &first = *as_array(dec_args).begin();
+        if(is_node_type(first, "Lambda"))
+          icontract_invariant_lambdas.push_back(&first);
+      }
+    }
+  }
+
   // Analyze __init__ to determine instance attributes
   struct_typet::componentst components;
   const jsont &body = json_member(stmt, "body");
@@ -2268,6 +2313,47 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           current_function = class_name + "::" + method_name;
 
           code_blockt method_body;
+
+          // Phase 6 of the icontract integration plan:
+          // translate each class-level @icontract.invariant
+          // lambda in the method's scope (so Name("self")
+          // resolves to the method's self parameter), then
+          // (a) prepend the assertions at method entry — but
+          // skip __init__ since the object's fields haven't
+          // been initialised yet, and (b) collect the
+          // assertions for the post-walk that fires before
+          // every return + at the end of method_body for
+          // fall-through. Skipped for staticmethod/classmethod
+          // since they don't operate on a self instance.
+          std::vector<exprt> invariant_assertions;
+          if(
+            !icontract_invariant_lambdas.empty() && !is_staticmethod &&
+            !is_classmethod)
+          {
+            for(const jsont *lam : icontract_invariant_lambdas)
+            {
+              const jsont &lam_body = json_member(*lam, "body");
+              exprt cond;
+              try
+              {
+                cond = convert_expression(lam_body);
+              }
+              catch(...)
+              {
+                cond = nil_exprt{};
+              }
+              if(cond.is_nil() || cond.type().id() == ID_empty)
+                continue;
+              if(cond.type().id() != ID_bool)
+                cond = typecast_exprt{cond, bool_typet{}};
+              invariant_assertions.push_back(cond);
+            }
+            if(method_name != "__init__")
+            {
+              for(const exprt &cond : invariant_assertions)
+                method_body.add(code_assertt{cond});
+            }
+          }
           // Under --python-lazy-stubs AND while processing an
           // imported module, skip the method body. The stub
           // becomes a pure type surface: method signature only,
@@ -2449,6 +2535,43 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           {
             for(const auto &s : as_array(method_body_json))
               method_body.add(convert_statement(s));
+          }
+
+          // Phase 6 of the icontract integration plan: inject
+          // invariant assertions before every return in the
+          // method body, plus a final assertion at the end so
+          // fall-through paths see it too.
+          if(!invariant_assertions.empty())
+          {
+            std::function<void(codet &)> inject_at_returns =
+              [&](codet &c) -> void
+            {
+              for(auto &op : c.operands())
+              {
+                if(op.id() != ID_code)
+                  continue;
+                codet &inner = static_cast<codet &>(op);
+                if(inner.get_statement() == ID_return)
+                {
+                  code_blockt blk;
+                  for(const exprt &cond : invariant_assertions)
+                    blk.add(code_assertt{cond});
+                  blk.add(static_cast<const codet &>(inner));
+                  op = std::move(blk);
+                }
+                else
+                {
+                  inject_at_returns(inner);
+                }
+              }
+            };
+            inject_at_returns(method_body);
+            // Fall-through: append the invariant assertions at
+            // the end. If the last statement was a return, this
+            // is unreachable (no harm). Otherwise it covers the
+            // implicit return case.
+            for(const exprt &cond : invariant_assertions)
+              method_body.add(code_assertt{cond});
           }
 
           // Tier 1B: selective precondition processing. When we
