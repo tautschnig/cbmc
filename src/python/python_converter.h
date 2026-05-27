@@ -878,6 +878,19 @@ private:
     const std::string &method_name,
     const jsont &args);
 
+  /// List-method dispatch (handled by
+  /// python_converter_call_list_methods.cpp): append, sort,
+  /// reverse, pop, copy, extend, remove, index, __iter__,
+  /// __contains__, count, clear, plus bytes-as-list[uint8]
+  /// decode/encode. Returns nullopt if method_name doesn't
+  /// match any recognised list method.
+  std::optional<exprt> try_list_method(
+    const jsont &expr,
+    const exprt &obj,
+    const typet &obj_base_type,
+    const std::string &method_name,
+    const jsont &args);
+
   /// Final user-function-call fallback (handled by
   /// python_converter_call_user.cpp): nested-function lookup,
   /// lambdas, function_aliases, @c_intrinsic redirection,
