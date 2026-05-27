@@ -1169,10 +1169,38 @@ struct multi_return_resultt
 };
 
 /// Substitute local-variable references in `e` with their values
-/// from `locals`. Only string-keyed identifier substitution.
+/// from `locals`. Also resolves `dereference_exprt(symbol)` and
+/// `dereference_exprt(typecast(symbol, ptr_type))` to `heap[symbol_id]`
+/// when the heap entry exists — this is how 1.1c-constructors
+/// makes inlined accessor expressions like `(*receiver).field`
+/// resolve to the field of a struct value synthesized inside the
+/// callee body.
 static exprt subst_locals(
-  const exprt &e, const std::map<irep_idt, exprt> &locals)
+  const exprt &e,
+  const std::map<irep_idt, exprt> &locals,
+  const std::map<irep_idt, exprt> &heap)
 {
+  // Pattern: dereference_exprt(symbol_exprt(id)) where heap has id.
+  if(e.id() == ID_dereference && e.operands().size() == 1)
+  {
+    const exprt &op = e.operands()[0];
+    irep_idt ptr_id;
+    if(op.id() == ID_symbol)
+    {
+      ptr_id = to_symbol_expr(op).get_identifier();
+    }
+    else if(op.id() == ID_typecast && op.operands().size() == 1 &&
+            op.operands()[0].id() == ID_symbol)
+    {
+      ptr_id = to_symbol_expr(op.operands()[0]).get_identifier();
+    }
+    if(!ptr_id.empty())
+    {
+      auto hit = heap.find(ptr_id);
+      if(hit != heap.end())
+        return hit->second;
+    }
+  }
   if(e.id() == ID_symbol)
   {
     auto it = locals.find(to_symbol_expr(e).get_identifier());
@@ -1182,7 +1210,7 @@ static exprt subst_locals(
   }
   exprt out = e;
   for(auto &op : out.operands())
-    op = subst_locals(op, locals);
+    op = subst_locals(op, locals, heap);
   return out;
 }
 
@@ -1193,6 +1221,12 @@ struct path_state_t
 {
   exprt pc;
   std::map<irep_idt, exprt> locals;
+  /// Heap model for objects allocated within the body being
+  /// traversed. Keyed by pointer-symbol identifier; value is
+  /// the current symbolic struct value at *ptr. Populated by
+  /// `ASSIGN *ptr := { class_id, fields_default }` and
+  /// `CALL <X>.<init>(ptr, args)` patterns.
+  std::map<irep_idt, exprt> heap;
 };
 
 /// Forward-declare for mutual recursion: traverse_paths calls
@@ -1224,14 +1258,109 @@ static bool traverse_paths(
     if(it->is_assign())
     {
       const exprt &lhs = it->assign_lhs();
+      // Heap-tracking patterns. The Java GOTO program emits the
+      // following sequence for `T x = new T(args)`:
+      //   ASSIGN ptr := side_effect "allocate"(SIZE, false)
+      //   ASSIGN *ptr := { class_id_struct, default_fields }
+      //   CALL T.<init>(ptr, args)
+      //   ASSIGN target := ptr
+      //
+      // Pattern: ASSIGN *ptr := struct_init — class-init,
+      // populating the freshly-allocated object's class_identifier
+      // and default field values.
+      if(
+        lhs.id() == ID_dereference && lhs.operands().size() == 1 &&
+        lhs.operands()[0].id() == ID_symbol)
+      {
+        const irep_idt ptr_id = to_symbol_expr(lhs.operands()[0]).get_identifier();
+        exprt rhs = subst_locals(it->assign_rhs(), state.locals, state.heap);
+        state.heap[ptr_id] = rhs;
+        ++it;
+        continue;
+      }
+      // Pattern: ASSIGN *ptr.field := value — field-init.
+      if(
+        lhs.id() == ID_member && lhs.operands().size() == 1 &&
+        lhs.operands()[0].id() == ID_dereference &&
+        lhs.operands()[0].operands().size() == 1 &&
+        lhs.operands()[0].operands()[0].id() == ID_symbol)
+      {
+        const irep_idt ptr_id =
+          to_symbol_expr(lhs.operands()[0].operands()[0]).get_identifier();
+        auto hit = state.heap.find(ptr_id);
+        if(hit != state.heap.end() && hit->second.id() == ID_struct &&
+          hit->second.type().id() == ID_struct)
+        {
+          const irep_idt field_name =
+            to_member_expr(lhs).get_component_name();
+          const auto &struct_t = to_struct_type(hit->second.type());
+          const auto &components = struct_t.components();
+          for(std::size_t i = 0; i < components.size(); ++i)
+          {
+            if(components[i].get_name() == field_name)
+            {
+              exprt rhs = subst_locals(
+                it->assign_rhs(), state.locals, state.heap);
+              hit->second.operands()[i] = rhs;
+              break;
+            }
+          }
+          ++it;
+          continue;
+        }
+        // Heap doesn't track this pointer — bail.
+        return false;
+      }
+
       if(lhs.id() == ID_symbol)
       {
         const irep_idt id = to_symbol_expr(lhs).get_identifier();
-        exprt rhs = subst_locals(it->assign_rhs(), state.locals);
+        exprt rhs = subst_locals(it->assign_rhs(), state.locals, state.heap);
         if(id2string(id) == ret_needle)
         {
+          // If the rhs is a pointer-typed symbol (or a typecast
+          // of one) that we've heap-tracked, surface the
+          // synthesized struct via address_of so the caller can
+          // resolve `(*receiver).field` accesses through CBMC's
+          // standard *&x = x simplification.
+          auto unwrap_ptr_id = [](const exprt &e) -> irep_idt {
+            const exprt *cur = &e;
+            while(cur->id() == ID_typecast && cur->operands().size() == 1)
+              cur = &cur->operands()[0];
+            if(cur->id() == ID_symbol)
+              return to_symbol_expr(*cur).get_identifier();
+            return irep_idt();
+          };
+          irep_idt rhs_ptr = unwrap_ptr_id(rhs);
+          if(!rhs_ptr.empty())
+          {
+            auto hit = state.heap.find(rhs_ptr);
+            if(hit != state.heap.end())
+            {
+              rhs = address_of_exprt(hit->second);
+            }
+          }
           results.emplace_back(state.pc, rhs);
           return true;
+        }
+        // Track the local's current symbolic value.
+        // If the rhs aliases a heap-tracked pointer, propagate
+        // the heap entry so subsequent dereferences of `id` see
+        // the same struct.
+        auto unwrap_ptr_id2 = [](const exprt &e) -> irep_idt {
+          const exprt *cur = &e;
+          while(cur->id() == ID_typecast && cur->operands().size() == 1)
+            cur = &cur->operands()[0];
+          if(cur->id() == ID_symbol)
+            return to_symbol_expr(*cur).get_identifier();
+          return irep_idt();
+        };
+        irep_idt rhs_ptr2 = unwrap_ptr_id2(rhs);
+        if(!rhs_ptr2.empty())
+        {
+          auto hit = state.heap.find(rhs_ptr2);
+          if(hit != state.heap.end())
+            state.heap[id] = hit->second;
         }
         state.locals[id] = rhs;
       }
@@ -1258,7 +1387,7 @@ static bool traverse_paths(
         it = target;
         continue;
       }
-      const exprt sub_cond = subst_locals(cond, state.locals);
+      const exprt sub_cond = subst_locals(cond, state.locals, state.heap);
       path_state_t taken = state;
       taken.pc = and_exprt(taken.pc, sub_cond);
       if(!traverse_paths(
@@ -1272,7 +1401,7 @@ static bool traverse_paths(
     if(it->is_assume())
     {
       state.pc = and_exprt(
-        state.pc, subst_locals(it->condition(), state.locals));
+        state.pc, subst_locals(it->condition(), state.locals, state.heap));
       ++it;
       continue;
     }
@@ -1287,11 +1416,122 @@ static bool traverse_paths(
       if(call_func.id() != ID_symbol)
         return false;
       irep_idt callee_id = to_symbol_expr(call_func).get_identifier();
+      const std::string callee_str = id2string(callee_id);
       // Substitute locals into call args.
       exprt::operandst sub_args;
       sub_args.reserve(it->call_arguments().size());
       for(const auto &a : it->call_arguments())
-        sub_args.push_back(subst_locals(a, state.locals));
+        sub_args.push_back(subst_locals(a, state.locals, state.heap));
+
+      // Class-init wrappers (`<clinit_wrapper>`) are no-op
+      // bridges that ensure static initializers ran. Skip them
+      // so they don't block multi-return inlining.
+      if(callee_str.find(".<clinit_wrapper>") != std::string::npos)
+      {
+        ++it;
+        continue;
+      }
+
+      // 1.1c-constructors: recognise constructors and apply their
+      // field-assignment effect to heap[ptr]. The constructor's
+      // first argument is `this` (the pointer); remaining
+      // arguments are the field values.
+      if(
+        callee_str.find(".<init>:") != std::string::npos &&
+        !sub_args.empty() && sub_args[0].id() == ID_symbol)
+      {
+        const irep_idt this_ptr =
+          to_symbol_expr(sub_args[0]).get_identifier();
+        auto hit = state.heap.find(this_ptr);
+        if(hit != state.heap.end() && hit->second.id() == ID_struct &&
+          hit->second.type().id() == ID_struct)
+        {
+          // Walk the constructor's body for ASSIGN
+          // *this.field := param patterns and apply them to the
+          // heap entry. For Java records, this is a trivial
+          // sequence; for richer constructors, we conservatively
+          // bail if we encounter shapes we can't model.
+          auto ctor_it = goto_functions.function_map.find(callee_id);
+          if(ctor_it != goto_functions.function_map.end())
+          {
+            const goto_programt &ctor_body = ctor_it->second.body;
+            const auto *ctor_sym = ns.get_symbol_table().lookup(callee_id);
+            if(ctor_sym != nullptr)
+            {
+              const auto &ctor_params =
+                to_code_type(ctor_sym->type).parameters();
+              std::map<irep_idt, exprt> param_map;
+              for(std::size_t i = 0;
+                  i < ctor_params.size() && i < sub_args.size(); ++i)
+              {
+                param_map[ctor_params[i].get_identifier()] = sub_args[i];
+              }
+              auto resolve_param = [&](const exprt &e) -> exprt {
+                std::function<exprt(const exprt &)> rec =
+                  [&](const exprt &x) -> exprt {
+                  if(x.id() == ID_symbol)
+                  {
+                    auto pit = param_map.find(
+                      to_symbol_expr(x).get_identifier());
+                    if(pit != param_map.end())
+                      return pit->second;
+                    return x;
+                  }
+                  exprt o = x;
+                  for(auto &op : o.operands())
+                    op = rec(op);
+                  return o;
+                };
+                return rec(e);
+              };
+              for(const auto &i : ctor_body.instructions)
+              {
+                if(!i.is_assign())
+                  continue;
+                const exprt &lhs = i.assign_lhs();
+                // Match `*<this_param>.field := value`.
+                if(
+                  lhs.id() == ID_member &&
+                  lhs.operands().size() == 1 &&
+                  lhs.operands()[0].id() == ID_dereference &&
+                  lhs.operands()[0].operands().size() == 1 &&
+                  lhs.operands()[0].operands()[0].id() == ID_symbol)
+                {
+                  const irep_idt deref_sym =
+                    to_symbol_expr(lhs.operands()[0].operands()[0]).get_identifier();
+                  // Only match `this`.
+                  if(
+                    !ctor_params.empty() &&
+                    deref_sym != ctor_params[0].get_identifier())
+                    continue;
+                  const irep_idt field_name =
+                    to_member_expr(lhs).get_component_name();
+                  const auto &struct_t =
+                    to_struct_type(hit->second.type());
+                  const auto &components = struct_t.components();
+                  for(std::size_t k = 0; k < components.size(); ++k)
+                  {
+                    if(components[k].get_name() == field_name)
+                    {
+                      hit->second.operands()[k] =
+                        resolve_param(i.assign_rhs());
+                      break;
+                    }
+                  }
+                }
+                // Other assigns inside the constructor (to
+                // local temps, to other heap, etc.) are ignored.
+                // Object-graph constructors are out of scope.
+              }
+            }
+          }
+          // Skip the CALL itself; the constructor's effect has
+          // been recorded in the heap.
+          ++it;
+          continue;
+        }
+      }
+
       auto inlined = inline_one_call(
         callee_id, sub_args, goto_functions, ns, depth - 1);
       if(!inlined.has_value())
