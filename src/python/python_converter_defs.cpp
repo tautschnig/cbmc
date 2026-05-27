@@ -108,6 +108,51 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
   }
 
+  // Phase 2 of the icontract integration plan
+  // (doc/python-frontend-icontract-plan.md): collect the
+  // @icontract.require / bare @require decorators so we can
+  // emit the corresponding precondition assumes at function
+  // entry, and (for DFCC) attach __CPROVER_requires clauses to
+  // the function type. Each entry is a pointer into the
+  // decorator AST owned by `stmt`, so it remains valid for the
+  // duration of convert_function_def.
+  std::vector<const jsont *> icontract_require_lambdas;
+  if(decorators.is_array())
+  {
+    for(const auto &dec : as_array(decorators))
+    {
+      if(!is_node_type(dec, "Call"))
+        continue;
+      const jsont &dec_func = json_member(dec, "func");
+      bool is_require = false;
+      // @icontract.require(lambda ...): Attribute(Name("icontract"), "require")
+      if(
+        is_node_type(dec_func, "Attribute") &&
+        json_string(json_member(dec_func, "attr")) == "require")
+      {
+        const jsont &v = json_member(dec_func, "value");
+        if(
+          is_node_type(v, "Name") &&
+          json_string(json_member(v, "id")) == "icontract")
+          is_require = true;
+      }
+      // @require(lambda ...): Name("require") — when imported as
+      // `from icontract import require`.
+      else if(
+        is_node_type(dec_func, "Name") &&
+        json_string(json_member(dec_func, "id")) == "require")
+        is_require = true;
+      if(!is_require)
+        continue;
+      const jsont &dec_args = json_member(dec, "args");
+      if(!dec_args.is_array() || as_array(dec_args).empty())
+        continue;
+      const jsont &first = *as_array(dec_args).begin();
+      if(is_node_type(first, "Lambda"))
+        icontract_require_lambdas.push_back(&first);
+    }
+  }
+
   std::string func_name = json_string(json_member(stmt, "name"));
   source_locationt loc = get_location(stmt);
 
@@ -707,6 +752,45 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             data_t},
           array_exprt{std::move(zero_elems), data_t}});
       }
+    }
+  }
+
+  // Phase 2 of the icontract integration plan: lower each
+  // @require lambda to (a) a __CPROVER_assume at the start of
+  // the function body so the body is verified under the
+  // precondition, and (b) a __CPROVER_requires clause on the
+  // function type so DFCC can use it for caller-side checking.
+  // We invoke this AFTER param symbols are added (so Name
+  // lookups in the lambda body resolve to function params) and
+  // AFTER current_function is set to qualified_func_name, but
+  // BEFORE the body conversion that consumes them. The
+  // translation gracefully degrades to a skip when the lambda
+  // body can't be converted (e.g. references a free variable
+  // not in the function's signature).
+  for(const jsont *lam : icontract_require_lambdas)
+  {
+    const jsont &lam_body = json_member(*lam, "body");
+    exprt cond;
+    try
+    {
+      cond = convert_expression(lam_body);
+    }
+    catch(...)
+    {
+      cond = nil_exprt{};
+    }
+    if(cond.is_nil() || cond.type().id() == ID_empty)
+      continue;
+    if(cond.type().id() != ID_bool)
+      cond = typecast_exprt{cond, bool_typet{}};
+    body_block.add(code_assumet{cond});
+    // Attach to the function type for DFCC compatibility.
+    if(symbol_table.has_symbol(symbol_id))
+    {
+      typet &t = symbol_table.get_writeable_ref(symbol_id).type;
+      static_cast<exprt &>(t.add(ID_C_spec_requires))
+        .operands()
+        .push_back(cond);
     }
   }
 
