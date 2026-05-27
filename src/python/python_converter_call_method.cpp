@@ -601,6 +601,28 @@ std::optional<exprt> python_convertert::try_method_call(
           return binary_relation_exprt{diff, ID_le, tol_max};
         }
       }
+      // PLR §math: math.frexp — returns (mantissa, exponent)
+      // tuple. Constant-fold via std::frexp when the argument
+      // is a numeric constant. There is no library body for
+      // frexp (see the comment in library/math.py), so the
+      // imported_modules dispatch silently falls through to
+      // a no-body warning otherwise.
+      if(
+        obj_name == "math" && method_name == "frexp" && args.is_array() &&
+        !as_array(args).empty())
+      {
+        exprt arg = convert_expression(*as_array(args).begin());
+        auto v = try_eval_double(arg);
+        if(v.has_value())
+        {
+          int e = 0;
+          double m = std::frexp(v.value(), &e);
+          struct_typet ttype =
+            python_tuple_type({double_type(), python_int_type()});
+          return struct_exprt{
+            {double_to_floatbv(m), from_integer(e, python_int_type())}, ttype};
+        }
+      }
       // PLR §math: list-arg math functions (prod / dist / sumprod
       // / fsum) — when called as math.X(...) with literal-list
       // arguments of int/float constants, constant-fold to the
