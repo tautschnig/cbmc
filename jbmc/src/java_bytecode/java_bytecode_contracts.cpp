@@ -2301,7 +2301,7 @@ static bool inline_pure_call_chains(
       callee_str.find("java::org.strata.jverify.JVerify.") == 0 ||
       callee_str.find(".lambda$") != std::string::npos ||
       callee_str.find("java::java.util.") == 0 ||
-      callee_str.find("java::java.lang.Object.") == 0)
+      callee_str.find("java::java.lang.") == 0)
     {
       continue;
     }
@@ -2475,12 +2475,49 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
   // when a caller's body-rewrite tries to inline a callee
   // (e.g. coverContainsLeft inlining cover()), the callee's
   // body has already had its Math.min/max patterns cleaned up.
+  //
+  // The Math intrinsic rewrite is always safe: it converts a
+  // CALL Math.{min,max,abs} stub (which returns nondet through
+  // the JDK model) into a clean if-expression. No existing JBMC
+  // test relies on the stub's specific lowering, so we apply it
+  // unconditionally to every function body — this lets us inline
+  // helper methods (like cover()) that themselves use Math.min
+  // even when those helpers aren't lemma candidates.
   for(auto &fp : goto_model.goto_functions.function_map)
   {
     rewrite_math_intrinsics(fp.second.body);
   }
+  // The body-rewrite is OPT-IN by lemma scope: only functions
+  // whose body contains a CALL to a JVerify primitive
+  // (precondition / check / forall / exists / old / etc.) are
+  // subject to inline_pure_call_chains. Methods that don't
+  // reference JVerify are upstream Java code and must not be
+  // body-rewritten — doing so changes the SSA shape (eliminates
+  // `<callee>#return_value` symbols in favour of inlined
+  // values), which existing JBMC regression tests rely on.
+  std::set<irep_idt> lemma_candidates;
+  for(const auto &fp : goto_model.goto_functions.function_map)
+  {
+    for(const auto &i : fp.second.body.instructions)
+    {
+      if(!i.is_function_call())
+        continue;
+      const exprt &cf = i.call_function();
+      if(cf.id() != ID_symbol)
+        continue;
+      const std::string cs =
+        id2string(to_symbol_expr(cf).get_identifier());
+      if(cs.find("java::org.strata.jverify.JVerify.") == 0)
+      {
+        lemma_candidates.insert(fp.first);
+        break;
+      }
+    }
+  }
   for(auto &fp : goto_model.goto_functions.function_map)
   {
+    if(lemma_candidates.count(fp.first) == 0)
+      continue;
     inline_pure_call_chains(
       fp.second.body, fp.first, goto_model.goto_functions,
       goto_model.symbol_table, ns);
