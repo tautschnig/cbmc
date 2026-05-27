@@ -123,6 +123,13 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // mechanism — they're collected here but skipped during
   // emission below.
   std::vector<const jsont *> icontract_ensure_lambdas;
+  // Phase 5: collect @icontract.snapshot decorators. Each
+  // entry pairs a name (the keyword argument `name="..."`) with
+  // a pointer to the capture lambda's AST. The capture
+  // expression is evaluated at function entry (body
+  // prologue), stored in a synthesised per-snapshot symbol,
+  // and exposed to ensure lambdas via OLD.<name>.
+  std::vector<std::pair<std::string, const jsont *>> icontract_snapshots;
   if(decorators.is_array())
   {
     for(const auto &dec : as_array(decorators))
@@ -132,8 +139,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       const jsont &dec_func = json_member(dec, "func");
       bool is_require = false;
       bool is_ensure = false;
-      // @icontract.require / @icontract.ensure:
-      //   Attribute(Name("icontract"), "require"|"ensure")
+      bool is_snapshot = false;
+      // @icontract.require / @icontract.ensure / @icontract.snapshot:
+      //   Attribute(Name("icontract"), "require"|"ensure"|"snapshot")
       if(is_node_type(dec_func, "Attribute"))
       {
         std::string attr = json_string(json_member(dec_func, "attr"));
@@ -146,10 +154,12 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             is_require = true;
           else if(attr == "ensure")
             is_ensure = true;
+          else if(attr == "snapshot")
+            is_snapshot = true;
         }
       }
-      // @require / @ensure (when imported as
-      // `from icontract import require, ensure`).
+      // @require / @ensure / @snapshot (when imported as
+      // `from icontract import require, ensure, snapshot`).
       else if(is_node_type(dec_func, "Name"))
       {
         std::string nm = json_string(json_member(dec_func, "id"));
@@ -157,8 +167,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           is_require = true;
         else if(nm == "ensure")
           is_ensure = true;
+        else if(nm == "snapshot")
+          is_snapshot = true;
       }
-      if(!is_require && !is_ensure)
+      if(!is_require && !is_ensure && !is_snapshot)
         continue;
       const jsont &dec_args = json_member(dec, "args");
       if(!dec_args.is_array() || as_array(dec_args).empty())
@@ -168,8 +180,33 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         continue;
       if(is_require)
         icontract_require_lambdas.push_back(&first);
-      else
+      else if(is_ensure)
         icontract_ensure_lambdas.push_back(&first);
+      else
+      {
+        // @snapshot needs a name= keyword argument. Default
+        // to empty (skip) if not provided.
+        std::string snap_name;
+        const jsont &dec_kws = json_member(dec, "keywords");
+        if(dec_kws.is_array())
+        {
+          for(const auto &kw : as_array(dec_kws))
+          {
+            if(json_string(json_member(kw, "arg")) != "name")
+              continue;
+            const jsont &val = json_member(kw, "value");
+            if(is_node_type(val, "Constant"))
+            {
+              const jsont &v = json_member(val, "value");
+              if(v.is_string())
+                snap_name = v.value;
+            }
+          }
+        }
+        if(snap_name.empty())
+          continue;
+        icontract_snapshots.emplace_back(std::move(snap_name), &first);
+      }
     }
   }
 
@@ -723,6 +760,60 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
   }
 
+  // Phase 5 of the icontract integration plan: translate
+  // @snapshot decorators. For each @snapshot(lambda x:
+  // expr_x, name="N") we:
+  //   1. Translate expr_x to an exprt in the function's
+  //      scope (so it can reference function parameters).
+  //   2. Create a per-snapshot symbol
+  //      python::FUNC::__icontract_old_N of the captured
+  //      expression's type.
+  //   3. Save the snapshot symbol's expression in
+  //      active_old_snapshots[N] so that ensure-lambda
+  //      translation below sees Name("OLD"), Attribute "N"
+  //      and substitutes the snapshot symbol expression
+  //      (handled in convert_attribute).
+  //   4. Build the "capture at entry" assignments — these
+  //      are pushed onto active_snapshot_assigns and
+  //      injected into body_block as the first executable
+  //      statements (after the require assumes) further
+  //      below.
+  std::map<std::string, exprt> saved_old_snapshots;
+  saved_old_snapshots.swap(active_old_snapshots);
+  std::vector<code_frontend_assignt> snapshot_assigns;
+  for(const auto &snap : icontract_snapshots)
+  {
+    const std::string &name = snap.first;
+    const jsont &lam = *snap.second;
+    const jsont &lam_body = json_member(lam, "body");
+    exprt cap;
+    try
+    {
+      cap = convert_expression(lam_body);
+    }
+    catch(...)
+    {
+      cap = nil_exprt{};
+    }
+    if(cap.is_nil() || cap.type().id() == ID_empty)
+      continue;
+    std::string old_id_str =
+      "python::" + qualified_func_name + "::__icontract_old_" + name;
+    irep_idt old_id{old_id_str};
+    if(!symbol_table.has_symbol(old_id))
+    {
+      symbolt old_sym{old_id, cap.type(), "python"};
+      old_sym.base_name = "__icontract_old_" + name;
+      old_sym.is_lvalue = true;
+      old_sym.is_state_var = true;
+      symbol_table.add(old_sym);
+    }
+    const symbolt &old_sym = symbol_table.lookup_ref(old_id);
+    snapshot_assigns.push_back(
+      code_frontend_assignt{old_sym.symbol_expr(), cap});
+    active_old_snapshots[name] = old_sym.symbol_expr();
+  }
+
   // Phase 3 of the icontract integration plan: translate the
   // @ensure lambdas now that current_function is set so Name
   // lookups in the lambda body resolve to function parameters
@@ -875,6 +966,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         .push_back(cond);
     }
   }
+
+  // Phase 5 of the icontract integration plan: emit the
+  // @snapshot capture assignments at function entry, after
+  // the precondition assumes (so the captures see the
+  // post-assume state — which equals the pre-state under
+  // the precondition).
+  for(auto &assign : snapshot_assigns)
+    body_block.add(std::move(assign));
 
   const jsont &body = json_member(stmt, "body");
 
@@ -1135,6 +1234,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // the integration plan). Done AFTER body assembly because the
   // implicit-return injection above reads from active_ensures.
   active_ensures.swap(saved_ensures);
+  active_old_snapshots.swap(saved_old_snapshots);
 
   // PLR §8.7: if the AST body is a single \`return <constant>\`, record
   // the constant for downstream propagation. Only the simplest shape
