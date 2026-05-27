@@ -825,6 +825,20 @@ private:
   exprt convert_bool_op(const jsont &expr);
   exprt convert_compare(const jsont &expr);
   exprt convert_call(const jsont &expr);
+
+  /// Dispatch the verification-primitive call group (handled by
+  /// python_converter_call_nondet.cpp): nondet_int / nondet_float /
+  /// nondet_bool / nondet_str / nondet_list / nondet_dict /
+  /// nondet_complex / their __VERIFIER_nondet_* aliases / randint /
+  /// the assume family / and the regex frontend hooks
+  /// __cbmc_re_{match,search,fullmatch}. Returns nullopt if
+  /// func_name doesn't match any of the recognised primitives so
+  /// convert_call can fall through to the next dispatch group.
+  std::optional<exprt> try_nondet_call(
+    const jsont &expr,
+    const std::string &func_name,
+    const jsont &args);
+
   exprt convert_if_exp(const jsont &expr);
   exprt convert_subscript(const jsont &expr);
   exprt convert_tuple(const jsont &expr);
