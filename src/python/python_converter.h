@@ -87,6 +87,30 @@ private:
   /// function definitions.
   std::map<std::string, exprt> active_old_snapshots;
 
+  /// icontract Phase 7: per-class @icontract.invariant lambda
+  /// AST pointers, keyed by class name. Populated by
+  /// convert_class_def as each class is processed. Used by
+  /// the per-method contract emission to compose the class's
+  /// own invariants with those of every base class (Liskov:
+  /// child invariants merge with parent's via AND).
+  std::map<std::string, std::vector<const jsont *>> class_invariant_lambdas;
+
+  /// icontract Phase 7: per-class per-method @require lambda
+  /// AST pointers. class_method_require_lambdas[Cls][m] is
+  /// the list of @require lambdas declared on Cls.m. Used by
+  /// the inheritance composition step: when a subclass overrides
+  /// a base-class method, the effective precondition weakens to
+  /// `parent_pre OR child_pre` per Liskov.
+  std::map<std::string, std::map<std::string, std::vector<const jsont *>>>
+    class_method_require_lambdas;
+
+  /// icontract Phase 7: per-class per-method @ensure lambda
+  /// AST pointers. Mirror of class_method_require_lambdas.
+  /// Effective postcondition strengthens to
+  /// `parent_post AND child_post` per Liskov.
+  std::map<std::string, std::map<std::string, std::vector<const jsont *>>>
+    class_method_ensure_lambdas;
+
   /// Stack of enclosing function names (outermost first). A nested
   /// 'def' pushes the new function onto the stack. When a name is
   /// not found in the current function's scope, we fall back to
