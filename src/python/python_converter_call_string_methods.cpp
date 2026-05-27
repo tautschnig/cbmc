@@ -1069,7 +1069,8 @@ std::optional<exprt> python_convertert::try_string_method(
     method_name == "isdigit" || method_name == "isalpha" ||
     method_name == "isalnum" || method_name == "isupper" ||
     method_name == "islower" || method_name == "isspace" ||
-    method_name == "isascii")
+    method_name == "isascii" || method_name == "isnumeric" ||
+    method_name == "isidentifier")
   {
     // Constant-string optimization
     auto sv = extract_string_value(obj);
@@ -1077,6 +1078,25 @@ std::optional<exprt> python_convertert::try_string_method(
     {
       const std::string &s = sv.value();
       bool result = !s.empty();
+      // isidentifier has a different shape: first char must be
+      // alpha or '_'; subsequent chars alpha-numeric or '_'.
+      // Python's str.isidentifier returns True for keywords.
+      if(method_name == "isidentifier")
+      {
+        if(s.empty())
+          result = false;
+        else
+        {
+          unsigned char first = static_cast<unsigned char>(s[0]);
+          result = std::isalpha(first) || first == '_' || first >= 0x80;
+          for(std::size_t i = 1; i < s.size() && result; ++i)
+          {
+            unsigned char uc = static_cast<unsigned char>(s[i]);
+            result = std::isalnum(uc) || uc == '_' || uc >= 0x80;
+          }
+        }
+        return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      }
       for(char c : s)
       {
         unsigned char uc = static_cast<unsigned char>(c);
