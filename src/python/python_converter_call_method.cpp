@@ -43,6 +43,7 @@
 #include <cstring>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -825,6 +826,23 @@ std::optional<exprt> python_convertert::try_method_call(
                 res = std::expm1(val);
               else if(func_name == "log1p" && val > -1)
                 res = std::log1p(val);
+              else if(func_name == "ulp")
+              {
+                // PLR: math.ulp(x) — unit in the last place.
+                // Equivalent to nextafter(|x|, +inf) - |x|;
+                // for x = 0 returns the smallest subnormal.
+                double ax = std::fabs(val);
+                if(std::isnan(ax) || std::isinf(ax))
+                  res = ax;
+                else if(ax == 0.0)
+                  res = std::numeric_limits<double>::denorm_min();
+                else
+                {
+                  double na =
+                    std::nextafter(ax, std::numeric_limits<double>::infinity());
+                  res = na - ax;
+                }
+              }
               else
                 computed = false;
               if(computed)
@@ -871,6 +889,10 @@ std::optional<exprt> python_convertert::try_method_call(
                   r = std::copysign(v1, v2);
                 else if(op == "remainder")
                   r = std::remainder(v1, v2);
+                else if(op == "ldexp")
+                  r = std::ldexp(v1, static_cast<int>(v2));
+                else if(op == "nextafter")
+                  r = std::nextafter(v1, v2);
                 else
                   ok = false;
                 if(ok && std::isfinite(r))

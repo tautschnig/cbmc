@@ -41,6 +41,7 @@
 #include <cstring>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -1079,6 +1080,24 @@ exprt python_convertert::convert_user_call(
           r = std::tgamma(x);
         else if(op == "lgamma")
           r = std::lgamma(x);
+        else if(op == "ulp")
+        {
+          // PLR / IEEE-754: math.ulp(x) returns the unit in
+          // the last place at x (i.e. spacing to the next
+          // representable double). Equivalent to
+          // nextafter(|x|, +inf) - |x|.
+          double ax = std::fabs(x);
+          if(std::isnan(ax) || std::isinf(ax))
+            r = ax;
+          else if(ax == 0.0)
+            r = std::numeric_limits<double>::denorm_min();
+          else
+          {
+            double na =
+              std::nextafter(ax, std::numeric_limits<double>::infinity());
+            r = na - ax;
+          }
+        }
         else
           computed = false;
         if(computed && std::isfinite(r))
@@ -1112,6 +1131,16 @@ exprt python_convertert::convert_user_call(
           r = std::copysign(a, b);
         else if(op == "remainder")
           r = std::remainder(a, b);
+        else if(op == "ldexp")
+        {
+          // PLR: math.ldexp(x, i) = x * 2**i. Second arg is int,
+          // try_eval_double already converts it to double.
+          r = std::ldexp(a, static_cast<int>(b));
+        }
+        else if(op == "nextafter")
+        {
+          r = std::nextafter(a, b);
+        }
         else
           computed = false;
         if(computed && std::isfinite(r))
