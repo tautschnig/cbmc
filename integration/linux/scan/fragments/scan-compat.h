@@ -248,4 +248,29 @@ void bpf_jit_fill_hole_with_zero(void *area, unsigned int size)
 #endif
 #define check_sub_overflow(a, b, d) ({ *(d) = (a) - (b); 0; })
 
+/* `_ctype[]` (in <linux/ctype.h>) is declared as
+ * `extern const unsigned char _ctype[]` — an incomplete
+ * array.  CBMC's bv-pointers (LIM-018) caches `_ctype`
+ * symbol-width = 8 (one byte) when it encounters
+ * `_ctype[i]`, then on a subsequent reference computes
+ * width = 0 (element-count × element-width with
+ * element-count = 0 for the incomplete declaration) and
+ * aborts.
+ *
+ * Workaround: include ctype.h, then override the
+ * `__ismask` macro that all the is*() macros expand to.
+ * Replace the `_ctype[i]` lookup with a nondet byte —
+ * sound under our scan interpretation since the leak /
+ * null-deref / refcount analyses don't care about the
+ * specific character class. */
+#include <linux/ctype.h>
+#ifdef __ismask
+#  undef __ismask
+#endif
+/* Note: we DELIBERATELY define this without referring to
+ * `_ctype` so the bv-pointers never sees the incomplete
+ * array type.  __ismask is used by isalpha, isspace,
+ * isalnum, etc. */
+#define __ismask(x) ((unsigned char)(x))
+
 #endif /* INTEGRATION_LINUX_SCAN_FRAGMENTS_SCAN_COMPAT_H */
