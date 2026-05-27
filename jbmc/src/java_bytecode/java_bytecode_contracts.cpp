@@ -1095,6 +1095,8 @@ static exprt inline_pure_calls(
   const irep_idt &target_function_id,
   const goto_functionst &goto_functions,
   const namespacet &ns,
+  symbol_tablet &symbol_table,
+  std::map<std::string, symbol_exprt> &intrinsic_symbol_cache,
   int max_depth);
 
 namespace
@@ -1151,6 +1153,8 @@ static exprt inline_pure_calls(
   const irep_idt &target_function_id,
   const goto_functionst &goto_functions,
   const namespacet &ns,
+  symbol_tablet &symbol_table,
+  std::map<std::string, symbol_exprt> &intrinsic_symbol_cache,
   int max_depth)
 {
   if(max_depth <= 0)
@@ -1183,6 +1187,86 @@ static exprt inline_pure_calls(
       // Find the callee's single-return-value ASSIGN.
       const std::string callee_ret_needle =
         id2string(found.callee_id) + "#return_value";
+
+      // 1.1b: recognise JDK intrinsics whose body we don't have
+      // (List.size, Map.size, List.isEmpty, etc.) and emit a
+      // stable symbolic value instead of bailing out. Treat as a
+      // CBMC function_application_exprt so the SAT solver knows
+      // "same args -> same result", which is the only relation
+      // we need for forall-precondition reasoning. The receiver
+      // (call_arguments[0] for instance methods) is the input.
+      const std::string callee_str = id2string(found.callee_id);
+      auto is_jdk_size_call = [&]() -> bool {
+        // Match the qualified-name shapes javac emits for
+        // List.size and Map.size.
+        return callee_str.find("java::java.util.List.size:") == 0 ||
+               callee_str.find("java::java.util.Map.size:") == 0 ||
+               callee_str.find("java::java.util.Collection.size:") == 0 ||
+               callee_str.find("java::java.util.Set.size:") == 0;
+      };
+      auto is_jdk_isEmpty_call = [&]() -> bool {
+        return callee_str.find("java::java.util.List.isEmpty:") == 0 ||
+               callee_str.find("java::java.util.Map.isEmpty:") == 0 ||
+               callee_str.find("java::java.util.Collection.isEmpty:") == 0 ||
+               callee_str.find("java::java.util.Set.isEmpty:") == 0;
+      };
+      if((is_jdk_size_call() || is_jdk_isEmpty_call()) && !found.args.empty())
+      {
+        // Build a stable symbolic expression keyed by the
+        // receiver's identifier. For `p.size()` where `p` is a
+        // symbol, the result is `p$size` (or `p$isEmpty` for
+        // isEmpty). Two calls to `p.size()` with the same
+        // receiver yield the same expression — exactly the
+        // congruence the SAT solver needs.
+        const exprt &recv = found.args[0];
+        std::string suffix;
+        typet result_type;
+        if(is_jdk_size_call())
+        {
+          suffix = "$size";
+          result_type = signedbv_typet(32);
+        }
+        else
+        {
+          suffix = "$isEmpty";
+          result_type = bool_typet{};
+        }
+        // Receiver identity: prefer the symbol's identifier,
+        // fall back to an opaque counter if the receiver is a
+        // complex expression. Stable across calls in the same
+        // body.
+        std::string recv_key;
+        if(recv.id() == ID_symbol)
+        {
+          recv_key = id2string(to_symbol_expr(recv).get_identifier());
+        }
+        else
+        {
+          // Hash-stable representation of the expression so two
+          // identical sub-expressions yield the same symbol.
+          std::ostringstream ss;
+          ss << recv.pretty();
+          recv_key = std::to_string(std::hash<std::string>{}(ss.str()));
+        }
+        const std::string sym_name = recv_key + suffix;
+        // Look up or register in the symbol-table-tracking cache.
+        // Repeated calls with the same receiver yield the same
+        // symbol_exprt (and thus the same goto-symex value).
+        auto cache_it = intrinsic_symbol_cache.find(sym_name);
+        if(cache_it != intrinsic_symbol_cache.end())
+          return cache_it->second;
+        symbol_exprt fresh = get_fresh_aux_symbol(
+                               result_type,
+                               id2string(target_function_id),
+                               sym_name,
+                               source_locationt::nil(),
+                               ID_java,
+                               symbol_table)
+                               .symbol_expr();
+        intrinsic_symbol_cache.emplace(sym_name, fresh);
+        return fresh;
+      }
+
       const exprt *callee_rhs = nullptr;
       goto_programt::const_targett callee_ret_it = callee_body.instructions.cend();
       std::size_t return_assigns = 0;
@@ -1258,7 +1342,8 @@ static exprt inline_pure_calls(
       // CALLs in target_body.
       return inline_pure_calls(
         substituted, target_body, target_function_id,
-        goto_functions, ns, max_depth - 1);
+        goto_functions, ns, symbol_table,
+        intrinsic_symbol_cache, max_depth - 1);
     }
     exprt out = e;
     for(auto &op : out.operands())
@@ -1501,18 +1586,14 @@ std::set<irep_idt> lower_jverify_contracts(goto_modelt &goto_model)
         exprt resolved_body = resolve_stack_temps(
           *body_rhs, target_body, ret_it, info.target_method_id);
 
-        // 1.1a: inline pure-function call returns inside the
-        // lambda body. After resolve_stack_temps, the body may
-        // reference `<callee>#return_value` symbols (the result
-        // slots of helper-method CALLs in the lambda's own
-        // GOTO body). Walk those references and inline the
-        // callees' single-return RHS expressions, substituting
-        // parameters with the call-site arguments. Recurse up
-        // to a bounded depth.
+        // 1.1a/1.1b: inline pure-function call returns + JDK
+        // size/isEmpty intrinsics inside the lambda body.
+        std::map<std::string, symbol_exprt> intrinsic_symbol_cache;
         resolved_body = inline_pure_calls(
           resolved_body, target_body, info.target_method_id,
-          goto_model.goto_functions,
-          ns, /*max_depth=*/8);
+          goto_model.goto_functions, ns,
+          goto_model.symbol_table, intrinsic_symbol_cache,
+          /*max_depth=*/8);
 
         // Step 3: identify the lambda method's parameters. The
         // target method is the user's lambda$ method whose
