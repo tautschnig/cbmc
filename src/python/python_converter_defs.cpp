@@ -2510,18 +2510,24 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // emitted. Walks direct bases left-to-right and
           // looks up class_method_*_lambdas for the same
           // method name.
+          //
+          // Walks the C3 MRO (skipping the class itself) so
+          // grandparent and farther-ancestor contracts are
+          // included transitively. Each ancestor's contracts
+          // are added in MRO order; the OR/AND composition
+          // below treats the union as a single weakening
+          // (preconditions) or strengthening (postconditions)
+          // step against the child's own.
           std::vector<const jsont *> inherited_requires;
           std::vector<const jsont *> inherited_ensures;
           {
-            const jsont &cls_bases_node = json_member(stmt, "bases");
-            if(cls_bases_node.is_array())
+            auto mro_lookup = class_mro.find(class_name);
+            if(mro_lookup != class_mro.end())
             {
-              for(const auto &base : as_array(cls_bases_node))
+              for(std::size_t mi = 1; mi < mro_lookup->second.size(); ++mi)
               {
-                if(!is_node_type(base, "Name"))
-                  continue;
-                std::string base_name = json_string(json_member(base, "id"));
-                auto rit = class_method_require_lambdas.find(base_name);
+                const std::string &ancestor = mro_lookup->second[mi];
+                auto rit = class_method_require_lambdas.find(ancestor);
                 if(rit != class_method_require_lambdas.end())
                 {
                   auto mit = rit->second.find(method_name);
@@ -2529,7 +2535,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                     for(const jsont *lam : mit->second)
                       inherited_requires.push_back(lam);
                 }
-                auto eit = class_method_ensure_lambdas.find(base_name);
+                auto eit = class_method_ensure_lambdas.find(ancestor);
                 if(eit != class_method_ensure_lambdas.end())
                 {
                   auto mit = eit->second.find(method_name);
