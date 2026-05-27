@@ -523,6 +523,248 @@ std::optional<exprt> python_convertert::try_method_call(
           return result;
         }
       }
+      // PLR §math: math.isclose — handle in a dedicated early
+      // dispatch so the inline tolerance/rel_tol/abs_tol logic
+      // takes precedence over the library's `return True`
+      // placeholder. CPython:
+      //   isclose(a, b, *, rel_tol=1e-9, abs_tol=0.0) returns
+      //   |a - b| <= max(rel_tol * max(|a|, |b|), abs_tol)
+      if(obj_name == "math" && method_name == "isclose")
+      {
+        if(args.is_array() && as_array(args).size() >= 2)
+        {
+          auto args_it = as_array(args).begin();
+          exprt a = convert_expression(*args_it++);
+          exprt b = convert_expression(*args_it);
+          if(a.type().id() != ID_floatbv)
+            a = safe_typecast(a, double_type());
+          if(b.type().id() != ID_floatbv)
+            b = safe_typecast(b, double_type());
+          double rel_tol = 1e-9, abs_tol = 0.0;
+          const jsont &kw = json_member(expr, "keywords");
+          if(kw.is_array())
+          {
+            for(const auto &k : as_array(kw))
+            {
+              std::string kn = json_string(json_member(k, "arg"));
+              auto v =
+                try_eval_double(convert_expression(json_member(k, "value")));
+              if(v.has_value())
+              {
+                if(kn == "rel_tol")
+                  rel_tol = v.value();
+                else if(kn == "abs_tol")
+                  abs_tol = v.value();
+              }
+            }
+          }
+          // Try constant-fold for fully concrete inputs.
+          auto av = try_eval_double(a);
+          auto bv = try_eval_double(b);
+          if(av.has_value() && bv.has_value())
+          {
+            double diff = std::fabs(av.value() - bv.value());
+            double tol = std::max(
+              rel_tol * std::max(std::fabs(av.value()), std::fabs(bv.value())),
+              abs_tol);
+            return diff <= tol ? exprt{true_exprt{}} : exprt{false_exprt{}};
+          }
+          // Symbolic: emit |a-b| <= max(rel_tol * max(|a|,|b|), abs_tol).
+          ieee_floatt rt{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          rt.from_double(rel_tol);
+          ieee_floatt at{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          at.from_double(abs_tol);
+          exprt abs_a = if_exprt{
+            binary_relation_exprt{a, ID_lt, safe_zero(double_type())},
+            unary_minus_exprt{a},
+            a};
+          exprt abs_b = if_exprt{
+            binary_relation_exprt{b, ID_lt, safe_zero(double_type())},
+            unary_minus_exprt{b},
+            b};
+          exprt max_ab =
+            if_exprt{binary_relation_exprt{abs_a, ID_lt, abs_b}, abs_b, abs_a};
+          exprt rel_term = mult_exprt{rt.to_expr(), max_ab};
+          exprt tol_max = if_exprt{
+            binary_relation_exprt{rel_term, ID_lt, at.to_expr()},
+            at.to_expr(),
+            rel_term};
+          exprt diff = if_exprt{
+            binary_relation_exprt{
+              minus_exprt{a, b}, ID_lt, safe_zero(double_type())},
+            unary_minus_exprt{minus_exprt{a, b}},
+            minus_exprt{a, b}};
+          return binary_relation_exprt{diff, ID_le, tol_max};
+        }
+      }
+      // PLR §math: list-arg math functions (prod / dist / sumprod
+      // / fsum) — when called as math.X(...) with literal-list
+      // arguments of int/float constants, constant-fold to the
+      // precise result. Like the int-math fold below, this runs
+      // BEFORE the imported_modules dispatch so it intercepts
+      // the library's placeholder body for the constant case.
+      if(
+        obj_name == "math" &&
+        (method_name == "prod" || method_name == "dist" ||
+         method_name == "sumprod" || method_name == "fsum"))
+      {
+        // Helper: try to extract a list literal's elements as
+        // doubles. Returns nullopt if the node isn't a List or
+        // bound Name and any element isn't a numeric constant.
+        auto extract_doubles =
+          [&](const jsont &node) -> std::optional<std::vector<double>>
+        {
+          // Path 1: direct List or Tuple literal node.
+          if(is_node_type(node, "List") || is_node_type(node, "Tuple"))
+          {
+            const jsont &elts = json_member(node, "elts");
+            if(!elts.is_array())
+              return std::nullopt;
+            std::vector<double> out;
+            for(const auto &e : as_array(elts))
+            {
+              exprt ee = convert_expression(e);
+              auto v = try_eval_double(ee);
+              if(!v.has_value())
+                return std::nullopt;
+              out.push_back(v.value());
+            }
+            return out;
+          }
+          // Path 2: Name node bound to a list literal — look up
+          // list_literals which records {length, data} struct
+          // for each list-literal symbol assignment.
+          if(is_node_type(node, "Name"))
+          {
+            std::string nm = json_string(json_member(node, "id"));
+            irep_idt sid{qualify_name(nm)};
+            auto it = list_literals.find(sid);
+            if(it == list_literals.end())
+              return std::nullopt;
+            const exprt &lit = it->second;
+            if(lit.id() != ID_struct || lit.operands().size() < 2)
+              return std::nullopt;
+            const exprt &len_e = lit.operands()[0];
+            const exprt &data = lit.operands()[1];
+            if(!len_e.is_constant() || data.id() != ID_array)
+              return std::nullopt;
+            mp_integer len_v;
+            if(to_integer(to_constant_expr(len_e), len_v))
+              return std::nullopt;
+            std::size_t n = static_cast<std::size_t>(len_v.to_long());
+            std::vector<double> out;
+            for(std::size_t k = 0; k < n && k < data.operands().size(); ++k)
+            {
+              auto v = try_eval_double(data.operands()[k]);
+              if(!v.has_value())
+                return std::nullopt;
+              out.push_back(v.value());
+            }
+            return out;
+          }
+          return std::nullopt;
+        };
+        // Extract optional `start=N` keyword argument value
+        // (defaults to 1 for prod, 0 for fsum).
+        auto extract_start = [&]() -> std::optional<double>
+        {
+          const jsont &kw = json_member(expr, "keywords");
+          if(!kw.is_array())
+            return std::nullopt;
+          for(const auto &k : as_array(kw))
+          {
+            if(json_string(json_member(k, "arg")) == "start")
+            {
+              exprt v = convert_expression(json_member(k, "value"));
+              auto d = try_eval_double(v);
+              if(d.has_value())
+                return d.value();
+            }
+          }
+          return std::nullopt;
+        };
+        if(args.is_array() && !as_array(args).empty())
+        {
+          auto args_it = as_array(args).begin();
+          // prod / fsum: single list argument.
+          if(method_name == "prod" || method_name == "fsum")
+          {
+            auto vals = extract_doubles(*args_it);
+            if(vals.has_value())
+            {
+              if(method_name == "prod")
+              {
+                auto start = extract_start();
+                long long acc_int =
+                  start.has_value() ? static_cast<long long>(start.value()) : 1;
+                double acc_dbl = start.has_value() ? start.value() : 1.0;
+                bool all_int = !start.has_value() || start.value() == acc_int;
+                for(double v : vals.value())
+                {
+                  long long iv = static_cast<long long>(v);
+                  if(v != iv)
+                    all_int = false;
+                  acc_int *= iv;
+                  acc_dbl *= v;
+                }
+                if(all_int)
+                  return from_integer(acc_int, python_int_type());
+                return double_to_floatbv(acc_dbl);
+              }
+              if(method_name == "fsum")
+              {
+                double acc = 0.0;
+                for(double v : vals.value())
+                  acc += v;
+                return double_to_floatbv(acc);
+              }
+            }
+          }
+          // dist / sumprod: two list arguments (must be equal length).
+          if(method_name == "dist" || method_name == "sumprod")
+          {
+            if(as_array(args).size() < 2)
+            { /* fall through */
+            }
+            else
+            {
+              const jsont &a_node = *args_it;
+              const jsont &b_node = *std::next(args_it);
+              auto av = extract_doubles(a_node);
+              auto bv = extract_doubles(b_node);
+              if(
+                av.has_value() && bv.has_value() &&
+                av.value().size() == bv.value().size())
+              {
+                if(method_name == "dist")
+                {
+                  double sum = 0.0;
+                  for(std::size_t i = 0; i < av.value().size(); ++i)
+                  {
+                    double d = av.value()[i] - bv.value()[i];
+                    sum += d * d;
+                  }
+                  return double_to_floatbv(std::sqrt(sum));
+                }
+                if(method_name == "sumprod")
+                {
+                  double sum = 0.0;
+                  for(std::size_t i = 0; i < av.value().size(); ++i)
+                    sum += av.value()[i] * bv.value()[i];
+                  return double_to_floatbv(sum);
+                }
+              }
+            }
+          }
+        }
+        // Fall through to imported_modules dispatch for symbolic
+        // / non-literal-list cases. The library placeholder will
+        // run there.
+      }
       // PLR §math: int-math functions (factorial / comb / perm /
       // gcd / lcm / isqrt) — when called as math.X(...) with
       // int-constant arguments, constant-fold to the precise
