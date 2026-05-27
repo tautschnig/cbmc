@@ -55,6 +55,7 @@ class optionst;
   "(modular)" /* F12: replace calls to JVerify-annotated methods with their contracts */ \
   "(jml-specs-path):" /* JML: directories containing .jml sidecar files */ \
   "(jml-source):" /* JML: Java source files to scan for //@ annotations */ \
+  "(axiomatic-collections)" /* opt in to axiomatic-models.jar (HashMap, HashSet, LinkedHashMap) */ \
   OPT_XML_INTERFACE \
   OPT_JSON_INTERFACE \
   "(smt1)" /* rejected, will eventually disappear */ \

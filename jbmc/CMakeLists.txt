@@ -37,6 +37,25 @@ install(
         DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
+# axiomatic models library (opt-in via --axiomatic-collections)
+file(GLOB_RECURSE axiomatic_models_sources "lib/axiomatic-models-library/src/*.java")
+
+add_custom_command(OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/lib/axiomatic-models-library/target/axiomatic-models.jar"
+    COMMAND ${MAVEN_PROGRAM} --quiet -Dmaven.test.skip=true package
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib/axiomatic-models-library
+    DEPENDS ${axiomatic_models_sources}
+)
+
+add_custom_target(axiomatic-models-library ALL
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/lib/axiomatic-models-library/target/axiomatic-models.jar"
+)
+
+install(
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/axiomatic-models-library/target/axiomatic-models.jar"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
 # java regression tests
 file(GLOB_RECURSE java_regression_sources "regression/**/*.java,regression/**/*.kt,regression/**/*.j,regression/**/pom.xml")
 file(GLOB java_regression_test_dirs LIST_DIRECTORIES true "regression/*/*")

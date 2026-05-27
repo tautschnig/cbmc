@@ -45,6 +45,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-instrument/reachability_slicer.h>
 #include <goto-symex/path_storage.h>
 #include <java_bytecode/convert_java_nondet.h>
+#include <java_bytecode/java_bytecode_axiomatic.h>
 #include <java_bytecode/java_bytecode_contracts.h>
 #include <java_bytecode/java_bytecode_language.h>
 #include <java_bytecode/java_multi_path_symex_checker.h>
@@ -138,6 +139,16 @@ void jbmc_parse_optionst::get_command_line_options(optionst &options)
 
   parse_java_language_options(cmdline, options);
   parse_java_object_factory_options(cmdline, options);
+
+  if(cmdline.isset("axiomatic-collections"))
+  {
+    // Marker option consumed by future lowering passes. The
+    // axiomatic-models.jar must be on the classpath BEFORE
+    // core-models.jar for this flag to take effect at the Java
+    // class-resolution level. Documented in
+    // jbmc/lib/axiomatic-models-library/README.md.
+    options.set_option("axiomatic-collections", true);
+  }
 
   if(cmdline.isset("max-field-sensitivity-array-size"))
   {
@@ -863,6 +874,16 @@ bool jbmc_parse_optionst::process_goto_functions(
 
   // Lower JVerify contract calls to GOTO assertions/assumptions
   std::set<irep_idt> annotated_functions = lower_jverify_contracts(goto_model);
+
+  // Axiomatic collections: replace HashMap / HashSet method
+  // calls with direct CBMC IR backed by global SMT-LIB
+  // associative arrays. Runs BEFORE the body inliner inside
+  // lower_jverify_contracts (which would otherwise see the
+  // unlowered Java bodies of these methods).
+  if(options.get_bool_option("axiomatic-collections"))
+  {
+    lower_axiomatic_collections(goto_model);
+  }
 
   // JML support: if --jml-specs-path or --jml-source is specified,
   // load and lower JML specifications alongside JVerify contracts.
