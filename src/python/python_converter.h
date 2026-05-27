@@ -839,6 +839,19 @@ private:
     const std::string &func_name,
     const jsont &args);
 
+  /// Dispatch the method-call group (handled by
+  /// python_converter_call_method.cpp): obj.method(args) on
+  /// strings / lists / dicts / sets / class instances /
+  /// math/random/re module receivers / generators / iterators.
+  /// May rebind `func_name` to the method's name when the
+  /// dispatch needs to fall back to the bare-name function
+  /// resolution downstream (e.g. math.ceil() called on a
+  /// non-module receiver). Returns nullopt if no method-call
+  /// path produced a result (caller continues with the
+  /// builtin/class-constructor/user-call dispatchers).
+  std::optional<exprt>
+  try_method_call(const jsont &expr, std::string &func_name, const jsont &args);
+
   /// Dispatch the built-in free-function group (handled by
   /// python_converter_call_builtins.cpp): map / zip / filter /
   /// iter / next / len / int / float / bool / print / input /
