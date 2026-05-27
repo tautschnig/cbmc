@@ -413,7 +413,7 @@ cost of new frontend infrastructure.
 | 7 | Inheritance composition (Liskov rules) — single-level | ✅ | `e55d313531` |
 | 8 | Comprehensive regression suite | ✅ | `2da80f822f` |
 
-Eight regression tests landed:
+Ten regression tests landed:
 
 - `regression/python/icontract-stub-import` — Phase 1: import + decorator no-op.
 - `regression/python/icontract-require-positive` — Phase 2: precondition is observable as an entry assume.
@@ -422,43 +422,51 @@ Eight regression tests landed:
 - `regression/python/icontract-snapshot` — Phase 5: `@snapshot` + `OLD.NAME` binding.
 - `regression/python/icontract-class-invariant` — Phase 6: class invariant at method entry/exit.
 - `regression/python/icontract-liskov-inheritance` — Phase 7: invariant merging, precondition weakening, postcondition strengthening.
+- `regression/python/icontract-inherited-method-invariant` — Phase 7 follow-up: child invariants apply to inherited methods via wrapper synthesis.
+- `regression/python/icontract-multi-level-liskov` — Phase 7 follow-up: 3-level chain composition.
 - `regression/python/icontract-comprehensive` — combined Phases 1-6.
+- `regression/python/icontract-upstream-patterns` — distillation of patterns from icontract's own test corpus.
 
 ## Phase 7 — implementation notes
 
-Single-level Liskov composition is fully implemented:
+Multi-level Liskov composition is implemented:
 
 - **Class invariants merge** via `class_invariant_lambdas`,
   populated by `convert_class_def` for each class. The walk
   at the top of `convert_class_def` prepends every direct
-  base class's lambdas to the current class's effective set
-  before they're translated in each method's scope.
+  base class's effective invariants to the current class's
+  set before they're translated in each method's scope.
+  Because each class stores its **effective** invariant set
+  (not just its own), the direct-base walk picks up
+  grandparent and farther-ancestor invariants through one
+  hop — the multi-level chain is implicit.
 - **Method preconditions weaken** via
   `class_method_require_lambdas` (a per-class per-method map
   of lambda AST pointers). When the child has its own
-  `@require` lambdas AND the parent has registered ones for
-  the same method name, the emission generates
-  `assume((AND of own) OR (AND of parent's))` per Liskov.
-  When only one side has lambdas the composition degenerates
-  cleanly.
+  `@require` lambdas AND any ancestor (walked via C3 MRO)
+  has registered ones for the same method name, the
+  emission generates `assume((AND of own) OR (AND of all
+  ancestors'))` per Liskov. When only one side has lambdas
+  the composition degenerates cleanly.
 - **Method postconditions strengthen** via
-  `class_method_ensure_lambdas` (mirror map). Parent's
-  ensure lambdas are appended to the child method's
-  `method_ensure_assertions` vector; the post-process walk
-  asserts each in turn, equivalent to their conjunction.
+  `class_method_ensure_lambdas` (mirror map). Every ancestor's
+  ensure lambdas (walked via MRO) are appended to the child
+  method's `method_ensure_assertions` vector; the post-process
+  walk asserts each in turn, equivalent to their conjunction.
+- **Inherited methods get child invariants** via wrapper
+  synthesis. When a class with @invariant inherits a method
+  that it doesn't override, `convert_class_def` synthesises
+  a wrapper method on the child that asserts the child's
+  invariants entry+exit and delegates to the inherited body
+  via a self-pointer cast.
 
 Limitations:
 
-- **Single-level inheritance only.** Grandparent contracts
-  are not transitively composed; only direct base classes
-  are walked. Multi-level support requires storing the
-  effective (composed) lambdas at registration time, or
-  recursive walking at lookup time. Both are mechanical
-  extensions.
-- **MRO not respected.** Multiple direct bases are walked
-  left-to-right with simple union semantics. This works for
-  most single-inheritance and simple mixin cases but
-  doesn't fully implement Python's C3 linearisation.
+- **MRO not respected for multiple direct bases.** Multiple
+  direct bases are walked left-to-right in MRO order. The
+  C3 linearisation is computed correctly but mixin scenarios
+  with method-override conflicts use first-found-wins
+  semantics rather than strict MRO precedence.
 
 ## DFCC integration
 
