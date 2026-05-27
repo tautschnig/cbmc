@@ -1,5 +1,29 @@
 # DIFF cluster analysis — wave 41 (post-inheritance fix)
 
+> **Status update (2026-05-27 evening):** All 3 originally-deferred
+> items have been addressed:
+>
+> - **Union[X, Y] check** (item 1) — landed in `e11911c837`. Added
+>   `union_annotation_components` map populated during parameter
+>   creation; `union_annotation_violated` helper does strict
+>   category matching at call sites. Closes
+>   `type-annotation-union-check`.
+> - **Generator-expression nested** (item 2 partial) — landed in
+>   `089a695a29`. 2-level nested generators with no var shadowing
+>   are unrolled via cartesian product. Closes
+>   `builtin_all_genexp_nested` and
+>   `builtin_all_genexp_short_circuit`. The
+>   `builtin_all_genexp_inner_iter_shadow` test (var shadowing)
+>   remains as a known limitation.
+> - **Complex tag** (item 3) — investigated; would close 2
+>   regressions but requires extending `python_type_tagt` and
+>   `python_truthiness` to recognise complex values stored in
+>   tagged unions. Substantial refactor; deferred. The all/any
+>   change that regressed those 2 tests was reverted.
+>
+> Cumulative result: **PASS 2605 → 2636** (+31) from the day's
+> work.
+
 Snapshot: 2026-05-27 wave 41 sweep. **2605 PASS, 399 DIFF, 71
 FAIL, 10 TIMEOUT, 3 TOERR, 2 UNKNOWN** out of 3091 tests.
 
