@@ -9,10 +9,11 @@
 #  3. Method postconditions strengthen: child must satisfy
 #     BOTH its own ensure and the parent's.
 #
-# Note: Python class-method-inheritance (calling a parent's
-# method on a subclass instance) has a pre-existing limitation
-# in the frontend that is orthogonal to icontract. This test
-# only invokes methods declared directly on the subclass.
+# This test exercises both methods declared directly on a
+# subclass AND methods inherited from the parent (the latter
+# was previously broken — the inherited body wasn't reached
+# from a subclass instance — and is now fixed by walking the
+# C3 MRO at the call site).
 
 import icontract
 
@@ -23,6 +24,9 @@ import icontract
 class Account:
     def __init__(self, start: int) -> None:
         self.balance = start
+
+    def deposit(self, amt: int) -> None:
+        self.balance = self.balance + amt
 
 
 @icontract.invariant(lambda self: self.balance <= 1000000)
@@ -73,8 +77,15 @@ class Lenient(Strict):
 
 
 def main():
-    # Invariant inheritance.
+    # __init__ inherited from Account — MRO walk resolves it.
     a = CappedAccount(100)
+
+    # Inherited method invocation — Account.deposit reached
+    # via the MRO walk on a subclass instance.
+    a.deposit(50)
+    assert a.balance == 150
+
+    # Method declared directly on the subclass.
     a.deposit_capped(2000000)
     # Capped at 1M; both invariants hold.
     assert a.balance == 1000000
