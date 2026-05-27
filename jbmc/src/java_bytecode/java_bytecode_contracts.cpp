@@ -1210,6 +1210,73 @@ static exprt inline_pure_calls(
                callee_str.find("java::java.util.Collection.isEmpty:") == 0 ||
                callee_str.find("java::java.util.Set.isEmpty:") == 0;
       };
+      // 1.3: List.get / Map.get as a binary-argument intrinsic.
+      // Cache key combines receiver identity with the call's
+      // second argument (the index/key). This gives the SAT
+      // solver "same (L, i) -> same get(L, i)" — which lets a
+      // forall precondition `forall i. L.get(i) != null`
+      // constrain the lemma body's L.get(0) and similar uses.
+      auto is_jdk_get_call = [&]() -> bool {
+        return callee_str.find("java::java.util.List.get:") == 0 ||
+               callee_str.find("java::java.util.Map.get:") == 0;
+      };
+      if(is_jdk_get_call() && found.args.size() >= 2)
+      {
+        const exprt &recv = found.args[0];
+        const exprt &key = found.args[1];
+        std::string recv_key;
+        if(recv.id() == ID_symbol)
+        {
+          recv_key = id2string(to_symbol_expr(recv).get_identifier());
+        }
+        else
+        {
+          std::ostringstream ss;
+          ss << recv.pretty();
+          recv_key = std::to_string(std::hash<std::string>{}(ss.str()));
+        }
+        std::string key_str;
+        if(key.id() == ID_symbol)
+        {
+          key_str = id2string(to_symbol_expr(key).get_identifier());
+        }
+        else if(key.id() == ID_constant)
+        {
+          key_str = "c" + id2string(to_constant_expr(key).get_value());
+        }
+        else
+        {
+          std::ostringstream ss;
+          ss << key.pretty();
+          key_str = std::to_string(std::hash<std::string>{}(ss.str()));
+        }
+        const std::string sym_name = recv_key + "$get$" + key_str;
+        auto cache_it = intrinsic_symbol_cache.find(sym_name);
+        if(cache_it != intrinsic_symbol_cache.end())
+          return cache_it->second;
+        // The result type comes from the callee's signature —
+        // typically a boxed Character/Integer pointer. We fall
+        // back to looking up the callee in the symbol table.
+        typet result_type = pointer_typet(empty_typet{}, 64);
+        if(symbol_table.has_symbol(found.callee_id))
+        {
+          const auto &callee_sym = symbol_table.lookup_ref(found.callee_id);
+          const auto &callee_t =
+            to_code_type(callee_sym.type).return_type();
+          if(!callee_t.is_nil())
+            result_type = callee_t;
+        }
+        symbol_exprt fresh = get_fresh_aux_symbol(
+                               result_type,
+                               id2string(target_function_id),
+                               sym_name,
+                               source_locationt::nil(),
+                               ID_java,
+                               symbol_table)
+                               .symbol_expr();
+        intrinsic_symbol_cache.emplace(sym_name, fresh);
+        return fresh;
+      }
       if((is_jdk_size_call() || is_jdk_isEmpty_call()) && !found.args.empty())
       {
         // Build a stable symbolic expression keyed by the
