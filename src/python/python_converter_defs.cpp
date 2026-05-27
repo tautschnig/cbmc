@@ -1215,6 +1215,31 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // None return.
     for(const exprt &cond : active_ensures)
       body_block.add(code_assertt{cond});
+    // --python-missing-return-check: when this function has
+    // an explicit non-None return-type annotation but a
+    // control-flow path reaches the implicit fall-through,
+    // emit a missing-return property. Reachability of this
+    // assertion implies the path didn't execute a `return X`
+    // — which is a Python bug since the implicit None return
+    // violates the declared return type.
+    //
+    // The check is gated on annotated_return_functions to
+    // avoid firing for functions with no annotation (where
+    // the inferred-int-return is just our default).
+    if(
+      python_missing_return_check &&
+      annotated_return_functions.count(qualified_func_name) > 0)
+    {
+      source_locationt mr_loc = loc;
+      mr_loc.set_property_class("missing-return");
+      mr_loc.set_comment(
+        "function '" + qualified_func_name +
+        "' has annotated return type but a path reaches the "
+        "implicit fall-through without returning a value");
+      code_assertt mr{false_exprt{}};
+      mr.add_source_location() = mr_loc;
+      body_block.add(std::move(mr));
+    }
     body_block.add(code_frontend_returnt{none_expr});
   }
   else

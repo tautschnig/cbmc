@@ -105,6 +105,13 @@ protected:
   /// Catches the `bedrock_data_automation_example` Any-erasure
   /// pattern. Off-by-default (opt-in via --python-check-any-arg-attrs).
   bool python_check_any_arg_attrs = false;
+  /// When true, emit a missing-return property at the implicit
+  /// fall-through of every function with a non-None return-type
+  /// annotation. The property fires only if a control-flow path
+  /// reaches the implicit return — i.e. the function declared a
+  /// return type but a path falls off without returning a value.
+  /// Off-by-default (opt-in via --python-missing-return-check).
+  bool python_missing_return_check = false;
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When
