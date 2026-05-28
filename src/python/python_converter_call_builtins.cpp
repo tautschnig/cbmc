@@ -1096,6 +1096,60 @@ std::optional<exprt> python_convertert::try_builtin_call(
         }
       }
     }
+    // PLR §6.10.1: complex(real=N, imag=M) — keyword-only
+    // call. The constructor accepts 'real' and 'imag' as
+    // named keywords (only with no positional second arg).
+    // Walk the call's keywords and replace real_val /
+    // imag_val from any matches.
+    {
+      const jsont &kws = json_member(expr, "keywords");
+      if(kws.is_array())
+      {
+        for(const auto &kw : as_array(kws))
+        {
+          std::string kn = json_string(json_member(kw, "arg"));
+          if(kn != "real" && kn != "imag")
+            continue;
+          exprt kv = convert_expression(json_member(kw, "value"));
+          ieee_floatt fv{
+            ieee_float_spect::double_precision(),
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          exprt fv_expr;
+          if(kv.type().id() == ID_floatbv)
+            fv_expr = kv;
+          else
+          {
+            auto ev = try_eval_double(kv);
+            if(ev.has_value())
+            {
+              fv.from_double(ev.value());
+              fv_expr = fv.to_expr();
+            }
+            else if(kv.is_constant())
+            {
+              mp_integer iv;
+              if(!to_integer(to_constant_expr(kv), iv))
+              {
+                fv.from_integer(iv);
+                fv_expr = fv.to_expr();
+              }
+              else
+                fv_expr = kv;
+            }
+            else
+              fv_expr = kv;
+          }
+          if(kn == "real")
+            real_val = fv_expr.type() != double_type()
+                         ? safe_typecast(fv_expr, double_type())
+                         : fv_expr;
+          else
+            imag_val = fv_expr.type() != double_type()
+                         ? safe_typecast(fv_expr, double_type())
+                         : fv_expr;
+        }
+      }
+    }
     return struct_exprt{{real_val, imag_val}, complex_type};
   }
   // PLR §8.5: collections.defaultdict / Counter constructor.
@@ -3090,6 +3144,17 @@ std::optional<exprt> python_convertert::try_builtin_call(
           cls_name == "complex" && obj.type().id() == ID_struct &&
           to_struct_type(obj.type()).get_tag() == "python_complex")
           return true_exprt{};
+        // Non-complex types are not complex.
+        if(cls_name == "complex")
+        {
+          if(
+            obj.type().id() == ID_signedbv || obj.type().id() == ID_integer ||
+            obj.type().id() == ID_floatbv || obj.type().id() == ID_bool ||
+            is_python_string_type(obj.type()) ||
+            is_python_list_type(obj.type()) ||
+            is_python_tuple_type(obj.type()) || is_python_dict_type(obj.type()))
+            return false_exprt{};
+        }
 
         // If checking against a built-in type and obj is a different
         // built-in type, return false (no cross-type isinstance)
@@ -3105,6 +3170,11 @@ std::optional<exprt> python_convertert::try_builtin_call(
             is_python_string_type(obj.type()) ||
             is_python_list_type(obj.type()) ||
             is_python_tuple_type(obj.type()) || is_python_dict_type(obj.type()))
+            return false_exprt{};
+          // python_complex is not int/float/bool/etc.
+          if(
+            obj.type().id() == ID_struct &&
+            to_struct_type(obj.type()).get_tag() == "python_complex")
             return false_exprt{};
         }
 
