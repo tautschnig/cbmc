@@ -591,6 +591,9 @@ private:
 
   /// Known imported module names (for `import math` style)
   std::set<std::string> imported_modules;
+  /// Names assigned from typing.NewType('X', T) — treated as
+  /// identity-call aliases so `UserId(42) == 42`.
+  std::set<std::string> newtype_aliases;
 
   /// PLR §8.5: collections module imports. Maps the binding
   /// name (asname after 'from collections import X as Y' / bare
