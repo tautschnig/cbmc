@@ -200,20 +200,27 @@ public class HashMap<K, V> implements Map<K, V> {
 
     @Override
     public Set<K> keySet() {
-        CProver.notModelled();
-        return null;
+        // Axiomatic encoding has no key list; iteration is
+        // not supported. Throwing forces JBMC to surface the
+        // limitation as a counterexample rather than silently
+        // killing the path via the auto-injected
+        //   ASSERT(it != null); ASSUME(it != null)
+        // pattern around hasNext() (which would prove the
+        // calling lemma vacuously).
+        throw new UnsupportedOperationException(
+                "axiomatic HashMap.keySet() not supported");
     }
 
     @Override
     public Collection<V> values() {
-        CProver.notModelled();
-        return null;
+        throw new UnsupportedOperationException(
+                "axiomatic HashMap.values() not supported");
     }
 
     @Override
     public Set<Map.Entry<K, V>> entrySet() {
-        CProver.notModelled();
-        return null;
+        throw new UnsupportedOperationException(
+                "axiomatic HashMap.entrySet() not supported");
     }
 
     @Override

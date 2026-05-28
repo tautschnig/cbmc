@@ -44,6 +44,7 @@ Activated by --axiomatic-collections.
 
 #include "java_types.h"
 
+#include <iostream>
 #include <string>
 
 namespace
@@ -265,6 +266,9 @@ bool lower_one_call(
   const exprt receiver = coerce(args[0], object_ptr_type());
 
   const auto loc = it->source_location();
+  // Save the original CALL iterator so we can SKIP it after
+  // patch_return_value advances `it` to the consumer ASSIGN.
+  const auto orig_call_it = it;
 
   switch(op)
   {
@@ -311,11 +315,8 @@ bool lower_one_call(
       result = notequal_exprt(val, object_null());
     if(!patch_return_value(body, it, cf_id, result))
       return false;
-    auto call_it = std::prev(it);
-    while(call_it != body.instructions.begin() && !call_it->is_function_call())
-      --call_it;
-    if(call_it->is_function_call())
-      call_it->turn_into_skip();
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
     return true;
   }
 
@@ -338,7 +339,11 @@ bool lower_one_call(
     plus_exprt incremented{cur_sz, from_integer(1, java_int_type())};
     if_exprt new_sz_for_receiver{was_unset, incremented, cur_sz};
     with_exprt new_sz{sz.symbol_expr(), rkey, new_sz_for_receiver};
-    auto next_it = std::next(it);
+    // Patch return-value consumer FIRST so synthetic ASSIGNs
+    // don't hide the <id>#return_value ASSIGN from
+    // patch_return_value's forward search.
+    patch_return_value(body, it, cf_id, old_v);
+    auto next_it = std::next(orig_call_it);
     body.insert_before(
       next_it,
       goto_programt::make_assignment(
@@ -347,12 +352,8 @@ bool lower_one_call(
       next_it,
       goto_programt::make_assignment(
         code_assignt(sz.symbol_expr(), new_sz), loc));
-    patch_return_value(body, it, cf_id, old_v);
-    auto call_it = std::prev(it);
-    while(call_it != body.instructions.begin() && !call_it->is_function_call())
-      --call_it;
-    if(call_it->is_function_call())
-      call_it->turn_into_skip();
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
     return true;
   }
 
@@ -372,11 +373,8 @@ bool lower_one_call(
       result = equal_exprt(cur_sz, from_integer(0, java_int_type()));
     if(!patch_return_value(body, it, cf_id, result))
       return false;
-    auto call_it = std::prev(it);
-    while(call_it != body.instructions.begin() && !call_it->is_function_call())
-      --call_it;
-    if(call_it->is_function_call())
-      call_it->turn_into_skip();
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
     return true;
   }
 
@@ -397,7 +395,13 @@ bool lower_one_call(
     plus_exprt incremented{cur_sz, from_integer(1, java_int_type())};
     if_exprt new_sz_for_receiver{was_present, cur_sz, incremented};
     with_exprt new_sz{sz.symbol_expr(), rkey, new_sz_for_receiver};
-    auto next_it = std::next(it);
+    // Patch the return-value consumer FIRST, before inserting
+    // synthetic ASSIGNs that would otherwise hide the
+    // <id>#return_value ASSIGN from patch_return_value's
+    // forward search.
+    not_exprt added{was_present};
+    patch_return_value(body, it, cf_id, added);
+    auto next_it = std::next(orig_call_it);
     body.insert_before(
       next_it,
       goto_programt::make_assignment(
@@ -406,14 +410,8 @@ bool lower_one_call(
       next_it,
       goto_programt::make_assignment(
         code_assignt(sz.symbol_expr(), new_sz), loc));
-    not_exprt added{was_present};
-    if(!patch_return_value(body, it, cf_id, added))
-      return false;
-    auto call_it = std::prev(it);
-    while(call_it != body.instructions.begin() && !call_it->is_function_call())
-      --call_it;
-    if(call_it->is_function_call())
-      call_it->turn_into_skip();
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
     return true;
   }
 
@@ -428,11 +426,8 @@ bool lower_one_call(
     exprt is_present = index_exprt(set.symbol_expr(), idx);
     if(!patch_return_value(body, it, cf_id, is_present))
       return false;
-    auto call_it = std::prev(it);
-    while(call_it != body.instructions.begin() && !call_it->is_function_call())
-      --call_it;
-    if(call_it->is_function_call())
-      call_it->turn_into_skip();
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
     return true;
   }
   }

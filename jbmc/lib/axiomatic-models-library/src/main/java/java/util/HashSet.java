@@ -143,9 +143,15 @@ public class HashSet<E> extends AbstractSet<E>
 
     @Override
     public Iterator<E> iterator() {
-        // Opaque nondet iteration; not used by lemmas.
-        CProver.notModelled();
-        return null;
+        // Axiomatic encoding has no element list; iteration
+        // is not supported. Throwing forces JBMC to surface
+        // the limitation as a counterexample rather than
+        // silently killing the path via the auto-injected
+        //   ASSERT(it != null); ASSUME(it != null)
+        // pattern around hasNext() (which would prove the
+        // calling lemma vacuously — see VacuityTest).
+        throw new UnsupportedOperationException(
+                "axiomatic HashSet.iterator() not supported");
     }
 
     @Override
