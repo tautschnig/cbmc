@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2719** | +118 |
+| ESBMC PASS | 2489 | 2601 | **2741** | +140 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -140,6 +140,37 @@ Foundational AST changes:
   comparisons).
 - Empty-list compare allowed across incompatible element
   types (length-only equality).
+
+Multi-cluster pass (wave 41 cont., +22 tests):
+- 6 lambdas (lambda7/10/14/15/16/20): body-emitted pending
+  checks (ZeroDivisionError on /, IndexError on []) now go
+  inside the lambda's function body instead of the outer
+  scope; per-parameter type inference replaces the
+  body-wide string/float heuristic.
+- 3 random tests (random2/3/7): random.random,
+  random.uniform, random.triangular, random.randrange now
+  emit constrained-nondet results matching their declared
+  ranges (with strict upper bound for random()).
+- 3 divmod tests: detect float arg before truncating to
+  int, so divmod(7.5, 2.0) → (3.0, 1.5) instead of
+  (3.0, 1.0).
+- 3 set tests (empty_difference / intersection / union):
+  set() now returns python_set_type, not python_list_type,
+  so the BinOp set-op fast path fires for `set() OP set()`.
+- boolop-short-circuit: 'and' / 'or' right-operand pending
+  checks (KeyError on dict subscript, IndexError on list
+  index, etc.) are now wrapped in an if-then-else guarded
+  by the same condition that selects the right operand at
+  runtime — so the right operand's side effects don't fire
+  when the left disjunct decides the result.
+- getrandbits: random.getrandbits(k) for constant k folds
+  to [0, (1<<k) - 1] precisely; k <= 0 emits ValueError.
+- int_bit_length: int.bit_length / .bit_count / .conjugate
+  / .real / .imag / .numerator / .denominator dispatched
+  on python_int receivers.
+- has-attr: hasattr(obj, name) static fold against the
+  receiver's struct components and qualified method symbols
+  for constant 'name'.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
