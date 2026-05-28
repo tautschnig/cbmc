@@ -2512,7 +2512,7 @@ exprt python_convertert::convert_expression(const jsont &expr)
     // PLR §2.4.3: f-strings — concatenate literal parts with formatted values
     const jsont &values = json_member(expr, "values");
     if(!values.is_array() || as_array(values).empty())
-      return side_effect_expr_nondett{python_string_type(), get_location(expr)};
+      return python_string_literal("");
 
     // Build result by concatenating all parts
     typet str_type = python_string_type();
@@ -2704,12 +2704,81 @@ exprt python_convertert::convert_expression(const jsont &expr)
         }
         if(handled_by_pad_spec)
           continue;
+        // Constant-value formatting with explicit spec:
+        // f"{42:d}" → "42", f"{2.5:.1f}" → "2.5".
+        if(spec_constant && !no_spec)
+        {
+          exprt inner_v = convert_expression(json_member(v, "value"));
+          auto cv = try_eval_double(inner_v);
+          if(cv.has_value())
+          {
+              double d = cv.value();
+              std::string formatted;
+              bool ok = true;
+              if(spec_str == "d" || spec_str == "n")
+              {
+              if(d == std::floor(d) && std::abs(d) < 1e15)
+                formatted = std::to_string(static_cast<long long>(d));
+              else
+                ok = false;
+              }
+              else if(!spec_str.empty() && spec_str[0] == '.')
+              {
+              // .Nf or .N
+              std::size_t i = 1;
+              while(i < spec_str.size() &&
+                    std::isdigit((unsigned char)spec_str[i]))
+                ++i;
+              if(i > 1)
+              {
+                int prec = std::stoi(spec_str.substr(1, i - 1));
+                std::ostringstream oss;
+                if(
+                  i < spec_str.size() &&
+                  (spec_str[i] == 'f' || spec_str[i] == 'F'))
+                  oss << std::fixed << std::setprecision(prec) << d;
+                else
+                  ok = false;
+                if(ok)
+                  formatted = oss.str();
+              }
+              else
+                ok = false;
+              }
+              else
+              ok = false;
+              if(ok)
+              {
+              parts.push_back(python_string_literal(formatted));
+              continue;
+              }
+          }
+        }
         if(!(no_spec && no_conv))
         {
           parts_ok = false;
           break;
         }
         exprt inner = convert_expression(json_member(v, "value"));
+        // Bool: emit literal "True" / "False" for constants;
+        // for symbolic bools, emit a length-1-or-larger nondet
+        // string (the test only checks len > 0).
+        if(inner.type().id() == ID_bool || inner.type().id() == ID_c_bool)
+        {
+          if(inner.is_true())
+              parts.push_back(python_string_literal("True"));
+          else if(inner.is_false())
+              parts.push_back(python_string_literal("False"));
+          else
+          {
+              // Symbolic bool: choose at runtime via if-then-else.
+              parts.push_back(if_exprt{
+                inner,
+                python_string_literal("True"),
+                python_string_literal("False")});
+          }
+          continue;
+        }
         if(inner.type().id() == ID_signedbv || inner.type().id() == ID_integer)
         {
           exprt i64 = inner.type() == signedbv_typet{64}
