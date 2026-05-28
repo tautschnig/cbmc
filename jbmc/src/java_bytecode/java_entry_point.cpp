@@ -404,7 +404,24 @@ std::pair<code_blockt, std::vector<exprt>> java_build_arguments(
     }
     else
     {
-      INVARIANT(!is_this, "We cannot have different types for `this` here");
+      // Historical invariant here said `this` cannot have
+      // alternative types. That assumption predates
+      // sealed-class / interface entry-point support
+      // (Item B, virtual dispatch through interface
+      // entry-point parameters): when the entry point is a
+      // default method on a sealed interface, `this`'s
+      // declared type IS the sealed interface, and the
+      // pointer_type_selector legitimately reports the
+      // permits set as alternatives.
+      //
+      // The nondet-switch construction below is type-
+      // agnostic — it allocates each alternative
+      // independently, casts back to `p.type()`, and uses
+      // a single fresh `nondet_parameter_N` symbol of type
+      // `p.type()` to feed the call. That works for `this`
+      // exactly as for any other pointer parameter; no
+      // downstream consumer (record_pointer_parameters,
+      // the call argument list) special-cases `this`.
       // create a non-deterministic switch between all possible values for the
       // type of the parameter.
 
