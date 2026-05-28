@@ -1,0 +1,13 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*unsafe property key.*FAILURE$
+--
+--
+Real-world finding: an INI parser with an incomplete blocklist
+that allows "constructor" as a section name, leading to global
+Object pollution. The CBMC primitive flags the dangerous key
+before assignment.
