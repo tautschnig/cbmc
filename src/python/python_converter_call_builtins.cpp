@@ -1835,15 +1835,22 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt a = convert_expression(*it);
       ++it;
       exprt b = convert_expression(*it);
-      a = safe_typecast(a, python_int_type());
-      b = safe_typecast(b, python_int_type());
-      // Use float type if either arg is float
-      typet result_type = python_int_type();
-      if(a.type().id() == ID_floatbv || b.type().id() == ID_floatbv)
+      // PLR §6.7: divmod with any float arg → float result
+      // (using true division and floor). Detect float BEFORE
+      // typecasting to int, otherwise 7.5 becomes 7 and the
+      // remainder is wrong.
+      bool is_float =
+        a.type().id() == ID_floatbv || b.type().id() == ID_floatbv;
+      typet result_type = is_float ? double_type() : python_int_type();
+      if(is_float)
       {
-        result_type = double_type();
         a = safe_typecast(a, double_type());
         b = safe_typecast(b, double_type());
+      }
+      else
+      {
+        a = safe_typecast(a, python_int_type());
+        b = safe_typecast(b, python_int_type());
       }
       struct_typet::componentst comps;
       comps.push_back(struct_typet::componentt{"_0", result_type});
