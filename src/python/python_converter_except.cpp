@@ -739,7 +739,7 @@ codet python_convertert::convert_try(const jsont &stmt)
         exc_type_sym != nullptr)
       {
         std::string htype = json_string(json_member(handler_type, "id"));
-        if(htype != "Exception" && !htype.empty())
+        if(htype != "Exception" && htype != "BaseException" && !htype.empty())
         {
           long type_hash = exception_type_hash(htype);
           condition = and_exprt{
