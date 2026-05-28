@@ -434,7 +434,23 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(!returns.is_null())
   {
     return_type = convert_type_annotation(returns);
-    annotated_return_functions.insert(qualified_func_name);
+    // Only register for missing-return checks when the
+    // declared return type is NOT None. A function annotated
+    // '-> None' legitimately falls through without returning
+    // a value, and the implicit None return matches the
+    // declared type. Detect None by inspecting the AST node
+    // (Constant with value=None) directly so we don't have
+    // to rely on the post-conversion typet which is now
+    // python_int_type for None.
+    bool is_none_annotation = false;
+    if(is_node_type(returns, "Constant"))
+    {
+      const jsont &v = json_member(returns, "value");
+      if(v.is_null())
+        is_none_annotation = true;
+    }
+    if(!is_none_annotation)
+      annotated_return_functions.insert(qualified_func_name);
   }
   else
   {
