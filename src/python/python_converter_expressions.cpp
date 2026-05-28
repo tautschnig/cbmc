@@ -934,6 +934,34 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         return v.to_expr();
       }
     }
+    if(obj_name == "string")
+    {
+      // PLR: string module constants. CPython's `string` module
+      // exposes a handful of static character-class strings.
+      // Map each here so `string.digits == "0123456789"` etc.
+      // fold directly without going through the library lookup
+      // (which currently leaves them as nondet symbols).
+      static const std::map<std::string, std::string> consts = {
+        {"ascii_lowercase", "abcdefghijklmnopqrstuvwxyz"},
+        {"ascii_uppercase", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+        {"ascii_letters",
+         "abcdefghijklmnopqrstuvwxyz"
+         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+        {"digits", "0123456789"},
+        {"hexdigits", "0123456789abcdefABCDEF"},
+        {"octdigits", "01234567"},
+        {"punctuation", "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"},
+        {"whitespace", " \t\n\r\x0b\x0c"},
+        {"printable",
+         "0123456789"
+         "abcdefghijklmnopqrstuvwxyz"
+         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+         "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+         " \t\n\r\x0b\x0c"}};
+      auto it = consts.find(attr);
+      if(it != consts.end())
+        return python_string_literal(it->second);
+    }
   }
 
   exprt value = convert_expression(json_member(expr, "value"));
