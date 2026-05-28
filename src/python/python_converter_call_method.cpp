@@ -1072,6 +1072,74 @@ std::optional<exprt> python_convertert::try_method_call(
         // / non-literal-list cases. The library placeholder will
         // run there.
       }
+      // PLR §math: TypeError when an int-only math function
+      // (factorial / comb / perm / gcd / lcm / isqrt / floor /
+      // ceil / trunc) is called with a non-integer argument
+      // (float / string / None). CPython explicitly rejects
+      // non-int arguments here; without this check, our int-
+      // math fold below would silently coerce or fall through
+      // to the library placeholder.
+      if(
+        obj_name == "math" &&
+        (method_name == "factorial" || method_name == "comb" ||
+         method_name == "perm" || method_name == "gcd" ||
+         method_name == "lcm" || method_name == "isqrt"))
+      {
+        bool any_non_int = false;
+        if(args.is_array())
+        {
+          for(const auto &a : as_array(args))
+          {
+            exprt e = convert_expression(a);
+            // None constant: convert_expression returns the
+            // None sentinel as a signedbv constant equal to
+            // -2^62; detect via the AST: Constant with null value.
+            if(is_node_type(a, "Constant"))
+            {
+              const jsont &v = json_member(a, "value");
+              if(v.is_null())
+              {
+                any_non_int = true;
+                break;
+              }
+            }
+            // Reject float / floatbv / string / list arguments
+            // that aren't representable as Python int.
+            if(e.type().id() == ID_floatbv)
+            {
+              any_non_int = true;
+              break;
+            }
+            // Python string / bytes are recognised by
+            // is_python_string_type. Pointers to string types
+            // and string struct types both qualify.
+            if(is_python_string_type(e.type()))
+            {
+              any_non_int = true;
+              break;
+            }
+          }
+        }
+        if(any_non_int)
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+            pending_checks.push_back(
+              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long type_hash = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(type_hash, python_int_type())});
+          }
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        }
+      }
       // PLR §math: int-math functions (factorial / comb / perm /
       // gcd / lcm / isqrt) — when called as math.X(...) with
       // int-constant arguments, constant-fold to the precise
