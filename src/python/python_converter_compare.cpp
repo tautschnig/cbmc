@@ -1073,6 +1073,34 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
     {
+      // PLR §6.10.1: ordering is undefined on complex.
+      // 'a < b' on python_complex raises TypeError.
+      auto is_complex = [](const exprt &e)
+      {
+        return e.type().id() == ID_struct &&
+               to_struct_type(e.type()).get_tag() == "python_complex";
+      };
+      if(is_complex(current_left) || is_complex(right))
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          pending_checks.push_back(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(h, exc_type_sym->type)});
+          }
+        }
+        cmp = false_exprt{};
+        goto done_cmp;
+      }
       // PLR §3.3.8 Emulating numeric types / §3.3.1 ordering:
       // if the struct class defines __lt__ / __le__ / __gt__
       // / __ge__, route through it. PLR also requires a

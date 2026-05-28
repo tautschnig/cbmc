@@ -137,6 +137,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     bool r_is_set = is_python_set_type(right.type());
     bool l_is_str = is_python_string_type(left.type());
     bool r_is_str = is_python_string_type(right.type());
+    bool l_is_complex =
+      left.type().id() == ID_struct &&
+      to_struct_type(left.type()).get_tag() == "python_complex";
+    bool r_is_complex =
+      right.type().id() == ID_struct &&
+      to_struct_type(right.type()).get_tag() == "python_complex";
     bool l_is_num =
       left.type().id() == ID_signedbv || left.type().id() == ID_integer ||
       left.type().id() == ID_floatbv || left.type().id() == ID_bool;
@@ -171,8 +177,52 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       if(!(op == "Mult" && l_is_num))
         incompatible = true;
     }
+    // PLR §6.7: complex OP str / list / etc. raises TypeError.
+    if(l_is_complex && (r_is_str || r_is_list || r_is_dict))
+      incompatible = true;
+    if(r_is_complex && (l_is_str || l_is_list || l_is_dict))
+      incompatible = true;
     if(incompatible)
     {
+      // PLR §6.7: incompatible operand types raise TypeError.
+      // Set the __exception_active flag (gated by the
+      // statement-level wrapper) so try/except TypeError can
+      // catch the path. Returning nondet keeps the GOTO
+      // well-typed regardless of whether the exception is
+      // caught.
+      //
+      // Restricted to ops where the incompatibility is
+      // unambiguous (Add / Sub / Mult / Div / FloorDiv /
+      // Mod / Pow). Bitwise ops (BitOr / BitAnd / BitXor /
+      // LShift / RShift) operate on ints AND sets, and our
+      // value-type tracking is too coarse to distinguish
+      // (set | set built on top of nondet ints from
+      // frozenset-returning functions, etc.). Skipping the
+      // exception emission for those preserves the silent-
+      // nondet behaviour that several library models depend
+      // on while still flagging arithmetic mismatches.
+      bool fire_exc = op == "Add" || op == "Sub" || op == "Mult" ||
+                      op == "Div" || op == "FloorDiv" || op == "Mod" ||
+                      op == "Pow";
+      if(fire_exc)
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          pending_checks.push_back(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(h, exc_type_sym->type)});
+          }
+        }
+      }
       log_overapprox(
         "BinOp " + op + " on incompatible types — returning nondet");
       return side_effect_expr_nondett{python_int_type(), get_location(expr)};
@@ -190,12 +240,58 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
   // PLR §3.2: Promote int/float to complex for mixed arithmetic
   if(is_complex(left.type()) && !is_complex(right.type()))
   {
+    // PLR §6.7: complex + str / complex * str / etc. is a
+    // TypeError. Detect non-numeric RHS and emit the
+    // exception flag without attempting a numeric promotion.
+    if(
+      is_python_string_type(right.type()) ||
+      is_python_list_type(right.type()) || is_python_tuple_type(right.type()) ||
+      is_python_dict_type(right.type()))
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("TypeError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
+        }
+      }
+      return left; // value irrelevant; exception will dominate
+    }
     struct_typet ct = to_struct_type(left.type());
     exprt real_part = safe_typecast(right, double_type());
     right = struct_exprt{{real_part, safe_zero(double_type())}, ct};
   }
   if(!is_complex(left.type()) && is_complex(right.type()))
   {
+    if(
+      is_python_string_type(left.type()) || is_python_list_type(left.type()) ||
+      is_python_tuple_type(left.type()) || is_python_dict_type(left.type()))
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        pending_checks.push_back(
+          code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("TypeError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
+        }
+      }
+      return right;
+    }
     struct_typet ct = to_struct_type(right.type());
     exprt real_part = safe_typecast(left, double_type());
     left = struct_exprt{{real_part, safe_zero(double_type())}, ct};
