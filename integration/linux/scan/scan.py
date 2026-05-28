@@ -404,6 +404,7 @@ CONTRACT_FUNCTIONS: dict[str, list[str]] = {
     ],
     "resource_leak_on_error_path": [
         "__assert_no_leak_at_exit",
+        "__assert_no_outstanding_leak",
     ],
     "integer_overflow_in_alloc_size": [
         "__assert_size_safe",
