@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2780** | +179 |
+| ESBMC PASS | 2489 | 2601 | **2786** | +185 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -304,6 +304,17 @@ test's other assertion is satisfied. ESBMC's stricter
 import tracking would still report FAILED for this test.
 The converter loads-everything semantics is unchanged
 from before the shadow fix.
+
+NewType + slice cluster (wave 41 cont., +6):
+- type_alias / type_alias_2 — typing.NewType('X', T)
+  callable aliases now identity at the call site
+  (UserId(42) -> 42).
+- string-slice-step / github_3553_reverse — string slice
+  fold for step != 1 (negative -1 reverse, positive
+  N stride) by walking the source string with the stride.
+- github_3581_1 / indexing9_fail (bonus) — list/string
+  slice negative-bound wrap and out-of-range clamp at
+  runtime.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
