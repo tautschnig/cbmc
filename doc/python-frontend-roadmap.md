@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2786** | +185 |
+| ESBMC PASS | 2489 | 2601 | **2793** | +192 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -315,6 +315,22 @@ NewType + slice cluster (wave 41 cont., +6):
 - github_3581_1 / indexing9_fail (bonus) — list/string
   slice negative-bound wrap and out-of-range clamp at
   runtime.
+
+Tuple / range / set / math / isinstance mini-cluster (wave 41 cont., +7):
+- multiple-assignment5 — typing.Tuple capital-T alias for
+  parameterised tuple annotations (Tuple[int, int]).
+- set_from_string — set(constant_string) folds to a
+  popcount-N bitmap.
+- range28 / range33 — range with negative step uses the
+  direction-aware termination check (val > stop instead of
+  val < stop).
+- isinstance34 — isinstance(None_literal, builtin) is now
+  False; isinstance(x, type(None)) accepts both the NONE-
+  tag and INT+sentinel encodings of None.
+- combo1 / combo3 — 'from math import X' direct calls now
+  route to the math intrinsic constant-fold (factorial /
+  comb / perm / gcd / lcm / isqrt) instead of dispatching
+  to the library placeholder.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
