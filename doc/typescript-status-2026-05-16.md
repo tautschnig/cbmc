@@ -64,6 +64,10 @@ items from the remaining-work plan have been addressed.
 
 ## Known limitations
 
+For the consolidated, authoritative tracker of all limitations,
+loose ends, and external dependencies, see
+[typescript-known-limitations.md](typescript-known-limitations.md).
+
 ### Design trade-off (1 KNOWNBUG)
 1. **async-race-undetected**: sequential async misses races (opt-in fix via `--ts-async-threading`)
 

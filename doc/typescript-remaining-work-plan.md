@@ -1,5 +1,11 @@
 # TypeScript Frontend — Remaining Work Plan (2026-05-16)
 
+For the consolidated tracker of limitations, architectural debt, and
+external dependencies, see
+[typescript-known-limitations.md](typescript-known-limitations.md).
+This document is the prioritized roadmap of planned future work; it
+is the answer to "what should we do next?"
+
 ## Current state
 
 - 700 CORE tests, 1 KNOWNBUG (async-race-undetected, opt-in design choice)
