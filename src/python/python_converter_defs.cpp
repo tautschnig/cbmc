@@ -1215,6 +1215,24 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   }
   else if(return_type.id() != ID_empty)
   {
+    // Re-read the function's return type from the symbol
+    // table; convert_return may have widened it during body
+    // conversion (e.g. annotated `-> int` widened to
+    // python_value when the body returns a tagged-union
+    // value). Without this, the implicit fall-through
+    // None-encoded as a python_int sentinel gets silently
+    // typecast to python_value at goto-conversion, emitting
+    // a "warning: ignoring typecast" and leaving the
+    // exception-active early-exit path with a wrong-typed
+    // return value.
+    const symbolt *cur_func_sym =
+      symbol_table.lookup(irep_idt{"python::" + qualified_func_name});
+    if(cur_func_sym != nullptr && cur_func_sym->type.id() == ID_code)
+    {
+      const typet &updated_rt = to_code_type(cur_func_sym->type).return_type();
+      if(updated_rt.id() != ID_empty)
+        return_type = updated_rt;
+    }
     exprt none_expr;
     if(is_python_value_type(return_type))
       none_expr = make_python_value(
