@@ -185,6 +185,36 @@ exprt python_convertert::convert_compare(const jsont &expr)
           (is_python_value_type(le) && is_python_string_type(re)) ||
           (is_python_string_type(le) && is_python_value_type(re)))
           can_bridge = true;
+        // PLR §6.10.1: empty list[X] == empty list[Y] regardless
+        // of element types (CPython's list equality compares
+        // element-by-element only for matching positions; if
+        // both lengths are 0, neither side has elements to
+        // compare, so they're equal). Detect via constant length
+        // operand on either side.
+        if(!can_bridge)
+        {
+          auto static_len_zero = [](const exprt &lst)
+          {
+            if(
+              lst.id() != ID_struct || lst.operands().empty() ||
+              !lst.operands()[0].is_constant())
+              return false;
+            mp_integer iv;
+            if(to_integer(to_constant_expr(lst.operands()[0]), iv))
+              return false;
+            return iv == 0;
+          };
+          if(static_len_zero(current_left) || static_len_zero(right))
+          {
+            // Reduce to length-only comparison.
+            exprt eq_expr = equal_exprt{
+              member_exprt{current_left, "length", signedbv_typet{64}},
+              member_exprt{right, "length", signedbv_typet{64}}};
+            if(op == "Eq")
+              return eq_expr;
+            return not_exprt{eq_expr};
+          }
+        }
         if(can_bridge)
         {
           member_exprt llen{current_left, "length", signedbv_typet{64}};
