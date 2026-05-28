@@ -11,8 +11,8 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2682** | +81 |
-| Soundness gaps (raw DIFFs) | n/a | ~50 | ~26 | −24 |
+| ESBMC PASS | 2489 | 2601 | **2719** | +118 |
+| Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
 | TIMEOUT | 26 | 10 | 10 | 0 |
@@ -106,6 +106,40 @@ syntax programs verified).**
   containing complex (e.g., `math.X(**fn())`), and
   `complex("bad")` raising ValueError before downstream
   dispatch.
+
+String cluster (wave 41 cont., +37 tests):
+- 7 `complex_str_*` (str(complex), complex(str), proper
+  formatting like CPython `(1+2j)` / `(1+0j)` / `Nj` /
+  `0j`, ValueError for malformed strings).
+- 14 `string-split-whitespace*` (whitespace-mode split when
+  no separator or None).
+- 4 `string-splitlines*` (line-boundary splitting with CRLF
+  awareness, proper empty-string and trailing-newline
+  semantics).
+- `string-module-constants` (`string.digits`,
+  `string.ascii_letters`, etc bound at attribute-access
+  time).
+- `string-format-named`, `string-format-none` (str.format
+  with named kwargs, None argument formatted as 'None').
+- `fstring`, `fstring2` (bool args, empty f-string,
+  format specs `:d` / `:.Nf` for constants).
+- Bonus: `complex_equality_nan_inf`,
+  `complex_handler_normalize` from string-vs-complex
+  compare fix.
+
+Foundational AST changes:
+- AST emitter now tags Python imaginary literals (`2j`,
+  `1+2j`) as `{"__complex__": true, "real": ..., "imag":
+  ...}` instead of `default=str` which was indistinguishable
+  from the source-string `"2j"`. Both the daemon and inline
+  AST-to-JSON code paths updated.
+- `convert_term` decodes the tagged complex JSON into a
+  `python_complex` struct.
+- Compare path skips string-to-complex promotion (was
+  silently producing nondet for string-vs-complex
+  comparisons).
+- Empty-list compare allowed across incompatible element
+  types (length-only equality).
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
