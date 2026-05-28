@@ -184,6 +184,7 @@ def _run_scan(c: FpCase, modules: list[str],
     """Run scan-per-file once per module, record best
     verdict on the case."""
     BEST_ORDER = ["candidate", "fp-filtered", "noise",
+                  "low-confidence-candidate",
                   "successful", "vacuous", "timeout",
                   "error", "skipped"]
     rank = {v: i for i, v in enumerate(BEST_ORDER)}
@@ -228,6 +229,10 @@ def _run_scan(c: FpCase, modules: list[str],
             if rc == 10:
                 v = "candidate"
                 note = f"module={mod} contract violation"
+            elif rc == 14:
+                v = "low-confidence-candidate"
+                note = (f"module={mod} contract violation "
+                        f"with empty-ghost-bootstrap")
             elif rc == 0:
                 v = "successful"
                 note = f"module={mod} clean"
@@ -328,11 +333,12 @@ def main(argv: list[str] | None = None) -> int:
     total = len(cases)
     print(f"\n=== n={total} per-function-best verdicts ===")
     for v in ["candidate", "fp-filtered", "noise",
+              "low-confidence-candidate",
               "successful", "vacuous", "timeout",
               "error", "skipped"]:
         n = counts.get(v, 0)
         pct = 100.0 * n / max(1, total)
-        print(f"  {v:15s} {n:4d}  ({pct:.1f}%)")
+        print(f"  {v:25s} {n:4d}  ({pct:.1f}%)")
     cand = counts.get("candidate", 0)
     print(f"\n  Upper-bound FP rate: {cand}/{total} = "
           f"{100.0 * cand / max(1, total):.1f}%")

@@ -828,6 +828,18 @@ def _run_scan(case: CveCase, timeout: int = 240,
     elif rc == 13:
         case.verdict = "skipped"
         case.note = "known-unverifiable shape"
+    elif rc == 14:
+        # Empty-ghost-bootstrap candidate: the harness
+        # didn't set up the relevant ghost state because no
+        # parameter matched the module's bootstrap config.
+        # CBMC's contract trivially fails (e.g.
+        # mutex_unlock fires when lock_held was never set).
+        # These are FPs by construction; flag separately so
+        # the per-CVE-best aggregation doesn't count them
+        # as detections.
+        case.verdict = "low-confidence-candidate"
+        case.note = ("empty-ghost-bootstrap (low-confidence)"
+                     + state_tag)
     elif rc in (2, 3):
         case.verdict = "error"
         # Return the last informative error line.
@@ -1039,6 +1051,7 @@ def main() -> int:
     # detection summary reflects "did the catalog catch this CVE
     # on ANY tried module" rather than "on every tried module".
     BEST_ORDER = ["candidate", "fp-filtered", "noise",
+                  "low-confidence-candidate",
                   "successful", "vacuous", "timeout",
                   "error", "skipped"]
     rank = {v: i for i, v in enumerate(BEST_ORDER)}

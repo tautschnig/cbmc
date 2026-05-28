@@ -516,6 +516,12 @@ else
 fi
 if grep -qE "$contract_pat.*FAILURE" "$tmp/cbmc.log"; then
   echo "  verdict: CONTRACT VIOLATION (real candidate)$conf"
+  # Distinguish empty-ghost-bootstrap candidates: those are
+  # low-confidence FPs by construction and the upper layers
+  # should reclassify them.
+  if (( EMPTY_GHOST == 1 )); then
+    exit 14
+  fi
   exit 10
 elif grep -q "^VERIFICATION SUCCESSFUL\$" "$tmp/cbmc.log"; then
   if grep -qE "$contract_pat" "$tmp/cbmc.log"; then

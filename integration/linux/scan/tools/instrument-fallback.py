@@ -37,6 +37,14 @@ from typing import Iterable
 
 # Allocator-API regex per shape.  Mirrors what's in
 # integration/linux/scan/tools/instrument-cocci/*.cocci
+#
+# Note: devm_* allocators are deliberately EXCLUDED from
+# resource-leak tracking.  These are devres-managed
+# (devm_kmalloc, devm_kzalloc, etc.) and the underlying
+# memory is auto-freed when the parent device is unbound.
+# Treating them as ordinary allocations produces false
+# positives because callers reasonably never invoke
+# devm_kfree explicitly.
 _ALLOC_APIS = (
     r"k(?:malloc|zalloc|calloc|malloc_array|memdup|strdup|"
     r"asprintf)|"
@@ -44,8 +52,7 @@ _ALLOC_APIS = (
     r"v(?:malloc|zalloc)|"
     r"alloc_skb|"
     r"kmem_cache_(?:alloc|zalloc)|"
-    r"alloc_workqueue|"
-    r"devm_k(?:malloc|zalloc|calloc|memdup)"
+    r"alloc_workqueue"
 )
 
 # Free-API regex for use_after_free.
@@ -282,14 +289,44 @@ def _instrument_resource_leak(source: str, fn_name: str
                 break
             j += 1
 
-    # Build the modification list.  Two kinds of edits:
+    # Build the modification list.  Three kinds of edits:
     #   * insertion at offset (alloc tracker after ';')
+    #   * insertion at offset (free tracker after ';')
     #   * replacement of [start,end) with new text (return)
-    # Both are encoded as (start, end, text) where end==start
-    # means insertion.
+    # All encoded as (start, end, text) with end==start for
+    # pure insertions.
     edits: list[tuple[int, int, str]] = []
     for off, lhs in tracked:
         edits.append((off, off, f"\n\tleak_alloc_track({lhs});"))
+
+    # Find kfree/kvfree/etc. calls within the function body
+    # and insert leak_alloc_freed(arg) after each so the
+    # ghost flag clears when the kernel actually frees the
+    # pointer.  Without this, the per-return assertion
+    # always fires on functions that free at a common
+    # error-cleanup label (e.g. `out: kfree(p); return ret;`).
+    for ls, le, line in body_lines:
+        fm = _FREE_CALL_RE.match(line)
+        if not fm:
+            continue
+        arg = fm.group("arg")
+        # Scan to terminating ';'.
+        j = ls
+        depth = 0
+        while j < len(body_text):
+            c = body_text[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            elif c == ";" and depth == 0:
+                edits.append((
+                    j + 1, j + 1,
+                    f"\n{fm.group('indent')}"
+                    f"leak_alloc_freed({arg});"
+                ))
+                break
+            j += 1
     # Tracked LHS names (deduplicated, ordered by appearance).
     seen: set[str] = set()
     tracked_lhs: list[str] = []
