@@ -2467,6 +2467,125 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // Security assertion: assert that a string is a compile-time
+      // constant (not derived from any nondet/symbolic input).
+      // Use at sinks like eval(), Function(), new Function() to
+      // express the contract that user-controlled input must never
+      // reach a code-execution sink. Catches the lodash _.template
+      // / serialize-javascript class of CVEs (e.g. CVE-2021-23337).
+      if(fn == "__CPROVER_assert_constant_string")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt val = convert_expression(*to_json_array(call_args).begin());
+          if(!val.is_nil() && is_typescript_string_type(val.type()))
+          {
+            // Constant strings have a value extractable via
+            // extract_string_value. Symbolic ones don't.
+            std::string sv = extract_string_value(val);
+            bool is_constant =
+              !sv.empty() && sv.size() >= 2 && sv.substr(0, 2) == "S:";
+            code_assertt assertion{
+              is_constant ? exprt{true_exprt{}} : exprt{false_exprt{}}};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class(
+              "code-injection");
+            assertion.add_source_location().set_comment(
+              "string must be a compile-time constant "
+              "(no user-controlled input may reach this sink)");
+            return std::move(assertion);
+          }
+        }
+        return code_skipt{};
+      }
+      // Security assertion: assert that a string does not contain
+      // common template/code-injection metacharacters
+      // ("${", "<%", "<?", "{{", "<script"). Use at template-engine
+      // sinks. Catches the lodash _.template / serialize-javascript
+      // class of CVEs even when the string is not a constant — for
+      // example, when sanitizers are claimed to filter the input.
+      if(fn == "__CPROVER_assert_no_template_metachars")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt val = convert_expression(*to_json_array(call_args).begin());
+          if(!val.is_nil() && is_typescript_string_type(val.type()))
+          {
+            // Try constant-fold first.
+            std::string sv = extract_string_value(val);
+            if(!sv.empty() && sv.size() >= 2 && sv.substr(0, 2) == "S:")
+            {
+              std::string content = sv.substr(2);
+              bool has_meta = content.find("${") != std::string::npos ||
+                              content.find("<%") != std::string::npos ||
+                              content.find("<?") != std::string::npos ||
+                              content.find("{{") != std::string::npos ||
+                              content.find("<script") != std::string::npos;
+              code_assertt assertion{
+                has_meta ? exprt{false_exprt{}} : exprt{true_exprt{}}};
+              assertion.add_source_location() = get_location(expr_node);
+              assertion.add_source_location().set_property_class(
+                "code-injection");
+              assertion.add_source_location().set_comment(
+                "string must not contain template/code-injection "
+                "metacharacters");
+              return std::move(assertion);
+            }
+            // Symbolic: route each pattern through
+            // cprover_string_contains_func.
+            exprt refined_val = ts_string_to_refined(val);
+            refined_string_typet rty =
+              to_refined_string_type(refined_val.type());
+            if(symbol_table.lookup(ID_cprover_string_contains_func) == nullptr)
+            {
+              std::vector<typet> arg_types = {rty, rty};
+              mathematical_function_typet ft(
+                std::move(arg_types), bool_typet{});
+              symbolt fs{ID_cprover_string_contains_func, ft, "typescript"};
+              fs.base_name = id2string(ID_cprover_string_contains_func);
+              symbol_table.add(fs);
+            }
+            auto build_no_contain = [&](const std::string &p) -> exprt
+            {
+              exprt refined_p =
+                ts_string_to_refined(convert_string_literal_from_text(p));
+              function_application_exprt app(
+                symbol_exprt{
+                  ID_cprover_string_contains_func,
+                  symbol_table.lookup_ref(ID_cprover_string_contains_func)
+                    .type},
+                {refined_val, refined_p});
+              app.type() = bool_typet{};
+              return not_exprt{app};
+            };
+            exprt cond =
+              and_exprt{build_no_contain("${"), build_no_contain("<%")};
+            cond = and_exprt{cond, build_no_contain("<?")};
+            cond = and_exprt{cond, build_no_contain("{{")};
+            cond = and_exprt{cond, build_no_contain("<script")};
+            code_assertt assertion{cond};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class(
+              "code-injection");
+            assertion.add_source_location().set_comment(
+              "string must not contain template/code-injection "
+              "metacharacters");
+            if(!pending_stmts.empty())
+            {
+              code_blockt block;
+              for(auto &s : pending_stmts)
+                block.add(std::move(s));
+              pending_stmts.clear();
+              block.add(std::move(assertion));
+              return std::move(block);
+            }
+            return std::move(assertion);
+          }
+        }
+        return code_skipt{};
+      }
       if(fn == "__CPROVER_loop_invariant")
       {
         const jsont &call_args = json_member(expr_node, "arguments");

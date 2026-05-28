@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+constant-string assertion fails on nondet input (catches user-input
+reaching a sink that requires a compile-time constant).
