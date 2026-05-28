@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2771** | +170 |
+| ESBMC PASS | 2489 | 2601 | **2777** | +176 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -247,6 +247,34 @@ Complex + Import cluster (wave 41 cont., +17 tests):
   unresolved 'import X' / 'from X import Y' now sets
   __exception_active so try/except ImportError catches
   the path.
+
+Exception + None + tuple + float-mod (wave 41 cont., +6):
+- 3 exception tests (exception_base_class with
+  BaseException, exception8 with OSError catching
+  FileNotFoundError, exception10 with user-defined class
+  hierarchy via class_mro). Builtin exception subclass
+  table + user-class MRO traversal in handler match.
+- none_compare_is — 'None' return / param annotation now
+  maps to python_int_type instead of empty_typet, so
+  arguments preserve the None sentinel through the call
+  boundary (and 'x is None' compares to the literal
+  -2^62 sentinel).
+- tuple6 — negative tuple index `t[-1]` folds via
+  try_eval_double through UnaryOp(USub) and wraps to
+  positive via the tuple's struct component count.
+- float_modulo_compound_assign — `x %= y` for python_float
+  uses Python's floored semantics
+  `r = a - floor(a/b) * b` instead of integer modulo.
+
+Coordinated supports:
+- The None-as-int change required gating the
+  --python-missing-return-check on functions with a
+  non-None return annotation: a `def f() -> None`
+  legitimately falls through, the implicit None return
+  matches the declared type, and missing-return should
+  not fire. Detect None at the AST level (Constant with
+  value=None) so the type-level check (now python_int)
+  doesn't mask it.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
