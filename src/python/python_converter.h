@@ -604,6 +604,13 @@ private:
   /// imported the symbol.
   std::map<std::string, std::string> collections_imports;
 
+  /// 'from math import comb / factorial / ...'. Maps the
+  /// imported alias -> original math-function name. Lets
+  /// convert_call route a direct call (e.g. comb(5,2)) to the
+  /// math-intrinsic constant fold without going through the
+  /// library placeholder.
+  std::map<std::string, std::string> math_imports;
+
   /// PLR §8.5: out-of-band hint from convert_call to
   /// convert_assign. When convert_call sees a defaultdict /
   /// Counter constructor, it stashes the factory name here so
