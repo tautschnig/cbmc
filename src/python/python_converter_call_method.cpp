@@ -38,6 +38,7 @@
 
 #include <cerrno>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -600,6 +601,105 @@ std::optional<exprt> python_convertert::try_method_call(
             minus_exprt{a, b}};
           return binary_relation_exprt{diff, ID_le, tol_max};
         }
+      }
+      // PLR §cmath: cmath.log / cmath.log10 — when called with
+      // complex constant arguments, constant-fold via std::complex
+      // so the resulting python_complex struct has the precise
+      // real/imag fields. The library/cmath.py placeholders return
+      // 0+0j, which silently misleads downstream tests that read
+      // real/imag of the result. Intercepts BEFORE the imported_
+      // modules dispatch so the fold takes precedence.
+      if(
+        obj_name == "cmath" && (method_name == "log" || method_name == "log10"))
+      {
+        // Helper: extract real/imag pair from an exprt holding a
+        // python_complex struct literal (or a Name bound to one).
+        auto extract_complex =
+          [&](const jsont &node) -> std::optional<std::pair<double, double>>
+        {
+          exprt e = convert_expression(node);
+          // Direct python_complex struct.
+          if(
+            e.id() == ID_struct && e.type().id() == ID_struct &&
+            to_struct_type(e.type()).get_tag() == "python_complex" &&
+            e.operands().size() >= 2)
+          {
+            auto r = try_eval_double(e.operands()[0]);
+            auto i = try_eval_double(e.operands()[1]);
+            if(r.has_value() && i.has_value())
+              return std::make_pair(r.value(), i.value());
+          }
+          // Symbol bound to complex_literals.
+          if(e.id() == ID_symbol)
+          {
+            auto sid = to_symbol_expr(e).get_identifier();
+            auto it = complex_literals.find(sid);
+            if(
+              it != complex_literals.end() && it->second.id() == ID_struct &&
+              it->second.operands().size() >= 2)
+            {
+              auto r = try_eval_double(it->second.operands()[0]);
+              auto i = try_eval_double(it->second.operands()[1]);
+              if(r.has_value() && i.has_value())
+                return std::make_pair(r.value(), i.value());
+            }
+          }
+          return std::nullopt;
+        };
+        if(args.is_array() && !as_array(args).empty())
+        {
+          auto args_it = as_array(args).begin();
+          auto z = extract_complex(*args_it);
+          if(z.has_value())
+          {
+            std::complex<double> zc{z.value().first, z.value().second};
+            std::complex<double> result;
+            if(method_name == "log10")
+              result = std::log10(zc);
+            else // log
+            {
+              if(as_array(args).size() >= 2)
+              {
+                // log(z, base): handle either complex base or
+                // numeric base.
+                ++args_it;
+                auto bcomplex = extract_complex(*args_it);
+                exprt b_expr = convert_expression(*args_it);
+                auto bnumeric = try_eval_double(b_expr);
+                if(bcomplex.has_value())
+                {
+                  std::complex<double> bc{
+                    bcomplex.value().first, bcomplex.value().second};
+                  result = std::log(zc) / std::log(bc);
+                }
+                else if(bnumeric.has_value())
+                {
+                  result = std::log(zc) / std::log(bnumeric.value());
+                }
+                else
+                {
+                  // Fall through (return nondet via library).
+                  goto cmath_log_fall_through;
+                }
+              }
+              else
+              {
+                result = std::log(zc);
+              }
+            }
+            // Build python_complex struct with fields {real, imag}.
+            struct_typet::componentst comps;
+            comps.push_back(struct_typet::componentt{"real", double_type()});
+            comps.push_back(struct_typet::componentt{"imag", double_type()});
+            struct_typet ct{comps};
+            ct.set_tag("python_complex");
+            return struct_exprt{
+              {double_to_floatbv(result.real()),
+               double_to_floatbv(result.imag())},
+              ct};
+          }
+        }
+      cmath_log_fall_through:;
       }
       // PLR §math: math.frexp — returns (mantissa, exponent)
       // tuple. Constant-fold via std::frexp when the argument
