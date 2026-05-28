@@ -2934,6 +2934,53 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     }
   }
 
+  // PLR §6.10.1: complex augmented assignment with non-complex
+  // RHS. Handle BEFORE the generic safe_typecast(rhs, lhs.type())
+  // — that path tries to typecast float/int into a complex
+  // struct and produces a nondet complex. Detect early so we
+  // can do field-wise arithmetic with the float/int kept as
+  // a scalar.
+  bool lhs_is_complex =
+    lhs.type().id() == ID_struct &&
+    to_struct_type(lhs.type()).get_tag() == "python_complex";
+  bool rhs_is_complex =
+    rhs.type().id() == ID_struct &&
+    to_struct_type(rhs.type()).get_tag() == "python_complex";
+  if(lhs_is_complex && !rhs_is_complex)
+  {
+    exprt rhs_d = rhs;
+    if(rhs_d.type() != double_type())
+      rhs_d = safe_typecast(rhs_d, double_type());
+    exprt new_rhs;
+    member_exprt lr{lhs, "real", double_type()};
+    member_exprt li{lhs, "imag", double_type()};
+    if(op == "Add")
+      new_rhs = struct_exprt{{plus_exprt{lr, rhs_d}, exprt{li}}, lhs.type()};
+    else if(op == "Sub")
+      new_rhs = struct_exprt{{minus_exprt{lr, rhs_d}, exprt{li}}, lhs.type()};
+    else if(op == "Mult")
+      new_rhs = struct_exprt{
+        {mult_exprt{lr, rhs_d}, mult_exprt{li, rhs_d}}, lhs.type()};
+    else if(op == "Div")
+    {
+      // Both real and imag divided by rhs.
+      new_rhs =
+        struct_exprt{{div_exprt{lr, rhs_d}, div_exprt{li, rhs_d}}, lhs.type()};
+    }
+    else
+    {
+      // Other ops on complex are TypeError per PLR. Leave
+      // empty so the generic path falls through and the
+      // existing TypeError check fires.
+    }
+    if(!new_rhs.is_nil() && new_rhs.id() != ID_nil)
+    {
+      code_frontend_assignt assign{lhs, new_rhs};
+      assign.add_source_location() = loc;
+      return std::move(assign);
+    }
+  }
+
   // Type promotion
   if(lhs.type() != rhs.type())
   {
@@ -3052,11 +3099,162 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     }
   }
   else if(op == "Add")
-    new_rhs = plus_exprt{arith_lhs, rhs};
+  {
+    // PLR §6.10.1: complex += / -= / *= / /=. Detect both sides
+    // are python_complex and do the field-wise arithmetic.
+    auto is_complex = [](const exprt &e)
+    {
+      return e.type().id() == ID_struct &&
+             to_struct_type(e.type()).get_tag() == "python_complex";
+    };
+    if(is_complex(arith_lhs) && is_complex(rhs))
+    {
+      // CBMC symex evaluates struct_exprt operands per-field
+      // when assigning self-referentially: writing field 0
+      // BEFORE evaluating field 1, so a struct_exprt's second
+      // operand sees the new field-0 value. Snapshot all four
+      // reads into temporaries first to keep the OLD values.
+      static unsigned aug_c_add_ctr = 0;
+      auto snap_field = [&](const exprt &owner, const std::string &fname)
+      {
+        std::string n =
+          "__aug_c_" + fname + "_" + std::to_string(aug_c_add_ctr++);
+        irep_idt sid{qualify_name(n)};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt s{sid, double_type(), "python"};
+          s.base_name = n;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        symbol_exprt sx = symbol_table.lookup_ref(sid).symbol_expr();
+        pending_checks.push_back(
+          code_frontend_assignt{sx, member_exprt{owner, fname, double_type()}});
+        return sx;
+      };
+      symbol_exprt lr_s = snap_field(arith_lhs, "real");
+      symbol_exprt li_s = snap_field(arith_lhs, "imag");
+      symbol_exprt rr_s = snap_field(rhs, "real");
+      symbol_exprt ri_s = snap_field(rhs, "imag");
+      new_rhs = struct_exprt{
+        {plus_exprt{lr_s, rr_s}, plus_exprt{li_s, ri_s}}, arith_lhs.type()};
+    }
+    else if(is_complex(arith_lhs))
+    {
+      // complex += real-typed: add to real, leave imag.
+      exprt rhs_d = rhs;
+      if(rhs_d.type() != double_type())
+        rhs_d = safe_typecast(rhs_d, double_type());
+      member_exprt lr{arith_lhs, "real", double_type()};
+      member_exprt li{arith_lhs, "imag", double_type()};
+      new_rhs =
+        struct_exprt{{plus_exprt{lr, rhs_d}, exprt{li}}, arith_lhs.type()};
+    }
+    else
+      new_rhs = plus_exprt{arith_lhs, rhs};
+  }
   else if(op == "Sub")
-    new_rhs = minus_exprt{arith_lhs, rhs};
+  {
+    auto is_complex = [](const exprt &e)
+    {
+      return e.type().id() == ID_struct &&
+             to_struct_type(e.type()).get_tag() == "python_complex";
+    };
+    if(is_complex(arith_lhs) && is_complex(rhs))
+    {
+      static unsigned aug_c_sub_ctr = 0;
+      auto snap_field = [&](const exprt &owner, const std::string &fname)
+      {
+        std::string n =
+          "__aug_c_" + fname + "_" + std::to_string(aug_c_sub_ctr++);
+        irep_idt sid{qualify_name(n)};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt s{sid, double_type(), "python"};
+          s.base_name = n;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        symbol_exprt sx = symbol_table.lookup_ref(sid).symbol_expr();
+        pending_checks.push_back(
+          code_frontend_assignt{sx, member_exprt{owner, fname, double_type()}});
+        return sx;
+      };
+      symbol_exprt lr_s = snap_field(arith_lhs, "real");
+      symbol_exprt li_s = snap_field(arith_lhs, "imag");
+      symbol_exprt rr_s = snap_field(rhs, "real");
+      symbol_exprt ri_s = snap_field(rhs, "imag");
+      new_rhs = struct_exprt{
+        {minus_exprt{lr_s, rr_s}, minus_exprt{li_s, ri_s}}, arith_lhs.type()};
+    }
+    else if(is_complex(arith_lhs))
+    {
+      exprt rhs_d = rhs;
+      if(rhs_d.type() != double_type())
+        rhs_d = safe_typecast(rhs_d, double_type());
+      member_exprt lr{arith_lhs, "real", double_type()};
+      member_exprt li{arith_lhs, "imag", double_type()};
+      new_rhs =
+        struct_exprt{{minus_exprt{lr, rhs_d}, exprt{li}}, arith_lhs.type()};
+    }
+    else
+      new_rhs = minus_exprt{arith_lhs, rhs};
+  }
   else if(op == "Mult")
-    new_rhs = mult_exprt{arith_lhs, rhs};
+  {
+    auto is_complex = [](const exprt &e)
+    {
+      return e.type().id() == ID_struct &&
+             to_struct_type(e.type()).get_tag() == "python_complex";
+    };
+    if(is_complex(arith_lhs) && is_complex(rhs))
+    {
+      // Snapshot the four field reads so the struct_exprt
+      // operand evaluation order can't see partial writes.
+      static unsigned aug_complex_ctr = 0;
+      auto snap_field = [&](const exprt &owner, const std::string &fname)
+      {
+        std::string n =
+          "__aug_c_" + fname + "_" + std::to_string(aug_complex_ctr++);
+        irep_idt sid{qualify_name(n)};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt s{sid, double_type(), "python"};
+          s.base_name = n;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        symbol_exprt sx = symbol_table.lookup_ref(sid).symbol_expr();
+        pending_checks.push_back(
+          code_frontend_assignt{sx, member_exprt{owner, fname, double_type()}});
+        return sx;
+      };
+      symbol_exprt lr_s = snap_field(arith_lhs, "real");
+      symbol_exprt li_s = snap_field(arith_lhs, "imag");
+      symbol_exprt rr_s = snap_field(rhs, "real");
+      symbol_exprt ri_s = snap_field(rhs, "imag");
+      new_rhs = struct_exprt{
+        {minus_exprt{mult_exprt{lr_s, rr_s}, mult_exprt{li_s, ri_s}},
+         plus_exprt{mult_exprt{lr_s, ri_s}, mult_exprt{li_s, rr_s}}},
+        arith_lhs.type()};
+    }
+    else if(is_complex(arith_lhs))
+    {
+      // complex *= real: scale both real and imag.
+      exprt rhs_d = rhs;
+      if(rhs_d.type() != double_type())
+        rhs_d = safe_typecast(rhs_d, double_type());
+      member_exprt lr{arith_lhs, "real", double_type()};
+      member_exprt li{arith_lhs, "imag", double_type()};
+      new_rhs = struct_exprt{
+        {mult_exprt{lr, rhs_d}, mult_exprt{li, rhs_d}}, arith_lhs.type()};
+    }
+    else
+      new_rhs = mult_exprt{arith_lhs, rhs};
+  }
   else if(op == "FloorDiv")
   {
     // PLR §6.7: x //= y must use Python's floored division (round
@@ -3093,13 +3291,56 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
   }
   else if(op == "Div")
   {
-    // True division: result is float
-    exprt fl = arith_lhs, fr = rhs;
-    if(fl.type().id() != ID_floatbv)
-      fl = typecast_exprt{fl, double_type()};
-    if(fr.type().id() != ID_floatbv)
-      fr = typecast_exprt{fr, double_type()};
-    new_rhs = div_exprt{fl, fr};
+    // PLR §6.10.1: complex /= complex, with snapshot guard.
+    auto is_complex = [](const exprt &e)
+    {
+      return e.type().id() == ID_struct &&
+             to_struct_type(e.type()).get_tag() == "python_complex";
+    };
+    if(is_complex(arith_lhs) && is_complex(rhs))
+    {
+      static unsigned aug_c_div_ctr = 0;
+      auto snap_field = [&](const exprt &owner, const std::string &fname)
+      {
+        std::string n =
+          "__aug_c_" + fname + "_" + std::to_string(aug_c_div_ctr++);
+        irep_idt sid{qualify_name(n)};
+        if(symbol_table.lookup(sid) == nullptr)
+        {
+          symbolt s{sid, double_type(), "python"};
+          s.base_name = n;
+          s.is_lvalue = true;
+          s.is_state_var = true;
+          symbol_table.add(s);
+        }
+        symbol_exprt sx = symbol_table.lookup_ref(sid).symbol_expr();
+        pending_checks.push_back(
+          code_frontend_assignt{sx, member_exprt{owner, fname, double_type()}});
+        return sx;
+      };
+      symbol_exprt lr_s = snap_field(arith_lhs, "real");
+      symbol_exprt li_s = snap_field(arith_lhs, "imag");
+      symbol_exprt rr_s = snap_field(rhs, "real");
+      symbol_exprt ri_s = snap_field(rhs, "imag");
+      exprt denom = plus_exprt{mult_exprt{rr_s, rr_s}, mult_exprt{ri_s, ri_s}};
+      exprt real_num =
+        plus_exprt{mult_exprt{lr_s, rr_s}, mult_exprt{li_s, ri_s}};
+      exprt imag_num =
+        minus_exprt{mult_exprt{li_s, rr_s}, mult_exprt{lr_s, ri_s}};
+      new_rhs = struct_exprt{
+        {div_exprt{real_num, denom}, div_exprt{imag_num, denom}},
+        arith_lhs.type()};
+    }
+    else
+    {
+      // True division: result is float
+      exprt fl = arith_lhs, fr = rhs;
+      if(fl.type().id() != ID_floatbv)
+        fl = typecast_exprt{fl, double_type()};
+      if(fr.type().id() != ID_floatbv)
+        fr = typecast_exprt{fr, double_type()};
+      new_rhs = div_exprt{fl, fr};
+    }
   }
   else if(op == "Mod")
   {
