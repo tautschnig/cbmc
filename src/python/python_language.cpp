@@ -100,8 +100,12 @@ void python_languaget::set_language_options(
   "  return r\n" \
   " if isinstance(n,list):return[c(x)for x in n]\n" \
   " return n\n" \
+  "def jd(o):\n" \
+  " if isinstance(o,complex):\n" \
+  "  return{'__complex__':True,'real':o.real,'imag':o.imag}\n" \
+  " return str(o)\n" \
   "r=c(t);r['_filename']=sys.argv[1]\n" \
-  "json.dump(r,open(sys.argv[2],'w',encoding='utf-8'),default=str,ensure_ascii=False)\n"
+  "json.dump(r,open(sys.argv[2],'w',encoding='utf-8'),default=jd,ensure_ascii=False)\n"
 // clang-format on
 
 /// Daemon fast path: if CBMC_PYTHON_SERVER_SOCKET points at a

@@ -30,6 +30,35 @@ exprt python_convertert::convert_constant(const jsont &expr)
   const jsont &value = json_member(expr, "value");
   source_locationt loc = get_location(expr);
 
+  // PLR §6.10.1: imaginary literal (`2j`, `1+2j` etc.) emitted by
+  // the AST server as {"__complex__": true, "real": ..., "imag":
+  // ...}. Distinguish from a string literal of the same form
+  // (e.g. `"2j"` is a string in CPython, not complex).
+  if(value.is_object() && !json_member(value, "__complex__").is_null())
+  {
+    const jsont &re_node = json_member(value, "real");
+    const jsont &im_node = json_member(value, "imag");
+    double re = 0.0, im = 0.0;
+    if(re_node.is_number())
+      re = std::stod(re_node.value);
+    if(im_node.is_number())
+      im = std::stod(im_node.value);
+    ieee_floatt real_f{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    real_f.from_double(re);
+    ieee_floatt imag_f{
+      ieee_float_spect::double_precision(),
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    imag_f.from_double(im);
+    struct_typet::componentst comps;
+    comps.push_back(struct_typet::componentt{"real", double_type()});
+    comps.push_back(struct_typet::componentt{"imag", double_type()});
+    struct_typet ct{comps};
+    ct.set_tag("python_complex");
+    return struct_exprt{{real_f.to_expr(), imag_f.to_expr()}, ct};
+  }
+
   if(value.is_true())
   {
     return true_exprt{};
@@ -152,42 +181,17 @@ exprt python_convertert::convert_constant(const jsont &expr)
         lt};
     }
 
-    // Detect Python complex-literal strings (e.g. "2j", "(1+2j)",
-    // "1e3+2e-1j") and fold them into a python_complex struct
-    // expression. We only attempt the fold for strings that
-    // syntactically look like complex literals — ending in 'j' / 'J',
-    // or wrapped in parentheses — to preserve the previous behaviour
-    // of leaving plain strings (e.g. "hello", "42") as strings.
-    //
-    // The parser is exception-free: malformed inputs are returned as
-    // std::nullopt, which falls through to the plain string-literal
-    // path. Unlike the earlier std::stod-based code, no input
-    // (including "+j", "-j", "++1j") can escape as an uncaught C++
-    // exception. See python_complex_parser.h for the grammar.
-    const bool ends_j =
-      !str_val.empty() && (str_val.back() == 'j' || str_val.back() == 'J');
-    const bool parenthesised =
-      str_val.size() >= 2 && str_val.front() == '(' && str_val.back() == ')';
-    if(ends_j || parenthesised)
-    {
-      if(auto cv = parse_python_complex_string(str_val); cv.has_value())
-      {
-        ieee_floatt real_f{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        real_f.from_double(cv->first);
-        ieee_floatt imag_f{
-          ieee_float_spect::double_precision(),
-          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-        imag_f.from_double(cv->second);
-        struct_typet::componentst comps;
-        comps.push_back(struct_typet::componentt{"real", double_type()});
-        comps.push_back(struct_typet::componentt{"imag", double_type()});
-        struct_typet ct{comps};
-        ct.set_tag("python_complex");
-        return struct_exprt{{real_f.to_expr(), imag_f.to_expr()}, ct};
-      }
-    }
+    // Note: We previously auto-parsed Constant string nodes that
+    // syntactically looked like complex literals (e.g. "1+2j",
+    // "(1-2j)") into python_complex struct values at term-conversion
+    // time. That was wrong: in CPython such expressions remain
+    // strings unless explicitly passed through `complex(s)`. The
+    // auto-parse made `assert str(complex(1, 2)) == "(1+2j)"` fail
+    // because the comparison's RHS was silently re-typed as a complex
+    // struct. String-to-complex conversion now lives only in the
+    // `complex()` builtin (see python_converter_call_builtins.cpp's
+    // func_name == "complex" branch), which is also the only path
+    // CPython's reference semantics require.
 
     // String literal
     return python_string_literal(str_val);
