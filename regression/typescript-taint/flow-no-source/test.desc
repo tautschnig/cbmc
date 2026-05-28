@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+End-to-end taint-flow test: when no taint source is called, the
+constant flowing to the sink is untainted and the assertion holds.
+This requires custom_bitvector_analysis to track value-typed
+(struct) inputs.

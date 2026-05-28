@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+End-to-end taint-flow test: source data passes through a sanitizer
+that clears the taint, so the sink assertion holds.

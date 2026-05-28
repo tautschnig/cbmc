@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "source",
+    "function": "typescript::user_input",
+    "where": "return_value",
+    "taint": "user_input",
+    "id": "ts-user-input",
+    "message": "untrusted user input"
+  },
+  {
+    "kind": "sink",
+    "function": "typescript::eval_sink",
+    "where": "parameter1",
+    "taint": "user_input",
+    "id": "ts-eval-sink",
+    "message": "untrusted input reaches eval-like sink"
+  }
+]

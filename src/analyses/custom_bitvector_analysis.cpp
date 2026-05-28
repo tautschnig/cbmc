@@ -238,6 +238,21 @@ void custom_bitvector_domaint::assign_struct_rec(
         ? to_struct_type(lhs.type())
         : ns.follow_tag(to_struct_tag_type(lhs.type()));
 
+    // Propagate any bits set on the rhs struct identifier itself
+    // to the lhs struct identifier. This complements the per-member
+    // recursion below so that taint set on a whole struct value
+    // (e.g. via __CPROVER_set_may on a struct return value) follows
+    // struct-to-struct copies correctly.
+    {
+      irep_idt lhs_id = object2id(lhs);
+      irep_idt rhs_id = object2id(rhs);
+      if(!lhs_id.empty() && !rhs_id.empty())
+      {
+        vectorst rhs_vectors = get_rhs(rhs_id);
+        assign_lhs(lhs_id, rhs_vectors);
+      }
+    }
+
     // assign member-by-member
     for(const auto &c : struct_type.components())
     {
@@ -514,6 +529,36 @@ void custom_bitvector_domaint::transform(
             }
           }
         }
+        else
+        {
+          // Non-pointer (value-typed) lhs. Set / clear the bit
+          // directly on the value's identifier (via object2id).
+          // For struct-typed values, additionally set / clear the
+          // bit on every (recursive) member so that subsequent
+          // member-by-member struct copies (handled by
+          // assign_struct_rec) propagate taint correctly. The
+          // member-level bits also let get_may queries on
+          // individual members resolve correctly.
+          set_bit(lhs, bit_nr, mode);
+          std::function<void(const exprt &)> propagate_to_members =
+            [&](const exprt &e)
+          {
+            const typet &t = e.type();
+            if(t.id() == ID_struct || t.id() == ID_struct_tag)
+            {
+              const struct_typet &st = t.id() == ID_struct
+                                         ? to_struct_type(t)
+                                         : ns.follow_tag(to_struct_tag_type(t));
+              for(const auto &c : st.components())
+              {
+                member_exprt m(e, c);
+                set_bit(m, bit_nr, mode);
+                propagate_to_members(m);
+              }
+            }
+          };
+          propagate_to_members(lhs);
+        }
       }
     }
     break;
@@ -711,8 +756,24 @@ exprt custom_bitvector_domaint::eval(
 
       exprt pointer = to_binary_expr(src).op0();
 
-      if(pointer.type().id()!=ID_pointer)
-        return src;
+      if(pointer.type().id() != ID_pointer)
+      {
+        // Value-typed get_may / get_must. Look up by identifier
+        // directly. This complements the non-pointer set_may /
+        // clear_may handling in transform() so that taint queries
+        // on whole structs (and their members) resolve to a
+        // concrete boolean.
+        irep_idt id = object2id(pointer);
+        if(id.empty())
+            return src;
+        vectorst v = get_rhs(id);
+        bool value = false;
+        if(src.id() == ID_get_must)
+            value = get_bit(v.must_bits, bit_nr);
+        else if(src.id() == ID_get_may)
+            value = get_bit(v.may_bits, bit_nr);
+        return value ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      }
 
       if(
         pointer.is_constant() &&
