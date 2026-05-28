@@ -166,3 +166,7 @@ dist/
 
 # auto generated documentation
 doc/html/
+
+# Security findings are kept locally (outside git) until disclosed.
+doc/security-findings/
+**/security-findings-private/
