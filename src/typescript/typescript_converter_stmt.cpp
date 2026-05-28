@@ -8,6 +8,8 @@
 #include <util/floatbv_expr.h>
 #include <util/ieee_float.h>
 #include <util/irep.h>
+#include <util/mathematical_expr.h>
+#include <util/mathematical_types.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
 #include <util/symbol.h>
@@ -2227,6 +2229,87 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
                 cond = ts_to_boolean(cond);
               return code_assumet{cond};
             }
+          }
+        }
+        return code_skipt{};
+      }
+      // Security assertion: assert that a path string does not
+      // contain a parent-directory traversal sequence ("..").
+      // Equivalent to `console.assert(!path.includes(".."))` but
+      // declarative — declares intent and is easy to grep for.
+      // Useful for hardening filesystem-handling code against the
+      // tmp/fast-uri/path-traversal class of CVEs (e.g.
+      // GHSA-7c78-jf6q-g5cm).
+      if(fn == "__CPROVER_assert_no_path_traversal")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt path_expr =
+            convert_expression(*to_json_array(call_args).begin());
+          if(!path_expr.is_nil() && is_typescript_string_type(path_expr.type()))
+          {
+            // Try constant-folding first: if the path is a literal
+            // string, we can decide statically.
+            std::string path_sv = extract_string_value(path_expr);
+            if(
+              !path_sv.empty() && path_sv.size() >= 2 &&
+              path_sv.substr(0, 2) == "S:")
+            {
+              std::string content = path_sv.substr(2);
+              bool has_traversal = content.find("..") != std::string::npos;
+              code_assertt assertion{
+                has_traversal ? exprt{false_exprt{}} : exprt{true_exprt{}}};
+              assertion.add_source_location() = get_location(expr_node);
+              assertion.add_source_location().set_property_class(
+                "path-traversal");
+              assertion.add_source_location().set_comment(
+                "no path traversal: '..' must not appear");
+              return std::move(assertion);
+            }
+            // Symbolic path: route through the refined-string solver
+            // for an exact contains check.
+            // Build !path.includes("..") via the existing solver-side
+            // contains check.
+            exprt refined_path = ts_string_to_refined(path_expr);
+            exprt refined_dotdot =
+              ts_string_to_refined(convert_string_literal_from_text(".."));
+            irep_idt func_id = ID_cprover_string_contains_func;
+            if(symbol_table.lookup(func_id) == nullptr)
+            {
+              refined_string_typet rty =
+                to_refined_string_type(refined_path.type());
+              std::vector<typet> arg_types = {rty, rty};
+              mathematical_function_typet ft(
+                std::move(arg_types), bool_typet{});
+              symbolt fs{func_id, ft, "typescript"};
+              fs.base_name = id2string(func_id);
+              symbol_table.add(fs);
+            }
+            function_application_exprt::argumentst call_args_v = {
+              refined_path, refined_dotdot};
+            function_application_exprt contains_call(
+              symbol_exprt{func_id, symbol_table.lookup_ref(func_id).type},
+              std::move(call_args_v));
+            contains_call.type() = bool_typet{};
+            code_assertt assertion{not_exprt{contains_call}};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class(
+              "path-traversal");
+            assertion.add_source_location().set_comment(
+              "no path traversal: '..' must not appear");
+            // Drain pending_stmts (refined-string associations
+            // emitted by ts_string_to_refined) before the assertion.
+            if(!pending_stmts.empty())
+            {
+              code_blockt block;
+              for(auto &s : pending_stmts)
+                block.add(std::move(s));
+              pending_stmts.clear();
+              block.add(std::move(assertion));
+              return std::move(block);
+            }
+            return std::move(assertion);
           }
         }
         return code_skipt{};

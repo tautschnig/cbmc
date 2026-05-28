@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Integration: tmp@0.2.7 (fixed). With the type-checked _assertPath,
+the path-traversal assertion holds for safe inputs.
