@@ -178,6 +178,39 @@ enforces; if it's broken at any sink, the harness fails.
 (static chain works); `integration-lodash-cve-ghsa-f23m/`
 (precondition-style detection works).
 
+### 1.7 Null/undefined preservation in reference and array element types
+
+**What**: For value-typed unions (`number | null`, `boolean | undefined`),
+null and undefined are preserved as IEEE-754 quiet NaN sentinels
+with distinct payloads (see §1.1) — the model is precise. For
+reference-typed unions (`string | null`, `T[] | null`) the type
+system collapses to the reference type without a sentinel for
+the missing value; assignments like `let x: string | null = null`
+silently coerce null to a garbage struct, and downstream null
+checks return false.
+
+**Where**: `src/typescript/typescript_converter.cpp` —
+`convert_type` collapses `T | null` and `T | undefined` to
+`T` for non-float `T`.
+
+**Why**: A discriminated representation for every type would
+either require a tagged-union runtime (significant overhead) or
+a carefully chosen "null-zone" within each type's value space
+(complex and type-specific). The current model trades precision
+for simplicity.
+
+**Implication for security work**:
+`__CPROVER_assert_not_null(x)` is precise for value-typed `x` and
+over-approximates to `true` for reference-typed `x` (sound for
+"no crash" claims but imprecise — a real null could slip through
+without being detected). Harnesses that need to verify null-safety
+on reference-typed inputs should structure inputs as `number | null`
+proxies or use object wrappers where the missing-ness is encoded
+as a `_present: boolean` discriminator field.
+
+**Tracking**: `regression/typescript/integration-qs-cve-ghsa-q8mj/`
+(uses the value-typed proxy pattern).
+
 ---
 
 ## 2. Specification gaps (fixable; pending work)
@@ -353,6 +386,7 @@ verify a feature. Use these as references when adding new ones.
 | `async-race-undetected` | Sequential async (KNOWNBUG by design) |
 | `integration-tmp-cve-ghsa-7c78` | Multi-char string arrays through function calls (§1.3) |
 | `integration-lodash-cve-ghsa-f23m` | Prototype-pollution detection via property-key contract (no runtime prototype-chain manipulation modelled) |
+| `integration-qs-cve-ghsa-q8mj` | Null-deref detection via not-null contract on value-typed inputs (§1.7) |
 | `optional-chaining` | Optional chaining on union method calls (§2 incomplete) |
 
 ---

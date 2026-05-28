@@ -2403,7 +2403,70 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
-      // CBMC verification primitive: loop invariant assertion
+      // Security assertion: assert that a value is not null or
+      // undefined. Useful for detecting "crash on null" bugs in
+      // functions that dereference parameters without checking
+      // (e.g. qs's stringify-on-comma-null CVE class). Use before
+      // a dereference site:
+      //   __CPROVER_assert_not_null(x);
+      //   x.method();
+      //
+      // Currently effective for value-typed inputs (number, boolean,
+      // and unions like `number | null`) where null/undefined are
+      // preserved as NaN sentinels. For reference-typed inputs
+      // (string, array, object), the type system collapses the
+      // optional union to the reference type without preserving
+      // null information; the primitive over-approximates (says
+      // "not null") in that case. See typescript-known-limitations
+      // §1.7 for the modelling detail.
+      if(fn == "__CPROVER_assert_not_null")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt val = convert_expression(*to_json_array(call_args).begin());
+          if(!val.is_nil())
+          {
+            // Constant fold: null/undefined sentinel literals.
+            if(ts_is_null_sentinel(val) || ts_is_undefined_sentinel(val))
+            {
+              code_assertt assertion{false_exprt{}};
+              assertion.add_source_location() = get_location(expr_node);
+              assertion.add_source_location().set_property_class("null-deref");
+              assertion.add_source_location().set_comment(
+                "value is null or undefined");
+              return std::move(assertion);
+            }
+            // Float-typed: emit a runtime bit-pattern check against
+            // the null and undefined sentinels.
+            if(val.type().id() == ID_floatbv)
+            {
+              exprt is_null =
+                equal_exprt{val, ts_nan_with_payload(TS_NAN_PAYLOAD_NULL)};
+              exprt is_undef =
+                equal_exprt{val, ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED)};
+              exprt is_nullish = or_exprt{is_null, is_undef};
+              code_assertt assertion{not_exprt{is_nullish}};
+              assertion.add_source_location() = get_location(expr_node);
+              assertion.add_source_location().set_property_class("null-deref");
+              assertion.add_source_location().set_comment(
+                "value is null or undefined");
+              return std::move(assertion);
+            }
+            // Reference-typed: type collapse loses null information.
+            // Over-approximate to true (sound for "no crash" claims;
+            // imprecise but won't produce false positives).
+            code_assertt assertion{true_exprt{}};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class("null-deref");
+            assertion.add_source_location().set_comment(
+              "value is null or undefined "
+              "(over-approximated for reference type)");
+            return std::move(assertion);
+          }
+        }
+        return code_skipt{};
+      }
       if(fn == "__CPROVER_loop_invariant")
       {
         const jsont &call_args = json_member(expr_node, "arguments");

@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Integration: qs@6.15.2 (fixed). The defensive null-guard makes the
+not-null contract hold for all callers.

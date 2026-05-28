@@ -3102,7 +3102,44 @@ exprt typescript_convertert::convert_binary_expression(const jsont &node)
   if(op == "ExclamationEqualsEqualsToken")
   {
     if(left.type().id() == ID_floatbv && right.type().id() == ID_floatbv)
-      return ieee_float_notequal_exprt{left, right};
+    {
+      // Mirror the === logic for NaN sentinels (null, undefined,
+      // real NaN), then negate. Without this, `x !== null` reduces
+      // to ieee_float_notequal which is true for any pair of NaNs
+      // (incl. null !== null), violating our sentinel semantics.
+      auto is_nan_const = [](const exprt &e)
+      {
+        if(!e.is_constant() || e.type().id() != ID_floatbv)
+          return false;
+        ieee_floatt v{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        v.from_expr(to_constant_expr(e));
+        return v.is_NaN();
+      };
+      if(is_nan_const(right))
+      {
+        // x !== NaN/null/undefined: negation of bit-pattern check.
+        if(ts_is_nan_payload(right, TS_NAN_PAYLOAD_REAL))
+          return true_exprt{}; // x !== realNaN is always true
+        return notequal_exprt{left, right};
+      }
+      if(is_nan_const(left))
+      {
+        if(ts_is_nan_payload(left, TS_NAN_PAYLOAD_REAL))
+          return true_exprt{};
+        return notequal_exprt{left, right};
+      }
+      // Neither side is a constant NaN sentinel. Use the same
+      // dual-comparison as ===, then negate.
+      // === := ieee_float_equal(l,r) || (bit_eq(l,r) && l != realNaN)
+      // !== := negation
+      exprt ieee_eq = ieee_float_equal_exprt{left, right};
+      exprt bit_eq = equal_exprt{left, right};
+      exprt not_real_nan =
+        notequal_exprt{left, ts_nan_with_payload(TS_NAN_PAYLOAD_REAL)};
+      return not_exprt{or_exprt{ieee_eq, and_exprt{bit_eq, not_real_nan}}};
+    }
     // Null comparison: x !== null
     if(left.type() != right.type())
     {
