@@ -1925,7 +1925,16 @@ std::optional<exprt> python_convertert::try_builtin_call(
       {
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt val = plus_exprt{start, mult_exprt{idx, step}};
-        exprt in_range = binary_relation_exprt{val, ID_lt, stop};
+        // PLR §6.10.1: positive step iterates while val < stop;
+        // negative step while val > stop. Pick at runtime so
+        // 'range(5, 0, -1)' produces [5,4,3,2,1] and
+        // 'range(2, 5, -1)' produces [].
+        exprt step_pos = binary_relation_exprt{
+          step, ID_gt, from_integer(0, python_int_type())};
+        exprt in_range = if_exprt{
+          step_pos,
+          binary_relation_exprt{val, ID_lt, stop},
+          binary_relation_exprt{val, ID_gt, stop}};
         code_blockt add;
         add.add(code_frontend_assignt{index_exprt{data, idx}, val});
         add.add(code_frontend_assignt{
