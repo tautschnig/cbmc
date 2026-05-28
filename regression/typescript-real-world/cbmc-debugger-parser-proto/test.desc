@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*unsafe property key.*FAILURE$
+--
+--
+Real-world finding: cbmc-proof-debugger trace parser allows
+__proto__ as a variable identifier, mutating the prototype chain
+of internal struct maps. See doc/security-findings/01.
