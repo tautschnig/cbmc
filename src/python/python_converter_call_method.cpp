@@ -787,6 +787,38 @@ std::optional<exprt> python_convertert::try_method_call(
           return binary_relation_exprt{diff, ID_le, tol_max};
         }
       }
+      // PLR §cmath: cmath functions don't accept keyword
+      // arguments. cmath.log10(z=complex(1, 0)) raises
+      // TypeError: log10() takes no keyword arguments.
+      if(obj_name == "cmath")
+      {
+        const jsont &kw = json_member(expr, "keywords");
+        if(kw.is_array() && !as_array(kw).empty())
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+            pending_checks.push_back(
+              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long type_hash = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(type_hash, python_int_type())});
+          }
+          // Return a nondet python_complex struct to keep
+          // downstream code well-typed.
+          struct_typet::componentst comps;
+          comps.push_back(struct_typet::componentt{"real", double_type()});
+          comps.push_back(struct_typet::componentt{"imag", double_type()});
+          struct_typet ct{comps};
+          ct.set_tag("python_complex");
+          return side_effect_expr_nondett{ct, get_location(expr)};
+        }
+      }
       // PLR §cmath: cmath.log / cmath.log10 — when called with
       // complex constant arguments, constant-fold via std::complex
       // so the resulting python_complex struct has the precise
