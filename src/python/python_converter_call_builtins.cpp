@@ -759,11 +759,67 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // PLR §6.10.1: repr(complex) follows the same format as
+      // str(complex) — both produce '(real+imagj)' or 'Nj' for
+      // pure-imag — so dispatch to the same constant-fold path.
       if(!arg.is_nil() && arg.type().id() == ID_struct)
       {
-        std::string tag = id2string(to_struct_type(arg.type()).get_tag());
+        const auto &tag = to_struct_type(arg.type()).get_tag();
+        if(id2string(tag) == "python_complex")
+        {
+          // Try to recover the (real, imag) pair from the
+          // struct directly or via complex_literals.
+          std::optional<double> re, im;
+          if(arg.id() == ID_struct && arg.operands().size() >= 2)
+          {
+            re = try_eval_double(arg.operands()[0]);
+            im = try_eval_double(arg.operands()[1]);
+          }
+          if((!re.has_value() || !im.has_value()) && arg.id() == ID_symbol)
+          {
+            auto sid = to_symbol_expr(arg).get_identifier();
+            auto it = complex_literals.find(sid);
+            if(
+              it != complex_literals.end() && it->second.id() == ID_struct &&
+              it->second.operands().size() >= 2)
+            {
+              re = try_eval_double(it->second.operands()[0]);
+              im = try_eval_double(it->second.operands()[1]);
+            }
+          }
+          if(re.has_value() && im.has_value())
+          {
+            double r = re.value(), i = im.value();
+            auto fmt = [](double d) -> std::string
+            {
+              if(d == std::floor(d) && std::abs(d) < 1e15)
+                return std::to_string(static_cast<long long>(d));
+              std::ostringstream oss;
+              oss << d;
+              std::string s = oss.str();
+              if(s.find('.') != std::string::npos)
+                while(s.size() > 1 && s.back() == '0' && s[s.size() - 2] != '.')
+                  s.pop_back();
+              return s;
+            };
+            std::string out;
+            if(r == 0.0 && i == 0.0)
+              out = "0j";
+            else if(r == 0.0)
+              out = fmt(i) + "j";
+            else
+            {
+              std::string sr = fmt(r);
+              std::string sep = i >= 0 ? "+" : "-";
+              std::string si = fmt(std::fabs(i));
+              out = "(" + sr + sep + si + "j)";
+            }
+            return python_string_literal(out);
+          }
+        }
+        std::string tagstr = id2string(to_struct_type(arg.type()).get_tag());
         std::string cls =
-          tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+          tagstr.substr(0, 13) == "python_class_" ? tagstr.substr(13) : tagstr;
         irep_idt rid{"python::" + cls + "::__repr__"};
         const symbolt *rsym = symbol_table.lookup(rid);
         if(rsym != nullptr)
