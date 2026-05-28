@@ -2830,6 +2830,37 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && as_array(args).size() >= 2)
     {
       auto it = as_array(args).begin();
+      // PLR §6.10.2: if the first argument is the literal
+      // 'None', isinstance(None, X) is False for every X
+      // except type(None) / NoneType. We special-case the
+      // common 'isinstance(None, builtin_type)' shape here so
+      // None doesn't match int/str/list etc. (None is encoded
+      // as a python_int sentinel, which the standard signedbv
+      // dispatch below would otherwise accept as int).
+      if(is_node_type(*it, "Constant") && json_member(*it, "value").is_null())
+      {
+        auto cls_it = it;
+        ++cls_it;
+        if(is_node_type(*cls_it, "Name"))
+        {
+          std::string nm = json_string(json_member(*cls_it, "id"));
+          static const std::set<std::string> non_none_builtins = {
+            "int",
+            "float",
+            "bool",
+            "str",
+            "list",
+            "tuple",
+            "dict",
+            "set",
+            "frozenset",
+            "bytes",
+            "bytearray",
+            "complex"};
+          if(non_none_builtins.count(nm) > 0)
+            return false_exprt{};
+        }
+      }
       exprt obj = convert_expression(*it);
       ++it;
       std::string cls_name;
@@ -2961,9 +2992,24 @@ std::optional<exprt> python_convertert::try_builtin_call(
           is_node_type(*as_array(type_args).begin(), "Constant") &&
           json_member(*as_array(type_args).begin(), "value").is_null())
         {
-          // isinstance(x, type(None)) — check if x is None
+          // isinstance(x, type(None)) — check if x is None.
+          // None has two representations in our encoding:
+          //   * tag NONE (when explicitly wrapped via wrap_value
+          //     with a None-aware fast path)
+          //   * tag INT with int_val == -2^62 (the legacy
+          //     sentinel form used everywhere else)
+          // Accept either.
           if(is_python_value_type(obj.type()))
-            return python_value_is(obj, python_type_tagt::NONE);
+          {
+            exprt is_none_tag = python_value_is(obj, python_type_tagt::NONE);
+            exprt is_int_sentinel = and_exprt{
+              python_value_is(obj, python_type_tagt::INT),
+              equal_exprt{
+                python_value_int(obj),
+                from_integer(
+                  mp_integer{-4611686018427387904LL}, signedbv_typet{64})}};
+            return or_exprt{std::move(is_none_tag), std::move(is_int_sentinel)};
+          }
           if(obj.type().id() == ID_signedbv)
           {
             // None sentinel check
