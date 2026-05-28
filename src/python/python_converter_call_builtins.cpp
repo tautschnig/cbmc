@@ -1267,21 +1267,18 @@ std::optional<exprt> python_convertert::try_builtin_call(
     }
     // PLR §6.10.2: set() with no argument (or with a non-list
     // argument we can't statically expand) returns an empty set.
-    // Return an empty list-shaped struct (our string-set model is
-    // list-backed) so subsequent in/add operations work
-    // structurally rather than against a nondet placeholder.
+    // Return an empty python_set_type struct (bitmap=0, offset=0)
+    // so set-op and set-compare fast paths fire (they require
+    // python_set_type on both sides).
     {
-      typet elem_t = python_value_type();
-      typet st_t = python_list_type(elem_t);
-      const auto &list_st = to_struct_type(st_t);
-      const auto &data_t = to_array_type(list_st.components()[1].type());
+      typet st_t = python_set_type();
+      // Build a constant struct with the underlying field types.
+      // python_set_struct_def() gives us { bitmap: u64, offset: i64 }.
+      const auto &set_st = python_set_struct_def();
       exprt::operandst zeros;
-      while(zeros.size() < PYTHON_MAX_LIST_LENGTH)
-        zeros.push_back(safe_zero(data_t.element_type()));
-      return struct_exprt{
-        {from_integer(0LL, signedbv_typet{64}),
-         array_exprt{std::move(zeros), data_t}},
-        st_t};
+      for(const auto &c : set_st.components())
+        zeros.push_back(safe_zero(c.type()));
+      return struct_exprt{std::move(zeros), st_t};
     }
   }
   // list() / reversed() — return copy or nondet
