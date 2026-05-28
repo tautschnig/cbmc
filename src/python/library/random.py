@@ -60,25 +60,15 @@ def randint(a: int, b: int) -> int:
 
 
 def getrandbits(k: int) -> int:
-    """random.getrandbits(k) — nondet int in [0, 2**k - 1]."""
+    """random.getrandbits(k) — nondet int in [0, 2**k - 1].
+
+    The cbmc converter intercepts random.getrandbits ahead of
+    this library function for constant k, mapping it to a
+    precise [0, (1<<k) - 1] nondet via an inline assume. This
+    body is the fallback for symbolic k.
+    """
     n: int = nondet_int()
     __ESBMC_assume(n >= 0)
-    if k == 1:
-        __ESBMC_assume(n <= 1)
-    elif k == 8:
-        __ESBMC_assume(n <= 255)
-    elif k == 16:
-        __ESBMC_assume(n <= 65535)
-    elif k == 32:
-        __ESBMC_assume(n <= 4294967295)
-    elif k == 64:
-        __ESBMC_assume(n >= 0)  # full range; further constraint via shifts
-    else:
-        # Generic: assume non-negative, leave upper bound to the
-        # caller's reasoning. (Encoding 1<<k for symbolic k via
-        # __ESBMC_assume isn't well-supported in CBMC's solver
-        # paths.)
-        pass
     return n
 
 
