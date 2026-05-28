@@ -993,9 +993,15 @@ std::optional<exprt> python_convertert::try_string_method(
               // arg name; missing → KeyError.
               std::string key_name = spec;
               auto colon_pos = key_name.find(':');
+              std::string named_fmt_spec;
               if(colon_pos != std::string::npos)
+              {
+                named_fmt_spec = key_name.substr(colon_pos + 1);
                 key_name = key_name.substr(0, colon_pos);
+              }
               bool found_kw = false;
+              std::string kw_value;
+              bool kw_value_const = false;
               const jsont &kws = json_member(expr, "keywords");
               if(kws.is_array())
               {
@@ -1004,6 +1010,15 @@ std::optional<exprt> python_convertert::try_string_method(
                   if(json_string(json_member(kw, "arg")) == key_name)
                   {
                     found_kw = true;
+                    // Try to extract the kwarg's value as a
+                    // constant string for fold.
+                    exprt v_expr = convert_expression(json_member(kw, "value"));
+                    auto sv = extract_string_value(v_expr);
+                    if(sv.has_value())
+                    {
+                      kw_value = sv.value();
+                      kw_value_const = true;
+                    }
                     break;
                   }
                 }
@@ -1026,8 +1041,17 @@ std::optional<exprt> python_convertert::try_string_method(
                       from_integer(h, python_int_type())});
                   }
                 }
+                all_const = false;
+                continue;
               }
-              all_const = false;
+              if(kw_value_const)
+              {
+                result += kw_value;
+              }
+              else
+              {
+                all_const = false;
+              }
               continue;
             }
 
@@ -1058,6 +1082,26 @@ std::optional<exprt> python_convertert::try_string_method(
             }
 
             // Extract value
+            // Detect None argument by AST inspection (not type)
+            // since Python's None becomes a signedbv sentinel
+            // value indistinguishable from an int by type.
+            bool is_none_arg = false;
+            if(args.is_array() && use_idx < as_array(args).size())
+            {
+              auto ait_n = as_array(args).begin();
+              std::advance(ait_n, use_idx);
+              if(is_node_type(*ait_n, "Constant"))
+              {
+                const jsont &v = json_member(*ait_n, "value");
+                if(v.is_null())
+                  is_none_arg = true;
+              }
+            }
+            if(is_none_arg)
+            {
+              result += "None";
+              continue;
+            }
             auto sv = extract_string_value(arg_exprs[use_idx]);
             if(sv.has_value())
             {
