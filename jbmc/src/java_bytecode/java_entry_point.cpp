@@ -437,8 +437,47 @@ std::pair<code_blockt, std::vector<exprt>> java_build_arguments(
       for(const auto &type : alternatives)
       {
         code_blockt init_code_for_type;
+        // Carry generic type arguments from the original
+        // parameter into the alternative concrete type when
+        // possible. Without this, the harness allocates the
+        // alternative with no type arguments — losing the
+        // K, V, ... bindings from the original parameter
+        // type — and JBMC's lazy nondet factory cannot
+        // recover them when initialising
+        // @CProverGenericArrayElement-annotated fields on
+        // modeled-collection classes.
+        typet alternative_type = java_reference_type(type);
+        if(p.type().id() == ID_pointer && is_java_generic_type(p.type()))
+        {
+          // Look up the alternative's class symbol; if it
+          // declares generic parameters of the SAME COUNT
+          // as the original parameter, build a
+          // java_generic_typet with the original's type
+          // arguments. (For non-passthrough cases —
+          // different parameter counts or implements with
+          // substituted bindings — we conservatively keep
+          // the no-args fallback.)
+          const symbolt *alt_class_symbol =
+            symbol_table.lookup(type.get_identifier());
+          if(
+            alt_class_symbol != nullptr &&
+            is_java_generic_class_type(alt_class_symbol->type))
+          {
+            const auto &alt_class_type = to_java_generic_class_type(
+              to_java_class_type(alt_class_symbol->type));
+            const auto &alt_params = alt_class_type.generic_types();
+            const auto &orig_args =
+              to_java_generic_type(p.type()).generic_type_arguments();
+            if(alt_params.size() == orig_args.size())
+            {
+              java_generic_typet generic_alt(type);
+              generic_alt.generic_type_arguments() = orig_args;
+              alternative_type = generic_alt;
+            }
+          }
+        }
         exprt init_expr_for_parameter = object_factory(
-          java_reference_type(type),
+          alternative_type,
           id2string(base_name) + "_alternative_" +
             id2string(type.get_identifier()),
           init_code_for_type,

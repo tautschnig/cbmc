@@ -1009,9 +1009,97 @@ void java_object_factoryt::gen_nondet_struct_init(
         update_in_place==update_in_placet::MUST_UPDATE_IN_PLACE && !_is_sub ?
         update_in_placet::MAY_UPDATE_IN_PLACE :
         update_in_place;
+      // Element-type override for modeled-collection backing
+      // arrays. The annotation
+      //   @org.cprover.CProverGenericArrayElement("K")
+      //   private Object[] keys;
+      // tells us the field's element type is logically the
+      // enclosing class's K parameter, even though Java
+      // erasure forces the field's declared element type to
+      // Object[]. Without the override, JBMC's lazy nondet
+      // factory allocates each keys[i] as a base Object —
+      // which has no `value` field and the wrong
+      // @class_identifier — making preconditions like
+      //   precondition(map.containsKey(absN))
+      // unsat under nondet exploration. Vacuous proofs
+      // result. See ~/moog/AUDIT-PROVED-LEMMAS.md.
+      exprt me_for_init = me;
+      if(component_type.id() == ID_pointer)
+      {
+        const annotated_typet &annotated = to_annotated_type(component_type);
+        for(const auto &anno : annotated.get_annotations())
+        {
+          const typet &anno_type = anno.get_type();
+          if(anno_type.id() != ID_pointer)
+            continue;
+          if(
+            to_pointer_type(anno_type).base_type().id() != ID_struct_tag ||
+            to_struct_tag_type(to_pointer_type(anno_type).base_type())
+                .get_identifier() !=
+              "java::org.cprover.CProverGenericArrayElement")
+            continue;
+          // Read the simple parameter name from the
+          // annotation's `value` element.
+          irep_idt param_simple_name;
+          for(const auto &val : anno.get_values())
+          {
+            if(val.get_name() == "value")
+            {
+              const exprt &v = val.get_value();
+              // Annotation string literals are stored as
+              // string_constant (not regular constant).
+              if(v.id() == ID_string_constant || v.id() == ID_constant)
+                param_simple_name = v.get(ID_value);
+              break;
+            }
+          }
+          if(param_simple_name.empty())
+            continue;
+          // Resolve the simple name "K" to the enclosing
+          // class's full parameter name
+          // "java::<class_id>::K".
+          const irep_idt full_param_name = "java::" + id2string(struct_tag) +
+                                           "::" + id2string(param_simple_name);
+          std::optional<reference_typet> resolved_specialization =
+            generic_parameter_specialization_map.lookup(full_param_name);
+          if(!resolved_specialization.has_value())
+          {
+            // Fallback: the entry-point harness might have
+            // allocated this concrete class as an
+            // alternative for an abstract parameter type
+            // (e.g. HashMap chosen for a Map<Integer, V>
+            // parameter), losing the generic type arguments
+            // in the process. Look up by simple name across
+            // all containers in the spec map.
+            resolved_specialization =
+              generic_parameter_specialization_map.lookup_by_simple_name(
+                param_simple_name);
+          }
+          if(!resolved_specialization.has_value())
+            break;
+          // Construct an array reference type whose
+          // ID_element_type is the specialization. Both
+          // gen_nondet_array_init and assign_element read
+          // element_type from expr.type(), so we cast `me`
+          // to this override and pass the cast down.
+          const pointer_typet &orig_ptr = to_pointer_type(component_type);
+          if(
+            orig_ptr.base_type().id() == ID_struct_tag &&
+            is_java_array_tag(
+              to_struct_tag_type(orig_ptr.base_type()).get_identifier()))
+          {
+            struct_tag_typet new_array_tag =
+              to_struct_tag_type(orig_ptr.base_type());
+            new_array_tag.set(ID_element_type, *resolved_specialization);
+            pointer_typet override_ptr = java_reference_type(new_array_tag);
+            me_for_init = typecast_exprt(me, override_ptr);
+          }
+          break;
+        }
+      }
       gen_nondet_init(
         assignments,
-        me,
+        me_for_init,
         _is_sub,
         false, // skip_classid
         lifetime,

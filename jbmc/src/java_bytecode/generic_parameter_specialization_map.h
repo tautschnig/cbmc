@@ -56,6 +56,30 @@ public:
   ///   one before the pop, or an empty std::optional if the stack was empty
   std::optional<reference_typet> pop(const irep_idt &parameter_name);
 
+  /// Non-destructive read of the current specialization for a given type
+  /// parameter. Identical to \ref pop in semantics but does NOT remove the
+  /// stack frame.
+  /// \param parameter_name: The name of the type parameter
+  /// \returns: The current specialization for the given type parameter, if
+  ///   the stack is non-empty; an empty std::optional otherwise.
+  std::optional<reference_typet> lookup(const irep_idt &parameter_name) const;
+
+  /// Non-destructive lookup by SIMPLE parameter name (e.g. "K" rather than
+  /// "java::java.util.HashMap::K"). Walks all containers and returns the
+  /// first specialization for any parameter whose name ends in
+  /// "::" + simple_name.
+  ///
+  /// This is a heuristic fallback for the case where a modeled-collection
+  /// field is annotated with @CProverGenericArrayElement("K") but the
+  /// enclosing class's K parameter isn't directly in the spec map — for
+  /// example because the entry-point harness selected HashMap as an
+  /// alternative for an abstract Map<Integer, V> parameter and the
+  /// alternative-type construction lost the generic type arguments. In
+  /// that case the spec map has Map's K=Integer but not HashMap's K. The
+  /// simple-name lookup recovers K=Integer.
+  std::optional<reference_typet>
+  lookup_by_simple_name(const irep_idt &simple_name) const;
+
   /// A wrapper for a generic_parameter_specialization_mapt and a namespacet
   /// that can be output to a stream
   struct printert

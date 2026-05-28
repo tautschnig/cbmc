@@ -65,3 +65,39 @@ generic_parameter_specialization_mapt::pop(const irep_idt &parameter_name)
   stack.pop();
   return result;
 }
+
+std::optional<reference_typet> generic_parameter_specialization_mapt::lookup(
+  const irep_idt &parameter_name) const
+{
+  const auto types_it = param_to_container.find(parameter_name);
+  if(types_it == param_to_container.end())
+    return {};
+  const std::stack<std::vector<reference_typet>> &stack =
+    container_to_specializations.at(types_it->second.container_index);
+  if(stack.empty())
+    return {};
+  return stack.top().at(types_it->second.param_index);
+}
+
+std::optional<reference_typet>
+generic_parameter_specialization_mapt::lookup_by_simple_name(
+  const irep_idt &simple_name) const
+{
+  const std::string suffix = "::" + id2string(simple_name);
+  for(const auto &p : param_to_container)
+  {
+    const std::string name_str = id2string(p.first);
+    if(name_str.size() < suffix.size())
+      continue;
+    if(
+      name_str.compare(
+        name_str.size() - suffix.size(), suffix.size(), suffix) != 0)
+      continue;
+    const std::stack<std::vector<reference_typet>> &stack =
+      container_to_specializations.at(p.second.container_index);
+    if(stack.empty())
+      continue;
+    return stack.top().at(p.second.param_index);
+  }
+  return {};
+}
