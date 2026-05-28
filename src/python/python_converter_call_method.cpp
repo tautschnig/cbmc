@@ -2091,6 +2091,86 @@ std::optional<exprt> python_convertert::try_method_call(
     if(obj_base_type.id() == ID_pointer)
       obj_base_type = to_pointer_type(obj_base_type).base_type();
 
+    // PLR §4.4.2: int instance methods. obj is python_int
+    // (signedbv 64). Dispatch on method_name.
+    if(obj_base_type.id() == ID_signedbv)
+    {
+      if(method_name == "bit_length")
+      {
+        // Constant fold: bit_length() == ceil(log2(|n|+1)).
+        auto fv = try_eval_double(obj);
+        if(fv.has_value())
+        {
+          long long n = (long long)*fv;
+          if(n < 0)
+            n = -n;
+          long long bl = 0;
+          while(n > 0)
+          {
+            bl++;
+            n >>= 1;
+          }
+          return from_integer(bl, python_int_type());
+        }
+        // Symbolic: result is in [0, 63].
+        // Could express precisely with a clz-style intrinsic; we
+        // settle for a constrained nondet here.
+        side_effect_expr_nondett nondet{python_int_type(), get_location(expr)};
+        static unsigned bl_ctr = 0;
+        std::string tmp = "__bitlen_" + std::to_string(bl_ctr++);
+        irep_idt ti{qualify_name(tmp)};
+        if(symbol_table.lookup(ti) == nullptr)
+        {
+          symbolt ts{ti, python_int_type(), "python"};
+          ts.base_name = tmp;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          symbol_table.add(ts);
+        }
+        symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+        pending_checks.push_back(code_frontend_assignt{tv, nondet});
+        pending_checks.push_back(code_assumet{and_exprt{
+          binary_relation_exprt{tv, ID_ge, from_integer(0, python_int_type())},
+          binary_relation_exprt{
+            tv, ID_le, from_integer(63, python_int_type())}}});
+        return std::move(tv);
+      }
+      if(method_name == "bit_count")
+      {
+        // bit_count(): popcount of |n|.
+        auto fv = try_eval_double(obj);
+        if(fv.has_value())
+        {
+          long long n = (long long)*fv;
+          if(n < 0)
+            n = -n;
+          long long bc = 0;
+          while(n > 0)
+          {
+            bc += n & 1;
+            n >>= 1;
+          }
+          return from_integer(bc, python_int_type());
+        }
+      }
+      if(method_name == "conjugate" || method_name == "real")
+      {
+        return obj;
+      }
+      if(method_name == "imag")
+      {
+        return from_integer(0, python_int_type());
+      }
+      if(method_name == "denominator")
+      {
+        return from_integer(1, python_int_type());
+      }
+      if(method_name == "numerator")
+      {
+        return obj;
+      }
+    }
+
     if(obj_base_type.id() == ID_struct || obj_base_type.id() == ID_struct_tag)
     {
       // PLR §3.2: Complex number methods

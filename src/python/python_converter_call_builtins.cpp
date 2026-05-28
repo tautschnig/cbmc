@@ -2587,6 +2587,61 @@ std::optional<exprt> python_convertert::try_builtin_call(
   // We model this as a static type tag for comparison with type names.
   else if(func_name == "hasattr" || func_name == "callable")
   {
+    // PLR §3.3.5 / §4.4.4: hasattr(obj, name) — True if the
+    // object has an attribute called 'name', else False.
+    // For constant 'name' and a class-instance obj we can
+    // resolve statically against the struct's components.
+    if(func_name == "hasattr" && args.is_array() && as_array(args).size() >= 2)
+    {
+      auto it = as_array(args).begin();
+      exprt obj = convert_expression(*it);
+      ++it;
+      std::string attr;
+      if(is_node_type(*it, "Constant"))
+      {
+        const jsont &v = json_member(*it, "value");
+        if(v.is_string())
+          attr = json_string(v);
+      }
+      if(!attr.empty() && !obj.is_nil())
+      {
+        // Strip pointer wrap to get to the struct.
+        typet ot = obj.type();
+        if(ot.id() == ID_pointer)
+          ot = to_pointer_type(ot).base_type();
+        struct_typet st;
+        if(ot.id() == ID_struct)
+          st = to_struct_type(ot);
+        else if(ot.id() == ID_struct_tag)
+        {
+          auto sym =
+            symbol_table.lookup(to_struct_tag_type(ot).get_identifier());
+          if(sym != nullptr && sym->type.id() == ID_struct)
+            st = to_struct_type(sym->type);
+        }
+        if(!st.components().empty())
+        {
+          for(const auto &c : st.components())
+          {
+            if(id2string(c.get_name()) == attr)
+              return true_exprt{};
+          }
+          // Also check for a method symbol on the class:
+          // python::<Class>::<attr>.
+          std::string tag = id2string(st.get_tag());
+          if(tag.substr(0, 13) == "python_class_")
+            tag = tag.substr(13);
+          for(const std::string &prefix :
+              {std::string{"python::"} + id2string(st.get_tag()) + "::" + attr,
+               std::string{"python::"} + tag + "::" + attr})
+          {
+            if(symbol_table.lookup(irep_idt{prefix}) != nullptr)
+              return true_exprt{};
+          }
+          return false_exprt{};
+        }
+      }
+    }
     return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
   }
   else if(
