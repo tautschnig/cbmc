@@ -86,6 +86,38 @@ codet python_convertert::convert_statement(const jsont &stmt)
           if(asname.empty())
             asname = name;
           imported_modules.insert(asname);
+          // PLR §6.10.7: 'import non_existent_module' raises
+          // ImportError. The module-resolution pass populates
+          // unresolved_imports for any 'import' / 'from'
+          // whose module file isn't on the search path. Emit
+          // __exception_active so try/except ImportError can
+          // catch the path; the downstream uncaught_exception
+          // assertion fires for unhandled cases.
+          //
+          // Skip well-known stdlib stubs (typing) and any
+          // module whose alias was successfully bound (i.e.
+          // present in imported_modules but NOT in
+          // unresolved_imports).
+          if(unresolved_imports.count(asname) > 0 && name != "typing")
+          {
+            const symbolt *exc_sym =
+              symbol_table.lookup("python::__exception_active");
+            const symbolt *exc_type_sym =
+              symbol_table.lookup("python::__exception_type");
+            if(exc_sym != nullptr)
+            {
+              import_block.add(
+                code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+              if(exc_type_sym != nullptr)
+              {
+                long h = exception_type_hash("ImportError");
+                import_block.add(code_frontend_assignt{
+                  exc_type_sym->symbol_expr(),
+                  from_integer(h, exc_type_sym->type)});
+              }
+              has_assigns = true;
+            }
+          }
           // Module symbol was registered in Pass 0.1 so function
           // bodies processed earlier can already see it.
         }
