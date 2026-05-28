@@ -521,5 +521,17 @@ std::optional<exprt> python_convertert::try_list_method(
     return tmp;
   }
 
+  if(method_name == "clear")
+  {
+    // PLib stdtypes: list.clear() — empty the list in place.
+    // Reset length to 0; data slots are left as-is (their
+    // values become undefined, but indexing them is then
+    // out-of-bounds anyway).
+    pending_checks.push_back(code_frontend_assignt{
+      member_exprt{obj, "length", signedbv_typet{64}},
+      from_integer(0, signedbv_typet{64})});
+    return obj;
+  }
+
   return std::nullopt;
 }
