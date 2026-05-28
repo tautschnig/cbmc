@@ -2448,8 +2448,58 @@ exprt python_convertert::convert_expression(const jsont &expr)
       }
       else
       {
-        // Non-integer set: fall back to list model
-        result = convert_list(expr);
+        // Non-integer set: fall back to list model. Count
+        // distinct string-constant elements; if duplicates are
+        // present, build the resulting struct directly with
+        // the unique elements rather than going through
+        // convert_list (which keeps duplicates).
+        std::vector<std::pair<exprt, std::string>> unique_elts;
+        std::set<std::string> seen_strings;
+        bool has_only_string_consts = true;
+        if(elts.is_array())
+        {
+          for(const auto &elt : as_array(elts))
+          {
+            std::string key;
+            if(is_node_type(elt, "Constant"))
+            {
+              const jsont &cv = json_member(elt, "value");
+              if(cv.is_string())
+                key = cv.value;
+              else
+                has_only_string_consts = false;
+            }
+            else
+              has_only_string_consts = false;
+            if(has_only_string_consts && !key.empty())
+            {
+              if(seen_strings.count(key) > 0)
+                continue;
+              seen_strings.insert(key);
+              unique_elts.emplace_back(convert_expression(elt), key);
+            }
+          }
+        }
+        if(
+          has_only_string_consts && unique_elts.size() != as_array(elts).size())
+        {
+          // Build a python_list_type with the unique strings.
+          typet str_t = python_string_type();
+          typet list_t = python_list_type(str_t);
+          const auto &list_st = to_struct_type(list_t);
+          const auto &data_t = to_array_type(list_st.components()[1].type());
+          exprt::operandst ops;
+          for(auto &p : unique_elts)
+            ops.push_back(p.first);
+          while(ops.size() < PYTHON_MAX_LIST_LENGTH)
+            ops.push_back(safe_zero(str_t));
+          result = struct_exprt{
+            {from_integer((long)unique_elts.size(), signedbv_typet{64}),
+             array_exprt{std::move(ops), data_t}},
+            list_t};
+        }
+        else
+          result = convert_list(expr);
       }
     }
   }
