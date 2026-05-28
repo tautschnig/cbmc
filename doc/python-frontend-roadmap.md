@@ -7,7 +7,111 @@ the symptom, the architectural shape of a fix, the rough scope
 estimate, and any prior investigation. Update statuses as work
 lands.
 
-## Status snapshot (wave 41+, 2026-05-27)
+## Status snapshot (wave 41+, 2026-05-28)
+
+| Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
+|---|---:|---:|---:|---:|
+| ESBMC PASS | 2489 | 2601 | **2682** | +81 |
+| Soundness gaps (raw DIFFs) | n/a | ~50 | ~26 | −24 |
+| Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
+| Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
+| TIMEOUT | 26 | 10 | 10 | 0 |
+| Hypothesmith --unrestricted failures | 4 | 0 | 0 | 0 |
+| AWS benchmark pass rate | n/a | 86.3% / 94.1% | 86.3% / 94.1% | 0 |
+
+**Wave 41 work (2026-05-27 / 2026-05-28):**
+
+Inheritance fix + cluster passes + COMPLEX tag + math edges
+closed **+81 tests**:
+
+Earlier in wave 41 (cluster + COMPLEX, +37):
+- Inheritance MRO walk for method dispatch and `__init__` —
+  +4 tests where subclass instances correctly route to
+  inherited bodies (`a12746cd7f`).
+- New CLI flag `--python-missing-return-check` + ESBMC
+  `--incremental-bmc` alias; closes 6 missing-return
+  soundness DIFFs (`9e86eb0deb`).
+- ESBMC `--is-instance-check` alias for
+  `--python-check-annotations`; closes 4 type-annotation
+  soundness DIFFs (`7202c01f89`).
+- `str.isidentifier` / `str.isnumeric` constant-fold;
+  closes 11 string predicate DIFFs (`e8cb784c3b`).
+- `str.partition` / `str.rpartition` constant-fold returning
+  proper 3-tuple; closes 5 partition DIFFs (`817c3d1d4c`).
+- Class-vs-class annotation check (Liskov MRO walk) +
+  reassignment check; closes 2 type-annotation soundness
+  DIFFs (`6ce20e9780`).
+- `Union[X, Y, ...]` annotation check at call sites with
+  strict category matching + class MRO walk; closes 1
+  union-check DIFF (`e11911c837`).
+- 2-level nested generator-expression unrolling for
+  `all`/`any`; closes 2 nested-genexp DIFFs (`089a695a29`).
+- COMPLEX tag in `python_type_tagt` (=8) with full
+  truthiness / unwrap dispatch; enables universal
+  `python_truthiness` in the all/any list path. Closes
+  `builtin_all` and `any` (+2) without regressing
+  `builtin_all_complex` / `builtin_all_complex_fail`
+  (`90a76669ba`).
+
+Math edges + TypeError cluster (+44 tests):
+- `math.ldexp` / `nextafter` / `ulp` constant-fold (+6 tests,
+  `bcf6e1b199`).
+- int-math constant-fold (`factorial` / `comb` / `perm` / `gcd` /
+  `lcm` / `isqrt`) with negative-literal handling and
+  ValueError emission for negative args (+9 tests,
+  `411e4861c1`).
+- math constants (`pi` / `e` / `tau` / `inf` / `nan`) bound to
+  IEEE-754 values via explicit ASSIGN at import-from + fold
+  for `degrees` / `radians` (using M_PI directly) + `gamma`
+  alias for `tgamma` + fix `gamma`→`std::tgamma` dispatch
+  (+7 tests, `ac8ae6fef6`).
+- list-arg math fold (`prod` / `dist` / `sumprod` / `fsum`)
+  accepting List, Tuple, or Name-bound-list; proper
+  `isclose(a, b, *, rel_tol, abs_tol)` with CPython's
+  formula (+9 tests, `03c3dbc910`).
+- `math.frexp` constant-fold returning (mantissa, exponent)
+  python_tuple struct (+2 tests, `949b51a93c`).
+- `cmath.log` / `log10` constant-fold for python_complex
+  args via std::complex (+3 tests, `c62ac1e226`).
+- `complex` type annotation registered as python_complex
+  struct + `math.X(complex)` raises TypeError; recursive walk
+  of List/Tuple/dict-unpack/Name-bound-list/function-returning-
+  complex (+2 tests, `8ce56a15a8`).
+- int-math TypeError for non-int args (float/string/None,
+  `e4f8dbcb9b`); cmath kwargs raise TypeError
+  (`e99e7f91d0`).
+- Symbolic exprt for `math.degrees` / `radians` / `fmod` /
+  `copysign` so isfinite-style assertions propagate from
+  finite inputs (+1 test, `d9a23a5bc1`).
+- dict-literals alias propagation (`kw_alias = kw_base`) +
+  extended complex-arg detection across alias chains, list
+  literals with complex elements, direct dict literals in
+  `**` (`b2cbdab7a6`); exclude `math.prod`/`math.sumprod`
+  from complex-arg TypeError per CPython
+  (`e68d923590`).
+
+**Hypothesmith --unrestricted at 0 fails (200 semantic + 24
+syntax programs verified).**
+
+**Documented limitations (deferred):**
+
+- `builtin_all_genexp_inner_iter_shadow` (var shadow `for x
+  in xs for x in range(x)`) — needs proper Python generator
+  scoping; current impl punts to single-generator path.
+- icontract MRO precedence for mixin override conflicts uses
+  first-found-wins rather than strict C3.
+- `complex_math_typeerror_edges` — 14 of 94 sub-assertions
+  remain. Need cross-function tracking of
+  `function_return_constants` for dict/list literals
+  containing complex (e.g., `math.X(**fn())`), and
+  `complex("bad")` raising ValueError before downstream
+  dispatch.
+
+All three regression suites (`regression/python`,
+`regression/python-strata-tests`,
+`regression/python-strata-tests-pending`) green.
+
+## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|

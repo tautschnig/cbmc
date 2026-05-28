@@ -1,30 +1,28 @@
 # DIFF cluster analysis — wave 41 (post-inheritance fix)
 
-> **Status update (2026-05-27 evening):** All 3 originally-deferred
-> items have been addressed:
+> **Status update (2026-05-28):** All originally-deferred
+> items addressed, plus full math-edges cluster pass.
+> Cumulative: PASS 2605 → 2682 (+77).
 >
-> - **Union[X, Y] check** (item 1) — landed in `e11911c837`. Added
->   `union_annotation_components` map populated during parameter
->   creation; `union_annotation_violated` helper does strict
->   category matching at call sites. Closes
->   `type-annotation-union-check`.
-> - **Generator-expression nested** (item 2 partial) — landed in
->   `089a695a29`. 2-level nested generators with no var shadowing
->   are unrolled via cartesian product. Closes
->   `builtin_all_genexp_nested` and
->   `builtin_all_genexp_short_circuit`. The
->   `builtin_all_genexp_inner_iter_shadow` test (var shadowing)
->   remains as a known limitation.
-> - **Complex tag** (item 3) — landed in `90a76669ba`. Adds
->   COMPLEX = 8 to `python_type_tagt`, dispatch in
->   `python_truthiness` and `unwrap_value`, special-case in the
->   wrap path. With COMPLEX in place, the all/any non-generator
->   list path now uses `python_truthiness(elem)` instead of
->   `safe_typecast(elem, bool_t)` — closes `builtin_all` and
->   `any` (+2 PASS) without regressing the complex tests.
+> - **Union[X, Y] check** (item 1) — `e11911c837`. Strict
+>   category matching at call sites + class-MRO walk.
+> - **Generator-expression nested** (item 2 partial) —
+>   `089a695a29`. 2-level nested with cartesian-product
+>   unrolling; var-shadow case still deferred.
+> - **Complex tag** (item 3) — `90a76669ba`. COMPLEX = 8
+>   added to python_type_tagt with truthiness / unwrap
+>   dispatch. Universal python_truthiness re-applied to
+>   all/any list path.
+> - **Math edges cluster** — 12 commits closing 49 tests
+>   from the math/cmath cluster. Architectural patterns:
+>   early intercept before imported_modules dispatch,
+>   List/Tuple/Name-bound list extraction, alias-chain
+>   propagation through dict_literals, complex-arg
+>   TypeError detection across multiple AST shapes.
+>   Documented in roadmap section "Math edges + TypeError
+>   cluster".
 >
-> Cumulative result: **PASS 2605 → 2638** (+33) from the day's
-> work.
+> Cumulative wave 41: **PASS 2605 → 2682** (+77).
 
 Snapshot: 2026-05-27 wave 41 sweep. **2605 PASS, 399 DIFF, 71
 FAIL, 10 TIMEOUT, 3 TOERR, 2 UNKNOWN** out of 3091 tests.
