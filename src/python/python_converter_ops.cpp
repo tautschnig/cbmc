@@ -1550,7 +1550,41 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
   auto it = std::next(as_array(values).begin());
   for(; it != as_array(values).end(); ++it)
   {
+    // PLR §6.11: 'and' / 'or' short-circuit. The right
+    // operand is evaluated *only* when the left operand
+    // doesn't decide the result. Side-effecting checks
+    // emitted while converting the right operand (e.g.
+    // KeyError on dict subscript, IndexError on list
+    // subscript) must therefore be guarded by the same
+    // condition that selects the right operand at runtime.
+    //
+    // Capture pending_checks before/after the right-operand
+    // conversion, then wrap the difference in an
+    // if-then-else guarded by:
+    //   for 'and': condition = python_truthiness(result)
+    //   for 'or' : condition = NOT(python_truthiness(result))
+    std::vector<codet> saved_pending_before = pending_checks;
     exprt next = convert_expression(*it);
+    if(
+      pending_checks.size() > saved_pending_before.size() &&
+      (op == "And" || op == "Or"))
+    {
+      // Extract just the new checks added by 'next'.
+      std::vector<codet> new_checks(
+        std::make_move_iterator(
+          pending_checks.begin() + saved_pending_before.size()),
+        std::make_move_iterator(pending_checks.end()));
+      pending_checks.erase(
+        pending_checks.begin() + saved_pending_before.size(),
+        pending_checks.end());
+      // Build a code block of the new checks and a guard.
+      code_blockt block;
+      for(auto &c : new_checks)
+        block.add(std::move(c));
+      exprt left_truthy = python_truthiness(result);
+      exprt guard = op == "And" ? left_truthy : exprt{not_exprt{left_truthy}};
+      pending_checks.push_back(code_ifthenelset{guard, block});
+    }
     // Each successive AND-operand can also enrich the bounds
     // for the operands that follow. (e.g. `len(L) >= 3 and
     // len(M) >= 2 and L[2] == M[1]`.)
