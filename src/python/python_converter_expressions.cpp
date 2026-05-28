@@ -180,6 +180,54 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           }
         }
       }
+      // Constant-int-key optimization: if the slice is a
+      // constant int and the dict literal has known int keys,
+      // resolve at conversion time. Avoids emitting the
+      // PYTHON_MAX_DICT_SIZE-wide key-match chain (which is
+      // expensive for the SAT solver, especially when
+      // multiple nested dict accesses chain together).
+      if(slice.is_constant())
+      {
+        mp_integer slice_iv;
+        if(!to_integer(to_constant_expr(slice), slice_iv))
+        {
+          const exprt *dict_val = nullptr;
+          if(value.id() == ID_struct)
+            dict_val = &value;
+          else if(value.id() == ID_symbol)
+          {
+            auto it =
+              dict_literals.find(to_symbol_expr(value).get_identifier());
+            if(it != dict_literals.end())
+              dict_val = &it->second;
+          }
+          if(
+            dict_val != nullptr && dict_val->operands().size() >= 3 &&
+            dict_val->operands()[0].is_constant())
+          {
+            mp_integer len_val;
+            if(!to_integer(to_constant_expr(dict_val->operands()[0]), len_val))
+            {
+              const exprt &keys_arr = dict_val->operands()[1];
+              const exprt &vals_arr = dict_val->operands()[2];
+              for(mp_integer i = 0; i < len_val; ++i)
+              {
+                auto idx = i.to_ulong();
+                if(idx < keys_arr.operands().size())
+                {
+                  const exprt &k = keys_arr.operands()[idx];
+                  if(k.is_constant())
+                  {
+                    mp_integer kv;
+                    if(!to_integer(to_constant_expr(k), kv) && kv == slice_iv)
+                      return vals_arr.operands()[idx];
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
 
       const auto &dict_st = to_struct_type(value.type());
       const auto &keys_type = to_array_type(dict_st.components()[1].type());
