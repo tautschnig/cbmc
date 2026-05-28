@@ -2290,6 +2290,19 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return double_type();
   else if(type_name == "bool")
     return bool_typet{};
+  else if(type_name == "complex")
+  {
+    // PLR §6.10.1: complex is the python_complex struct with
+    // {real, imag : double} fields. Tag it so callers like the
+    // math/cmath dispatch can detect a complex argument and
+    // emit TypeError where appropriate.
+    struct_typet::componentst cc;
+    cc.push_back(struct_typet::componentt{"real", double_type()});
+    cc.push_back(struct_typet::componentt{"imag", double_type()});
+    struct_typet ct{cc};
+    ct.set_tag("python_complex");
+    return ct;
+  }
   else if(type_name == "str")
     return python_string_type();
   else if(type_name == "bytes" || type_name == "bytearray")

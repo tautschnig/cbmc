@@ -46,6 +46,7 @@
 #include <iomanip>
 #include <limits>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 
@@ -522,6 +523,190 @@ std::optional<exprt> python_convertert::try_method_call(
             result = if_exprt{is_neg, minus_exprt{result, sub_amount}, result};
           }
           return result;
+        }
+      }
+      // PLR §math: TypeError when math.X(...) is called with a
+      // complex argument. CPython's math module is real-only;
+      // calling math.sin(complex(1, 2)) raises TypeError. We
+      // model this by setting __exception_active /
+      // __exception_type and returning a nondet of double_type
+      // (compatible with the most common math return type).
+      // Skip cmath.X — that module IS complex-aware.
+      if(obj_name == "math")
+      {
+        // Detect: a node represents (or contains) a complex value.
+        // Recursively walks List / Tuple literals so cases like
+        // math.fsum([1.0, z]) or math.dist((z, 0.0), (0.0, 0.0))
+        // also match.
+        std::function<bool(const jsont &)> is_complex_node;
+        is_complex_node = [&](const jsont &node) -> bool
+        {
+          if(is_node_type(node, "List") || is_node_type(node, "Tuple"))
+          {
+            const jsont &elts = json_member(node, "elts");
+            if(elts.is_array())
+              for(const auto &e : as_array(elts))
+                if(is_complex_node(e))
+                  return true;
+            return false;
+          }
+          exprt e = convert_expression(node);
+          // Direct python_complex struct (or struct_tag).
+          auto get_tag = [](const typet &t) -> std::string
+          {
+            if(t.id() == ID_struct)
+              return id2string(to_struct_type(t).get_tag());
+            if(t.id() == ID_struct_tag)
+              return id2string(to_struct_tag_type(t).get_identifier());
+            return {};
+          };
+          if(get_tag(e.type()) == "python_complex")
+            return true;
+          if(e.id() == ID_symbol)
+          {
+            auto sid = to_symbol_expr(e).get_identifier();
+            if(complex_literals.count(sid) > 0)
+              return true;
+          }
+          // Function call returning complex: lookup the callee's
+          // declared return type. AST: Call → func: Name(id).
+          if(is_node_type(node, "Call"))
+          {
+            const jsont &func = json_member(node, "func");
+            if(is_node_type(func, "Name"))
+            {
+              std::string fnm = json_string(json_member(func, "id"));
+              if(fnm == "complex")
+                return true;
+              irep_idt fid{"python::" + fnm};
+              const symbolt *fsym = symbol_table.lookup(fid);
+              if(fsym != nullptr && fsym->type.id() == ID_code)
+              {
+                const auto &ft = to_code_type(fsym->type);
+                if(get_tag(ft.return_type()) == "python_complex")
+                  return true;
+              }
+            }
+          }
+          return false;
+        };
+        bool any_complex = false;
+        if(args.is_array())
+          for(const auto &a : as_array(args))
+            if(is_complex_node(a))
+            {
+              any_complex = true;
+              break;
+            }
+        // Also scan keyword arguments (math.X(b=z)).
+        // Handles both regular kwargs (arg= ...) AND
+        // dict-unpacking (**kw), where the keyword's `arg` field
+        // is null and `value` references a dict literal whose
+        // values may contain complex.
+        if(!any_complex)
+        {
+          const jsont &kw = json_member(expr, "keywords");
+          if(kw.is_array())
+            for(const auto &k : as_array(kw))
+            {
+              const jsont &arg = json_member(k, "arg");
+              const jsont &val = json_member(k, "value");
+              if(arg.is_null() && is_node_type(val, "Name"))
+              {
+                // Dict-unpack: look up the bound dict's values.
+                // Dict literal is stored as struct
+                // {length, keys_array, values_array}.
+                std::string nm = json_string(json_member(val, "id"));
+                irep_idt sid{qualify_name(nm)};
+                auto it = dict_literals.find(sid);
+                if(
+                  it != dict_literals.end() && it->second.id() == ID_struct &&
+                  it->second.operands().size() >= 3)
+                {
+                  const exprt &vals_arr = it->second.operands()[2];
+                  if(vals_arr.id() == ID_array)
+                  {
+                    for(const auto &v : vals_arr.operands())
+                    {
+                      // Direct python_complex struct.
+                      if(
+                        v.type().id() == ID_struct &&
+                        to_struct_type(v.type()).get_tag() == "python_complex")
+                      {
+                        any_complex = true;
+                        break;
+                      }
+                      // python_value tagged-union with COMPLEX
+                      // tag (heterogeneous dicts whose values
+                      // include a complex literal).
+                      if(
+                        is_python_value_type(v.type()) && v.id() == ID_struct &&
+                        !v.operands().empty())
+                      {
+                        const exprt &tag_expr = v.operands()[0];
+                        if(tag_expr.is_constant())
+                        {
+                          mp_integer tag_iv;
+                          if(!to_integer(to_constant_expr(tag_expr), tag_iv))
+                          {
+                            if(
+                              tag_iv ==
+                              static_cast<int>(python_type_tagt::COMPLEX))
+                            {
+                              any_complex = true;
+                              break;
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              else if(is_complex_node(val))
+              {
+                any_complex = true;
+              }
+              if(any_complex)
+                break;
+            }
+        }
+        if(any_complex)
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+          {
+            pending_checks.push_back(
+              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          }
+          if(exc_type_sym != nullptr)
+          {
+            long type_hash = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(type_hash, python_int_type())});
+          }
+          static const std::set<std::string> int_returning = {
+            "factorial",
+            "gcd",
+            "lcm",
+            "isqrt",
+            "perm",
+            "comb",
+            "floor",
+            "ceil",
+            "trunc"};
+          static const std::set<std::string> bool_returning = {
+            "isnan", "isinf", "isfinite", "isclose"};
+          if(int_returning.count(method_name) > 0)
+            return side_effect_expr_nondett{
+              python_int_type(), get_location(expr)};
+          if(bool_returning.count(method_name) > 0)
+            return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+          return side_effect_expr_nondett{double_type(), get_location(expr)};
         }
       }
       // PLR §math: math.isclose — handle in a dedicated early
