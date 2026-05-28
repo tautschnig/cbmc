@@ -203,11 +203,34 @@ exprt python_convertert::convert_call(const jsont &expr)
   // python_converter_call_nondet.cpp for clarity.
   if(auto r = try_nondet_call(expr, func_name, args))
     return std::move(*r);
-  // Built-in free-function dispatch group (map, len, range,
-  // sorted, isinstance, type, min, max, ...). Extracted to
-  // python_converter_call_builtins.cpp for clarity.
-  if(auto r = try_builtin_call(expr, func_name, args))
-    return std::move(*r);
+  // PLR §4: name resolution. If the user defined a function
+  // (or class) with the same name as a Python builtin, the
+  // user binding shadows the builtin within the module. Try
+  // the user-call dispatch first when a same-named function
+  // symbol exists, before falling through to the builtin
+  // intercept. Without this, calls like 'sum(2, 2)' (user-
+  // defined two-arg sum) match the builtin sum(iterable)
+  // intercept and return nondet because the args don't fit.
+  if(!func_name.empty())
+  {
+    irep_idt user_id{"python::" + func_name};
+    const symbolt *us = symbol_table.lookup(user_id);
+    if(us != nullptr && us->type.id() == ID_code)
+    {
+      // Defer to the user-call dispatch path below.
+    }
+    else
+    {
+      // No user function with this name — try builtins.
+      if(auto r = try_builtin_call(expr, func_name, args))
+        return std::move(*r);
+    }
+  }
+  else
+  {
+    if(auto r = try_builtin_call(expr, func_name, args))
+      return std::move(*r);
+  }
 
   // Regular function call — check if it's a class constructor
   if(class_types.count(func_name))
