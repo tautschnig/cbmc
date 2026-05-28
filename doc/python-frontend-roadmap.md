@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2754** | +153 |
+| ESBMC PASS | 2489 | 2601 | **2771** | +170 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -218,6 +218,35 @@ Two coordinated supports:
   covered string keys), so nested-dict2 stays under the
   per-test sweep timeout after the new exception flag adds
   modest SAT work to the runtime path.
+
+Complex + Import cluster (wave 41 cont., +17 tests):
+- 4 complex isinstance (arith / cond / conj / neg) —
+  isinstance(non_complex, complex) and the symmetric forms
+  now return false, instead of falling through to nondet.
+- 4 complex augassign (attr_augassign / augassign /
+  augassign_handler / attr_reassign) — `z += w` /
+  `z -= w` / `z *= w` / `z /= w` for python_complex now
+  do field-wise arithmetic. The Mul / Div paths use a
+  field-snapshot temp because CBMC symex assigns struct
+  fields one-at-a-time, evaluating the second field's
+  expression after writing the first — so a self-
+  referential struct_exprt that reads lhs.real and
+  lhs.imag in both fields produced a wrong second-field
+  result.
+- 3 complex repr / zerodiv (repr / repr_var / zerodiv) —
+  repr(complex) folds to the same string format as
+  str(complex); complex / 0 raises ZeroDivisionError via
+  the exception flag.
+- complex_handler_typeerror — ordering compare on complex
+  raises TypeError; incompatible-type BinOp (complex+str
+  etc.) raises TypeError via __exception_active. Bitwise
+  ops kept silent-nondet because our value-type tracking
+  sometimes confuses set with int (frozenset returns a
+  typet{}-typed nondet that defaults to int).
+- 4 import-error tests (1-4) + import-error-fail bonus —
+  unresolved 'import X' / 'from X import Y' now sets
+  __exception_active so try/except ImportError catches
+  the path.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
