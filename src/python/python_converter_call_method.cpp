@@ -1498,6 +1498,27 @@ std::optional<exprt> python_convertert::try_method_call(
               minus_exprt{math_arg, arg2}};
             return binary_relation_exprt{diff, ID_le, tol.to_expr()};
           }
+          // PLR §math: degrees / radians for symbolic args —
+          // emit the closed-form expression directly so
+          // assertions like `assert math.isfinite(math.degrees(x))`
+          // can propagate from a finite x. The constant-fold
+          // path below handles concrete values.
+          if(func_name == "degrees" || func_name == "radians")
+          {
+            ieee_floatt c180{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            c180.from_double(180.0);
+            ieee_floatt cpi{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            cpi.from_double(M_PI);
+            if(func_name == "degrees")
+              return div_exprt{
+                mult_exprt{math_arg, c180.to_expr()}, cpi.to_expr()};
+            return div_exprt{
+              mult_exprt{math_arg, cpi.to_expr()}, c180.to_expr()};
+          }
           // Option-4 domain check: raise ValueError for known-bad
           // constant arguments, and emit a guarded ValueError for
           // non-constant arguments. See math_function_domain() /
@@ -1685,6 +1706,24 @@ std::optional<exprt> python_convertert::try_method_call(
                 if(ok && std::isfinite(r))
                   return double_to_floatbv(r);
               }
+            }
+            // PLR §math: fmod / remainder / copysign symbolic
+            // fallback — emit the closed-form expression so
+            // properties like `|fmod(x, y)| < |y|` propagate.
+            if(func_name == "fmod")
+              return floatbv_mod_exprt{math_arg, arg2};
+            if(func_name == "copysign")
+            {
+              // copysign(x, y) = |x| if y >= 0, else -|x|.
+              exprt abs_x = if_exprt{
+                binary_relation_exprt{
+                  math_arg, ID_lt, safe_zero(double_type())},
+                unary_minus_exprt{math_arg},
+                math_arg};
+              return if_exprt{
+                binary_relation_exprt{arg2, ID_lt, safe_zero(double_type())},
+                unary_minus_exprt{abs_x},
+                abs_x};
             }
           }
           // Nondet with constraints. Look up domain= / range=
