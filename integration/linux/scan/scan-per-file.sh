@@ -214,12 +214,14 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
       )
       ;;
     resource_leak_on_error_path)
-      # The cocci instrumentation inserts
-      # __assert_no_leak_at_exit(x); before each early return
-      # reached from a kmalloc-tracked allocation.  The
-      # adapter declares this as a contract function.
+      # Cocci inserts __assert_no_leak_at_exit(x); before each
+      # early return reached from a kmalloc-tracked allocation.
+      # The per-return fallback emits __assert_no_outstanding_leak()
+      # at every return for many-allocations functions.  Both
+      # contracts are declared in the adapter.
       CONTRACT_TARGETS=(
         __assert_no_leak_at_exit
+        __assert_no_outstanding_leak
       )
       ;;
     null_after_alloc)

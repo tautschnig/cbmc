@@ -58,5 +58,6 @@
 void leak_alloc_track(const void *p);
 void leak_alloc_freed(const void *p);
 int leak_outstanding(const void *p);
+int leak_any_outstanding(void);
 
 #endif

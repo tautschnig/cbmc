@@ -334,18 +334,19 @@ def _instrument_resource_leak(source: str, fn_name: str
         if lhs not in seen:
             seen.add(lhs)
             tracked_lhs.append(lhs)
-    # Filter to in-scope identifiers for the per-return check.
-    # For chained accesses (x->y), the base ident must be in
-    # scope.
-    def _base(name: str) -> str:
-        return re.match(r"^(\w+)", name).group(1)
-    return_lhs = [n for n in tracked_lhs if _base(n) in in_scope]
+
+    # Per-return assertion strategy.  We use a single
+    # __assert_no_outstanding_leak() check per return rather
+    # than one __assert_no_leak_at_exit(<lhs>) per (return ×
+    # tracked variable).  The aggregated version checks the
+    # global ghost table for ANY outstanding allocation,
+    # reducing assertion fan-out from O(returns × vars) to
+    # O(returns).  Critical for many-allocations functions
+    # where the fan-out variant blew CBMC's symex budget.
     for rstart, rend in return_ranges:
         return_stmt = body_text[rstart:rend]
-        asserts = "".join(
-            f"__assert_no_leak_at_exit({lhs}); "
-            for lhs in return_lhs)
-        replacement = "{ " + asserts + return_stmt + " }"
+        replacement = ("{ __assert_no_outstanding_leak(); "
+                       + return_stmt + " }")
         edits.append((rstart, rend, replacement))
 
     # Apply edits in reverse offset order.  Sort by start

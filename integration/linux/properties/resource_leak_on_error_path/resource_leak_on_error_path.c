@@ -60,3 +60,11 @@ int leak_outstanding(const void *p)
     return 0;
   return e->outstanding;
 }
+
+int leak_any_outstanding(void)
+{
+  for(unsigned int i = 0; i < table_len; i++)
+    if(table[i].outstanding)
+      return 1;
+  return 0;
+}

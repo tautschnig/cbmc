@@ -32,6 +32,7 @@ ALL_SHAPES=(
 HEADER='/* AUTO-INSERTED by integration/linux/scan/tools/instrument-cocci.sh */
 extern void __assert_safe_to_deref(const void *p);
 extern void __assert_no_leak_at_exit(const void *p);
+extern void __assert_no_outstanding_leak(void);
 extern void __assert_not_freed(const void *p);
 extern void __assert_size_safe(unsigned long n, unsigned long elem_size);
 extern void __assert_copy_safe(unsigned long dst_capacity, unsigned long len);
@@ -90,7 +91,7 @@ for shape in "${SHAPES[@]}"; do
 done
 
 # Count insertions for reporting.
-INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe|no_pending_work)|leak_alloc_(track|freed)\(|cancel_work_(set|clear)_pending\(" \
+INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|no_outstanding_leak|not_freed|size_safe|copy_safe|no_pending_work)|leak_alloc_(track|freed)\(|cancel_work_(set|clear)_pending\(" \
   "$WORK/inst.c" 2>/dev/null || true)
 INSERTED=${INSERTED:-0}
 
@@ -116,7 +117,7 @@ count_insertions_in_function() {
       }
     }
   ' "$file" \
-    | grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe|no_pending_work)|leak_alloc_(track|freed)\(|cancel_work_(set|clear)_pending\(" \
+    | grep -cE "__assert_(safe_to_deref|no_leak_at_exit|no_outstanding_leak|not_freed|size_safe|copy_safe|no_pending_work)|leak_alloc_(track|freed)\(|cancel_work_(set|clear)_pending\(" \
     || true
 }
 
@@ -149,7 +150,7 @@ if [[ -n "$TARGET_FN" && "$INSERTED_IN_FN" == "0" ]]; then
          --function "$TARGET_FN" \
          "${SHAPE_ARGS[@]}" 2>"$WORK/fb.err"; then
       mv "$WORK/inst-fb.c" "$WORK/inst.c"
-      INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe)|leak_alloc_(track|freed)\(" \
+      INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|no_outstanding_leak|not_freed|size_safe|copy_safe)|leak_alloc_(track|freed)\(" \
         "$WORK/inst.c" 2>/dev/null || true)
       INSERTED=${INSERTED:-0}
       INSERTED_IN_FN=$(count_insertions_in_function "$WORK/inst.c" "$TARGET_FN")
