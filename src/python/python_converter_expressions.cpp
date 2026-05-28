@@ -498,6 +498,34 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       lower = lower_json.is_null() ? from_integer(0, signedbv_typet{64})
                                    : convert_expression(lower_json);
       upper = upper_json.is_null() ? length : convert_expression(upper_json);
+      // PLR §6.3.3: negative bounds wrap relative to length;
+      // bounds beyond length clamp to length; bounds below 0
+      // (after wrap) clamp to 0. Normalize both bounds via
+      // if_exprt so the runtime form picks the right slot.
+      auto normalize = [&](exprt bound) -> exprt
+      {
+        if(bound.type() != signedbv_typet{64})
+          bound = safe_typecast(bound, signedbv_typet{64});
+        // wrapped = bound < 0 ? bound + length : bound
+        exprt wrapped = if_exprt{
+          binary_relation_exprt{
+            bound, ID_lt, from_integer(0, signedbv_typet{64})},
+          plus_exprt{bound, length},
+          bound};
+        // clamped_low = max(0, wrapped)
+        exprt clamped_low = if_exprt{
+          binary_relation_exprt{
+            wrapped, ID_lt, from_integer(0, signedbv_typet{64})},
+          from_integer(0, signedbv_typet{64}),
+          wrapped};
+        // clamped_high = min(length, clamped_low)
+        return if_exprt{
+          binary_relation_exprt{clamped_low, ID_gt, length},
+          length,
+          clamped_low};
+      };
+      lower = normalize(std::move(lower));
+      upper = normalize(std::move(upper));
     }
 
     exprt new_length =
