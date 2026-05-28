@@ -51,10 +51,17 @@ bvt boolbvt::convert_index(const index_exprt &expr)
           final_array.id() == ID_symbol || final_array.id() == ID_nondet_symbol)
         {
           const auto &array_width_opt = bv_width.get_width_opt(array_type);
-          (void)map.get_literals(
-            final_array.get(ID_identifier),
-            array_type,
-            array_width_opt.value_or(0));
+          // Skip the registration when the array width is
+          // unknown (e.g. `extern T arr[]`).  Passing 0 to
+          // get_literals creates a zero-width entry that
+          // trips its size-equals-width invariant when the
+          // same symbol is — or has been — registered at a
+          // non-zero width via its element-typed access path.
+          if(array_width_opt.has_value())
+          {
+            (void)map.get_literals(
+              final_array.get(ID_identifier), array_type, *array_width_opt);
+          }
         }
 
         // make sure we have the index in the cache
@@ -71,8 +78,13 @@ bvt boolbvt::convert_index(const index_exprt &expr)
         if(array.id() == ID_symbol || array.id() == ID_nondet_symbol)
         {
           const auto &array_width_opt = bv_width.get_width_opt(array_type);
-          (void)map.get_literals(
-            array.get(ID_identifier), array_type, array_width_opt.value_or(0));
+          // See comment above for the same case in the
+          // byte-operator branch.
+          if(array_width_opt.has_value())
+          {
+            (void)map.get_literals(
+              array.get(ID_identifier), array_type, *array_width_opt);
+          }
         }
 
         // make sure we have the index in the cache
