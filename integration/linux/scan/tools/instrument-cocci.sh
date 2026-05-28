@@ -38,7 +38,7 @@ extern void leak_alloc_track(const void *p);
 '
 
 if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <input.c> <output.c> [--shapes SHAPES]" >&2
+  echo "Usage: $0 <input.c> <output.c> [--shapes SHAPES] [--target-function FN]" >&2
   exit 2
 fi
 
@@ -46,9 +46,11 @@ INPUT="$1"; shift
 OUTPUT="$1"; shift
 
 SHAPES=("${ALL_SHAPES[@]}")
+TARGET_FN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --shapes) IFS=, read -ra SHAPES <<< "$2"; shift 2 ;;
+    --target-function) TARGET_FN="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -84,7 +86,75 @@ done
 
 # Count insertions for reporting.
 INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe)|leak_alloc_track\(" \
-  "$WORK/inst.c" 2>/dev/null || echo 0)
+  "$WORK/inst.c" 2>/dev/null || true)
+INSERTED=${INSERTED:-0}
+
+# Count insertions within the target function specifically:
+# extract the function body (line range starting with the
+# function signature, up to the matching unindented '}')
+# and count insertion markers in that slice.
+count_insertions_in_function() {
+  local file=$1 fn=$2
+  awk -v fn="$fn" '
+    BEGIN { depth = 0; inside = 0 }
+    inside == 0 && $0 ~ "^[[:alnum:]_[:space:]\\*\\(\\)]*[[:space:]]"fn"[[:space:]]*\\(" {
+      inside = 1
+    }
+    inside {
+      print $0
+      n = gsub(/\{/, "&")
+      depth += n
+      n = gsub(/\}/, "&")
+      depth -= n
+      if (depth == 0 && /[\}]/) {
+        exit
+      }
+    }
+  ' "$file" \
+    | grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe)|leak_alloc_track\(" \
+    || true
+}
+
+INSERTED_IN_FN=0
+if [[ -n "$TARGET_FN" ]]; then
+  INSERTED_IN_FN=$(count_insertions_in_function "$WORK/inst.c" "$TARGET_FN")
+  INSERTED_IN_FN=${INSERTED_IN_FN:-0}
+fi
+
+# Fallback pass: when cocci produced zero insertions for the
+# target function AND the caller specified --target-function,
+# run the manual per-return instrumenter.  This unblocks
+# many-returns functions where cocci's CFG analysis aborts.
+if [[ -n "$TARGET_FN" && "$INSERTED_IN_FN" == "0" ]]; then
+  FALLBACK_SHAPES=()
+  for s in "${SHAPES[@]}"; do
+    case "$s" in
+      resource_leak_on_error_path|use_after_free_generic)
+        FALLBACK_SHAPES+=("$s")
+        ;;
+    esac
+  done
+  if [[ ${#FALLBACK_SHAPES[@]} -gt 0 ]]; then
+    SHAPE_ARGS=()
+    for s in "${FALLBACK_SHAPES[@]}"; do
+      SHAPE_ARGS+=("--shape" "$s")
+    done
+    if python3 "$SCRIPT_DIR/instrument-fallback.py" \
+         "$WORK/inst.c" "$WORK/inst-fb.c" \
+         --function "$TARGET_FN" \
+         "${SHAPE_ARGS[@]}" 2>"$WORK/fb.err"; then
+      mv "$WORK/inst-fb.c" "$WORK/inst.c"
+      INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe)|leak_alloc_track\(" \
+        "$WORK/inst.c" 2>/dev/null || true)
+      INSERTED=${INSERTED:-0}
+      INSERTED_IN_FN=$(count_insertions_in_function "$WORK/inst.c" "$TARGET_FN")
+      INSERTED_IN_FN=${INSERTED_IN_FN:-0}
+      if [[ "$INSERTED_IN_FN" != "0" ]]; then
+        echo "  fallback used: cocci produced 0 insertions in $TARGET_FN; per-return fallback added $INSERTED_IN_FN" >&2
+      fi
+    fi
+  fi
+fi
 
 # Prepend header and write output.
 {

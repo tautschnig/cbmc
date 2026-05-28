@@ -288,6 +288,7 @@ if [[ -n "${INSTRUMENT:-}" ]]; then
     all|cocci)
       "$SCRIPT_DIR/tools/instrument-cocci.sh" \
         "$FULL_KERNEL_FILE" "$INSTR_TU" \
+        --target-function "$TARGET_FUNC" \
         2> "$tmp/instr.err" || {
           echo "  FAIL: instrument-cocci.sh returned $?" >&2
           tail -5 "$tmp/instr.err" >&2
@@ -298,6 +299,7 @@ if [[ -n "${INSTRUMENT:-}" ]]; then
       "$SCRIPT_DIR/tools/instrument-cocci.sh" \
         "$FULL_KERNEL_FILE" "$INSTR_TU" \
         --shapes "$INSTRUMENT" \
+        --target-function "$TARGET_FUNC" \
         2> "$tmp/instr.err" || {
           echo "  FAIL: instrument-cocci.sh returned $?" >&2
           tail -5 "$tmp/instr.err" >&2

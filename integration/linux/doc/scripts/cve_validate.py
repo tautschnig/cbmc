@@ -1008,7 +1008,7 @@ def main() -> int:
     print(f"\nResults CSV: {args.out_csv}")
 
     # Per-category summary.
-    print("\n=== Per-category detection summary ===")
+    print("\n=== Per-category detection summary (per row) ===")
     by_cat: dict[str, dict[str, int]] = {}
     for c in cases:
         by_cat.setdefault(c.category, {}).setdefault(c.verdict, 0)
@@ -1025,6 +1025,62 @@ def main() -> int:
               f"{d.get('noise',0):5d} "
               f"{d.get('error',0):5d} "
               f"{d.get('skipped',0)+d.get('timeout',0):5d}")
+
+    # Per-CVE best-verdict aggregation.  When --modules-per-cve > 1
+    # the validator scans each candidate module independently; the
+    # per-row table above counts each scan separately.  This block
+    # picks the most-bug-finding verdict for each CVE so the
+    # detection summary reflects "did the catalog catch this CVE
+    # on ANY tried module" rather than "on every tried module".
+    BEST_ORDER = ["candidate", "fp-filtered", "noise",
+                  "successful", "vacuous", "timeout",
+                  "error", "skipped"]
+    rank = {v: i for i, v in enumerate(BEST_ORDER)}
+    per_cve_best: dict[str, CveCase] = {}
+    for c in cases:
+        cur = per_cve_best.get(c.cve)
+        if (cur is None
+                or rank.get(c.verdict, len(BEST_ORDER))
+                < rank.get(cur.verdict, len(BEST_ORDER))):
+            per_cve_best[c.cve] = c
+
+    print("\n=== Per-CVE best verdict aggregation ===")
+    by_cve_cat: dict[str, dict[str, int]] = {}
+    for c in per_cve_best.values():
+        by_cve_cat.setdefault(c.category, {}).setdefault(c.verdict, 0)
+        by_cve_cat[c.category][c.verdict] = by_cve_cat[c.category].get(c.verdict, 0) + 1
+    print(f"  {'category':<22} {'cand':>5} {'fp':>5} "
+          f"{'succ':>5} {'vac':>5} {'noise':>5} "
+          f"{'err':>5} {'skip':>5}")
+    for cat in sorted(by_cve_cat):
+        d = by_cve_cat[cat]
+        print(f"  {cat:<22} {d.get('candidate',0):5d} "
+              f"{d.get('fp-filtered',0):5d} "
+              f"{d.get('successful',0):5d} "
+              f"{d.get('vacuous',0):5d} "
+              f"{d.get('noise',0):5d} "
+              f"{d.get('error',0):5d} "
+              f"{d.get('skipped',0)+d.get('timeout',0):5d}")
+    # Cleanly-testable subset across the per-CVE-best aggregation.
+    clean_states = ("upstream_vuln", "already_vuln", "reverted")
+    clean_cves = [c for c in per_cve_best.values()
+                  if any(f"state={s}" in c.note for s in clean_states)]
+    print(f"\n=== Cleanly-testable per-CVE summary "
+          f"(n={len(clean_cves)} unique CVEs) ===")
+    detected = [c for c in clean_cves if c.verdict == "candidate"]
+    fp_filt = [c for c in clean_cves if c.verdict == "fp-filtered"]
+    missed = [c for c in clean_cves if c.verdict == "successful"]
+    print(f"  detected:    {len(detected)} -- "
+          f"{sorted(c.cve for c in detected)}")
+    print(f"  fp-filtered: {len(fp_filt)} -- "
+          f"{sorted(c.cve for c in fp_filt)}")
+    print(f"  missed:      {len(missed)} -- "
+          f"{sorted(c.cve for c in missed)}")
+    if detected or missed:
+        recall = len(detected) / max(1, len(detected) + len(missed))
+        print(f"  recall = {len(detected)}/"
+              f"({len(detected)}+{len(missed)}) = {recall:.1%}")
+
 
     # Markdown table.
     with open(args.out_md, "w") as f:

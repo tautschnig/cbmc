@@ -1170,7 +1170,14 @@ def synthesise(module: str, source: Path, function: str,
     for i, p in enumerate(sig.params):
         local = f"arg{i}"
         if "*" in p.type_text:
-            lines.append(f"  static char {local}_backing[1024];")
+            # Use a stack-local (non-static) buffer so CBMC
+            # treats its contents as nondet.  The kernel
+            # function under test will then explore both
+            # success and error paths through field reads.
+            # (Static buffers are zero-initialised in C, so
+            # CBMC would only see all-zero inputs and miss
+            # the alloc-success path.)
+            lines.append(f"  char {local}_backing[1024];")
             lines.append(f"  {p.type_text} {local} = "
                          f"({p.type_text}){local}_backing;")
             if is_ghost_tracked(module, p.type_text):
