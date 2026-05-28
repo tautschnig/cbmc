@@ -2199,9 +2199,9 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
         return python_dict_type(key_t, val_t);
       return python_int_type();
     }
-    if(base == "tuple")
+    if(base == "tuple" || base == "Tuple")
     {
-      // tuple[int, int] → struct with _0, _1, ... components
+      // tuple[int, int] / Tuple[int, int] → struct with _0, _1, ... components
       const jsont &slice = json_member(annotation, "slice");
       struct_typet::componentst comps;
       if(is_node_type(slice, "Tuple"))
