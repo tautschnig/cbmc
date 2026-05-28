@@ -72,6 +72,23 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       symbol_exprt snap = symbol_table.lookup_ref(tmpid).symbol_expr();
       pending_checks.push_back(code_frontend_assignt{snap, right});
+      // Propagate string_constants tracking from the source
+      // expression to the snap, so the next iteration's
+      // constant-fold compare can still see the underlying
+      // literal.
+      if(is_python_string_type(right.type()))
+      {
+        std::optional<std::string> rv = extract_string_value(right);
+        if(!rv.has_value() && right.id() == ID_symbol)
+        {
+          auto it =
+            string_constants.find(to_symbol_expr(right).get_identifier());
+          if(it != string_constants.end())
+            rv = it->second;
+        }
+        if(rv.has_value())
+          string_constants[snap.get_identifier()] = rv.value();
+      }
       right = snap;
     }
 
