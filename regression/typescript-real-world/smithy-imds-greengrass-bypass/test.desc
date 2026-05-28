@@ -1,0 +1,13 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*allowlist.*FAILURE$
+--
+--
+Real-world finding: @smithy/credential-provider-imds GREENGRASS_HOSTS
+allowlist bypass via prototype chain (the `in` operator includes
+inherited properties like "constructor"). See
+doc/security-findings/02.
