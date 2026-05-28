@@ -993,12 +993,12 @@ analyses don't need the overflow detection here.
 This eliminates the symex_assign abort but unmasks a
 separate CBMC bug (LIM-018 below).
 
-## LIM-018 — CBMC bv_pointers map-entry width mismatch on linked kernel TUs — **WORKAROUND APPLIED**
+## LIM-018 — CBMC bv_pointers map-entry width mismatch on linked kernel TUs — **FIXED IN CBMC**
 
 **First hit:** same path as LIM-017, on the same file
 after LIM-017 was worked around.
 
-CBMC's bit-blasting front-end aborts with:
+CBMC's bit-blasting front-end aborted with:
 
 ```
 Invariant check failed
@@ -1009,40 +1009,43 @@ Reason: number of literals in the literal map shall equal the bitvector width
 
 **Root cause.** The kernel's `<linux/ctype.h>` declares
 `extern const unsigned char _ctype[]` — an INCOMPLETE array
-type with no specified size.  When CBMC's bv-pointers
-encounters `_ctype[i]`, it caches the symbol `_ctype` with
-width = 8 (one byte, the element size).  On a subsequent
-reference (after some intervening operation) it computes
-`width = element_count × element_width = 0 × 8 = 0` because
-the array's element-count for an incomplete declaration is
-0.  The boolbv_map then aborts on the size mismatch
-between the cached 8 and the requested 0.
+type with no specified size.  `boolbv_index.cpp` had two
+call sites that registered the array symbol with
+`array_width_opt.value_or(0)` — passing 0 as the width when
+the array's element-count is unknown.  When the same symbol
+was later (or earlier) referenced via its element-typed
+access path (e.g. `_ctype[i]` returns a `const unsigned char`
+of width 8), the cached width=8 disagreed with the
+later/earlier registration at width=0, tripping the
+invariant.
 
-The kernel's actual `_ctype` definition (in `lib/ctype.c`)
-has 256 entries, so the runtime semantics are fine — only
-CBMC's own type-system handling of incomplete extern arrays
-is broken here.
+**Upstream fix.** In `src/solvers/flattening/boolbv_index.cpp`,
+guard both `map.get_literals` calls behind
+`array_width_opt.has_value()` — when the width is unknown,
+skip the registration entirely.  The array decision
+procedure handles unbounded arrays by another code path,
+so no flattening is needed.
 
-**Workaround.** Override `__ismask(x)` in scan-compat.h to
-NOT reference `_ctype[i]` at all.  All the `is*()` macros
-(`isalpha`, `isspace`, `isalnum`, etc.) expand to
-`__ismask(c)`, so the override propagates cleanly.  The
-substitute returns `(unsigned char)(x)` — sound under our
-usual scan interpretation since the leak / null-deref /
-refcount analyses don't depend on character class.
+Regression test: `regression/cbmc/incomplete_extern_array1/`.
 
-**Verification.** With the workaround, `lib/argv_split.c`
-runs to completion.  The previously-aborting case
-`/tmp/argv-keep2/argv_split.instr.gb` now produces a
-verdict.
+**Verification.**
 
-**Why the workaround is sound.** The `is*()` family of
-character classifiers is used in kernel TUs purely for
-input parsing — the semantics of leak / refcount / lock
-properties don't depend on whether a particular byte is
-classified as space-or-not.  Over-approximating
-`__ismask(x)` to a nondet-of-(unsigned char)x yields a more
-permissive harness that still preserves the property
-under analysis.
+  - Minimal C reproducer:
+    ```c
+    extern const unsigned char _ctype[];
+    int main(void) {
+        int c = nondet_int();
+        if (c >= 0 && c < 128)
+          return _ctype[c] + _ctype[c + 1];
+        return 0;
+    }
+    ```
+    Previously aborted; now produces `VERIFICATION SUCCESSFUL`.
+  - `lib/argv_split.c::argv_split` (the LIM-018 reproducer):
+    runs to completion without the scan-compat.h `__ismask`
+    override (which is now unneeded and has been removed).
+  - All `scan/run.sh` regressions pass.
+  - `regression/cbmc` test `incomplete_extern_array1`
+    documents the fix.
 
 
