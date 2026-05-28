@@ -140,7 +140,8 @@ class optionst;
 
 #define GOTO_ANALYSER_OPTIONS_OUTPUT \
   "(json):(xml):" \
-  "(text):(dot):"
+  "(text):(dot):" \
+  "(write-goto-binary):"
 
 #define GOTO_ANALYSER_OPTIONS_SPECIFIC_ANALYSES \
   "(taint):(show-taint)" \

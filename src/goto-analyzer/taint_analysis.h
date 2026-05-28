@@ -23,6 +23,7 @@ bool taint_analysis(
   const std::string &taint_file_name,
   message_handlert &,
   bool show_full,
-  const std::optional<std::string> &json_output_file_name = {});
+  const std::optional<std::string> &json_output_file_name = {},
+  bool lower_for_external_verification = false);
 
 #endif // CPROVER_GOTO_ANALYZER_TAINT_ANALYSIS_H

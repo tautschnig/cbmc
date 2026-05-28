@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+^.*untrusted input reaches eval-like sink: FAILURE$
+--
+--
+End-to-end taint-flow integration test: cbmc → goto-analyzer →
+cbmc pipeline. Untrusted input flows from source to sink without
+a sanitizer; the inserted assertion fails.

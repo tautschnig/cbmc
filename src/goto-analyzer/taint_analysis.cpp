@@ -44,6 +44,13 @@ public:
     bool show_full,
     const std::optional<std::string> &json_file_name);
 
+  /// If true, after the taint analysis runs, replace get_may / set_may
+  /// / clear_may instrumentation with concrete equivalents (boolean
+  /// constants in assertions; SKIP elsewhere) so that the resulting
+  /// goto-program can be verified by tools that do not handle the
+  /// instrumentation directly.
+  bool lower_for_external_verification = false;
+
 protected:
   messaget log;
   taint_parse_treet taint;
@@ -379,6 +386,61 @@ bool taint_analysist::operator()(
       }
     }
 
+    if(lower_for_external_verification)
+    {
+      // Lower the taint instrumentation so the goto-program can be
+      // verified by an external tool (e.g. CBMC) that does not
+      // know about set_may / get_may / clear_may operations.
+      // Strategy:
+      //  - Replace get_may/get_must in assertion conditions with
+      //    the concrete boolean computed by the data-flow analysis
+      //    (after simplify_expr).
+      //  - Replace set_may / clear_may / set_must / clear_must
+      //    'other' instructions with SKIP (they are no-ops once
+      //    the assertions have been resolved).
+      log.status() << "Lowering taint instrumentation for external "
+                      "verification"
+                   << messaget::eom;
+      for(auto &gf_entry : goto_functions.function_map)
+      {
+        auto &body = gf_entry.second.body;
+        for(auto i_it = body.instructions.begin();
+            i_it != body.instructions.end();
+            ++i_it)
+        {
+          if(i_it->is_other())
+          {
+            const auto &code = i_it->get_other();
+            const auto stmt = code.get_statement();
+            if(
+              stmt == ID_set_may || stmt == ID_clear_may ||
+              stmt == ID_set_must || stmt == ID_clear_must)
+            {
+              i_it->turn_into_skip();
+            }
+          }
+          else if(i_it->is_assert())
+          {
+            if(custom_bitvector_domaint::has_get_must_or_may(i_it->condition()))
+            {
+              if(custom_bitvector_analysis[i_it].has_values.is_false())
+              {
+                // Unreachable per analysis — assertion vacuously
+                // true.
+                i_it->condition_nonconst() = true_exprt();
+                continue;
+              }
+              exprt result =
+                custom_bitvector_analysis.eval(i_it->condition(), i_it);
+              result = simplify_expr(std::move(result), ns);
+              i_it->condition_nonconst() = result;
+            }
+          }
+        }
+      }
+      goto_functions.update();
+    }
+
     if(use_json)
     {
       std::ofstream json_out(json_file_name.value());
@@ -421,9 +483,12 @@ bool taint_analysis(
   const std::string &taint_file_name,
   message_handlert &message_handler,
   bool show_full,
-  const std::optional<std::string> &json_file_name)
+  const std::optional<std::string> &json_file_name,
+  bool lower_for_external_verification)
 {
   taint_analysist taint_analysis(message_handler);
+  taint_analysis.lower_for_external_verification =
+    lower_for_external_verification;
   return taint_analysis(
     taint_file_name,
     goto_model.symbol_table,

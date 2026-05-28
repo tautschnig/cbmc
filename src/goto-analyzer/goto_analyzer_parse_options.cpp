@@ -23,6 +23,7 @@ Author: Daniel Kroening, kroening@kroening.com
 #include <goto-programs/set_properties.h>
 #include <goto-programs/show_properties.h>
 #include <goto-programs/show_symbol_table.h>
+#include <goto-programs/write_goto_binary.h>
 
 #include <analyses/ai.h>
 #include <analyses/local_bitvector_analysis.h>
@@ -474,13 +475,48 @@ int goto_analyzer_parse_optionst::perform_analysis(const optionst &options)
     if(cmdline.isset("show-taint"))
     {
       taint_analysis(goto_model, taint_file, ui_message_handler, true);
+      // Optionally persist the (instrumented) goto-program.
+      if(cmdline.isset("write-goto-binary"))
+      {
+        const std::string out_file = cmdline.get_value("write-goto-binary");
+        if(write_goto_binary(out_file, goto_model, ui_message_handler))
+        {
+          log.error() << "Failed to write goto binary '" << out_file << "'"
+                      << messaget::eom;
+          return CPROVER_EXIT_INTERNAL_ERROR;
+        }
+        log.status() << "Wrote instrumented goto-program to " << out_file
+                     << messaget::eom;
+      }
       return CPROVER_EXIT_SUCCESS;
     }
     else
     {
       std::string json_file=cmdline.get_value("json");
+      // If we're going to write the goto-binary for external
+      // verification (e.g. by CBMC), lower the taint instrumentation
+      // to plain assertions / SKIPs.
+      const bool lower_for_external = cmdline.isset("write-goto-binary");
       bool result = taint_analysis(
-        goto_model, taint_file, ui_message_handler, false, json_file);
+        goto_model,
+        taint_file,
+        ui_message_handler,
+        false,
+        json_file,
+        lower_for_external);
+      // Optionally persist the (lowered) goto-program.
+      if(cmdline.isset("write-goto-binary"))
+      {
+        const std::string out_file = cmdline.get_value("write-goto-binary");
+        if(write_goto_binary(out_file, goto_model, ui_message_handler))
+        {
+          log.error() << "Failed to write goto binary '" << out_file << "'"
+                      << messaget::eom;
+          return CPROVER_EXIT_INTERNAL_ERROR;
+        }
+        log.status() << "Wrote instrumented goto-program to " << out_file
+                     << messaget::eom;
+      }
       return result ? CPROVER_EXIT_VERIFICATION_UNSAFE : CPROVER_EXIT_SUCCESS;
     }
   }
@@ -825,6 +861,8 @@ void goto_analyzer_parse_optionst::help()
     " {y--taint} {ufile_name} \t perform taint analysis using rules in given"
     " file\n"
     " {y--show-taint} \t print taint analysis results on stdout\n"
+    " {y--write-goto-binary} {ufile_name} \t after the analysis, write the"
+    " (possibly instrumented) goto-program to the given file\n"
     " {y--show-local-bitvector} \t perform procedure-local bitvector analysis\n"
     " {y--show-local-may-alias} \t perform procedure-local may alias analysis\n"
     "\n"

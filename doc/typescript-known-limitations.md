@@ -349,6 +349,39 @@ been pushed upstream (deliberately; we accumulate on this branch).
 this branch. To be filed separately as upstream PRs when this branch
 stabilises.
 
+### 3.4 Taint analysis is pointer-typed only
+
+**What**: The existing `custom_bitvector_analysis` (used by
+`goto-analyzer --taint`) tracks taint state on pointer-typed values.
+Our TypeScript values (string struct, array struct, generic structs)
+are value types, so the analysis cannot precisely track taint
+through them. The result is an over-approximation: any value that
+could syntactically reach a sink is reported as potentially tainted,
+even when no source actually fed it.
+
+**Where**: `src/analyses/custom_bitvector_analysis.cpp` — the
+transfer functions check `lhs.type().id() == ID_pointer` before
+updating the taint state.
+
+**Implication**: The taint-flow workflow
+(`cbmc --export-symex-ready-goto` → `goto-analyzer --taint
+--write-goto-binary` → `cbmc`) is sound (no real taint flow is
+missed) but imprecise (false positives are common). The flow is
+useful as a coarse triage: if the workflow reports VERIFICATION
+SUCCESSFUL, no source-to-sink path exists; if it reports
+VERIFICATION FAILED, manual review or a more precise tool is needed.
+
+**Path to better precision**: extend
+`custom_bitvector_analysist::eval` and the transfer functions to
+handle non-pointer values, or wrap TS values in pointer-typed
+shadow variables in the frontend. Both are non-trivial; the
+contract-style primitives (Phases 1-6) avoid this issue by checking
+properties at specific points rather than tracking taint through
+the whole program.
+
+**Tracking**: `regression/typescript-taint/flow-tainted/`
+demonstrates the working positive case.
+
 ---
 
 ## 4. UX / ergonomics
