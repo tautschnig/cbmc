@@ -399,17 +399,16 @@ exprt python_convertert::convert_subscript(const jsont &expr)
 
     member_exprt length{value, "length", signedbv_typet{64}};
 
-    // Check for step=-1 (reverse)
+    // Check for step=-1 (reverse). Use try_eval_double to fold
+    // through UnaryOp(USub, Constant(1)) — the AST shape for
+    // -1 in slice steps.
     bool is_reverse = false;
     if(!step_json.is_null())
     {
       exprt step = convert_expression(step_json);
-      if(step.is_constant())
-      {
-        mp_integer step_val;
-        if(!to_integer(to_constant_expr(step), step_val) && step_val == -1)
-          is_reverse = true;
-      }
+      auto step_d = try_eval_double(step);
+      if(step_d.has_value() && *step_d == -1.0)
+        is_reverse = true;
     }
 
     // Constant-string optimization for slicing
@@ -443,6 +442,17 @@ exprt python_convertert::convert_subscript(const jsont &expr)
               ? len
               : static_cast<int>(try_eval_double(convert_expression(upper_json))
                                    .value_or(len));
+          // PLR §6.3.3: optional step. The is_reverse branch
+          // above handles step=-1; here we handle other
+          // constant steps (positive only — negative-step !=
+          // -1 is rare and would need a different traversal).
+          int step = 1;
+          if(!step_json.is_null())
+          {
+            auto sv_step = try_eval_double(convert_expression(step_json));
+            if(sv_step.has_value())
+              step = static_cast<int>(*sv_step);
+          }
           if(lo < 0)
             lo += len;
           if(hi < 0)
@@ -451,9 +461,21 @@ exprt python_convertert::convert_subscript(const jsont &expr)
             lo = 0;
           if(hi > len)
             hi = len;
-          if(lo >= hi)
+          if(lo >= hi || step == 0)
             return python_string_literal("");
-          return python_string_literal(s.substr(lo, hi - lo));
+          if(step > 0)
+          {
+            std::string r;
+            for(int i = lo; i < hi; i += step)
+              r += s[i];
+            return python_string_literal(r);
+          }
+          // step < 0 (and not -1): walk in reverse with stride.
+          std::string r;
+          int start = hi - 1;
+          for(int i = start; i >= lo; i += step)
+            r += s[i];
+          return python_string_literal(r);
         }
       }
       // Non-constant string: return nondet
