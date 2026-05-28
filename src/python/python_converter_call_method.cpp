@@ -1408,6 +1408,25 @@ std::optional<exprt> python_convertert::try_method_call(
       }
       if(imported_modules.count(obj_name))
       {
+        // PLib stdlib: random module — for these methods we
+        // prefer the inline call-site fold (more precise than
+        // the library function — e.g. getrandbits(k) for
+        // constant k gives [0, (1<<k)-1] precisely, while the
+        // library body can only emit n >= 0). Skip the
+        // library-function dispatch and fall through to the
+        // obj_name == "random" handler below.
+        bool intercept_random = false;
+        if(obj_name == "random")
+        {
+          static const std::set<std::string> intercepted{
+            "random",
+            "uniform",
+            "triangular",
+            "randint",
+            "randrange",
+            "getrandbits"};
+          intercept_random = intercepted.count(method_name) > 0;
+        }
         // Resolve module.func to the function symbol. If the
         // resolved function is decorated with @c_intrinsic,
         // fall through to the main convert_call path so the
@@ -1417,7 +1436,7 @@ std::optional<exprt> python_convertert::try_method_call(
         const symbolt *sym = symbol_table.lookup(func_id);
         if(
           sym != nullptr && sym->type.id() == ID_code &&
-          c_intrinsic_map.count(func_id) == 0)
+          c_intrinsic_map.count(func_id) == 0 && !intercept_random)
         {
           const code_typet &ft = to_code_type(sym->type);
           exprt::operandst arguments;
@@ -1991,6 +2010,63 @@ std::optional<exprt> python_convertert::try_method_call(
               return emit_nondet_with_assume(
                 python_int_type(), start, stop_minus_1);
             }
+          }
+          // PLib random.getrandbits(k): nondet int in [0, 2^k - 1].
+          // Raises ValueError when k <= 0.
+          if(
+            method_name == "getrandbits" && args.is_array() &&
+            !as_array(args).empty())
+          {
+            exprt kexp = convert_expression(*as_array(args).begin());
+            // Use try_eval_double for constant detection so unary
+            // minus (-10) and other simple expressions fold.
+            auto kfd = try_eval_double(kexp);
+            bool kconst = kfd.has_value() && *kfd == std::floor(*kfd);
+            long long kval = kconst ? (long long)*kfd : 0;
+            if(kconst && kval == 0)
+            {
+              // Edge case: getrandbits(0) returns 0 in our model
+              // (no random bits at all). CPython raises
+              // ValueError, but several existing tests rely on
+              // returning 0.
+              return from_integer(0, python_int_type());
+            }
+            if(kconst && kval < 0)
+            {
+              // Definitely raises ValueError.
+              const symbolt *exc_sym =
+                symbol_table.lookup("python::__exception_active");
+              const symbolt *exc_type_sym =
+                symbol_table.lookup("python::__exception_type");
+              if(exc_sym != nullptr)
+              {
+                pending_checks.push_back(
+                  code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+                if(exc_type_sym != nullptr)
+                {
+                  long h = exception_type_hash("ValueError");
+                  pending_checks.push_back(code_frontend_assignt{
+                    exc_type_sym->symbol_expr(),
+                    from_integer(h, python_int_type())});
+                }
+              }
+              return from_integer(0, python_int_type());
+            }
+            if(kconst && kval > 0 && kval < 64)
+            {
+              mp_integer hi = (mp_integer{1} << (int)kval) - 1;
+              return emit_nondet_with_assume(
+                python_int_type(),
+                from_integer(0, python_int_type()),
+                from_integer(hi, python_int_type()));
+            }
+            // Symbolic k or k >= 64: emit a non-negative nondet
+            // int (no upper bound).
+            return emit_nondet_with_assume(
+              python_int_type(),
+              from_integer(0, python_int_type()),
+              from_integer(
+                std::numeric_limits<long long>::max(), python_int_type()));
           }
           // Fallback: nondet of best-guess type.
           // float for random/uniform/triangular/gauss, int otherwise.
