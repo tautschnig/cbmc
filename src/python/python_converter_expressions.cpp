@@ -775,6 +775,26 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // Tuple indexing with constant index
   if(is_python_tuple_type(value.type()))
   {
+    // Try to fold the index, including unary-minus over a constant.
+    auto fv = try_eval_double(slice);
+    if(fv.has_value() && *fv == std::floor(*fv))
+    {
+      mp_integer idx{(long long)*fv};
+      const auto &st = to_struct_type(value.type());
+      // Compute tuple length from struct components (named _0, _1...).
+      std::size_t tup_len = 0;
+      for(const auto &c : st.components())
+      {
+        std::string n = id2string(c.get_name());
+        if(n.size() > 1 && n[0] == '_' && std::isdigit((unsigned char)n[1]))
+          tup_len++;
+      }
+      if(idx < 0)
+        idx += mp_integer{(long long)tup_len};
+      std::string field = "_" + integer2string(idx);
+      if(st.has_component(field))
+        return member_exprt{value, field, st.get_component(field).type()};
+    }
     if(slice.is_constant())
     {
       mp_integer idx;
