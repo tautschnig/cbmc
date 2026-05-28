@@ -741,12 +741,45 @@ codet python_convertert::convert_try(const jsont &stmt)
         std::string htype = json_string(json_member(handler_type, "id"));
         if(htype != "Exception" && htype != "BaseException" && !htype.empty())
         {
-          long type_hash = exception_type_hash(htype);
-          condition = and_exprt{
-            condition,
-            equal_exprt{
-              exc_type_sym->symbol_expr(),
-              from_integer(type_hash, python_int_type())}};
+          // PLR §8.4: handler matches the named class and any
+          // of its subclasses. Build the set of matching
+          // hashes from a builtin-hierarchy table plus any
+          // user-defined classes whose MRO includes htype.
+          static const std::map<std::string, std::vector<std::string>>
+            builtin_subclasses = {
+              {"OSError",
+               {"OSError", "FileNotFoundError", "IOError", "EOFError"}},
+              {"IOError",
+               {"IOError", "OSError", "FileNotFoundError", "EOFError"}},
+              {"ArithmeticError", {"ArithmeticError", "ZeroDivisionError"}},
+              {"LookupError", {"LookupError", "KeyError", "IndexError"}},
+              {"ValueError", {"ValueError", "UnicodeError"}},
+              {"RuntimeError", {"RuntimeError", "NotImplementedError"}},
+            };
+          std::vector<std::string> match_types{htype};
+          auto sit = builtin_subclasses.find(htype);
+          if(sit != builtin_subclasses.end())
+            match_types = sit->second;
+          // User-defined exception classes whose MRO includes
+          // htype: register them as matching too.
+          for(const auto &p : class_mro)
+            for(const auto &mro_cls : p.second)
+              if(mro_cls == htype)
+              {
+                match_types.push_back(p.first);
+                break;
+              }
+          exprt any_match = false_exprt{};
+          for(const auto &mt : match_types)
+          {
+            long type_hash = exception_type_hash(mt);
+            any_match = or_exprt{
+              any_match,
+              equal_exprt{
+                exc_type_sym->symbol_expr(),
+                from_integer(type_hash, python_int_type())}};
+          }
+          condition = and_exprt{condition, any_match};
         }
       }
       else if(
