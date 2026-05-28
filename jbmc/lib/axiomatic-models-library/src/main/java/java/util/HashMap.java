@@ -41,6 +41,9 @@
  */
 package java.util;
 
+import org.cprover.AxiomaticEntrySetView;
+import org.cprover.AxiomaticKeySetView;
+import org.cprover.AxiomaticValuesView;
 import org.cprover.CProver;
 
 public class HashMap<K, V> implements Map<K, V> {
@@ -200,27 +203,24 @@ public class HashMap<K, V> implements Map<K, V> {
 
     @Override
     public Set<K> keySet() {
-        // Axiomatic encoding has no key list; iteration is
-        // not supported. Throwing forces JBMC to surface the
-        // limitation as a counterexample rather than silently
-        // killing the path via the auto-injected
-        //   ASSERT(it != null); ASSUME(it != null)
-        // pattern around hasNext() (which would prove the
-        // calling lemma vacuously).
-        throw new UnsupportedOperationException(
-                "axiomatic HashMap.keySet() not supported");
+        // The skolemizing iterator yields fresh nondet keys
+        // constrained to be in the map. We wrap it in a
+        // ghost HashSet view; the only useful method on the
+        // returned Set is iterator(), which delegates here.
+        // If a user code touches other Set methods, they get
+        // the axiomatic HashSet's behaviour applied to a
+        // separate ghost set with no contents.
+        return new AxiomaticKeySetView<K>(this);
     }
 
     @Override
     public Collection<V> values() {
-        throw new UnsupportedOperationException(
-                "axiomatic HashMap.values() not supported");
+        return new AxiomaticValuesView<V>(this);
     }
 
     @Override
     public Set<Map.Entry<K, V>> entrySet() {
-        throw new UnsupportedOperationException(
-                "axiomatic HashMap.entrySet() not supported");
+        return new AxiomaticEntrySetView<K, V>(this);
     }
 
     @Override

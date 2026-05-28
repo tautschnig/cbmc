@@ -21,6 +21,7 @@
  */
 package java.util;
 
+import org.cprover.AxiomaticSetIterator;
 import org.cprover.CProver;
 
 public class HashSet<E> extends AbstractSet<E>
@@ -143,15 +144,13 @@ public class HashSet<E> extends AbstractSet<E>
 
     @Override
     public Iterator<E> iterator() {
-        // Axiomatic encoding has no element list; iteration
-        // is not supported. Throwing forces JBMC to surface
-        // the limitation as a counterexample rather than
-        // silently killing the path via the auto-injected
-        //   ASSERT(it != null); ASSUME(it != null)
-        // pattern around hasNext() (which would prove the
-        // calling lemma vacuously — see VacuityTest).
-        throw new UnsupportedOperationException(
-                "axiomatic HashSet.iterator() not supported");
+        // Skolemizing iterator: hasNext() returns nondet,
+        // next() returns a nondet element constrained to be
+        // in this set (`set.contains(elem)`). JBMC's BMC
+        // explores all loop iteration counts up to the unwind
+        // bound; the loop body must hold for every consistent
+        // element the set contains.
+        return new AxiomaticSetIterator<E>(this);
     }
 
     @Override

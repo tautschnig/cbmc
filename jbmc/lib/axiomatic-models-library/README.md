@@ -42,32 +42,49 @@ support it (`--smt2 --z3`, `--cvc5`).
 
 ## Limitations
 
-1. **Boxed-primitive keys (Integer, Long, etc.) are unsound**:
-   the lowering pass uses pointer-identity to pack the
-   (receiver, key) tuple into a 64-bit array index. Java's
-   `Integer.valueOf(n)` is modelled by JBMC's core-models
-   library as `return new Integer(n)` (no cache), so two calls
-   with the same int value produce DIFFERENT pointers. The
-   axiomatic encoding sees them as DIFFERENT keys, breaking
-   `m.put(k, v); m.get(k)` round-trips when the boxing happens
-   at distinct call sites. Lemmas with `Map<Integer, ...>` or
-   `Set<Integer>` will produce spurious counterexamples.
+1. **Boxed-primitive keys (Integer, Long, etc.) use
+   value-semantic packing**: the lowering pass detects the
+   autobox pattern
+   `cast(address_of(*<sym>.@Number.@Object), Object*)` and
+   reads `(*<sym>).value` (the primitive int / long / etc.
+   field) instead of the pointer offset to pack the
+   (receiver, key) tuple. This makes
+   `m.put(5, v); m.get(5)` round-trip correctly even though
+   JBMC's `Integer.valueOf(n)` model returns a fresh
+   allocation each call. Recognises Integer, Long, Short,
+   Byte, Character, Boolean.
 
-   **Future work**: special-case boxed-primitive keys in the
-   lowering pass — read `key.@Number.value` instead of using
-   `pointer_offset(key)` to pack the index. This requires
-   detecting the static class of the key argument at goto time.
+2. **Iteration is supported via skolemizing iterators**:
+   `keySet()`, `values()`, `entrySet()`, `Set.iterator()`
+   return AxiomaticSetIterator / AxiomaticEntryIterator /
+   AxiomaticKeySetView / AxiomaticValuesView / AxiomaticEntrySetView
+   instances whose `hasNext()` returns nondet bool and whose
+   `next()` returns a fresh nondet element constrained to be
+   in the underlying collection (`map.containsKey(key)` /
+   `set.contains(elem)`). JBMC's BMC then explores all loop
+   iteration counts up to the unwind bound; the loop body
+   must hold for every consistent element.
 
-2. **Iteration is not supported**: `keySet()`, `values()`,
-   `entrySet()`, `Set.iterator()` all `throw new
-   UnsupportedOperationException(...)` rather than returning
-   a stub. Returning null silently kills paths via JBMC's
-   auto-injected `ASSERT(it != null); ASSUME(it != null)`
-   pattern around `hasNext()`, which would prove iterating
-   lemmas vacuously (see VacuityTest in
-   /tmp/axiomatic-test/).
+   This is sound but expensive: each iteration introduces a
+   nondet key constrained by an axiomatic-encoded
+   `containsKey` lookup, which the SAT solver expands to one
+   array select per iteration. Lemmas with multiple nested
+   iterations (e.g. FormulaSpec.satUnsatExclusive) often
+   exceed JBMC's time budget at corpus-default unwind=10.
 
-3. **Hash collisions**: keys with `k1.hashCode() == k2.hashCode() (mod CAPACITY)`
+3. **`size()` is over-approximate for fresh allocations**:
+   `m = new HashMap<>(); m.put(k, v)` increments
+   `_sz[receiver]` only if `_kv[pack(receiver, k)]` was
+   `null` before the put. The global `_kv` is NOT initialised
+   at `__CPROVER_initialize` (deliberately, so that input
+   parameter Maps can have nondet contents), so for a fresh
+   allocation the slot's prior value is nondet and the
+   increment may or may not happen. As a result `m.size()`
+   after a sequence of puts is bounded above by the put count
+   but not necessarily equal to it. Lemmas relying on
+   `size()` exactness are not supported.
+
+4. **Hash collisions**: keys with `k1.hashCode() == k2.hashCode() (mod CAPACITY)`
    alias to the same slot. The model silently overwrites. For
    `Integer` keys in `[0, CAPACITY)`, no collisions occur —
    `Integer.hashCode()` is the identity, and `slot = k & MASK`
