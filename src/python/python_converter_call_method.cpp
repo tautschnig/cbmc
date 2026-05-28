@@ -567,6 +567,40 @@ std::optional<exprt> python_convertert::try_method_call(
             auto sid = to_symbol_expr(e).get_identifier();
             if(complex_literals.count(sid) > 0)
               return true;
+            // Name bound to a list literal whose elements
+            // contain a complex value.
+            auto lit = list_literals.find(sid);
+            if(
+              lit != list_literals.end() && lit->second.id() == ID_struct &&
+              lit->second.operands().size() >= 2)
+            {
+              const exprt &data = lit->second.operands()[1];
+              if(data.id() == ID_array)
+              {
+                for(const auto &elem : data.operands())
+                {
+                  if(get_tag(elem.type()) == "python_complex")
+                    return true;
+                  // python_value tagged-union with COMPLEX tag.
+                  if(
+                    is_python_value_type(elem.type()) &&
+                    elem.id() == ID_struct && !elem.operands().empty())
+                  {
+                    const exprt &tag_expr = elem.operands()[0];
+                    if(tag_expr.is_constant())
+                    {
+                      mp_integer tag_iv;
+                      if(!to_integer(to_constant_expr(tag_expr), tag_iv))
+                      {
+                        if(
+                          tag_iv == static_cast<int>(python_type_tagt::COMPLEX))
+                          return true;
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
           // Function call returning complex: lookup the callee's
           // declared return type. AST: Call → func: Name(id).
@@ -611,24 +645,56 @@ std::optional<exprt> python_convertert::try_method_call(
             {
               const jsont &arg = json_member(k, "arg");
               const jsont &val = json_member(k, "value");
-              if(arg.is_null() && is_node_type(val, "Name"))
+              if(arg.is_null())
               {
-                // Dict-unpack: look up the bound dict's values.
-                // Dict literal is stored as struct
-                // {length, keys_array, values_array}.
-                std::string nm = json_string(json_member(val, "id"));
-                irep_idt sid{qualify_name(nm)};
-                auto it = dict_literals.find(sid);
-                if(
-                  it != dict_literals.end() && it->second.id() == ID_struct &&
-                  it->second.operands().size() >= 3)
+                // Dict-unpack via Name (`**kw`) or direct dict
+                // literal (`**{...}`).
+                exprt resolved;
+                bool resolved_ok = false;
+                if(is_node_type(val, "Name"))
                 {
-                  const exprt &vals_arr = it->second.operands()[2];
+                  std::string nm = json_string(json_member(val, "id"));
+                  irep_idt sid{qualify_name(nm)};
+                  // Walk alias chain through dict_literals so
+                  // `kw_alias = kw_base` cases resolve.
+                  std::set<irep_idt> seen;
+                  while(seen.insert(sid).second)
+                  {
+                    auto it = dict_literals.find(sid);
+                    if(it == dict_literals.end())
+                      break;
+                    if(it->second.id() == ID_symbol)
+                    {
+                      sid = to_symbol_expr(it->second).get_identifier();
+                      continue;
+                    }
+                    resolved = it->second;
+                    resolved_ok = true;
+                    break;
+                  }
+                }
+                else if(is_node_type(val, "Dict"))
+                {
+                  // **{"x": 1.0, "y": complex(...)}: walk values
+                  // directly via the AST.
+                  const jsont &vals_arr = json_member(val, "values");
+                  if(vals_arr.is_array())
+                    for(const auto &dv : as_array(vals_arr))
+                      if(is_complex_node(dv))
+                      {
+                        any_complex = true;
+                        break;
+                      }
+                }
+                if(
+                  resolved_ok && resolved.id() == ID_struct &&
+                  resolved.operands().size() >= 3)
+                {
+                  const exprt &vals_arr = resolved.operands()[2];
                   if(vals_arr.id() == ID_array)
                   {
                     for(const auto &v : vals_arr.operands())
                     {
-                      // Direct python_complex struct.
                       if(
                         v.type().id() == ID_struct &&
                         to_struct_type(v.type()).get_tag() == "python_complex")
@@ -636,9 +702,6 @@ std::optional<exprt> python_convertert::try_method_call(
                         any_complex = true;
                         break;
                       }
-                      // python_value tagged-union with COMPLEX
-                      // tag (heterogeneous dicts whose values
-                      // include a complex literal).
                       if(
                         is_python_value_type(v.type()) && v.id() == ID_struct &&
                         !v.operands().empty())

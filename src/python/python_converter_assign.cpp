@@ -2465,6 +2465,19 @@ codet python_convertert::convert_assign(const jsont &stmt)
         else
           dict_literals.erase(sym.name);
       }
+      else if(typed_rhs.id() == ID_symbol)
+      {
+        // PLR §3.1: alias propagation for `kw_alias = kw_base`
+        // where kw_base is in dict_literals. Propagates so
+        // downstream consumers (e.g., math.X(**kw_alias)
+        // TypeError detection) can resolve the underlying dict.
+        auto rhs_id = to_symbol_expr(typed_rhs).get_identifier();
+        auto rhs_it = dict_literals.find(rhs_id);
+        if(rhs_it != dict_literals.end())
+          dict_literals[sym.name] = rhs_it->second;
+        else
+          dict_literals.erase(sym.name);
+      }
       else
         dict_literals.erase(sym.name);
     }
