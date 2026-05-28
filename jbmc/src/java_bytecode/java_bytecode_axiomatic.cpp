@@ -352,10 +352,21 @@ bool patch_return_value(
     ++next_it;
   if(next_it == body.instructions.end() || !next_it->is_assign())
     return false;
-  const exprt &rhs = next_it->assign_rhs();
-  if(rhs.id() != ID_symbol)
+  // The consumer ASSIGN's RHS may be either a bare
+  //     <call_id>#return_value
+  // (the typical case) or wrapped in one or more typecasts
+  //     cast(<call_id>#return_value, T)
+  // (when the JVM bytecode upcasts the result, e.g. when
+  // HashMap.get's Object return value flows into an
+  // anonymous Object-typed local). Strip the cast(s) before
+  // comparing the identifier.
+  const exprt *rhs_inner = &next_it->assign_rhs();
+  while(rhs_inner->id() == ID_typecast)
+    rhs_inner = &to_typecast_expr(*rhs_inner).op();
+  if(rhs_inner->id() != ID_symbol)
     return false;
-  const std::string rhs_id = id2string(to_symbol_expr(rhs).get_identifier());
+  const std::string rhs_id =
+    id2string(to_symbol_expr(*rhs_inner).get_identifier());
   if(rhs_id != call_id + "#return_value")
     return false;
   exprt clean = coerce(replacement_value, next_it->assign_lhs().type());
