@@ -2314,6 +2314,95 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // Security assertion: assert that a property-key string is
+      // not one of "__proto__", "constructor", "prototype". These
+      // are the keys exploited in the classical prototype-pollution
+      // class of CVEs (e.g. lodash GHSA-jf85-cpcp-j695,
+      // flatted GHSA-q8gm-r3vv-cwfj). Use this before a computed
+      // property assignment driven by untrusted input:
+      //   __CPROVER_assert_safe_property_key(k);
+      //   obj[k] = v;
+      if(fn == "__CPROVER_assert_safe_property_key")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && !to_json_array(call_args).empty())
+        {
+          exprt key_expr =
+            convert_expression(*to_json_array(call_args).begin());
+          if(!key_expr.is_nil() && is_typescript_string_type(key_expr.type()))
+          {
+            // Try constant-folding first.
+            std::string key_sv = extract_string_value(key_expr);
+            if(
+              !key_sv.empty() && key_sv.size() >= 2 &&
+              key_sv.substr(0, 2) == "S:")
+            {
+              std::string content = key_sv.substr(2);
+              bool dangerous =
+                (content == "__proto__" || content == "constructor" ||
+                 content == "prototype");
+              code_assertt assertion{
+                dangerous ? exprt{false_exprt{}} : exprt{true_exprt{}}};
+              assertion.add_source_location() = get_location(expr_node);
+              assertion.add_source_location().set_property_class(
+                "prototype-pollution");
+              assertion.add_source_location().set_comment(
+                "unsafe property key: must not be __proto__, "
+                "constructor, or prototype");
+              return std::move(assertion);
+            }
+            // Symbolic path: route each comparison through
+            // cprover_string_equal_func and conjoin the negations.
+            exprt refined_key = ts_string_to_refined(key_expr);
+            refined_string_typet rty =
+              to_refined_string_type(refined_key.type());
+            if(symbol_table.lookup(ID_cprover_string_equal_func) == nullptr)
+            {
+              std::vector<typet> arg_types = {rty, rty};
+              mathematical_function_typet ft(
+                std::move(arg_types), bool_typet{});
+              symbolt fs{ID_cprover_string_equal_func, ft, "typescript"};
+              fs.base_name = id2string(ID_cprover_string_equal_func);
+              symbol_table.add(fs);
+            }
+            auto build_neq = [&](const std::string &dangerous) -> exprt
+            {
+              exprt refined_d = ts_string_to_refined(
+                convert_string_literal_from_text(dangerous));
+              function_application_exprt app(
+                symbol_exprt{
+                  ID_cprover_string_equal_func,
+                  symbol_table.lookup_ref(ID_cprover_string_equal_func).type},
+                {refined_key, refined_d});
+              app.type() = bool_typet{};
+              return not_exprt{app};
+            };
+            exprt neq_proto = build_neq("__proto__");
+            exprt neq_ctor = build_neq("constructor");
+            exprt neq_proto_str = build_neq("prototype");
+            exprt cond = and_exprt{neq_proto, neq_ctor, neq_proto_str};
+            code_assertt assertion{cond};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class(
+              "prototype-pollution");
+            assertion.add_source_location().set_comment(
+              "unsafe property key: must not be __proto__, "
+              "constructor, or prototype");
+            // Drain pending_stmts (refined-string associations).
+            if(!pending_stmts.empty())
+            {
+              code_blockt block;
+              for(auto &s : pending_stmts)
+                block.add(std::move(s));
+              pending_stmts.clear();
+              block.add(std::move(assertion));
+              return std::move(block);
+            }
+            return std::move(assertion);
+          }
+        }
+        return code_skipt{};
+      }
       // CBMC verification primitive: loop invariant assertion
       if(fn == "__CPROVER_loop_invariant")
       {

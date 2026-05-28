@@ -152,6 +152,32 @@ race-detection mode (opt-in).
 **Tracking**: `regression/typescript/async-race-undetected/`
 (KNOWNBUG by design).
 
+### 1.6 Static prototype chain only
+
+**What**: We resolve prototype chains at conversion time (parent
+class fields are inlined into child structs; `isPrototypeOf` is
+constant-folded). Runtime prototype manipulation (`Object.create`,
+`Object.setPrototypeOf`, assignment to `obj.__proto__`) is not
+modelled.
+
+**Why**: Our struct model has no runtime prototype pointer. A full
+runtime model would require pointer-based chain walking on every
+property access (substantial overhead and complexity).
+
+**Implication for security work**: We cannot directly verify
+prototype-pollution propagation (e.g. that polluting
+`Object.prototype.x = "bad"` later affects an unrelated object's
+`.x`). Instead, the
+`__CPROVER_assert_safe_property_key(k)` primitive lets harnesses
+verify the *pre-condition*: "the attacker-controlled key must not
+be `__proto__`, `constructor`, or `prototype`." This is the
+contract that defensive code (e.g. lodash@4.18.0's `baseUnset`)
+enforces; if it's broken at any sink, the harness fails.
+
+**Tracking**: `regression/typescript/object-prototype-chain/`
+(static chain works); `integration-lodash-cve-ghsa-f23m/`
+(precondition-style detection works).
+
 ---
 
 ## 2. Specification gaps (fixable; pending work)
@@ -326,6 +352,7 @@ verify a feature. Use these as references when adding new ones.
 |------|------------|
 | `async-race-undetected` | Sequential async (KNOWNBUG by design) |
 | `integration-tmp-cve-ghsa-7c78` | Multi-char string arrays through function calls (§1.3) |
+| `integration-lodash-cve-ghsa-f23m` | Prototype-pollution detection via property-key contract (no runtime prototype-chain manipulation modelled) |
 | `optional-chaining` | Optional chaining on union method calls (§2 incomplete) |
 
 ---

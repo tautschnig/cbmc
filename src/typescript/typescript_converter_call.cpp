@@ -6483,6 +6483,11 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // Handled at statement level
       return nil_exprt{};
     }
+    if(func_name == "__CPROVER_assert_safe_property_key")
+    {
+      // Handled at statement level
+      return nil_exprt{};
+    }
     if(func_name == "__CPROVER_havoc_object")
     {
       // Handled at statement level

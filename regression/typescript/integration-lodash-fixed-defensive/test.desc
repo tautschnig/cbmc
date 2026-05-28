@@ -1,0 +1,11 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Integration: defensive _unset (lodash@4.18.0 pattern). Each
+segment is validated, so the prototype-pollution assertion
+holds for safe paths.
