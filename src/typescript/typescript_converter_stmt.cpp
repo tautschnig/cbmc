@@ -2645,6 +2645,132 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // Security assertion: assert that a string is in an allowlist
+      // of permitted values. Use to prevent method-injection /
+      // unsafe-property-access patterns where attacker-controlled
+      // input drives lookup or dispatch (e.g. picomatch POSIX
+      // character class injection, GHSA-37vp-87m6-c477).
+      // Signature: __CPROVER_assert_in_allowlist(s, allowed)
+      // where `allowed` must be a constant array of strings.
+      if(fn == "__CPROVER_assert_in_allowlist")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && to_json_array(call_args).size() >= 2)
+        {
+          auto it = to_json_array(call_args).begin();
+          exprt s_expr = convert_expression(*it);
+          ++it;
+          exprt allowed_expr = convert_expression(*it);
+          if(
+            !s_expr.is_nil() && !allowed_expr.is_nil() &&
+            is_typescript_string_type(s_expr.type()) &&
+            allowed_expr.type().id() == ID_struct &&
+            to_struct_type(allowed_expr.type()).get_tag() == "typescript_array")
+          {
+            // Resolve allowed to its constant struct value.
+            exprt src = allowed_expr;
+            if(src.id() == ID_symbol)
+            {
+              const symbolt *sym =
+                symbol_table.lookup(to_symbol_expr(src).get_identifier());
+              if(sym && !sym->value.is_nil())
+                src = sym->value;
+            }
+            if(src.id() != ID_struct || src.operands().size() < 2)
+              return code_skipt{};
+            mp_integer len{0};
+            if(src.operands()[0].is_constant())
+              to_integer(to_constant_expr(src.operands()[0]), len);
+            const exprt &data = src.operands()[1];
+            // Collect the allowed strings.
+            std::vector<std::string> allowed_strings;
+            for(mp_integer i = 0; i < len; ++i)
+            {
+              auto idx = i.to_ulong();
+              if(idx >= data.operands().size())
+                break;
+              std::string elem_sv = extract_string_value(data.operands()[idx]);
+              if(
+                elem_sv.empty() || elem_sv.size() < 2 ||
+                elem_sv.substr(0, 2) != "S:")
+                return code_skipt{}; // non-constant element
+              allowed_strings.push_back(elem_sv.substr(2));
+            }
+            // Try constant-fold s.
+            std::string s_sv = extract_string_value(s_expr);
+            if(!s_sv.empty() && s_sv.size() >= 2 && s_sv.substr(0, 2) == "S:")
+            {
+              std::string content = s_sv.substr(2);
+              bool found = false;
+              for(const auto &a : allowed_strings)
+                if(a == content)
+                {
+                  found = true;
+                  break;
+                }
+              code_assertt assertion{
+                found ? exprt{true_exprt{}} : exprt{false_exprt{}}};
+              assertion.add_source_location() = get_location(expr_node);
+              assertion.add_source_location().set_property_class(
+                "method-injection");
+              assertion.add_source_location().set_comment(
+                "value must be in the allowlist");
+              return std::move(assertion);
+            }
+            // Symbolic s: emit OR of refined-string equalities.
+            exprt refined_s = ts_string_to_refined(s_expr);
+            refined_string_typet rty = to_refined_string_type(refined_s.type());
+            if(symbol_table.lookup(ID_cprover_string_equal_func) == nullptr)
+            {
+              std::vector<typet> arg_types = {rty, rty};
+              mathematical_function_typet ft(
+                std::move(arg_types), bool_typet{});
+              symbolt fs{ID_cprover_string_equal_func, ft, "typescript"};
+              fs.base_name = id2string(ID_cprover_string_equal_func);
+              symbol_table.add(fs);
+            }
+            exprt cond = false_exprt{};
+            bool first = true;
+            for(const auto &a : allowed_strings)
+            {
+              exprt refined_a =
+                ts_string_to_refined(convert_string_literal_from_text(a));
+              function_application_exprt app(
+                symbol_exprt{
+                  ID_cprover_string_equal_func,
+                  symbol_table.lookup_ref(ID_cprover_string_equal_func).type},
+                {refined_s, refined_a});
+              app.type() = bool_typet{};
+              if(first)
+              {
+                cond = app;
+                first = false;
+              }
+              else
+              {
+                cond = or_exprt{cond, app};
+              }
+            }
+            code_assertt assertion{cond};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class(
+              "method-injection");
+            assertion.add_source_location().set_comment(
+              "value must be in the allowlist");
+            if(!pending_stmts.empty())
+            {
+              code_blockt block;
+              for(auto &s : pending_stmts)
+                block.add(std::move(s));
+              pending_stmts.clear();
+              block.add(std::move(assertion));
+              return std::move(block);
+            }
+            return std::move(assertion);
+          }
+        }
+        return code_skipt{};
+      }
       if(fn == "__CPROVER_loop_invariant")
       {
         const jsont &call_args = json_member(expr_node, "arguments");

@@ -387,11 +387,35 @@ verify a feature. Use these as references when adding new ones.
 | `integration-tmp-cve-ghsa-7c78` | Multi-char string arrays through function calls (§1.3) |
 | `integration-lodash-cve-ghsa-f23m` | Prototype-pollution detection via property-key contract (no runtime prototype-chain manipulation modelled) |
 | `integration-qs-cve-ghsa-q8mj` | Null-deref detection via not-null contract on value-typed inputs (§1.7) |
+| `integration-lodash-template-cve-r5fr` | Constant-string check is conversion-time only — applied at the application call-site, not inside the library |
+| `integration-flatted-recursion-dos` | Recursion-DoS detection via input-size precondition + `--unwinding-assertions` |
+| `integration-picomatch-cve-3v7f` | Method-injection detection via allowlist primitive |
 | `optional-chaining` | Optional chaining on union method calls (§2 incomplete) |
 
 ---
 
-## 6. Cross-references
+## 6. Security primitives summary
+
+The frontend provides several security-oriented assertion primitives.
+Each is conversion-time (constant-fold when possible) with a
+solver-side path for symbolic inputs. Use them as preconditions /
+postconditions in security harnesses.
+
+| Primitive | Catches | CVE pattern |
+|-----------|---------|-------------|
+| `__CPROVER_assert_no_path_traversal(s)` | `..` in path strings | tmp GHSA-7c78-jf6q-g5cm |
+| `__CPROVER_assert_safe_property_key(k)` | `__proto__`, `constructor`, `prototype` | lodash GHSA-f23m-r3pf-42rh, flatted GHSA-rf6f-7fwh-wjgh |
+| `__CPROVER_assert_not_null(x)` | null/undefined dereference | qs GHSA-q8mj-m7cp-5q26 |
+| `__CPROVER_assert_constant_string(s)` | user-controlled string at code sink | lodash _.template GHSA-r5fr-rjxr-66jc |
+| `__CPROVER_assert_no_template_metachars(s)` | `${`, `<%`, `<?`, `{{`, `<script` | template-injection class |
+| `__CPROVER_assert_input_size_bounded(input, max)` | unbounded recursion DoS | flatted GHSA-q8gm-r3vv-cwfj |
+| `__CPROVER_assert_in_allowlist(s, allowed)` | method/property injection via inherited keys | picomatch GHSA-3v7f-55p6-f55p |
+
+Each has paired regression tests (`sec-*`) and integration tests
+(`integration-*-cve-*` for the vulnerable pattern, `integration-*-fixed-*`
+for the defensive pattern) under `regression/typescript/`.
+
+## 7. Cross-references
 
 - [typescript-remaining-work-plan.md](typescript-remaining-work-plan.md) — prioritized future work
 - [typescript-capability-matrix.md](typescript-capability-matrix.md) — per-feature support status
