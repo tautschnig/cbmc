@@ -532,7 +532,10 @@ std::optional<exprt> python_convertert::try_method_call(
       // __exception_type and returning a nondet of double_type
       // (compatible with the most common math return type).
       // Skip cmath.X — that module IS complex-aware.
-      if(obj_name == "math")
+      // Skip math.prod / math.sumprod — Python accepts complex
+      // values in these via element-wise float*complex multiply.
+      if(
+        obj_name == "math" && method_name != "prod" && method_name != "sumprod")
       {
         // Detect: a node represents (or contains) a complex value.
         // Recursively walks List / Tuple literals so cases like
