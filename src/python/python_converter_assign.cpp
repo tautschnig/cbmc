@@ -3249,6 +3249,15 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     member_exprt length{dict_aug_container, "length", signedbv_typet{64}};
     member_exprt keys_arr{dict_aug_container, "keys", keys_type};
     member_exprt vals_arr{dict_aug_container, "values", vals_type};
+    // Invalidate any constant-fold record of the dict's
+    // contents — the aug-assign mutates it, so subsequent
+    // reads must go through the runtime keys/values arrays
+    // rather than the literal dict_literals snapshot.
+    if(dict_aug_container.id() == ID_symbol)
+    {
+      irep_idt did = to_symbol_expr(dict_aug_container).get_identifier();
+      dict_literals.erase(did);
+    }
     exprt typed_new_val = new_rhs;
     if(typed_new_val.type() != vals_type.element_type())
       typed_new_val = safe_typecast(typed_new_val, vals_type.element_type());
