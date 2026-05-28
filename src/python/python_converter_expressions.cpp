@@ -530,13 +530,38 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
     }
     if(!elide_str_idx_check)
-      add_check(
-        and_exprt{
+    {
+      // PLR §6.10.1: string subscript out-of-range raises
+      // IndexError. Set the __exception_active flag and the
+      // exception type so try/except IndexError catches the
+      // path; the downstream uncaught_exception assertion
+      // catches the uncaught case.
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt in_range = and_exprt{
           binary_relation_exprt{adjusted_idx, ID_ge, safe_zero(slice.type())},
-          binary_relation_exprt{adjusted_idx, ID_lt, length}},
-        "index-out-of-bounds",
-        "string index out of range",
-        get_location(expr));
+          binary_relation_exprt{adjusted_idx, ID_lt, length}};
+        exprt out_of_range = not_exprt{in_range};
+        // exc_active := exc_active || out_of_range
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(),
+          or_exprt{exc_sym->symbol_expr(), out_of_range}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("IndexError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              out_of_range,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
+    }
     // Constant-string optimization for indexing
     {
       auto sv = extract_string_value(value);
@@ -662,14 +687,36 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     }
 
     if(!elide_idx_check)
-      add_check(
-        and_exprt{
+    {
+      // PLR §6.10.1: list subscript out-of-range raises
+      // IndexError. Set the __exception_active flag and
+      // exception type so try/except IndexError catches it.
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt in_range = and_exprt{
           binary_relation_exprt{
             effective_idx, ID_ge, safe_zero(effective_idx.type())},
-          binary_relation_exprt{effective_idx, ID_lt, length}},
-        "index-out-of-bounds",
-        "list index out of range",
-        get_location(expr));
+          binary_relation_exprt{effective_idx, ID_lt, length}};
+        exprt out_of_range = not_exprt{in_range};
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(),
+          or_exprt{exc_sym->symbol_expr(), out_of_range}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("IndexError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              out_of_range,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
+    }
 
     const auto &st = to_struct_type(value.type());
     const auto &data_type = to_array_type(st.components()[1].type());
