@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2741** | +140 |
+| ESBMC PASS | 2489 | 2601 | **2746** | +145 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -171,6 +171,17 @@ Multi-cluster pass (wave 41 cont., +22 tests):
 - has-attr: hasattr(obj, name) static fold against the
   receiver's struct components and qualified method symbols
   for constant 'name'.
+
+List + dict mini-cluster (wave 41 cont., +5 tests):
+- list-clear: list.clear() new method handler.
+- list-insert-beyond / -preserves: insert(i, x) clamps i
+  to [0, len] (CPython semantics) instead of writing past
+  the buffer boundary.
+- dict44: dict[key] aug-assign now invalidates the
+  dict_literals constant-fold cache so subsequent reads
+  see the updated value.
+- (chained-string compare snap propagation also helps
+  github_3036 substring patterns.)
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
