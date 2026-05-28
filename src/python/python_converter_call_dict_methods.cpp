@@ -622,11 +622,26 @@ std::optional<exprt> python_convertert::try_dict_method(
     // KeyError when not found and no default given.
     if(!has_default)
     {
-      add_check(
-        found,
-        "exception",
-        "KeyError: key not found in dict",
-        get_location(expr));
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt missing = not_exprt{found};
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), missing}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("KeyError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              missing,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
     }
     if(obj.id() == ID_symbol)
       dict_literals.erase(to_symbol_expr(obj).get_identifier());
@@ -642,12 +657,30 @@ std::optional<exprt> python_convertert::try_dict_method(
     const auto &keys_type = to_array_type(dict_st.components()[1].type());
     const auto &vals_type = to_array_type(dict_st.components()[2].type());
     member_exprt length{obj, "length", signedbv_typet{64}};
-    // Empty-dict KeyError check.
-    add_check(
-      binary_relation_exprt{length, ID_gt, from_integer(0, signedbv_typet{64})},
-      "exception",
-      "KeyError: dictionary is empty",
-      get_location(expr));
+    // Empty-dict KeyError check via __exception_active flag.
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt empty = binary_relation_exprt{
+          length, ID_le, from_integer(0, signedbv_typet{64})};
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), empty}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("KeyError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              empty,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
+    }
     // Snapshot the pre-popitem length so the (key, value) we
     // return doesn't depend on the post-decrement length.
     // pending_checks are emitted BEFORE the surrounding

@@ -306,11 +306,29 @@ std::optional<exprt> python_convertert::try_list_method(
       exprt neg_ok = and_exprt{
         binary_relation_exprt{pop_idx, ID_lt, zero64},
         binary_relation_exprt{plus_exprt{pop_idx, length}, ID_ge, zero64}};
-      add_check(
-        or_exprt{nonneg_ok, neg_ok},
-        "exception",
-        "IndexError: pop index out of range",
-        get_location(expr));
+      // Set __exception_active for try/except catch; downstream
+      // uncaught_exception fires for unhandled cases.
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        exprt out_of_range = not_exprt{or_exprt{nonneg_ok, neg_ok}};
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(),
+          or_exprt{exc_sym->symbol_expr(), out_of_range}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("IndexError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              out_of_range,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
     }
 
     // Normalise negative index for the actual extraction.
