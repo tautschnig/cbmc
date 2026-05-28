@@ -52,8 +52,139 @@ std::optional<exprt> python_convertert::try_string_method(
   const jsont &args)
 {
   // PLib stdtypes: String methods
+  if(method_name == "splitlines")
+  {
+    // PLib stdtypes: str.splitlines(keepends=False).
+    // Splits on line boundaries (\n, \r, \r\n, plus \v, \f,
+    // \x1c, \x1d, \x1e, \x85, U+2028, U+2029). Empty string
+    // produces []; trailing newline does NOT produce an
+    // empty trailing element.
+    bool keepends = false;
+    if(args.is_array() && !as_array(args).empty())
+    {
+      auto cv = try_eval_double(convert_expression(*as_array(args).begin()));
+      if(cv.has_value())
+        keepends = cv.value() != 0;
+    }
+    auto obj_sv = extract_string_value(obj);
+    if(obj_sv.has_value())
+    {
+      const std::string &s = obj_sv.value();
+      std::vector<std::string> parts;
+      auto is_line_break = [](char c)
+      {
+        return c == '\n' || c == '\r' || c == '\v' || c == '\f' ||
+               c == '\x1c' || c == '\x1d' || c == '\x1e' || c == '\x85';
+      };
+      std::size_t i = 0, n = s.size();
+      while(i < n)
+      {
+        std::size_t start = i;
+        while(i < n && !is_line_break(s[i]))
+          ++i;
+        std::size_t end_no_sep = i;
+        if(i < n)
+        {
+          // \r\n is a single boundary.
+          if(s[i] == '\r' && i + 1 < n && s[i + 1] == '\n')
+            i += 2;
+          else
+            ++i;
+        }
+        std::size_t end = keepends ? i : end_no_sep;
+        parts.push_back(s.substr(start, end - start));
+      }
+      typet list_type = python_list_type(python_string_type());
+      const auto &data_type =
+        to_array_type(to_struct_type(list_type).components()[1].type());
+      exprt::operandst list_elems;
+      for(const auto &p : parts)
+        list_elems.push_back(python_string_literal(p));
+      while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
+        list_elems.push_back(safe_zero(python_string_type()));
+      return struct_exprt{
+        {from_integer(static_cast<long long>(parts.size()), python_int_type()),
+         array_exprt{std::move(list_elems), data_type}},
+        list_type};
+    }
+  }
   if(method_name == "split")
   {
+    // PLib stdtypes: str.split() / str.split(None[, maxsplit]) —
+    // whitespace mode. Splits on runs of any whitespace,
+    // skipping empty tokens entirely. Triggered when no
+    // separator is provided OR the separator argument is None.
+    bool whitespace_mode = false;
+    long long ws_max_split = -1;
+    if(!args.is_array() || as_array(args).empty())
+    {
+      whitespace_mode = true;
+    }
+    else
+    {
+      auto wit = as_array(args).begin();
+      // Check if first arg is None (Constant with null value).
+      if(is_node_type(*wit, "Constant") && json_member(*wit, "value").is_null())
+      {
+        whitespace_mode = true;
+        ++wit;
+        if(wit != as_array(args).end())
+        {
+          auto cv = try_eval_double(convert_expression(*wit));
+          if(cv.has_value())
+            ws_max_split = static_cast<long long>(cv.value());
+        }
+      }
+    }
+    if(whitespace_mode)
+    {
+      auto obj_sv = extract_string_value(obj);
+      if(obj_sv.has_value())
+      {
+        std::string s = obj_sv.value();
+        std::vector<std::string> parts;
+        auto is_ws = [](char c)
+        {
+          return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' ||
+                 c == '\f';
+        };
+        std::size_t i = 0, n = s.size();
+        long long splits = 0;
+        while(i < n)
+        {
+          while(i < n && is_ws(s[i]))
+            ++i;
+          if(i >= n)
+            break;
+          if(ws_max_split >= 0 && splits >= ws_max_split)
+          {
+            // Remaining string (with leading whitespace
+            // already stripped) is the final token.
+            parts.push_back(s.substr(i));
+            i = n;
+            break;
+          }
+          std::size_t start = i;
+          while(i < n && !is_ws(s[i]))
+            ++i;
+          parts.push_back(s.substr(start, i - start));
+          ++splits;
+        }
+        typet list_type = python_list_type(python_string_type());
+        const auto &data_type =
+          to_array_type(to_struct_type(list_type).components()[1].type());
+        exprt::operandst list_elems;
+        for(const auto &p : parts)
+          list_elems.push_back(python_string_literal(p));
+        while(list_elems.size() < PYTHON_MAX_LIST_LENGTH)
+          list_elems.push_back(safe_zero(python_string_type()));
+        return struct_exprt{
+          {from_integer(
+             static_cast<long long>(parts.size()), python_int_type()),
+           array_exprt{std::move(list_elems), data_type}},
+          list_type};
+      }
+    }
     // PLib stdtypes: str.split(sep[, maxsplit]) — constant optimization
     if(args.is_array() && !as_array(args).empty())
     {
