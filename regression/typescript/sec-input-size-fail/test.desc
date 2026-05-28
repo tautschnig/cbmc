@@ -1,0 +1,9 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+--
+input-size assertion fails for a 5-element array bounded by 3.

@@ -1,0 +1,11 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+Integration: flatted-style recursion DoS. parse_safe enforces
+the input-size bound at entry, so the contract holds for valid
+input.

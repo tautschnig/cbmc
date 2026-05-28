@@ -1,0 +1,9 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+--
+input-size assertion holds for a 3-element array bounded by 10.

@@ -2586,6 +2586,65 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
         }
         return code_skipt{};
       }
+      // Security assertion: assert that an input array or string
+      // length is bounded by a maximum. Use as a precondition to
+      // recursive parsers / processors to express the contract
+      // "this function expects bounded input." Catches the
+      // flatted/underscore class of recursion-DoS CVEs (e.g.
+      // GHSA-q8gm-r3vv-cwfj) when used at function entry. For
+      // the actual unbounded-recursion detection, combine with
+      // CBMC's --unwinding-assertions flag.
+      if(fn == "__CPROVER_assert_input_size_bounded")
+      {
+        const jsont &call_args = json_member(expr_node, "arguments");
+        if(call_args.is_array() && to_json_array(call_args).size() >= 2)
+        {
+          auto it = to_json_array(call_args).begin();
+          exprt input = convert_expression(*it);
+          ++it;
+          exprt max_expr = convert_expression(*it);
+          if(!input.is_nil() && !max_expr.is_nil())
+          {
+            // Try to extract the input length: works for both
+            // string structs and array structs (both have a
+            // length field as their first component).
+            exprt len_expr;
+            if(input.type().id() == ID_struct)
+            {
+              const auto &st = to_struct_type(input.type());
+              if(
+                !st.components().empty() &&
+                st.components()[0].get_name() == "length")
+              {
+                len_expr =
+                  member_exprt{input, "length", st.components()[0].type()};
+              }
+            }
+            if(len_expr.is_nil())
+              return code_skipt{};
+            // Cast max to the length type if necessary.
+            exprt max_typed = max_expr;
+            if(max_expr.type() != len_expr.type())
+            {
+              if(max_expr.type().id() == ID_floatbv)
+              {
+                max_typed = typecast_exprt{max_expr, len_expr.type()};
+              }
+            }
+            // Assert: len(input) <= max
+            exprt cond = binary_relation_exprt{len_expr, ID_le, max_typed};
+            code_assertt assertion{cond};
+            assertion.add_source_location() = get_location(expr_node);
+            assertion.add_source_location().set_property_class(
+              "input-size-bound");
+            assertion.add_source_location().set_comment(
+              "input length must be bounded "
+              "(precondition for recursive processing)");
+            return std::move(assertion);
+          }
+        }
+        return code_skipt{};
+      }
       if(fn == "__CPROVER_loop_invariant")
       {
         const jsont &call_args = json_member(expr_node, "arguments");
