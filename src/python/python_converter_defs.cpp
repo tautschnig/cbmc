@@ -3528,21 +3528,57 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           const auto &data_type = to_array_type(list_st.components()[1].type());
           member_exprt length{obj, "length", python_int_type()};
           member_exprt data{obj, "data", data_type};
+          if(idx_expr.type() != python_int_type())
+            idx_expr = safe_typecast(idx_expr, python_int_type());
           if(val.type() != data_type.element_type())
             val = safe_typecast(val, data_type.element_type());
+          // PLR §4.6.3: list.insert(i, x) clamps i to
+          // [0, len(list)]. Index past the end appends; very
+          // negative index inserts at front (idx + len <= 0 → 0,
+          // else idx + len). We materialise the clamped index
+          // into a temp so the shift loop and the write below
+          // both reference the same value.
+          // clamped =
+          //   idx < 0 ? max(0, idx + length)
+          //           : min(idx, length)
+          exprt zero64 = from_integer(0, python_int_type());
+          exprt neg_branch = if_exprt{
+            binary_relation_exprt{plus_exprt{idx_expr, length}, ID_lt, zero64},
+            zero64,
+            plus_exprt{idx_expr, length}};
+          exprt pos_branch = if_exprt{
+            binary_relation_exprt{idx_expr, ID_gt, length}, length, idx_expr};
+          exprt clamped = if_exprt{
+            binary_relation_exprt{idx_expr, ID_lt, zero64},
+            neg_branch,
+            pos_branch};
+          static unsigned ins_ctr = 0;
+          std::string tname = "__ins_idx_" + std::to_string(ins_ctr++);
+          irep_idt tid{qualify_name(tname)};
+          if(symbol_table.lookup(tid) == nullptr)
+          {
+            symbolt ts{tid, python_int_type(), "python"};
+            ts.base_name = tname;
+            ts.is_lvalue = true;
+            ts.is_state_var = true;
+            ts.is_static_lifetime = current_function.empty();
+            symbol_table.add(ts);
+          }
+          symbol_exprt ins_idx = symbol_table.lookup_ref(tid).symbol_expr();
           code_blockt block;
+          block.add(code_frontend_assignt{ins_idx, std::move(clamped)});
           for(int i = PYTHON_MAX_LIST_LENGTH - 1; i >= 1; i--)
           {
             exprt ii = from_integer(i, python_int_type());
             exprt prev = from_integer(i - 1, python_int_type());
             block.add(code_ifthenelset{
               and_exprt{
-                binary_relation_exprt{prev, ID_ge, idx_expr},
+                binary_relation_exprt{prev, ID_ge, ins_idx},
                 binary_relation_exprt{prev, ID_lt, length}},
               code_frontend_assignt{
                 index_exprt{data, ii}, index_exprt{data, prev}}});
           }
-          block.add(code_frontend_assignt{index_exprt{data, idx_expr}, val});
+          block.add(code_frontend_assignt{index_exprt{data, ins_idx}, val});
           block.add(code_frontend_assignt{
             length, plus_exprt{length, from_integer(1, python_int_type())}});
           return std::move(block);
