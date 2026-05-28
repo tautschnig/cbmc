@@ -38,23 +38,26 @@ The orchestration is in `chain.sh`. Each test directory contains:
 ]
 ```
 
-## Limitations
+## Precision
 
 The underlying static analysis (`custom_bitvector_analysist`) tracks
-taint state on **pointer-typed** values. TypeScript values in our
-model are value-typed structs (strings, arrays, objects), so the
-analysis falls back to over-approximation: any value that could
-syntactically reach a sink is reported as potentially tainted, even
-when no source actually fed it.
+taint state on both pointer-typed and value-typed values (the
+latter as of commit extending the analysis to handle
+non-pointer operands). For TypeScript struct values (strings,
+arrays, objects), set_may / clear_may / get_may operate on the
+struct identifier and propagate through member-by-member struct
+copies via `assign_struct_rec`.
 
-The workflow is therefore **sound** (no real taint flow is missed)
-but **imprecise** (false positives are common). It is most useful
-as a coarse triage. For precise per-CVE-class detection, prefer the
-contract-style assertion primitives (`__CPROVER_assert_*`) under
-`regression/typescript/sec-*` and `regression/typescript/integration-*`.
+The pipeline is therefore both **sound** (no real taint flow is
+missed) and **precise enough for many real cases**: if the
+workflow reports VERIFICATION SUCCESSFUL, no source-to-sink path
+exists; a VERIFICATION FAILED result usually corresponds to a real
+flow.
 
-See [`doc/typescript-known-limitations.md`](../../doc/typescript-known-limitations.md)
-§3.4 for the full discussion.
+The contract-style assertion primitives (`__CPROVER_assert_*` under
+`regression/typescript/sec-*` and `regression/typescript/integration-*`)
+remain useful for finer-grained checks at specific program points
+where the taint hooks are coarse.
 
 ## Running
 

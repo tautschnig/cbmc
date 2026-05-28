@@ -349,38 +349,37 @@ been pushed upstream (deliberately; we accumulate on this branch).
 this branch. To be filed separately as upstream PRs when this branch
 stabilises.
 
-### 3.4 Taint analysis is pointer-typed only
+### 3.4 Taint analysis precision (resolved 2026-05-28)
 
-**What**: The existing `custom_bitvector_analysis` (used by
-`goto-analyzer --taint`) tracks taint state on pointer-typed values.
-Our TypeScript values (string struct, array struct, generic structs)
-are value types, so the analysis cannot precisely track taint
-through them. The result is an over-approximation: any value that
-could syntactically reach a sink is reported as potentially tainted,
-even when no source actually fed it.
+**Previously**: `custom_bitvector_analysis` (used by
+`goto-analyzer --taint`) only tracked taint state on pointer-typed
+values. TypeScript value-typed structs (string, array, object)
+fell back to over-approximation: any value that could syntactically
+reach a sink was reported as potentially tainted, regardless of
+whether a source actually fed it.
 
-**Where**: `src/analyses/custom_bitvector_analysis.cpp` — the
-transfer functions check `lhs.type().id() == ID_pointer` before
-updating the taint state.
+**Resolution**: `src/analyses/custom_bitvector_analysis.cpp` was
+extended to handle value-typed (non-pointer) operands in three
+places:
+1. `transform()` for `set_may` / `clear_may` / `set_must` /
+   `clear_must`: when lhs is non-pointer, set/clear the bit on
+   the identifier directly (via `object2id`); for struct-typed
+   lhs, propagate to every recursive member.
+2. `assign_struct_rec()`: for struct LHS, propagate the parent
+   struct identifier's bits in addition to the existing per-member
+   recursion.
+3. `eval()` for `get_may` / `get_must`: when src is non-pointer,
+   look up bits by identifier directly.
 
-**Implication**: The taint-flow workflow
-(`cbmc --export-symex-ready-goto` → `goto-analyzer --taint
---write-goto-binary` → `cbmc`) is sound (no real taint flow is
-missed) but imprecise (false positives are common). The flow is
-useful as a coarse triage: if the workflow reports VERIFICATION
-SUCCESSFUL, no source-to-sink path exists; if it reports
-VERIFICATION FAILED, manual review or a more precise tool is needed.
+The pointer paths are unchanged, so C-style taint analysis keeps
+its existing semantics and tests.
 
-**Path to better precision**: extend
-`custom_bitvector_analysist::eval` and the transfer functions to
-handle non-pointer values, or wrap TS values in pointer-typed
-shadow variables in the frontend. Both are non-trivial; the
-contract-style primitives (Phases 1-6) avoid this issue by checking
-properties at specific points rather than tracking taint through
-the whole program.
-
-**Tracking**: `regression/typescript-taint/flow-tainted/`
-demonstrates the working positive case.
+**Tracking**:
+- `regression/typescript-taint/flow-tainted/` (taint detected)
+- `regression/typescript-taint/flow-no-source/` (no source called →
+  no taint, was false positive before)
+- `regression/typescript-taint/flow-sanitized/` (sanitizer clears
+  taint, was false positive before)
 
 ---
 
