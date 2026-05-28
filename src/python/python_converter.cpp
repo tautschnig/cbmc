@@ -2439,7 +2439,17 @@ exprt python_convertert::convert_expression(const jsont &expr)
         for(const auto &v : values)
         {
           if(v >= 0 && v < 64)
-            bitmap = bitmap + power(2, v);
+          {
+            // Use bitwise OR so duplicate values don't double-add.
+            // {1, 2, 1} should produce bitmap (1<<1 | 1<<2) = 6,
+            // not (2 + 4 + 2) = 8. mp_integer has no | operator
+            // but at this stage the values are small (<64 bits),
+            // so cast to long long for the OR and back.
+            mp_integer bit_v = power(2, v);
+            unsigned long long b_l = bit_v.to_ulong();
+            unsigned long long bm_l = bitmap.to_ulong();
+            bitmap = mp_integer{(long long)(bm_l | b_l)};
+          }
         }
         result = struct_exprt{
           {from_integer(bitmap, unsignedbv_typet{64}),
