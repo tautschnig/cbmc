@@ -3367,6 +3367,36 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
           rhs,
           from_integer(0, arith_lhs.type())}};
     }
+    else if(arith_lhs.type().id() == ID_floatbv)
+    {
+      // PLR §6.7: float modulo follows Python's floored
+      // semantics: r = a - floor(a/b) * b. Sign matches
+      // divisor.
+      exprt rhs_d = rhs;
+      if(rhs_d.type() != double_type())
+        rhs_d = safe_typecast(rhs_d, double_type());
+      // floor(a/b) via cast-to-int-then-back-to-float, with
+      // correction for negative quotients (round toward zero
+      // → round toward -inf).
+      exprt q_raw = div_exprt{arith_lhs, rhs_d};
+      exprt q_int = typecast_exprt{q_raw, python_int_type()};
+      exprt q_back = typecast_exprt{q_int, double_type()};
+      // Adjust: when q_back > q_raw (truncation toward 0
+      // overshot for negatives), subtract 1.
+      ieee_floatt fone{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      fone.from_double(1.0);
+      ieee_floatt fzero = fone;
+      fzero.make_zero();
+      exprt floor_q = minus_exprt{
+        q_back,
+        if_exprt{
+          binary_relation_exprt{q_back, ID_gt, q_raw},
+          fone.to_expr(),
+          fzero.to_expr()}};
+      new_rhs = minus_exprt{arith_lhs, mult_exprt{floor_q, rhs_d}};
+    }
     else
       new_rhs = mod_exprt{arith_lhs, rhs};
   }
