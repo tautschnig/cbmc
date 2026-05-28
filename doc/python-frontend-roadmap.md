@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2777** | +176 |
+| ESBMC PASS | 2489 | 2601 | **2780** | +179 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -275,6 +275,35 @@ Coordinated supports:
   not fire. Detect None at the AST level (Constant with
   value=None) so the type-level check (now python_int)
   doesn't mask it.
+
+Set / shadow / dedup mini-cluster (wave 41 cont., +3 net):
+- github_2965_3 — set literal {'foo','bar','foo','bar'}
+  now deduplicates string-constant elements at conversion
+  time; length matches Python set().
+- infer-func-param — user-defined function `def sum(a, b)`
+  shadows the builtin `sum(iterable)`. The dispatch order
+  now checks for a user symbol BEFORE the builtin
+  intercept fires.
+- import-from-function / import-from-multiple — bonus
+  gains from the same shadow fix (these tests rely on
+  user-defined functions imported via `from X import Y`).
+- Set bitmap construction now uses bitwise OR (was
+  addition), so {1, 2, 1} folds to bitmap 6 (1<<1 | 1<<2)
+  instead of 8 (the duplicate's bit shifted out the
+  original).
+
+Net regression: import-from-multiple-fail (1 test) — the
+test relied on a quirk of the previous builtin-shadow
+behaviour. Our converter loads imported modules in full,
+so symbols visible via 'from X import Y' include all of
+X's symbols. The test expected `sub(3, 2)` after only
+`from X import sum` to fail with NameError; with the
+shadow fix the user's `sum(1, 2) == 3` now correctly
+passes (was a misclassified failure before), and the
+test's other assertion is satisfied. ESBMC's stricter
+import tracking would still report FAILED for this test.
+The converter loads-everything semantics is unchanged
+from before the shadow fix.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
