@@ -211,6 +211,137 @@ exprt python_convertert::convert_call(const jsont &expr)
   {
     return convert_expression(*as_array(args).begin());
   }
+  // PLR §math: 'from math import X' direct calls. When X
+  // is a math-int intrinsic (factorial / comb / perm / gcd /
+  // lcm / isqrt) and all arguments are integer constants,
+  // emit the precise constant-fold instead of dispatching
+  // to the library placeholder (which returns 0). Mirrors
+  // the fold inside try_method_call's 'math.X' dispatch.
+  if(!func_name.empty() && math_imports.count(func_name) > 0 && args.is_array())
+  {
+    const std::string &mn = math_imports[func_name];
+    if(
+      mn == "factorial" || mn == "comb" || mn == "perm" || mn == "gcd" ||
+      mn == "lcm" || mn == "isqrt")
+    {
+      auto get_int_args = [&]() -> std::optional<std::vector<long long>>
+      {
+        std::vector<long long> out;
+        for(const auto &a : as_array(args))
+        {
+          exprt e = convert_expression(a);
+          bool negate = false;
+          if(e.id() == ID_unary_minus && e.operands().size() == 1)
+          {
+            e = e.operands()[0];
+            negate = true;
+          }
+          if(
+            e.id() == ID_typecast && e.operands().size() == 1 &&
+            e.operands()[0].is_constant() &&
+            e.operands()[0].type().id() == ID_signedbv)
+            e = e.operands()[0];
+          if(!e.is_constant() || e.type().id() != ID_signedbv)
+            return std::nullopt;
+          mp_integer iv;
+          if(to_integer(to_constant_expr(e), iv))
+            return std::nullopt;
+          long long val = iv.to_long();
+          if(negate)
+            val = -val;
+          out.push_back(val);
+        }
+        return out;
+      };
+      auto iargs = get_int_args();
+      if(iargs.has_value())
+      {
+        const auto &v = iargs.value();
+        auto make_int = [this](long long x)
+        { return from_integer(x, python_int_type()); };
+        if(mn == "factorial" && v.size() == 1 && v[0] >= 0)
+        {
+          long long r = 1;
+          for(long long i = 2; i <= v[0]; ++i)
+            r *= i;
+          return make_int(r);
+        }
+        if(mn == "isqrt" && v.size() == 1 && v[0] >= 0)
+        {
+          long long n = v[0];
+          long long r = 0;
+          while((r + 1) * (r + 1) <= n)
+            ++r;
+          return make_int(r);
+        }
+        if(mn == "comb" && v.size() == 2 && v[0] >= 0 && v[1] >= 0)
+        {
+          long long n = v[0], k = v[1];
+          if(k > n)
+            return make_int(0);
+          if(k > n - k)
+            k = n - k;
+          long long r = 1;
+          for(long long i = 0; i < k; ++i)
+          {
+            r *= (n - i);
+            r /= (i + 1);
+          }
+          return make_int(r);
+        }
+        if(mn == "perm" && v.size() >= 1 && v[0] >= 0)
+        {
+          long long n = v[0];
+          long long k = v.size() == 1 ? n : v[1];
+          if(k < 0)
+            k = 0;
+          if(k > n)
+            return make_int(0);
+          long long r = 1;
+          for(long long i = 0; i < k; ++i)
+            r *= (n - i);
+          return make_int(r);
+        }
+        if(mn == "gcd")
+        {
+          long long g = 0;
+          for(auto x : v)
+          {
+            long long a = std::llabs(x);
+            while(a)
+            {
+              long long t = g % a;
+              g = a;
+              a = t;
+            }
+          }
+          return make_int(g);
+        }
+        if(mn == "lcm" && !v.empty())
+        {
+          long long l = std::llabs(v[0]);
+          for(std::size_t i = 1; i < v.size(); ++i)
+          {
+            long long a = std::llabs(v[i]);
+            if(l == 0 || a == 0)
+            {
+              l = 0;
+              break;
+            }
+            long long g = l, t = a;
+            while(t)
+            {
+              long long r = g % t;
+              g = t;
+              t = r;
+            }
+            l = (l / g) * a;
+          }
+          return make_int(l);
+        }
+      }
+    }
+  }
   // PLR §4: name resolution. If the user defined a function
   // (or class) with the same name as a Python builtin, the
   // user binding shadows the builtin within the module. Try

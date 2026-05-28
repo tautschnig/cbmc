@@ -212,6 +212,10 @@ codet python_convertert::convert_statement(const jsont &stmt)
             }
             // Other math functions: handled by the library's
             // @c_intrinsic decorators; no registration here.
+            // Track the alias -> math-name binding so direct
+            // calls (e.g. comb(5,2) after 'from math import
+            // comb') are routed to the math intrinsic dispatch.
+            math_imports[asname] = name;
           }
           // typing module — type aliases, no-op
           else if(module == "typing")
