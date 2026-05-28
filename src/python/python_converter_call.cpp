@@ -203,6 +203,14 @@ exprt python_convertert::convert_call(const jsont &expr)
   // python_converter_call_nondet.cpp for clarity.
   if(auto r = try_nondet_call(expr, func_name, args))
     return std::move(*r);
+  // PLR §22.7.1: typing.NewType-defined callable aliases.
+  // 'X = NewType(...); X(arg)' is the identity: X(arg) == arg.
+  if(
+    newtype_aliases.count(func_name) > 0 && args.is_array() &&
+    !as_array(args).empty())
+  {
+    return convert_expression(*as_array(args).begin());
+  }
   // PLR §4: name resolution. If the user defined a function
   // (or class) with the same name as a Python builtin, the
   // user binding shadows the builtin within the module. Try

@@ -685,6 +685,47 @@ codet python_convertert::convert_assign(const jsont &stmt)
 
   source_locationt loc = get_location(stmt);
 
+  // PLR §22.7.1: typing.NewType('X', T) — a marker that creates
+  // a callable identity alias. Detect 'X = NewType(...)' or
+  // 'X = t.NewType(...)' / 'X = typing.NewType(...)' so that
+  // subsequent X(arg) calls fold to arg.
+  {
+    auto detect_newtype_call = [this](const jsont &v) -> bool
+    {
+      if(!is_node_type(v, "Call"))
+        return false;
+      const jsont &fn = json_member(v, "func");
+      if(
+        is_node_type(fn, "Name") &&
+        json_string(json_member(fn, "id")) == "NewType")
+        return true;
+      if(
+        is_node_type(fn, "Attribute") &&
+        json_string(json_member(fn, "attr")) == "NewType")
+      {
+        const jsont &recv = json_member(fn, "value");
+        if(is_node_type(recv, "Name"))
+        {
+          std::string rn = json_string(json_member(recv, "id"));
+          if(rn == "typing" || rn == "t")
+            return true;
+        }
+      }
+      return false;
+    };
+    if(detect_newtype_call(value))
+    {
+      for(const auto &tgt : as_array(targets))
+      {
+        if(is_node_type(tgt, "Name"))
+        {
+          std::string nm = json_string(json_member(tgt, "id"));
+          newtype_aliases.insert(nm);
+        }
+      }
+    }
+  }
+
   // Check if RHS is a constructor call
   if(
     is_node_type(value, "Call") &&

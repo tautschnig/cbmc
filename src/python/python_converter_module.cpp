@@ -838,6 +838,45 @@ bool python_convertert::convert()
           class_tag_ids[name] = static_cast<int>(class_tag_ids.size()) + 1;
         }
       }
+      // PLR §22.7.1: typing.NewType callable aliases. Scan for
+      // module-level 'X = NewType(...)' / 'X = t.NewType(...)' /
+      // 'X = typing.NewType(...)' so the alias is registered
+      // before function bodies are processed (a function body
+      // calling X(arg) is converted before the module-level
+      // assignment is evaluated, otherwise).
+      if(is_node_type(stmt, "Assign"))
+      {
+        const jsont &v = json_member(stmt, "value");
+        if(is_node_type(v, "Call"))
+        {
+          const jsont &fn = json_member(v, "func");
+          bool is_newtype = false;
+          if(
+            is_node_type(fn, "Name") &&
+            json_string(json_member(fn, "id")) == "NewType")
+            is_newtype = true;
+          else if(
+            is_node_type(fn, "Attribute") &&
+            json_string(json_member(fn, "attr")) == "NewType")
+          {
+            const jsont &recv = json_member(fn, "value");
+            if(is_node_type(recv, "Name"))
+            {
+              std::string rn = json_string(json_member(recv, "id"));
+              if(rn == "typing" || rn == "t")
+                is_newtype = true;
+            }
+          }
+          if(is_newtype)
+          {
+            const jsont &targets = json_member(stmt, "targets");
+            if(targets.is_array())
+              for(const auto &tgt : as_array(targets))
+                if(is_node_type(tgt, "Name"))
+                  newtype_aliases.insert(json_string(json_member(tgt, "id")));
+          }
+        }
+      }
     }
   }
 
