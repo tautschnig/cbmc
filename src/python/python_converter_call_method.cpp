@@ -1899,9 +1899,38 @@ std::optional<exprt> python_convertert::try_method_call(
         if(obj_name == "re")
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
-        // PLib: random module — constrained nondet for randint
+        // PLib: random module — constrained nondet for randint /
+        // random / uniform / triangular.
         if(obj_name == "random")
         {
+          // Helper to emit a nondet result with a constrained
+          // range, returning the temp symbol expression.
+          // strict_high=true: result < high; else result <= high.
+          static unsigned rand_ctr = 0;
+          auto emit_nondet_with_assume =
+            [&](const typet &t, exprt low, exprt high, bool strict_high = false)
+            -> exprt
+          {
+            std::string tmp = "__rand_" + std::to_string(rand_ctr++);
+            std::string tq = qualify_name(tmp);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, t, "python"};
+              ts.base_name = tmp;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              symbol_table.add(ts);
+            }
+            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              tv, side_effect_expr_nondett{t, get_location(expr)}});
+            irep_idt high_op = strict_high ? ID_lt : ID_le;
+            pending_checks.push_back(code_assumet{and_exprt{
+              binary_relation_exprt{tv, ID_ge, std::move(low)},
+              binary_relation_exprt{tv, high_op, std::move(high)}}});
+            return std::move(tv);
+          };
           if(
             method_name == "randint" && args.is_array() &&
             as_array(args).size() >= 2)
@@ -1910,28 +1939,65 @@ std::optional<exprt> python_convertert::try_method_call(
             exprt lo = convert_expression(*it);
             ++it;
             exprt hi = convert_expression(*it);
-            // Return nondet int with assume(lo <= result <= hi)
-            side_effect_expr_nondett nondet{
-              python_int_type(), get_location(expr)};
-            static unsigned rand_ctr = 0;
-            std::string tmp = "__rand_" + std::to_string(rand_ctr++);
-            std::string tq = qualify_name(tmp);
-            irep_idt ti{tq};
-            if(symbol_table.lookup(ti) == nullptr)
-            {
-              symbolt ts{ti, python_int_type(), "python"};
-              ts.base_name = tmp;
-              ts.is_lvalue = true;
-              ts.is_state_var = true;
-              symbol_table.add(ts);
-            }
-            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
-            pending_checks.push_back(code_frontend_assignt{tv, nondet});
-            pending_checks.push_back(code_assumet{and_exprt{
-              binary_relation_exprt{tv, ID_ge, lo},
-              binary_relation_exprt{tv, ID_le, hi}}});
-            return std::move(tv);
+            return emit_nondet_with_assume(python_int_type(), lo, hi);
           }
+          if(method_name == "random")
+          {
+            // PLib random.random() — float in [0.0, 1.0).
+            return emit_nondet_with_assume(
+              double_type(),
+              double_to_floatbv(0.0),
+              double_to_floatbv(1.0),
+              /*strict_high=*/true);
+          }
+          if(
+            (method_name == "uniform" || method_name == "triangular") &&
+            args.is_array() && as_array(args).size() >= 2)
+          {
+            auto it = as_array(args).begin();
+            exprt a = convert_expression(*it);
+            ++it;
+            exprt b = convert_expression(*it);
+            // Cast to double if not already.
+            if(a.type() != double_type())
+              a = safe_typecast(a, double_type());
+            if(b.type() != double_type())
+              b = safe_typecast(b, double_type());
+            return emit_nondet_with_assume(double_type(), a, b);
+          }
+          if(method_name == "randrange" && args.is_array())
+          {
+            auto sz = as_array(args).size();
+            if(sz == 1)
+            {
+              // randrange(stop): [0, stop)
+              auto it = as_array(args).begin();
+              exprt stop = convert_expression(*it);
+              exprt zero = from_integer(0, python_int_type());
+              exprt stop_minus_1 =
+                minus_exprt{stop, from_integer(1, python_int_type())};
+              return emit_nondet_with_assume(
+                python_int_type(), zero, stop_minus_1);
+            }
+            if(sz >= 2)
+            {
+              // randrange(start, stop[, step]): [start, stop)
+              auto it = as_array(args).begin();
+              exprt start = convert_expression(*it);
+              ++it;
+              exprt stop = convert_expression(*it);
+              exprt stop_minus_1 =
+                minus_exprt{stop, from_integer(1, python_int_type())};
+              return emit_nondet_with_assume(
+                python_int_type(), start, stop_minus_1);
+            }
+          }
+          // Fallback: nondet of best-guess type.
+          // float for random/uniform/triangular/gauss, int otherwise.
+          if(
+            method_name == "gauss" || method_name == "expovariate" ||
+            method_name == "betavariate" || method_name == "gammavariate")
+            return side_effect_expr_nondett{double_type(), get_location(expr)};
           return side_effect_expr_nondett{
             python_int_type(), get_location(expr)};
         }
