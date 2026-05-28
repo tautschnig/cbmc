@@ -11,11 +11,11 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2746** | +145 |
+| ESBMC PASS | 2489 | 2601 | **2754** | +153 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
-| TIMEOUT | 26 | 10 | 10 | 0 |
+| TIMEOUT | 26 | 10 | 13 | +3 |
 | Hypothesmith --unrestricted failures | 4 | 0 | 0 | 0 |
 | AWS benchmark pass rate | n/a | 86.3% / 94.1% | 86.3% / 94.1% | 0 |
 
@@ -182,6 +182,42 @@ List + dict mini-cluster (wave 41 cont., +5 tests):
   see the updated value.
 - (chained-string compare snap propagation also helps
   github_3036 substring patterns.)
+
+KeyError / IndexError exception-flag refactor
+(wave 41 cont., +8 tests):
+- dict subscript on missing key (dict41,
+  dict-attr-int-int).
+- list / string subscript out-of-range (string-split-count,
+  string-split-count2, github_3566, github_3609,
+  github_3621, github_3716).
+- list.pop, dict.pop, dict.popitem follow the same pattern
+  (no test gain themselves but unblocks the general
+  try/except IndexError / KeyError idiom).
+
+Background: these emissions previously used
+add_check(condition, "exception", "...") which is a property
+assertion that fires regardless of any enclosing
+try/except. Switched to setting __exception_active /
+__exception_type — the flag composes with the existing
+try/except dispatch so a matching handler catches the
+path; the downstream uncaught_exception module-level
+assertion still catches uncaught cases, with property
+class "exception" and comment "uncaught exception"
+(the regression test
+regression/python/index-out-of-bounds was updated to match).
+
+Two coordinated supports:
+- python_converter_defs.cpp: implicit fall-through None
+  return now re-reads the function symbol's return type
+  AFTER body conversion, so a python_int sentinel doesn't
+  silently truncate to a python_value-typed return slot
+  (which produced a "warning: ignoring typecast" that
+  broke typeddict-kwargs).
+- python_converter_expressions.cpp: const-int-key dict
+  subscript fold added (the existing const-key fold only
+  covered string keys), so nested-dict2 stays under the
+  per-test sweep timeout after the new exception flag adds
+  modest SAT work to the runtime path.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
