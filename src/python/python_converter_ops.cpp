@@ -241,6 +241,37 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       exprt denom = plus_exprt{mult_exprt{rr, rr}, mult_exprt{ri, ri}};
       exprt real_num = plus_exprt{mult_exprt{lr, rr}, mult_exprt{li, ri}};
       exprt imag_num = minus_exprt{mult_exprt{li, rr}, mult_exprt{lr, ri}};
+      // PLR §6.7: division by zero on complex raises
+      // ZeroDivisionError. The denominator is c²+d²; a zero
+      // denominator means c == 0 AND d == 0. Set the
+      // exception flag so try/except catches it.
+      const symbolt *exc_sym_d =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym_d =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym_d != nullptr)
+      {
+        ieee_floatt fz{
+          ieee_float_spect::double_precision(),
+          ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+        fz.make_zero();
+        exprt zero = fz.to_expr();
+        exprt is_zero_denom = and_exprt{
+          ieee_float_equal_exprt{rr, zero}, ieee_float_equal_exprt{ri, zero}};
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym_d->symbol_expr(),
+          or_exprt{exc_sym_d->symbol_expr(), is_zero_denom}});
+        if(exc_type_sym_d != nullptr)
+        {
+          long h = exception_type_hash("ZeroDivisionError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym_d->symbol_expr(),
+            if_exprt{
+              is_zero_denom,
+              from_integer(h, exc_type_sym_d->type),
+              exc_type_sym_d->symbol_expr()}});
+        }
+      }
       return struct_exprt{
         {div_exprt{real_num, denom}, div_exprt{imag_num, denom}}, ct};
     }
