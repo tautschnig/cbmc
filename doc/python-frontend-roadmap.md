@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2793** | +192 |
+| ESBMC PASS | 2489 | 2601 | **2794** | +193 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -331,6 +331,10 @@ Tuple / range / set / math / isinstance mini-cluster (wave 41 cont., +7):
   route to the math intrinsic constant-fold (factorial /
   comb / perm / gcd / lcm / isqrt) instead of dispatching
   to the library placeholder.
+- github_3804_3 (bonus) — reversed(range(start, stop,
+  step)) for non-trivial constant step now reverses
+  correctly (was: step magnitude lost during the reversed-
+  iteration transform).
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
