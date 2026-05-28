@@ -300,11 +300,40 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
       if(!skip_key_check)
       {
-        add_check(
-          found,
-          "exception",
-          "KeyError: key not found in dict",
-          get_location(expr));
+        // PLR §6.10.1: dict subscript on missing key raises
+        // KeyError. Set the __exception_active flag and the
+        // exception-type so the value propagates as a Python
+        // exception that try/except can catch. Don't emit a
+        // separate property assertion: the downstream
+        // uncaught_exception assertion (added per-statement)
+        // fires for any path that reaches the end of a
+        // function body / module scope with __exception_active
+        // still true.
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          exprt found_bool = found;
+          if(found_bool.type() != bool_typet{})
+            found_bool = safe_typecast(found_bool, bool_typet{});
+          exprt missing = not_exprt{found_bool};
+          // exc_active := exc_active || missing
+          pending_checks.push_back(code_frontend_assignt{
+            exc_sym->symbol_expr(), or_exprt{exc_sym->symbol_expr(), missing}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("KeyError");
+            // exc_type := missing ? KeyError : exc_type
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              if_exprt{
+                missing,
+                from_integer(h, exc_type_sym->type),
+                exc_type_sym->symbol_expr()}});
+          }
+        }
       }
       return result;
     }
