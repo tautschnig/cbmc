@@ -2232,12 +2232,18 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     return convert_type_annotation(json_member(annotation, "value"));
   }
 
-  // Handle Constant None annotation (-> None)
+  // Handle Constant None annotation (-> None / x: None).
+  // Python treats `None` as the type whose only value is None.
+  // Encode it as python_int_type since our None sentinel
+  // (-2^62) is a python_int value; using empty_typet here
+  // breaks the call site (parameter is void → arg is
+  // nondet) and the comparison `x is None` falls back to
+  // an irrelevant equality.
   if(is_node_type(annotation, "Constant"))
   {
     const jsont &val = json_member(annotation, "value");
     if(val.is_null())
-      return empty_typet{};
+      return python_int_type();
   }
 
   // PLR §4.7.2: Forward references — string annotations like -> "Foo"
