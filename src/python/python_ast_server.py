@@ -42,6 +42,25 @@ import sys
 import threading
 
 
+def _json_default(o):
+    """JSON serializer for non-serializable values.
+
+    Python complex literals (e.g. `2j`, `1+2j`) appear as a complex
+    value on the AST's Constant.value field. Without this hook,
+    json.dumps fails. Returning str(o) is wrong for the complex case
+    because the CBMC frontend's Constant-string path would parse a
+    `"2j"` source-string literal the same as a `2j` imaginary
+    literal — yet Python distinguishes the two: `"2j" + "x"` is a
+    string concat, `2j + 1` is complex addition.
+
+    We emit complex literals as a tagged dict so the frontend can
+    distinguish them from plain strings.
+    """
+    if isinstance(o, complex):
+        return {"__complex__": True, "real": o.real, "imag": o.imag}
+    return str(o)
+
+
 # Convert a Python AST node to the JSON shape CBMC expects.
 def to_dict(node):
     if isinstance(node, ast.AST):
@@ -99,7 +118,8 @@ def serve_one(conn):
                 path = buf[:nl].decode("utf-8", errors="replace")
                 break
         result = parse_file(path)
-        payload = json.dumps(result, default=str, ensure_ascii=False).encode(
+        payload = json.dumps(
+          result, default=_json_default, ensure_ascii=False).encode(
             "utf-8")
         header = f"{len(payload)}\n".encode("ascii")
         conn.sendall(header)
