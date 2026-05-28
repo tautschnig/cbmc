@@ -529,10 +529,30 @@ codet python_convertert::convert_for(const jsont &stmt)
     // For other step, fall through to the generic path.
     bool reversible = false;
     exprt new_start, new_stop, new_step;
-    if(rstep.is_constant())
+    // PLR §6.3.1: the AST for negative integer literals is
+    // UnaryOp(USub, Constant(N)). Fold so the constant detection
+    // below recognises -3 as a constant. Stripping a top-level
+    // typecast(int) is also needed because safe_typecast may
+    // wrap the constant.
+    auto fold_const = [](exprt e) -> exprt
+    {
+      if(e.id() == ID_typecast && e.operands().size() == 1)
+        e = e.operands()[0];
+      if(
+        e.id() == ID_unary_minus && e.operands().size() == 1 &&
+        e.operands()[0].is_constant())
+      {
+        mp_integer v;
+        if(!to_integer(to_constant_expr(e.operands()[0]), v))
+          return from_integer(-v, e.type());
+      }
+      return e;
+    };
+    exprt rstep_const = fold_const(rstep);
+    if(rstep_const.is_constant())
     {
       mp_integer sv;
-      if(!to_integer(to_constant_expr(rstep), sv))
+      if(!to_integer(to_constant_expr(rstep_const), sv))
       {
         if(sv == 1)
         {
@@ -560,7 +580,8 @@ codet python_convertert::convert_for(const jsont &stmt)
             rstart, mult_exprt{div_exprt{diff_minus_1, rstep}, rstep}};
           new_start = std::move(last);
           new_stop = minus_exprt{rstart, from_integer(1, int_type)};
-          new_step = from_integer(-1, int_type);
+          // Reverse step is the negation of the original.
+          new_step = from_integer(-sv, int_type);
           reversible = true;
         }
         else if(sv < 0)
@@ -571,7 +592,7 @@ codet python_convertert::convert_for(const jsont &stmt)
             rstart, mult_exprt{div_exprt{diff_plus_1, rstep}, rstep}};
           new_start = std::move(last);
           new_stop = plus_exprt{rstart, from_integer(1, int_type)};
-          new_step = from_integer(1, int_type);
+          new_step = from_integer(-sv, int_type);
           reversible = true;
         }
       }
