@@ -1253,6 +1253,39 @@ std::optional<exprt> python_convertert::try_builtin_call(
     if(args.is_array() && !as_array(args).empty())
     {
       exprt arg = convert_expression(*as_array(args).begin());
+      // PLR §6.10.2: set(constant_string) — fold to a bitmap
+      // with one bit per unique character. The bit positions
+      // are arbitrary (we use 0..N-1), since the only ops we
+      // support on string-set values are popcount(len) and
+      // truthiness (== empty). For larger consumer ops with
+      // string-set, fall back to nondet.
+      if(is_python_string_type(arg.type()))
+      {
+        auto sv = extract_string_value(arg);
+        if(!sv.has_value() && arg.id() == ID_symbol)
+        {
+          auto it = string_constants.find(to_symbol_expr(arg).get_identifier());
+          if(it != string_constants.end())
+            sv = it->second;
+        }
+        if(sv.has_value())
+        {
+          std::set<char> uniq(sv.value().begin(), sv.value().end());
+          std::size_t n = uniq.size();
+          if(n <= 64)
+          {
+            // Build bitmap with bits 0..n-1 set: (1 << n) - 1
+            // (using uint128 trick for n=64).
+            std::uint64_t bm = n == 64
+                                 ? ~static_cast<std::uint64_t>(0)
+                                 : ((static_cast<std::uint64_t>(1) << n) - 1);
+            return struct_exprt{
+              {from_integer(bm, unsignedbv_typet{64}),
+               from_integer(0, signedbv_typet{64})},
+              python_set_type()};
+          }
+        }
+      }
       // PLR §6.10.2: set(list_of_ints) — build a bitmap-set so it
       // interoperates with set literals {1,2,3} and the binary
       // operators (|, &, -, ^). For non-int element types we
