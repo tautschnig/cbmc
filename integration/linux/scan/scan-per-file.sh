@@ -236,6 +236,15 @@ if [[ ${#CONTRACT_TARGETS[@]} -eq 0 ]]; then
         __assert_not_freed
       )
       ;;
+    cancel_work_before_free)
+      # Cocci (and the per-return fallback) insert
+      # __assert_no_pending_work(&obj->work) before each
+      # kfree(obj) of an object whose work_struct was
+      # INIT_WORK'd.
+      CONTRACT_TARGETS=(
+        __assert_no_pending_work
+      )
+      ;;
     *)
       echo "no default contract targets for '$MODULE'; pass explicitly" >&2
       exit 2

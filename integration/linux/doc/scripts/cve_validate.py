@@ -118,6 +118,12 @@ _MODULE_API_PATTERNS = [
     ("use_after_free_generic",
                            r"\b(?:kfree|kvfree|kfree_skb|"
                            r"devm_kfree)\b"),
+    ("cancel_work_before_free",
+                           r"\b(?:INIT_WORK|INIT_DELAYED_WORK|"
+                           r"__INIT_WORK|INIT_WORK_ONSTACK|"
+                           r"cancel_work_sync|"
+                           r"cancel_delayed_work_sync|"
+                           r"flush_work|flush_delayed_work)\b"),
 ]
 
 

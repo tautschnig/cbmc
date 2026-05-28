@@ -24,6 +24,7 @@ ALL_SHAPES=(
   use_after_free_generic
   integer_overflow_in_alloc_size
   copy_from_user_size_check
+  cancel_work_before_free
 )
 
 # Header that must be prepended to instrumented sources so
@@ -34,7 +35,10 @@ extern void __assert_no_leak_at_exit(const void *p);
 extern void __assert_not_freed(const void *p);
 extern void __assert_size_safe(unsigned long n, unsigned long elem_size);
 extern void __assert_copy_safe(unsigned long dst_capacity, unsigned long len);
+extern void __assert_no_pending_work(struct work_struct *p);
 extern void leak_alloc_track(const void *p);
+extern void cancel_work_set_pending(struct work_struct *p);
+extern void cancel_work_clear_pending(struct work_struct *p);
 '
 
 if [[ $# -lt 2 ]]; then
@@ -85,7 +89,7 @@ for shape in "${SHAPES[@]}"; do
 done
 
 # Count insertions for reporting.
-INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe)|leak_alloc_track\(" \
+INSERTED=$(grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe|no_pending_work)|leak_alloc_track\(|cancel_work_(set|clear)_pending\(" \
   "$WORK/inst.c" 2>/dev/null || true)
 INSERTED=${INSERTED:-0}
 
@@ -111,7 +115,7 @@ count_insertions_in_function() {
       }
     }
   ' "$file" \
-    | grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe)|leak_alloc_track\(" \
+    | grep -cE "__assert_(safe_to_deref|no_leak_at_exit|not_freed|size_safe|copy_safe|no_pending_work)|leak_alloc_track\(|cancel_work_(set|clear)_pending\(" \
     || true
 }
 
@@ -129,7 +133,7 @@ if [[ -n "$TARGET_FN" && "$INSERTED_IN_FN" == "0" ]]; then
   FALLBACK_SHAPES=()
   for s in "${SHAPES[@]}"; do
     case "$s" in
-      resource_leak_on_error_path|use_after_free_generic)
+      resource_leak_on_error_path|use_after_free_generic|cancel_work_before_free)
         FALLBACK_SHAPES+=("$s")
         ;;
     esac

@@ -378,7 +378,136 @@ def _instrument_use_after_free(source: str, fn_name: str
 _SHAPE_HANDLERS = {
     "resource_leak_on_error_path": _instrument_resource_leak,
     "use_after_free_generic": _instrument_use_after_free,
+    "cancel_work_before_free": None,  # filled below
 }
+
+
+# Match INIT_WORK(&X->fld, ...) and similar work-init calls.
+_INIT_WORK_RE = re.compile(
+    r"^(?P<indent>\s*)"
+    r"(?:INIT_WORK|INIT_DELAYED_WORK|"
+    r"__INIT_WORK|INIT_WORK_ONSTACK)\s*\(\s*"
+    r"(?P<arg>&?[\w\.\->]+)\s*,"
+)
+_KFREE_RE = re.compile(
+    r"^(?P<indent>\s*)kfree\s*\(\s*(?P<arg>[\w\.\->]+)\s*\)"
+)
+_CANCEL_WORK_RE = re.compile(
+    r"^(?P<indent>\s*)"
+    r"(?:cancel_work_sync|cancel_delayed_work_sync|"
+    r"flush_work|flush_delayed_work)\s*\(\s*"
+    r"(?P<arg>&?[\w\.\->]+)\s*\)"
+)
+
+
+def _instrument_cancel_work(source: str, fn_name: str
+                            ) -> tuple[str, int]:
+    """Apply cancel_work_before_free fallback: insert
+    `cancel_work_set_pending(W)` after each INIT_WORK(W, ...),
+    `cancel_work_clear_pending(W)` after each cancel_work_sync,
+    and `__assert_no_pending_work(W)` before each kfree
+    of an object known to embed a tracked work_struct."""
+    body_range = _find_function_body(source, fn_name)
+    if body_range is None:
+        return source, 0
+    body_start, body_end = body_range
+    body_text = source[body_start:body_end]
+    body_lines = _split_lines_with_offsets(body_text)
+
+    # Pass 1: collect INIT_WORK args (the work_struct pointers
+    # we'll later check before kfree).
+    tracked_works: list[str] = []  # exprs like '&obj->work'
+
+    edits: list[tuple[int, int, str]] = []
+    for ls, le, line in body_lines:
+        m = _INIT_WORK_RE.match(line)
+        if m:
+            arg = m.group("arg")
+            tracked_works.append(arg)
+            # Find statement-terminating ';' so we insert AFTER.
+            j = ls
+            depth = 0
+            while j < len(body_text):
+                c = body_text[j]
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                elif c == ";" and depth == 0:
+                    edits.append((
+                        j + 1, j + 1,
+                        f"\n{m.group('indent')}"
+                        f"cancel_work_set_pending({arg});"
+                    ))
+                    break
+                j += 1
+            continue
+        m = _CANCEL_WORK_RE.match(line)
+        if m:
+            arg = m.group("arg")
+            j = ls
+            depth = 0
+            while j < len(body_text):
+                c = body_text[j]
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                elif c == ";" and depth == 0:
+                    edits.append((
+                        j + 1, j + 1,
+                        f"\n{m.group('indent')}"
+                        f"cancel_work_clear_pending({arg});"
+                    ))
+                    break
+                j += 1
+            continue
+        m = _KFREE_RE.match(line)
+        if m and tracked_works:
+            arg = m.group("arg")
+            indent = m.group("indent")
+            # Insert __assert_no_pending_work before each
+            # tracked work_struct that's reachable from arg
+            # (heuristic: starts with &arg-> or &arg.).
+            prefix_a = f"&{arg}->"
+            prefix_b = f"&{arg}."
+            relevant = [w for w in tracked_works
+                        if w.startswith(prefix_a)
+                        or w.startswith(prefix_b)]
+            if not relevant:
+                continue
+            # Find the kfree's terminating ';'.
+            j = ls
+            depth = 0
+            cstart = ls + len(indent)
+            while j < len(body_text):
+                c = body_text[j]
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                elif c == ";" and depth == 0:
+                    stmt = body_text[cstart:j + 1]
+                    asserts = "".join(
+                        f"__assert_no_pending_work({w}); "
+                        for w in relevant)
+                    edits.append((
+                        cstart, j + 1,
+                        "{ " + asserts + stmt + " }"
+                    ))
+                    break
+                j += 1
+
+    edits.sort(key=lambda x: (-x[0], -x[1]))
+    new_body = body_text
+    for start, end, text in edits:
+        new_body = new_body[:start] + text + new_body[end:]
+
+    return (source[:body_start] + new_body + source[body_end:],
+            len(edits))
+
+
+_SHAPE_HANDLERS["cancel_work_before_free"] = _instrument_cancel_work
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -519,6 +519,19 @@ MODULE_GHOST_BOOTSTRAP = {
         "wrapper_paths": [],
         "uses_cocci_instrumentation": True,
     },
+    "cancel_work_before_free": {
+        # Same shape as the other cocci-driven modules:
+        # __assert_no_pending_work(work) is inserted by cocci
+        # (or the per-return fallback) before kfree of an object
+        # whose embedded work_struct was INIT_WORK'd.
+        "types": [],
+        "ghost_init_call": None,
+        "ghost_init_args_template": None,
+        "ghost_init_decl": "",
+        "forward_decls": [],
+        "wrapper_paths": [],
+        "uses_cocci_instrumentation": True,
+    },
 }
 
 
