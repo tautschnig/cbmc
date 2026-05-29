@@ -958,6 +958,62 @@ exprt python_convertert::convert_compare(const jsont &expr)
                                            : exprt{false_exprt{}};
             goto done_cmp;
           }
+          // PLR §6.10.1: 1-char-vs-1-char-constant fast-path
+          // for Eq. When one side is a 1-char string view (from
+          // s[i] / for-c-in-s iteration) and the other is a
+          // 1-char constant, skip the refined-string solver and
+          // generate a direct byte equality. This unlocks
+          // assume(s == "abc") → assert(s[0] == "a") propagation
+          // that the refined solver loses across pointer views,
+          // and avoids long SAT loops on 'all(c in HEX for c in
+          // s)' patterns.
+          {
+            auto try_view_byte = [&](const exprt &s) -> exprt
+            {
+              if(
+                s.id() == ID_struct && s.operands().size() == 2 &&
+                s.operands()[0].is_constant())
+              {
+                mp_integer slen;
+                if(
+                  !to_integer(to_constant_expr(s.operands()[0]), slen) &&
+                  slen == 1)
+                {
+                  const exprt &sd = s.operands()[1];
+                  // The s[i] path leaves s.operands()[1] as a
+                  // pointer (s.data + i) or address_of(arr[0]).
+                  if(
+                    sd.id() == ID_address_of &&
+                    sd.operands().size() == 1 &&
+                    sd.operands()[0].id() == ID_index)
+                    return sd.operands()[0];
+                  if(sd.type().id() == ID_pointer)
+                    return dereference_exprt{sd};
+                }
+              }
+              return nil_exprt{};
+            };
+            exprt lvb = try_view_byte(current_left);
+            exprt rvb = try_view_byte(right);
+            if(lv.has_value() && lv.value().size() == 1 && !rvb.is_nil())
+            {
+              cmp = equal_exprt{
+                rvb,
+                from_integer(
+                  static_cast<unsigned char>(lv.value()[0]),
+                  unsignedbv_typet{8})};
+              goto done_cmp;
+            }
+            if(rv.has_value() && rv.value().size() == 1 && !lvb.is_nil())
+            {
+              cmp = equal_exprt{
+                lvb,
+                from_integer(
+                  static_cast<unsigned char>(rv.value()[0]),
+                  unsignedbv_typet{8})};
+              goto done_cmp;
+            }
+          }
           // Use string solver for content equality
           {
             // PLR §6.10.1: when 's' is a side-effect-bearing
