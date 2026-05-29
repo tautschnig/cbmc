@@ -2492,8 +2492,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           {
             std::string pn = json_string(json_member(param, "arg"));
             const jsont &ann = json_member(param, "annotation");
-            typet pt =
-              ann.is_null() ? python_int_type() : convert_type_annotation(ann);
+            // PLR §8.7: kwonly param without annotation defaults
+            // to the tagged-union (Any), matching positional
+            // params. Default of int previously typecast strings
+            // to int and zeroed struct contents at the call.
+            typet pt = ann.is_null() ? python_value_type()
+                                     : convert_type_annotation(ann);
             code_typet::parametert p{pt};
             p.set_identifier(
               "python::" + class_name + "::" + method_name + "::" + pn);
