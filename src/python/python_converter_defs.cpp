@@ -2751,6 +2751,27 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             return_type = python_dict_type(first_dict_key, first_dict_val);
           else if(has_list && all_list && !first_list_elem.id_string().empty())
             return_type = python_list_type(first_list_elem);
+          else
+          {
+            // PLR §3.2: heterogeneous-return method with at least
+            // one 'return None' literal alongside other non-None
+            // returns (e.g. defaultdict.__missing__ returning
+            // 0/0.0/[]/None). Widen to python_value so each
+            // value-returning path is wrapped via wrap_value at
+            // convert_return time, and 'is None' / `== None` at
+            // the call site dispatches via the NONE tag.
+            bool has_none_lit = false;
+            bool has_other = false;
+            for(shape_t s : shapes)
+            {
+              if(s == shape_t::NONE_LITERAL)
+                has_none_lit = true;
+              else
+                has_other = true;
+            }
+            if(has_none_lit && has_other)
+              return_type = python_value_type();
+          }
         }
 
         code_typet func_type{parameters, return_type};
