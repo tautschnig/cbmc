@@ -1,0 +1,13 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §13.3.10: Dynamic import — `import("./mod")` returns a struct
+of nondet values typed per the imported module's export shape. We
+verify that the frontend doesn't crash and that field access produces
+values of the expected (declared) type.

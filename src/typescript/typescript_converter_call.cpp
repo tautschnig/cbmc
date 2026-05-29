@@ -30,6 +30,60 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
   const jsont &callee = json_member(node, "expression");
   const jsont &args = json_member(node, "arguments");
 
+  // ES2024 §13.3.10: Dynamic import — `import("./mod")` returns a
+  // Promise<typeof module>. With our sequential async model, await
+  // unwraps it to the module exports object.
+  //
+  // The parser annotates such calls with `dynamicImport: true` and
+  // (where it could resolve the target module) `moduleExports`: a
+  // list of {name, type} entries describing the exported symbols.
+  //
+  // We construct an anonymous struct value with one nondet field
+  // per export, of approximately the right shape. This is sound
+  // (over-approximates) and lets `mod.foo` reads through the
+  // existing struct-property machinery return values of the
+  // matching field type.
+  if(json_member(node, "dynamicImport").is_true())
+  {
+    const jsont &exports_arr = json_member(node, "moduleExports");
+    if(exports_arr.is_array() && !to_json_array(exports_arr).empty())
+    {
+      struct_typet mod_type;
+      std::vector<exprt> field_values;
+      for(const auto &exp : to_json_array(exports_arr))
+      {
+        std::string name = json_string(json_member(exp, "name"));
+        std::string ty = json_string(json_member(exp, "type"));
+        // Map TS-typeString to CBMC type. Crude mapping; more
+        // sophisticated dispatch could route to the existing
+        // type-string parser.
+        typet field_ty;
+        if(ty == "number")
+          field_ty = double_type();
+        else if(ty == "boolean")
+          field_ty = bool_typet{};
+        else if(ty == "string")
+          field_ty = typescript_string_type();
+        else
+          field_ty = typescript_string_type(); // safe default
+        mod_type.components().push_back(
+          struct_typet::componentt{name, field_ty});
+        field_values.push_back(
+          side_effect_expr_nondett{field_ty, get_location(node)});
+      }
+      mod_type.set_tag("typescript_dynamic_module");
+      return struct_exprt{std::move(field_values), mod_type};
+    }
+    // Could not resolve the target module — fall through to a
+    // generic nondet object.
+    log.warning() << "Dynamic import target not resolved at conversion "
+                  << "time; returning empty nondet module struct"
+                  << messaget::eom;
+    struct_typet empty_mod;
+    empty_mod.set_tag("typescript_dynamic_module");
+    return side_effect_expr_nondett{empty_mod, get_location(node)};
+  }
+
   // ES2024 §20.1.3.3: X.prototype.isPrototypeOf(y).
   // Resolve statically by checking if y's class has X in its
   // parent chain (known at conversion time from parent_class map).

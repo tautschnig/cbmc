@@ -181,6 +181,39 @@ function n2j(node) {
     case ts.SyntaxKind.CallExpression:
       r.expression = n2j(node.expression);
       r.arguments = node.arguments.map(n2j);
+      // ES2024 §13.3.10: Dynamic import — `import("./mod")`. Detect
+      // by checking whether the callee is the `import` keyword.
+      // When detected, also emit the resolved module's exported
+      // names + their types so the converter can build a struct of
+      // the proper shape.
+      if(node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        r.dynamicImport = true;
+        try {
+          const moduleType = checker.getTypeAtLocation(node);
+          // The Promise<typeof import(...)> wrapper: peel it.
+          let inner = moduleType;
+          if(moduleType.symbol && moduleType.symbol.name === "Promise" &&
+             moduleType.aliasTypeArguments &&
+             moduleType.aliasTypeArguments.length === 1) {
+            inner = moduleType.aliasTypeArguments[0];
+          } else if(moduleType.typeArguments && moduleType.typeArguments.length === 1) {
+            inner = moduleType.typeArguments[0];
+          }
+          // Inner is now `typeof import("...")` — get its symbol's exports.
+          const exportsList = [];
+          if(inner.symbol) {
+            const moduleExports = checker.getExportsOfModule(inner.symbol);
+            for(const exp of moduleExports) {
+              const expType = checker.getTypeOfSymbolAtLocation(exp, node);
+              exportsList.push({
+                name: exp.name,
+                type: checker.typeToString(expType, node),
+              });
+            }
+          }
+          r.moduleExports = exportsList;
+        } catch(e) {}
+      }
       break;
     case ts.SyntaxKind.PropertyAccessExpression:
       r.expression = n2j(node.expression);
