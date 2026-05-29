@@ -786,6 +786,173 @@ codet python_convertert::convert_for(const jsont &stmt)
   // statements after the unrolled body when the loop wasn't
   // broken; we conservatively assume the loop always exits
   // normally via fall-through (the standard semantics).
+  //
+  // Variant: 'for i, c in enumerate("literal"):' — same idea
+  // but the target is a Tuple(i, c). Both names are bound per
+  // unrolled iteration: i to the integer literal and c to the
+  // 1-char string literal.
+  bool is_enumerate_const_str = false;
+  std::string enum_const_sv;
+  mp_integer enum_start_val{0};
+  std::string enum_idx_name, enum_char_name;
+  if(
+    is_node_type(target, "Tuple") && is_node_type(iter, "Call") &&
+    is_node_type(json_member(iter, "func"), "Name") &&
+    json_string(json_member(json_member(iter, "func"), "id")) == "enumerate")
+  {
+    const jsont &elts = json_member(target, "elts");
+    const jsont &eargs = json_member(iter, "args");
+    if(
+      elts.is_array() && as_array(elts).size() == 2 && eargs.is_array() &&
+      !as_array(eargs).empty())
+    {
+      auto eit = as_array(elts).begin();
+      auto e0 = eit;
+      ++eit;
+      auto e1 = eit;
+      if(is_node_type(*e0, "Name") && is_node_type(*e1, "Name"))
+      {
+        enum_idx_name = json_string(json_member(*e0, "id"));
+        enum_char_name = json_string(json_member(*e1, "id"));
+        exprt s_arg = convert_expression(*as_array(eargs).begin());
+        auto pit = as_array(eargs).begin();
+        ++pit;
+        if(pit != as_array(eargs).end())
+        {
+          exprt s = convert_expression(*pit);
+          if(s.is_constant())
+          {
+            mp_integer v;
+            if(!to_integer(to_constant_expr(s), v))
+              enum_start_val = v;
+          }
+        }
+        const jsont &enum_kw = json_member(iter, "keywords");
+        if(enum_kw.is_array())
+        {
+          for(const auto &k : as_array(enum_kw))
+          {
+            if(json_string(json_member(k, "arg")) == "start")
+            {
+              exprt s = convert_expression(json_member(k, "value"));
+              if(s.is_constant())
+              {
+                mp_integer v;
+                if(!to_integer(to_constant_expr(s), v))
+                  enum_start_val = v;
+              }
+            }
+          }
+        }
+        if(is_python_string_type(s_arg.type()))
+        {
+          auto sv2 = extract_string_value(s_arg);
+          if(!sv2.has_value() && s_arg.id() == ID_symbol)
+          {
+            auto it =
+              string_constants.find(to_symbol_expr(s_arg).get_identifier());
+            if(it != string_constants.end())
+              sv2 = it->second;
+          }
+          if(sv2.has_value())
+          {
+            enum_const_sv = sv2.value();
+            is_enumerate_const_str = true;
+          }
+        }
+      }
+    }
+  }
+  if(is_enumerate_const_str)
+  {
+    const jsont &body_e = json_member(stmt, "body");
+    std::function<bool(const jsont &)> has_bc_e = [&](const jsont &n) -> bool
+    {
+      if(n.is_array())
+      {
+        for(const auto &e : as_array(n))
+          if(has_bc_e(e))
+            return true;
+        return false;
+      }
+      if(!n.is_object())
+        return false;
+      if(is_node_type(n, "Break") || is_node_type(n, "Continue"))
+        return true;
+      if(
+        is_node_type(n, "For") || is_node_type(n, "While") ||
+        is_node_type(n, "AsyncFor"))
+        return false;
+      const auto &obj = static_cast<const json_objectt &>(n);
+      for(const auto &kv : obj)
+      {
+        if(
+          kv.first == "_type" || kv.first == "lineno" ||
+          kv.first == "col_offset" || kv.first == "end_lineno" ||
+          kv.first == "end_col_offset")
+          continue;
+        if(has_bc_e(kv.second))
+          return true;
+      }
+      return false;
+    };
+    if(body_e.is_array() && !has_bc_e(body_e))
+    {
+      std::string iq = qualify_name(enum_idx_name);
+      irep_idt iid{iq};
+      if(symbol_table.lookup(iid) == nullptr)
+      {
+        symbolt is{iid, int_type, "python"};
+        is.base_name = enum_idx_name;
+        is.location = loc;
+        is.is_lvalue = true;
+        is.is_state_var = true;
+        symbol_table.add(is);
+      }
+      std::string cq = qualify_name(enum_char_name);
+      irep_idt cid{cq};
+      if(symbol_table.lookup(cid) == nullptr)
+      {
+        symbolt cs{cid, python_string_type(), "python"};
+        cs.base_name = enum_char_name;
+        cs.location = loc;
+        cs.is_lvalue = true;
+        cs.is_state_var = true;
+        symbol_table.add(cs);
+      }
+      else if(symbol_table.lookup_ref(cid).type != python_string_type())
+      {
+        symbol_table.get_writeable_ref(cid).type = python_string_type();
+      }
+      symbol_exprt iv = symbol_table.lookup_ref(iid).symbol_expr();
+      symbol_exprt cv = symbol_table.lookup_ref(cid).symbol_expr();
+      code_blockt unrolled;
+      for(auto &pc : pre_loop.statements())
+        unrolled.add(std::move(pc));
+      pre_loop = code_blockt{};
+      mp_integer i_val{0};
+      for(char ch : enum_const_sv)
+      {
+        std::string ch_str(1, ch);
+        string_constants[cid] = ch_str;
+        unrolled.add(code_frontend_assignt{
+          iv, from_integer(enum_start_val + i_val, int_type)});
+        unrolled.add(code_frontend_assignt{cv, python_string_literal(ch_str)});
+        loop_depth++;
+        for(const auto &s : as_array(body_e))
+          unrolled.add(convert_statement(s));
+        loop_depth--;
+        i_val += 1;
+      }
+      string_constants.erase(cid);
+      const jsont &orelse_e = json_member(stmt, "orelse");
+      if(orelse_e.is_array())
+        for(const auto &s : as_array(orelse_e))
+          unrolled.add(convert_statement(s));
+      return finalize_for(std::move(unrolled));
+    }
+  }
+
   if(is_python_string_type(iterable.type()) && is_node_type(target, "Name"))
   {
     auto sv = extract_string_value(iterable);
