@@ -514,6 +514,47 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                   return_type = python_value_type();
               }
             }
+            // PLR §3.2: 'return varname' where varname was
+            // bound to a class constructor in the same body.
+            // Walk the body looking for 'varname = ClassName(...)'
+            // and pick up the class type as the return type.
+            if(is_node_type(rv, "Name"))
+            {
+              std::string rname = json_string(json_member(rv, "id"));
+              const jsont &fn_body = json_member(stmt, "body");
+              if(fn_body.is_array())
+              {
+                for(const auto &bs : as_array(fn_body))
+                {
+                  if(!is_node_type(bs, "Assign"))
+                    continue;
+                  const jsont &targets = json_member(bs, "targets");
+                  if(!targets.is_array() || as_array(targets).empty())
+                    continue;
+                  const jsont &t0 = *as_array(targets).begin();
+                  if(
+                    !is_node_type(t0, "Name") ||
+                    json_string(json_member(t0, "id")) != rname)
+                    continue;
+                  const jsont &av = json_member(bs, "value");
+                  if(
+                    !is_node_type(av, "Call") ||
+                    !is_node_type(json_member(av, "func"), "Name"))
+                    continue;
+                  std::string cn =
+                    json_string(json_member(json_member(av, "func"), "id"));
+                  if(class_types.count(cn))
+                  {
+                    typet this_type = class_types[cn];
+                    if(return_type.id() == ID_empty)
+                      return_type = this_type;
+                    else if(return_type != this_type)
+                      return_type = python_value_type();
+                  }
+                  break;
+                }
+              }
+            }
             // PLR §6.10.5: 'return a, b' — the implicit tuple
             // is the return value. Infer the tuple type from
             // the syntactic shape (the element types are
