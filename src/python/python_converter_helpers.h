@@ -487,8 +487,18 @@ make_nondet_string(symbol_table_baset &symbol_table)
   array_exprt arr(std::move(chars), at);
   exprt content = address_of_exprt(
     index_exprt(arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
-  exprt length =
-    from_integer(static_cast<long long>(s.size()), signedbv_typet{64});
+  // PLR §3.6: 'len(s)' returns the number of code points, not
+  // the number of UTF-8 bytes. Count code points by counting
+  // bytes that are NOT continuation bytes (UTF-8 continuation
+  // bytes have the form 10xxxxxx, i.e. value in [0x80, 0xC0)).
+  long long codepoints = 0;
+  for(char c : s)
+  {
+    unsigned char uc = static_cast<unsigned char>(c);
+    if(uc < 0x80 || uc >= 0xC0)
+      ++codepoints;
+  }
+  exprt length = from_integer(codepoints, signedbv_typet{64});
   return struct_exprt({length, content}, python_string_type());
 }
 

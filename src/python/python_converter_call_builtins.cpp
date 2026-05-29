@@ -317,8 +317,18 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // constant-fold paths (subscript, predicates) fire.
           auto sv = extract_string_value(arg);
           if(sv.has_value())
-            return from_integer(
-              static_cast<long long>(sv->size()), python_int_type());
+          {
+            // PLR §6.10: len(s) returns the code-point count.
+            // Count UTF-8 leading bytes (non-continuation).
+            long long cp = 0;
+            for(char c : sv.value())
+            {
+              unsigned char uc = static_cast<unsigned char>(c);
+              if(uc < 0x80 || uc >= 0xC0)
+                ++cp;
+            }
+            return from_integer(cp, python_int_type());
+          }
           exprt result = emit_string_int_function(
             ID_cprover_string_length_func, arg, symbol_table, pending_checks);
           if(result.type() != python_int_type())

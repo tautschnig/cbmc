@@ -675,18 +675,33 @@ python_convertert::extract_string_value(const exprt &e) const
         arr = &data_op;
       if(arr != nullptr && arr->id() == ID_array)
       {
+        // PLR §3.6: the string struct's length is the
+        // code-point count, but the data array stores UTF-8
+        // bytes. Read up to the array's full size: collect
+        // bytes until we've seen `slen` non-continuation
+        // bytes, plus any trailing continuation bytes for
+        // the last code point.
         std::string s;
-        for(mp_integer i = 0; i < slen; ++i)
+        mp_integer codepoints_seen = 0;
+        for(std::size_t i = 0; i < arr->operands().size(); ++i)
         {
-          auto idx = i.to_ulong();
-          if(idx >= arr->operands().size())
-            return std::nullopt;
-          if(!arr->operands()[idx].is_constant())
+          if(!arr->operands()[i].is_constant())
             return std::nullopt;
           mp_integer ch;
-          if(to_integer(to_constant_expr(arr->operands()[idx]), ch))
+          if(to_integer(to_constant_expr(arr->operands()[i]), ch))
             return std::nullopt;
-          s += static_cast<char>(ch.to_ulong());
+          unsigned char byte = static_cast<unsigned char>(ch.to_ulong());
+          // Stop at the first leading byte (non-continuation)
+          // AFTER having collected all `slen` code points.
+          // Continuation bytes (10xxxxxx, [0x80, 0xC0)) are
+          // tail bytes of the current code point and are
+          // collected together with the leading byte.
+          bool is_continuation = byte >= 0x80 && byte < 0xC0;
+          if(!is_continuation && codepoints_seen >= slen)
+            break;
+          s += static_cast<char>(byte);
+          if(!is_continuation)
+            ++codepoints_seen;
         }
         return s;
       }
