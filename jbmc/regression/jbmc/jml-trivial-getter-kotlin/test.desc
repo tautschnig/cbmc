@@ -1,0 +1,25 @@
+CORE
+JmlTrivialGetterKotlin
+--function "experiment.JmlTrivialGetterKotlin.validate:(Lexperiment/ColumnAttributes;)V" --jml-source src/main/kotlin/JmlTrivialGetterKotlin.kt --no-lazy-methods --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for chained trivial getters on Kotlin data
+classes. JML clauses can call
+
+  attrs.getSensitivity().getViewable()
+
+and JBMC's resolver descends through both Kotlin-emitted
+getter methods, recognising each as a trivial field-read
+(`return this.sensitivity` then `return this.viewable`),
+producing the equivalent member-access chain
+
+  *attrs.sensitivity.viewable
+
+against the backing fields. This is the AWS-Bastion privacy-
+pipeline idiom.

@@ -1,0 +1,41 @@
+CORE
+JmlTrivialGetter
+--function "JmlTrivialGetter.echo:()I" --jml-source src/main/java/JmlTrivialGetter.java --no-lazy-methods --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for trivial bean-getter recognition in JML.
+
+JML's purity rule forbids calling arbitrary methods from
+specification expressions. Implementations like OpenJML allow
+methods marked `@pure`; JBMC instead recognises trivial bean-
+style getters by their bytecode shape and rewrites the call
+to a direct member access. The recognised pattern (after
+JBMC's null-pointer-check injection and remove_returns) is:
+
+  ASSERT/ASSUME this != NULL
+  ASSIGN <method>#return_value := *this.<field>      // optional cast
+  END_FUNCTION
+
+Both `getX` (returning int) and `isReady` (returning boolean
+with the JVM `int → boolean` cast) match the pattern; non-
+trivial getters (e.g. `return this.x + 1;`) do not.
+
+The test exercises `requires` and `ensures` clauses that
+call trivial getters on `this`, plus a parameter-typed
+receiver. Verification proves that the precondition's getX()
+and the postcondition's getX() resolve to the same backing
+field, so `\result == this.getX()` holds.
+
+`--no-lazy-methods` is needed so JBMC loads the getter
+bodies into the goto-functions table; lazy loading would
+otherwise discard unreachable methods (the getters aren't
+called from the verified entry point) and the recogniser
+wouldn't see them. A future improvement: have the JML
+processing pass force-load methods referenced by JML
+expressions before lazy loading runs.

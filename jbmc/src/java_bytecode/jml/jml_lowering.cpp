@@ -25,18 +25,134 @@ Author: Kiro (AI agent)
 #include "../remove_exceptions.h"
 #include "jml_ids.h"
 
+#include <iostream>
+
 namespace
 {
 
 /// Resolve unresolved JML expressions (jml_field_access,
 /// jml_method_call, untyped symbols) against the symbol table.
 /// This is the "Phase 3 resolution" that the parser deferred.
+/// Recognised result for a trivial bean-style getter
+/// (`int getX() { return this.x; }`). When the JML resolver
+/// encounters a method call to such a getter, it rewrites the
+/// call to a direct member access — the same shape that
+/// `obj.x` would have produced — keeping JML's purity rule
+/// honoured by inspection of the bytecode.
+struct trivial_gettert
+{
+  irep_idt field_name;
+  typet field_type;
+  /// True if the original return expression had a final
+  /// typecast (e.g. signedbv32 → c_bool8 for boolean
+  /// getters). The caller may need to wrap the result with a
+  /// matching typecast to preserve type-equality with the
+  /// original `obj.getX()` site.
+  bool returns_cast = false;
+  typet return_type;
+};
+
+using trivial_getter_mapt = std::map<irep_idt, trivial_gettert>;
+
+/// Strip outer typecast layers; return the innermost expression.
+const exprt &strip_typecasts(const exprt &e)
+{
+  const exprt *cur = &e;
+  while(cur->id() == ID_typecast && cur->operands().size() == 1)
+    cur = &to_typecast_expr(*cur).op();
+  return *cur;
+}
+
+/// Decide whether a goto-program body realises the trivial
+/// `return this.field` pattern. Returns the field name + type
+/// if so, std::nullopt otherwise.
+std::optional<trivial_gettert> recognise_trivial_getter(
+  const irep_idt &method_id,
+  const goto_programt &body)
+{
+  const std::string rv_id = id2string(method_id) + "#return_value";
+  std::optional<trivial_gettert> found;
+
+  for(const auto &ins : body.instructions)
+  {
+    // Skip harness-injected guards and bookkeeping.
+    if(ins.is_dead() || ins.is_decl() || ins.is_skip() ||
+       ins.is_atomic_begin() || ins.is_atomic_end() ||
+       ins.is_start_thread() || ins.is_end_thread() ||
+       ins.is_end_function() || ins.is_location())
+      continue;
+    if(ins.is_assert() || ins.is_assume())
+    {
+      // Only ignore null-pointer / similar boilerplate.
+      const auto &pc = ins.source_location().get_property_class();
+      if(
+        pc == "null-pointer-exception" || pc == "pointer-out-of-bounds" ||
+        pc == "Null pointer check" || pc.empty())
+        continue;
+      return std::nullopt;
+    }
+    if(!ins.is_assign())
+      return std::nullopt;
+    if(found.has_value())
+      return std::nullopt; // more than one meaningful assignment
+
+    const auto &lhs = ins.assign_lhs();
+    if(lhs.id() != ID_symbol)
+      return std::nullopt;
+    if(id2string(to_symbol_expr(lhs).get_identifier()) != rv_id)
+      return std::nullopt;
+
+    // Strip outer casts; expect member_exprt(deref(this), field).
+    const exprt &raw_rhs = ins.assign_rhs();
+    const exprt &core = strip_typecasts(raw_rhs);
+    if(core.id() != ID_member)
+      return std::nullopt;
+    const auto &mem = to_member_expr(core);
+    const exprt *root = &mem.compound();
+    while(root->id() == ID_member)
+      root = &to_member_expr(*root).compound();
+    if(root->id() != ID_dereference)
+      return std::nullopt;
+    const exprt &deref_op = to_dereference_expr(*root).op();
+    if(deref_op.id() != ID_symbol)
+      return std::nullopt;
+    const std::string this_id = id2string(method_id) + "::this";
+    if(id2string(to_symbol_expr(deref_op).get_identifier()) != this_id)
+      return std::nullopt;
+
+    trivial_gettert g;
+    g.field_name = mem.get_component_name();
+    g.field_type = mem.type();
+    g.returns_cast = (raw_rhs.id() == ID_typecast);
+    g.return_type = lhs.type();
+    found = g;
+  }
+
+  return found;
+}
+
+/// Build the map of trivial getters across all currently
+/// loaded goto functions.
+trivial_getter_mapt build_trivial_getters(const goto_functionst &fns)
+{
+  trivial_getter_mapt out;
+  for(const auto &[id, fn] : fns.function_map)
+  {
+    if(fn.body.instructions.empty())
+      continue;
+    if(auto g = recognise_trivial_getter(id, fn.body))
+      out[id] = *g;
+  }
+  return out;
+}
+
 exprt resolve_jml_expr(
   const exprt &e,
   const irep_idt &method_id,
   const irep_idt &class_id,
   const namespacet &ns,
-  const std::vector<std::string> &param_names)
+  const std::vector<std::string> &param_names,
+  const trivial_getter_mapt &trivial_getters)
 {
   // Resolve symbol_exprt with empty type: look up as parameter
   // or field of the enclosing class.
@@ -229,7 +345,8 @@ exprt resolve_jml_expr(
   if(e.id() == jml_ids::jml_field_access && e.operands().size() == 1)
   {
     exprt receiver = resolve_jml_expr(
-      e.operands()[0], method_id, class_id, ns, param_names);
+      e.operands()[0], method_id, class_id, ns, param_names,
+      trivial_getters);
     const irep_idt field_name{e.get("field_name")};
 
     // Static field: <ReceiverClassName>.field_name. The receiver
@@ -301,6 +418,132 @@ exprt resolve_jml_expr(
     return e;
   }
 
+  // Resolve jml_method_call: obj.foo(args). JML's purity rule
+  // requires methods called inside specifications to be free
+  // of visible side effects. We honour the rule by inspection:
+  // a JML method-call site is rewritten to a member access
+  // only when the called method is a TRIVIAL bean-style getter
+  // (`return this.field;`), which is provably pure by virtue
+  // of its bytecode shape. Any other call leaves the node
+  // unresolved and downstream produces a clear "non-trivial
+  // method call in JML expression" error rather than silently
+  // accepting a potentially-impure call.
+  if(e.id() == jml_ids::jml_method_call && e.operands().size() >= 1)
+  {
+    const irep_idt method_name{e.get("method_name")};
+    exprt receiver = resolve_jml_expr(
+      e.operands()[0], method_id, class_id, ns, param_names,
+      trivial_getters);
+
+    // Trivial getters take no arguments. If the parser captured
+    // arguments, this is not a candidate.
+    if(e.operands().size() == 1)
+    {
+      // Resolve receiver class through its struct-tag type.
+      exprt recv = receiver;
+      if(recv.type().id() == ID_pointer)
+        recv = dereference_exprt(recv);
+      if(recv.type().id() == ID_struct_tag)
+      {
+        const irep_idt class_qid =
+          to_struct_tag_type(recv.type()).get_identifier();
+        // Walk the class hierarchy looking for a method
+        // <ClassName>.<methodName>:... that is a known trivial
+        // getter.
+        irep_idt cur = class_qid;
+        while(!cur.empty())
+        {
+          const std::string method_prefix =
+            id2string(cur) + "." + id2string(method_name) + ":";
+          // Find any symbol whose id starts with this prefix
+          // and which corresponds to a trivial getter.
+          for(const auto &[gid, info] : trivial_getters)
+          {
+            const std::string gid_str = id2string(gid);
+            if(gid_str.rfind(method_prefix, 0) == 0)
+            {
+              // Build the equivalent member access.
+              const auto *cls = ns.get_symbol_table().lookup(cur);
+              if(cls != nullptr && cls->type.id() == ID_struct)
+              {
+                exprt cur_obj = recv;
+                irep_idt walk = cur;
+                while(!walk.empty())
+                {
+                  const auto *wcls = ns.get_symbol_table().lookup(walk);
+                  if(wcls == nullptr || wcls->type.id() != ID_struct)
+                    break;
+                  const auto &comps =
+                    to_struct_type(wcls->type).components();
+                  for(const auto &c : comps)
+                  {
+                    if(c.get_name() == info.field_name)
+                    {
+                      exprt mem = member_exprt(
+                        std::move(cur_obj), info.field_name, info.field_type);
+                      // Restore the original return-type cast
+                      // if the bytecode getter applied one.
+                      if(info.returns_cast)
+                        mem = typecast_exprt(mem, info.return_type);
+                      return mem;
+                    }
+                  }
+                  irep_idt next;
+                  for(const auto &c : comps)
+                  {
+                    const std::string cn = id2string(c.get_name());
+                    if(
+                      !cn.empty() && cn[0] == '@' &&
+                      c.type().id() == ID_struct_tag)
+                    {
+                      cur_obj = member_exprt(cur_obj, c.get_name(), c.type());
+                      next = to_struct_tag_type(c.type()).get_identifier();
+                      break;
+                    }
+                  }
+                  walk = next;
+                }
+              }
+            }
+          }
+          // Walk to base class via @<Parent>.
+          const auto *cls = ns.get_symbol_table().lookup(cur);
+          if(cls == nullptr || cls->type.id() != ID_struct)
+            break;
+          const auto &cs = to_struct_type(cls->type).components();
+          irep_idt next;
+          for(const auto &c : cs)
+          {
+            const std::string cn = id2string(c.get_name());
+            if(
+              !cn.empty() && cn[0] == '@' &&
+              c.type().id() == ID_struct_tag)
+            {
+              next = to_struct_tag_type(c.type()).get_identifier();
+              break;
+            }
+          }
+          cur = next;
+        }
+      }
+    }
+
+    // Not a recognised trivial getter; emit a clear warning
+    // and leave the node intact so downstream produces an
+    // error site that points at the call. JML's purity rule
+    // forbids arbitrary method invocations in specification
+    // expressions, and JBMC only recognises trivial bean-
+    // style getters today.
+    std::cerr
+      << "warning: JML method call '" << id2string(method_name)
+      << "' in a specification expression is not a trivial bean "
+      << "getter; only `return this.<field>` shapes are accepted "
+      << "today. Either rewrite the spec to access the underlying "
+      << "field directly, or wait for JBMC to grow @pure-method "
+      << "support.\n";
+    return e;
+  }
+
   // Aggregate expressions need special handling: their bound
   // variable (operand[0]) is a symbol_exprt with the user's name
   // (e.g., "i"). If we recurse into operands first, the bound
@@ -347,7 +590,8 @@ exprt resolve_jml_expr(
       };
 
       const exprt range = resolve_jml_expr(
-        type_bound_refs(raw_range), method_id, class_id, ns, param_names);
+        type_bound_refs(raw_range), method_id, class_id, ns, param_names,
+        trivial_getters);
 
       // Extract constant bounds from the resolved range:
       // `lb <= bound_var && bound_var < ub` (or any commuted /
@@ -432,7 +676,9 @@ exprt resolve_jml_expr(
           };
           sub(body_i);
           expanded.push_back(
-            resolve_jml_expr(body_i, method_id, class_id, ns, param_names));
+            resolve_jml_expr(
+              body_i, method_id, class_id, ns, param_names,
+              trivial_getters));
         }
         if(expanded.empty())
         {
@@ -477,7 +723,8 @@ exprt resolve_jml_expr(
   // Recurse into operands
   exprt result = e;
   for(auto &op : result.operands())
-    op = resolve_jml_expr(op, method_id, class_id, ns, param_names);
+    op = resolve_jml_expr(
+      op, method_id, class_id, ns, param_names, trivial_getters);
 
   // Refresh the outer type after resolution. The parser
   // constructs many wrapper expressions (history_exprt,
@@ -625,6 +872,14 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
   std::set<irep_idt> annotated_functions;
   const namespacet ns{goto_model.symbol_table};
 
+  // Build the table of trivial bean-style getters once across
+  // the whole goto model. JML method-call expressions can then
+  // be rewritten inline to direct member accesses without
+  // running symex on the getter body. See
+  // recognise_trivial_getter for the bytecode pattern.
+  const trivial_getter_mapt trivial_getters =
+    build_trivial_getters(goto_model.goto_functions);
+
   for(const auto &[method_id, spec] : contracts)
   {
     auto fn_it = goto_model.goto_functions.function_map.find(method_id);
@@ -657,7 +912,8 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
         continue;
 
       exprt resolved = resolve_jml_expr(
-        clause.expr, method_id, class_id, ns, spec.param_names);
+        clause.expr, method_id, class_id, ns, spec.param_names,
+        trivial_getters);
 
       // The JML clause is a logical predicate; symex expects
       // a bool_typet expression for ASSUME / ASSERT. If the
