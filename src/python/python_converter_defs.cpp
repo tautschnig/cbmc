@@ -2533,6 +2533,175 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(method_name == "__init__")
           return_type = empty_typet{};
 
+        // PLR §3.2: when there's no return annotation, scan the
+        // method body for the first 'return DICT_LITERAL' or
+        // 'return LIST_LITERAL' and infer a typed dict/list
+        // return. Without this, class methods that build and
+        // return a dict get int(0) as the return value (the
+        // signedbv → struct typecast at the SET RETURN VALUE
+        // collapses the literal to its int slot).
+        // Bail out if the body has mixed return shapes (e.g.
+        // 'return int' and 'return []' — picking either type
+        // mis-encodes the other branch). In that case keep the
+        // default int return so existing tests stay green.
+        if(returns.is_null())
+        {
+          enum class shape_t
+          {
+            NONE_LITERAL,
+            INT,
+            FLOAT,
+            BOOL,
+            STR,
+            LIST,
+            DICT,
+            OTHER
+          };
+          std::vector<shape_t> shapes;
+          typet first_dict_key, first_dict_val;
+          typet first_list_elem;
+          std::function<void(const jsont &)> walk_returns =
+            [&](const jsont &body)
+          {
+            if(!body.is_array())
+              return;
+            for(const auto &s : as_array(body))
+            {
+              if(is_node_type(s, "Return"))
+              {
+                const jsont &rv = json_member(s, "value");
+                if(rv.is_null())
+                  shapes.push_back(shape_t::NONE_LITERAL);
+                else if(is_node_type(rv, "Constant"))
+                {
+                  const jsont &cv = json_member(rv, "value");
+                  if(cv.is_null())
+                    shapes.push_back(shape_t::NONE_LITERAL);
+                  else if(cv.is_string())
+                    shapes.push_back(shape_t::STR);
+                  else if(cv.is_true() || cv.is_false())
+                    shapes.push_back(shape_t::BOOL);
+                  else if(cv.is_number())
+                  {
+                    if(cv.value.find('.') != std::string::npos)
+                      shapes.push_back(shape_t::FLOAT);
+                    else
+                      shapes.push_back(shape_t::INT);
+                  }
+                  else
+                    shapes.push_back(shape_t::OTHER);
+                }
+                else if(is_node_type(rv, "Dict"))
+                {
+                  shapes.push_back(shape_t::DICT);
+                  if(first_dict_key.id_string().empty())
+                  {
+                    const jsont &keys = json_member(rv, "keys");
+                    const jsont &values = json_member(rv, "values");
+                    first_dict_key = python_string_type();
+                    first_dict_val = python_value_type();
+                    if(
+                      keys.is_array() && values.is_array() &&
+                      !as_array(keys).empty())
+                    {
+                      const jsont &k0 = *as_array(keys).begin();
+                      const jsont &v0 = *as_array(values).begin();
+                      if(is_node_type(k0, "Constant"))
+                      {
+                        const jsont &kcv = json_member(k0, "value");
+                        if(kcv.is_number())
+                          first_dict_key = python_int_type();
+                        else if(kcv.is_string())
+                          first_dict_key = python_string_type();
+                      }
+                      if(is_node_type(v0, "Constant"))
+                      {
+                        const jsont &vcv = json_member(v0, "value");
+                        if(vcv.is_number())
+                        {
+                          if(vcv.value.find('.') != std::string::npos)
+                            first_dict_val = double_type();
+                          else
+                            first_dict_val = python_int_type();
+                        }
+                        else if(vcv.is_string())
+                          first_dict_val = python_string_type();
+                        else if(vcv.is_true() || vcv.is_false())
+                          first_dict_val = bool_typet{};
+                      }
+                    }
+                  }
+                }
+                else if(is_node_type(rv, "List"))
+                {
+                  shapes.push_back(shape_t::LIST);
+                  if(first_list_elem.id_string().empty())
+                  {
+                    const jsont &elts = json_member(rv, "elts");
+                    first_list_elem = python_value_type();
+                    if(elts.is_array() && !as_array(elts).empty())
+                    {
+                      const jsont &e0 = *as_array(elts).begin();
+                      if(is_node_type(e0, "Constant"))
+                      {
+                        const jsont &cv = json_member(e0, "value");
+                        if(cv.is_string())
+                          first_list_elem = python_string_type();
+                        else if(cv.is_number())
+                        {
+                          if(cv.value.find('.') != std::string::npos)
+                            first_list_elem = double_type();
+                          else
+                            first_list_elem = python_int_type();
+                        }
+                        else if(cv.is_true() || cv.is_false())
+                          first_list_elem = bool_typet{};
+                      }
+                    }
+                  }
+                }
+                else
+                  shapes.push_back(shape_t::OTHER);
+              }
+              walk_returns(json_member(s, "body"));
+              walk_returns(json_member(s, "orelse"));
+              if(json_member(s, "handlers").is_array())
+              {
+                for(const auto &h : as_array(json_member(s, "handlers")))
+                  walk_returns(json_member(h, "body"));
+              }
+            }
+          };
+          walk_returns(json_member(item, "body"));
+          // Compute dominant shape — only set return_type when
+          // ALL non-None returns share one of {DICT, LIST}.
+          // Mixed shapes keep the default int.
+          bool all_dict = true, has_dict = false;
+          bool all_list = true, has_list = false;
+          for(shape_t s : shapes)
+          {
+            if(s == shape_t::DICT)
+              has_dict = true;
+            else if(s != shape_t::NONE_LITERAL)
+              all_dict = false;
+            if(s == shape_t::LIST)
+              has_list = true;
+            else if(s != shape_t::NONE_LITERAL)
+              all_list = false;
+          }
+          auto is_safe = [](const typet &t)
+          {
+            return t.id() == ID_signedbv || t.id() == ID_floatbv ||
+                   t.id() == ID_bool || is_python_string_type(t);
+          };
+          if(
+            has_dict && all_dict && !first_dict_key.id_string().empty() &&
+            is_safe(first_dict_key) && is_safe(first_dict_val))
+            return_type = python_dict_type(first_dict_key, first_dict_val);
+          else if(has_list && all_list && !first_list_elem.id_string().empty())
+            return_type = python_list_type(first_list_elem);
+        }
+
         code_typet func_type{parameters, return_type};
         irep_idt func_id{"python::" + class_name + "::" + method_name};
 

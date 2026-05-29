@@ -569,7 +569,10 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         else
         {
           auto ki = function_returned_dict_keys.find(callee);
-          if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+          auto rc2_it = function_return_count.find(callee);
+          if(
+            ki != function_returned_dict_keys.end() && !ki->second.empty() &&
+            rc2_it != function_return_count.end() && rc2_it->second == 1)
           {
             // Build a sentinel dict-struct with the known keys
             // (values nondet). Match rhs.type() so dict_literals
@@ -2614,7 +2617,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
           if(!used_full)
           {
             auto ki = function_returned_dict_keys.find(callee);
-            if(ki != function_returned_dict_keys.end() && !ki->second.empty())
+            auto rc2_it = function_return_count.find(callee);
+            if(
+              ki != function_returned_dict_keys.end() && !ki->second.empty() &&
+              rc2_it != function_return_count.end() && rc2_it->second == 1)
             {
               const auto &dt = to_struct_type(typed_rhs.type());
               const auto &keys_type = to_array_type(dt.components()[1].type());
