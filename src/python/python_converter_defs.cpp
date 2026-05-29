@@ -385,10 +385,26 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       for(std::size_t i = first_default; i < parameters.size(); i++, ++def_it)
       {
         exprt val = convert_expression(*def_it);
-        if(
-          !val.is_nil() && val.type().id() != ID_struct &&
-          val.type().id() != ID_pointer)
-          default_values[{func_name, i}] = val;
+        if(val.is_nil())
+          continue;
+        if(val.type().id() == ID_pointer)
+          continue;
+        // Skip raw struct types — those are class-instance
+        // defaults whose value we don't have a stable
+        // snapshot for at definition time. Built-in container
+        // types (string, tuple, list, set, value, complex) are
+        // returned as struct_tag values by their respective
+        // constructors and ARE safe to record here.
+        if(val.type().id() == ID_struct)
+        {
+          std::string tag = id2string(to_struct_type(val.type()).get_tag());
+          if(
+            tag != "python_string" && tag != "python_tuple" &&
+            tag != "python_value" && tag != "python_set" &&
+            tag != "python_complex" && tag != "python_list")
+            continue;
+        }
+        default_values[{func_name, i}] = val;
       }
     }
   }
@@ -2561,6 +2577,42 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           if(!current_function.empty())
             enclosing_functions.push_back(current_function);
           current_function = class_name + "::" + method_name;
+
+          // PLR §8.7: register class method defaults under the
+          // bare method name. The function-call default-fill
+          // path (call_method.cpp / call_user.cpp) keys lookups
+          // by method_name so this lets f.foo(a='x') pick up
+          // 'b="xyz"' rather than safe_zero'ing the slot.
+          {
+            const jsont &m_args_node = json_member(item, "args");
+            const jsont &m_defaults = json_member(m_args_node, "defaults");
+            if(m_defaults.is_array() && !as_array(m_defaults).empty())
+            {
+              std::size_t mn_defaults = as_array(m_defaults).size();
+              std::size_t mfirst_default = parameters.size() - mn_defaults;
+              auto m_def_it = as_array(m_defaults).begin();
+              for(std::size_t i = mfirst_default; i < parameters.size();
+                  i++, ++m_def_it)
+              {
+                exprt val = convert_expression(*m_def_it);
+                if(val.is_nil())
+                  continue;
+                if(val.type().id() == ID_pointer)
+                  continue;
+                if(val.type().id() == ID_struct)
+                {
+                  std::string tag =
+                    id2string(to_struct_type(val.type()).get_tag());
+                  if(
+                    tag != "python_string" && tag != "python_tuple" &&
+                    tag != "python_value" && tag != "python_set" &&
+                    tag != "python_complex" && tag != "python_list")
+                    continue;
+                }
+                default_values[{method_name, i}] = val;
+              }
+            }
+          }
 
           code_blockt method_body;
 

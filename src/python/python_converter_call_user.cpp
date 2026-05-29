@@ -585,38 +585,70 @@ exprt python_convertert::convert_user_call(
   const jsont &body = json_member(parse_tree.ast_json, "body");
   if(body.is_array())
   {
+    // Helper: try to bind defaults from a FunctionDef whose
+    // name matches func_name. Returns true once a match is
+    // processed so the outer scan can stop. Used both for
+    // top-level defs and class methods (which live inside a
+    // ClassDef body).
+    auto try_apply_defaults = [&](const jsont &fn_stmt) -> bool
+    {
+      const jsont &func_args = json_member(fn_stmt, "args");
+      const jsont &defaults = json_member(func_args, "defaults");
+      if(!defaults.is_array())
+        return true;
+      std::size_t n_defaults = as_array(defaults).size();
+      std::size_t first_default = params.size() - n_defaults;
+      auto def_it = as_array(defaults).begin();
+      for(std::size_t i = first_default; i < params.size(); i++, ++def_it)
+      {
+        if(arguments[i].is_nil())
+        {
+          arguments[i] = convert_expression(*def_it);
+          if(
+            params[i].type().id() == ID_pointer &&
+            arguments[i].type().id() == ID_struct &&
+            to_pointer_type(params[i].type()).base_type() ==
+              arguments[i].type())
+          {
+            arguments[i] = address_of_exprt{arguments[i]};
+          }
+        }
+      }
+      return true;
+    };
+    bool done = false;
     for(const auto &stmt : as_array(body))
     {
+      if(done)
+        break;
       if(
         (is_node_type(stmt, "FunctionDef") ||
          is_node_type(stmt, "AsyncFunctionDef")) &&
         json_string(json_member(stmt, "name")) == func_name)
       {
-        const jsont &func_args = json_member(stmt, "args");
-        const jsont &defaults = json_member(func_args, "defaults");
-        if(defaults.is_array())
+        done = try_apply_defaults(stmt);
+        break;
+      }
+      // Class methods: walk the ClassDef body for matching
+      // method definitions. Recognises 'ClassName.foo' lookups
+      // too (qualified_func_name shape).
+      if(is_node_type(stmt, "ClassDef"))
+      {
+        const jsont &cls_body = json_member(stmt, "body");
+        if(cls_body.is_array())
         {
-          std::size_t n_defaults = as_array(defaults).size();
-          std::size_t first_default = params.size() - n_defaults;
-          auto def_it = as_array(defaults).begin();
-          for(std::size_t i = first_default; i < params.size(); i++, ++def_it)
+          for(const auto &cs : as_array(cls_body))
           {
-            if(arguments[i].is_nil())
+            if(
+              (is_node_type(cs, "FunctionDef") ||
+               is_node_type(cs, "AsyncFunctionDef")) &&
+              json_string(json_member(cs, "name")) == func_name)
             {
-              arguments[i] = convert_expression(*def_it);
-              // Class reference: struct default → pointer param
-              if(
-                params[i].type().id() == ID_pointer &&
-                arguments[i].type().id() == ID_struct &&
-                to_pointer_type(params[i].type()).base_type() ==
-                  arguments[i].type())
-              {
-                arguments[i] = address_of_exprt{arguments[i]};
-              }
+              done = try_apply_defaults(cs);
+              break;
             }
           }
         }
-        break;
       }
     }
   }
