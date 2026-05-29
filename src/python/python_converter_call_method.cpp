@@ -1440,8 +1440,18 @@ std::optional<exprt> python_convertert::try_method_call(
         // constructor path the bare 'ClassName(...)' call
         // would use. Without this, the call falls through to
         // the function-call dispatch which produces nondet.
+        //
+        // Skip when the call is a known collections
+        // constructor — those have a dedicated dispatch later
+        // in this function that wires the right factory and
+        // value type. The check is on method_name (and not on
+        // obj_name) so the alias form ('col.defaultdict')
+        // also reaches the dedicated dispatch.
+        bool is_collections_ctor =
+          method_name == "defaultdict" || method_name == "Counter";
         if(
-          class_types.count(method_name) && c_intrinsic_map.count(func_id) == 0)
+          class_types.count(method_name) &&
+          c_intrinsic_map.count(func_id) == 0 && !is_collections_ctor)
         {
           // Re-dispatch by setting func_name to the class name
           // and falling through to the regular convert_call
@@ -3021,7 +3031,26 @@ std::optional<exprt> python_convertert::try_method_call(
                 i++)
             {
               if(arguments[i].is_nil())
-                arguments[i] = safe_zero(mparams[i].type());
+              {
+                // PLR §8.7: try the default-values map first
+                // (definition-time-evaluated defaults). Class
+                // method defaults are stored under the bare
+                // method name (the same key used for top-level
+                // functions). Fall back to safe_zero only if
+                // no default is registered.
+                auto def_it = default_values.find({method_name, i});
+                if(def_it != default_values.end())
+                {
+                  arguments[i] = def_it->second;
+                  if(arguments[i].type() != mparams[i].type())
+                    arguments[i] =
+                      safe_typecast(arguments[i], mparams[i].type());
+                }
+                else
+                {
+                  arguments[i] = safe_zero(mparams[i].type());
+                }
+              }
               else if(arguments[i].type() != mparams[i].type())
               {
                 // PLR §3.1: emit annotation-mismatch property
