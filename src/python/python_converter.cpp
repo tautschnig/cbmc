@@ -1846,11 +1846,29 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
         notequal_exprt{
           member_exprt{cplx_deref, "imag", double_type()},
           safe_zero(double_type())}}};
-    // NONE tag → false (not in any of the above)
-    return or_exprt{
-      or_exprt{bool_true, int_true},
-      or_exprt{
-        float_true, or_exprt{or_exprt{str_true, list_true}, complex_true}}};
+    // CLASS tag → instance is truthy by default (PLR §6.10.1).
+    // Without __bool__/__len__ dunder support, treat the
+    // instance pointer as truthy when present (non-NULL).
+    exprt class_truthy = python_value_is(e, python_type_tagt::CLASS);
+    // DICT tag → truthy iff length > 0.
+    {
+      // Read the length from the dict struct via __class_ptr;
+      // the dict layout has length at offset 0.
+      pointer_typet len_ptr_type{signedbv_typet{64}, 64};
+      exprt dict_len = dereference_exprt{
+        typecast_exprt{python_value_class_ptr(e), len_ptr_type},
+        signedbv_typet{64}};
+      exprt dict_truthy_local = and_exprt{
+        python_value_is(e, python_type_tagt::DICT),
+        notequal_exprt{dict_len, from_integer(0, signedbv_typet{64})}};
+      // NONE tag → false (not in any of the above)
+      return or_exprt{
+        or_exprt{bool_true, int_true},
+        or_exprt{
+          or_exprt{
+            float_true, or_exprt{or_exprt{str_true, list_true}, complex_true}},
+          or_exprt{class_truthy, dict_truthy_local}}};
+    }
   }
   else if(is_python_string_type(target_type))
     return python_value_str(e);
