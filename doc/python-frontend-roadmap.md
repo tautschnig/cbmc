@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2802** | +201 |
+| ESBMC PASS | 2489 | 2601 | **2805** | +204 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -356,6 +356,19 @@ Class / module dispatch + method defaults (wave 41 cont., +8):
   methods skipped definition-time default extraction
   entirely, so 'f.foo(a=\"aaa\")' on a method with
   'b: str = \"xyz\"' got safe_zero (empty string) for b.
+
+list*value / Pow / Any-arg dict mini-cluster (wave 41 cont., +3):
+- list-repetition2 — '[0] * k' for unannotated parameter
+  k (python_value) unwraps as int instead of dereferencing
+  __list_ptr; the list * non-list compatibility check
+  also accepts python_value.
+- github_3805_3-nondet — variable-exponent Pow now
+  handles n in -16..-1 (1.0/base**i) in addition to
+  positive 1..16.
+- github_3647_1 — Any-typed parameter attribute-error
+  check skips builtin container types (python_dict_array
+  / list / string / set / tuple / complex) so 'd.items()'
+  on a dict argument doesn't false-positive.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
