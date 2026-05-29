@@ -1,0 +1,48 @@
+CORE
+JmlSignalsTyped
+--function "JmlSignalsTyped.doubleOrThrow:(I)I" --jml-source src/main/java/JmlSignalsTyped.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for typed `signals (T e) p;` JML clauses.
+
+`signals (T e) p;` constrains methods that throw an exception
+of (a subtype of) T: when the method exits with such an
+exception in flight, p must hold, with `e` bound to the
+inflight pointer cast to T.
+
+Lowering pipeline:
+  1. Parser captures clause.signal_type, clause.signal_var,
+     and the predicate text (jml_parser.cpp).
+  2. lower_jml_contracts pre-substitutes `e` with
+     `(T*) @inflight_exception` BEFORE running
+     resolve_jml_expr, so that calls like `e.getFoo()` see a
+     properly-typed receiver and the trivial-getter rewrite
+     can fire.
+  3. At the function exit, before any signals_only block,
+     the assertion
+       (\inflight != null && classid(\inflight) ∈ T*) ⇒ p
+     is inserted. signals_only's null-assignment is
+     deliberately ordered AFTER this assertion so we still
+     see the actual inflight value.
+  4. ensures clauses are gated by `\inflight == null` so the
+     normal-return postcondition no longer fires on
+     exception-throwing paths (a pre-existing latent issue
+     surfaced by combining ensures with signals).
+
+The test method `doubleOrThrow(int)` returns `2 * x` for
+`x ≤ 1000` and throws `BadInputException(x)` otherwise.
+The full JML
+  requires x >= 0;
+  ensures \result == x * 2;
+  signals_only BadInputException;
+  signals (BadInputException e) e.getBadValue() == x;
+exercises requires (precondition), ensures (gated by normal
+return), signals_only (allowed exception type), and signals
+(typed exception postcondition with a trivial-getter call on
+the bound variable).

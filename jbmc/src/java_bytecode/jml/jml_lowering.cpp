@@ -22,10 +22,11 @@ Author: Kiro (AI agent)
 #include <ansi-c/c_expr.h>
 #include <langapi/language_util.h>
 
-#include "../remove_exceptions.h"
 #include "jml_ids.h"
 
 #include <iostream>
+
+#include "../remove_exceptions.h"
 
 namespace
 {
@@ -66,9 +67,8 @@ const exprt &strip_typecasts(const exprt &e)
 /// Decide whether a goto-program body realises the trivial
 /// `return this.field` pattern. Returns the field name + type
 /// if so, std::nullopt otherwise.
-std::optional<trivial_gettert> recognise_trivial_getter(
-  const irep_idt &method_id,
-  const goto_programt &body)
+std::optional<trivial_gettert>
+recognise_trivial_getter(const irep_idt &method_id, const goto_programt &body)
 {
   const std::string rv_id = id2string(method_id) + "#return_value";
   std::optional<trivial_gettert> found;
@@ -76,10 +76,10 @@ std::optional<trivial_gettert> recognise_trivial_getter(
   for(const auto &ins : body.instructions)
   {
     // Skip harness-injected guards and bookkeeping.
-    if(ins.is_dead() || ins.is_decl() || ins.is_skip() ||
-       ins.is_atomic_begin() || ins.is_atomic_end() ||
-       ins.is_start_thread() || ins.is_end_thread() ||
-       ins.is_end_function() || ins.is_location())
+    if(
+      ins.is_dead() || ins.is_decl() || ins.is_skip() ||
+      ins.is_atomic_begin() || ins.is_atomic_end() || ins.is_start_thread() ||
+      ins.is_end_thread() || ins.is_end_function() || ins.is_location())
       continue;
     if(ins.is_assert() || ins.is_assume())
     {
@@ -146,6 +146,94 @@ trivial_getter_mapt build_trivial_getters(const goto_functionst &fns)
   return out;
 }
 
+/// Resolve a JML-supplied Java exception type name to a list of
+/// fully-qualified `java::...` class identifiers, including the
+/// transitive subclass closure.
+///
+/// The resolution rules are:
+///   1. If the name already starts with `java::`, take it
+///      verbatim (one match).
+///   2. Else if `java::<name>` exists as a class symbol, use it.
+///   3. Else treat the name as a simple class name and match
+///      every `java::<pkg>.<name>` symbol — covers java.lang
+///      import-style names and lets the user write `Foo`,
+///      `pkg.Foo`, or `java::pkg.Foo` interchangeably.
+///
+/// After base resolution we walk every class symbol; if its
+/// `@<Parent>` synthetic parent component refers to one of the
+/// already-found classes, we add it. Iterates to saturation.
+/// This is what lets `signals_only Throwable` cover every Java
+/// exception type.
+static std::vector<std::string>
+resolve_jml_type_name(const namespacet &ns, const std::string &raw)
+{
+  std::string name = raw;
+  std::vector<std::string> bases;
+  if(name.rfind("java::", 0) == 0)
+  {
+    bases.push_back(name);
+  }
+  else if(ns.get_symbol_table().lookup("java::" + name) != nullptr)
+  {
+    bases.push_back("java::" + name);
+  }
+  else
+  {
+    const std::string suffix = "." + name;
+    for(const auto &entry : ns.get_symbol_table().symbols)
+    {
+      const std::string id = id2string(entry.first);
+      if(id.rfind("java::", 0) != 0)
+        continue;
+      // Class symbols have type ID_struct.
+      if(entry.second.type.id() != ID_struct)
+        continue;
+      const std::string short_id = id.substr(6);
+      if(
+        short_id == name ||
+        (short_id.size() > suffix.size() &&
+         short_id.compare(
+           short_id.size() - suffix.size(), suffix.size(), suffix) == 0))
+      {
+        bases.push_back(id);
+      }
+    }
+  }
+  std::set<std::string> all(bases.begin(), bases.end());
+  bool changed = true;
+  while(changed)
+  {
+    changed = false;
+    for(const auto &entry : ns.get_symbol_table().symbols)
+    {
+      const std::string id = id2string(entry.first);
+      if(id.rfind("java::", 0) != 0)
+        continue;
+      if(entry.second.type.id() != ID_struct)
+        continue;
+      if(all.count(id))
+        continue;
+      const auto &cs = to_struct_type(entry.second.type).components();
+      for(const auto &c : cs)
+      {
+        const std::string cn = id2string(c.get_name());
+        if(!cn.empty() && cn[0] == '@' && c.type().id() == ID_struct_tag)
+        {
+          const std::string parent =
+            id2string(to_struct_tag_type(c.type()).get_identifier());
+          if(all.count(parent))
+          {
+            all.insert(id);
+            changed = true;
+          }
+          break;
+        }
+      }
+    }
+  }
+  return std::vector<std::string>(all.begin(), all.end());
+}
+
 exprt resolve_jml_expr(
   const exprt &e,
   const irep_idt &method_id,
@@ -185,8 +273,7 @@ exprt resolve_jml_expr(
       // aligns the JML signature's i-th name with the i-th real
       // parameter.
       const std::size_t param_offset =
-        (!params.empty() &&
-         id2string(params.front().get_base_name()) == "this")
+        (!params.empty() && id2string(params.front().get_base_name()) == "this")
           ? 1
           : 0;
 
@@ -300,8 +387,7 @@ exprt resolve_jml_expr(
               this_chain = build_this_chain();
             if(this_chain.is_nil())
               break;
-            return member_exprt(
-              std::move(this_chain), c.get_name(), c.type());
+            return member_exprt(std::move(this_chain), c.get_name(), c.type());
           }
         }
 
@@ -315,15 +401,14 @@ exprt resolve_jml_expr(
         {
           const std::string cname = id2string(c.get_name());
           if(
-            !cname.empty() && cname[0] == '@' &&
-            c.type().id() == ID_struct_tag)
+            !cname.empty() && cname[0] == '@' && c.type().id() == ID_struct_tag)
           {
             if(this_chain.is_nil())
               this_chain = build_this_chain();
             if(this_chain.is_nil())
               break;
-            this_chain = member_exprt(
-              std::move(this_chain), c.get_name(), c.type());
+            this_chain =
+              member_exprt(std::move(this_chain), c.get_name(), c.type());
             next = to_struct_tag_type(c.type()).get_identifier();
             break;
           }
@@ -345,8 +430,7 @@ exprt resolve_jml_expr(
   if(e.id() == jml_ids::jml_field_access && e.operands().size() == 1)
   {
     exprt receiver = resolve_jml_expr(
-      e.operands()[0], method_id, class_id, ns, param_names,
-      trivial_getters);
+      e.operands()[0], method_id, class_id, ns, param_names, trivial_getters);
     const irep_idt field_name{e.get("field_name")};
 
     // Static field: <ReceiverClassName>.field_name. The receiver
@@ -355,8 +439,7 @@ exprt resolve_jml_expr(
     // look up the static field directly.
     if(receiver.id() == ID_symbol)
     {
-      const irep_idt &recv_id =
-        to_symbol_expr(receiver).get_identifier();
+      const irep_idt &recv_id = to_symbol_expr(receiver).get_identifier();
       const irep_idt field_id =
         id2string(recv_id) + "." + id2string(field_name);
       if(const auto *sym = ns.get_symbol_table().lookup(field_id))
@@ -381,12 +464,9 @@ exprt resolve_jml_expr(
         const auto &components = to_struct_type(cls->type).components();
         for(const auto &c : components)
         {
-          if(
-            c.get_name() == field_name ||
-            c.get_base_name() == field_name)
+          if(c.get_name() == field_name || c.get_base_name() == field_name)
           {
-            return member_exprt(
-              std::move(cur_obj), c.get_name(), c.type());
+            return member_exprt(std::move(cur_obj), c.get_name(), c.type());
           }
         }
         // Step into `@<Parent>` synthetic component.
@@ -395,8 +475,7 @@ exprt resolve_jml_expr(
         {
           const std::string cname = id2string(c.get_name());
           if(
-            !cname.empty() && cname[0] == '@' &&
-            c.type().id() == ID_struct_tag)
+            !cname.empty() && cname[0] == '@' && c.type().id() == ID_struct_tag)
           {
             cur_obj = member_exprt(cur_obj, c.get_name(), c.type());
             next = to_struct_tag_type(c.type()).get_identifier();
@@ -432,8 +511,7 @@ exprt resolve_jml_expr(
   {
     const irep_idt method_name{e.get("method_name")};
     exprt receiver = resolve_jml_expr(
-      e.operands()[0], method_id, class_id, ns, param_names,
-      trivial_getters);
+      e.operands()[0], method_id, class_id, ns, param_names, trivial_getters);
 
     // Trivial getters take no arguments. If the parser captured
     // arguments, this is not a candidate.
@@ -473,8 +551,7 @@ exprt resolve_jml_expr(
                   const auto *wcls = ns.get_symbol_table().lookup(walk);
                   if(wcls == nullptr || wcls->type.id() != ID_struct)
                     break;
-                  const auto &comps =
-                    to_struct_type(wcls->type).components();
+                  const auto &comps = to_struct_type(wcls->type).components();
                   for(const auto &c : comps)
                   {
                     if(c.get_name() == info.field_name)
@@ -515,9 +592,7 @@ exprt resolve_jml_expr(
           for(const auto &c : cs)
           {
             const std::string cn = id2string(c.get_name());
-            if(
-              !cn.empty() && cn[0] == '@' &&
-              c.type().id() == ID_struct_tag)
+            if(!cn.empty() && cn[0] == '@' && c.type().id() == ID_struct_tag)
             {
               next = to_struct_tag_type(c.type()).get_identifier();
               break;
@@ -534,13 +609,12 @@ exprt resolve_jml_expr(
     // forbids arbitrary method invocations in specification
     // expressions, and JBMC only recognises trivial bean-
     // style getters today.
-    std::cerr
-      << "warning: JML method call '" << id2string(method_name)
-      << "' in a specification expression is not a trivial bean "
-      << "getter; only `return this.<field>` shapes are accepted "
-      << "today. Either rewrite the spec to access the underlying "
-      << "field directly, or wait for JBMC to grow @pure-method "
-      << "support.\n";
+    std::cerr << "warning: JML method call '" << id2string(method_name)
+              << "' in a specification expression is not a trivial bean "
+              << "getter; only `return this.<field>` shapes are accepted "
+              << "today. Either rewrite the spec to access the underlying "
+              << "field directly, or wait for JBMC to grow @pure-method "
+              << "support.\n";
     return e;
   }
 
@@ -590,7 +664,11 @@ exprt resolve_jml_expr(
       };
 
       const exprt range = resolve_jml_expr(
-        type_bound_refs(raw_range), method_id, class_id, ns, param_names,
+        type_bound_refs(raw_range),
+        method_id,
+        class_id,
+        ns,
+        param_names,
         trivial_getters);
 
       // Extract constant bounds from the resolved range:
@@ -675,10 +753,8 @@ exprt resolve_jml_expr(
               sub(child);
           };
           sub(body_i);
-          expanded.push_back(
-            resolve_jml_expr(
-              body_i, method_id, class_id, ns, param_names,
-              trivial_getters));
+          expanded.push_back(resolve_jml_expr(
+            body_i, method_id, class_id, ns, param_names, trivial_getters));
         }
         if(expanded.empty())
         {
@@ -735,12 +811,8 @@ exprt resolve_jml_expr(
   // exprt(id) constructor, and the empty `typet()` for nodes
   // built by other paths. Both shapes signal "type not yet
   // known", so propagate up if either holds.
-  const auto needs_type =
-    [](const exprt &x)
-  {
-    return x.type() == typet() || x.type().id().empty() ||
-           x.type().is_nil();
-  };
+  const auto needs_type = [](const exprt &x)
+  { return x.type() == typet() || x.type().id().empty() || x.type().is_nil(); };
   // Harmonise operand types in (in)equality comparisons against
   // the parser's untyped null literal. The parser emits
   //   constant_exprt("NULL", pointer_typet(empty_typet(), 64))
@@ -906,13 +978,76 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
     std::vector<std::string> signals_only_types;
     bool has_signals_only = false;
 
+    // SIGNALS (typed): one entry per `signals (T e) p;` clause.
+    // The captured fields are sufficient to build the
+    // postcondition  (\inflight != null && classid \in T*) ==> p
+    // at function exit.
+    struct signals_typed_clauset
+    {
+      std::string type_name;
+      std::string var_name;
+      exprt predicate;
+    };
+    std::vector<signals_typed_clauset> signals_typed_clauses;
+
     for(const auto &clause : spec.clauses)
     {
       if(clause.expr.is_nil())
         continue;
 
+      // Pre-resolve the typed-signals bound variable. For
+      // `signals (T e) p;` the parser leaves `e` as an
+      // unresolved symbol_exprt. We substitute every
+      // occurrence of `e` with `(T*) @inflight_exception`
+      // (typed) BEFORE handing the predicate to
+      // resolve_jml_expr, so that `e.getFoo()` calls inside p
+      // see a properly-typed receiver and the trivial-getter
+      // rewrite can fire.
+      exprt prepared_expr = clause.expr;
+      if(
+        clause.kind == jml_clauset::kindt::SIGNALS &&
+        !clause.signal_type.empty() && !clause.signal_var.empty())
+      {
+        const auto *infl_sym =
+          ns.get_symbol_table().lookup(INFLIGHT_EXCEPTION_VARIABLE_NAME);
+        if(infl_sym != nullptr)
+        {
+          const exprt infl = infl_sym->symbol_expr();
+          pointer_typet target_ptr =
+            pointer_type(struct_tag_typet("java::java.lang.Object"));
+          for(const auto &fq : resolve_jml_type_name(ns, clause.signal_type))
+          {
+            const auto *t_sym = ns.get_symbol_table().lookup(fq);
+            if(t_sym != nullptr && t_sym->type.id() == ID_struct)
+            {
+              target_ptr = pointer_type(struct_tag_typet(fq));
+              break;
+            }
+          }
+          const exprt e_value = typecast_exprt(infl, target_ptr);
+          std::function<void(exprt &)> subst = [&](exprt &e_walk)
+          {
+            if(
+              e_walk.id() == ID_symbol &&
+              id2string(to_symbol_expr(e_walk).get_identifier()) ==
+                clause.signal_var)
+            {
+              e_walk = e_value;
+              return;
+            }
+            for(auto &op : e_walk.operands())
+              subst(op);
+          };
+          subst(prepared_expr);
+        }
+      }
+
       exprt resolved = resolve_jml_expr(
-        clause.expr, method_id, class_id, ns, spec.param_names,
+        prepared_expr,
+        method_id,
+        class_id,
+        ns,
+        spec.param_names,
         trivial_getters);
 
       // The JML clause is a logical predicate; symex expects
@@ -926,8 +1061,7 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
         resolved.type().id() == ID_unsignedbv ||
         resolved.type().id() == ID_signedbv)
       {
-        resolved = notequal_exprt(
-          resolved, from_integer(0, resolved.type()));
+        resolved = notequal_exprt(resolved, from_integer(0, resolved.type()));
       }
 
       switch(clause.kind)
@@ -953,6 +1087,19 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
           signals_only_types.push_back(t);
         break;
       case jml_clauset::kindt::SIGNALS:
+        // signals (T e) p — typed exception postcondition. We
+        // accept clauses where both type and variable are set;
+        // untyped `signals expr;` is parsed but treated as a
+        // no-op until the parser distinguishes the two forms.
+        if(!clause.signal_type.empty() && !clause.signal_var.empty())
+        {
+          signals_typed_clauset c;
+          c.type_name = clause.signal_type;
+          c.var_name = clause.signal_var;
+          c.predicate = resolved;
+          signals_typed_clauses.push_back(std::move(c));
+        }
+        break;
       case jml_clauset::kindt::PURE:
       case jml_clauset::kindt::NULLABLE:
       case jml_clauset::kindt::NON_NULL:
@@ -963,7 +1110,8 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
     }
 
     if(
-      requires_exprs.empty() && ensures_exprs.empty() && !has_signals_only)
+      requires_exprs.empty() && ensures_exprs.empty() && !has_signals_only &&
+      signals_typed_clauses.empty())
       continue;
 
     // Pre-state capture for \old(expr): walk all ensures and
@@ -1067,12 +1215,27 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
         // retarget gotos. Initially nil: if no checks are
         // inserted, no retargeting is needed.
         std::optional<goto_programt::targett> new_first;
-        auto record_first =
-          [&](goto_programt::targett inserted)
+        auto record_first = [&](goto_programt::targett inserted)
         {
           if(!new_first.has_value())
             new_first = inserted;
         };
+
+        // ensures: per JML semantics, the postcondition only
+        // applies on normal return, not on exceptional exit. We
+        // emit `inflight == null ==> ens` so that an exception-
+        // throwing path doesn't trigger the assertion.
+        std::optional<exprt> normal_exit_guard;
+        {
+          const auto *infl_sym =
+            ns.get_symbol_table().lookup(INFLIGHT_EXCEPTION_VARIABLE_NAME);
+          if(infl_sym != nullptr)
+          {
+            const exprt infl = infl_sym->symbol_expr();
+            normal_exit_guard = equal_exprt(
+              infl, null_pointer_exprt(to_pointer_type(infl.type())));
+          }
+        }
 
         for(const auto &ens : ensures_exprs)
         {
@@ -1080,9 +1243,106 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
           loc.set_comment("JML ensures");
           loc.set_step_kind(ID_postcondition);
           loc.set_property_class("postcondition");
+          exprt body_expr = ens;
+          if(normal_exit_guard.has_value())
+            body_expr = or_exprt(not_exprt(*normal_exit_guard), body_expr);
           auto inserted = body.insert_before(
-            end_fn_it, goto_programt::make_assertion(ens, loc));
+            end_fn_it, goto_programt::make_assertion(body_expr, loc));
           record_first(inserted);
+        }
+
+        // Typed signals: signals (T e) p; — at the function exit,
+        // assert that whenever an exception of (a subtype of) T
+        // is in flight, the predicate p holds (with `e` bound to
+        // the inflight exception cast to T).
+        //
+        // Emit BEFORE the signals_only block, because that block
+        // assigns inflight to null at the end to suppress the
+        // harness's default uncaught-exception check; if our
+        // assertion ran afterwards it would always see inflight
+        // == null and be vacuously true.
+        if(!signals_typed_clauses.empty())
+        {
+          const auto *infl_sym =
+            ns.get_symbol_table().lookup(INFLIGHT_EXCEPTION_VARIABLE_NAME);
+          if(infl_sym != nullptr)
+          {
+            const exprt infl = infl_sym->symbol_expr();
+            const auto *jlo_sym =
+              ns.get_symbol_table().lookup("java::java.lang.Object");
+            irep_idt classid_field;
+            typet classid_type;
+            if(jlo_sym != nullptr && jlo_sym->type.id() == ID_struct)
+            {
+              const auto &components =
+                to_struct_type(jlo_sym->type).components();
+              for(const auto &c : components)
+              {
+                if(
+                  c.get_name() == "@class_identifier" ||
+                  c.get_base_name() == "@class_identifier")
+                {
+                  classid_field = c.get_name();
+                  classid_type = c.type();
+                  break;
+                }
+              }
+            }
+            if(!classid_field.empty())
+            {
+              for(const auto &sc : signals_typed_clauses)
+              {
+                pointer_typet jlo_ptr =
+                  pointer_type(struct_tag_typet("java::java.lang.Object"));
+                const exprt jlo_obj =
+                  dereference_exprt(typecast_exprt(infl, jlo_ptr));
+                const exprt classid =
+                  member_exprt(jlo_obj, classid_field, classid_type);
+
+                // Build the type-class disjunction over T and its
+                // subclasses.
+                exprt class_match = false_exprt();
+                for(const auto &fq : resolve_jml_type_name(ns, sc.type_name))
+                {
+                  const exprt eq =
+                    equal_exprt(classid, constant_exprt(fq, classid_type));
+                  class_match =
+                    class_match.is_false() ? eq : or_exprt(class_match, eq);
+                }
+
+                // The predicate has already had `e` substituted
+                // with `(T*) inflight` by the pre-resolve pass
+                // and been run through resolve_jml_expr (so any
+                // e.getFoo() calls have been rewritten via the
+                // trivial-getter machinery).
+                exprt pred = sc.predicate;
+
+                // Coerce booleans (c_bool / Java boolean) to bool.
+                if(
+                  pred.type().id() == ID_c_bool ||
+                  pred.type().id() == ID_unsignedbv ||
+                  pred.type().id() == ID_signedbv)
+                {
+                  pred = notequal_exprt(pred, from_integer(0, pred.type()));
+                }
+
+                // (inflight != null && classid in T*) ==> pred
+                const exprt is_nonnull = notequal_exprt(
+                  infl, null_pointer_exprt(to_pointer_type(infl.type())));
+                const exprt guard = and_exprt(is_nonnull, class_match);
+                const exprt assertion = or_exprt(not_exprt(guard), pred);
+
+                source_locationt sloc = end_fn_it->source_location();
+                sloc.set_comment(
+                  "JML signals (" + sc.type_name + " " + sc.var_name + ")");
+                sloc.set_step_kind(ID_postcondition);
+                sloc.set_property_class("signals");
+                auto inserted = body.insert_before(
+                  end_fn_it, goto_programt::make_assertion(assertion, sloc));
+                record_first(inserted);
+              }
+            }
+          }
         }
 
         // signals_only T1, T2, ...;
@@ -1097,13 +1357,13 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
         // every successful T-throwing path.
         if(has_signals_only)
         {
-          const auto *infl_sym = ns.get_symbol_table().lookup(
-            INFLIGHT_EXCEPTION_VARIABLE_NAME);
+          const auto *infl_sym =
+            ns.get_symbol_table().lookup(INFLIGHT_EXCEPTION_VARIABLE_NAME);
           if(infl_sym != nullptr)
           {
             const exprt infl = infl_sym->symbol_expr();
-            const exprt is_null =
-              equal_exprt(infl, null_pointer_exprt(to_pointer_type(infl.type())));
+            const exprt is_null = equal_exprt(
+              infl, null_pointer_exprt(to_pointer_type(infl.type())));
             // Build an OR of class-identifier comparisons.
             // remove_instanceof has already run by the time we
             // get here, so use the post-removal form directly:
@@ -1155,94 +1415,15 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
                 //   4. Always include subclasses transitively, so
                 //      `signals_only Throwable` covers every
                 //      Java exception type.
-                auto resolve_type_name =
-                  [&](const std::string &raw) -> std::vector<std::string>
-                {
-                  std::string name = raw;
-                  std::vector<std::string> bases;
-                  if(name.rfind("java::", 0) == 0)
-                  {
-                    bases.push_back(name);
-                  }
-                  else if(
-                    ns.get_symbol_table().lookup("java::" + name) != nullptr)
-                  {
-                    bases.push_back("java::" + name);
-                  }
-                  else
-                  {
-                    const std::string suffix = "." + name;
-                    for(const auto &entry : ns.get_symbol_table().symbols)
-                    {
-                      const std::string id = id2string(entry.first);
-                      if(id.rfind("java::", 0) != 0)
-                        continue;
-                      // Class symbols have type ID_struct.
-                      if(entry.second.type.id() != ID_struct)
-                        continue;
-                      const std::string short_id = id.substr(6);
-                      if(
-                        short_id == name ||
-                        (short_id.size() > suffix.size() &&
-                         short_id.compare(
-                           short_id.size() - suffix.size(),
-                           suffix.size(),
-                           suffix) == 0))
-                      {
-                        bases.push_back(id);
-                      }
-                    }
-                  }
-                  // Transitive subclass closure: walk every class
-                  // symbol; if its '@<Parent>' component points
-                  // at one of `bases`, add it (and iterate to
-                  // saturation). This is O(classes * fixedpoint
-                  // iterations); the symbol table is small enough
-                  // that the simple loop is fine.
-                  std::set<std::string> all(bases.begin(), bases.end());
-                  bool changed = true;
-                  while(changed)
-                  {
-                    changed = false;
-                    for(const auto &entry : ns.get_symbol_table().symbols)
-                    {
-                      const std::string id = id2string(entry.first);
-                      if(id.rfind("java::", 0) != 0)
-                        continue;
-                      if(entry.second.type.id() != ID_struct)
-                        continue;
-                      if(all.count(id))
-                        continue;
-                      const auto &cs =
-                        to_struct_type(entry.second.type).components();
-                      for(const auto &c : cs)
-                      {
-                        const std::string cn = id2string(c.get_name());
-                        if(
-                          !cn.empty() && cn[0] == '@' &&
-                          c.type().id() == ID_struct_tag)
-                        {
-                          const std::string parent = id2string(
-                            to_struct_tag_type(c.type()).get_identifier());
-                          if(all.count(parent))
-                          {
-                            all.insert(id);
-                            changed = true;
-                          }
-                          break;
-                        }
-                      }
-                    }
-                  }
-                  return std::vector<std::string>(all.begin(), all.end());
-                };
-
+                // resolve_jml_type_name (free helper above) does
+                // the resolution and transitive subclass closure
+                // for us.
                 for(const auto &ty : signals_only_types)
                 {
-                  for(const auto &fq : resolve_type_name(ty))
+                  for(const auto &fq : resolve_jml_type_name(ns, ty))
                   {
-                    const exprt eq = equal_exprt(
-                      classid, constant_exprt(fq, classid_type));
+                    const exprt eq =
+                      equal_exprt(classid, constant_exprt(fq, classid_type));
                     type_check = or_exprt(type_check, eq);
                   }
                 }
@@ -1260,12 +1441,9 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
             body.insert_before(
               end_fn_it,
               goto_programt::make_assignment(
-                infl,
-                null_pointer_exprt(to_pointer_type(infl.type())),
-                loc));
+                infl, null_pointer_exprt(to_pointer_type(infl.type())), loc));
           }
         }
-
         // Retarget any GOTOs whose target was END_FUNCTION
         // (e.g. exception-throwing paths) to the first
         // inserted check, so they no longer skip the JML
