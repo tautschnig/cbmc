@@ -1634,6 +1634,9 @@ exprt python_convertert::convert_compare(const jsont &expr)
         // 'z = y; assert y is z' returns True. alias_targets
         // records the canonical-source identifier for each
         // alias; same canonical source = same identity.
+        // Either side may be a raw Name (symbol_expr) OR a
+        // dereference of a pointer-promoted alias symbol — peel
+        // a single dereference layer to see the raw id.
         auto canonical = [this](irep_idt id) -> irep_idt
         {
           auto it = alias_targets.find(id);
@@ -1644,10 +1647,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
           }
           return id;
         };
+        auto raw_id = [&](const exprt &e) -> irep_idt
+        {
+          if(e.id() == ID_symbol)
+            return to_symbol_expr(e).get_identifier();
+          if(
+            e.id() == ID_dereference && e.operands().size() == 1 &&
+            e.operands()[0].id() == ID_symbol)
+            return to_symbol_expr(e.operands()[0]).get_identifier();
+          return irep_idt{};
+        };
+        irep_idt lid = raw_id(current_left);
+        irep_idt rid = raw_id(right);
         bool same_id =
-          current_left.id() == ID_symbol && right.id() == ID_symbol &&
-          canonical(to_symbol_expr(current_left).get_identifier()) ==
-            canonical(to_symbol_expr(right).get_identifier());
+          !lid.empty() && !rid.empty() && canonical(lid) == canonical(rid);
         cmp = same_id ? exprt{true_exprt{}} : exprt{false_exprt{}};
         goto done_cmp;
       }
@@ -1708,10 +1721,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
           }
           return id;
         };
+        auto raw_id = [&](const exprt &e) -> irep_idt
+        {
+          if(e.id() == ID_symbol)
+            return to_symbol_expr(e).get_identifier();
+          if(
+            e.id() == ID_dereference && e.operands().size() == 1 &&
+            e.operands()[0].id() == ID_symbol)
+            return to_symbol_expr(e.operands()[0]).get_identifier();
+          return irep_idt{};
+        };
+        irep_idt lid = raw_id(current_left);
+        irep_idt rid = raw_id(right);
         bool same_id =
-          current_left.id() == ID_symbol && right.id() == ID_symbol &&
-          canonical(to_symbol_expr(current_left).get_identifier()) ==
-            canonical(to_symbol_expr(right).get_identifier());
+          !lid.empty() && !rid.empty() && canonical(lid) == canonical(rid);
         cmp = same_id ? exprt{false_exprt{}} : exprt{true_exprt{}};
         goto done_cmp;
       }
