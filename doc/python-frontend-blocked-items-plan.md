@@ -262,6 +262,36 @@ escapes the function (regression in `github_3916` / `last(a)`).
 - Slicing semantics around negative indices, step != 1, etc. need
   separate handling.
 
+### P1 status (2026-05-29)
+
+P1.B and P1.D have landed. PASS 2852 → 2859 (+7 net):
+- `string-char-symbolic-success`, `string-nondet-index-success`,
+  `string-symbolic-7`, `string-nondet-in-success`,
+  `string-nondet-slice-success`, `nondet_dict14`, `github_3553`.
+
+Implementation chose two strategies in `convert_subscript`:
+- (a) Direct byte read via `*(value.data + i)` into a fresh local
+  1-byte array — kept for the case where `value` has known byte
+  content (constant string literal or `string_constants`-tracked
+  symbol). Required for byte-level operations like `.isalpha()`
+  that read `data[0]` from the result struct (e.g. `github_2879`).
+- (b) `cprover_string_substring(value, i, i+1)` — used for
+  truly-symbolic `value`. Solver propagates `assume(s == "abc")`
+  byte-level constraints to `s[i]`.
+
+Slicing follows the same pattern: forward slice `s[a:b]` (step 1,
+no reverse) emits `cprover_string_substring(s, a, b)` for symbolic
+`s`. Reverse step (-1) and arbitrary steps fall back to a nondet
+result.
+
+Phase 1.C (per-symbol view-of-source map fallback) was not needed
+— the substring intrinsic propagates correctly.
+
+Side-effect cleanup: `nondet_str` now binds the python_string
+struct's length field to the solver's length symbol so the
+IndexError out-of-range check at convert_subscript sees the same
+bound the solver works with.
+
 ---
 
 ## P2 — Symbolic-string genexp iteration
@@ -417,7 +447,7 @@ to it.
 
 ---
 
-**Last updated:** 2026-05-29 (PASS 2852 cumulative wave 41 +251).
-P0 phases 0.A–0.F substantially complete; the typed-numeric
-`is None`=False fast-path is the remaining piece, deferred until
-data-flow tracking for implicit-None pathways is in place.
+**Last updated:** 2026-05-29 (PASS 2859 cumulative wave 41 +258).
+P0 phases 0.A–0.F substantially complete; P1.B and P1.D landed
+(symbolic string subscript and forward slicing via
+`cprover_string_substring`).

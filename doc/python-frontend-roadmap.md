@@ -612,6 +612,39 @@ All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
 `regression/python-strata-tests-pending`) green.
 
+Architectural cluster v12: symbolic string subscript via
+cprover_string_substring (P1, +7):
+- Symbolic-content python_string indexing s[i] now emits
+  cprover_string_substring(s, i, i+1) for the truly-
+  symbolic case (no known byte array). The refined-string
+  solver registers the result as a substring of `s` via the
+  universal axiom forall k<|res|. res[k]==s[start+k], so
+  byte-level constraints from `assume(s == "abc")` propagate
+  to s[i].
+- Two-strategy split in convert_subscript:
+  - (a) Direct byte read via *(value.data + i) into a
+    fresh local 1-byte array — kept for known-byte
+    sources (constant string, string_constants-tracked
+    symbol). Required for byte-level operations like
+    .isalpha() on the result.
+  - (b) cprover_string_substring intrinsic for symbolic
+    sources where the solver propagates content
+    constraints.
+- Forward slicing s[a:b] (step 1, no reverse) follows the
+  same pattern: emits cprover_string_substring(s, a, b)
+  for symbolic sources. Reverse step (-1) and arbitrary
+  steps fall back to nondet.
+- nondet_str now binds the python_string struct's length
+  field to the solver's length symbol so the IndexError
+  out-of-range check at convert_subscript sees the same
+  bound the solver works with.
+- Closes string-char-symbolic-success,
+  string-nondet-index-success, string-symbolic-7,
+  string-nondet-in-success, string-nondet-slice-success,
+  nondet_dict14, github_3553. See
+  doc/python-frontend-blocked-items-plan.md P1 for the
+  full plan (phases 1.A and 1.C not needed).
+
 ## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
