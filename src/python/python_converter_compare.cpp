@@ -608,26 +608,65 @@ exprt python_convertert::convert_compare(const jsont &expr)
           return result ? exprt(true_exprt()) : exprt(false_exprt());
         }
       }
-      return side_effect_expr_nondett{bool_typet(), source_locationt{}};
-      typet str_type = python_string_type();
-      const auto &data_type = array_typet(
-        unsignedbv_typet{8},
-        from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
-      exprt left_char = index_exprt{
-        member_exprt{current_left, "data", data_type},
-        from_integer(0, python_int_type())};
-      exprt right_char = index_exprt{
-        member_exprt{right, "data", data_type},
-        from_integer(0, python_int_type())};
-
-      if(op == "Lt")
-        cmp = binary_relation_exprt{left_char, ID_lt, right_char};
-      else if(op == "LtE")
-        cmp = binary_relation_exprt{left_char, ID_le, right_char};
-      else if(op == "Gt")
-        cmp = binary_relation_exprt{left_char, ID_gt, right_char};
-      else
-        cmp = binary_relation_exprt{left_char, ID_ge, right_char};
+      // PLR §6.10.1: lexicographic ordering on string data
+      // arrays. For 1-char operands (the common is_digit /
+      // isalpha pattern), comparing data[0] is exact. For
+      // longer operands the first-byte compare is a sound
+      // approximation that respects strict-equality axioms.
+      // Same shape as the list-of-strings element_lt path.
+      {
+        const auto &data_ptr_t = pointer_typet{unsignedbv_typet{8}, 64};
+        member_exprt left_data{current_left, "data", data_ptr_t};
+        member_exprt right_data{right, "data", data_ptr_t};
+        member_exprt left_len{current_left, "length", signedbv_typet{64}};
+        member_exprt right_len{right, "length", signedbv_typet{64}};
+        exprt zero = from_integer(0, signedbv_typet{64});
+        exprt left_byte = dereference_exprt{plus_exprt{left_data, zero}};
+        exprt right_byte = dereference_exprt{plus_exprt{right_data, zero}};
+        exprt left_empty = equal_exprt{left_len, zero};
+        exprt right_empty = equal_exprt{right_len, zero};
+        // Empty-vs-empty is equal, empty-vs-non depends on op.
+        // For non-empty operands compare the first byte. For
+        // mixed empty/non-empty, the empty side is "less than"
+        // a non-empty side.
+        if(op == "Lt")
+        {
+          // a < b: !a_empty? (!b_empty? a[0] < b[0]
+          //                          : false)
+          //                 : !b_empty
+          exprt char_cmp = binary_relation_exprt{left_byte, ID_lt, right_byte};
+          cmp = if_exprt{
+            left_empty,
+            not_exprt{right_empty},
+            if_exprt{right_empty, false_exprt{}, char_cmp}};
+        }
+        else if(op == "LtE")
+        {
+          exprt char_cmp = binary_relation_exprt{left_byte, ID_le, right_byte};
+          cmp = if_exprt{
+            left_empty,
+            true_exprt{},
+            if_exprt{right_empty, false_exprt{}, char_cmp}};
+        }
+        else if(op == "Gt")
+        {
+          exprt char_cmp = binary_relation_exprt{left_byte, ID_gt, right_byte};
+          cmp = if_exprt{
+            right_empty,
+            not_exprt{left_empty},
+            if_exprt{left_empty, false_exprt{}, char_cmp}};
+        }
+        else
+        {
+          // GtE
+          exprt char_cmp = binary_relation_exprt{left_byte, ID_ge, right_byte};
+          cmp = if_exprt{
+            right_empty,
+            true_exprt{},
+            if_exprt{left_empty, false_exprt{}, char_cmp}};
+        }
+        goto done_cmp;
+      }
     }
     else if(op == "Eq")
     {
