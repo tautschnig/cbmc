@@ -1873,30 +1873,18 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // PLR §6.10.3: Identity comparison
       // For tagged unions, "x is None" checks tag == NONE
       if(
-        is_python_value_type(current_left.type()) && right.is_constant() &&
-        right.type().id() == ID_signedbv)
+        is_python_value_type(current_left.type()) &&
+        is_python_none_constant(right))
       {
-        mp_integer rv;
-        if(
-          !to_integer(to_constant_expr(right), rv) &&
-          rv == mp_integer{-4611686018427387904LL})
-        {
-          cmp = python_value_is(current_left, python_type_tagt::NONE);
-          goto done_cmp;
-        }
+        cmp = python_value_is(current_left, python_type_tagt::NONE);
+        goto done_cmp;
       }
       if(
-        is_python_value_type(right.type()) && current_left.is_constant() &&
-        current_left.type().id() == ID_signedbv)
+        is_python_value_type(right.type()) &&
+        is_python_none_constant(current_left))
       {
-        mp_integer lv;
-        if(
-          !to_integer(to_constant_expr(current_left), lv) &&
-          lv == mp_integer{-4611686018427387904LL})
-        {
-          cmp = python_value_is(right, python_type_tagt::NONE);
-          goto done_cmp;
-        }
+        cmp = python_value_is(right, python_type_tagt::NONE);
+        goto done_cmp;
       }
       // Concrete struct instance compared with None sentinel is
       // always false — the struct is never the None value.
@@ -1921,17 +1909,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
         (current_left.type().id() == ID_struct ||
          current_left.type().id() == ID_struct_tag) &&
         !is_python_value_type(current_left.type()) &&
-        !is_optional_sym(current_left) && right.is_constant() &&
-        right.type().id() == ID_signedbv)
+        !is_optional_sym(current_left) && is_python_none_constant(right))
       {
-        mp_integer rv;
-        if(
-          !to_integer(to_constant_expr(right), rv) &&
-          rv == mp_integer{-4611686018427387904LL})
-        {
-          cmp = false_exprt{};
-          goto done_cmp;
-        }
+        cmp = false_exprt{};
+        goto done_cmp;
       }
       // Optional[str]: 'y is None' for an Optional[str] param
       // bound to its default-None becomes length==0 (the marker
@@ -1941,48 +1922,30 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // exactly when y was bound to None at the call site.
       if(
         is_optional_sym(current_left) &&
-        is_python_string_type(current_left.type()) && right.is_constant() &&
-        right.type().id() == ID_signedbv)
+        is_python_string_type(current_left.type()) &&
+        is_python_none_constant(right))
       {
-        mp_integer rv;
-        if(
-          !to_integer(to_constant_expr(right), rv) &&
-          rv == mp_integer{-4611686018427387904LL})
-        {
-          member_exprt llen{current_left, "length", signedbv_typet{64}};
-          cmp = equal_exprt{llen, from_integer(0, signedbv_typet{64})};
-          goto done_cmp;
-        }
+        member_exprt llen{current_left, "length", signedbv_typet{64}};
+        cmp = equal_exprt{llen, from_integer(0, signedbv_typet{64})};
+        goto done_cmp;
       }
       // Same for the reversed orientation.
       if(
         (right.type().id() == ID_struct ||
          right.type().id() == ID_struct_tag) &&
         !is_python_value_type(right.type()) && !is_optional_sym(right) &&
-        current_left.is_constant() && current_left.type().id() == ID_signedbv)
+        is_python_none_constant(current_left))
       {
-        mp_integer lv;
-        if(
-          !to_integer(to_constant_expr(current_left), lv) &&
-          lv == mp_integer{-4611686018427387904LL})
-        {
-          cmp = false_exprt{};
-          goto done_cmp;
-        }
+        cmp = false_exprt{};
+        goto done_cmp;
       }
       if(
         is_optional_sym(right) && is_python_string_type(right.type()) &&
-        current_left.is_constant() && current_left.type().id() == ID_signedbv)
+        is_python_none_constant(current_left))
       {
-        mp_integer lv;
-        if(
-          !to_integer(to_constant_expr(current_left), lv) &&
-          lv == mp_integer{-4611686018427387904LL})
-        {
-          member_exprt rlen{right, "length", signedbv_typet{64}};
-          cmp = equal_exprt{rlen, from_integer(0, signedbv_typet{64})};
-          goto done_cmp;
-        }
+        member_exprt rlen{right, "length", signedbv_typet{64}};
+        cmp = equal_exprt{rlen, from_integer(0, signedbv_typet{64})};
+        goto done_cmp;
       }
       // PLR §6.10.3: lists, dicts, sets, and class instances are
       // distinct heap objects per construction. Two list/dict
@@ -2042,18 +2005,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
     {
       // PLR §6.10.3: "x is not None" checks tag != NONE
       if(
-        is_python_value_type(current_left.type()) && right.is_constant() &&
-        right.type().id() == ID_signedbv)
+        is_python_value_type(current_left.type()) &&
+        is_python_none_constant(right))
       {
-        mp_integer rv;
-        if(
-          !to_integer(to_constant_expr(right), rv) &&
-          rv == mp_integer{-4611686018427387904LL})
-        {
-          cmp =
-            not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
-          goto done_cmp;
-        }
+        cmp =
+          not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
+        goto done_cmp;
       }
       // A concrete class-instance (struct) compared against None is
       // always non-None — typecasting the None-sentinel int to a
@@ -2079,33 +2036,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
         (current_left.type().id() == ID_struct ||
          current_left.type().id() == ID_struct_tag) &&
         !is_python_value_type(current_left.type()) &&
-        !is_opt_sym2(current_left) && right.is_constant() &&
-        right.type().id() == ID_signedbv)
+        !is_opt_sym2(current_left) && is_python_none_constant(right))
       {
-        mp_integer rv;
-        if(
-          !to_integer(to_constant_expr(right), rv) &&
-          rv == mp_integer{-4611686018427387904LL})
-        {
-          cmp = true_exprt{};
-          goto done_cmp;
-        }
+        cmp = true_exprt{};
+        goto done_cmp;
       }
       // Same for reversed orientation.
       if(
         (right.type().id() == ID_struct ||
          right.type().id() == ID_struct_tag) &&
         !is_python_value_type(right.type()) && !is_opt_sym2(right) &&
-        current_left.is_constant() && current_left.type().id() == ID_signedbv)
+        is_python_none_constant(current_left))
       {
-        mp_integer lv;
-        if(
-          !to_integer(to_constant_expr(current_left), lv) &&
-          lv == mp_integer{-4611686018427387904LL})
-        {
-          cmp = true_exprt{};
-          goto done_cmp;
-        }
+        cmp = true_exprt{};
+        goto done_cmp;
       }
       // PLR §6.10.3: list/dict 'x is not y' — same logic as 'is'
       // but inverted. Different-symbol or literal-on-either-side

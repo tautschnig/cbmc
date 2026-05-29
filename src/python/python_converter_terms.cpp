@@ -73,7 +73,7 @@ exprt python_convertert::convert_constant(const jsont &expr)
     // the absence of a value." §6.10.3: "x is y is true if and only
     // if x and y are the same object." We use a sentinel value
     // distinct from 0 so that "0 is None" is correctly False. (not 0)
-    return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
+    return from_integer(python_none_sentinel_int(), python_int_type());
   }
   else if(value.is_number())
   {
@@ -212,7 +212,7 @@ exprt python_convertert::convert_name(const jsont &expr)
   else if(id == "False")
     return false_exprt{};
   else if(id == "None")
-    return from_integer(mp_integer{-4611686018427387904LL}, python_int_type());
+    return from_integer(python_none_sentinel_int(), python_int_type());
   else if(id == "NotImplemented")
   {
     // NotImplemented is a Python singleton returned by __op__ methods

@@ -71,7 +71,7 @@ std::optional<exprt> python_convertert::try_dict_method(
           elem_t.id() == ID_signedbv || elem_t.id() == ID_unsignedbv ||
           elem_t.id() == ID_integer || elem_t.id() == ID_natural)
           default_val =
-            from_integer(mp_integer{-4611686018427387904LL}, elem_t);
+            from_integer(python_none_sentinel_int(), elem_t);
         else
           default_val = safe_zero(elem_t);
       }
@@ -462,7 +462,7 @@ std::optional<exprt> python_convertert::try_dict_method(
       if(
         elem_t.id() == ID_signedbv || elem_t.id() == ID_unsignedbv ||
         elem_t.id() == ID_integer || elem_t.id() == ID_natural)
-        default_val = from_integer(mp_integer{-4611686018427387904LL}, elem_t);
+        default_val = from_integer(python_none_sentinel_int(), elem_t);
       else
         default_val = safe_zero(elem_t);
     }

@@ -614,21 +614,13 @@ exprt python_convertert::convert_user_call(
           // compare) recognise the default-None binding via
           // the length-zero discriminator.
           if(
-            arguments[i].is_constant() &&
-            arguments[i].type().id() == ID_signedbv &&
+            is_python_none_constant(arguments[i]) &&
             is_python_string_type(params[i].type()))
           {
-            mp_integer av;
-            const mp_integer none_sentinel{-4611686018427387904LL};
-            if(
-              !to_integer(to_constant_expr(arguments[i]), av) &&
-              av == none_sentinel)
-            {
-              arguments[i] = struct_exprt{
-                {from_integer(0, signedbv_typet{64}),
-                 null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
-                python_string_type()};
-            }
+            arguments[i] = struct_exprt{
+              {from_integer(0, signedbv_typet{64}),
+               null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+              python_string_type()};
           }
           if(
             params[i].type().id() == ID_pointer &&

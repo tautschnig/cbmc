@@ -1646,9 +1646,8 @@ codet python_convertert::convert_return(const jsont &stmt)
         //   * int / float / etc. -> int None-sentinel typecast
         //   * empty (void) -> bare return
         if(is_python_value_type(rt))
-          return code_frontend_returnt{make_python_value(
-            python_type_tagt::NONE, from_integer(0, signedbv_typet{64}))};
-        const mp_integer none_val{-4611686018427387904LL};
+          return code_frontend_returnt{python_none_value()};
+        const mp_integer none_val = python_none_sentinel_int();
         return code_frontend_returnt{
           safe_typecast(from_integer(none_val, python_int_type()), rt)};
       }
