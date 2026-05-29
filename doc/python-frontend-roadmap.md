@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2794** | +193 |
+| ESBMC PASS | 2489 | 2601 | **2802** | +201 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -335,6 +335,27 @@ Tuple / range / set / math / isinstance mini-cluster (wave 41 cont., +7):
   step)) for non-trivial constant step now reverses
   correctly (was: step magnitude lost during the reversed-
   iteration transform).
+
+Class / module dispatch + method defaults (wave 41 cont., +8):
+- randrange — random.randrange(start, stop, step) now
+  enforces step alignment and direction.
+- list-append — list.append into a python_value list now
+  wraps via wrap_value (was: typecast to struct zeros all
+  fields, hiding 'numbers[4] == 4' after append).
+- type-annotation-class10 — function returning a Name
+  bound to a class constructor now infers the class type
+  as the function's return type ('def f(): x = A(); return x').
+- github_2944 / import-class-methods — 'module.ClassName(...)'
+  now routes through class instantiation when the
+  attribute is a known class (was: function-call dispatch
+  → nondet).
+- github_3287 / github_3287_fail / github_3287_1_fail /
+  github_3287_2_fail (bonus) — class-method defaults are
+  now registered (in convert_class_def) and consulted (in
+  the method-call default-fill loop). Previously class
+  methods skipped definition-time default extraction
+  entirely, so 'f.foo(a=\"aaa\")' on a method with
+  'b: str = \"xyz\"' got safe_zero (empty string) for b.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
