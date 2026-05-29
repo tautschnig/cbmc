@@ -2898,6 +2898,25 @@ std::optional<exprt> python_convertert::try_builtin_call(
             exprt any_match = false_exprt{};
             for(const auto &elt : as_array(elts))
             {
+              // type(None) — a Call node. Check NONE tag.
+              if(
+                is_node_type(elt, "Call") &&
+                is_node_type(json_member(elt, "func"), "Name") &&
+                json_string(json_member(json_member(elt, "func"), "id")) ==
+                  "type")
+              {
+                const jsont &t_args = json_member(elt, "args");
+                if(
+                  t_args.is_array() && !as_array(t_args).empty() &&
+                  is_node_type(*as_array(t_args).begin(), "Constant") &&
+                  json_member(*as_array(t_args).begin(), "value").is_null())
+                {
+                  exprt none_match =
+                    python_value_is(obj, python_type_tagt::NONE);
+                  any_match = or_exprt{any_match, std::move(none_match)};
+                }
+                continue;
+              }
               if(!is_node_type(elt, "Name"))
                 continue;
               std::string tname = json_string(json_member(elt, "id"));

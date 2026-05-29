@@ -73,6 +73,14 @@ exprt python_convertert::convert_constant(const jsont &expr)
     // the absence of a value." §6.10.3: "x is y is true if and only
     // if x and y are the same object." We use a sentinel value
     // distinct from 0 so that "0 is None" is correctly False. (not 0)
+    //
+    // NOTE: A future refactor (P0 in
+    // doc/python-frontend-blocked-items-plan.md) will switch this
+    // to python_none_value() (tagged-union NONE). Doing so requires
+    // a return-type pre-pass so that mixed `return 0; return None`
+    // functions wrap the int return correctly. For now, the
+    // sentinel form is recognised by is_python_none_constant() at
+    // consumer sites alongside the tagged form.
     return from_integer(python_none_sentinel_int(), python_int_type());
   }
   else if(value.is_number())

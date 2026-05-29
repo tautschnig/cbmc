@@ -1805,6 +1805,18 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   if(!is_python_value_type(e.type()))
     return e; // already concrete
 
+  // PLR §3.2: when unwrapping a NONE-tagged python_value to a typed
+  // numeric slot, produce the legacy sentinel value so existing
+  // typed-numeric 'is None' fast-paths and Optional[int] default
+  // bindings keep working during gradual migration to the tagged
+  // encoding everywhere. See doc/python-frontend-blocked-items-plan.md
+  // (P0 phase 0.C).
+  if(
+    is_python_none_constant(e) &&
+    (target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
+     target_type == python_int_type()))
+    return from_integer(python_none_sentinel_int(), target_type);
+
   // Extract the appropriate field based on target type
   if(
     target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
