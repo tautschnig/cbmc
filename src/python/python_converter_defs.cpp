@@ -3529,7 +3529,17 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           index_exprt slot{data, length};
 
           if(val.type() != data_type.element_type())
-            val = typecast_exprt{val, data_type.element_type()};
+          {
+            // PLR §4.5: tagged-union list element. wrap_value
+            // sets the right __tag and underlying field so
+            // numbers.data[k].__int_val (etc.) are observable
+            // after the append. The naive typecast would zero
+            // every field.
+            if(is_python_value_type(data_type.element_type()))
+              val = wrap_value(val);
+            else
+              val = typecast_exprt{val, data_type.element_type()};
+          }
 
           code_blockt block;
           code_frontend_assignt store{slot, val};
