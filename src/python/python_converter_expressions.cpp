@@ -37,9 +37,49 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
   if(test.is_nil() || body.is_nil() || orelse.is_nil())
     return nil_exprt{};
 
-  // Ensure both branches have the same type
+  // PLR §6.13: if branch types differ, the conditional's type
+  // is the union of both. Wrap each branch in the tagged-union
+  // (python_value) ONLY when the branches span fundamentally
+  // different categories (e.g. str vs int) where downstream
+  // isinstance / type checks would lie. Numeric mismatches
+  // (int vs float, bool vs int) stay typecast-promoted: the
+  // existing test base relies on 'priority: float = 2.5 if c
+  // else 1' silently widening the int 1 to 1.0.
   if(body.type() != orelse.type())
-    orelse = safe_typecast(orelse, body.type());
+  {
+    auto category = [this](const typet &t) -> int
+    {
+      // Numeric category (int / float / bool) — typecast-OK.
+      if(
+        t.id() == ID_signedbv || t.id() == ID_floatbv || t.id() == ID_bool ||
+        t.id() == ID_unsignedbv || t.id() == ID_integer)
+        return 0;
+      if(is_python_string_type(t))
+        return 1;
+      if(is_python_list_type(t))
+        return 2;
+      if(is_python_dict_type(t))
+        return 3;
+      if(is_python_value_type(t))
+        return 4;
+      return -1;
+    };
+    int bcat = category(body.type());
+    int ocat = category(orelse.type());
+    // Wrap when both sides are categorisable AND they're in
+    // different categories AND at least one is non-numeric
+    // (a str/list/dict/python_value). Pure numeric mismatches
+    // continue to typecast.
+    bool different_categories =
+      bcat >= 0 && ocat >= 0 && bcat != ocat && (bcat != 0 || ocat != 0);
+    if(different_categories)
+    {
+      body = wrap_value(body);
+      orelse = wrap_value(orelse);
+    }
+    else
+      orelse = safe_typecast(orelse, body.type());
+  }
 
   if(test.type() != bool_typet{})
     test = safe_typecast(test, bool_typet{});
