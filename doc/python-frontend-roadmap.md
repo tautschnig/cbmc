@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2851** | +250 |
+| ESBMC PASS | 2489 | 2601 | **2852** | +251 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -574,6 +574,39 @@ Architectural cluster v10: set-bitmap for-iteration (wave 41 cont., +1):
   conditionally executing the body when the bit is
   set; x = bit_index + offset. Closes
   github_2965_set_unique.
+
+Architectural cluster v11: None encoding refactor (P0, +1):
+- convert_term for None constants now produces a
+  canonical python_value{NONE} (NONE-tagged tagged-union)
+  instead of the legacy -2^62 int sentinel. Typed
+  numeric slots still receive the sentinel via
+  unwrap_value's NONE-aware adapter; this preserves
+  backwards-compatibility for default-arg binding,
+  Optional[int] params, etc.
+- New helpers in python_value_type.h:
+  python_none_sentinel_int() centralises the magic
+  number; python_none_value() builds the tagged form;
+  is_python_none_constant() recognises both forms at
+  consumer sites.
+- Heterogeneous-return widening: when a function has
+  both value-returning and 'return None' paths, the
+  declared return type is widened to python_value
+  up-front (was: stayed python_int, leaving the
+  later-converted None return as a struct mismatching
+  the function's signature).
+- Tagged-union Eq/NotEq for python_value vs python_value:
+  emits struct equality (skipping the lossy unwrap to
+  __int_val); LIST/DICT tag predicates added for
+  Eq/NotEq to typed list/dict.
+- isinstance(x, (..., type(None), ...)) now recognises
+  type(None) inside a tuple form for python_value x.
+- list-subscript with a python_value index unwraps
+  __int_val instead of raising TypeError.
+- Closes list-nondet (heterogeneous-return + nondet
+  index). See doc/python-frontend-blocked-items-plan.md
+  for the multi-phase plan; phases 0.A–0.E complete,
+  0.F (cleanup of old workarounds) and the typed-int-
+  is-None=False rule are deferred.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
