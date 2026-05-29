@@ -1007,15 +1007,18 @@ exprt python_convertert::convert_list(const jsont &expr)
 
   if(elements.empty())
   {
-    // Empty list — default to int element type
-    struct_typet list_type = python_list_type(python_int_type());
+    // PLR §3.2: an empty list literal has no element type from
+    // its operands; we default to the tagged union python_value
+    // so subsequent .append(X) / .extend(X) for any X works
+    // through wrap_value rather than through a typecast that
+    // zeros struct fields.
+    typet elem_t = python_value_type();
+    struct_typet list_type = python_list_type(elem_t);
     exprt length = from_integer(0, python_int_type());
-    array_typet data_type{
-      python_int_type(),
-      from_integer(PYTHON_MAX_LIST_LENGTH, python_int_type())};
+    const auto &data_type = to_array_type(list_type.components()[1].type());
     exprt::operandst zeros;
     for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
-      zeros.push_back(from_integer(0, python_int_type()));
+      zeros.push_back(safe_zero(elem_t));
     array_exprt data{std::move(zeros), data_type};
     return struct_exprt{{length, data}, list_type};
   }

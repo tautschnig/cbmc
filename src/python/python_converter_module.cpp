@@ -1004,8 +1004,16 @@ bool python_convertert::convert()
                     }
                     if(simple)
                     {
-                      // Infer element type from first constant
-                      typet elem_type = python_int_type();
+                      // Infer element type from first constant.
+                      // For an empty list, default to the tagged
+                      // union python_value so subsequent
+                      // .append(X) for any X type wraps via
+                      // wrap_value and the values stay readable.
+                      // Matches the convert_list (pass 2) behaviour.
+                      typet elem_type =
+                        (elts.is_array() && as_array(elts).empty())
+                          ? python_value_type()
+                          : python_int_type();
                       bool mixed_types = false;
                       if(elts.is_array() && !as_array(elts).empty())
                       {
