@@ -751,6 +751,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       }
     }
     // Non-constant indexing: read char via pointer arithmetic
+    // and build a 1-char string struct backed by a fresh local
+    // 1-byte array. We can't return a view {1, s.data + i}
+    // directly because callers may return s[i] across stack
+    // frames (e.g. `def last(a): return a[-1]`), where s is
+    // local to the callee — pointing into it would dangle. The
+    // fresh-local backing means the returned char's bytes are
+    // captured at the subscript point.
     {
       member_exprt data_ptr(
         value, "data", pointer_typet(unsignedbv_typet{8}, 64));
