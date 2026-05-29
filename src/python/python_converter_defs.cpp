@@ -545,6 +545,27 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             if(is_node_type(rv, "Name"))
             {
               std::string rname = json_string(json_member(rv, "id"));
+              // PLR §3.2: 'return param' where param is a
+              // tagged-union (Any / no annotation) parameter.
+              // The return type must be python_value so that
+              // sibling 'return concrete_value' branches wrap
+              // their values into the union — otherwise the
+              // sibling's int / float gets typecast to nondet
+              // python_value at the SET RETURN VALUE site.
+              for(const auto &p : parameters)
+              {
+                if(p.get_base_name() == rname)
+                {
+                  if(is_python_value_type(p.type()))
+                  {
+                    if(return_type.id() == ID_empty)
+                      return_type = python_value_type();
+                    else if(return_type != python_value_type())
+                      return_type = python_value_type();
+                  }
+                  break;
+                }
+              }
               const jsont &fn_body = json_member(stmt, "body");
               if(fn_body.is_array())
               {
