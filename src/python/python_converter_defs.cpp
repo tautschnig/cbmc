@@ -740,6 +740,20 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       // tagged union's tag.
       return_type = python_value_type();
     }
+    else if(
+      has_value_return && has_none_return && return_type.id() == ID_empty)
+    {
+      // PLR §3.2: heterogeneous-return function with at least
+      // one 'return None' and at least one value-returning path
+      // (e.g. 'return 0; return None'). Widen to python_value
+      // so the int/float/bool returns are wrapped via
+      // wrap_value at convert_return — without this, the int
+      // return goes out as plain signedbv but the function's
+      // declared type ends up python_value (after the
+      // ret-time widening), creating a type mismatch at the
+      // call site.
+      return_type = python_value_type();
+    }
     else if(has_value_return && return_type.id() == ID_empty)
     {
       // If any parameter is float, return type is likely float

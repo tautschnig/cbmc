@@ -70,18 +70,13 @@ exprt python_convertert::convert_constant(const jsont &expr)
   else if(value.is_null())
   {
     // PLR §3.2: "None — This type has a single value... used to signify
-    // the absence of a value." §6.10.3: "x is y is true if and only
-    // if x and y are the same object." We use a sentinel value
-    // distinct from 0 so that "0 is None" is correctly False. (not 0)
-    //
-    // NOTE: A future refactor (P0 in
-    // doc/python-frontend-blocked-items-plan.md) will switch this
-    // to python_none_value() (tagged-union NONE). Doing so requires
-    // a return-type pre-pass so that mixed `return 0; return None`
-    // functions wrap the int return correctly. For now, the
-    // sentinel form is recognised by is_python_none_constant() at
-    // consumer sites alongside the tagged form.
-    return from_integer(python_none_sentinel_int(), python_int_type());
+    // the absence of a value." Encoded as the canonical NONE-tagged
+    // python_value. Typed numeric slots receive the legacy int
+    // sentinel via safe_typecast/unwrap_value at the assignment site;
+    // this preserves backwards compatibility while letting NONE-aware
+    // consumers see a tagged value. See
+    // doc/python-frontend-blocked-items-plan.md (P0).
+    return python_none_value();
   }
   else if(value.is_number())
   {
