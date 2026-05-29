@@ -4,8 +4,8 @@
 # goto-cc goto binary without driving the kernel's make system.
 #
 # Takes an already-configured kernel tree (must have
-# include/generated/autoconf.h, i.e. 'make olddefconfig && make
-# prepare scripts' has succeeded at least once) and a path to a .c
+# include/generated/autoconf.h, i.e. 'make defconfig && make
+# prepare0' has succeeded at least once) and a path to a .c
 # source file relative to the tree root.
 #
 # Writes the goto binary to the second argument.
@@ -17,7 +17,7 @@
 #   compile_file.sh /home/ubuntu/linux_5_10 crypto/algif_aead.c /tmp/algif.gb
 #
 # The compile flags mirror the ones the kernel's own V=1 build logs
-# for x86_64 allnoconfig + KVM + crypto user-API.  They have been
+# for x86_64 defconfig + KVM + crypto user-API.  They have been
 # trimmed to drop gcc-specific flags that goto-cc does not parse
 # cleanly, and extended with -DKBUILD_* defaults.  If your target
 # file has architecture-specific flag requirements, check the
@@ -45,7 +45,7 @@ if [[ ! -x $GOTOCC ]]; then
 fi
 if [[ ! -f $KTREE/include/generated/autoconf.h ]]; then
   echo "$KTREE looks unconfigured (no include/generated/autoconf.h)" >&2
-  echo "run 'make olddefconfig && make prepare scripts' there first." >&2
+  echo "run 'make defconfig && make prepare0' there first." >&2
   exit 2
 fi
 if [[ ! -f $KTREE/$SOURCE && ! -f $SOURCE ]]; then
