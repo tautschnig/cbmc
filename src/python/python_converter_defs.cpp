@@ -768,13 +768,15 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     else if(!has_value_return)
     {
       // PLR §7.6: a function that does not execute a value-returning
-      // \`return\` statement falls off the end and returns None. Model
-      // None as the int-typed sentinel so callers can distinguish it
-      // from concrete values via \`r is None\`.
+      // \`return\` statement falls off the end and returns None. With
+      // the P0 None-encoding refactor, model the implicit None as a
+      // python_value{NONE}. The caller's `r is None` then dispatches
+      // on the NONE tag (precise) instead of comparing against the
+      // legacy int sentinel.
       // Only \`empty_typet\` is the "void" indicator that suppresses
       // the implicit return and makes the call's value undefined; we
       // want a real return slot.
-      return_type = python_int_type();
+      return_type = python_value_type();
     }
   }
 
