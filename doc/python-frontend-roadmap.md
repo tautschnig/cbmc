@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2850** | +249 |
+| ESBMC PASS | 2489 | 2601 | **2851** | +250 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -566,6 +566,14 @@ Architectural cluster v9: Optional[str], list unpack, type promotion (wave 41 co
   before float_plus, instead of using __float_val (which
   is undefined zero for INT). Closes list_pop10,
   list_pop11_nondet (heterogeneous list summation).
+
+Architectural cluster v10: set-bitmap for-iteration (wave 41 cont., +1):
+- 'for x in s' over a python_set was falling through to
+  the 'unsupported iterable' fallback (one nondet
+  iteration). Now unrolls 64-way over the bitmap bits,
+  conditionally executing the body when the bit is
+  set; x = bit_index + offset. Closes
+  github_2965_set_unique.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
