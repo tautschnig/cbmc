@@ -1,0 +1,28 @@
+CORE
+JmlSignalsOnlyKotlin
+--function "experiment.JmlSignalsOnlyKotlin.validate:(ZZ)V" --jml-source src/main/kotlin/JmlSignalsOnlyKotlin.kt --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML signals_only on Kotlin source.
+
+Mirrors the AWS-Bastion privacy-pipeline idiom: a Kotlin
+class declares its own InvalidInputException subtype and a
+validation method that throws it under various conditions.
+The signals_only contract permits InvalidInputException
+(and its subtypes) to escape; JBMC must verify nothing else
+can.
+
+Exercises the union of features:
+  - JML annotations parsed directly from .kt source
+    (jml-kotlin-direct).
+  - Instance-method parameter resolution with the implicit
+    `this` slot (jml-instance-method).
+  - signals_only type-name resolution via the symbol table
+    + transitive subclass closure (so a method that throws
+    a subclass of the listed type is also accepted).

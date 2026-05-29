@@ -96,6 +96,7 @@ struct jml_clauset
     ENSURES,
     ASSIGNABLE,
     SIGNALS,
+    SIGNALS_ONLY,
     INVARIANT,
     DECREASES,
     PURE,
@@ -108,6 +109,17 @@ struct jml_clauset
   kindt kind = kindt::UNKNOWN;
   exprt expr;           // The clause's expression (nil for PURE, etc.)
   std::string raw_text; // Original text for diagnostics
+  /// SIGNALS_ONLY: list of fully-qualified Java exception type
+  /// names (e.g. "java::java.lang.IllegalArgumentException").
+  /// Empty for other clause kinds.
+  std::vector<std::string> signal_types;
+  /// SIGNALS (typed): the type the predicate guards on (e.g.
+  /// "java::java.lang.IllegalArgumentException") and the bound
+  /// variable name introduced by `signals (T e) p;`. Both are
+  /// empty when the clause is a non-typed signals (e.g. just
+  /// `signals expr;`) or any other kind.
+  std::string signal_type;
+  std::string signal_var;
 };
 
 /// Parse a single JML clause line (e.g., "requires x > 0;").

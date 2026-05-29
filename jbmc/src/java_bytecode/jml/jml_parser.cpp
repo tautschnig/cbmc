@@ -889,6 +889,8 @@ jml_clauset jml_parse_clause(
   else if(strip_prefix("assignable") || strip_prefix("modifiable") ||
           strip_prefix("modifies"))
     result.kind = jml_clauset::kindt::ASSIGNABLE;
+  else if(strip_prefix("signals_only"))
+    result.kind = jml_clauset::kindt::SIGNALS_ONLY;
   else if(strip_prefix("signals"))
     result.kind = jml_clauset::kindt::SIGNALS;
   else if(strip_prefix("invariant") || strip_prefix("maintaining") ||
@@ -927,6 +929,92 @@ jml_clauset jml_parse_clause(
     {
       result.expr = exprt("jml_everything");
       return result;
+    }
+  }
+
+  // Special case: signals_only T1, T2, ...;
+  // The body is a comma-separated list of Java exception types,
+  // not an expression. Parse the list into signal_types and
+  // skip the expression parser.
+  if(result.kind == jml_clauset::kindt::SIGNALS_ONLY)
+  {
+    auto trim_str = [](std::string s)
+    {
+      auto start = s.find_first_not_of(" \t");
+      if(start == std::string::npos)
+        return std::string{};
+      auto end = s.find_last_not_of(" \t;");
+      return s.substr(start, end - start + 1);
+    };
+    std::string body = trim_str(text);
+    // Split by comma.
+    std::string::size_type pos = 0;
+    while(pos <= body.size())
+    {
+      const auto comma = body.find(',', pos);
+      const auto stop = (comma == std::string::npos) ? body.size() : comma;
+      const std::string ty = trim_str(body.substr(pos, stop - pos));
+      if(!ty.empty())
+        result.signal_types.push_back(ty);
+      if(comma == std::string::npos)
+        break;
+      pos = comma + 1;
+    }
+    result.expr = true_exprt();
+    return result;
+  }
+
+  // Special case: signals (T e) predicate;
+  // Recognise the optional `(T e)` after `signals` and capture
+  // the type plus bound variable name; the rest of `text` is
+  // the predicate expression.
+  if(result.kind == jml_clauset::kindt::SIGNALS)
+  {
+    auto skip_ws = [](const std::string &s, std::size_t &i)
+    {
+      while(i < s.size() &&
+            std::isspace(static_cast<unsigned char>(s[i])))
+        ++i;
+    };
+    std::size_t i = 0;
+    skip_ws(text, i);
+    if(i < text.size() && text[i] == '(')
+    {
+      ++i;
+      skip_ws(text, i);
+      // Parse type: dotted Java identifier (e.g.
+      // `IllegalArgumentException`,
+      // `com.example.Foo$Bar`).
+      const std::size_t type_start = i;
+      while(i < text.size() &&
+            (std::isalnum(static_cast<unsigned char>(text[i])) ||
+             text[i] == '.' || text[i] == '_' || text[i] == '$'))
+        ++i;
+      std::string ty = text.substr(type_start, i - type_start);
+      skip_ws(text, i);
+      // Parse variable name (identifier).
+      const std::size_t var_start = i;
+      while(i < text.size() &&
+            (std::isalnum(static_cast<unsigned char>(text[i])) ||
+             text[i] == '_'))
+        ++i;
+      std::string var = text.substr(var_start, i - var_start);
+      skip_ws(text, i);
+      if(i < text.size() && text[i] == ')' && !ty.empty() && !var.empty())
+      {
+        ++i;
+        result.signal_type = ty;
+        result.signal_var = var;
+        // Trim leading whitespace and trailing ';' from the
+        // predicate slice.
+        std::string pred = text.substr(i);
+        while(!pred.empty() &&
+              std::isspace(static_cast<unsigned char>(pred.front())))
+          pred.erase(pred.begin());
+        while(!pred.empty() && pred.back() == ';')
+          pred.pop_back();
+        text = pred;
+      }
     }
   }
 

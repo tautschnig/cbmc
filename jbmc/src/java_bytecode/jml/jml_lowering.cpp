@@ -22,6 +22,7 @@ Author: Kiro (AI agent)
 #include <ansi-c/c_expr.h>
 #include <langapi/language_util.h>
 
+#include "../remove_exceptions.h"
 #include "jml_ids.h"
 
 namespace
@@ -644,6 +645,11 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
     exprt::operandst assigns_exprs;
     exprt::operandst invariant_exprs;
     exprt::operandst decreases_exprs;
+    // SIGNALS_ONLY: list of allowed Java exception type names
+    // accumulated from all signals_only clauses on the method.
+    // Empty list means no signals_only clause was supplied.
+    std::vector<std::string> signals_only_types;
+    bool has_signals_only = false;
 
     for(const auto &clause : spec.clauses)
     {
@@ -685,6 +691,11 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
       case jml_clauset::kindt::DECREASES:
         decreases_exprs.push_back(resolved);
         break;
+      case jml_clauset::kindt::SIGNALS_ONLY:
+        has_signals_only = true;
+        for(const auto &t : clause.signal_types)
+          signals_only_types.push_back(t);
+        break;
       case jml_clauset::kindt::SIGNALS:
       case jml_clauset::kindt::PURE:
       case jml_clauset::kindt::NULLABLE:
@@ -695,7 +706,8 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
       }
     }
 
-    if(requires_exprs.empty() && ensures_exprs.empty())
+    if(
+      requires_exprs.empty() && ensures_exprs.empty() && !has_signals_only)
       continue;
 
     // Pre-state capture for \old(expr): walk all ensures and
@@ -787,13 +799,231 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
     {
       if(it->type() == END_FUNCTION)
       {
+        // Insert all the exit-time checks BEFORE this
+        // END_FUNCTION instruction, then redirect any GOTO
+        // that targets END_FUNCTION (e.g. exception-throwing
+        // paths emitted by remove_exceptions) to the first
+        // inserted instruction. Without that redirection the
+        // GOTOs jump straight at END_FUNCTION and skip the
+        // ensures / signals_only checks entirely.
+        const auto end_fn_it = it;
+        // Track the first inserted instruction so we can
+        // retarget gotos. Initially nil: if no checks are
+        // inserted, no retargeting is needed.
+        std::optional<goto_programt::targett> new_first;
+        auto record_first =
+          [&](goto_programt::targett inserted)
+        {
+          if(!new_first.has_value())
+            new_first = inserted;
+        };
+
         for(const auto &ens : ensures_exprs)
         {
-          source_locationt loc = it->source_location();
+          source_locationt loc = end_fn_it->source_location();
           loc.set_comment("JML ensures");
           loc.set_step_kind(ID_postcondition);
           loc.set_property_class("postcondition");
-          body.insert_before(it, goto_programt::make_assertion(ens, loc));
+          auto inserted = body.insert_before(
+            end_fn_it, goto_programt::make_assertion(ens, loc));
+          record_first(inserted);
+        }
+
+        // signals_only T1, T2, ...;
+        // At the function exit, assert that the inflight
+        // exception is null OR is one of the listed types,
+        // then ASSUME the inflight exception is null so the
+        // harness's downstream uncaught-exception check
+        // passes regardless. The ASSUME is necessary because
+        // a method with `signals_only T` is allowed to throw
+        // T; without the ASSUME, the harness's default
+        // "no uncaught exception" assertion would fire on
+        // every successful T-throwing path.
+        if(has_signals_only)
+        {
+          const auto *infl_sym = ns.get_symbol_table().lookup(
+            INFLIGHT_EXCEPTION_VARIABLE_NAME);
+          if(infl_sym != nullptr)
+          {
+            const exprt infl = infl_sym->symbol_expr();
+            const exprt is_null =
+              equal_exprt(infl, null_pointer_exprt(to_pointer_type(infl.type())));
+            // Build an OR of class-identifier comparisons.
+            // remove_instanceof has already run by the time we
+            // get here, so use the post-removal form directly:
+            //   ((java.lang.Object*)inflight)->@class_identifier == "java::T"
+            // The exception is laid out as a Java object, so
+            // its first component is `@java.lang.Object` whose
+            // first component is `@class_identifier`. Cast to
+            // a `struct java.lang.Object *`, dereference, and
+            // read the field.
+            const auto *jlo_sym =
+              ns.get_symbol_table().lookup("java::java.lang.Object");
+            exprt type_check = is_null;
+            if(jlo_sym != nullptr && jlo_sym->type.id() == ID_struct)
+            {
+              const auto &components =
+                to_struct_type(jlo_sym->type).components();
+              irep_idt classid_field;
+              typet classid_type;
+              for(const auto &c : components)
+              {
+                if(
+                  c.get_name() == "@class_identifier" ||
+                  c.get_base_name() == "@class_identifier")
+                {
+                  classid_field = c.get_name();
+                  classid_type = c.type();
+                  break;
+                }
+              }
+              if(!classid_field.empty())
+              {
+                pointer_typet jlo_ptr =
+                  pointer_type(struct_tag_typet("java::java.lang.Object"));
+                const exprt jlo_obj =
+                  dereference_exprt(typecast_exprt(infl, jlo_ptr));
+                const exprt classid =
+                  member_exprt(jlo_obj, classid_field, classid_type);
+                // Resolve a user-supplied type name to a list of
+                // fully-qualified Java class identifiers. Strategy:
+                //   1. If the user wrote a `java::` prefix, take it
+                //      verbatim (one match).
+                //   2. If `java::<name>` is a class symbol, use it.
+                //   3. Otherwise, treat the name as a simple class
+                //      name and match every `java::<pkg>.<name>`
+                //      symbol — covers java.lang import-style names
+                //      and lets `signals_only Foo` work whether the
+                //      user wrote `Foo`, `pkg.Foo`, or
+                //      `java::pkg.Foo`.
+                //   4. Always include subclasses transitively, so
+                //      `signals_only Throwable` covers every
+                //      Java exception type.
+                auto resolve_type_name =
+                  [&](const std::string &raw) -> std::vector<std::string>
+                {
+                  std::string name = raw;
+                  std::vector<std::string> bases;
+                  if(name.rfind("java::", 0) == 0)
+                  {
+                    bases.push_back(name);
+                  }
+                  else if(
+                    ns.get_symbol_table().lookup("java::" + name) != nullptr)
+                  {
+                    bases.push_back("java::" + name);
+                  }
+                  else
+                  {
+                    const std::string suffix = "." + name;
+                    for(const auto &entry : ns.get_symbol_table().symbols)
+                    {
+                      const std::string id = id2string(entry.first);
+                      if(id.rfind("java::", 0) != 0)
+                        continue;
+                      // Class symbols have type ID_struct.
+                      if(entry.second.type.id() != ID_struct)
+                        continue;
+                      const std::string short_id = id.substr(6);
+                      if(
+                        short_id == name ||
+                        (short_id.size() > suffix.size() &&
+                         short_id.compare(
+                           short_id.size() - suffix.size(),
+                           suffix.size(),
+                           suffix) == 0))
+                      {
+                        bases.push_back(id);
+                      }
+                    }
+                  }
+                  // Transitive subclass closure: walk every class
+                  // symbol; if its '@<Parent>' component points
+                  // at one of `bases`, add it (and iterate to
+                  // saturation). This is O(classes * fixedpoint
+                  // iterations); the symbol table is small enough
+                  // that the simple loop is fine.
+                  std::set<std::string> all(bases.begin(), bases.end());
+                  bool changed = true;
+                  while(changed)
+                  {
+                    changed = false;
+                    for(const auto &entry : ns.get_symbol_table().symbols)
+                    {
+                      const std::string id = id2string(entry.first);
+                      if(id.rfind("java::", 0) != 0)
+                        continue;
+                      if(entry.second.type.id() != ID_struct)
+                        continue;
+                      if(all.count(id))
+                        continue;
+                      const auto &cs =
+                        to_struct_type(entry.second.type).components();
+                      for(const auto &c : cs)
+                      {
+                        const std::string cn = id2string(c.get_name());
+                        if(
+                          !cn.empty() && cn[0] == '@' &&
+                          c.type().id() == ID_struct_tag)
+                        {
+                          const std::string parent = id2string(
+                            to_struct_tag_type(c.type()).get_identifier());
+                          if(all.count(parent))
+                          {
+                            all.insert(id);
+                            changed = true;
+                          }
+                          break;
+                        }
+                      }
+                    }
+                  }
+                  return std::vector<std::string>(all.begin(), all.end());
+                };
+
+                for(const auto &ty : signals_only_types)
+                {
+                  for(const auto &fq : resolve_type_name(ty))
+                  {
+                    const exprt eq = equal_exprt(
+                      classid, constant_exprt(fq, classid_type));
+                    type_check = or_exprt(type_check, eq);
+                  }
+                }
+              }
+            }
+            source_locationt loc = end_fn_it->source_location();
+            loc.set_comment("JML signals_only");
+            loc.set_step_kind(ID_postcondition);
+            loc.set_property_class("signals_only");
+            auto a1 = body.insert_before(
+              end_fn_it, goto_programt::make_assertion(type_check, loc));
+            record_first(a1);
+            // Suppress propagation to the harness's default
+            // uncaught-exception check.
+            body.insert_before(
+              end_fn_it,
+              goto_programt::make_assignment(
+                infl,
+                null_pointer_exprt(to_pointer_type(infl.type())),
+                loc));
+          }
+        }
+
+        // Retarget any GOTOs whose target was END_FUNCTION
+        // (e.g. exception-throwing paths) to the first
+        // inserted check, so they no longer skip the JML
+        // exit-time checks.
+        if(new_first.has_value() && *new_first != end_fn_it)
+        {
+          for(auto &ins : body.instructions)
+          {
+            for(auto &target : ins.targets)
+            {
+              if(target == end_fn_it)
+                target = *new_first;
+            }
+          }
         }
       }
     }

@@ -1,0 +1,38 @@
+CORE
+JmlSignalsOnly
+--function "JmlSignalsOnly.safeSqrt:(I)I" --jml-source src/main/java/JmlSignalsOnly.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for `signals_only T1, T2, ...;` JML clauses.
+
+The method actually throws IllegalArgumentException for
+negative inputs; the contract permits exactly that type to
+escape. JBMC's signals_only lowering must:
+
+  1. Parse the comma-separated type-name list (handling the
+     `signals_only` prefix without confusing it with
+     `signals`).
+  2. At every method exit, ASSERT that the inflight exception
+     is null OR matches one of the listed types via
+     @class_identifier comparison (post-remove_instanceof
+     form, since JML lowering runs after remove_exceptions
+     and remove_instanceof).
+  3. Resolve simple class names to fully-qualified Java type
+     identifiers — `IllegalArgumentException` matches
+     `java::java.lang.IllegalArgumentException` even though
+     the user wrote the unqualified name.
+  4. Include all subclasses transitively in the allowed-set.
+  5. ASSIGN @inflight_exception := NULL after the assertion
+     so the harness's default no-uncaught-exception check
+     still passes (signals_only declares which exceptions
+     are *permitted* to escape, not that they must propagate).
+  6. Retarget GOTOs that previously jumped directly to
+     END_FUNCTION (e.g. exception-throwing paths from
+     remove_exceptions) so they reach the inserted check
+     rather than skipping past it.
