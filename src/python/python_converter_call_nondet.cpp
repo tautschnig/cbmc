@@ -144,6 +144,14 @@ std::optional<exprt> python_convertert::try_nondet_call(
     // cprover_string_length_func) see the same value.
     exprt len_intr = emit_string_int_function(
       ID_cprover_string_length_func, tmp, symbol_table, pending_checks);
+    // Bind the struct's length field to the solver's length so
+    // downstream reads via `tmp.length` (e.g. the IndexError
+    // out-of-range check in convert_subscript) see the same
+    // value the solver constrains. Without this, `tmp.length`
+    // is the nondet result of `tmp = nondet python_string` and
+    // the OOB check fails on safe accesses.
+    pending_checks.push_back(code_assumet{equal_exprt{
+      member_exprt{tmp, "length", signedbv_typet{64}}, len_intr}});
     // If size argument provided, constrain length == size
     if(args.is_array() && !as_array(args).empty())
     {
