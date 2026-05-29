@@ -83,6 +83,38 @@ if [[ -n $EXTRA_DEFINE ]]; then
   EXTRA_ARGS+=("-D$EXTRA_DEFINE")
 fi
 
+# Automatically add the source file's directory as an include
+# path so #include "foo.h" forms (relative-to-source-file)
+# resolve correctly.  This is the kernel build's default
+# behaviour.  For instrumented copies at absolute paths,
+# SOURCE_INCLUDE_DIR overrides this with the original
+# source's directory.
+#
+# Many subsystem headers are organised so a file at
+# drivers/<sub>/<dir1>/<dir2>/foo.c includes a header in
+# drivers/<sub>/<sibling>/.  Add ancestor directories up
+# to two levels above the source file's directory so the
+# #include "header.h" form resolves more often without
+# kernel-build-system involvement.
+auto_inc=""
+if [[ $SOURCE = /* ]]; then
+  auto_inc=$(dirname -- "$SOURCE")
+else
+  auto_inc=$(dirname -- "$KTREE/$SOURCE")
+fi
+if [[ -n "$auto_inc" && -d "$auto_inc" ]]; then
+  EXTRA_ARGS+=("-I" "$auto_inc")
+  parent=$(dirname -- "$auto_inc")
+  if [[ -n "$parent" && -d "$parent" && "$parent" != "$auto_inc" ]]; then
+    EXTRA_ARGS+=("-I" "$parent")
+    grandparent=$(dirname -- "$parent")
+    if [[ -n "$grandparent" && -d "$grandparent" \
+          && "$grandparent" != "$parent" ]]; then
+      EXTRA_ARGS+=("-I" "$grandparent")
+    fi
+  fi
+fi
+
 # When SOURCE_INCLUDE_DIR is set in the environment, add it
 # to the include path.  This is used when the source file is
 # an instrumented copy at an absolute path outside the kernel
@@ -92,26 +124,101 @@ if [[ -n "${SOURCE_INCLUDE_DIR:-}" ]]; then
   EXTRA_ARGS+=("-I" "$SOURCE_INCLUDE_DIR")
 fi
 
-"$GOTOCC" --native-compiler gcc \
-  --export-file-local-symbols \
-  -Wall \
-  -nostdinc \
-  -isystem "$(gcc -print-file-name=include)" \
-  -I./arch/x86/include -I./arch/x86/include/generated \
-  -I./include -I./arch/x86/include/uapi -I./arch/x86/include/generated/uapi \
-  -I./include/uapi -I./include/generated/uapi \
-  -include ./include/linux/kconfig.h \
-  -include ./include/linux/compiler_types.h \
-  -include "${SCAN_COMPAT_H:-$SCRIPT_DIR/fragments/scan-compat.h}" \
-  -D__KERNEL__ -std=gnu89 \
-  -m64 -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx \
-  -mno-80387 -mno-fp-ret-in-387 \
-  -mtune=generic -mno-red-zone -mcmodel=kernel \
-  -fno-stack-protector -fomit-frame-pointer \
-  -fno-strict-aliasing -fno-common -fshort-wchar -fno-PIE \
-  -O2 \
-  -DKBUILD_MODFILE="\"$modfile\"" \
-  -DKBUILD_BASENAME="\"$base\"" \
-  -DKBUILD_MODNAME="\"$modname\"" \
-  "${EXTRA_ARGS[@]}" \
+# Build the goto-cc command as an array so we can re-run it
+# below after auto-resolving missing-header errors.
+GOTOCC_CMD=(
+  "$GOTOCC" --native-compiler gcc
+  --export-file-local-symbols
+  -Wall
+  -nostdinc
+  -isystem "$(gcc -print-file-name=include)"
+  -I./arch/x86/include -I./arch/x86/include/generated
+  -I./include -I./arch/x86/include/uapi -I./arch/x86/include/generated/uapi
+  -I./include/uapi -I./include/generated/uapi
+  -include ./include/linux/kconfig.h
+  -include ./include/linux/compiler_types.h
+  -include "${SCAN_COMPAT_H:-$SCRIPT_DIR/fragments/scan-compat.h}"
+  -D__KERNEL__ -std=gnu89
+  -m64 -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx
+  -mno-80387 -mno-fp-ret-in-387
+  -mtune=generic -mno-red-zone -mcmodel=kernel
+  -fno-stack-protector -fomit-frame-pointer
+  -fno-strict-aliasing -fno-common -fshort-wchar -fno-PIE
+  -O2
+  -DKBUILD_MODFILE="\"$modfile\""
+  -DKBUILD_BASENAME="\"$base\""
+  -DKBUILD_MODNAME="\"$modname\""
+  "${EXTRA_ARGS[@]}"
   -c -o "$OUT" "$source_for_gotocc"
+)
+
+# Run the goto-cc compile.  If it fails with
+# "fatal error: foo.h: No such file or directory", do a
+# bounded `find` for foo.h in the kernel tree, add that
+# directory to the include path, and retry once.  This
+# recovers many drivers/<sub>/<group>/foo.c files that
+# include sibling-subdirectory headers
+# (e.g. drivers/media/usb/em28xx/em28xx-cards.c needs
+# tuner-xc2028.h from drivers/media/tuners/).
+COMPILE_LOG=$(mktemp)
+trap 'rm -f "$COMPILE_LOG"' EXIT
+"${GOTOCC_CMD[@]}" 2>"$COMPILE_LOG"
+rc=$?
+if [[ $rc -ne 0 ]]; then
+  # Look for missing-header errors in the log.
+  missing_headers=$(grep -oE 'fatal error: [^:]+: No such file or directory' \
+                    "$COMPILE_LOG" \
+                    | sed -E 's/^fatal error: //; s/: No such file or directory$//' \
+                    | sort -u)
+  added_paths=()
+  for header in $missing_headers; do
+    # Bounded find: limit max-depth to keep the cost
+    # bounded on large kernel trees.
+    found_path=$(find . -type f -name "$header" \
+                 -not -path '*/.git/*' \
+                 -not -path '*/Documentation/*' \
+                 2>/dev/null | head -1)
+    if [[ -n "$found_path" ]]; then
+      header_dir=$(dirname -- "$found_path")
+      if [[ -n "$header_dir" ]]; then
+        added_paths+=("-I" "$header_dir")
+      fi
+    fi
+  done
+  if [[ ${#added_paths[@]} -gt 0 ]]; then
+    # Rebuild with the added include paths.
+    GOTOCC_CMD=(
+      "$GOTOCC" --native-compiler gcc
+      --export-file-local-symbols
+      -Wall
+      -nostdinc
+      -isystem "$(gcc -print-file-name=include)"
+      -I./arch/x86/include -I./arch/x86/include/generated
+      -I./include -I./arch/x86/include/uapi -I./arch/x86/include/generated/uapi
+      -I./include/uapi -I./include/generated/uapi
+      -include ./include/linux/kconfig.h
+      -include ./include/linux/compiler_types.h
+      -include "${SCAN_COMPAT_H:-$SCRIPT_DIR/fragments/scan-compat.h}"
+      -D__KERNEL__ -std=gnu89
+      -m64 -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx
+      -mno-80387 -mno-fp-ret-in-387
+      -mtune=generic -mno-red-zone -mcmodel=kernel
+      -fno-stack-protector -fomit-frame-pointer
+      -fno-strict-aliasing -fno-common -fshort-wchar -fno-PIE
+      -O2
+      -DKBUILD_MODFILE="\"$modfile\""
+      -DKBUILD_BASENAME="\"$base\""
+      -DKBUILD_MODNAME="\"$modname\""
+      "${EXTRA_ARGS[@]}"
+      "${added_paths[@]}"
+      -c -o "$OUT" "$source_for_gotocc"
+    )
+    "${GOTOCC_CMD[@]}" 2>"$COMPILE_LOG"
+    rc=$?
+  fi
+fi
+
+# Replay the final compile log to stderr so callers see
+# warnings/errors as before.
+cat "$COMPILE_LOG" >&2
+exit $rc
