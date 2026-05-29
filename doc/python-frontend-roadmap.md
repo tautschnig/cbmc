@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2805** | +204 |
+| ESBMC PASS | 2489 | 2601 | **2814** | +213 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -369,6 +369,33 @@ list*value / Pow / Any-arg dict mini-cluster (wave 41 cont., +3):
   check skips builtin container types (python_dict_array
   / list / string / set / tuple / complex) so 'd.items()'
   on a dict argument doesn't false-positive.
+
+Architectural: const-string for-loop unroll + list aliasing (wave 41 cont., +9):
+- Constant-string for loops 'for c in "lit":' now unroll
+  at conversion time, binding the loop variable to a
+  literal 1-char string per iteration (and recording it
+  in string_constants so ord(c) / c.isalpha() / c == 'x'
+  fold). The general string-iter path emits an opaque
+  per-iteration {1, address_of(temp)} struct CBMC's
+  symex layer can't propagate the byte through.
+  Closes: enumerate8, for-loop17, for-loop-with-char,
+  github_2986_2, github_3150, string-concat5.
+- 'for i, c in enumerate("lit"):' tuple-target variant
+  uses the same unroll. Closes: github_3127, github_3127_2.
+- list/dict identity aliasing for plain Assign (no type
+  annotation): when 'z = y' and y's canonical source is a
+  list/dict-typed symbol, record alias_targets[z] =
+  canonical_y so 'y is z' (and 'is not') walks the chain
+  to canonical and returns True for both ends of the
+  alias. convert_ann_assign already had this; convert_assign
+  now does too. Closes: is3, is4, is5.
+
+Tried but reverted: changing empty '[]' default element
+type from int to python_value broke comparisons of
+list[python_value] vs list[int]/list[str]/list[X] in
+4 existing tests (github_3607, list-sort2, list17,
+list_extend) for a +2 gain. Net negative; deferred until
+the list-comparison machinery handles the cross-type case.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
