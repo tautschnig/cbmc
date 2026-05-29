@@ -1354,12 +1354,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     }
     exprt none_expr;
     if(is_python_value_type(return_type))
-      none_expr = make_python_value(
-        python_type_tagt::NONE, from_integer(0, signedbv_typet{64}));
+      none_expr = python_none_value();
     else
     {
-      mp_integer none_val = mp_integer(1) << 62;
-      none_val = -none_val;
+      mp_integer none_val = python_none_sentinel_int();
       none_expr =
         safe_typecast(from_integer(none_val, python_int_type()), return_type);
     }
