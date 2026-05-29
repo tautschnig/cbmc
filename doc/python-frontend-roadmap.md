@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2828** | +227 |
+| ESBMC PASS | 2489 | 2601 | **2829** | +228 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -454,6 +454,17 @@ Architectural cluster v3: tag-dispatched 'in' + class-method return inference + 
   them, so a string-typed y holding the None sentinel via
   default-argument binding is not lied about. Closes
   github_3243_2, github_2937_2 (correctness-preserving).
+
+Architectural cluster v4: tagged-union arithmetic edges (wave 41 cont., +2):
+- abs() on a python_value dispatches on the tag like
+  add/sub/mult: 'tag == FLOAT ? abs(float_val) :
+  abs(int_val)' wrapped back into python_value. Closes
+  infer-func-param4.
+- convert_return wraps int → python_value via wrap_value()
+  (instead of safe_typecast which produced nondet) so
+  callers reading r.__int_val see the actual return value
+  rather than garbage. Helps any 'def f(x): return 0'
+  pattern when f's inferred return type is python_value.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
