@@ -1,0 +1,14 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+Recipe regression test for the discriminated-union null-safety pattern
+documented in typescript-known-limitations §1.7. Demonstrates that a
+defensive consumer that guards on `_present` before dereferencing
+`value` verifies cleanly, even when the value field is reference-typed
+(string in this case).

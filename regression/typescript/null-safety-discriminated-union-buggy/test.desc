@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^Invariant check failed$
+--
+Companion to null-safety-discriminated-union/ showing the buggy form
+(missing `_present` guard). __CPROVER_assert_not_null is expected to
+fail, demonstrating that the recipe + assertion catches the bug.

@@ -208,8 +208,42 @@ on reference-typed inputs should structure inputs as `number | null`
 proxies or use object wrappers where the missing-ness is encoded
 as a `_present: boolean` discriminator field.
 
-**Tracking**: `regression/typescript/integration-qs-cve-ghsa-q8mj/`
-(uses the value-typed proxy pattern).
+**Recipe — discriminated-union wrapper for reference types**:
+
+```typescript
+type NullableString = { _present: boolean; value: string };
+
+function nondet_nullable_string(): NullableString {
+    return { _present: nondet_boolean(), value: nondet_string() };
+}
+
+function safe_consumer(input: NullableString): number {
+    if (!input._present) {
+        return -1;          // explicit "missing" branch
+    }
+    return input.value.length;   // safe after the guard
+}
+```
+
+The contract is: callers/harnesses construct a wrapper whose
+`_present` field is non-deterministic; consumers MUST guard on
+`_present` before reading `value`. A missing guard is caught by
+asserting `__CPROVER_assert(input._present, "...")` at the
+dereference site, or by structuring the consumer so the dereference
+is unreachable when `_present === false`.
+
+**Tracking**:
+- `regression/typescript/integration-qs-cve-ghsa-q8mj/` (uses the
+  value-typed proxy pattern — `number | null` instead of
+  `string | null`).
+- `regression/typescript/null-safety-discriminated-union/` (positive
+  recipe regression: defensive consumer verifies cleanly).
+- `regression/typescript/null-safety-discriminated-union-buggy/`
+  (companion: same recipe with missing guard, assertion catches it).
+
+**Caveat**: the wrapper type must be concrete (named) rather than
+`Nullable<T>` generic. Converter support for generics in object-
+literal return positions is incomplete; tracked as a P2 follow-up.
 
 ---
 
