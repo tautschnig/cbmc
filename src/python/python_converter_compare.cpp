@@ -117,7 +117,13 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // (caller checks via is_python_string_type)
       return python_type_tagt::INT; // fallback; caller decides
     };
-    if(op != "In" && op != "NotIn")
+    if(
+      op != "In" && op != "NotIn" && op != "Is" && op != "IsNot" &&
+      !is_python_none_constant(current_left) &&
+      !is_python_none_constant(right) &&
+      !((op == "Eq" || op == "NotEq") &&
+        is_python_value_type(current_left.type()) &&
+        is_python_value_type(right.type())))
     {
       if(is_python_value_type(current_left.type()))
       {
@@ -137,6 +143,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
           else if(right.type().id() == ID_bool)
             left_tag_pred =
               python_value_is(current_left, python_type_tagt::BOOL);
+          else if(is_python_list_type(right.type()))
+            left_tag_pred =
+              python_value_is(current_left, python_type_tagt::LIST);
+          else if(is_python_dict_type(right.type()))
+            left_tag_pred =
+              python_value_is(current_left, python_type_tagt::DICT);
         }
         current_left = unwrap_value(current_left, right.type());
       }
@@ -154,6 +166,10 @@ exprt python_convertert::convert_compare(const jsont &expr)
             right_tag_pred = python_value_is(right, python_type_tagt::FLOAT);
           else if(current_left.type().id() == ID_bool)
             right_tag_pred = python_value_is(right, python_type_tagt::BOOL);
+          else if(is_python_list_type(current_left.type()))
+            right_tag_pred = python_value_is(right, python_type_tagt::LIST);
+          else if(is_python_dict_type(current_left.type()))
+            right_tag_pred = python_value_is(right, python_type_tagt::DICT);
         }
         right = unwrap_value(right, current_left.type());
       }
@@ -729,6 +745,58 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Eq")
     {
+      // PLR §6.10.1 + §3.2: x == None reduces to identity check
+      // for None: equal to itself, never equal to any non-None
+      // value of any type. Same dispatch as 'is None'.
+      if(is_python_none_constant(right))
+      {
+        if(is_python_value_type(current_left.type()))
+        {
+          cmp = python_value_is(current_left, python_type_tagt::NONE);
+          goto done_cmp;
+        }
+        if(is_python_none_constant(current_left))
+        {
+          cmp = true_exprt{};
+          goto done_cmp;
+        }
+        // Typed numeric LHS: only equal to None if it carries
+        // the legacy sentinel. (After the full migration, typed
+        // numerics never carry the sentinel and this becomes
+        // false_exprt unconditionally.)
+        if(
+          current_left.type().id() == ID_signedbv ||
+          current_left.type().id() == ID_integer)
+        {
+          cmp = equal_exprt{
+            current_left,
+            from_integer(python_none_sentinel_int(), current_left.type())};
+          goto done_cmp;
+        }
+        // Other types (struct, string, list, dict): never equal to None.
+        cmp = false_exprt{};
+        goto done_cmp;
+      }
+      if(is_python_none_constant(current_left))
+      {
+        if(is_python_value_type(right.type()))
+        {
+          cmp = python_value_is(right, python_type_tagt::NONE);
+          goto done_cmp;
+        }
+        if(
+          right.type().id() == ID_signedbv ||
+          right.type().id() == ID_integer)
+        {
+          cmp = equal_exprt{
+            right,
+            from_integer(python_none_sentinel_int(), right.type())};
+          goto done_cmp;
+        }
+        cmp = false_exprt{};
+        goto done_cmp;
+      }
+
       // PLR §6.10.1: dict equality is order-independent.
       // d1 == d2 iff len(d1)==len(d2) AND for every key k in
       // d1, k is also in d2 with d1[k] == d2[k]. The struct's
@@ -1076,6 +1144,52 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "NotEq")
     {
+      // PLR §6.10.1 + §3.2: x != None — negation of x == None.
+      if(is_python_none_constant(right))
+      {
+        if(is_python_value_type(current_left.type()))
+        {
+          cmp =
+            not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
+          goto done_cmp;
+        }
+        if(is_python_none_constant(current_left))
+        {
+          cmp = false_exprt{};
+          goto done_cmp;
+        }
+        if(
+          current_left.type().id() == ID_signedbv ||
+          current_left.type().id() == ID_integer)
+        {
+          cmp = notequal_exprt{
+            current_left,
+            from_integer(python_none_sentinel_int(), current_left.type())};
+          goto done_cmp;
+        }
+        cmp = true_exprt{};
+        goto done_cmp;
+      }
+      if(is_python_none_constant(current_left))
+      {
+        if(is_python_value_type(right.type()))
+        {
+          cmp = not_exprt{python_value_is(right, python_type_tagt::NONE)};
+          goto done_cmp;
+        }
+        if(
+          right.type().id() == ID_signedbv ||
+          right.type().id() == ID_integer)
+        {
+          cmp = notequal_exprt{
+            right,
+            from_integer(python_none_sentinel_int(), right.type())};
+          goto done_cmp;
+        }
+        cmp = true_exprt{};
+        goto done_cmp;
+      }
+
       // PLR §6.10.1: dict inequality is the negation of dict
       // equality (order-independent).
       if(

@@ -796,6 +796,14 @@ exprt python_convertert::convert_subscript(const jsont &expr)
   // Array/list indexing
   if(is_python_list_type(value.type()))
   {
+    // PLR §3.1: a python_value (tagged-union) index might be an
+    // INT-tagged number that wraps a concrete int. Unwrap to
+    // python_int so the subscript reads correctly. Tag-mismatch
+    // would technically be a runtime error, but we
+    // overapproximate by extracting __int_val and letting the
+    // bounds check catch out-of-range values.
+    if(is_python_value_type(slice.type()))
+      slice = python_value_int(slice);
     // PLR §6.3.2: Non-integer index → TypeError
     if(
       slice.type().id() != ID_signedbv && slice.type().id() != ID_unsignedbv &&

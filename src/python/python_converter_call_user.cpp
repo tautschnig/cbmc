@@ -569,6 +569,21 @@ exprt python_convertert::convert_user_call(
       if(def_it != default_values.end())
       {
         arguments[i] = def_it->second;
+        // PLR §3.6: a frozen python_value{NONE} default for an
+        // Optional[str] parameter binds as the canonical
+        // length-0 marker so that 'y is None' (Optional[str])
+        // and 'len(y) == 0' both evaluate correctly. The
+        // symbol's stored value is python_value{NONE} but the
+        // param expects python_string.
+        if(
+          is_python_value_type(arguments[i].type()) &&
+          is_python_string_type(params[i].type()))
+        {
+          arguments[i] = struct_exprt{
+            {from_integer(0, signedbv_typet{64}),
+             null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+            python_string_type()};
+        }
         // Class reference: struct default → pointer param
         if(
           params[i].type().id() == ID_pointer &&
