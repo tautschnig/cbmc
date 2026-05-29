@@ -715,9 +715,38 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         if(nv.has_value())
         {
           int i = static_cast<int>(nv.value());
-          int len = static_cast<int>(sv.value().size());
-          if(i >= 0 && i < len)
-            return python_string_literal(std::string(1, sv.value()[i]));
+          // PLR §6.10.1: string indexing is by code point.
+          // Walk the UTF-8 bytes counting code points; once
+          // we hit code point i, return all its bytes.
+          const std::string &s = sv.value();
+          int cp_idx = 0;
+          std::size_t byte_start = 0;
+          while(byte_start < s.size())
+          {
+            unsigned char first = static_cast<unsigned char>(s[byte_start]);
+            if(first < 0x80 || first >= 0xC0)
+            {
+              // Leading byte for code point cp_idx.
+              if(cp_idx == i)
+              {
+                // Determine how many continuation bytes
+                // follow (1-3 for 2-, 3-, 4-byte sequences).
+                std::size_t cp_len = 1;
+                while(byte_start + cp_len < s.size())
+                {
+                  unsigned char nb =
+                    static_cast<unsigned char>(s[byte_start + cp_len]);
+                  if(nb >= 0x80 && nb < 0xC0)
+                    ++cp_len;
+                  else
+                    break;
+                }
+                return python_string_literal(s.substr(byte_start, cp_len));
+              }
+              ++cp_idx;
+            }
+            ++byte_start;
+          }
         }
       }
     }
