@@ -518,8 +518,56 @@ exprt python_convertert::convert_subscript(const jsont &expr)
           return python_string_literal(r);
         }
       }
-      // Non-constant string: return nondet
-      return side_effect_expr_nondett{python_string_type(), source_locationt{}};
+      // Non-constant string: emit cprover_string_substring(s, lo, hi)
+      // for forward slicing so byte-level constraints from
+      // `assume(s == "abc")` propagate to the slice (P1.D).
+      // Reverse slicing (step=-1) and arbitrary steps fall back to
+      // a nondet result — covering them would need additional axioms
+      // not provided by the current refined-string solver.
+      if(is_reverse)
+        return side_effect_expr_nondett{
+          python_string_type(), source_locationt{}};
+      if(!step_json.is_null())
+      {
+        exprt step = convert_expression(step_json);
+        auto step_d = try_eval_double(step);
+        if(!step_d.has_value() || *step_d != 1.0)
+          return side_effect_expr_nondett{
+            python_string_type(), source_locationt{}};
+      }
+      member_exprt str_length{value, "length", signedbv_typet{64}};
+      auto normalize_bound = [&](exprt bound) -> exprt
+      {
+        if(bound.type() != signedbv_typet{64})
+          bound = safe_typecast(bound, signedbv_typet{64});
+        // wrapped = bound < 0 ? bound + length : bound
+        exprt wrapped = if_exprt{
+          binary_relation_exprt{
+            bound, ID_lt, from_integer(0, signedbv_typet{64})},
+          plus_exprt{bound, str_length},
+          bound};
+        return wrapped;
+      };
+      exprt lo_e = lower_json.is_null()
+                     ? from_integer(0, signedbv_typet{64})
+                     : normalize_bound(convert_expression(lower_json));
+      exprt hi_e = upper_json.is_null()
+                     ? exprt{str_length}
+                     : normalize_bound(convert_expression(upper_json));
+      exprt src_struct =
+        (value.id() == ID_struct && value.operands().size() == 2)
+          ? value
+          : exprt(struct_exprt{
+              {member_exprt{value, "length", signedbv_typet{64}},
+               member_exprt{
+                 value, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
+              value.type()});
+      return emit_string_function(
+        ID_cprover_string_substring_func,
+        {src_struct, lo_e, hi_e},
+        symbol_table,
+        pending_checks,
+        loop_depth > 0);
     }
 
     const auto &st = to_struct_type(value.type());
