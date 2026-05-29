@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2814** | +213 |
+| ESBMC PASS | 2489 | 2601 | **2822** | +221 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -396,6 +396,29 @@ list[python_value] vs list[int]/list[str]/list[X] in
 4 existing tests (github_3607, list-sort2, list17,
 list_extend) for a +2 gain. Net negative; deferred until
 the list-comparison machinery handles the cross-type case.
+
+Architectural cluster v2: empty-list inference + alias pointer-promotion + kwonly default (wave 41 cont., +8):
+- Empty-list element-type inference: a body-level pre-scan
+  (collect_empty_list_inferred_types) walks the AST for
+  'name = []' followed by 'name.append(X)' /
+  'name.extend(X)'. The element type comes from X (constant
+  / Name with known type / for-loop iter target whose
+  source is a known dict/list/string). The pre-scan also
+  consults dict-key types from earlier dict literals,
+  list-element types from earlier list literals, and
+  list[T] / dict[K,V] AnnAssign annotations in the same
+  body. Result stored in empty_list_inferred_types and
+  consulted by convert_assign / convert_ann_assign on
+  empty-list rhs.  Closes: dict_iteration_over_keys,
+  dict52, dict57, dict61, list_extend7, string-concat6.
+- convert_assign list/dict alias is now pointer-promoted
+  (mirroring convert_ann_assign). Mutations through 'z = y'
+  alias hit the same storage. The 'is' / 'is not' compare
+  arms peel a single dereference layer before walking the
+  alias chain. Closes: list_pop17.
+- kwonly param without annotation defaults to python_value
+  (matching positional-param behaviour) instead of int.
+  Closes: github_2916_4.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
