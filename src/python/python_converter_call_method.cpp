@@ -2302,6 +2302,68 @@ std::optional<exprt> python_convertert::try_method_call(
           return std::move(*r);
       }
 
+      // PLR §6.10.5: Tuple methods. tuple.index(x) returns the
+      // first index of x; tuple.count(x) returns occurrences.
+      // Restrict to constant-tuple (struct_exprt with constant
+      // operands) + constant-arg path: tuple elements and the
+      // search value are both known at conversion time, so we
+      // can fold to a constant integer.
+      if(is_python_tuple_type(obj_base_type))
+      {
+        if(method_name == "index" || method_name == "count")
+        {
+          const exprt *tup = &obj;
+          if(obj.id() == ID_symbol)
+          {
+            auto it = tuple_literals.find(to_symbol_expr(obj).get_identifier());
+            if(it != tuple_literals.end())
+              tup = &it->second;
+          }
+          if(
+            tup->id() == ID_struct && args.is_array() &&
+            !as_array(args).empty())
+          {
+            exprt arg = convert_expression(*as_array(args).begin());
+            mp_integer count_val = 0;
+            mp_integer first_match = -1;
+            for(std::size_t i = 0; i < tup->operands().size(); ++i)
+            {
+              const exprt &elem = tup->operands()[i];
+              bool matches = false;
+              auto e_str = extract_string_value(elem);
+              auto a_str = extract_string_value(arg);
+              if(e_str.has_value() && a_str.has_value())
+                matches = e_str.value() == a_str.value();
+              else if(elem.is_constant() && arg.is_constant())
+              {
+                mp_integer ev, av;
+                if(
+                  !to_integer(to_constant_expr(elem), ev) &&
+                  !to_integer(to_constant_expr(arg), av))
+                  matches = ev == av;
+              }
+              if(matches)
+              {
+                count_val += 1;
+                if(first_match < 0)
+                  first_match = static_cast<long long>(i);
+              }
+            }
+            if(method_name == "index")
+            {
+              if(first_match >= 0)
+                return from_integer(first_match, python_int_type());
+              // PLR: index() raises ValueError if not found —
+              // fall through to nondet.
+            }
+            else
+            {
+              return from_integer(count_val, python_int_type());
+            }
+          }
+        }
+      }
+
       if(obj_base_type.id() != ID_struct)
       {
         // Tagged-union (python_value_type) values: route the
