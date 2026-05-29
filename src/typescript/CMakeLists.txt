@@ -4,6 +4,7 @@ add_library(typescript
   typescript_converter_call.cpp
   typescript_converter_stmt.cpp
   typescript_converter_func.cpp
+  typescript_regex.cpp
   expr2typescript.cpp
 )
 

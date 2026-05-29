@@ -257,17 +257,26 @@ with a planned approach and estimate. Resolved entries are kept inline
 narrative for each fix lives in
 [typescript-fixes-changelog.md](typescript-fixes-changelog.md).
 
-### 2.1 RegExp metacharacters (Phase 2)
+### 2.1 RegExp metacharacters (Phase 2 done; Phase 2b/3 pending)
 
-**What**: `/a.b/.test(s)` treats `.` as literal; `*`, `+`, `?`, `[]`,
-`^`, `$`, `\d`, `\w`, `\s`, `|` not yet supported.
+**What works** (Phase 2, landed): `.` (any char), `*` `+` `?`
+quantifiers, `[abc]` / `[^abc]` / `[a-z]` character classes, `\d`
+`\w` `\s` (and negated `\D` `\W` `\S`) shorthand classes, `^` and
+`$` anchors, `\\` literal escapes. Constant-pattern + constant-input
+matches are evaluated at conversion time via a small NFA built with
+Thompson construction.
 
-**Workaround**: Use literal regex patterns or rewrite tests as
-explicit string predicates.
+**What does not work yet**: `|` alternation and `(...)` grouping
+(Phase 2b); `{n,m}` bounded quantifiers (Phase 2b); symbolic input
+matching (Phase 3, depends on SMT-string).
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 1. Blocked on: nothing (Phase 2 is a self-contained NFA addition).
+**Workaround for Phase 2b features**: Rewrite alternation as separate
+`.test()` calls combined with `||`. For grouping, factor common
+prefixes/suffixes into the surrounding code.
+
+**Tracking**: regression tests `regexp-metachar-dot`,
+`regexp-quantifiers`, `regexp-charclass`, `regexp-shorthand-classes`,
+`regexp-anchors` (all CORE).
 
 **External dependency for Phase 3**: SMT-string integration from the
 `tautschnig/py` branch — would enable symbolic regex matching via

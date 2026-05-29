@@ -17,6 +17,7 @@
 #include <goto-programs/goto_functions.h>
 
 #include "typescript_converter.h"
+#include "typescript_regex.h"
 #include "typescript_types.h"
 
 #include <cmath>
@@ -1625,8 +1626,9 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
             // the solver path. We detect this by checking if the
             // call has 2+ args but num_args is empty.
             bool has_nonconst_from = false;
-            if(args.is_array() && to_json_array(args).size() >= 2 &&
-               num_args.empty())
+            if(
+              args.is_array() && to_json_array(args).size() >= 2 &&
+              num_args.empty())
               has_nonconst_from = true;
             if(!has_nonconst_from)
             {
@@ -2194,9 +2196,8 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // string-modelled RegExp (the pattern text); the argument is
       // the string to search.
       if(
-        method == "test" && args.is_array() &&
-        !to_json_array(args).empty() && !obj_expr.is_nil() &&
-        is_typescript_string_type(obj_expr.type()))
+        method == "test" && args.is_array() && !to_json_array(args).empty() &&
+        !obj_expr.is_nil() && is_typescript_string_type(obj_expr.type()))
       {
         exprt str_arg = convert_expression(*to_json_array(args).begin());
         if(is_typescript_string_type(str_arg.type()))
@@ -2209,6 +2210,14 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           {
             std::string pattern = pattern_sv.substr(2);
             std::string str = str_sv.substr(2);
+            // Phase 2: try NFA-based metacharacter match.
+            std::optional<bool> nfa_result =
+              typescript_regex::match(pattern, str);
+            if(nfa_result.has_value())
+              return *nfa_result ? exprt{true_exprt{}} : exprt{false_exprt{}};
+            // Phase 1 fallback: literal-substring semantics.
+            // (Only reached when pattern uses an unsupported feature
+            // such as |, (, ), or { — see typescript_regex.h.)
             return str.find(pattern) != std::string::npos
                      ? exprt{true_exprt{}}
                      : exprt{false_exprt{}};
@@ -2224,8 +2233,7 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
           if(symbol_table.lookup(func_id) == nullptr)
           {
             std::vector<typet> arg_types = {refined_ty, refined_ty};
-            mathematical_function_typet ft(
-              std::move(arg_types), bool_typet{});
+            mathematical_function_typet ft(std::move(arg_types), bool_typet{});
             symbolt fs{func_id, ft, "typescript"};
             fs.base_name = id2string(func_id);
             symbol_table.add(fs);

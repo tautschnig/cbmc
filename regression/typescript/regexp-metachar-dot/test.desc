@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+RegExp Phase 2: `.` matches any single character (except newline).

@@ -141,3 +141,53 @@ functions tested, 4 hit this invariant — all 4 now parse and analyse
 cleanly.
 
 **Commit**: `1dda2c44f6`.
+
+### `regexp-*` — RegExp Phase 2 (metacharacter support via NFA, 2026-05-29)
+
+**Was**: `RegExp.prototype.test(s)` treated the regex source as a
+literal substring. `/a.b/.test("axb")` returned `false` because `.` was
+matched literally rather than as "any character". Quantifiers (`*`,
+`+`, `?`), character classes (`[abc]`, `[^abc]`, `[a-z]`), shorthand
+classes (`\d`, `\w`, `\s` and negated forms), and anchors (`^`, `$`)
+were all unsupported.
+
+**Implementation**: new module `src/typescript/typescript_regex.{h,cpp}`
+implementing a small NFA engine:
+
+1. **Parser**: regex source → AST. Handles `.`, `*`, `+`, `?`, `[...]`
+   with negation and ranges, `\d` `\D` `\w` `\W` `\s` `\S` shorthand,
+   `^` `$` anchors, and `\\` literal escapes. Returns a parse error
+   for unsupported features (`|`, `(...)`, `{n,m}`).
+2. **Compiler**: AST → NFA via Thompson's construction. Each
+   sub-expression yields a fragment with a single entry state and a
+   single dangling exit; quantifier sutures wire fragments via
+   epsilon transitions.
+3. **Simulator**: NFA × constant input → bool. Subset-construction-
+   style step-by-step state-set evolution. ANCHOR_BEGIN /
+   ANCHOR_END states are gated on input position via
+   `epsilon_close`. RegExp `.test()` partial-match semantics
+   implemented by trying every starting offset (unless the pattern
+   is `^`-anchored).
+
+**Dispatch**: `typescript_converter_call.cpp`'s `method == "test"`
+handler calls `typescript_regex::match(pattern, str)` for constant
+pattern + constant string. On `std::nullopt` (unsupported feature),
+falls back to the Phase 1 literal-substring fold; on `true`/`false`,
+returns the corresponding constant.
+
+**Symbolic input** continues to fall through to the nondet path
+(Phase 3, blocked on SMT-string integration).
+
+**Regression guards**:
+- `regression/typescript/regexp-metachar-dot/` — `.` metachar.
+- `regression/typescript/regexp-quantifiers/` — `*` `+` `?`.
+- `regression/typescript/regexp-charclass/` — `[abc]`, `[^abc]`,
+  `[a-z]`, multi-range.
+- `regression/typescript/regexp-shorthand-classes/` — `\d` `\D`
+  `\w` `\W` `\s` `\S`.
+- `regression/typescript/regexp-anchors/` — `^`, `$`, combined with
+  quantifiers and char classes.
+
+Total of 76 individual `console.assert` checks across the five tests
+(plus the existing `regexp-test-literal/` Phase 1 test which
+continues to pass — Phase 2 strictly extends Phase 1).
