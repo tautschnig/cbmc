@@ -908,16 +908,24 @@ def _autodiscover_wrapper_paths(cfg: dict, source: Path,
     existing = {(wp["param_type"], wp["field_path"])
                 for wp in cfg.get("wrapper_paths", [])}
     for api in put_apis:
+        # Match the FULL ->-chain so callers that pass
+        # `&sl->master->bus_mutex` don't get truncated to
+        # `&sl->master` (a different type).  The chain is
+        # captured as group(3).
         api_pat = re.compile(
             r"\b" + re.escape(api) + r"\s*\(\s*"
-            r"(&\s*)?([A-Za-z_]\w*)\s*->\s*(\w+)\b"
+            r"(&\s*)?([A-Za-z_]\w*)"
+            r"((?:\s*->\s*\w+)+)\b"
         )
         for m in api_pat.finditer(fn_body):
-            amp, var, fld = m.group(1), m.group(2), m.group(3)
+            amp, var, chain = m.group(1), m.group(2), m.group(3)
             if var not in param_type:
                 continue
             ptype = param_type[var]
-            field_path = (f"&{{arg}}->{fld}" if amp else fld)
+            # Normalise the chain: strip whitespace.
+            chain_norm = re.sub(r"\s+", "", chain)
+            field_path = (f"&{{arg}}{chain_norm}"
+                          if amp else f"{{arg}}{chain_norm}")
             key = (ptype, field_path)
             if key in existing or key in discovered:
                 continue
@@ -938,6 +946,17 @@ def _autodiscover_wrapper_paths(cfg: dict, source: Path,
                 "field_path": field_path,
                 "kernel_includes": includes,
                 "auto_discovered": True,
+                # Wrapper paths that traverse more than one
+                # `->` cannot be accurately modeled by a
+                # stack-local backing buffer (each pointer
+                # dereference returns a fresh symbolic value),
+                # so the bootstrap and the kernel function's
+                # use of the same path see different addresses.
+                # Mark these chained paths as low-confidence
+                # so a CONTRACT VIOLATION on a chained-path
+                # function gets reclassified rather than
+                # claimed as a real candidate.
+                "chained_path": chain_norm.count("->") > 1,
             }
     return list(discovered.values())
 
@@ -1227,6 +1246,18 @@ def synthesise(module: str, source: Path, function: str,
             # ghost is live.
             for wp_idx, wp in enumerate(cfg.get("wrapper_paths", [])):
                 if wp["param_type"] not in p.type_text:
+                    continue
+                # Skip chained-path wrapper specs (multi-level
+                # `->` traversals).  CBMC's stack-local backing
+                # buffer can't model the chained pointer
+                # stably: each pointer dereference returns a
+                # fresh symbolic value, so the bootstrap path
+                # and the kernel function's use of the same
+                # path see different addresses.  Better to
+                # leave the ghost empty (low-confidence) than
+                # bootstrap a different mutex than the one the
+                # function actually unlocks.
+                if wp.get("chained_path"):
                     continue
                 for inc in wp.get("kernel_includes", []):
                     if inc not in wrapper_includes:
