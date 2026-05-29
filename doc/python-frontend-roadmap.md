@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2845** | +244 |
+| ESBMC PASS | 2489 | 2601 | **2846** | +245 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -534,6 +534,15 @@ Architectural cluster v7: 'return param' inference + symbolic isalpha + Unicode 
   Closes github_3552, github_3552_1, string-many-ops,
   casting-chr-var-multibyte. Foundational for chr() with
   multi-byte values and any unicode-string assertion.
+
+Architectural cluster v8: code-point string subscript (wave 41 cont., +1):
+- 's[i]' on a constant string now indexes the i-th code
+  point (returning all bytes of that code point), not
+  the i-th UTF-8 byte. Walks the byte string by leading
+  bytes counting code points, returns the multi-byte
+  sequence at code point i. Bounds checking compares
+  against length (now code-point count) which matches
+  the indexing. Closes string-unicode-basic.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
