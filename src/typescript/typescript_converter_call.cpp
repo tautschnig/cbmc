@@ -2472,6 +2472,17 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
              array_exprt{std::move(elts), arr_type}},
             list_type};
         }
+        // split("non-empty") on non-constant string: return a nondet
+        // array of strings of bounded length. We can't model the actual
+        // separator semantics symbolically, but returning a struct of
+        // the right shape is sound (over-approximating: each element
+        // is an arbitrary string) and makes for-of iteration work.
+        struct_typet str_type = typescript_string_type();
+        array_typet arr_type{
+          str_type,
+          from_integer(TYPESCRIPT_MAX_ARRAY_LENGTH, signedbv_typet{64})};
+        struct_typet list_type = make_array_struct_type(arr_type);
+        return side_effect_expr_nondett{list_type, get_location(node)};
       }
       // Nondet fallback for non-constant strings
       return side_effect_expr_nondett{double_type(), get_location(node)};

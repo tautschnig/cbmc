@@ -303,11 +303,11 @@ emits warning and uses nondet (sound but imprecise).
 item 6 (workaround landed in commit `5c06761f7e`; full core fix
 deferred).
 
-### 2.9 `for..of` over method-call result with index-map writes inside
+### 2.9 `for..of` over method-call result with index-map writes inside (resolved 2026-05-29)
 
-**What**: A `for..of` loop whose iterable is a method-call expression
+**What was**: A `for..of` loop whose iterable is a method-call expression
 (e.g., `iniData.split("\n")`) combined with `map[k] = map[k] || {}`
-chain writes inside the loop trips the `member_exprt` invariant in
+chain writes inside the loop tripped the `member_exprt` invariant in
 `util/std_expr.h:2862` (`compound_type_id == ID_struct_tag || ...`).
 
 **Repro** (11 lines):
@@ -320,23 +320,27 @@ const f = (iniData: string) => {
 };
 ```
 
-**Workarounds**:
-- Hoist the iterable into a typed local first:
-  `const lines: string[] = iniData.split("\n"); for (const k of lines) {...}` — this works.
-- Replace `for..of` with a counter loop: `for (let i = 0; i < arr.length; i++)` — this works.
+**Root cause**: `String.prototype.split(non_empty_separator)` on a
+non-constant receiver fell through to a generic
+`side_effect_expr_nondett{double_type(), ...}` return path. The
+for-of conversion then did
+`member_exprt{arr, "length", signedbv_typet{64}}` on this `double`
+expression, violating the precondition.
+
+**Fix**: In `typescript_converter_call.cpp`, the `split` handler
+now returns `side_effect_expr_nondett{<typescript_array struct>}`
+of the correct shape (over-approximating: each element is an
+arbitrary string, length nondet up to TYPESCRIPT_MAX_ARRAY_LENGTH).
+The for-of conversion now succeeds.
+
+**Test**: `regression/typescript/for-of-method-call-map-write/`
+(promoted from KNOWNBUG to CORE on 2026-05-29).
 
 **Found by**: scale run of CodeQL→CBMC auto-triage pipeline on real
 AWS-related TypeScript code (smithy-typescript `parseIni` and an
-amplify-cli channel-validation function). Out of 19 unique enclosing
-functions tested, 2 hit this invariant.
-
-**Tracking**: TODO. The trigger appears to be the type inferred for
-the method-call iterable not propagating cleanly into the for-of
-binding, then the subsequent index-map writes use the wrong compound
-type when constructing a member_exprt. Likely fixable by either
-hoisting the iterable to a typed temporary in
-`typescript_converter_stmt.cpp` for-of conversion, or by fixing the
-member_exprt construction site to handle the broader compound type.
+amplify-cli channel-validation function). Out of 28 unique
+enclosing functions tested, 4 hit this invariant — all 4 now parse
+and analyze cleanly.
 
 ---
 

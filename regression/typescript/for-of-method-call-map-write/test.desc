@@ -1,13 +1,15 @@
-KNOWNBUG
+CORE
 main.ts
 
-^EXIT=10$
+^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
 --
 ^Invariant check failed$
 --
-Tracks §2.9 in typescript-known-limitations.md. The for-of loop over a
-method-call result combined with map[k] = map[k] || {} writes inside
-trips member_exprt's struct-tag/union-tag precondition. Hoisting the
-iterable into a typed local works around the bug.
+Regression test for the for..of + map[k] = map[k] || {} chain. Previously
+hit a member_exprt invariant when split() with a non-empty separator on a
+non-constant string returned a side_effect_expr_nondett of type double,
+which is not a struct/union. Fix: split-with-separator now returns a
+nondet array struct of the right shape so the for-of body's
+member_exprt{arr, "length", ...} succeeds.
