@@ -303,6 +303,41 @@ emits warning and uses nondet (sound but imprecise).
 item 6 (workaround landed in commit `5c06761f7e`; full core fix
 deferred).
 
+### 2.9 `for..of` over method-call result with index-map writes inside
+
+**What**: A `for..of` loop whose iterable is a method-call expression
+(e.g., `iniData.split("\n")`) combined with `map[k] = map[k] || {}`
+chain writes inside the loop trips the `member_exprt` invariant in
+`util/std_expr.h:2862` (`compound_type_id == ID_struct_tag || ...`).
+
+**Repro** (11 lines):
+```typescript
+const f = (iniData: string) => {
+  const map: { [k: string]: any } = {};
+  for (const k of iniData.split("\n")) {
+    map[k] = map[k] || {};
+  }
+};
+```
+
+**Workarounds**:
+- Hoist the iterable into a typed local first:
+  `const lines: string[] = iniData.split("\n"); for (const k of lines) {...}` — this works.
+- Replace `for..of` with a counter loop: `for (let i = 0; i < arr.length; i++)` — this works.
+
+**Found by**: scale run of CodeQL→CBMC auto-triage pipeline on real
+AWS-related TypeScript code (smithy-typescript `parseIni` and an
+amplify-cli channel-validation function). Out of 19 unique enclosing
+functions tested, 2 hit this invariant.
+
+**Tracking**: TODO. The trigger appears to be the type inferred for
+the method-call iterable not propagating cleanly into the for-of
+binding, then the subsequent index-map writes use the wrong compound
+type when constructing a member_exprt. Likely fixable by either
+hoisting the iterable to a typed temporary in
+`typescript_converter_stmt.cpp` for-of conversion, or by fixing the
+member_exprt construction site to handle the broader compound type.
+
 ---
 
 ## 3. Solver-side limitations
@@ -416,6 +451,7 @@ verify a feature. Use these as references when adding new ones.
 | Test | Limitation |
 |------|------------|
 | `async-race-undetected` | Sequential async (KNOWNBUG by design) |
+| `for-of-method-call-map-write` | `for..of` over method-call iterable + index-map write trips member_exprt invariant (§2.9) |
 | `integration-tmp-cve-ghsa-7c78` | Multi-char string arrays through function calls (§1.3) |
 | `integration-lodash-cve-ghsa-f23m` | Prototype-pollution detection via property-key contract (no runtime prototype-chain manipulation modelled) |
 | `integration-qs-cve-ghsa-q8mj` | Null-deref detection via not-null contract on value-typed inputs (§1.7) |
