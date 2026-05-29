@@ -1468,6 +1468,57 @@ exprt python_convertert::convert_compare(const jsont &expr)
                     : (found ? exprt{false_exprt{}} : exprt{true_exprt{}});
             goto done_cmp;
           }
+          // Symbolic-1-char-in-constant-string fast-path: when
+          // the container is a constant string and the item is
+          // a 1-char string struct (e.g. from s[i] / 'for c in
+          // s' iteration), build the membership check as an OR
+          // over the constant's ASCII bytes — cheaper and more
+          // precise than routing through the refined-string
+          // solver, and avoids SAT-loop crashes on long-tail
+          // patterns like 'all(c in HEX for c in color)'.
+          if(
+            container_sv.has_value() && item.id() == ID_struct &&
+            item.operands().size() >= 2 && item.operands()[0].is_constant())
+          {
+            mp_integer item_len;
+            if(
+              !to_integer(to_constant_expr(item.operands()[0]), item_len) &&
+              item_len == 1)
+            {
+              const exprt &item_data = item.operands()[1];
+              // item_data is address_of(arr[0]); peel to access
+              // arr[0] as the byte.
+              exprt item_byte;
+              if(
+                item_data.id() == ID_address_of &&
+                item_data.operands().size() == 1 &&
+                item_data.operands()[0].id() == ID_index)
+              {
+                item_byte = item_data.operands()[0];
+              }
+              else
+              {
+                pointer_typet bp_t{unsignedbv_typet{8}, 64};
+                exprt addr = item_data;
+                if(addr.type() != bp_t)
+                  addr = typecast_exprt{addr, bp_t};
+                item_byte = dereference_exprt{addr};
+              }
+              if(!item_byte.is_nil())
+              {
+                exprt match = false_exprt{};
+                for(unsigned char b : container_sv.value())
+                {
+                  match = or_exprt{
+                    match,
+                    equal_exprt{
+                      item_byte, from_integer(b, unsignedbv_typet{8})}};
+                }
+                cmp = (op == "In") ? match : exprt{not_exprt{match}};
+                goto done_cmp;
+              }
+            }
+          }
         }
         // Use string solver for non-constant string 'in' operator
         {
