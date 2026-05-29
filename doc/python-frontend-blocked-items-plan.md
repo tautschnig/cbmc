@@ -80,6 +80,35 @@ breaks `limit-none-identity`'s `x = None; assert x is None`, because
   etc.) emit `python_none_value()` and let Optional-aware Is/IsNot
   handle it.
 
+**Phase 0.C blocker discovered (2026-05-29):** switching the
+primary producer in `convert_term` triggers a downstream issue with
+heterogeneous-return functions. When `def f(): return 0; return None`
+has its first `return 0` converted, the function's currently-declared
+return type is `python_int` (default), so `return 0` emits `SET RETURN
+VALUE 0` without wrapping. When `return None` is then encountered
+with the new producer, ret_val is `python_value{NONE}` and the
+widening path bumps the function's return type to `python_value`,
+*but the earlier `return 0` is not retroactively wrapped*. The result
+is a function whose declared return type is `python_value` but whose
+first return is just `0:int`, leading to garbage struct fields at
+the call site.
+
+Fix path: introduce a *return-type pre-pass* over a function's
+body before converting any return statement. The pre-pass walks all
+`Return` nodes, collects their value types (by lightweight type
+inference), and sets the function's declared return type up-front.
+Then each `return X` converts with the correct target type and
+wraps appropriately. This is its own ~100-line refactor in
+`python_converter_defs.cpp` / `python_converter_module.cpp`. Once
+landed, Phase 0.C can re-attempt the producer switch cleanly.
+
+**Phase 0.C alternative (lighter weight):** keep the legacy int
+sentinel as the producer output, but switch specific call sites
+that consume None-marker values (e.g., default-arg binding loop,
+`return None` in a python_value-returning function) to produce
+`python_none_value()` directly. This avoids the function-return
+inference issue but is less architecturally clean.
+
 **Phase 0.D — Migrate consumers**:
 - `is_python_value_type(left) and right == sentinel` Is path: keep
   `python_value_is(NONE)`.
