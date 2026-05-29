@@ -169,12 +169,16 @@ jml_contract_mapt jml_extract_from_source(
       continue;
     }
 
-    // Package
-    if(trimmed.substr(0, 7) == "package")
+    // Package. Java syntax requires a trailing semicolon
+    // (`package com.example;`); Kotlin omits it
+    // (`package com.example`). Accept both.
+    if(trimmed.substr(0, 7) == "package" &&
+       (trimmed.size() == 7 || std::isspace(
+                                static_cast<unsigned char>(trimmed[7]))))
     {
       auto semi = trimmed.find(';');
-      if(semi != std::string::npos)
-        package_name = trim(trimmed.substr(8, semi - 8));
+      const auto end = (semi == std::string::npos) ? trimmed.size() : semi;
+      package_name = trim(trimmed.substr(8, end - 8));
       continue;
     }
 
@@ -249,12 +253,38 @@ jml_contract_mapt jml_extract_from_source(
               param = trim(param);
               if(param.empty())
                 continue;
-              // Last word is the parameter name
-              auto last_space = param.rfind(' ');
-              if(last_space != std::string::npos)
-                spec.param_names.push_back(trim(param.substr(last_space + 1)));
+              // Java syntax: `int x` — the last whitespace-separated
+              // token is the parameter name.
+              // Kotlin syntax: `x: Int` (or `x: Int = default`) —
+              // the parameter name is the token *before* the first
+              // colon. We disambiguate by checking for a colon
+              // before any equals sign.
+              auto colon = param.find(':');
+              auto eq = param.find('=');
+              const bool is_kotlin =
+                colon != std::string::npos &&
+                (eq == std::string::npos || colon < eq);
+              if(is_kotlin)
+              {
+                std::string name = trim(param.substr(0, colon));
+                // Strip Kotlin parameter modifiers (`vararg`,
+                // `crossinline`, `noinline`) if present at the
+                // start of the token.
+                auto sp = name.rfind(' ');
+                if(sp != std::string::npos)
+                  name = trim(name.substr(sp + 1));
+                spec.param_names.push_back(name);
+              }
               else
-                spec.param_names.push_back(param);
+              {
+                // Last word is the parameter name (Java form).
+                auto last_space = param.rfind(' ');
+                if(last_space != std::string::npos)
+                  spec.param_names.push_back(
+                    trim(param.substr(last_space + 1)));
+                else
+                  spec.param_names.push_back(param);
+              }
             }
           }
 

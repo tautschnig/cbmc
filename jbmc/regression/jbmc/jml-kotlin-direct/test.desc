@@ -1,0 +1,30 @@
+CORE
+JmlKotlinDirect
+--function "experiment.JmlKotlinDirect.clamp:(III)I" --jml-source src/main/kotlin/JmlKotlinDirect.kt --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML annotations embedded directly in Kotlin
+source. JBMC's --jml-source scans the .kt file for //@
+clauses, recognizes Kotlin's `package x` (no semicolon) and
+`x: Int` parameter syntax, and binds the JML to the
+Kotlin-emitted bytecode method by class+method name.
+
+Demonstrates that authors can attach contracts to the Kotlin
+class directly without a separate Java stub. The bytecode
+is built by kotlinc; the JML file IS the Kotlin source.
+
+Pre-built target/classes/experiment/JmlKotlinDirect.class
+ships with the test (kotlinc is not in the test environment).
+
+When this test passes, three independent improvements are
+exercised together:
+  1. The instance-method parameter-offset fix (jml-instance-method).
+  2. Kotlin-syntax package detection (no trailing semicolon).
+  3. Kotlin-syntax parameter parsing (`name: Type` instead of
+     Java's `Type name`).
