@@ -203,6 +203,67 @@ python_convertert::extract_union_components(const jsont &annotation)
   return components;
 }
 
+bool python_convertert::annotation_includes_none(const jsont &annotation)
+{
+  if(annotation.is_null())
+    return false;
+  // Optional[T] — explicit Optional name on either Subscript
+  // shape (typing.Optional / Optional).
+  if(is_node_type(annotation, "Subscript"))
+  {
+    const jsont &val = json_member(annotation, "value");
+    std::string base;
+    if(is_node_type(val, "Attribute"))
+      base = json_string(json_member(val, "attr"));
+    else if(is_node_type(val, "Name"))
+      base = json_string(json_member(val, "id"));
+    if(base == "Optional")
+      return true;
+    if(base == "Union")
+    {
+      const jsont &slice = json_member(annotation, "slice");
+      if(is_node_type(slice, "Tuple"))
+      {
+        const jsont &elts = json_member(slice, "elts");
+        if(elts.is_array())
+        {
+          for(const auto &e : as_array(elts))
+            if(annotation_includes_none(e))
+              return true;
+        }
+      }
+      else if(annotation_includes_none(slice))
+        return true;
+    }
+  }
+  // PEP 604: T1 | T2 | None — recurse on both sides.
+  if(is_node_type(annotation, "BinOp"))
+  {
+    std::string op =
+      json_string(json_member(json_member(annotation, "op"), "_type"));
+    if(op == "BitOr")
+    {
+      if(annotation_includes_none(json_member(annotation, "left")))
+        return true;
+      if(annotation_includes_none(json_member(annotation, "right")))
+        return true;
+    }
+  }
+  // Bare 'None' constant or Name.
+  if(is_node_type(annotation, "Constant"))
+  {
+    const jsont &v = json_member(annotation, "value");
+    if(v.is_null())
+      return true;
+  }
+  if(is_node_type(annotation, "Name"))
+  {
+    if(json_string(json_member(annotation, "id")) == "None")
+      return true;
+  }
+  return false;
+}
+
 bool python_convertert::union_annotation_violated(
   const irep_idt &sym_id,
   const exprt &actual_value) const
