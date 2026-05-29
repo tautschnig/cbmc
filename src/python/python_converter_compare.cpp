@@ -1409,14 +1409,29 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       else if(is_python_value_type(container.type()))
       {
+        // PLR §3.3: 'x in container' for a tagged-union value
+        // dispatches at runtime on the container's __tag.
+        // We emit a chain:
+        //   tag == DICT ? dict_key_membership :
+        //   tag == STR  ? substring_check :
+        //   tag == LIST ? list_scan :
+        //                 false
+        // The DICT branch casts __class_ptr to a string-keyed
+        // dict pointer (string keys are by far the common
+        // case from JSON / kwargs); int-keyed dicts misread
+        // here, but the membership check returns false rather
+        // than crashing.
+        // The STR branch casts __str_ptr to a string and uses
+        // the existing string-contains intrinsic.
+        // The LIST branch is the existing list-scan.
         exprt list_val = python_value_list(container);
+        exprt list_scan = false_exprt{};
         if(is_python_list_type(list_val.type()))
         {
           const auto &list_st = to_struct_type(list_val.type());
           const auto &data_type = to_array_type(list_st.components()[1].type());
           member_exprt list_len{list_val, "length", signedbv_typet{64}};
           member_exprt list_data{list_val, "data", data_type};
-          exprt in_expr = false_exprt{};
           for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
           {
             exprt idx = from_integer(i, signedbv_typet{64});
@@ -1431,12 +1446,91 @@ exprt python_convertert::convert_compare(const jsont &expr)
             if(cmp_left.type() != unwrapped.type())
               unwrapped = safe_typecast(unwrapped, cmp_left.type());
             exprt match = equal_exprt{cmp_left, unwrapped};
-            in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
+            list_scan = or_exprt{list_scan, and_exprt{in_range, match}};
           }
-          cmp = (op == "In") ? in_expr : not_exprt{in_expr};
         }
-        else
-          cmp = (op == "In") ? exprt{false_exprt{}} : exprt{true_exprt{}};
+        // DICT branch — only attempt when item is a string-typed
+        // value (constant or python_string). For non-string
+        // items, we don't know the dict's key type so default
+        // to false.
+        exprt dict_membership = false_exprt{};
+        if(
+          is_python_string_type(item.type()) ||
+          extract_string_value(item).has_value())
+        {
+          // Cast __class_ptr to dict[str, python_value]*. Read
+          // the dict struct's length and keys. Build an OR of
+          // (i < length && keys[i] == item) for i in 0..N.
+          struct_typet dict_st_layout =
+            python_dict_type(python_string_type(), python_value_type());
+          pointer_typet dict_ptr_type{dict_st_layout, 64};
+          exprt class_ptr = python_value_class_ptr(container);
+          dereference_exprt dict_val{typecast_exprt{class_ptr, dict_ptr_type}};
+          member_exprt dict_len{dict_val, "length", signedbv_typet{64}};
+          member_exprt dict_keys{
+            dict_val,
+            "keys",
+            to_struct_type(dict_st_layout).components()[1].type()};
+          // Item should be python_string.
+          exprt key_item = item;
+          if(!is_python_string_type(key_item.type()))
+          {
+            auto sv = extract_string_value(key_item);
+            if(sv.has_value())
+              key_item = build_string_struct(sv.value());
+          }
+          if(is_python_string_type(key_item.type()))
+          {
+            for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
+            {
+              exprt idx = from_integer(i, signedbv_typet{64});
+              exprt in_range = binary_relation_exprt{idx, ID_lt, dict_len};
+              exprt key_at = index_exprt{dict_keys, idx};
+              exprt match = equal_exprt{key_at, key_item};
+              dict_membership =
+                or_exprt{dict_membership, and_exprt{in_range, match}};
+            }
+          }
+        }
+        // STR branch — substring check via string solver.
+        exprt str_contains = false_exprt{};
+        if(
+          is_python_string_type(item.type()) ||
+          extract_string_value(item).has_value())
+        {
+          // Reconstruct a python_string-typed expression for
+          // the container (deref __str_ptr).
+          dereference_exprt str_val{member_exprt{
+            container, "__str_ptr", pointer_typet{python_string_type(), 64}}};
+          exprt key_item = item;
+          if(!is_python_string_type(key_item.type()))
+          {
+            auto sv = extract_string_value(key_item);
+            if(sv.has_value())
+              key_item = build_string_struct(sv.value());
+          }
+          if(is_python_string_type(key_item.type()))
+          {
+            str_contains = emit_string_bool_function(
+              ID_cprover_string_contains_func,
+              str_val,
+              key_item,
+              symbol_table,
+              pending_checks);
+          }
+        }
+        // Tag dispatch.
+        exprt tag_dict = python_value_is(container, python_type_tagt::DICT);
+        exprt tag_str = python_value_is(container, python_type_tagt::STR);
+        exprt tag_list = python_value_is(container, python_type_tagt::LIST);
+        exprt in_expr = if_exprt{
+          tag_dict,
+          dict_membership,
+          if_exprt{
+            tag_str,
+            str_contains,
+            if_exprt{tag_list, list_scan, exprt{false_exprt{}}}}};
+        cmp = (op == "In") ? in_expr : not_exprt{in_expr};
       }
       else if(is_python_dict_type(container.type()))
       {
