@@ -750,19 +750,62 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         }
       }
     }
-    // Non-constant indexing: read char via pointer arithmetic
-    // and build a 1-char string struct backed by a fresh local
-    // 1-byte array. We can't return a view {1, s.data + i}
-    // directly because callers may return s[i] across stack
-    // frames (e.g. `def last(a): return a[-1]`), where s is
-    // local to the callee — pointing into it would dangle. The
-    // fresh-local backing means the returned char's bytes are
-    // captured at the subscript point.
+    // Non-constant indexing.
+    //
+    // We have two strategies:
+    //
+    // (a) Direct byte read via pointer arithmetic — read
+    //     `*(value.data + i)` into a fresh local 1-byte array.
+    //     Exact when value's content is a known byte array
+    //     (constant string literal or string_constants-tracked
+    //     symbol), since the .data pointer points to actual
+    //     bytes the back-end can read.
+    //
+    // (b) Refined-string substring intrinsic — emit
+    //     `cprover_string_substring(value, i, i+1)`. The solver
+    //     registers the result as a substring of `value` via
+    //     the universal axiom
+    //       forall k < |res|. res[k] == value[start+k]
+    //     so byte-level constraints from `assume(value == "abc")`
+    //     propagate to value[i]. Required when value's content
+    //     is symbolic (no known byte array) but the solver has
+    //     constraints linking it to a known string.
+    //
+    // The two strategies serve different patterns:
+    // - (a) handles `s = "Livros"; for i in range(len(s)): s[i].isalpha()`.
+    //   Byte-level reads of the result struct hit memory that
+    //   the back-end actually has bytes for.
+    // - (b) handles `s = nondet_str(3); assume(s == "abc"); s[0] == "a"`.
+    //   The result needs to satisfy solver-level constraints
+    //   from the equality assumption.
+    //
+    // We pick (a) when value has a known byte array reachable
+    // (constant struct content, or tracked via string_constants),
+    // (b) otherwise.
+    bool value_has_known_bytes = false;
     {
+      auto sv = extract_string_value(value);
+      if(!sv.has_value() && value.id() == ID_symbol)
+      {
+        auto it = string_constants.find(to_symbol_expr(value).get_identifier());
+        if(it != string_constants.end())
+          sv = it->second;
+      }
+      if(sv.has_value())
+        value_has_known_bytes = true;
+    }
+    if(value_has_known_bytes)
+    {
+      // Strategy (a): fresh-local 1-byte array backing.
+      // We can't return a view {1, value.data + i} directly
+      // because callers may return s[i] across stack frames
+      // (e.g. `def last(a): return a[-1]`), where the source is
+      // local to the callee — pointing into it would dangle.
+      // The fresh-local backing means the returned char's bytes
+      // are captured at the subscript point.
       member_exprt data_ptr(
         value, "data", pointer_typet(unsignedbv_typet{8}, 64));
       dereference_exprt ch(plus_exprt(data_ptr, adjusted_idx));
-      // Build a single-char string from the character
       exprt::operandst chars;
       chars.push_back(ch);
       array_typet at(unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
@@ -771,6 +814,28 @@ exprt python_convertert::convert_subscript(const jsont &expr)
         arr, from_integer(0, signedbv_typet{64}), unsignedbv_typet{8}));
       exprt len = from_integer(1, signedbv_typet{64});
       return struct_exprt({len, ptr}, python_string_type());
+    }
+    {
+      // Strategy (b): substring intrinsic.
+      exprt src_struct =
+        (value.id() == ID_struct && value.operands().size() == 2)
+          ? value
+          : exprt(struct_exprt{
+              {member_exprt{value, "length", signedbv_typet{64}},
+               member_exprt{
+                 value, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
+              value.type()});
+      exprt start64 = adjusted_idx;
+      if(start64.type() != signedbv_typet{64})
+        start64 = safe_typecast(start64, signedbv_typet{64});
+      exprt end64 = plus_exprt{
+        start64, from_integer(1, signedbv_typet{64})};
+      return emit_string_function(
+        ID_cprover_string_substring_func,
+        {src_struct, start64, end64},
+        symbol_table,
+        pending_checks,
+        loop_depth > 0);
     }
     typet str_type = python_string_type();
     const auto &data_type = array_typet(
