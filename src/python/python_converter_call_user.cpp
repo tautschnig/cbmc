@@ -884,6 +884,23 @@ exprt python_convertert::convert_user_call(
             std::string class_name = arg_class_tag;
             if(class_name.rfind("python_class_", 0) == 0)
               class_name = class_name.substr(13);
+            // PLR §3.2: skip the missing-method check for
+            // builtin container types. Their methods (.items(),
+            // .keys(), .append(), .upper(), etc.) are dispatched
+            // by call_method and are NOT recorded in
+            // class_declared_methods. Without this skip, every
+            // 'def f(d): for k, v in d.items(): ...' call with
+            // a concrete dict argument would fire a false
+            // attribute-error.
+            static const std::set<std::string> builtin_container_tags = {
+              "python_dict_array",
+              "python_list",
+              "python_string",
+              "python_set",
+              "python_tuple",
+              "python_complex"};
+            if(builtin_container_tags.count(arg_class_tag) > 0)
+              goto skip_any_attr_check;
             auto cdm = class_declared_methods.find(class_name);
             // Boto3 base methods (inherited helpers) — do not
             // flag these even if absent from the class's own
@@ -942,6 +959,7 @@ exprt python_convertert::convert_user_call(
               }
             }
           }
+        skip_any_attr_check:;
         }
         // PLR §3.1: when binding a class-instance Name argument
         // to a python_value parameter, pass the address of the
