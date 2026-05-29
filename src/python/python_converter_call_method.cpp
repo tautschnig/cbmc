@@ -1434,6 +1434,21 @@ std::optional<exprt> python_convertert::try_method_call(
         // direct function-call emission would bypass those.
         irep_idt func_id{"python::" + method_name};
         const symbolt *sym = symbol_table.lookup(func_id);
+        // PLR §3.3: 'module.ClassName(...)' constructs an
+        // instance of ClassName. Detect this by looking up
+        // ClassName in class_types and route to the same
+        // constructor path the bare 'ClassName(...)' call
+        // would use. Without this, the call falls through to
+        // the function-call dispatch which produces nondet.
+        if(
+          class_types.count(method_name) && c_intrinsic_map.count(func_id) == 0)
+        {
+          // Re-dispatch by setting func_name to the class name
+          // and falling through to the regular convert_call
+          // continuation in the caller.
+          func_name = method_name;
+          return std::nullopt;
+        }
         if(
           sym != nullptr && sym->type.id() == ID_code &&
           c_intrinsic_map.count(func_id) == 0 && !intercept_random)
