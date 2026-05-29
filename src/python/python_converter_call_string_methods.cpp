@@ -1296,10 +1296,110 @@ std::optional<exprt> python_convertert::try_string_method(
         result = true; // empty string is ASCII
       return result ? exprt{true_exprt{}} : exprt{false_exprt{}};
     }
-    // Non-constant string predicate: return nondet bool
-    // (the predicate's actual type — was python_string by
-    // mistake, which forced downstream truthy-conversion
-    // to compare struct.length != 0 and mis-evaluate).
+    // Non-constant string predicate: try to read the first
+    // byte through the string struct's data pointer and apply
+    // the predicate as a byte-level check. This is exact for
+    // 1-char strings (the s[i] / 'for c in s' patterns) and
+    // a safe over-approximation for longer ones (we only
+    // examine data[0]).
+    if(
+      method_name == "isdigit" || method_name == "isalpha" ||
+      method_name == "isalnum" || method_name == "isupper" ||
+      method_name == "islower" || method_name == "isspace" ||
+      method_name == "isascii" || method_name == "isnumeric")
+    {
+      // Resolve the string source: either obj is the literal
+      // struct (1-char from s[i]), or obj is a Name pointing
+      // to a python_string symbol.
+      const exprt *src = &obj;
+      if(obj.id() == ID_symbol)
+        src = &obj;
+      // Read the first byte via *(data + 0). Empty string
+      // (length=0) returns False per Python semantics
+      // (isalpha returns False on empty).
+      member_exprt data_ptr{
+        *src, "data", pointer_typet{unsignedbv_typet{8}, 64}};
+      member_exprt len{*src, "length", signedbv_typet{64}};
+      exprt zero = from_integer(0, signedbv_typet{64});
+      exprt is_empty = equal_exprt{len, zero};
+      exprt is_single = equal_exprt{len, from_integer(1, signedbv_typet{64})};
+      // Dereference data[0]. Cast to unsignedbv to make ranges
+      // unambiguous.
+      exprt byte0 = dereference_exprt{plus_exprt{data_ptr, zero}};
+      // Per-method predicate on byte0:
+      auto byte_in_range = [&](unsigned char lo, unsigned char hi)
+      {
+        return and_exprt{
+          binary_relation_exprt{byte0, ID_ge, from_integer(lo, byte0.type())},
+          binary_relation_exprt{byte0, ID_le, from_integer(hi, byte0.type())}};
+      };
+      exprt byte_pred = false_exprt{};
+      if(method_name == "isdigit" || method_name == "isnumeric")
+        byte_pred = byte_in_range('0', '9');
+      else if(method_name == "isalpha")
+      {
+        byte_pred = or_exprt{
+          byte_in_range('A', 'Z'),
+          or_exprt{
+            byte_in_range('a', 'z'),
+            // High-byte (UTF-8 leading byte) approximated as alpha.
+            binary_relation_exprt{
+              byte0, ID_ge, from_integer(0x80, byte0.type())}}};
+      }
+      else if(method_name == "isalnum")
+      {
+        byte_pred = or_exprt{
+          byte_in_range('0', '9'),
+          or_exprt{
+            byte_in_range('A', 'Z'),
+            or_exprt{
+              byte_in_range('a', 'z'),
+              binary_relation_exprt{
+                byte0, ID_ge, from_integer(0x80, byte0.type())}}}};
+      }
+      else if(method_name == "isupper")
+        byte_pred = byte_in_range('A', 'Z');
+      else if(method_name == "islower")
+        byte_pred = byte_in_range('a', 'z');
+      else if(method_name == "isspace")
+      {
+        byte_pred = or_exprt{
+          equal_exprt{byte0, from_integer(' ', byte0.type())},
+          or_exprt{
+            equal_exprt{byte0, from_integer('\t', byte0.type())},
+            or_exprt{
+              equal_exprt{byte0, from_integer('\n', byte0.type())},
+              or_exprt{
+                equal_exprt{byte0, from_integer('\r', byte0.type())},
+                or_exprt{
+                  equal_exprt{byte0, from_integer('\v', byte0.type())},
+                  equal_exprt{byte0, from_integer('\f', byte0.type())}}}}}};
+      }
+      else if(method_name == "isascii")
+      {
+        byte_pred =
+          binary_relation_exprt{byte0, ID_lt, from_integer(0x80, byte0.type())};
+      }
+      // PLR semantics: empty string returns False for all
+      // these predicates except isascii (which returns True).
+      exprt empty_result =
+        (method_name == "isascii") ? exprt{true_exprt{}} : exprt{false_exprt{}};
+      // For length >= 1, the predicate holds iff byte0 matches.
+      // (For longer strings, we under-check by only looking at
+      // byte0, which would over-approximate the result —
+      // soundly, a stricter compile-time check would walk
+      // every byte. For 1-char strings this is exact.)
+      // Use 'is_single' to decide whether to gate on byte0
+      // alone or fall through to nondet for length>1.
+      return if_exprt{
+        is_empty,
+        empty_result,
+        if_exprt{
+          is_single,
+          byte_pred,
+          side_effect_expr_nondett{bool_typet{}, source_locationt{}}}};
+    }
+    // Other unsupported predicates: nondet bool.
     return side_effect_expr_nondett{bool_typet{}, source_locationt{}};
   }
   if(
