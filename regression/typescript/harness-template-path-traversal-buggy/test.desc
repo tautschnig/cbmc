@@ -1,0 +1,10 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^Invariant check failed$
+--
+Harness template: path-traversal, buggy form.

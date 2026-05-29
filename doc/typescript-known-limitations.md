@@ -424,16 +424,24 @@ syntax error), the error surfaced to the user is sometimes terse.
 **Tracking**: none currently; raise a regression test if this comes
 up again.
 
-### 4.2 No type-checked harness templates
+### 4.2 Type-checked harness templates (partial)
 
-**What**: Users writing security/property harnesses must manually
-combine `nondet_*()` primitives. A library of common harness
-templates (path-traversal, prototype-pollution, crash-on-null) would
-improve the onboarding experience.
+**What's available**: a catalog of starting-point harness templates
+under `regression/typescript/harness-templates/`, each demonstrating
+one security primitive with a vulnerable + defensive pair:
 
-**Tracking**: planned as part of the security track (path-traversal
-primitive landed in commit for `__CPROVER_assert_no_path_traversal`;
-prototype-pollution and crash-on-null primitives are next phases).
+- `harness-template-recursion-dos-{buggy,defensive}/`
+- `harness-template-allowlist-injection-{buggy,defensive}/`
+- `harness-template-prototype-key-injection-{buggy,defensive}/`
+- `harness-template-path-traversal-{buggy,defensive}/`
+
+See `regression/typescript/harness-templates/README.md` for the
+catalog overview and "how to adapt a template to your audit" guide.
+
+**What's still pending**: a template for cross-fn taint (using
+`goto-analyzer --taint`) and one for prototype-pollution at a
+deserialization boundary (the F1 / F5 / F6 audit pattern). Tracked
+as a P2 follow-up.
 
 ### 4.3 Auto-generated harnesses from local pattern matches over-flag
 

@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+Harness template: allowlist-injection, defensive form. The
+__CPROVER_assert_in_allowlist holds because the harness only
+generates inputs that match an allowlist entry.

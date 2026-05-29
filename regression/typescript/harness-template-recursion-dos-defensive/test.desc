@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+Harness template: recursion-DoS, defensive form. The
+__CPROVER_assert_input_size_bounded precondition holds because the
+harness only generates inputs that satisfy MAX_DEPTH.

@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^Invariant check failed$
+--
+Harness template: allowlist-injection, buggy form. Without an
+upstream-validator __CPROVER_assume, a nondet input can be a
+non-allowlisted string and __CPROVER_assert_in_allowlist fails.

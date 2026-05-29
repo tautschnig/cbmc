@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^Invariant check failed$
+--
+Harness template: recursion-DoS, buggy form. The unbounded nondet
+input source allows array.length > MAX_DEPTH, and the
+__CPROVER_assert_input_size_bounded precondition fails.
