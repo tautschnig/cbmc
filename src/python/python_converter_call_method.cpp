@@ -2000,15 +2000,67 @@ std::optional<exprt> python_convertert::try_method_call(
             }
             if(sz >= 2)
             {
-              // randrange(start, stop[, step]): [start, stop)
+              // randrange(start, stop[, step]): a value v
+              // such that v = start + k*step for some k>=0
+              // and (step>0 ? v<stop : v>stop).
               auto it = as_array(args).begin();
               exprt start = convert_expression(*it);
               ++it;
               exprt stop = convert_expression(*it);
-              exprt stop_minus_1 =
-                minus_exprt{stop, from_integer(1, python_int_type())};
-              return emit_nondet_with_assume(
-                python_int_type(), start, stop_minus_1);
+              exprt step = from_integer(1, python_int_type());
+              if(sz >= 3)
+              {
+                ++it;
+                step = convert_expression(*it);
+              }
+              start = safe_typecast(start, python_int_type());
+              stop = safe_typecast(stop, python_int_type());
+              step = safe_typecast(step, python_int_type());
+              // Build a fresh nondet symbol and assume:
+              //   step > 0 -> start <= v < stop AND
+              //               (v - start) % step == 0
+              //   step < 0 -> stop  <  v <= start AND
+              //               (start - v) % (-step) == 0
+              static unsigned rrng_ctr = 0;
+              std::string vn = "__randrange_" + std::to_string(rrng_ctr++);
+              std::string vq = qualify_name(vn);
+              irep_idt vi{vq};
+              if(symbol_table.lookup(vi) == nullptr)
+              {
+                symbolt vs{vi, python_int_type(), "python"};
+                vs.base_name = vn;
+                vs.is_lvalue = true;
+                vs.is_state_var = true;
+                symbol_table.add(vs);
+              }
+              symbol_exprt v = symbol_table.lookup_ref(vi).symbol_expr();
+              pending_checks.push_back(code_frontend_assignt{
+                v,
+                side_effect_expr_nondett{
+                  python_int_type(), get_location(expr)}});
+              // pos: start <= v < stop && (v - start) % step == 0
+              exprt pos_bounds = and_exprt{
+                binary_relation_exprt{start, ID_le, v},
+                binary_relation_exprt{v, ID_lt, stop}};
+              exprt pos_align = equal_exprt{
+                mod_exprt{minus_exprt{v, start}, step},
+                from_integer(0, python_int_type())};
+              exprt pos_assume = and_exprt{pos_bounds, pos_align};
+              // neg: stop < v <= start && (start - v) % (-step) == 0
+              exprt neg_step = unary_minus_exprt{step, python_int_type()};
+              exprt neg_bounds = and_exprt{
+                binary_relation_exprt{stop, ID_lt, v},
+                binary_relation_exprt{v, ID_le, start}};
+              exprt neg_align = equal_exprt{
+                mod_exprt{minus_exprt{start, v}, neg_step},
+                from_integer(0, python_int_type())};
+              exprt neg_assume = and_exprt{neg_bounds, neg_align};
+              exprt step_pos = binary_relation_exprt{
+                step, ID_gt, from_integer(0, python_int_type())};
+              exprt assumption = if_exprt{step_pos, pos_assume, neg_assume};
+              code_assumet assume{assumption};
+              pending_checks.push_back(std::move(assume));
+              return v;
             }
           }
           // PLib random.getrandbits(k): nondet int in [0, 2^k - 1].
