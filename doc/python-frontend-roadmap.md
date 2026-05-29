@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2838** | +237 |
+| ESBMC PASS | 2489 | 2601 | **2839** | +238 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -494,6 +494,17 @@ Architectural cluster v5: lex-string compare + nondet/chr in prescan + tag-aware
   (instances are truthy by default, PLR §6.10.1) and DICT
   (truthy iff length > 0). Closes
   github_3974_constructor_temp_object_arg.
+
+Architectural cluster v6: heterogeneous IfExp wrapping (wave 41 cont., +1):
+- 'cond ? body : orelse' with branches of different
+  categories (e.g. str if cond else int) now wraps each
+  branch in python_value (wrap_value) instead of forcing
+  orelse into body's type via safe_typecast. The previous
+  cast locked the conditional's static type to one branch
+  and lied about the other ('isinstance(x, str)' returned
+  True even when the int branch was taken). Restricted to
+  cross-category mismatches so numeric promotions
+  (int → float) continue silently. Closes github_2966_fail.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
