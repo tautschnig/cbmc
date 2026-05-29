@@ -1933,6 +1933,27 @@ exprt python_convertert::convert_compare(const jsont &expr)
           goto done_cmp;
         }
       }
+      // Optional[str]: 'y is None' for an Optional[str] param
+      // bound to its default-None becomes length==0 (the marker
+      // we emit at the call site for None-default-binding).
+      // Otherwise structurally None can never equal a non-empty
+      // string, so the assertion 'y is None' is satisfiable
+      // exactly when y was bound to None at the call site.
+      if(
+        is_optional_sym(current_left) &&
+        is_python_string_type(current_left.type()) && right.is_constant() &&
+        right.type().id() == ID_signedbv)
+      {
+        mp_integer rv;
+        if(
+          !to_integer(to_constant_expr(right), rv) &&
+          rv == mp_integer{-4611686018427387904LL})
+        {
+          member_exprt llen{current_left, "length", signedbv_typet{64}};
+          cmp = equal_exprt{llen, from_integer(0, signedbv_typet{64})};
+          goto done_cmp;
+        }
+      }
       // Same for the reversed orientation.
       if(
         (right.type().id() == ID_struct ||
@@ -1946,6 +1967,20 @@ exprt python_convertert::convert_compare(const jsont &expr)
           lv == mp_integer{-4611686018427387904LL})
         {
           cmp = false_exprt{};
+          goto done_cmp;
+        }
+      }
+      if(
+        is_optional_sym(right) && is_python_string_type(right.type()) &&
+        current_left.is_constant() && current_left.type().id() == ID_signedbv)
+      {
+        mp_integer lv;
+        if(
+          !to_integer(to_constant_expr(current_left), lv) &&
+          lv == mp_integer{-4611686018427387904LL})
+        {
+          member_exprt rlen{right, "length", signedbv_typet{64}};
+          cmp = equal_exprt{rlen, from_integer(0, signedbv_typet{64})};
           goto done_cmp;
         }
       }
