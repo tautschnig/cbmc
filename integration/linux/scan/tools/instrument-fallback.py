@@ -360,6 +360,22 @@ def _instrument_resource_leak(source: str, fn_name: str
         # allocation.  Skip `*rdev = NULL;` and similar.
         if lhs not in tracked_lhs_set:
             continue
+        # Compute the set of tracked variables to clear:
+        # the LHS itself plus any tracked variable that
+        # is reachable through the LHS.  Common idiom:
+        #   dev = kzalloc(...);
+        #   dev->buf = kmalloc(...);
+        #   *rdev = dev;        // transfers `dev` AND sub-allocs.
+        # We treat any tracked var whose name starts with
+        # `<lhs>->` or `<lhs>.` as a sub-allocation that
+        # transitively follows ownership.
+        to_clear = [lhs]
+        for other in tracked_lhs_set:
+            if other == lhs:
+                continue
+            if (other.startswith(f"{lhs}->")
+                    or other.startswith(f"{lhs}.")):
+                to_clear.append(other)
         # Scan to terminating ';'.
         j = ls
         depth = 0
@@ -370,11 +386,11 @@ def _instrument_resource_leak(source: str, fn_name: str
             elif c == ")":
                 depth -= 1
             elif c == ";" and depth == 0:
-                edits.append((
-                    j + 1, j + 1,
-                    f"\n{om.group('indent')}"
-                    f"leak_alloc_freed({lhs});"
-                ))
+                indent = om.group('indent')
+                clear_block = "\n" + "".join(
+                    f"{indent}leak_alloc_freed({v});"
+                    for v in to_clear)
+                edits.append((j + 1, j + 1, clear_block))
                 break
             j += 1
     # Tracked LHS names (deduplicated, ordered by appearance).

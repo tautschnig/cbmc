@@ -252,6 +252,77 @@ _OWNERSHIP_FN_SUFFIXES = (
 )
 
 
+def _detect_constructor_with_out_pointer(
+        fn_name: str, body: str | None) -> FilterVerdict | None:
+    """Return a verdict if `fn_name` is itself a constructor-
+    style function (returns an allocated object via an
+    out-pointer parameter or directly).
+
+    Common kernel idiom:
+      int snd_midi_event_new(int bufsize, struct snd_midi_event **rdev) {
+          *rdev = kzalloc(...);
+          (*rdev)->buf = kmalloc(...);
+          return 0;
+      }
+
+    Sub-allocations stored through the out-pointer are
+    transferred to the caller; the catalog's per-function
+    leak check naturally flags them as outstanding even
+    though ownership has transferred.
+
+    Detection: function name ends in `_new`, `_alloc`,
+    `_create`, or `_init` AND body contains an assignment
+    of the form `*<param> = X;` where X is an alloc-API
+    result OR a tracked variable.
+
+    The name-only check is used when body is unavailable.
+    """
+    name_match = (fn_name.endswith("_new")
+                  or fn_name.endswith("_create")
+                  or fn_name.endswith("_alloc")
+                  or fn_name.endswith("_init"))
+    if not name_match:
+        return None
+    if body is None:
+        # Name match is a strong-but-not-definitive hint;
+        # only flag as ownership-handler if the body is
+        # unavailable.  Tag confidence accordingly.
+        return FilterVerdict(
+            "ownership_handler",
+            f"function name '{fn_name}' suggests a constructor "
+            "(transfers allocated object to caller); "
+            "leak preconditions are caller-ensured "
+            "(out of harness scope)",
+            "medium",
+        )
+    # Body present: look for `*<word> = ...` patterns.
+    if re.search(
+            r"\*\s*\w+\s*=\s*"
+            r"(?:k[zv]?(?:alloc|malloc|calloc)|"
+            r"alloc_skb|kmem_cache_(?:alloc|zalloc))",
+            body):
+        return FilterVerdict(
+            "ownership_handler",
+            f"function `{fn_name}` is a constructor: "
+            "allocates and stores the result in an "
+            "out-pointer parameter, transferring "
+            "ownership to the caller",
+            "high",
+        )
+    # Also detect the two-step form: `X = alloc(); ... *out = X;`
+    # which our body-extractor sees as separate statements.
+    if (re.search(r"=\s*k[zv]?(?:alloc|malloc|calloc)\s*\(",
+                  body)
+            and re.search(r"\*\s*\w+\s*=\s*\w+", body)):
+        return FilterVerdict(
+            "ownership_handler",
+            f"function `{fn_name}` is a constructor: "
+            "alloc-then-store-via-out-pointer pattern",
+            "medium",
+        )
+    return None
+
+
 def _detect_ownership_handler(fn_name: str) -> FilterVerdict | None:
     """Return a verdict if `fn_name` is itself an ownership-
     handler whose contract preconditions are caller-ensured
@@ -302,17 +373,25 @@ def classify(kernel_file: str | Path, fn_name: str,
         return FilterVerdict(None, f"unreadable: {kp}", "high")
     body = _function_body(source, fn_name)
     if body is None:
-        # Try ownership-handler shape on the function name
-        # alone; useful when source-extraction fails.
+        # Try name-based detectors when source-extraction
+        # fails — both constructor and ownership-handler
+        # patterns are detectable from the name alone.
+        v_constructor = _detect_constructor_with_out_pointer(
+            fn_name, None)
+        if v_constructor is not None:
+            return v_constructor
         v_name = _detect_ownership_handler(fn_name)
         if v_name is not None:
             return v_name
         return FilterVerdict(None, f"function `{fn_name}` not "
                                    "found", "high")
 
-    # Function-name based detection runs before any
-    # body-based detector.  It's the most reliable signal
-    # for the "function IS the cleanup" shape.
+    # Constructor / ownership-handler name-and-body checks
+    # run before per-variable body detectors.
+    v_constructor = _detect_constructor_with_out_pointer(
+        fn_name, body)
+    if v_constructor is not None:
+        return v_constructor
     v_name = _detect_ownership_handler(fn_name)
     if v_name is not None:
         return v_name
