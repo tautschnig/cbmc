@@ -2196,6 +2196,17 @@ exprt python_convertert::wrap_value(const exprt &e)
   if(is_python_value_type(e.type()))
     return e; // already wrapped
 
+  // PLR §3.2: an int constant equal to the legacy None sentinel
+  // represents None — wrap as the canonical NONE-tagged
+  // python_value rather than {INT, sentinel}. Without this, the
+  // tagged-union truthiness check would have to special-case
+  // the sentinel value in the INT-tagged slot. Long-term this
+  // should disappear once typed numeric slots stop using the
+  // sentinel encoding altogether (see P0 in
+  // doc/python-frontend-blocked-items-plan.md).
+  if(is_python_none_constant(e))
+    return python_none_value();
+
   python_type_tagt tag = python_type_tagt::INT;
   if(e.type().id() == ID_floatbv)
     tag = python_type_tagt::FLOAT;
