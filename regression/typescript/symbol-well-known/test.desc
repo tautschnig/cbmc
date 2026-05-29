@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §6.1.5.1: well-known Symbols modelled as `@@<name>` special
+property names. Class methods `[Symbol.X]() {}` register as `@@X`;
+element access `obj[Symbol.X]` rewrites to property access `obj.@@X`.

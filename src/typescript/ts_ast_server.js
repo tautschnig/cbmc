@@ -199,6 +199,39 @@ function makeN2j(sourceFile, checker) {
         r.expression = n2j(node.expression);
         r.arguments = node.arguments.map(n2j);
         if (node.typeArguments) r.typeArguments = node.typeArguments.map(n2j);
+        // ES2024 §13.3.10: Dynamic import — `import("./mod")`.
+        if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+          r.dynamicImport = true;
+          try {
+            const moduleType = checker.getTypeAtLocation(node);
+            let inner = moduleType;
+            if (
+              moduleType.symbol &&
+              moduleType.symbol.name === "Promise" &&
+              moduleType.aliasTypeArguments &&
+              moduleType.aliasTypeArguments.length === 1
+            ) {
+              inner = moduleType.aliasTypeArguments[0];
+            } else if (
+              moduleType.typeArguments &&
+              moduleType.typeArguments.length === 1
+            ) {
+              inner = moduleType.typeArguments[0];
+            }
+            const exportsList = [];
+            if (inner.symbol) {
+              const moduleExports = checker.getExportsOfModule(inner.symbol);
+              for (const exp of moduleExports) {
+                const expType = checker.getTypeOfSymbolAtLocation(exp, node);
+                exportsList.push({
+                  name: exp.name,
+                  type: checker.typeToString(expType, node),
+                });
+              }
+            }
+            r.moduleExports = exportsList;
+          } catch (e) {}
+        }
         break;
       case ts.SyntaxKind.PropertyAccessExpression:
         r.expression = n2j(node.expression);
@@ -206,6 +239,29 @@ function makeN2j(sourceFile, checker) {
         if (node.questionDotToken) r.optional = true;
         break;
       case ts.SyntaxKind.ElementAccessExpression:
+        // ES2024 §6.1.5.1: `obj[Symbol.X]` — reserialise as the
+        // synthetic identifier `@@X`.
+        {
+          const arg = node.argumentExpression;
+          if (
+            arg &&
+            arg.kind === ts.SyntaxKind.PropertyAccessExpression &&
+            arg.expression &&
+            arg.expression.kind === ts.SyntaxKind.Identifier &&
+            arg.expression.escapedText === "Symbol" &&
+            arg.name &&
+            arg.name.escapedText
+          ) {
+            r._kind = "PropertyAccessExpression";
+            r.expression = n2j(node.expression);
+            r.name = {
+              _kind: "Identifier",
+              text: "@@" + arg.name.escapedText,
+            };
+            if (node.questionDotToken) r.optional = true;
+            break;
+          }
+        }
         r.expression = n2j(node.expression);
         r.argumentExpression = n2j(node.argumentExpression);
         if (node.questionDotToken) r.optional = true;
@@ -273,7 +329,31 @@ function makeN2j(sourceFile, checker) {
       case ts.SyntaxKind.SetAccessor:
         if (node.kind === ts.SyntaxKind.GetAccessor) r.isGetter = true;
         if (node.kind === ts.SyntaxKind.SetAccessor) r.isSetter = true;
-        if (node.name && node.name.text)
+        // ES2024 §6.1.5.1: well-known symbols. Computed property
+        // names of the form `[Symbol.X]` are reserialised as the
+        // synthetic identifier `@@X`.
+        if (
+          node.name &&
+          node.name.kind === ts.SyntaxKind.ComputedPropertyName
+        ) {
+          const inner = node.name.expression;
+          if (
+            inner &&
+            inner.kind === ts.SyntaxKind.PropertyAccessExpression &&
+            inner.expression &&
+            inner.expression.kind === ts.SyntaxKind.Identifier &&
+            inner.expression.escapedText === "Symbol" &&
+            inner.name &&
+            inner.name.escapedText
+          ) {
+            r.name = {
+              _kind: "Identifier",
+              text: "@@" + inner.name.escapedText,
+            };
+          } else {
+            r.name = n2j(node.name);
+          }
+        } else if (node.name && node.name.text)
           r.name = { _kind: "Identifier", text: node.name.text };
         else if (node.name) r.name = n2j(node.name);
         r.parameters = node.parameters

@@ -221,6 +221,27 @@ function n2j(node) {
       if(node.questionDotToken) r.optional = true;
       break;
     case ts.SyntaxKind.ElementAccessExpression:
+      // ES2024 §6.1.5.1: `obj[Symbol.X]` — reserialise as the
+      // synthetic identifier `@@X` so that the property access
+      // resolves to the method-of-the-same-name registered by
+      // ComputedPropertyName above. After the rewrite, the access
+      // is equivalent to a PropertyAccessExpression — emit it as
+      // such so the converter's existing method-call dispatch
+      // path picks it up unchanged.
+      {
+        const arg = node.argumentExpression;
+        if(arg && arg.kind === ts.SyntaxKind.PropertyAccessExpression &&
+           arg.expression && arg.expression.kind === ts.SyntaxKind.Identifier &&
+           arg.expression.escapedText === "Symbol" &&
+           arg.name && arg.name.escapedText) {
+          // Rewrite to PropertyAccessExpression(@@X)
+          r._kind = "PropertyAccessExpression";
+          r.expression = n2j(node.expression);
+          r.name = { _kind: "Identifier", text: "@@" + arg.name.escapedText };
+          if(node.questionDotToken) r.optional = true;
+          break;
+        }
+      }
       r.expression = n2j(node.expression);
       r.argumentExpression = n2j(node.argumentExpression);
       if(node.questionDotToken) r.optional = true;
@@ -281,7 +302,22 @@ function n2j(node) {
     case ts.SyntaxKind.SetAccessor:
       if(node.kind === ts.SyntaxKind.GetAccessor) r.isGetter = true;
       if(node.kind === ts.SyntaxKind.SetAccessor) r.isSetter = true;
-      if(node.name && node.name.text) r.name = { _kind: "Identifier", text: node.name.text };
+      // ES2024 §6.1.5.1: well-known symbols (Symbol.iterator,
+      // Symbol.toPrimitive, etc.). Computed property names of the
+      // form `[Symbol.X]` are reserialised as a synthetic
+      // identifier `@@X` so the rest of the frontend can treat
+      // symbol-keyed methods as named members.
+      if(node.name && node.name.kind === ts.SyntaxKind.ComputedPropertyName) {
+        const inner = node.name.expression;
+        if(inner && inner.kind === ts.SyntaxKind.PropertyAccessExpression &&
+           inner.expression && inner.expression.kind === ts.SyntaxKind.Identifier &&
+           inner.expression.escapedText === "Symbol" &&
+           inner.name && inner.name.escapedText) {
+          r.name = { _kind: "Identifier", text: "@@" + inner.name.escapedText };
+        } else {
+          r.name = n2j(node.name);
+        }
+      } else if(node.name && node.name.text) r.name = { _kind: "Identifier", text: node.name.text };
       else if(node.name) r.name = n2j(node.name);
       r.parameters = node.parameters ? Array.from(node.parameters).map(n2j) : [];
       if(node.type) r.returnType = n2j(node.type);
