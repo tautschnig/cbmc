@@ -884,6 +884,33 @@ exprt resolve_jml_expr(
     }
   }
 
+  // Boolean-context operand coercion. When the parser
+  // constructed `not_exprt`, `and_exprt`, `or_exprt`, or
+  // similar boolean operators, the operand types were not
+  // yet known. After resolution they may be Java booleans
+  // (c_bool, width 8) or integer-typed (signedbv) — both
+  // would trip the bool-operand invariants of the
+  // surrounding nodes on a later structural visit. Coerce
+  // each non-bool operand to a Boolean expression by
+  // `!= 0`. This runs unconditionally (not just when the
+  // outer node "needs a type") because the parser-built
+  // nodes already have bool result types but operand types
+  // that get refined here.
+  if(
+    result.id() == ID_and || result.id() == ID_or || result.id() == ID_not ||
+    result.id() == ID_implies)
+  {
+    for(auto &op : result.operands())
+    {
+      if(
+        op.type().id() == ID_c_bool || op.type().id() == ID_unsignedbv ||
+        op.type().id() == ID_signedbv)
+      {
+        op = notequal_exprt(op, from_integer(0, op.type()));
+      }
+    }
+  }
+
   // Lower aggregate expressions (\sum, \product, \min, \max)
   // by bounded expansion when the range is of the form
   // `lb <= var && var < ub` with constant bounds.

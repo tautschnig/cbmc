@@ -1,0 +1,52 @@
+CORE
+UserGranularityCheckAdder
+--function "privacy.UserGranularityCheckAdder.validate:(Lprivacy/ColumnAttributes;)V" --jml-source src/main/kotlin/privacy/UserGranularityCheckAdder.kt --unwind 3 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+End-to-end smoke test that mirrors the AWS-Bastion privacy
+pipeline's `validateNonViewableColumns` shape — chained
+trivial getters, requires/ensures gated by exception state,
+typed signals, signals_only, and assignable \nothing — all
+on Kotlin source.
+
+The class shape is deliberately close to the production
+UserGranularityCheckAdder.kt:
+
+  data class Sensitivity(val viewable: Boolean)
+  data class ColumnAttributes(val sensitivity: Sensitivity)
+
+with the JBMC-verifiable subset of the contract:
+
+  //@ requires attrs != null;
+  //@ requires attrs.getSensitivity() != null;
+  //@ assignable \nothing;
+  //@ ensures attrs.getSensitivity().getViewable();
+  //@ signals_only InvalidInputException;
+  //@ signals (InvalidInputException e) e != null;
+
+This exercises five of the JBMC features added in the
+java-contracts feature branch:
+  * trivial bean-getter recognition (Kotlin val accessors
+    becoming JVM-style getter methods);
+  * chained getter-call resolution
+    (attrs.getSensitivity().getViewable() rewrites to a
+    nested member_exprt against the backing fields);
+  * inline (non-modular) `assignable` enforcement;
+  * exception-gated `ensures`;
+  * typed signals (T e) p exit-time assertion.
+
+What the production code uses that's not yet supported here
+is `Map<ColumnVertex, ColumnAttributes>` — JBMC needs
+java.util.Map library models for that. The smoke test uses
+a single-column shape to sidestep the Map dependency while
+preserving every other AWS-Bastion idiom.
+
+The full Brazil-built bytecode of the production
+UserGranularityCheckAdder.kt would verify with the same
+flags once Map model support lands.

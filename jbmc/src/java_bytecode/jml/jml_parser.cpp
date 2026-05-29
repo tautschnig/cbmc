@@ -62,8 +62,14 @@ private:
   const symbol_table_baset &symbol_table_;
 
   // Token access
-  const jml_tokent &current() const { return tokens_[pos_]; }
-  jml_token_kindt peek() const { return tokens_[pos_].kind; }
+  const jml_tokent &current() const
+  {
+    return tokens_[pos_];
+  }
+  jml_token_kindt peek() const
+  {
+    return tokens_[pos_].kind;
+  }
   const jml_tokent &advance()
   {
     const auto &tok = tokens_[pos_];
@@ -357,9 +363,8 @@ exprt jml_parser_statet::multiplicative_expr()
   exprt left = unary_expr();
   if(has_error_)
     return nil_exprt();
-  while(
-    peek() == jml_token_kindt::STAR || peek() == jml_token_kindt::SLASH ||
-    peek() == jml_token_kindt::PERCENT)
+  while(peek() == jml_token_kindt::STAR || peek() == jml_token_kindt::SLASH ||
+        peek() == jml_token_kindt::PERCENT)
   {
     const auto op = peek();
     advance();
@@ -386,6 +391,19 @@ exprt jml_parser_statet::unary_expr()
       exprt operand = unary_expr();
       if(has_error_)
         return nil_exprt();
+      // not_exprt requires a bool operand; coerce Java
+      // booleans (c_bool) and other integer-typed expressions
+      // by comparing against zero. Without this the
+      // constructor invariant `as_const(*this).op().is_boolean()`
+      // fires on `!attrs.getViewable()`-style clauses where
+      // the operand resolves to a c_bool field load.
+      if(
+        operand.type().id() == ID_c_bool ||
+        operand.type().id() == ID_unsignedbv ||
+        operand.type().id() == ID_signedbv)
+      {
+        operand = notequal_exprt(operand, from_integer(0, operand.type()));
+      }
       return not_exprt(operand);
     }
   case jml_token_kindt::TILDE:
@@ -498,11 +516,13 @@ exprt jml_parser_statet::primary()
     const std::string &text = current().text;
     advance();
     // Parse integer value
-    bool is_long = (!text.empty() && (text.back() == 'L' || text.back() == 'l'));
+    bool is_long =
+      (!text.empty() && (text.back() == 'L' || text.back() == 'l'));
     std::string num_text = is_long ? text.substr(0, text.size() - 1) : text;
     mp_integer value;
-    if(num_text.size() > 2 && num_text[0] == '0' &&
-       (num_text[1] == 'x' || num_text[1] == 'X'))
+    if(
+      num_text.size() > 2 && num_text[0] == '0' &&
+      (num_text[1] == 'x' || num_text[1] == 'X'))
     {
       value = string2integer(num_text.substr(2), 16);
     }
@@ -843,7 +863,8 @@ jml_parse_resultt jml_parse_expression(
   const symbol_table_baset &symbol_table)
 {
   auto tokens = jml_tokenize(jml_text);
-  jml_parser_statet parser(std::move(tokens), method_id, class_id, symbol_table);
+  jml_parser_statet parser(
+    std::move(tokens), method_id, class_id, symbol_table);
   return parser.parse_expression();
 }
 
@@ -869,9 +890,9 @@ jml_clauset jml_parse_clause(
   // Determine clause kind from keyword prefix
   auto strip_prefix = [&](const std::string &prefix) -> bool
   {
-    if(text.size() > prefix.size() &&
-       text.substr(0, prefix.size()) == prefix &&
-       std::isspace(static_cast<unsigned char>(text[prefix.size()])))
+    if(
+      text.size() > prefix.size() && text.substr(0, prefix.size()) == prefix &&
+      std::isspace(static_cast<unsigned char>(text[prefix.size()])))
     {
       text = text.substr(prefix.size());
       while(!text.empty() &&
@@ -886,18 +907,21 @@ jml_clauset jml_parse_clause(
     result.kind = jml_clauset::kindt::REQUIRES;
   else if(strip_prefix("ensures"))
     result.kind = jml_clauset::kindt::ENSURES;
-  else if(strip_prefix("assignable") || strip_prefix("modifiable") ||
-          strip_prefix("modifies"))
+  else if(
+    strip_prefix("assignable") || strip_prefix("modifiable") ||
+    strip_prefix("modifies"))
     result.kind = jml_clauset::kindt::ASSIGNABLE;
   else if(strip_prefix("signals_only"))
     result.kind = jml_clauset::kindt::SIGNALS_ONLY;
   else if(strip_prefix("signals"))
     result.kind = jml_clauset::kindt::SIGNALS;
-  else if(strip_prefix("invariant") || strip_prefix("maintaining") ||
-          strip_prefix("loop_invariant"))
+  else if(
+    strip_prefix("invariant") || strip_prefix("maintaining") ||
+    strip_prefix("loop_invariant"))
     result.kind = jml_clauset::kindt::INVARIANT;
-  else if(strip_prefix("decreases") || strip_prefix("decreasing") ||
-          strip_prefix("loop_variant"))
+  else if(
+    strip_prefix("decreases") || strip_prefix("decreasing") ||
+    strip_prefix("loop_variant"))
     result.kind = jml_clauset::kindt::DECREASES;
   else if(text == "pure")
   {
@@ -972,8 +996,7 @@ jml_clauset jml_parse_clause(
   {
     auto skip_ws = [](const std::string &s, std::size_t &i)
     {
-      while(i < s.size() &&
-            std::isspace(static_cast<unsigned char>(s[i])))
+      while(i < s.size() && std::isspace(static_cast<unsigned char>(s[i])))
         ++i;
     };
     std::size_t i = 0;
@@ -994,9 +1017,9 @@ jml_clauset jml_parse_clause(
       skip_ws(text, i);
       // Parse variable name (identifier).
       const std::size_t var_start = i;
-      while(i < text.size() &&
-            (std::isalnum(static_cast<unsigned char>(text[i])) ||
-             text[i] == '_'))
+      while(
+        i < text.size() &&
+        (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '_'))
         ++i;
       std::string var = text.substr(var_start, i - var_start);
       skip_ws(text, i);
