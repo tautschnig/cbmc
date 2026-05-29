@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2839** | +238 |
+| ESBMC PASS | 2489 | 2601 | **2845** | +244 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -505,6 +505,35 @@ Architectural cluster v6: heterogeneous IfExp wrapping (wave 41 cont., +1):
   True even when the int branch was taken). Restricted to
   cross-category mismatches so numeric promotions
   (int → float) continue silently. Closes github_2966_fail.
+
+Architectural cluster v7: 'return param' inference + symbolic isalpha + Unicode codepoint length (wave 41 cont., +6):
+- 'return param' inference: when a function has both
+  'return concrete_value' (int/float) and 'return param'
+  where param is python_value-typed (Any), pre-detect this
+  in the return-shape scan and set return_type =
+  python_value upfront. The convert_return wrap_value
+  path then handles the int-literal returns from the
+  start, instead of leaving the first 'return 0' as a
+  raw int that gets nondet-typecast at SET RETURN VALUE.
+  Closes isinstance29.
+- Byte-level isalpha / isdigit / isalnum / isupper /
+  islower / isspace / isascii / isnumeric for symbolic
+  strings: previously returned nondet for non-constant
+  receivers. Now reads data[0] and applies the byte-range
+  check; exact for 1-char strings (the s[i] / 'for c in
+  s' iter target pattern, common in is_digit /
+  isparenthesization-like predicates). Closes
+  github_2879. Foundational improvement.
+- Unicode code-point length: PLR §3.6 / §6.10 require
+  len(s) to count code points, not UTF-8 bytes. Three
+  coordinated changes: build_string_struct sets .length
+  to code-point count (UTF-8 leading bytes);
+  extract_string_value walks the data array byte-by-byte
+  collecting up to slen code points;
+  len(constant_string) folds to code-point count.
+  Closes github_3552, github_3552_1, string-many-ops,
+  casting-chr-var-multibyte. Foundational for chr() with
+  multi-byte values and any unicode-string assertion.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
