@@ -3387,6 +3387,32 @@ std::optional<exprt> python_convertert::try_builtin_call(
             arg,
             unary_minus_exprt{arg}};
         }
+        // PLR §6.10.2: abs() on a tagged-union value dispatches
+        // on the runtime tag — return abs(int_val) when tag==INT,
+        // abs(float_val) when tag==FLOAT, abs(complex) shape
+        // when tag==COMPLEX, nondet otherwise. Wraps the result
+        // back into python_value so 'r = abs(diff); r ==
+        // expected' works downstream.
+        if(is_python_value_type(arg.type()))
+        {
+          exprt iv = python_value_int(arg);
+          exprt fv = python_value_float(arg);
+          exprt abs_int = if_exprt{
+            binary_relation_exprt{iv, ID_ge, safe_zero(iv.type())},
+            iv,
+            unary_minus_exprt{iv}};
+          exprt abs_float = if_exprt{
+            binary_relation_exprt{fv, ID_ge, safe_zero(fv.type())},
+            fv,
+            unary_minus_exprt{fv}};
+          exprt int_wrapped = make_python_value(python_type_tagt::INT, abs_int);
+          exprt float_wrapped =
+            make_python_value(python_type_tagt::FLOAT, abs_float);
+          return if_exprt{
+            python_value_is(arg, python_type_tagt::FLOAT),
+            float_wrapped,
+            int_wrapped};
+        }
         // TypeError for non-numeric types
         if(
           is_python_string_type(arg.type()) ||
