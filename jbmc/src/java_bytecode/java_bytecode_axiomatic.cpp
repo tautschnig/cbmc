@@ -585,6 +585,32 @@ bool lower_one_call(
 
 } // namespace
 
+exprt jml_axiomatic_size_expr(
+  symbol_table_baset &symbol_table,
+  const exprt &receiver)
+{
+  // We want a writable symbol_tablet here so we can install
+  // the backing array if it doesn't yet exist. The runtime
+  // type passed in is goto_model.symbol_table, so the cast
+  // is safe.
+  auto &writable = dynamic_cast<symbol_tablet &>(symbol_table);
+  const symbolt &sz = ensure_global_array(
+    writable,
+    AXIOMATIC_SZ_SYM,
+    sz_array_type(),
+    from_integer(0, java_int_type()));
+  return index_exprt(sz.symbol_expr(), pack_receiver_only(receiver));
+}
+
+exprt jml_axiomatic_is_empty_expr(
+  symbol_table_baset &symbol_table,
+  const exprt &receiver)
+{
+  return equal_exprt(
+    jml_axiomatic_size_expr(symbol_table, receiver),
+    from_integer(0, java_int_type()));
+}
+
 std::size_t lower_axiomatic_collections(goto_modelt &goto_model)
 {
   std::size_t rewritten = 0;

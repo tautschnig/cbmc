@@ -28,6 +28,8 @@ Author: Kiro (AI agent)
 
 #include <iostream>
 
+#include "../java_bytecode_axiomatic.h"
+#include "../java_types.h"
 #include "../remove_exceptions.h"
 
 namespace
