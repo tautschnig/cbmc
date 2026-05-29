@@ -230,3 +230,39 @@ imprecision.
 - `regression/typescript/date-getters-symbolic/` — 7 range-bound
   invariants (millis ∈ [0, 999], seconds ∈ [0, 59], etc.) on a
   bounded symbolic timestamp.
+
+### `syntax-error-reporting` — surface TS syntax errors with file:line:col (2026-05-29)
+
+**Was**: When a TypeScript source had a syntax error, the parser
+silently produced a partial AST and the converter walked it to
+completion. The user saw `Failed to parse TypeScript file: <path>`
+followed by `PARSING ERROR` with no information about *where* in
+the source the error was.
+
+**Resolution**: Both the inline parser (in
+`typescript_language.cpp`) and the daemon parser (in
+`ts_ast_server.js`) now run `program.getSyntacticDiagnostics(sourceFile)`
+before walking the AST. If any syntax-level diagnostics are
+present, the parser reports them — up to 5 inline plus a count of
+extras — with file:line:col and the underlying TS diagnostic
+message, then exits with code 2 / returns the error envelope.
+
+The C++ frontend reads the script's stderr on parse failure and
+emits the diagnostic lines through CBMC's `log.error()` channel
+before reporting `Failed to parse TypeScript file`.
+
+Type-checker (semantic) diagnostics are NOT raised — those are
+intentionally lenient because the model accepts some
+type-checker-rejected forms (e.g. nondet primitives that lack
+declarations).
+
+**Side effect**: one regression test
+(`regression/typescript/verify-template-literal/`) had its source
+silently corrupted by a shell-escaped here-doc when it was first
+checked in. The pre-existing parser glossed over the corruption;
+the new strict parser surfaces it. The test source has been fixed
+to be syntactically valid TypeScript.
+
+**Regression guard**: `regression/typescript/syntax-error-reporting/`
+(CORE) — feeds a syntactically-malformed TS file and asserts that
+the diagnostic line and PARSING ERROR are emitted.

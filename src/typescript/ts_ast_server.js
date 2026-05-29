@@ -544,6 +544,34 @@ function parseFile(inputFile) {
   const sourceFile = program.getSourceFile(inputFile);
   if (!sourceFile)
     throw new Error("Source file not loaded: " + inputFile);
+
+  // Surface syntax-level diagnostics. We treat parse / syntax errors
+  // as fatal because they leave the AST in a partial state that the
+  // converter would mis-handle. Type-checker semantic diagnostics
+  // are more lenient: we collect them but proceed.
+  const syntaxDiags = program.getSyntacticDiagnostics(sourceFile);
+  if (syntaxDiags && syntaxDiags.length > 0) {
+    const formatted = syntaxDiags.slice(0, 5).map((d) => {
+      const where = d.file && d.start !== undefined
+        ? (() => {
+            const lc = d.file.getLineAndCharacterOfPosition(d.start);
+            return d.file.fileName + ":" + (lc.line + 1) + ":" + (lc.character + 1);
+          })()
+        : inputFile;
+      const text = ts.flattenDiagnosticMessageText(d.messageText, "\n");
+      return where + ": " + text;
+    });
+    const more =
+      syntaxDiags.length > 5
+        ? "\n  (and " + (syntaxDiags.length - 5) + " more)"
+        : "";
+    const err = new Error(
+      "TypeScript syntax error(s):\n  " + formatted.join("\n  ") + more
+    );
+    err.kind = "syntax";
+    throw err;
+  }
+
   const checker = program.getTypeChecker();
   const n2j = makeN2j(sourceFile, checker);
   const allFiles = program

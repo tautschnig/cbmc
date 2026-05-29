@@ -416,13 +416,12 @@ Resolved: see
 
 Items that are not soundness or precision issues but affect usability.
 
-### 4.1 Error messages from the AST server
+### 4.1 Error messages from the AST server (resolved 2026-05-29)
 
-**What**: When `ts_ast_server.js` rejects a TypeScript program (e.g.
-syntax error), the error surfaced to the user is sometimes terse.
-
-**Tracking**: none currently; raise a regression test if this comes
-up again.
+Resolved: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)" → `syntax-error-reporting`.
+Regression guard: `regression/typescript/syntax-error-reporting/`.
 
 ### 4.2 Type-checked harness templates (partial)
 

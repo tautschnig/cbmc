@@ -78,6 +78,28 @@ const program = ts.createProgram([inputFile], {
 const checker = program.getTypeChecker();
 const sourceFile = program.getSourceFile(inputFile);
 if (!sourceFile) { process.exit(1); }
+
+// Surface syntax errors with file:line:col before walking the AST.
+// (Parallels the daemon's handling — see ts_ast_server.js.)
+const syntaxDiags = program.getSyntacticDiagnostics(sourceFile);
+if (syntaxDiags && syntaxDiags.length > 0) {
+  const lines = syntaxDiags.slice(0, 5).map((d) => {
+    let where = inputFile;
+    if (d.file && d.start !== undefined) {
+      const lc = d.file.getLineAndCharacterOfPosition(d.start);
+      where = d.file.fileName + ":" + (lc.line + 1) + ":" + (lc.character + 1);
+    }
+    const text = ts.flattenDiagnosticMessageText(d.messageText, "\n");
+    return where + ": " + text;
+  });
+  const more = syntaxDiags.length > 5
+    ? "\n  (and " + (syntaxDiags.length - 5) + " more)"
+    : "";
+  process.stderr.write(
+    "TypeScript syntax error(s):\n  " + lines.join("\n  ") + more + "\n"
+  );
+  process.exit(2);
+}
 function n2j(node) {
   const r = {
     _kind: ts.SyntaxKind[node.kind],
@@ -660,6 +682,16 @@ fs.writeFileSync(outputFile, JSON.stringify((() => {
 
   if(result != 0)
   {
+    // Surface the node script's stderr (which contains
+    // file:line:col diagnostics for syntax errors) so the user has
+    // enough info to fix the source.
+    std::ifstream err_in{stderr_path};
+    std::string err_msg{
+      std::istreambuf_iterator<char>{err_in}, std::istreambuf_iterator<char>{}};
+    while(!err_msg.empty() && err_msg.back() == '\n')
+      err_msg.pop_back();
+    if(!err_msg.empty())
+      log.error() << err_msg << messaget::eom;
     log.error() << "Failed to parse TypeScript file: " << path << messaget::eom;
     return true;
   }

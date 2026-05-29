@@ -131,7 +131,7 @@ this repo. After coordinated disclosure of the 14 findings completes:
 | P2.2 | `yield*` delegation (constant case) | half day | pending |
 | P2.3 | Well-known Symbols (`Symbol.iterator` etc., as named special properties) | 1 day | done (17c007d28f) |
 | P2.5 | Dynamic `import()` resolution via existing module infrastructure | half day | done (24e8048a9d) |
-| P2.6 | AST server error message improvements | 1 day | pending |
+| P2.6 | AST server error message improvements | 1 day | done (this commit) |
 | P2.7 | Harness template library — 4 templates (recursion-DoS, allowlist-injection, prototype-key-injection, path-traversal) with vulnerable+defensive pairs | 2–3 days | done (this commit) |
 
 (P2.4 WeakRef.deref() landed in 5c06761f7e and is no longer in this list.)

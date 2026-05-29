@@ -1,0 +1,14 @@
+CORE
+main.ts
+
+^EXIT=6$
+^SIGNAL=0$
+^TypeScript syntax error
+main.ts:4:9: Expression expected
+^PARSING ERROR$
+--
+^Invariant check failed$
+--
+Verifies that a TypeScript syntax error surfaces with file:line:col
+and the underlying TS diagnostic, rather than silently producing a
+degenerate AST that confuses downstream verification.
