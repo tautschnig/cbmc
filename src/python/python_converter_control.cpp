@@ -771,6 +771,138 @@ codet python_convertert::convert_for(const jsont &stmt)
   if(is_python_value_type(iterable.type()))
     iterable = python_value_list(iterable);
 
+  // PLR §6.3.4: 'for c in "literal":' — when iter is a known
+  // constant string AND the loop target is a single Name, unroll
+  // the body once per character with the loop variable bound to
+  // the i'th 1-char string literal. The general string-iter path
+  // emits a struct {1, address_of(temp_array[0])} per iteration,
+  // which CBMC's symex layer treats as opaque per-iteration
+  // scratch — the underlying char value doesn't propagate to
+  // ord(c) / c.isalpha() / c == 'x' / etc. Unrolling at
+  // conversion time avoids this entirely (each c is a literal
+  // string the rest of the converter can fold).
+  //
+  // The else clause (orelse) is preserved by appending its
+  // statements after the unrolled body when the loop wasn't
+  // broken; we conservatively assume the loop always exits
+  // normally via fall-through (the standard semantics).
+  if(is_python_string_type(iterable.type()) && is_node_type(target, "Name"))
+  {
+    auto sv = extract_string_value(iterable);
+    if(!sv.has_value() && iterable.id() == ID_symbol)
+    {
+      auto it =
+        string_constants.find(to_symbol_expr(iterable).get_identifier());
+      if(it != string_constants.end())
+        sv = it->second;
+    }
+    if(sv.has_value())
+    {
+      // Skip the unroll if the body contains break/continue
+      // we'd need to translate to a flag-based form. For now,
+      // fall through to the generic loop in that case.
+      const jsont &body_for_scan = json_member(stmt, "body");
+      std::function<bool(const jsont &)> has_break_or_continue =
+        [&](const jsont &n) -> bool
+      {
+        if(n.is_array())
+        {
+          for(const auto &e : as_array(n))
+            if(has_break_or_continue(e))
+              return true;
+          return false;
+        }
+        if(!n.is_object())
+          return false;
+        if(is_node_type(n, "Break") || is_node_type(n, "Continue"))
+          return true;
+        // Don't recurse into nested for / while bodies — their
+        // own break/continue stay scoped to the inner loop.
+        if(
+          is_node_type(n, "For") || is_node_type(n, "While") ||
+          is_node_type(n, "AsyncFor"))
+          return false;
+        // Recurse into the rest.
+        if(n.is_object())
+        {
+          const auto &obj = static_cast<const json_objectt &>(n);
+          for(const auto &kv : obj)
+          {
+            if(
+              kv.first == "_type" || kv.first == "lineno" ||
+              kv.first == "col_offset" || kv.first == "end_lineno" ||
+              kv.first == "end_col_offset")
+              continue;
+            if(has_break_or_continue(kv.second))
+              return true;
+          }
+        }
+        return false;
+      };
+      bool body_has_break =
+        body_for_scan.is_array() && has_break_or_continue(body_for_scan);
+      if(body_has_break)
+        goto skip_string_unroll;
+      // Materialise the loop variable so the body's reads see
+      // the right type (single-char python_string).
+      irep_idt var_id_unroll{qualified_name};
+      if(symbol_table.lookup(var_id_unroll) == nullptr)
+      {
+        symbolt new_sym{var_id_unroll, python_string_type(), "python"};
+        new_sym.base_name = var_name;
+        new_sym.location = loc;
+        new_sym.is_lvalue = true;
+        new_sym.is_state_var = true;
+        symbol_table.add(new_sym);
+      }
+      else if(
+        symbol_table.lookup_ref(var_id_unroll).type != python_string_type())
+      {
+        symbol_table.get_writeable_ref(var_id_unroll).type =
+          python_string_type();
+      }
+      symbol_exprt loop_var_unroll =
+        symbol_table.lookup_ref(var_id_unroll).symbol_expr();
+      const jsont &body = json_member(stmt, "body");
+      code_blockt unrolled;
+      // Pre-flush any pending checks built while computing
+      // 'iterable' (e.g. wrap_value side effects).
+      for(auto &pc : pre_loop.statements())
+        unrolled.add(std::move(pc));
+      pre_loop = code_blockt{};
+      for(char ch : sv.value())
+      {
+        std::string ch_str(1, ch);
+        // Record the binding so convert_expression can fold
+        // ord(c) / c.isalpha() / c == 'x' / etc. through
+        // extract_string_value.
+        string_constants[var_id_unroll] = ch_str;
+        unrolled.add(code_frontend_assignt{
+          loop_var_unroll, python_string_literal(ch_str)});
+        if(body.is_array())
+        {
+          loop_depth++;
+          for(const auto &s : as_array(body))
+            unrolled.add(convert_statement(s));
+          loop_depth--;
+        }
+      }
+      // Clear the per-loop binding so the rest of the function
+      // doesn't see a stale value.
+      string_constants.erase(var_id_unroll);
+      // Append orelse (always-taken since we don't break in the
+      // unrolled form — the string-iter unroll never breaks).
+      const jsont &orelse_for_unroll = json_member(stmt, "orelse");
+      if(orelse_for_unroll.is_array())
+      {
+        for(const auto &s : as_array(orelse_for_unroll))
+          unrolled.add(convert_statement(s));
+      }
+      return finalize_for(std::move(unrolled));
+    }
+  }
+skip_string_unroll:;
+
   bool is_list = is_python_list_type(iterable.type());
   bool is_string = is_python_string_type(iterable.type());
   bool is_dict = is_python_dict_type(iterable.type());
