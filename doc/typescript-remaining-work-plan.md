@@ -62,7 +62,7 @@ if a real user need surfaces.
 | **P1.1** | RegExp Phase 2 (metacharacters via NFA: `.` `*` `+` `?` `[]` `^` `$` `\d` `\w` `\s`) | 2–3 days | done |
 | **P1.1b** | RegExp Phase 2b: `\|` alternation, `(...)` grouping, `{n,m}` quantifiers | 2 days | pending |
 | **P1.2** | Date calendar getters (getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds) | 1 day | done |
-| **P1.3** | Integrate CodeQL `DataFlow::Global` into triage queries | 3–4 days | pending |
+| **P1.3** | Integrate CodeQL `DataFlow::Global` into triage queries (Q1, Q2, Q4) | 3–4 days | done |
 | **P1.4** | Public release skeleton for the CodeQL pack (waits on coordinated-disclosure completion) | 2–3 days | pending |
 
 #### P1.1 — RegExp Phase 2 plan
