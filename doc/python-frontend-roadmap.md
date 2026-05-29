@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2846** | +245 |
+| ESBMC PASS | 2489 | 2601 | **2850** | +249 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -543,6 +543,29 @@ Architectural cluster v8: code-point string subscript (wave 41 cont., +1):
   sequence at code point i. Bounds checking compares
   against length (now code-point count) which matches
   the indexing. Closes string-unicode-basic.
+
+Architectural cluster v9: Optional[str], list unpack, type promotion (wave 41 cont., +4):
+- Optional[str]=None default binding: when 'def
+  foo(y: Optional[str] = None)' is called as foo(),
+  bind y as struct{0, NULL} (length-0, null-data) at
+  the call site. The 'is None' check on optional_params
+  short-circuits to length==0, picking up the
+  default-None binding without losing PLR semantics
+  (concrete non-empty strings remain 'is not None').
+  Closes optional3.
+- Tuple-target unpacking from list rhs: 'first,
+  second, third = lst' was silently dropped (only
+  tuple-rhs and starred unpacking were handled). The
+  new path materialises the list, assumes len matches
+  the target count (sound under-approximation; the
+  ValueError case is dropped), and reads list.data[i]
+  for each Name target. Closes github_3846_2.
+- int-to-float promotion in python_value Add/Sub/Mult:
+  for tagged-union arithmetic with mixed-type operands,
+  promote __int_val to float for INT-tagged operands
+  before float_plus, instead of using __float_val (which
+  is undefined zero for INT). Closes list_pop10,
+  list_pop11_nondet (heterogeneous list summation).
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
