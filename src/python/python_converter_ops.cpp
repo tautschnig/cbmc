@@ -1339,17 +1339,59 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         return result;
       }
     }
-    // Variable exponent: build if-then-else chain for b=0..16
-    // (only for scalar types — complex handled above)
+    // Variable exponent: build if-then-else chain for b=-16..16
+    // (only for scalar types — complex handled above). The
+    // negative-exponent branch produces a float (1.0 / base**|n|);
+    // positive branches produce the same type as the base.
     {
-      exprt result = from_integer(1, left.type()); // x**0 == 1
+      typet ft = double_type();
+      ieee_floatt one_f{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      one_f.from_integer(1);
+      // Default: x**0 == 1. Promote to float so the negative-
+      // arm if-exprts unify type. The Python BMC is fine with a
+      // float 1.0 fallback for large exponents (we can't exactly
+      // model 2**100 anyway).
+      exprt result = one_f.to_expr();
+      auto float_of = [&](const exprt &e) -> exprt
+      {
+        if(e.type().id() == ID_floatbv)
+          return e;
+        if(e.is_constant() && e.type().id() == ID_signedbv)
+        {
+          mp_integer rv;
+          if(!to_integer(to_constant_expr(e), rv))
+          {
+            ieee_floatt fv{
+              ieee_float_spect::double_precision(),
+              ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+            fv.from_integer(rv);
+            return fv.to_expr();
+          }
+        }
+        return typecast_exprt{e, ft};
+      };
       for(int i = 16; i >= 1; i--)
       {
+        // Positive arm: n == i -> base**i
         exprt power = left;
         for(int j = 1; j < i; j++)
           power = mult_exprt{power, left};
         result = if_exprt{
-          equal_exprt{right, from_integer(i, right.type())}, power, result};
+          equal_exprt{right, from_integer(i, right.type())},
+          float_of(power),
+          result};
+      }
+      for(int i = 1; i <= 16; i++)
+      {
+        // Negative arm: n == -i -> 1.0 / base**i
+        exprt power = left;
+        for(int j = 1; j < i; j++)
+          power = mult_exprt{power, left};
+        exprt neg_pow = div_exprt{one_f.to_expr(), float_of(power)};
+        result = if_exprt{
+          equal_exprt{right, from_integer(-i, right.type())}, neg_pow, result};
       }
       return result;
     }
