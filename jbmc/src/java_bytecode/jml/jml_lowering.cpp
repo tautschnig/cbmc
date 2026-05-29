@@ -14,8 +14,10 @@ Author: Kiro (AI agent)
 #include <util/fresh_symbol.h>
 #include <util/mathematical_expr.h>
 #include <util/namespace.h>
+#include <util/prefix.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
+#include <util/suffix.h>
 
 #include <goto-programs/goto_model.h>
 
@@ -1056,10 +1058,16 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
       // width 8) — typically because the clause is just
       // `obj.flag` for some `boolean` field — coerce it to
       // bool by comparing against zero.
+      //
+      // Skip the coercion for ASSIGNABLE clauses: those
+      // expressions are l-values that name memory locations,
+      // not predicates, and `obj.field != 0` would not be a
+      // legitimate target.
       if(
-        resolved.type().id() == ID_c_bool ||
-        resolved.type().id() == ID_unsignedbv ||
-        resolved.type().id() == ID_signedbv)
+        clause.kind != jml_clauset::kindt::ASSIGNABLE &&
+        (resolved.type().id() == ID_c_bool ||
+         resolved.type().id() == ID_unsignedbv ||
+         resolved.type().id() == ID_signedbv))
       {
         resolved = notequal_exprt(resolved, from_integer(0, resolved.type()));
       }
@@ -1111,7 +1119,8 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
 
     if(
       requires_exprs.empty() && ensures_exprs.empty() && !has_signals_only &&
-      signals_typed_clauses.empty())
+      signals_typed_clauses.empty() && assigns_exprs.empty() &&
+      invariant_exprs.empty())
       continue;
 
     // Pre-state capture for \old(expr): walk all ensures and
@@ -1533,6 +1542,151 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
 
     body.update();
     annotated_functions.insert(method_id);
+
+    // assignable / modifiable / modifies frame condition,
+    // checked inline (non-modular). For each ASSIGN whose LHS
+    // is rooted in a parameter (or `this`), assert that the
+    // location is one of the allowed locations:
+    //
+    //   * \nothing  → no parameter-rooted writes allowed.
+    //   * \everything → no constraint emitted.
+    //   * obj.field, this.field → the listed location matches
+    //     a structurally-equal write.
+    //
+    // Local-only writes (LHS rooted in a non-parameter local
+    // symbol) and the harness-injected `<method>#return_value`
+    // / `@inflight_exception` writes are unconditionally
+    // allowed — they don't reach observable state.
+    //
+    // What this MVP does NOT yet handle:
+    //   * fresh allocations producing pointers used as writable
+    //     bases (constructors, factory-style helpers);
+    //   * array indices and chained-member writes
+    //     (this.foo.bar.baz = ...);
+    //   * `\old(expr)` inside the assignable list;
+    //   * commaseparated lists in a single clause (the parser
+    //     currently keeps only the first target — users can
+    //     work around this by writing one //@ assignable
+    //     clause per location).
+    if(!assigns_exprs.empty())
+    {
+      // Check whether \everything appears anywhere in the list.
+      // If so, the constraint is vacuously satisfied and we
+      // skip emission.
+      bool any_everything = false;
+      // Filter out \nothing markers to leave just the
+      // explicit-location targets.
+      exprt::operandst assign_targets;
+      for(const auto &e : assigns_exprs)
+      {
+        if(e.id() == "jml_everything")
+        {
+          any_everything = true;
+          break;
+        }
+        if(e.id() == "jml_nothing")
+          continue;
+        assign_targets.push_back(e);
+      }
+
+      if(!any_everything)
+      {
+        // Compute the set of method-parameter symbol names.
+        // ASSIGNs whose LHS is rooted at one of these are
+        // observable state writes that must satisfy the
+        // assignable list. Other ASSIGNs (locals, harness
+        // injectables) bypass the check.
+        std::set<irep_idt> param_symbols;
+        const auto sym_lookup = goto_model.symbol_table.lookup(method_id);
+        if(sym_lookup != nullptr && sym_lookup->type.id() == ID_code)
+        {
+          const code_typet &ct = to_code_type(sym_lookup->type);
+          for(const auto &p : ct.parameters())
+          {
+            if(!p.get_identifier().empty())
+              param_symbols.insert(p.get_identifier());
+          }
+        }
+
+        // Walk the LHS to find the underlying root symbol.
+        // member_exprt(parent, name) and dereference_exprt(p)
+        // and index_exprt(arr, i) all descend; ID_symbol is
+        // the leaf.
+        std::function<irep_idt(const exprt &)> root_symbol_of =
+          [&](const exprt &e) -> irep_idt
+        {
+          if(e.id() == ID_symbol)
+            return to_symbol_expr(e).get_identifier();
+          if(e.has_operands())
+            return root_symbol_of(e.operands().front());
+          return irep_idt{};
+        };
+
+        // Collect (insertion-point, assertion-condition) pairs
+        // first, then insert in a second pass to avoid iterator
+        // invalidation while walking.
+        std::vector<std::pair<goto_programt::targett, exprt>> to_insert;
+        for(auto it = body.instructions.begin(); it != body.instructions.end();
+            ++it)
+        {
+          if(!it->is_assign())
+            continue;
+          const exprt &lhs = it->assign_lhs();
+          const irep_idt root = root_symbol_of(lhs);
+          if(root.empty())
+            continue;
+          const std::string root_str = id2string(root);
+
+          // Skip harness-injected writes.
+          if(
+            has_suffix(root_str, "#return_value") ||
+            root_str == "java::@inflight_exception" ||
+            has_prefix(root_str, "__CPROVER") || has_prefix(root_str, "tag-") ||
+            has_prefix(root_str, "anonlocal::") ||
+            root_str.find("::tmp_") != std::string::npos)
+          {
+            continue;
+          }
+
+          // Skip pure-local writes: root is a method-local
+          // (declared inside method_id) but is NOT one of the
+          // method's parameters.
+          const std::string method_prefix = id2string(method_id) + "::";
+          if(has_prefix(root_str, method_prefix) && !param_symbols.count(root))
+          {
+            continue;
+          }
+
+          // The LHS reaches observable state. Build the
+          // disjunction of address-equalities against each
+          // listed target. If none match, the disjunction is
+          // false_exprt() and the assertion will fire.
+          exprt matches = false_exprt();
+          for(const auto &tgt : assign_targets)
+          {
+            if(lhs.type() != tgt.type())
+              continue;
+            address_of_exprt lhs_addr{lhs};
+            address_of_exprt tgt_addr{tgt};
+            if(lhs_addr.type() != tgt_addr.type())
+              continue;
+            const exprt eq = equal_exprt(lhs_addr, tgt_addr);
+            matches = matches.is_false() ? eq : or_exprt(matches, eq);
+          }
+          to_insert.emplace_back(it, matches);
+        }
+
+        for(const auto &[where, cond] : to_insert)
+        {
+          source_locationt sloc = where->source_location();
+          sloc.set_comment("JML assignable");
+          sloc.set_property_class("assigns");
+          body.insert_before(where, goto_programt::make_assertion(cond, sloc));
+        }
+        if(!to_insert.empty())
+          body.update();
+      }
+    }
 
     // Populate code_with_contract_typet on the symbol (for DFCC)
     auto sym_it = goto_model.symbol_table.get_writeable(method_id);

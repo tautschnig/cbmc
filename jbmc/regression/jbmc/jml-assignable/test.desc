@@ -1,0 +1,51 @@
+CORE
+JmlAssignNothing
+--function "JmlAssignNothing.readOnly:()I" --jml-source src/main/java/JmlAssignNothing.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for inline (non-modular) JML `assignable` frame
+condition checking. The JML clause
+
+  //@ assignable \nothing;
+
+forbids any observable-state writes (writes through `this`
+or any pointer parameter). The lowering pipeline:
+
+  1. The parser captures `\nothing` as exprt(jml_nothing)
+     and any explicit location list as resolved expressions.
+
+  2. lower_jml_contracts walks every ASSIGN in the body and
+     skips writes whose LHS root symbol is:
+       - a method-local (declared inside method_id but not
+         in the parameter set), or
+       - the harness-injected `<method>#return_value` /
+         `@inflight_exception`, or
+       - any `__CPROVER...`, `tag-`, `anonlocal::`, or
+         `tmp_` symbol.
+
+  3. For ASSIGNs that survive the filter, an assertion is
+     inserted before the ASSIGN: `&lhs == &t_1 \/ &lhs == &t_2
+     \/ ...` over the listed targets, or `false` for
+     `\nothing`.
+
+This positive test verifies a pure read-only method passes
+its `\nothing` contract; the negative companion is in
+JmlAssignList (the `touchYBad` method which writes `y` while
+declaring `assignable this.x;` would FAIL).
+
+Limitations of the current MVP, which the comment block in
+jml_lowering.cpp also lists:
+  * fresh-allocation tracking (constructors writing into
+    a freshly-allocated `this` should be allowed even with
+    `assignable \nothing`); not yet supported.
+  * comma-separated lists in a single clause; the parser
+    keeps only the first target. Workaround: write
+    one //@ assignable clause per location.
+  * array indices, chained-member writes,
+    `\old(...)` inside the assignable list.
