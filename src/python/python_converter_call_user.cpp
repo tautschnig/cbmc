@@ -604,6 +604,32 @@ exprt python_convertert::convert_user_call(
         if(arguments[i].is_nil())
         {
           arguments[i] = convert_expression(*def_it);
+          // PLR §3.6: 'None' default for a python_string-typed
+          // param (Optional[str] = None) needs to bind as a
+          // distinguishable empty-string struct (length=0,
+          // data=NULL) rather than the int sentinel that the
+          // type-mismatch typecast turns into nondet. The
+          // length=0 marker lets `y is None` (when y is in
+          // optional_params, falling through to struct-vs-int
+          // compare) recognise the default-None binding via
+          // the length-zero discriminator.
+          if(
+            arguments[i].is_constant() &&
+            arguments[i].type().id() == ID_signedbv &&
+            is_python_string_type(params[i].type()))
+          {
+            mp_integer av;
+            const mp_integer none_sentinel{-4611686018427387904LL};
+            if(
+              !to_integer(to_constant_expr(arguments[i]), av) &&
+              av == none_sentinel)
+            {
+              arguments[i] = struct_exprt{
+                {from_integer(0, signedbv_typet{64}),
+                 null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}},
+                python_string_type()};
+            }
+          }
           if(
             params[i].type().id() == ID_pointer &&
             arguments[i].type().id() == ID_struct &&
