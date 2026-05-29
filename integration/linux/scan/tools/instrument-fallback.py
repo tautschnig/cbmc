@@ -66,8 +66,16 @@ _FREE_APIS = (
 # one-statement-per-line.
 _ALLOC_ASSIGN_RE = re.compile(
     r"^(?P<indent>\s*)"
-    r"(?:(?:[\w\s\*]+?\s+)?)"  # optional declaration prefix
-    r"(?P<lhs>[\w\.\->]+)\s*=\s*"  # LHS (allow x->y or x.y)
+    # Optional declaration prefix: type words possibly with
+    # storage-class qualifiers, ending in a star and/or
+    # whitespace before the LHS.  The previous form
+    # `[\w\s\*]+?\s+` failed to match `struct foo *x =` because
+    # `\s+` required a space between the prefix and the LHS,
+    # but kernel style writes `*x` with no space after the
+    # star.  This form ends the prefix on either whitespace OR
+    # one or more stars.
+    r"(?:[\w\s]+?[\s\*]\s*\**\s*)?"
+    r"(?P<lhs>[A-Za-z_][\w\.\->]*)\s*=\s*"
     r"(?:\([\w\s\*]*\)\s*)?"  # optional cast
     r"(?P<api>" + _ALLOC_APIS + r")\s*\("
 )
@@ -482,8 +490,205 @@ def _instrument_use_after_free(source: str, fn_name: str
 _SHAPE_HANDLERS = {
     "resource_leak_on_error_path": _instrument_resource_leak,
     "use_after_free_generic": _instrument_use_after_free,
+    "null_after_alloc": None,  # filled below
     "cancel_work_before_free": None,  # filled below
 }
+
+
+# APIs whose return value can legitimately be NULL.  Wider
+# than the leak-tracking _ALLOC_APIS because we want to catch
+# the "kernel get/lookup returned NULL" pattern, not just
+# memory-alloc.  This list is conservative — adding too
+# many APIs increases the FP rate.
+_NULLABLE_RETURN_APIS = (
+    r"k(?:malloc|zalloc|calloc|malloc_array|memdup|strdup|"
+    r"asprintf)|"
+    r"kv(?:malloc|zalloc|malloc_array|calloc)|"
+    r"v(?:malloc|zalloc)|"
+    r"alloc_skb|"
+    r"kmem_cache_(?:alloc|zalloc)|"
+    r"alloc_workqueue|"
+    # ACPI device lookup APIs that can return NULL.
+    r"acpi_get_first_physical_node|"
+    r"acpi_dev_get_first_match_dev|"
+    r"acpi_match_device|"
+    # Generic kernel get/lookup that frequently returns NULL.
+    r"of_find_node_by_name|"
+    r"of_get_child_by_name|"
+    r"of_parse_phandle|"
+    r"of_get_property|"
+    r"bus_find_device_by_name|"
+    r"class_find_device|"
+    r"driver_find_device"
+)
+
+_NULLABLE_ASSIGN_RE = re.compile(
+    r"^(?P<indent>\s*)"
+    # Same declaration-prefix grammar as _ALLOC_ASSIGN_RE.
+    r"(?:[\w\s]+?[\s\*]\s*\**\s*)?"
+    r"(?P<lhs>[A-Za-z_][\w\.\->]*)\s*=\s*"
+    r"(?:\([\w\s\*]*\)\s*)?"  # optional cast
+    r"(?P<api>" + _NULLABLE_RETURN_APIS + r")\s*\("
+)
+
+# Patterns that count as a deref of x: x->field, *x, x[i],
+# OR x passed as a function argument (heuristic).
+_DEREF_FIELD_RE_TPL = (
+    r"\b{var}\s*->"
+)
+_DEREF_PASSED_RE_TPL = (
+    # A bare `var` passed as a function arg or used in
+    # *var.  We require either ',' or '(' immediately
+    # before to avoid matching var as part of a larger
+    # identifier or as the LHS of an assignment.
+    r"(?<![\w\->.])(?:\*\s*)?{var}(?![\w])"
+)
+
+
+def _instrument_null_after_alloc(source: str, fn_name: str
+                                 ) -> tuple[str, int]:
+    """Apply null_after_alloc fallback to the named function.
+
+    Inserts __assert_safe_to_deref(x) BEFORE each
+    dereference (x->field) or function-argument-pass of x,
+    where x is the LHS of a previous nullable-API call.
+
+    The contract on __assert_safe_to_deref(p) requires
+    `p != NULL || null_check_done(p) == 1`.  CBMC's symex
+    handles the path where x is non-NULL (assert holds) and
+    the path where x is NULL but the function reached a
+    NULL-check guard (assert holds).  Only the genuine
+    'NULL-returned-but-no-guard' path produces a contract
+    violation.
+    """
+    body_range = _find_function_body(source, fn_name)
+    if body_range is None:
+        return source, 0
+    body_start, body_end = body_range
+    body_text = source[body_start:body_end]
+    body_lines = _split_lines_with_offsets(body_text)
+
+    # Pass 1: find allocations whose LHS we'll track.
+    tracked_lhs: list[tuple[int, str]] = []  # (alloc-end-offset, lhs)
+    for ls, le, line in body_lines:
+        m = _NULLABLE_ASSIGN_RE.match(line)
+        if not m:
+            continue
+        lhs = m.group("lhs")
+        # Find the ';' terminating this statement.
+        j = ls
+        depth = 0
+        while j < len(body_text):
+            c = body_text[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            elif c == ";" and depth == 0:
+                tracked_lhs.append((j + 1, lhs))
+                break
+            j += 1
+    if not tracked_lhs:
+        return source, 0
+
+    # Pass 2: for each tracked LHS, find later derefs in
+    # the function body and insert
+    # __assert_safe_to_deref(<lhs>) before each.  Only
+    # consider derefs at offsets STRICTLY AFTER the
+    # allocation site so we don't add asserts before the
+    # allocation runs.
+    edits: list[tuple[int, int, str]] = []
+    seen_assert_offsets: set[tuple[int, str]] = set()
+    for alloc_end, lhs in tracked_lhs:
+        # Bare-identifier check is needed; we don't want to
+        # match `lhs` as part of e.g. `lhs_other`.
+        # Build safe regex by escaping the LHS.
+        esc = re.escape(lhs)
+        # Match a deref of `lhs`:
+        #   * `lhs->fld`     — pointer field access
+        #   * `*lhs`         — explicit dereference
+        #   * `lhs[i]`       — array index
+        #   * `lhs` passed to a function (heuristic: lhs
+        #     bare, preceded by `(` or `,` and followed
+        #     by `,` or `)`).
+        deref_re = re.compile(
+            # Field access
+            r"(?<![\w\->.])" + esc + r"\s*->"
+            r"|"
+            # Array index
+            r"(?<![\w\->.])" + esc + r"\s*\["
+            r"|"
+            # Explicit dereference
+            r"(?<![\w])\*\s*" + esc + r"(?![\w])"
+            r"|"
+            # Passed as function arg: preceded by `(` or `,`
+            # (with optional whitespace), followed by `,`
+            # or `)` (with optional whitespace), and not
+            # adjacent to a `&` (taking the address is fine).
+            r"(?<=[(,])\s*" + esc + r"\s*(?=[,)])"
+        )
+        # Find each deref position in the body AFTER the
+        # alloc.
+        for dm in deref_re.finditer(body_text, pos=alloc_end):
+            deref_off = dm.start()
+            # Find the start of the statement containing
+            # this offset.  We walk back from deref_off to
+            # the first ';' or '{' in the same brace depth.
+            j = deref_off
+            stmt_start = alloc_end  # sane default
+            while j > alloc_end:
+                c = body_text[j]
+                if c == ";" or c == "{":
+                    # The statement starts AFTER this delim
+                    # (skip whitespace).
+                    k = j + 1
+                    while k < len(body_text) and body_text[k] in " \t\n\r":
+                        k += 1
+                    stmt_start = k
+                    break
+                j -= 1
+            else:
+                # Reached alloc_end; statement starts there.
+                k = alloc_end
+                while k < len(body_text) and body_text[k] in " \t\n\r":
+                    k += 1
+                stmt_start = k
+
+            # De-duplicate: don't insert multiple asserts at
+            # the same statement-start for the same lhs.
+            key = (stmt_start, lhs)
+            if key in seen_assert_offsets:
+                continue
+            seen_assert_offsets.add(key)
+            # Determine the indent of the statement start
+            # by looking at the line containing stmt_start.
+            line_start = stmt_start
+            while (line_start > 0
+                   and body_text[line_start - 1] != "\n"):
+                line_start -= 1
+            indent = ""
+            k = line_start
+            while k < len(body_text) and body_text[k] in " \t":
+                indent += body_text[k]
+                k += 1
+            # Insert the assert as its own line BEFORE the
+            # statement.
+            edits.append((
+                stmt_start, stmt_start,
+                f"__assert_safe_to_deref({lhs});\n{indent}"
+            ))
+
+    if not edits:
+        return source, 0
+    edits.sort(key=lambda x: (-x[0], -x[1]))
+    new_body = body_text
+    for start, end, text in edits:
+        new_body = new_body[:start] + text + new_body[end:]
+    return (source[:body_start] + new_body + source[body_end:],
+            len(edits))
+
+
+_SHAPE_HANDLERS["null_after_alloc"] = _instrument_null_after_alloc
 
 
 # Match INIT_WORK(&X->fld, ...) and similar work-init calls.

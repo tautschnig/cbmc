@@ -135,7 +135,7 @@ if [[ -n "$TARGET_FN" && "$INSERTED_IN_FN" == "0" ]]; then
   FALLBACK_SHAPES=()
   for s in "${SHAPES[@]}"; do
     case "$s" in
-      resource_leak_on_error_path|use_after_free_generic|cancel_work_before_free)
+      resource_leak_on_error_path|use_after_free_generic|cancel_work_before_free|null_after_alloc)
         FALLBACK_SHAPES+=("$s")
         ;;
     esac

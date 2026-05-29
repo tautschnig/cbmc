@@ -282,7 +282,16 @@ echo "[per-file] module=$MODULE file=$KERNEL_FILE function=$TARGET_FUNC"
 #   INSTRUMENT=<shapes>  — comma-separated list of cocci shapes.
 INSTR_TU=""
 if [[ -n "${INSTRUMENT:-}" ]]; then
-  INSTR_TU="$tmp/${stem}.instrumented.c"
+  # Use a sub-directory whose filename MATCHES the original
+  # source's basename so goto-cc's file-local-symbol mangling
+  # produces the same `__CPROVER_file_local_<basename>_c_<fn>`
+  # name as the harness expects.  Previously we wrote to
+  # `${stem}.instrumented.c`, which produced
+  # `..._instrumented_c_<fn>` and the harness's call missed
+  # the body.
+  INSTR_DIR="$tmp/instr"
+  mkdir -p "$INSTR_DIR"
+  INSTR_TU="$INSTR_DIR/$(basename -- "$KERNEL_FILE")"
   echo "[1a/7] instrumenting kernel TU (mode: $INSTRUMENT)..."
   case "$INSTRUMENT" in
     regex)
