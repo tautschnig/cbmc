@@ -61,16 +61,31 @@ exprt resolve_jml_expr(
     {
       const auto &params = to_code_type(func_sym->type).parameters();
 
+      // For instance methods, the GOTO `params` list begins with
+      // an implicit `this` parameter that the source-extracted
+      // `param_names` (parsed from the method signature in the
+      // JML file) does not include. Skip it so positional-match
+      // aligns the JML signature's i-th name with the i-th real
+      // parameter.
+      const std::size_t param_offset =
+        (!params.empty() &&
+         id2string(params.front().get_base_name()) == "this")
+          ? 1
+          : 0;
+
       // Positional match via param_names from source signature
-      for(std::size_t i = 0; i < param_names.size() && i < params.size(); ++i)
+      for(std::size_t i = 0;
+          i < param_names.size() && i + param_offset < params.size();
+          ++i)
       {
         if(param_names[i] == name_str)
         {
-          if(!params[i].get_identifier().empty())
+          const auto &p = params[i + param_offset];
+          if(!p.get_identifier().empty())
           {
             if(
               const auto *psym =
-                ns.get_symbol_table().lookup(params[i].get_identifier()))
+                ns.get_symbol_table().lookup(p.get_identifier()))
               return psym->symbol_expr();
           }
         }

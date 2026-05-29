@@ -1,0 +1,33 @@
+CORE
+JmlInstanceMethod
+--function "JmlInstanceMethod.clamp:(III)I" --jml-source src/main/java/JmlInstanceMethod.java --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML on instance methods (non-static).
+
+The bug:
+  jml_lowering's positional-match loop iterated `params[i]` against
+  `param_names[i]`. For instance methods, `params[0]` is the
+  implicit `this` parameter; `param_names[0]` is the first
+  user-declared parameter. So `x` was bound to the `this` slot,
+  `lo` to the first int slot, etc. Equality between the int
+  return value and the (now pointer-typed) `x` triggered:
+
+    Invariant check failed
+    File: solvers/flattening/boolbv_equality.cpp:18
+    Reason: equality_types_match
+
+The fix:
+  Detect whether `params[0]` is `this` and apply a +1 offset to
+  the param-array index so source-extracted parameter names
+  align with the corresponding GOTO parameters in the bytecode.
+
+This test exercises the instance-method case end-to-end with
+three contract clauses including the `\result == x` equality that
+previously crashed JBMC.
