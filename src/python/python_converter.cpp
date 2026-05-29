@@ -1335,9 +1335,34 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
         }
       }
       irep_idt sid{qualify_name(nm)};
+      // Pre-scan-recorded shape: y = nondet_str() / y = "lit" /
+      // y = chr(c) → python_string. Visible to the prescan
+      // even though the symbol_table doesn't have y yet.
+      if(name_is_string.count(sid) > 0)
+        return python_string_type();
+      auto le_it = name_list_elem_t.find(sid);
+      if(le_it != name_list_elem_t.end())
+        return python_list_type(le_it->second);
       const symbolt *s = symbol_table.lookup(sid);
       if(s != nullptr && s->type.id() != ID_empty)
         return s->type;
+    }
+    // Direct call: nondet_str() / chr(...) / nondet_string()
+    // returns python_string. Helps 'x.append(nondet_str())'.
+    if(is_node_type(n, "Call") && is_node_type(json_member(n, "func"), "Name"))
+    {
+      std::string callee =
+        json_string(json_member(json_member(n, "func"), "id"));
+      if(
+        callee == "nondet_str" || callee == "nondet_string" ||
+        callee == "chr" || callee == "str")
+        return python_string_type();
+      if(callee == "nondet_int" || callee == "ord" || callee == "len")
+        return python_int_type();
+      if(callee == "nondet_float")
+        return double_type();
+      if(callee == "nondet_bool")
+        return bool_typet{};
     }
     return typet{}; // unknown
   };
@@ -1444,6 +1469,18 @@ void python_convertert::collect_empty_list_inferred_types(const jsont &body)
                   if(dk != name_dict_key_t.end())
                     name_list_elem_t[sid] = dk->second;
                 }
+              }
+              // 'name = nondet_str()' / 'name = chr(...)' /
+              // 'name = nondet_string()' produce a python_string
+              // value. Record so subsequent 'lst.append(name)'
+              // pre-scan resolves the element type.
+              else if(is_node_type(fn, "Name"))
+              {
+                std::string callee = json_string(json_member(fn, "id"));
+                if(
+                  callee == "nondet_str" || callee == "nondet_string" ||
+                  callee == "chr")
+                  name_is_string.insert(sid);
               }
             }
             else if(
