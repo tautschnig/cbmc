@@ -788,21 +788,28 @@ codet python_convertert::convert_assign(const jsont &stmt)
           target_sym != nullptr && (is_python_list_type(target_sym->type) ||
                                     is_python_dict_type(target_sym->type)))
         {
-          // Ensure lhs is in the symbol table (Assign without
-          // annotation may not have pre-registered it). Bind
-          // its type to match the source's so the alias check
-          // in compare picks the right path.
+          // PLR §3.1: pointer-promotion. Bind lhs's symbol type
+          // to pointer-to-target so subsequent reads through
+          // lhs auto-dereference, and mutations through lhs
+          // hit the same storage as rhs (alias semantics for
+          // 'l2 = l1; l2.pop()' / 'd2 = d1; d2[k] = v').
+          // Mirrors convert_ann_assign's path.
+          pointer_typet ptr_type{target_sym->type, 64};
           if(symbol_table.lookup(lhs_id) == nullptr)
           {
-            symbolt s{lhs_id, target_sym->type, "python"};
+            symbolt s{lhs_id, ptr_type, "python"};
             s.base_name = lhs_name;
             s.is_lvalue = true;
             s.is_state_var = true;
             s.is_static_lifetime = current_function.empty();
             symbol_table.add(s);
           }
-          // Record the alias. Both 'is' and 'is not' walk the
-          // chain to canonical and compare canonical IDs.
+          else
+          {
+            symbol_table.get_writeable_ref(lhs_id).type = ptr_type;
+          }
+          // Record the alias chain so the 'is' check walks to
+          // canonical and treats both ends as the same object.
           alias_targets[lhs_id] = target_id;
           // Drop any cached literal for the canonical source
           // because the alias makes its contents reachable
@@ -811,14 +818,15 @@ codet python_convertert::convert_assign(const jsont &stmt)
           // snapshot.
           list_literals.erase(target_id);
           dict_literals.erase(target_id);
-          // Emit the assignment as a plain copy. Pointer-based
-          // promotion (as in convert_ann_assign) would be
-          // semantically more accurate, but it requires
-          // changing the LHS symbol's type to a pointer and
-          // touching every later read — too big a change for
-          // an assignment whose only purpose is identity
-          // tracking. The alias_targets entry alone is
-          // sufficient to make the 'is' check return True.
+          tuple_literals.erase(target_id);
+          string_constants.erase(target_id);
+          // Emit lhs = address_of(target_sym).
+          source_locationt loc2 = get_location(stmt);
+          code_frontend_assignt assign{
+            symbol_table.lookup_ref(lhs_id).symbol_expr(),
+            address_of_exprt{target_sym->symbol_expr()}};
+          assign.add_source_location() = loc2;
+          return std::move(assign);
         }
       }
     }
