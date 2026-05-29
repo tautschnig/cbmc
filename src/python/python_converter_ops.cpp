@@ -149,16 +149,24 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     bool r_is_num =
       right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
       right.type().id() == ID_floatbv || right.type().id() == ID_bool;
+    // PLR §3.2: a python_value (tagged union) operand can hold
+    // an int / float / bool (or any other type) at runtime.
+    // For list / str repetition we accept it as 'num-like' so
+    // 'list * unannotated_int_param' doesn't trip an incompatible
+    // TypeError at conversion time. The operand-promotion path
+    // below unwraps it as needed.
+    bool l_is_value = is_python_value_type(left.type());
+    bool r_is_value = is_python_value_type(right.type());
     bool incompatible = false;
     // list OP non-list: only list * int (repeat) is valid.
     if(l_is_list && !r_is_list)
     {
-      if(!(op == "Mult" && r_is_num))
+      if(!(op == "Mult" && (r_is_num || r_is_value)))
         incompatible = true;
     }
     if(r_is_list && !l_is_list)
     {
-      if(!(op == "Mult" && l_is_num))
+      if(!(op == "Mult" && (l_is_num || l_is_value)))
         incompatible = true;
     }
     // dict / set with anything else is invalid.
@@ -169,12 +177,12 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // str OP non-str/num: invalid unless str * int (repeat).
     if(l_is_str && !r_is_str)
     {
-      if(!(op == "Mult" && r_is_num))
+      if(!(op == "Mult" && (r_is_num || r_is_value)))
         incompatible = true;
     }
     if(r_is_str && !l_is_str)
     {
-      if(!(op == "Mult" && l_is_num))
+      if(!(op == "Mult" && (l_is_num || l_is_value)))
         incompatible = true;
     }
     // PLR §6.7: complex OP str / list / etc. raises TypeError.
@@ -744,12 +752,28 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     return if_exprt{either_float, float_wrapped, int_wrapped};
   }
 
-  // Unwrap tagged-union values to concrete types for operations
+  // Unwrap tagged-union values to concrete types for operations.
+  // Special case: 'list * value' / 'value * list' is a repeat, so
+  // a tagged-union 'value' must be unwrapped to int (NOT to the
+  // other operand's list type via __list_ptr — that breaks the
+  // repeat semantics).
   if(is_python_value_type(left.type()))
-    left = unwrap_value(
-      left, right.type().id() != ID_struct ? right.type() : python_int_type());
+  {
+    typet target =
+      right.type().id() != ID_struct && right.type().id() != ID_struct_tag
+        ? right.type()
+        : python_int_type();
+    if(is_python_list_type(right.type()) && op == "Mult")
+      target = python_int_type();
+    left = unwrap_value(left, target);
+  }
   if(is_python_value_type(right.type()))
-    right = unwrap_value(right, left.type());
+  {
+    typet target = left.type();
+    if(is_python_list_type(left.type()) && op == "Mult")
+      target = python_int_type();
+    right = unwrap_value(right, target);
+  }
 
   // Guard: if types are incompatible after unwrapping, cast to match
   if(
@@ -902,6 +926,11 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     const auto &data_type = to_array_type(list_type.components()[1].type());
     member_exprt old_len{left, "length", signedbv_typet{64}};
     member_exprt old_data{left, "data", data_type};
+    // PLR §3.2: unwrap python_value to int when needed (the
+    // right-hand side could be a tagged union holding an int).
+    // The Mult-aware unwrap path above already handles this for
+    // python_value-typed operands; the cast here also handles
+    // any other numeric operand (signedbv, floatbv, bool).
     exprt n = safe_typecast(right, signedbv_typet{64});
 
     static unsigned list_repeat_counter = 0;
