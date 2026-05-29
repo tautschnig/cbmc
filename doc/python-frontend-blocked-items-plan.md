@@ -140,6 +140,43 @@ inference issue but is less architecturally clean.
 - Remove the cluster-v9 length-zero Optional[str] fast-path (if
   migration handles it cleanly via tag).
 
+**Phase 0.F status (2026-05-29):** done in part. Completed:
+- Class-method heterogeneous-return widening (covers
+  `defaultdict.__missing__` returning 0/0.0/[]/None).
+- Void-fall-through function widening (`def f(): pass`,
+  `def g(x): if cond: do_x()`).
+- `wrap_value(sentinel-int-constant)` returns
+  `python_none_value()` (eliminates {INT, sentinel} from
+  compile-time constants).
+- Centralised None-construction sites use the helpers
+  (`python_none_value()`, `python_none_sentinel_int()`).
+
+Deferred — requires data-flow tracking:
+- The typed-numeric `is None`=False fast-path (`x:int is None
+  → False`). Cannot fire safely until two test patterns are
+  migrated:
+  1. `def f(x:int) -> int: if cond: return x` — annotated
+     fall-through, where the implicit None becomes the int
+     sentinel via `safe_typecast`. Caller's `result is None`
+     would fail with the rule. Needs: detect annotated-with-
+     fall-through and either widen the return type to
+     `python_value` OR track per-call-site "implicit None
+     capable".
+  2. Counter/__missing__-style legacy patterns where a typed-
+     int return path encodes None as the sentinel (these are
+     largely covered by class-method widening, but inherited
+     methods may still produce sentinel-int returns).
+
+Still kept (still needed under the dual encoding):
+- `is_optional_sym` skip in the struct-vs-sentinel False fast-
+  path: Optional[T]-bound-to-None in non-numeric typed slots
+  uses the length-0 marker (Optional[str]) or sentinel
+  (Optional[int]); the skip prevents the False fast-path from
+  shadowing the Optional path.
+- The cluster-v9 length-0 Optional[str] marker: still the way
+  default-None binding stores its value for python_string-typed
+  parameters.
+
 ### Expected gains
 - `nondet_list4` (typed-int never None)
 - Several `optional*`-class tests
@@ -380,4 +417,7 @@ to it.
 
 ---
 
-**Last updated:** 2026-05-29 (PASS 2851 cumulative wave 41).
+**Last updated:** 2026-05-29 (PASS 2852 cumulative wave 41 +251).
+P0 phases 0.A–0.F substantially complete; the typed-numeric
+`is None`=False fast-path is the remaining piece, deferred until
+data-flow tracking for implicit-None pathways is in place.
