@@ -416,6 +416,13 @@ private:
   /// so the cached literal isn't safe to use unconditionally.
   std::map<std::string, std::size_t> function_return_count;
   std::map<irep_idt, exprt> list_literals; // track list literal values
+  /// PLR §3.2: empty-list element-type inference. For a body
+  /// containing `lst = []` followed by `lst.append(X)` (or
+  /// `.extend(X)`), record the inferred element type so the
+  /// `[]` allocation uses the right element type instead of
+  /// the int default. Without this the typecast at append
+  /// time zeros struct-typed elements (e.g. strings).
+  std::map<irep_idt, typet> empty_list_inferred_types;
   /// Track tuple literal values keyed by symbol identifier. Same
   /// purpose as list_literals: lets the constant-fold path in
   /// convert_call resolve `min(t)`/`max(t)`/etc. when `t` was
@@ -550,6 +557,13 @@ private:
   /// module body / function body before convert_module_body runs).
   std::set<irep_idt> escaped_mutables;
   void collect_escaped_mutables(const jsont &body);
+  /// PLR §3.2: pre-scan a body for the empty-list element-type
+  /// pattern. For each 'name = []' followed in the same body by
+  /// 'name.append(X)' / 'name.extend(X)' where X is constant /
+  /// has a known type, record the inferred element type in
+  /// empty_list_inferred_types so the `[]` allocation produces
+  /// a list with the right element type.
+  void collect_empty_list_inferred_types(const jsont &body);
   std::optional<std::string> extract_string_value(const exprt &e) const;
 
   /// PLR §8.2 / §8.3: invalidate conversion-time constant tracking

@@ -1741,6 +1741,7 @@ bool python_convertert::convert()
   // current_function is "" at module scope, so escapees get
   // qualified as `python::<name>`.
   collect_escaped_mutables(body);
+  collect_empty_list_inferred_types(body);
   code_blockt module_body = convert_module_body(body);
 
   // Store the module body as a function symbol for later use by

@@ -138,6 +138,43 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   if(rhs.is_nil())
     return code_skipt{};
 
+  // PLR §3.2: empty-list element-type inference. Same as in
+  // convert_assign, but applies when the user wrote
+  // 'name: list = []' (bare 'list' annotation, no parameter).
+  // Parameterised forms (list[T]) already lock in T via the
+  // annotation conversion above.
+  if(
+    is_node_type(value, "List") && json_member(value, "elts").is_array() &&
+    as_array(json_member(value, "elts")).empty() &&
+    is_python_list_type(rhs.type()))
+  {
+    auto inf_it = empty_list_inferred_types.find(symbol_id);
+    if(inf_it != empty_list_inferred_types.end())
+    {
+      typet new_elem_t = inf_it->second;
+      // Only override when annotation was bare list (or list
+      // with default int element). Skip when annotation
+      // already specified the element type.
+      const auto &cur_st = to_struct_type(rhs.type());
+      const auto &cur_data_t = to_array_type(cur_st.components()[1].type());
+      if(
+        cur_data_t.element_type() == python_int_type() ||
+        cur_data_t.element_type().id() == ID_empty)
+      {
+        struct_typet new_list_type = python_list_type(new_elem_t);
+        const auto &new_data_type =
+          to_array_type(new_list_type.components()[1].type());
+        exprt::operandst zeros;
+        for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+          zeros.push_back(safe_zero(new_elem_t));
+        array_exprt new_data{std::move(zeros), new_data_type};
+        rhs = struct_exprt{
+          {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
+        // Refresh the symbol's type to match the rebuilt list.
+        symbol_table.get_writeable_ref(symbol_id).type = new_list_type;
+      }
+    }
+  }
   // PLR §3.1: storage promotion for escaped mutables.
   // If this name's qualified form is in `escaped_mutables` (i.e. it
   // appears as a Name element of some List/Dict literal elsewhere)
@@ -1050,6 +1087,39 @@ codet python_convertert::convert_assign(const jsont &stmt)
   exprt rhs = convert_expression(value);
   if(rhs.is_nil())
     return code_skipt{};
+
+  // PLR §3.2: if the RHS is an empty list literal AND the
+  // single Name target is in empty_list_inferred_types
+  // (populated by collect_empty_list_inferred_types from a
+  // following 'name.append(X)' in the same body), rebuild
+  // the rhs with the inferred element type so the list's
+  // backing array matches the appended values' type. Without
+  // this the typecast at append time zeros struct-typed
+  // elements (string / list / dict / class).
+  if(
+    is_node_type(value, "List") && json_member(value, "elts").is_array() &&
+    as_array(json_member(value, "elts")).empty() &&
+    as_array(targets).size() == 1 &&
+    is_node_type(*as_array(targets).begin(), "Name"))
+  {
+    std::string lhs_name =
+      json_string(json_member(*as_array(targets).begin(), "id"));
+    irep_idt lhs_id{qualify_name(lhs_name)};
+    auto inf_it = empty_list_inferred_types.find(lhs_id);
+    if(inf_it != empty_list_inferred_types.end())
+    {
+      typet new_elem_t = inf_it->second;
+      struct_typet new_list_type = python_list_type(new_elem_t);
+      const auto &new_data_type =
+        to_array_type(new_list_type.components()[1].type());
+      exprt::operandst zeros;
+      for(std::size_t i = 0; i < PYTHON_MAX_LIST_LENGTH; i++)
+        zeros.push_back(safe_zero(new_elem_t));
+      array_exprt new_data{std::move(zeros), new_data_type};
+      rhs = struct_exprt{
+        {from_integer(0, signedbv_typet{64}), new_data}, new_list_type};
+    }
+  }
 
   // Lambda/function assignment: record alias instead of creating variable
   if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
