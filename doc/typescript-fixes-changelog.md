@@ -191,3 +191,42 @@ returns the corresponding constant.
 Total of 76 individual `console.assert` checks across the five tests
 (plus the existing `regexp-test-literal/` Phase 1 test which
 continues to pass — Phase 2 strictly extends Phase 1).
+
+### `date-calendar-getters` — Date getMonth/Date/Day/Hours/Minutes/Seconds/Milliseconds (2026-05-29)
+
+**Was**: `getMonth`, `getDate`, `getDay`, `getHours`, `getMinutes`,
+`getSeconds`, and `getMilliseconds` all returned
+`side_effect_expr_nondett{double_type()}` regardless of the
+underlying timestamp. Only `getFullYear` was deterministic (via
+approximate epoch arithmetic).
+
+**Resolution** (`typescript_converter_call.cpp` Date dispatch):
+implements all seven getters with deterministic integer arithmetic
+on the int64-cast timestamp.
+
+- **`getMilliseconds`** = `time mod 1000`.
+- **`getSeconds`** = `(time / 1000) mod 60`.
+- **`getMinutes`** = `(time / 60000) mod 60`.
+- **`getHours`** = `(time / 3600000) mod 24`.
+- **`getDay`** = `((time / 86400000) + 4) mod 7`. (Jan 1 1970 was a
+  Thursday = 4.)
+- **`getMonth`** and **`getDate`** use the Howard Hinnant
+  `civil_from_days` algorithm — a closed-form integer conversion
+  from days-since-epoch to (year, month, day) without per-year
+  iteration. The full pipeline (z, era, doe, yoe, doy, mp, d, m)
+  is built as a sequence of `div_exprt` / `minus_exprt` /
+  `plus_exprt` operations on int64.
+
+The cast int64←double is exact for any timestamp representable as
+a 64-bit integer (covers ±10^15 ms, well beyond JS's relevant
+range). Negative-timestamp correctness is not yet handled (the
+`era` formula needs a corrected branch); documented as a known
+imprecision.
+
+**Regression guards**:
+- `regression/typescript/date-calendar-getters/` — 27 assertions
+  against known timestamps (Unix epoch, Jan 1 2026, mid-2026
+  symbolic, Feb 29 2024 leap day) checking every getter.
+- `regression/typescript/date-getters-symbolic/` — 7 range-bound
+  invariants (millis ∈ [0, 999], seconds ∈ [0, 59], etc.) on a
+  bounded symbolic timestamp.

@@ -28,7 +28,8 @@ lower priority than originally estimated.
 | 9. WeakRef.deref() | done | 5c06761f7e |
 | 2.9 for-of/split member_exprt invariant | done | 1dda2c44f6 |
 | 3.4 taint analysis precision (value-typed) | done | (see changelog) |
-| P1.1 RegExp Phase 2 (NFA-based metacharacters) | done | (this commit) |
+| P1.1 RegExp Phase 2 (NFA-based metacharacters) | done | 7d98efe271 |
+| P1.2 Date calendar getters | done | (this commit) |
 
 ---
 
@@ -60,7 +61,7 @@ if a real user need surfaces.
 |---|------|----------|--------|
 | **P1.1** | RegExp Phase 2 (metacharacters via NFA: `.` `*` `+` `?` `[]` `^` `$` `\d` `\w` `\s`) | 2–3 days | done |
 | **P1.1b** | RegExp Phase 2b: `\|` alternation, `(...)` grouping, `{n,m}` quantifiers | 2 days | pending |
-| **P1.2** | Date calendar getters (getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds) | 1 day | pending |
+| **P1.2** | Date calendar getters (getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds) | 1 day | done |
 | **P1.3** | Integrate CodeQL `DataFlow::Global` into triage queries | 3–4 days | pending |
 | **P1.4** | Public release skeleton for the CodeQL pack (waits on coordinated-disclosure completion) | 2–3 days | pending |
 

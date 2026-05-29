@@ -5692,20 +5692,127 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         result.type() = double_type();
         return std::move(result);
       }
-      if(method == "getMonth")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
-      if(method == "getDate")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
-      if(method == "getDay")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
-      if(method == "getHours")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
-      if(method == "getMinutes")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
-      if(method == "getSeconds")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
+      // ES2024 §21.4.1.4–8: time-of-day getters via integer modular
+      // arithmetic. Cast the (double) timestamp to int64 first; this
+      // is exact for any timestamp representable as a 64-bit integer
+      // (covers the entire JS-relevant range ±10^15 ms).
+      //
+      // For getDate/getMonth we use the Howard Hinnant
+      // (chrono/civil) algorithm: a closed-form conversion from
+      // days-since-epoch to (year, month, day) that avoids
+      // year-by-year iteration. See
+      // http://howardhinnant.github.io/date_algorithms.html
+      auto cast_d2i = [&](const exprt &e) -> exprt {
+        return typecast_exprt{e, signedbv_typet{64}};
+      };
+      auto i2d = [&](const exprt &e) -> exprt {
+        return typecast_exprt{e, double_type()};
+      };
+      auto i64 = [&](long long v) -> exprt
+      { return from_integer(v, signedbv_typet{64}); };
+
       if(method == "getMilliseconds")
-        return side_effect_expr_nondett{double_type(), get_location(node)};
+      {
+        // time mod 1000
+        exprt t = cast_d2i(time_field);
+        return i2d(mod_exprt{t, i64(1000)});
+      }
+      if(method == "getSeconds")
+      {
+        // floor(time / 1000) mod 60
+        exprt t = cast_d2i(time_field);
+        exprt sec = div_exprt{t, i64(1000)};
+        return i2d(mod_exprt{sec, i64(60)});
+      }
+      if(method == "getMinutes")
+      {
+        // floor(time / 60000) mod 60
+        exprt t = cast_d2i(time_field);
+        exprt minute = div_exprt{t, i64(60000)};
+        return i2d(mod_exprt{minute, i64(60)});
+      }
+      if(method == "getHours")
+      {
+        // floor(time / 3600000) mod 24
+        exprt t = cast_d2i(time_field);
+        exprt hour = div_exprt{t, i64(3600000)};
+        return i2d(mod_exprt{hour, i64(24)});
+      }
+      if(method == "getDay")
+      {
+        // (floor(time / 86400000) + 4) mod 7
+        // Jan 1 1970 was Thursday (= 4).
+        exprt t = cast_d2i(time_field);
+        exprt days = div_exprt{t, i64(86400000)};
+        exprt shifted = plus_exprt{days, i64(4), signedbv_typet{64}};
+        return i2d(mod_exprt{shifted, i64(7)});
+      }
+      if(method == "getMonth" || method == "getDate")
+      {
+        // Howard Hinnant civil_from_days. Computes (year, month, day)
+        // from days-since-epoch via closed-form integer arithmetic.
+        //
+        //   days = floor(time / 86400000)
+        //   z    = days + 719468
+        //   era  = z / 146097                       (assumes z >= 0)
+        //   doe  = z - era * 146097                 [0, 146096]
+        //   yoe  = (doe - doe/1460 + doe/36524 - doe/146096) / 365
+        //                                            [0, 399]
+        //   doy  = doe - (365*yoe + yoe/4 - yoe/100) [0, 365]
+        //   mp   = (5*doy + 2) / 153                 [0, 11]
+        //   d    = doy - (153*mp + 2)/5 + 1          [1, 31]
+        //   m    = mp < 10 ? mp + 3 : mp - 9         [1, 12]
+        //
+        // Caveat: this assumes time >= 0. For negative timestamps,
+        // the algorithm needs a corrected `era` formula. We treat
+        // negative-time correctness as a known imprecision (rare in
+        // practice).
+        signedbv_typet i64t{64};
+        exprt t = cast_d2i(time_field);
+        exprt days = div_exprt{t, i64(86400000)};
+        exprt z = plus_exprt{days, i64(719468), i64t};
+        exprt era = div_exprt{z, i64(146097)};
+        // doe = z - era * 146097
+        exprt doe = minus_exprt{z, mult_exprt{era, i64(146097)}};
+        // yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365
+        exprt doe_div_1460 = div_exprt{doe, i64(1460)};
+        exprt doe_div_36524 = div_exprt{doe, i64(36524)};
+        exprt doe_div_146096 = div_exprt{doe, i64(146096)};
+        exprt yoe_num1 = minus_exprt{doe, doe_div_1460};
+        exprt yoe_num2 = plus_exprt{yoe_num1, doe_div_36524, i64t};
+        exprt yoe_num3 = minus_exprt{yoe_num2, doe_div_146096};
+        exprt yoe = div_exprt{yoe_num3, i64(365)};
+        // doy = doe - (365*yoe + yoe/4 - yoe/100)
+        exprt yoe_x_365 = mult_exprt{yoe, i64(365)};
+        exprt yoe_div_4 = div_exprt{yoe, i64(4)};
+        exprt yoe_div_100 = div_exprt{yoe, i64(100)};
+        exprt doy_sub1 = plus_exprt{yoe_x_365, yoe_div_4, i64t};
+        exprt doy_sub2 = minus_exprt{doy_sub1, yoe_div_100};
+        exprt doy = minus_exprt{doe, doy_sub2};
+        // mp = (5*doy + 2) / 153
+        exprt doy_x_5 = mult_exprt{doy, i64(5)};
+        exprt mp_num = plus_exprt{doy_x_5, i64(2), i64t};
+        exprt mp = div_exprt{mp_num, i64(153)};
+
+        if(method == "getDate")
+        {
+          // d = doy - (153*mp + 2)/5 + 1
+          exprt mp_x_153 = mult_exprt{mp, i64(153)};
+          exprt d_sub_num = plus_exprt{mp_x_153, i64(2), i64t};
+          exprt d_sub = div_exprt{d_sub_num, i64(5)};
+          exprt d_minus = minus_exprt{doy, d_sub};
+          exprt d = plus_exprt{d_minus, i64(1), i64t};
+          return i2d(d);
+        }
+        // method == "getMonth"
+        // m = mp < 10 ? mp + 3 : mp - 9, then 0-index for JS
+        // i.e. js_month = (mp < 10) ? mp + 2 : mp - 10
+        exprt cond = binary_relation_exprt{mp, ID_lt, i64(10)};
+        exprt then_branch = plus_exprt{mp, i64(2), i64t};
+        exprt else_branch = minus_exprt{mp, i64(10)};
+        exprt js_month = if_exprt{cond, then_branch, else_branch};
+        return i2d(js_month);
+      }
       // toISOString(), toString(), toLocaleDateString() — nondet string.
       if(
         method == "toISOString" || method == "toString" ||

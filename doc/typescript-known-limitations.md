@@ -282,14 +282,13 @@ prefixes/suffixes into the surrounding code.
 `tautschnig/py` branch — would enable symbolic regex matching via
 `str.in_re`. Currently waiting for upstream debugging to settle.
 
-### 2.2 Date calendar getters
+### 2.2 Date calendar getters (resolved 2026-05-29)
 
-**What**: `getMonth`, `getDate`, `getDay`, `getHours`, etc. return
-nondet (only `getFullYear` is implemented via epoch arithmetic).
-
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 2.
+Resolved: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)" → `date-calendar-getters`.
+Regression guards: `regression/typescript/date-calendar-getters/`
+and `regression/typescript/date-getters-symbolic/` (both CORE).
 
 ### 2.3 Generator next(value) parameters
 

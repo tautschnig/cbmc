@@ -1,0 +1,14 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §21.4.1: Date calendar/time-of-day getters (getMilliseconds,
+getSeconds, getMinutes, getHours, getDay, getDate, getMonth)
+implemented via integer modular arithmetic and the Howard Hinnant
+civil_from_days algorithm. Verifies known timestamps including
+the Unix epoch, a January 1, a mid-year time, and a leap day.
