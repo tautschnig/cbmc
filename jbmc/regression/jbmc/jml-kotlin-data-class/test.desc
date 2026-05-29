@@ -1,0 +1,32 @@
+CORE
+JmlKotlinDataClass
+--function "experiment.JmlKotlinDataClass.isViewable:(Lexperiment/ColumnAttributes;)Z" --jml-source src/main/kotlin/JmlKotlinDataClass.kt --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML field access on Kotlin data classes.
+
+Kotlin's `data class ColumnAttributes(val viewable: Boolean, ...)`
+emits private final boolean fields plus public getX() accessors.
+JML on `attrs.viewable` resolves to a member_exprt against the
+private field — Java-level access modifiers don't gate JBMC's
+bytecode-level analysis, but the field's type (c_bool, width 8)
+does require coercion to bool when used directly as a JML
+predicate (otherwise downstream's equal_exprt construction
+trips on type mismatch).
+
+Exercises three coordinated improvements at once:
+  1. obj.field resolution via jml_field_access (this commit's
+     siblings: jml-this-field, jml-inherited-field).
+  2. c_bool → bool coercion at the requires/ensures boundary
+     (so `requires attrs.viewable` works as a logical predicate
+     even though Java's boolean is c_bool_typet width 8).
+  3. Null-literal pointer typing for `attrs != null` against
+     a struct-tagged pointer parameter (parser produces null
+     with empty pointee type; resolver retypes to match the
+     comparison peer).

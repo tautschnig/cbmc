@@ -123,10 +123,97 @@ exprt resolve_jml_expr(
     if(const auto *sym = ns.get_symbol_table().lookup(param_id))
       return sym->symbol_expr();
 
-    // Try as a static field: class_id.name
-    const irep_idt field_id = id2string(class_id) + "." + name_str;
-    if(const auto *sym = ns.get_symbol_table().lookup(field_id))
-      return sym->symbol_expr();
+    // Special case: bare `this` → the implicit first parameter
+    // of an instance method. Look up `<method_id>::this`.
+    if(name_str == "this")
+    {
+      const irep_idt this_id = id2string(method_id) + "::this";
+      if(const auto *sym = ns.get_symbol_table().lookup(this_id))
+        return sym->symbol_expr();
+    }
+
+    // Try as a static field: class_id.name. Walk the class
+    // hierarchy if the field isn't on the enclosing class
+    // directly: a JML expression that references an inherited
+    // field without an explicit `super.` qualifier should still
+    // resolve. We follow base-class symbols via the struct
+    // type's components — the first component on a derived
+    // class is `@<BaseName>`, whose type is a struct_tag of the
+    // parent class — and try each ancestor in turn.
+    //
+    // For instance fields, build a member-access chain rooted
+    // at the method's `this` parameter and walking through each
+    // `@<Parent>` synthetic component until we reach the
+    // declaring class.
+    {
+      irep_idt cur_class_id = class_id;
+      // `this_chain`, when non-empty, is a member_exprt rooted
+      // at `*this` whose value walks the @-component chain.
+      // Built lazily the first time we need it.
+      auto build_this_chain = [&]() -> exprt
+      {
+        const irep_idt this_id = id2string(method_id) + "::this";
+        const auto *this_sym = ns.get_symbol_table().lookup(this_id);
+        if(this_sym == nullptr)
+          return nil_exprt();
+        exprt this_ref = this_sym->symbol_expr();
+        if(this_ref.type().id() == ID_pointer)
+          this_ref = dereference_exprt(this_ref);
+        return this_ref;
+      };
+      exprt this_chain = nil_exprt();
+      while(!cur_class_id.empty())
+      {
+        const irep_idt static_field_id =
+          id2string(cur_class_id) + "." + name_str;
+        if(const auto *sym = ns.get_symbol_table().lookup(static_field_id))
+          return sym->symbol_expr();
+
+        const auto *cls = ns.get_symbol_table().lookup(cur_class_id);
+        if(cls == nullptr || cls->type.id() != ID_struct)
+          break;
+        const auto &components = to_struct_type(cls->type).components();
+
+        // Direct match on this class's components.
+        for(const auto &c : components)
+        {
+          if(c.get_name() == name_str || c.get_base_name() == name_str)
+          {
+            if(this_chain.is_nil())
+              this_chain = build_this_chain();
+            if(this_chain.is_nil())
+              break;
+            return member_exprt(
+              std::move(this_chain), c.get_name(), c.type());
+          }
+        }
+
+        // Walk to the base class via the synthetic `@<Parent>`
+        // component (java_bytecode_convert_class emits this as
+        // the first component of subclasses). Extend the
+        // member-access chain so the eventual leaf access is
+        // typed against the correct ancestor struct.
+        irep_idt next;
+        for(const auto &c : components)
+        {
+          const std::string cname = id2string(c.get_name());
+          if(
+            !cname.empty() && cname[0] == '@' &&
+            c.type().id() == ID_struct_tag)
+          {
+            if(this_chain.is_nil())
+              this_chain = build_this_chain();
+            if(this_chain.is_nil())
+              break;
+            this_chain = member_exprt(
+              std::move(this_chain), c.get_name(), c.type());
+            next = to_struct_tag_type(c.type()).get_identifier();
+            break;
+          }
+        }
+        cur_class_id = next;
+      }
+    }
 
     // Leave unresolved — will produce a verification failure with
     // a clear "unknown symbol" message.
@@ -134,7 +221,79 @@ exprt resolve_jml_expr(
   }
 
   // Resolve jml_field_access: obj.field → member_exprt or
-  // static field symbol
+  // static field symbol. The parser produced an
+  // `jml_field_access` node carrying the field name; the
+  // receiver is operands()[0] (which itself may be unresolved
+  // and needs recursive resolution first).
+  if(e.id() == jml_ids::jml_field_access && e.operands().size() == 1)
+  {
+    exprt receiver = resolve_jml_expr(
+      e.operands()[0], method_id, class_id, ns, param_names);
+    const irep_idt field_name{e.get("field_name")};
+
+    // Static field: <ReceiverClassName>.field_name. The receiver
+    // is a (resolved) symbol naming the class itself rather than
+    // an instance — treat the receiver as a class identifier and
+    // look up the static field directly.
+    if(receiver.id() == ID_symbol)
+    {
+      const irep_idt &recv_id =
+        to_symbol_expr(receiver).get_identifier();
+      const irep_idt field_id =
+        id2string(recv_id) + "." + id2string(field_name);
+      if(const auto *sym = ns.get_symbol_table().lookup(field_id))
+        return sym->symbol_expr();
+    }
+
+    // Instance field: dereference the pointer and walk the
+    // struct's components (including super-classes via the
+    // `@<Parent>` synthetic field).
+    if(receiver.type().id() == ID_pointer)
+      receiver = dereference_exprt(receiver);
+
+    if(receiver.type().id() == ID_struct_tag)
+    {
+      irep_idt cur = to_struct_tag_type(receiver.type()).get_identifier();
+      exprt cur_obj = receiver;
+      while(!cur.empty())
+      {
+        const auto *cls = ns.get_symbol_table().lookup(cur);
+        if(cls == nullptr || cls->type.id() != ID_struct)
+          break;
+        const auto &components = to_struct_type(cls->type).components();
+        for(const auto &c : components)
+        {
+          if(
+            c.get_name() == field_name ||
+            c.get_base_name() == field_name)
+          {
+            return member_exprt(
+              std::move(cur_obj), c.get_name(), c.type());
+          }
+        }
+        // Step into `@<Parent>` synthetic component.
+        irep_idt next;
+        for(const auto &c : components)
+        {
+          const std::string cname = id2string(c.get_name());
+          if(
+            !cname.empty() && cname[0] == '@' &&
+            c.type().id() == ID_struct_tag)
+          {
+            cur_obj = member_exprt(cur_obj, c.get_name(), c.type());
+            next = to_struct_tag_type(c.type()).get_identifier();
+            break;
+          }
+        }
+        cur = next;
+      }
+    }
+
+    // Couldn't resolve: leave the original node so downstream
+    // produces a clear error.
+    return e;
+  }
+
   if(e.id() == ID_member && e.type().id() == ID_empty)
   {
     // Defer to Phase 3 full resolution (needs type info from obj)
@@ -323,9 +482,44 @@ exprt resolve_jml_expr(
   // constructs many wrapper expressions (history_exprt,
   // unary_exprt, member_exprt, plus/minus/times) before the
   // inner symbol's type is known; their .type() field reflects
-  // the unresolved operand's default type. Now that operands
-  // are resolved, propagate the type up:
-  if(result.type() == typet() || result.type().id().empty())
+  // the unresolved operand's default type — which is `nil`
+  // (irept id "nil") for nodes built by the parser-helper
+  // exprt(id) constructor, and the empty `typet()` for nodes
+  // built by other paths. Both shapes signal "type not yet
+  // known", so propagate up if either holds.
+  const auto needs_type =
+    [](const exprt &x)
+  {
+    return x.type() == typet() || x.type().id().empty() ||
+           x.type().is_nil();
+  };
+  // Harmonise operand types in (in)equality comparisons against
+  // the parser's untyped null literal. The parser emits
+  //   constant_exprt("NULL", pointer_typet(empty_typet(), 64))
+  // for `null`, but after resolution the other operand has a
+  // concrete struct_tag-pointer type. The pointer types
+  // therefore differ in their pointee types, tripping the
+  // (notequal_exprt) → equal_exprt precondition
+  // `lhs.type() == rhs.type()`. Retype the null constant to
+  // match its peer.
+  if(
+    (result.id() == ID_equal || result.id() == ID_notequal) &&
+    result.operands().size() == 2)
+  {
+    auto retype_null = [](exprt &null_side, const exprt &peer)
+    {
+      if(
+        null_side.id() == ID_constant && null_side.type().id() == ID_pointer &&
+        peer.type().id() == ID_pointer && null_side.type() != peer.type())
+      {
+        null_side = constant_exprt(ID_NULL, peer.type());
+      }
+    };
+    retype_null(result.operands()[0], result.operands()[1]);
+    retype_null(result.operands()[1], result.operands()[0]);
+  }
+
+  if(needs_type(result))
   {
     if(
       result.id() == ID_old || result.id() == ID_loop_entry ||
@@ -458,6 +652,21 @@ lower_jml_contracts(goto_modelt &goto_model, const jml_contract_mapt &contracts)
 
       exprt resolved = resolve_jml_expr(
         clause.expr, method_id, class_id, ns, spec.param_names);
+
+      // The JML clause is a logical predicate; symex expects
+      // a bool_typet expression for ASSUME / ASSERT. If the
+      // resolved expression is a Java boolean (c_bool_typet,
+      // width 8) — typically because the clause is just
+      // `obj.flag` for some `boolean` field — coerce it to
+      // bool by comparing against zero.
+      if(
+        resolved.type().id() == ID_c_bool ||
+        resolved.type().id() == ID_unsignedbv ||
+        resolved.type().id() == ID_signedbv)
+      {
+        resolved = notequal_exprt(
+          resolved, from_integer(0, resolved.type()));
+      }
 
       switch(clause.kind)
       {

@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 JmlInheritedField
 --function JmlInheritedField.bump --jml-source src/main/java/JmlInheritedField.java --unwind 5 -cp target/classes
 ^EXIT=0$
@@ -9,22 +9,15 @@ JmlInheritedField
 ^CONVERSION ERROR
 ^.*FAILURE$
 --
-KNOWNBUG: super-class field resolution in JML expressions.
+Regression for unqualified inherited-field access in JML.
 
-When a JML expression references a field declared in a parent
-class (here, `counter` is in JmlInheritedFieldBase), the
-resolver in jml_lowering.cpp looks up the field as
-`<class_id>.<field_name>` only — limited to the immediate
-class. The lookup fails and symex hits:
-
-    Reason: level0: failed to find counter
-
-The fix is in resolve_jml_expr's static-field-lookup path:
-walk the class hierarchy (via class_hierarchyt or by reading
-ID_super on the struct_tag_typet) and try each ancestor in
-turn. The same path also unblocks fields inherited from
-interfaces (Java's static fields on interfaces are inherited).
-
-Until that lands, JML expressions that reference inherited
-fields without an explicit `super.` or `this.` prefix can't be
-verified.
+`counter` (declared in JmlInheritedFieldBase, accessed from
+JmlInheritedField.bump) resolves through resolve_jml_expr's
+class-hierarchy walk:
+  - Symbol-table lookup of <enclosing_class>.<name> fails.
+  - Walk the struct's components; if `<name>` matches no
+    direct component, follow the synthetic `@<Parent>`
+    super-class component to the parent struct.
+  - Build a member-access chain rooted at `*this` whose
+    levels match the @-component path; the leaf member's
+    type comes from the struct's component declaration.
