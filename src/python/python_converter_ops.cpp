@@ -727,22 +727,37 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     exprt right_int = python_value_int(right);
     exprt left_float = python_value_float(left);
     exprt right_float = python_value_float(right);
+    // PLR §6.1.4: float arithmetic with mixed operands promotes
+    // ints to floats. When the value is INT-tagged, its
+    // __float_val is undefined (zero in our default
+    // initialisation), so we must promote __int_val → float
+    // before float_plus. Pick the float field for FLOAT-tagged
+    // operands and convert the int field for INT-tagged
+    // operands.
+    exprt left_promoted = if_exprt{
+      python_value_is(left, python_type_tagt::FLOAT),
+      left_float,
+      typecast_exprt{left_int, left_float.type()}};
+    exprt right_promoted = if_exprt{
+      python_value_is(right, python_type_tagt::FLOAT),
+      right_float,
+      typecast_exprt{right_int, right_float.type()}};
 
     exprt int_result, float_result;
     if(op == "Add")
     {
       int_result = plus_exprt{left_int, right_int};
-      float_result = plus_exprt{left_float, right_float};
+      float_result = plus_exprt{left_promoted, right_promoted};
     }
     else if(op == "Sub")
     {
       int_result = minus_exprt{left_int, right_int};
-      float_result = minus_exprt{left_float, right_float};
+      float_result = minus_exprt{left_promoted, right_promoted};
     }
     else
     {
       int_result = mult_exprt{left_int, right_int};
-      float_result = mult_exprt{left_float, right_float};
+      float_result = mult_exprt{left_promoted, right_promoted};
     }
 
     // Return tagged union with appropriate type
