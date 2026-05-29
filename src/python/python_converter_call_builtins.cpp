@@ -677,8 +677,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         pending_checks.push_back(code_frontend_assignt{te, v});
       }
     }
-    mp_integer none_val = mp_integer(1) << 62;
-    none_val = -none_val;
+    mp_integer none_val = python_none_sentinel_int();
     return from_integer(none_val, python_int_type());
   }
   // PLib builtins: input() reads from stdin — model as nondet string
