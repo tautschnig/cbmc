@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2822** | +221 |
+| ESBMC PASS | 2489 | 2601 | **2828** | +227 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -419,6 +419,41 @@ Architectural cluster v2: empty-list inference + alias pointer-promotion + kwonl
 - kwonly param without annotation defaults to python_value
   (matching positional-param behaviour) instead of int.
   Closes: github_2916_4.
+
+Architectural cluster v3: tag-dispatched 'in' + class-method return inference + Optional-aware None identity (wave 41 cont., +6):
+- 'x in container' on a python_value (tagged-union)
+  container now dispatches on the runtime tag instead of
+  defaulting to list-scan via __list_ptr. The chain emits:
+    tag == DICT ? dict_key_membership :
+    tag == STR  ? substring_check :
+    tag == LIST ? list_scan         :
+                  false
+  The DICT branch casts __class_ptr to a string-keyed dict
+  pointer (the common case); the STR branch derefs
+  __str_ptr through cprover_string_contains_func; the LIST
+  branch is the existing scan, factored out. Closes
+  github_2932_3, github_2932_4, github_2975.
+- Class methods without a return annotation now infer
+  dict / list return types when ALL non-None returns share
+  one of {DICT, LIST} shapes. Mixed-shape methods keep the
+  default int return so existing tests stay green
+  (defaultdict.__missing__: int / float / list / dict /
+  str / None branches). Empty {} / [] returns within
+  same-shape methods are accepted as the default key/elem
+  type. Plus: the function_returned_dict_keys cache used
+  by convert_assign / convert_ann_assign is now also
+  guarded by function_return_count == 1, so multi-return
+  functions don't fold the call's dict_literals[r]
+  against a sentinel that under-approximates as zero.
+  Closes github_3678.
+- 'is None' / 'is not None' fast-paths now apply to
+  struct_tag types (python_string, python_list,
+  python_dict, class instances) in addition to ID_struct.
+  Optional[T] / Union[..., None] / T | None parameters are
+  tracked in 'optional_params' and the fast-path skips
+  them, so a string-typed y holding the None sentinel via
+  default-argument binding is not lied about. Closes
+  github_3243_2, github_2937_2 (correctness-preserving).
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
