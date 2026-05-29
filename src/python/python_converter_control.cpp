@@ -7,6 +7,7 @@
 /// a pure source-split.
 
 #include <util/arith_tools.h>
+#include <util/bitvector_expr.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
 #include <util/json.h>
@@ -1283,6 +1284,64 @@ skip_string_unroll:;
 
         return finalize_for(std::move(result));
       }
+    }
+
+    // PLR §6.2.4 / §6.4.6: 'for x in s' over a python_set
+    // (bitmap representation). Iterate over each of the 64
+    // bitmap bits; when set, bind x to (offset + bit_index)
+    // and run the body.
+    if(is_python_set_type(iterable.type()))
+    {
+      code_blockt result;
+      for(auto &pc : pending_checks)
+        result.add(std::move(pc));
+      pending_checks.clear();
+      // The loop variable x is python_int (sets currently only
+      // hold ints precisely). Materialise its symbol.
+      irep_idt symbol_id{qualified_name};
+      if(symbol_table.lookup(symbol_id) == nullptr)
+      {
+        symbolt new_symbol{symbol_id, python_int_type(), "python"};
+        new_symbol.base_name = var_name;
+        new_symbol.location = loc;
+        new_symbol.is_lvalue = true;
+        new_symbol.is_state_var = true;
+        symbol_table.add(new_symbol);
+      }
+      symbol_exprt loop_sym =
+        symbol_table.lookup_ref(symbol_id).symbol_expr();
+      member_exprt bm{iterable, "bitmap", unsignedbv_typet{64}};
+      member_exprt off{iterable, "offset", signedbv_typet{64}};
+      const jsont &body = json_member(stmt, "body");
+      for(int k = 0; k < 64; ++k)
+      {
+        // bit k set?
+        exprt bit_set = notequal_exprt{
+          bitand_exprt{
+            lshr_exprt{bm, from_integer(k, unsignedbv_typet{64})},
+            from_integer(1, unsignedbv_typet{64})},
+          from_integer(0, unsignedbv_typet{64})};
+        // x = k + offset
+        exprt val = plus_exprt{
+          from_integer(k, signedbv_typet{64}), off};
+        code_blockt iter_body;
+        iter_body.add(code_frontend_assignt{loop_sym, val});
+        if(body.is_array())
+        {
+          for(const auto &s : as_array(body))
+          {
+            codet c = convert_statement(s);
+            for(auto &pc : pending_checks)
+              iter_body.add(std::move(pc));
+            pending_checks.clear();
+            iter_body.add(std::move(c));
+          }
+        }
+        code_ifthenelset cond_iter{bit_set, std::move(iter_body)};
+        cond_iter.add_source_location() = loc;
+        result.add(std::move(cond_iter));
+      }
+      return finalize_for(std::move(result));
     }
 
     log_overapprox(
