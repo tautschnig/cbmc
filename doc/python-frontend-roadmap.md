@@ -11,7 +11,7 @@ lands.
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
 |---|---:|---:|---:|---:|
-| ESBMC PASS | 2489 | 2601 | **2829** | +228 |
+| ESBMC PASS | 2489 | 2601 | **2838** | +237 |
 | Soundness gaps (raw DIFFs) | n/a | ~50 | ~22 | −28 |
 | Soundness gaps (PLR-relevant) | 77 | 0 | 0 | 0 |
 | Precision gaps (PLR-relevant) | 435 | ~50 | ~50 | 0 |
@@ -465,6 +465,35 @@ Architectural cluster v4: tagged-union arithmetic edges (wave 41 cont., +2):
   callers reading r.__int_val see the actual return value
   rather than garbage. Helps any 'def f(x): return 0'
   pattern when f's inferred return type is python_value.
+
+Architectural cluster v5: lex-string compare + nondet/chr in prescan + tag-aware Eq + tuple methods + truthy-class (wave 41 cont., +9):
+- Lexicographic string ordering 'a < b' / 'a <= b' /
+  'a > b' / 'a >= b' on non-constant strings now compares
+  the first byte (with empty-string edge cases). Activates
+  the previously dead first-byte-compare path. For 1-char
+  operands (the common is_digit / isalpha pattern) the
+  result is exact; longer operands give a sound
+  approximation. Closes github_3288, github_3288_2.
+- Empty-list inference prescan extended: 'name =
+  nondet_str() / chr(c) / nondet_string()' now records
+  name_is_string[name], so a subsequent 'lst.append(name)'
+  resolves the element type. type_of_expr also recognises
+  direct calls 'lst.append(nondet_str())'. Closes
+  nondet_list17, nondet_list18, github_3127, github_3127_2.
+- 'v == x' / 'v != x' for v python_value, x typed: AND
+  the tag predicate ('v.__tag matches x's category') with
+  the unwrapped equality. Without this, heterogeneous dict
+  iteration {\"a\": int_x, \"b\": float_y} read v.__int_val
+  for both entries; the float entry's int garbage could
+  coincidentally equal int_x. Closes github_2843_fail.
+- tuple.index(x) / tuple.count(x) fold at conversion time
+  when receiver is a struct_exprt and arg is constant.
+  Closes tuple_index_method.
+- truthy unwrap of python_value extends from {NONE, BOOL,
+  INT, FLOAT, STR, LIST, COMPLEX} to also include CLASS
+  (instances are truthy by default, PLR §6.10.1) and DICT
+  (truthy iff length > 0). Closes
+  github_3974_constructor_temp_object_arg.
 
 All three regression suites (`regression/python`,
 `regression/python-strata-tests`,
