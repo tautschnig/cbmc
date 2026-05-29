@@ -92,13 +92,71 @@ exprt python_convertert::convert_compare(const jsont &expr)
       right = snap;
     }
 
-    // Unwrap tagged-union values (skip for In/NotIn — container stays wrapped)
+    // Unwrap tagged-union values (skip for In/NotIn — container stays wrapped).
+    // PLR §6.10.1: comparing a tagged-union value against a typed
+    // value requires a tag check — the equality 'v == x' for v
+    // python_value, x int, holds only when v's tag is INT AND
+    // v.__int_val == x. Without the tag check the heterogeneous
+    // dict iteration {"a": int_x, "b": float_y} reads
+    // v.__int_val for both entries, and the int garbage in the
+    // float entry's __int_val happens to equal int_x with
+    // probability 2^-64.
+    exprt left_tag_pred = nil_exprt{};
+    exprt right_tag_pred = nil_exprt{};
+    auto tag_of = [](const typet &t) -> python_type_tagt
+    {
+      if(
+        t.id() == ID_signedbv || t.id() == ID_integer ||
+        t.id() == ID_unsignedbv)
+        return python_type_tagt::INT;
+      if(t.id() == ID_floatbv)
+        return python_type_tagt::FLOAT;
+      if(t.id() == ID_bool)
+        return python_type_tagt::BOOL;
+      // python_string: STR
+      // (caller checks via is_python_string_type)
+      return python_type_tagt::INT; // fallback; caller decides
+    };
     if(op != "In" && op != "NotIn")
     {
       if(is_python_value_type(current_left.type()))
+      {
+        // Build tag predicate before unwrap mutates current_left.
+        if(op == "Eq" || op == "NotEq")
+        {
+          if(is_python_string_type(right.type()))
+            left_tag_pred =
+              python_value_is(current_left, python_type_tagt::STR);
+          else if(
+            right.type().id() == ID_signedbv || right.type().id() == ID_integer)
+            left_tag_pred =
+              python_value_is(current_left, python_type_tagt::INT);
+          else if(right.type().id() == ID_floatbv)
+            left_tag_pred =
+              python_value_is(current_left, python_type_tagt::FLOAT);
+          else if(right.type().id() == ID_bool)
+            left_tag_pred =
+              python_value_is(current_left, python_type_tagt::BOOL);
+        }
         current_left = unwrap_value(current_left, right.type());
+      }
       if(is_python_value_type(right.type()))
+      {
+        if(op == "Eq" || op == "NotEq")
+        {
+          if(is_python_string_type(current_left.type()))
+            right_tag_pred = python_value_is(right, python_type_tagt::STR);
+          else if(
+            current_left.type().id() == ID_signedbv ||
+            current_left.type().id() == ID_integer)
+            right_tag_pred = python_value_is(right, python_type_tagt::INT);
+          else if(current_left.type().id() == ID_floatbv)
+            right_tag_pred = python_value_is(right, python_type_tagt::FLOAT);
+          else if(current_left.type().id() == ID_bool)
+            right_tag_pred = python_value_is(right, python_type_tagt::BOOL);
+        }
         right = unwrap_value(right, current_left.type());
+      }
     }
     else if(
       is_python_value_type(current_left.type()) &&
@@ -107,6 +165,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // For "x in lst": unwrap x but keep lst
       current_left = unwrap_value(current_left, right.type());
     }
+    (void)tag_of; // unused for now; reserved for future cross-type compares
 
     // Type promotion for comparisons (skip for In/NotIn/Is/IsNot,
     // and for cross-type list ordering — handled in dedicated
@@ -1954,6 +2013,31 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
 
   done_cmp:
+    // PLR §6.10.1: when comparing python_value with a typed value
+    // via Eq/NotEq, the tag must match. Otherwise the unwrap of
+    // the wrong slot reads garbage that may coincidentally equal
+    // the typed operand. AND in the tag predicate(s) recorded
+    // before the unwrap step.
+    if(op == "Eq" && (!left_tag_pred.is_nil() || !right_tag_pred.is_nil()))
+    {
+      exprt guard = true_exprt{};
+      if(!left_tag_pred.is_nil())
+        guard = and_exprt{guard, left_tag_pred};
+      if(!right_tag_pred.is_nil())
+        guard = and_exprt{guard, right_tag_pred};
+      cmp = and_exprt{guard, cmp};
+    }
+    else if(
+      op == "NotEq" && (!left_tag_pred.is_nil() || !right_tag_pred.is_nil()))
+    {
+      // NotEq: 'v != x' is True if (tag mismatch) OR (tag-match AND val !=).
+      exprt guard = true_exprt{};
+      if(!left_tag_pred.is_nil())
+        guard = and_exprt{guard, left_tag_pred};
+      if(!right_tag_pred.is_nil())
+        guard = and_exprt{guard, right_tag_pred};
+      cmp = or_exprt{not_exprt{guard}, cmp};
+    }
     if(result.is_nil())
       result = cmp;
     else
