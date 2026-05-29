@@ -1695,14 +1695,35 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       // Concrete struct instance compared with None sentinel is
       // always false — the struct is never the None value.
+      // Match struct (literal-typed) and struct_tag (named
+      // struct types like python_string, python_list, dict).
       if(
-        current_left.type().id() == ID_struct && right.is_constant() &&
+        (current_left.type().id() == ID_struct ||
+         current_left.type().id() == ID_struct_tag) &&
+        !is_python_value_type(current_left.type()) && right.is_constant() &&
         right.type().id() == ID_signedbv)
       {
         mp_integer rv;
         if(
           !to_integer(to_constant_expr(right), rv) &&
           rv == mp_integer{-4611686018427387904LL})
+        {
+          cmp = false_exprt{};
+          goto done_cmp;
+        }
+      }
+      // Same for the reversed orientation: None sentinel on the
+      // left, named struct / struct_tag on the right.
+      if(
+        (right.type().id() == ID_struct ||
+         right.type().id() == ID_struct_tag) &&
+        !is_python_value_type(right.type()) && current_left.is_constant() &&
+        current_left.type().id() == ID_signedbv)
+      {
+        mp_integer lv;
+        if(
+          !to_integer(to_constant_expr(current_left), lv) &&
+          lv == mp_integer{-4611686018427387904LL})
         {
           cmp = false_exprt{};
           goto done_cmp;
@@ -1783,14 +1804,34 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // always non-None — typecasting the None-sentinel int to a
       // struct type produces nondet and would allow the solver to
       // pick a value that looks like None. Simplify to true.
+      // Match struct (literal-typed) and struct_tag (named
+      // struct types like python_string, python_list, dict).
       if(
-        current_left.type().id() == ID_struct && right.is_constant() &&
+        (current_left.type().id() == ID_struct ||
+         current_left.type().id() == ID_struct_tag) &&
+        !is_python_value_type(current_left.type()) && right.is_constant() &&
         right.type().id() == ID_signedbv)
       {
         mp_integer rv;
         if(
           !to_integer(to_constant_expr(right), rv) &&
           rv == mp_integer{-4611686018427387904LL})
+        {
+          cmp = true_exprt{};
+          goto done_cmp;
+        }
+      }
+      // Same for reversed orientation.
+      if(
+        (right.type().id() == ID_struct ||
+         right.type().id() == ID_struct_tag) &&
+        !is_python_value_type(right.type()) && current_left.is_constant() &&
+        current_left.type().id() == ID_signedbv)
+      {
+        mp_integer lv;
+        if(
+          !to_integer(to_constant_expr(current_left), lv) &&
+          lv == mp_integer{-4611686018427387904LL})
         {
           cmp = true_exprt{};
           goto done_cmp;
