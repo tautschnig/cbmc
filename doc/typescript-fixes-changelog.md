@@ -62,3 +62,82 @@ catches it.
 | `spec3-string-utf16-astral` | Astral characters not encoded as UTF-16 surrogate pairs | 66de725c1b |
 | `spec3-string-coerce-array` | `"" + arr` didn't call array's toString (join with ",") | 66de725c1b |
 | `spec3-string-relational` | `<`/`>`/`<=`/`>=` on strings returned undefined struct compare | 66de725c1b |
+
+---
+
+## Larger fixes (with narrative)
+
+The fixes below are richer than a single table line — each was a model
+or analysis-pass change with non-trivial reasoning. They are recorded
+in full here so the limitations document can stay focused on
+*current* limitations.
+
+### `flow-no-source` / `flow-sanitized` — taint analysis precision (2026-05-28)
+
+**Was**: `custom_bitvector_analysis` (used by `goto-analyzer --taint`)
+only tracked taint state on pointer-typed values. TypeScript value-typed
+structs (string, array, object) fell back to over-approximation: any
+value that could syntactically reach a sink was reported as potentially
+tainted, regardless of whether a source actually fed it.
+
+**Fix**: `src/analyses/custom_bitvector_analysis.cpp` was extended to
+handle value-typed (non-pointer) operands in three places:
+1. `transform()` for `set_may` / `clear_may` / `set_must` / `clear_must`:
+   when lhs is non-pointer, set/clear the bit on the identifier directly
+   (via `object2id`); for struct-typed lhs, propagate to every recursive
+   member.
+2. `assign_struct_rec()`: for struct LHS, propagate the parent struct
+   identifier's bits in addition to the existing per-member recursion.
+3. `eval()` for `get_may` / `get_must`: when src is non-pointer, look
+   up bits by identifier directly.
+
+The pointer paths are unchanged, so C-style taint analysis keeps its
+existing semantics and tests.
+
+**Regression guards**:
+- `regression/typescript-taint/flow-tainted/` — taint detected end-to-end.
+- `regression/typescript-taint/flow-no-source/` — no source called → no
+  taint (was a false positive before).
+- `regression/typescript-taint/flow-sanitized/` — sanitizer clears taint
+  (was a false positive before).
+
+### `for-of-method-call-map-write` — `member_exprt` invariant on `String.split` result (2026-05-29)
+
+**Was**: A `for..of` loop whose iterable was a method-call expression
+(e.g., `iniData.split("\n")`) combined with `map[k] = map[k] || {}` chain
+writes inside the loop tripped the `member_exprt` invariant in
+`util/std_expr.h:2862`
+(`compound_type_id == ID_struct_tag || ...`).
+
+Minimal repro (11 lines):
+```typescript
+const f = (iniData: string) => {
+  const map: { [k: string]: any } = {};
+  for (const k of iniData.split("\n")) {
+    map[k] = map[k] || {};
+  }
+};
+```
+
+**Root cause**: `String.prototype.split(non_empty_separator)` on a
+non-constant receiver fell through to a generic
+`side_effect_expr_nondett{double_type(), ...}` return path. The for-of
+conversion then did `member_exprt{arr, "length", signedbv_typet{64}}` on
+this `double` expression, violating the precondition.
+
+**Fix**: In `src/typescript/typescript_converter_call.cpp`, the `split`
+handler now returns `side_effect_expr_nondett{<typescript_array struct>}`
+of the correct shape (over-approximating: each element is an arbitrary
+string, length nondet up to `TYPESCRIPT_MAX_ARRAY_LENGTH`). The for-of
+conversion now succeeds.
+
+**Regression guard**: `regression/typescript/for-of-method-call-map-write/`
+(promoted from KNOWNBUG to CORE on 2026-05-29).
+
+**Found by**: scale run of the CodeQL→CBMC auto-triage pipeline on real
+AWS-related TypeScript code (smithy-typescript `parseIni` and an
+amplify-cli channel-validation function). Out of 28 unique enclosing
+functions tested, 4 hit this invariant — all 4 now parse and analyse
+cleanly.
+
+**Commit**: `1dda2c44f6`.

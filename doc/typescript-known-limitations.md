@@ -216,9 +216,12 @@ as a `_present: boolean` discriminator field.
 ## 2. Specification gaps (fixable; pending work)
 
 Features where our implementation is incomplete relative to ES2024.
-Each has an entry in
+Each pending entry has a corresponding item in
 [typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-with a planned approach and estimate.
+with a planned approach and estimate. Resolved entries are kept inline
+(as one-line redirects) so the section number remains stable; the
+narrative for each fix lives in
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md).
 
 ### 2.1 RegExp metacharacters (Phase 2)
 
@@ -305,42 +308,11 @@ deferred).
 
 ### 2.9 `for..of` over method-call result with index-map writes inside (resolved 2026-05-29)
 
-**What was**: A `for..of` loop whose iterable is a method-call expression
-(e.g., `iniData.split("\n")`) combined with `map[k] = map[k] || {}`
-chain writes inside the loop tripped the `member_exprt` invariant in
-`util/std_expr.h:2862` (`compound_type_id == ID_struct_tag || ...`).
-
-**Repro** (11 lines):
-```typescript
-const f = (iniData: string) => {
-  const map: { [k: string]: any } = {};
-  for (const k of iniData.split("\n")) {
-    map[k] = map[k] || {};
-  }
-};
-```
-
-**Root cause**: `String.prototype.split(non_empty_separator)` on a
-non-constant receiver fell through to a generic
-`side_effect_expr_nondett{double_type(), ...}` return path. The
-for-of conversion then did
-`member_exprt{arr, "length", signedbv_typet{64}}` on this `double`
-expression, violating the precondition.
-
-**Fix**: In `typescript_converter_call.cpp`, the `split` handler
-now returns `side_effect_expr_nondett{<typescript_array struct>}`
-of the correct shape (over-approximating: each element is an
-arbitrary string, length nondet up to TYPESCRIPT_MAX_ARRAY_LENGTH).
-The for-of conversion now succeeds.
-
-**Test**: `regression/typescript/for-of-method-call-map-write/`
-(promoted from KNOWNBUG to CORE on 2026-05-29).
-
-**Found by**: scale run of CodeQL→CBMC auto-triage pipeline on real
-AWS-related TypeScript code (smithy-typescript `parseIni` and an
-amplify-cli channel-validation function). Out of 28 unique
-enclosing functions tested, 4 hit this invariant — all 4 now parse
-and analyze cleanly.
+Resolved: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)" → `for-of-method-call-map-write`.
+Regression guard: `regression/typescript/for-of-method-call-map-write/`
+(CORE).
 
 ---
 
@@ -390,35 +362,11 @@ stabilises.
 
 ### 3.4 Taint analysis precision (resolved 2026-05-28)
 
-**Previously**: `custom_bitvector_analysis` (used by
-`goto-analyzer --taint`) only tracked taint state on pointer-typed
-values. TypeScript value-typed structs (string, array, object)
-fell back to over-approximation: any value that could syntactically
-reach a sink was reported as potentially tainted, regardless of
-whether a source actually fed it.
-
-**Resolution**: `src/analyses/custom_bitvector_analysis.cpp` was
-extended to handle value-typed (non-pointer) operands in three
-places:
-1. `transform()` for `set_may` / `clear_may` / `set_must` /
-   `clear_must`: when lhs is non-pointer, set/clear the bit on
-   the identifier directly (via `object2id`); for struct-typed
-   lhs, propagate to every recursive member.
-2. `assign_struct_rec()`: for struct LHS, propagate the parent
-   struct identifier's bits in addition to the existing per-member
-   recursion.
-3. `eval()` for `get_may` / `get_must`: when src is non-pointer,
-   look up bits by identifier directly.
-
-The pointer paths are unchanged, so C-style taint analysis keeps
-its existing semantics and tests.
-
-**Tracking**:
-- `regression/typescript-taint/flow-tainted/` (taint detected)
-- `regression/typescript-taint/flow-no-source/` (no source called →
-  no taint, was false positive before)
-- `regression/typescript-taint/flow-sanitized/` (sanitizer clears
-  taint, was false positive before)
+Resolved: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)" →
+`flow-no-source` / `flow-sanitized`. Regression guards under
+`regression/typescript-taint/`.
 
 ---
 
@@ -445,6 +393,40 @@ improve the onboarding experience.
 primitive landed in commit for `__CPROVER_assert_no_path_traversal`;
 prototype-pollution and crash-on-null primitives are next phases).
 
+### 4.3 Auto-generated harnesses from local pattern matches over-flag
+
+**What**: When CBMC harnesses are auto-generated from a single CodeQL
+pattern match (or any single-function syntactic match), the harness
+treats the function's parameters as fully nondet. In real code, those
+parameters are often constrained by validators applied 2–3 calls away
+from the matched function. The auto-generated harness has no way to
+express that without a cross-procedural data-flow source telling it
+which `__CPROVER_assume` constraints to add.
+
+**Where**: not a frontend bug per se — a property of how CBMC's
+intra-procedural analysis composes with externally-driven harness
+generators.
+
+**Why**: CBMC analyses (symex, taint, model-checking) work on the
+GOTO program of one entry function plus everything it calls. They do
+not, by themselves, know which preconditions a *caller* of that
+function would establish. CodeQL has cross-procedural data-flow
+(`DataFlow::Global`) but our scale-triage pipeline currently uses
+syntactic matches.
+
+**Workaround**: The CodeQL→CBMC auto-triage pipeline
+(`triage.py`) implements a manual cross-procedural pass: for each
+CodeQL hit it traces the dangerous variable backwards to a function
+parameter, greps callers, classifies their arguments as
+literal / safe-source / unsafe-source, and emits matching
+`__CPROVER_assume` constraints into the harness. This brought the
+false-positive rate from ~40% to <2% on the AWS audit.
+
+**Path to fix**: integrate the CodeQL `DataFlow::Global` API into the
+triage queries themselves so the harness generator receives the
+cross-procedural call-graph slice directly, rather than reconstructing
+it via grep. Tracked as a follow-up in the security-tooling track.
+
 ---
 
 ## 5. Index of regression tests documenting limitations
@@ -455,7 +437,7 @@ verify a feature. Use these as references when adding new ones.
 | Test | Limitation |
 |------|------------|
 | `async-race-undetected` | Sequential async (KNOWNBUG by design) |
-| `for-of-method-call-map-write` | `for..of` over method-call iterable + index-map write trips member_exprt invariant (§2.9) |
+| `for-of-method-call-map-write` | Regression guard for §2.9 (resolved) — `member_exprt` invariant on `String.split` result iterated by `for..of` |
 | `integration-tmp-cve-ghsa-7c78` | Multi-char string arrays through function calls (§1.3) |
 | `integration-lodash-cve-ghsa-f23m` | Prototype-pollution detection via property-key contract (no runtime prototype-chain manipulation modelled) |
 | `integration-qs-cve-ghsa-q8mj` | Null-deref detection via not-null contract on value-typed inputs (§1.7) |
@@ -471,7 +453,10 @@ verify a feature. Use these as references when adding new ones.
 The frontend provides several security-oriented assertion primitives.
 Each is conversion-time (constant-fold when possible) with a
 solver-side path for symbolic inputs. Use them as preconditions /
-postconditions in security harnesses.
+postconditions in security harnesses. All seven primitives below have
+been exercised on real-world AWS TypeScript code (see §7) — both as
+positive verification of defensive code and as detectors of buggy
+patterns confirmed via end-to-end PoCs against published packages.
 
 | Primitive | Catches | CVE pattern |
 |-----------|---------|-------------|
@@ -487,7 +472,72 @@ Each has paired regression tests (`sec-*`) and integration tests
 (`integration-*-cve-*` for the vulnerable pattern, `integration-*-fixed-*`
 for the defensive pattern) under `regression/typescript/`.
 
-## 7. Cross-references
+## 7. Scale validation evidence
+
+The frontend has been exercised at scale on real-world TypeScript code
+through a CodeQL→CBMC auto-triage pipeline run against AWS-related
+repositories. This section records what that exercise tells us about
+the maturity and limits of the frontend.
+
+### Run shape
+
+- **Repos audited**: 35 (AWS SDKs, CDK constructs, smithy, amplify-*,
+  strands-agents, cbmc-proof-debugger, etc.).
+- **CodeQL queries**: 7 anti-pattern queries spanning the full primitive
+  taxonomy (path traversal, prototype pollution via `in` / `for..in` /
+  `Object.assign(JSON.parse)` / map-or-empty / `path.normalize` includes,
+  unbounded recursion).
+- **Hits processed**: 301.
+- **CBMC harnesses synthesised**: one per hit; each harness is the
+  outermost named enclosing function, with cross-procedural
+  `__CPROVER_assume` constraints derived from caller analysis (see §4.3).
+
+### What the run tells us about frontend robustness
+
+- **Frontend invariant violations**: one class observed across all 301
+  harnesses (the `member_exprt`-on-`String.split`-result violation, now
+  §2.9 — resolved). This is meaningful: the frontend now consumes
+  arbitrary AWS-quality TypeScript code without crashing.
+- **Triage outcomes**: 296 TRUE_POSITIVE, 5 FALSE_POSITIVE on the final
+  pass after §2.9 was fixed and after triage.py grew its cross-procedural
+  pass (see §4.3). The remaining FALSE_POSITIVEs are validators applied
+  via callers the local pattern match did not see.
+- **Distinct security findings**: 14, of which 6 are High severity. Each
+  has an end-to-end PoC running against the published package or the
+  actual source. The findings, PoCs, and disclosure correspondence live
+  outside this repository (kept private until coordinated disclosure
+  completes).
+
+### What this validates about the security primitives
+
+All seven primitives in §6 were exercised in synthesised harnesses
+during the run. None hit a soundness regression. A handful of
+imprecisions surfaced (constant-folding fallback for non-literal
+allowlists, prototype-chain `in` vs. `Object.hasOwn`); these are
+documented in [over-approximation-audit.md](over-approximation-audit.md).
+
+### What this does NOT validate
+
+- The audit ran the frontend up to GOTO conversion + intra-procedural
+  symbolic execution. It did **not** stress-test the symbolic-string
+  solver at scale — most harnesses had string content small enough to
+  constant-fold. §1.2, §1.3, and §3.1 remain the relevant string-model
+  scaling limits.
+- The audit did not exercise async / Promise.all paths; §1.5 is
+  unchanged by this evidence.
+- The audit was driven by syntactic CodeQL matches; it did not exercise
+  the type-checking front-half of the frontend on novel programs.
+
+### Where the scale-validation infrastructure lives
+
+The CodeQL pack (`aws-ts-anti-patterns/`) and the CBMC auto-triage
+pipeline (`triage.py`) live outside this repository for now (the audit
+surfaced findings under coordinated disclosure). Once disclosure
+completes, the intent is to publish the pack as a standalone tool that
+any TypeScript-using project can run for its own audit; that publication
+will be cross-referenced from this section.
+
+## 8. Cross-references
 
 - [typescript-remaining-work-plan.md](typescript-remaining-work-plan.md) — prioritized future work
 - [typescript-capability-matrix.md](typescript-capability-matrix.md) — per-feature support status
