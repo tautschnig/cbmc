@@ -77,6 +77,16 @@ _FREE_CALL_RE = re.compile(
     r"(?:" + _FREE_APIS + r")\s*\(\s*(?P<arg>[\w\.\->]+)\s*[,)]"
 )
 
+# Match `*OUT = LHS;` patterns that indicate ownership transfer
+# of a tracked allocation through an out-pointer parameter.
+# Common kernel idiom for constructor-style allocation
+# functions (e.g. `int snd_midi_event_new(int bufsize,
+# struct snd_midi_event **rdev) { ... *rdev = dev; return 0; }`).
+_OWNERSHIP_TRANSFER_RE = re.compile(
+    r"^(?P<indent>\s*)"
+    r"\*\s*(?P<out>[\w]+)\s*=\s*(?P<lhs>[\w\.\->]+)\s*;"
+)
+
 _RETURN_RE = re.compile(r"^(?P<indent>\s*)return\b")
 
 
@@ -324,6 +334,46 @@ def _instrument_resource_leak(source: str, fn_name: str
                     j + 1, j + 1,
                     f"\n{fm.group('indent')}"
                     f"leak_alloc_freed({arg});"
+                ))
+                break
+            j += 1
+
+    # Find `*OUT = LHS;` ownership-transfer patterns.  When a
+    # tracked allocation is stored into an out-pointer
+    # parameter (the `*rdev = dev;` constructor-style idiom),
+    # the function is transferring ownership to the caller —
+    # treat that as freed-from-this-function's-perspective
+    # and clear the ghost flag.  Without this, constructor-
+    # style allocators are flagged as leaks on success
+    # paths.
+    param_names = _function_parameter_names(source, fn_name)
+    tracked_lhs_set = {lhs for _, lhs in tracked}
+    for ls, le, line in body_lines:
+        om = _OWNERSHIP_TRANSFER_RE.match(line)
+        if not om:
+            continue
+        out_name = om.group("out")
+        lhs = om.group("lhs")
+        if out_name not in param_names:
+            continue
+        # Only clear if the assigned LHS is itself a tracked
+        # allocation.  Skip `*rdev = NULL;` and similar.
+        if lhs not in tracked_lhs_set:
+            continue
+        # Scan to terminating ';'.
+        j = ls
+        depth = 0
+        while j < len(body_text):
+            c = body_text[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            elif c == ";" and depth == 0:
+                edits.append((
+                    j + 1, j + 1,
+                    f"\n{om.group('indent')}"
+                    f"leak_alloc_freed({lhs});"
                 ))
                 break
             j += 1

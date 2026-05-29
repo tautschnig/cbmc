@@ -39,6 +39,8 @@ static struct leak_entry *find_or_add(const void *p)
 
 void leak_alloc_track(const void *p)
 {
+  if(!p)
+    return;
   struct leak_entry *e = find_or_add(p);
   if(e)
     e->outstanding = 1;
@@ -46,6 +48,8 @@ void leak_alloc_track(const void *p)
 
 void leak_alloc_freed(const void *p)
 {
+  if(!p)
+    return;
   struct leak_entry *e = find(p);
   if(e)
     e->outstanding = 0;
