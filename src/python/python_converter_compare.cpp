@@ -1630,10 +1630,24 @@ exprt python_convertert::convert_compare(const jsont &expr)
         (is_python_list_type(right.type()) ||
          is_python_dict_type(right.type())))
       {
-        bool same_id = current_left.id() == ID_symbol &&
-                       right.id() == ID_symbol &&
-                       to_symbol_expr(current_left).get_identifier() ==
-                         to_symbol_expr(right).get_identifier();
+        // PLR §6.10.3: walk the alias chain so that
+        // 'z = y; assert y is z' returns True. alias_targets
+        // records the canonical-source identifier for each
+        // alias; same canonical source = same identity.
+        auto canonical = [this](irep_idt id) -> irep_idt
+        {
+          auto it = alias_targets.find(id);
+          while(it != alias_targets.end())
+          {
+            id = it->second;
+            it = alias_targets.find(id);
+          }
+          return id;
+        };
+        bool same_id =
+          current_left.id() == ID_symbol && right.id() == ID_symbol &&
+          canonical(to_symbol_expr(current_left).get_identifier()) ==
+            canonical(to_symbol_expr(right).get_identifier());
         cmp = same_id ? exprt{true_exprt{}} : exprt{false_exprt{}};
         goto done_cmp;
       }
@@ -1677,17 +1691,27 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       // PLR §6.10.3: list/dict 'x is not y' — same logic as 'is'
       // but inverted. Different-symbol or literal-on-either-side
-      // is True; same symbol is False. Aliasing is not tracked.
+      // is True; same symbol (or alias chain) is False.
       if(
         (is_python_list_type(current_left.type()) ||
          is_python_dict_type(current_left.type())) &&
         (is_python_list_type(right.type()) ||
          is_python_dict_type(right.type())))
       {
-        bool same_id = current_left.id() == ID_symbol &&
-                       right.id() == ID_symbol &&
-                       to_symbol_expr(current_left).get_identifier() ==
-                         to_symbol_expr(right).get_identifier();
+        auto canonical = [this](irep_idt id) -> irep_idt
+        {
+          auto it = alias_targets.find(id);
+          while(it != alias_targets.end())
+          {
+            id = it->second;
+            it = alias_targets.find(id);
+          }
+          return id;
+        };
+        bool same_id =
+          current_left.id() == ID_symbol && right.id() == ID_symbol &&
+          canonical(to_symbol_expr(current_left).get_identifier()) ==
+            canonical(to_symbol_expr(right).get_identifier());
         cmp = same_id ? exprt{false_exprt{}} : exprt{true_exprt{}};
         goto done_cmp;
       }

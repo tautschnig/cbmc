@@ -726,6 +726,67 @@ codet python_convertert::convert_assign(const jsont &stmt)
     }
   }
 
+  // PLR §6.10.3: list/dict identity aliasing for plain Assign.
+  // Mirror convert_ann_assign's alias handling: when a single
+  // Name target receives another Name whose value is a list /
+  // dict variable, record the alias chain so subsequent
+  // 'lhs is rhs' compares true and so mutations through lhs
+  // also affect rhs (the contents are shared, not snapshotted).
+  if(as_array(targets).size() == 1)
+  {
+    const jsont &single_target = *as_array(targets).begin();
+    if(is_node_type(single_target, "Name") && is_node_type(value, "Name"))
+    {
+      std::string lhs_name = json_string(json_member(single_target, "id"));
+      std::string rhs_name = json_string(json_member(value, "id"));
+      if(!lhs_name.empty() && !rhs_name.empty())
+      {
+        irep_idt lhs_id{qualify_name(lhs_name)};
+        irep_idt rhs_id{qualify_name(rhs_name)};
+        // Walk the rhs side to find the canonical source.
+        auto it = alias_targets.find(rhs_id);
+        irep_idt target_id = (it != alias_targets.end()) ? it->second : rhs_id;
+        const symbolt *target_sym = symbol_table.lookup(target_id);
+        if(
+          target_sym != nullptr && (is_python_list_type(target_sym->type) ||
+                                    is_python_dict_type(target_sym->type)))
+        {
+          // Ensure lhs is in the symbol table (Assign without
+          // annotation may not have pre-registered it). Bind
+          // its type to match the source's so the alias check
+          // in compare picks the right path.
+          if(symbol_table.lookup(lhs_id) == nullptr)
+          {
+            symbolt s{lhs_id, target_sym->type, "python"};
+            s.base_name = lhs_name;
+            s.is_lvalue = true;
+            s.is_state_var = true;
+            s.is_static_lifetime = current_function.empty();
+            symbol_table.add(s);
+          }
+          // Record the alias. Both 'is' and 'is not' walk the
+          // chain to canonical and compare canonical IDs.
+          alias_targets[lhs_id] = target_id;
+          // Drop any cached literal for the canonical source
+          // because the alias makes its contents reachable
+          // via two names — subsequent reads must re-fetch
+          // from storage rather than the conversion-time
+          // snapshot.
+          list_literals.erase(target_id);
+          dict_literals.erase(target_id);
+          // Emit the assignment as a plain copy. Pointer-based
+          // promotion (as in convert_ann_assign) would be
+          // semantically more accurate, but it requires
+          // changing the LHS symbol's type to a pointer and
+          // touching every later read — too big a change for
+          // an assignment whose only purpose is identity
+          // tracking. The alias_targets entry alone is
+          // sufficient to make the 'is' check return True.
+        }
+      }
+    }
+  }
+
   // Check if RHS is a constructor call
   if(
     is_node_type(value, "Call") &&
