@@ -257,4 +257,58 @@ inline equal_exprt python_value_is(const exprt &value, python_type_tagt tag)
     from_integer(static_cast<int>(tag), signedbv_typet{32})};
 }
 
+/// PLR §3.2: the integer sentinel value used to encode None when
+/// stored in a typed numeric (signedbv/integer/natural) slot. Used
+/// because there is no distinguished bit pattern for None inside
+/// signedbv. Centralised here so we don't have the magic number
+/// scattered across the converter. Long term this encoding will
+/// be replaced by `python_none_value()` everywhere — see
+/// doc/python-frontend-blocked-items-plan.md (P0).
+inline mp_integer python_none_sentinel_int()
+{
+  return mp_integer{-4611686018427387904LL}; // -2^62
+}
+
+/// Build the canonical NONE-tagged tagged-union value.
+/// PLR §3.2: None is the single value of type NoneType. In the
+/// python_value tagged union, NONE has its own tag and no payload.
+inline struct_exprt python_none_value()
+{
+  return make_python_value(
+    python_type_tagt::NONE, from_integer(0, signedbv_typet{64}));
+}
+
+/// Check if `e` is a constant expression representing None in any
+/// of our encodings:
+///   * legacy: a signedbv constant equal to the None sentinel
+///   * tagged: a python_value struct literal with NONE tag
+/// This recognizer lets consumer sites accept both forms during the
+/// gradual migration to the python_none_value() encoding.
+inline bool is_python_none_constant(const exprt &e)
+{
+  // Legacy form: signedbv constant with sentinel value.
+  if(e.is_constant() && e.type().id() == ID_signedbv)
+  {
+    mp_integer v;
+    if(!to_integer(to_constant_expr(e), v) && v == python_none_sentinel_int())
+      return true;
+  }
+  // Tagged form: python_value struct literal with NONE tag.
+  if(
+    e.id() == ID_struct && is_python_value_type(e.type()) &&
+    e.operands().size() >= 1)
+  {
+    const exprt &tag_op = e.operands()[0];
+    if(tag_op.is_constant() && tag_op.type().id() == ID_signedbv)
+    {
+      mp_integer t;
+      if(
+        !to_integer(to_constant_expr(tag_op), t) &&
+        t == mp_integer{static_cast<int>(python_type_tagt::NONE)})
+        return true;
+    }
+  }
+  return false;
+}
+
 #endif // CPROVER_PYTHON_PYTHON_VALUE_TYPE_H

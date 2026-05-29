@@ -2003,8 +2003,8 @@ exprt python_convertert::python_truthiness(const exprt &e)
   if(t.id() == ID_bool)
     return e;
 
-  // None sentinel for int representation: -2^62.
-  const mp_integer none_sentinel{-4611686018427387904LL};
+  // None sentinel for int representation: -2^62 (legacy encoding).
+  const mp_integer none_sentinel = python_none_sentinel_int();
 
   // Concrete numeric types.
   if(t.id() == ID_signedbv || t.id() == ID_integer)

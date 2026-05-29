@@ -3015,8 +3015,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // None has two representations in our encoding:
           //   * tag NONE (when explicitly wrapped via wrap_value
           //     with a None-aware fast path)
-          //   * tag INT with int_val == -2^62 (the legacy
-          //     sentinel form used everywhere else)
+          //   * tag INT with int_val == python_none_sentinel_int()
+          //     (the legacy sentinel form used everywhere else)
           // Accept either.
           if(is_python_value_type(obj.type()))
           {
@@ -3026,15 +3026,14 @@ std::optional<exprt> python_convertert::try_builtin_call(
               equal_exprt{
                 python_value_int(obj),
                 from_integer(
-                  mp_integer{-4611686018427387904LL}, signedbv_typet{64})}};
+                  python_none_sentinel_int(), signedbv_typet{64})}};
             return or_exprt{std::move(is_none_tag), std::move(is_int_sentinel)};
           }
           if(obj.type().id() == ID_signedbv)
           {
-            // None sentinel check
+            // None sentinel check (legacy encoding)
             return equal_exprt{
-              obj,
-              from_integer(mp_integer{-4611686018427387904LL}, obj.type())};
+              obj, from_integer(python_none_sentinel_int(), obj.type())};
           }
           return false_exprt{};
         }
