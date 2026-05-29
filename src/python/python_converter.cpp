@@ -1134,6 +1134,396 @@ void python_convertert::collect_escaped_mutables(const jsont &body)
   scan_stmts(body);
 }
 
+void python_convertert::collect_empty_list_inferred_types(const jsont &body)
+{
+  if(!body.is_array())
+    return;
+
+  // Helper: extract a precise element type from an expression
+  // node (the argument of .append / .extend).
+  // We carry an enclosing-for-loops list so that 'name.append(x)'
+  // where x is the iter-target of an enclosing for-loop can be
+  // typed from the for-loop's iter source (dict key type / list
+  // element type / single-char string).
+  std::vector<const jsont *> for_stack;
+  // Track inferred dict-key / list-element / string types from
+  // dict / list / str literals seen in earlier Assigns. Used by
+  // type_of_expr to resolve 'for k in name' where name was
+  // assigned a literal earlier in the same body.
+  std::map<irep_idt, typet> name_dict_key_t;
+  std::map<irep_idt, typet> name_list_elem_t;
+  std::set<irep_idt> name_is_string;
+  auto type_of_expr = [&](const jsont &n) -> typet
+  {
+    if(is_node_type(n, "Constant"))
+    {
+      const jsont &v = json_member(n, "value");
+      if(v.is_string())
+        return python_string_type();
+      if(v.is_number())
+      {
+        std::string vs = v.value;
+        if(
+          vs.find('.') != std::string::npos ||
+          vs.find('e') != std::string::npos)
+          return double_type();
+        return python_int_type();
+      }
+      if(v.is_true() || v.is_false())
+        return bool_typet{};
+    }
+    if(is_node_type(n, "Name"))
+    {
+      std::string nm = json_string(json_member(n, "id"));
+      // Walk enclosing for-loops outermost → innermost; the
+      // innermost match wins.
+      const jsont *match_iter = nullptr;
+      for(const jsont *fp : for_stack)
+      {
+        const jsont &target = json_member(*fp, "target");
+        if(
+          is_node_type(target, "Name") &&
+          json_string(json_member(target, "id")) == nm)
+        {
+          match_iter = fp;
+        }
+      }
+      if(match_iter != nullptr)
+      {
+        const jsont &iter = json_member(*match_iter, "iter");
+        // PLR §6.3.4: extract the source Name for the iter.
+        // Handles: for k in d, for k in d.keys(), for k in d.values(),
+        // for k in d.items(), for k in (d.keys() / d.values()).
+        const jsont *src_name_node = nullptr;
+        bool iter_is_values = false;
+        bool iter_is_items = false;
+        if(is_node_type(iter, "Name"))
+          src_name_node = &iter;
+        else if(is_node_type(iter, "Call"))
+        {
+          const jsont &fn = json_member(iter, "func");
+          if(is_node_type(fn, "Attribute"))
+          {
+            std::string m = json_string(json_member(fn, "attr"));
+            const jsont &recv = json_member(fn, "value");
+            if(is_node_type(recv, "Name"))
+            {
+              src_name_node = &recv;
+              if(m == "values")
+                iter_is_values = true;
+              else if(m == "items")
+                iter_is_items = true;
+            }
+          }
+        }
+        if(src_name_node != nullptr)
+        {
+          std::string in = json_string(json_member(*src_name_node, "id"));
+          irep_idt iid{qualify_name(in)};
+          // Prefer the prescan-tracked types over the symbol
+          // table (the symbol table may not yet hold the
+          // pre-body literal at prescan time).
+          auto dk = name_dict_key_t.find(iid);
+          if(dk != name_dict_key_t.end())
+          {
+            if(iter_is_values)
+            {
+              // values yield value type — we don't track that
+              // separately; fall through to symbol-table.
+            }
+            else if(iter_is_items)
+            {
+              // tuple type for (k,v) — skip.
+            }
+            else
+            {
+              // d (default), d.keys()
+              return dk->second;
+            }
+          }
+          auto le = name_list_elem_t.find(iid);
+          if(le != name_list_elem_t.end())
+            return le->second;
+          if(name_is_string.count(iid) > 0)
+            return python_string_type();
+          const symbolt *isy = symbol_table.lookup(iid);
+          if(isy != nullptr)
+          {
+            if(is_python_dict_type(isy->type))
+            {
+              const auto &dst = to_struct_type(isy->type);
+              if(dst.components().size() >= 2 && !iter_is_values)
+              {
+                const auto &keys_arr_t =
+                  to_array_type(dst.components()[1].type());
+                return keys_arr_t.element_type();
+              }
+            }
+            if(is_python_list_type(isy->type))
+            {
+              const auto &lst = to_struct_type(isy->type);
+              if(lst.components().size() >= 2)
+              {
+                const auto &data_t = to_array_type(lst.components()[1].type());
+                return data_t.element_type();
+              }
+            }
+            if(is_python_string_type(isy->type))
+              return python_string_type();
+          }
+        }
+      }
+      irep_idt sid{qualify_name(nm)};
+      const symbolt *s = symbol_table.lookup(sid);
+      if(s != nullptr && s->type.id() != ID_empty)
+        return s->type;
+    }
+    return typet{}; // unknown
+  };
+
+  // Track which names are pending (i.e. we've seen 'name = []'
+  // but not yet seen the inferring append).
+  std::set<irep_idt> pending;
+  // Walk top-level statements in order. Reset pending when we
+  // see another assignment to the same name (the second assign
+  // shadows the empty-list start).
+  std::function<void(const jsont &)> walk = [&](const jsont &node)
+  {
+    if(!node.is_array())
+      return;
+    for(const auto &stmt : as_array(node))
+    {
+      if(is_node_type(stmt, "Assign") || is_node_type(stmt, "AnnAssign"))
+      {
+        bool is_ann = is_node_type(stmt, "AnnAssign");
+        const jsont &targets = json_member(stmt, "targets");
+        const jsont &target_single = json_member(stmt, "target");
+        const jsont &value = json_member(stmt, "value");
+        bool single_target_name =
+          (is_ann && is_node_type(target_single, "Name")) ||
+          (!is_ann && targets.is_array() && as_array(targets).size() == 1 &&
+           is_node_type(*as_array(targets).begin(), "Name"));
+        if(single_target_name)
+        {
+          std::string nm =
+            is_ann ? json_string(json_member(target_single, "id"))
+                   : json_string(json_member(*as_array(targets).begin(), "id"));
+          irep_idt sid{qualify_name(nm)};
+          // For AnnAssign 'name: list[T] = []' we skip the
+          // empty-list pending register because the declared
+          // element type T is already precise. Bare 'list'
+          // (Name) annotation is the polymorphic case.
+          bool ann_is_parameterised =
+            is_ann &&
+            is_node_type(json_member(stmt, "annotation"), "Subscript");
+          // 'name = []' — register as pending if not already
+          // inferred and the value is an empty List, AND the
+          // annotation (if any) doesn't already pin the type.
+          if(
+            !ann_is_parameterised && is_node_type(value, "List") &&
+            json_member(value, "elts").is_array() &&
+            as_array(json_member(value, "elts")).empty() &&
+            empty_list_inferred_types.count(sid) == 0)
+          {
+            pending.insert(sid);
+          }
+          else
+          {
+            pending.erase(sid);
+            // Always record dict / list / string literal types
+            // (regardless of annotation) so for-loop iter-
+            // target lookups in type_of_expr resolve.
+            if(is_node_type(value, "Dict"))
+            {
+              const jsont &keys = json_member(value, "keys");
+              if(keys.is_array() && !as_array(keys).empty())
+              {
+                const jsont &fk = *as_array(keys).begin();
+                if(is_node_type(fk, "Constant"))
+                {
+                  const jsont &kv = json_member(fk, "value");
+                  if(kv.is_string())
+                    name_dict_key_t[sid] = python_string_type();
+                  else if(kv.is_number())
+                  {
+                    std::string vs = kv.value;
+                    if(vs.find('.') != std::string::npos)
+                      name_dict_key_t[sid] = double_type();
+                    else
+                      name_dict_key_t[sid] = python_int_type();
+                  }
+                }
+              }
+            }
+            else if(is_node_type(value, "List"))
+            {
+              const jsont &elts = json_member(value, "elts");
+              if(elts.is_array() && !as_array(elts).empty())
+              {
+                const jsont &fe = *as_array(elts).begin();
+                typet et = type_of_expr(fe);
+                if(!et.id().empty() && et.id() != ID_empty)
+                  name_list_elem_t[sid] = et;
+              }
+            }
+            else if(is_node_type(value, "Call"))
+            {
+              // 'l = d.keys()' / 'l = d.values()' — propagate the
+              // dict's key/value type as l's element type.
+              const jsont &fn = json_member(value, "func");
+              if(is_node_type(fn, "Attribute"))
+              {
+                std::string m = json_string(json_member(fn, "attr"));
+                const jsont &recv = json_member(fn, "value");
+                if(is_node_type(recv, "Name") && m == "keys")
+                {
+                  std::string rn = json_string(json_member(recv, "id"));
+                  irep_idt rid{qualify_name(rn)};
+                  auto dk = name_dict_key_t.find(rid);
+                  if(dk != name_dict_key_t.end())
+                    name_list_elem_t[sid] = dk->second;
+                }
+              }
+            }
+            else if(
+              is_node_type(value, "Constant") &&
+              json_member(value, "value").is_string())
+            {
+              name_is_string.insert(sid);
+            }
+            // For an AnnAssign with parameterised list/dict
+            // annotation, also record the inferred types from
+            // the annotation. Lets the for-loop iter-target
+            // lookup find the element type without needing the
+            // RHS to be a literal.
+            if(is_ann)
+            {
+              const jsont &ann = json_member(stmt, "annotation");
+              if(
+                is_node_type(ann, "Subscript") &&
+                is_node_type(json_member(ann, "value"), "Name"))
+              {
+                std::string base =
+                  json_string(json_member(json_member(ann, "value"), "id"));
+                const jsont &slice = json_member(ann, "slice");
+                if(base == "list" || base == "List")
+                {
+                  if(is_node_type(slice, "Name"))
+                  {
+                    std::string sn = json_string(json_member(slice, "id"));
+                    if(sn == "str")
+                      name_list_elem_t[sid] = python_string_type();
+                    else if(sn == "int")
+                      name_list_elem_t[sid] = python_int_type();
+                    else if(sn == "float")
+                      name_list_elem_t[sid] = double_type();
+                  }
+                }
+                else if(base == "dict" || base == "Dict")
+                {
+                  // dict[K, V] — slice is Tuple(K, V) or single
+                  // Name (the key).
+                  const jsont *kn = nullptr;
+                  if(is_node_type(slice, "Tuple"))
+                  {
+                    const jsont &telts = json_member(slice, "elts");
+                    if(telts.is_array() && !as_array(telts).empty())
+                      kn = &(*as_array(telts).begin());
+                  }
+                  else if(is_node_type(slice, "Name"))
+                    kn = &slice;
+                  if(kn != nullptr && is_node_type(*kn, "Name"))
+                  {
+                    std::string knm = json_string(json_member(*kn, "id"));
+                    if(knm == "str")
+                      name_dict_key_t[sid] = python_string_type();
+                    else if(knm == "int")
+                      name_dict_key_t[sid] = python_int_type();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      else if(is_node_type(stmt, "Expr"))
+      {
+        const jsont &val = json_member(stmt, "value");
+        if(is_node_type(val, "Call"))
+        {
+          const jsont &fn = json_member(val, "func");
+          if(is_node_type(fn, "Attribute"))
+          {
+            std::string method = json_string(json_member(fn, "attr"));
+            const jsont &obj_node = json_member(fn, "value");
+            if(
+              is_node_type(obj_node, "Name") &&
+              (method == "append" || method == "extend"))
+            {
+              std::string nm = json_string(json_member(obj_node, "id"));
+              irep_idt sid{qualify_name(nm)};
+              if(pending.count(sid) > 0)
+              {
+                const jsont &args = json_member(val, "args");
+                if(args.is_array() && !as_array(args).empty())
+                {
+                  const jsont &arg = *as_array(args).begin();
+                  typet t;
+                  if(method == "append")
+                    t = type_of_expr(arg);
+                  else
+                  {
+                    // extend(X) — element type is X's element type.
+                    if(is_node_type(arg, "List"))
+                    {
+                      const jsont &arg_elts = json_member(arg, "elts");
+                      if(arg_elts.is_array() && !as_array(arg_elts).empty())
+                        t = type_of_expr(*as_array(arg_elts).begin());
+                    }
+                    else if(is_node_type(arg, "Constant"))
+                    {
+                      // extend("aaa") — string yields chars
+                      // (single-char strings).
+                      const jsont &v = json_member(arg, "value");
+                      if(v.is_string())
+                        t = python_string_type();
+                    }
+                  }
+                  if(!t.id().empty() && t.id() != ID_empty)
+                  {
+                    empty_list_inferred_types[sid] = t;
+                    pending.erase(sid);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      // Recurse into nested control-flow blocks so the inference
+      // also fires inside if/while/for bodies. For 'For' nodes
+      // also push the for-loop onto the stack so type_of_expr
+      // can resolve the iter-target's type.
+      if(stmt.is_object())
+      {
+        bool is_for_node =
+          is_node_type(stmt, "For") || is_node_type(stmt, "AsyncFor");
+        if(is_for_node)
+          for_stack.push_back(&stmt);
+        for(const char *child : {"body", "orelse", "finalbody", "handlers"})
+        {
+          const jsont &c = json_member(stmt, child);
+          if(c.is_array())
+            walk(c);
+        }
+        if(is_for_node)
+          for_stack.pop_back();
+      }
+    }
+  };
+  walk(body);
+}
+
 void python_convertert::invalidate_loop_writes(const jsont &body)
 {
   // Walk the body recursively, collect names assigned via Assign /

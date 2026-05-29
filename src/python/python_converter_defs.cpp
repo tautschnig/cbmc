@@ -1209,6 +1209,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // path knows to wrap the escaped Names with python_value
     // pointers rather than struct-copying them.
     collect_escaped_mutables(body);
+    collect_empty_list_inferred_types(body);
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
   }
