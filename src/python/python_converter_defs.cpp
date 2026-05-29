@@ -247,6 +247,14 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     typet param_type = annotation.is_null()
                          ? python_value_type()
                          : convert_type_annotation(annotation);
+    // Mark Optional[T] / Union[..., None] / T | None parameters
+    // as nullable so the Is/IsNot fast-path doesn't lie.
+    if(!annotation.is_null() && annotation_includes_none(annotation))
+    {
+      std::string param_id =
+        "python::" + qualified_func_name + "::" + param_name;
+      optional_params.insert(irep_idt{param_id});
+    }
     // Phase 7 type-annotation check: if the annotation is a
     // Union[X, Y, ...], extract its component types and
     // record under the parameter's symbol id so call-site
@@ -2456,6 +2464,14 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             "python::" + class_name + "::" + method_name + "::" + param_name);
           p.set_base_name(param_name);
           parameters.push_back(p);
+          // PLR §6.10.3: mark Optional / Union[..., None] params
+          // so the Is/IsNot fast-path treats them as nullable.
+          if(!is_staticmethod || param_name != "self")
+          {
+            const jsont &ann = json_member(param, "annotation");
+            if(!ann.is_null() && annotation_includes_none(ann))
+              optional_params.insert(p.get_identifier());
+          }
         };
 
         // PLR §8.7: positional-only parameters.

@@ -1696,11 +1696,27 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // Concrete struct instance compared with None sentinel is
       // always false — the struct is never the None value.
       // Match struct (literal-typed) and struct_tag (named
-      // struct types like python_string, python_list, dict).
+      // struct types like python_list, python_dict, class
+      // instances). For python_string, only fast-path when
+      // current_left isn't an Optional[str] parameter (which
+      // can hold the None sentinel via default-argument
+      // binding).
+      auto is_optional_sym = [this](const exprt &e)
+      {
+        if(e.id() == ID_symbol)
+          return optional_params.count(to_symbol_expr(e).get_identifier()) > 0;
+        if(
+          e.id() == ID_dereference && e.operands().size() == 1 &&
+          e.operands()[0].id() == ID_symbol)
+          return optional_params.count(
+                   to_symbol_expr(e.operands()[0]).get_identifier()) > 0;
+        return false;
+      };
       if(
         (current_left.type().id() == ID_struct ||
          current_left.type().id() == ID_struct_tag) &&
-        !is_python_value_type(current_left.type()) && right.is_constant() &&
+        !is_python_value_type(current_left.type()) &&
+        !is_optional_sym(current_left) && right.is_constant() &&
         right.type().id() == ID_signedbv)
       {
         mp_integer rv;
@@ -1712,13 +1728,12 @@ exprt python_convertert::convert_compare(const jsont &expr)
           goto done_cmp;
         }
       }
-      // Same for the reversed orientation: None sentinel on the
-      // left, named struct / struct_tag on the right.
+      // Same for the reversed orientation.
       if(
         (right.type().id() == ID_struct ||
          right.type().id() == ID_struct_tag) &&
-        !is_python_value_type(right.type()) && current_left.is_constant() &&
-        current_left.type().id() == ID_signedbv)
+        !is_python_value_type(right.type()) && !is_optional_sym(right) &&
+        current_left.is_constant() && current_left.type().id() == ID_signedbv)
       {
         mp_integer lv;
         if(
@@ -1805,11 +1820,26 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // struct type produces nondet and would allow the solver to
       // pick a value that looks like None. Simplify to true.
       // Match struct (literal-typed) and struct_tag (named
-      // struct types like python_string, python_list, dict).
+      // struct types like python_list, python_dict, class
+      // instances). Skip Optional[T]-annotated parameters
+      // (current_left is a symbol marked in optional_params)
+      // since they can still hold the None sentinel.
+      auto is_opt_sym2 = [this](const exprt &e)
+      {
+        if(e.id() == ID_symbol)
+          return optional_params.count(to_symbol_expr(e).get_identifier()) > 0;
+        if(
+          e.id() == ID_dereference && e.operands().size() == 1 &&
+          e.operands()[0].id() == ID_symbol)
+          return optional_params.count(
+                   to_symbol_expr(e.operands()[0]).get_identifier()) > 0;
+        return false;
+      };
       if(
         (current_left.type().id() == ID_struct ||
          current_left.type().id() == ID_struct_tag) &&
-        !is_python_value_type(current_left.type()) && right.is_constant() &&
+        !is_python_value_type(current_left.type()) &&
+        !is_opt_sym2(current_left) && right.is_constant() &&
         right.type().id() == ID_signedbv)
       {
         mp_integer rv;
@@ -1825,8 +1855,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
       if(
         (right.type().id() == ID_struct ||
          right.type().id() == ID_struct_tag) &&
-        !is_python_value_type(right.type()) && current_left.is_constant() &&
-        current_left.type().id() == ID_signedbv)
+        !is_python_value_type(right.type()) && !is_opt_sym2(right) &&
+        current_left.is_constant() && current_left.type().id() == ID_signedbv)
       {
         mp_integer lv;
         if(

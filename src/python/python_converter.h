@@ -423,6 +423,16 @@ private:
   /// the int default. Without this the typecast at append
   /// time zeros struct-typed elements (e.g. strings).
   std::map<irep_idt, typet> empty_list_inferred_types;
+  /// Symbol identifiers whose declared annotation was
+  /// `Optional[T]` (or any union including `None`). The
+  /// declared type collapses to T (since None is encoded as
+  /// the int sentinel), so structurally the symbol holds a
+  /// non-tagged value of T. The compare path uses this set
+  /// to skip the 'concrete struct vs None sentinel = false'
+  /// fast-path: an Optional[T]-annotated symbol can still
+  /// hold the None sentinel when assigned None, so the
+  /// fast-path would lie about identity.
+  std::set<irep_idt> optional_params;
   /// Track tuple literal values keyed by symbol identifier. Same
   /// purpose as list_literals: lets the constant-fold path in
   /// convert_call resolve `min(t)`/`max(t)`/etc. when `t` was
@@ -1094,6 +1104,13 @@ private:
   /// union. Used to populate union_annotation_components for
   /// parameters / variables.
   std::vector<typet> extract_union_components(const jsont &annotation);
+
+  /// Return true if the annotation is `Optional[T]` (or any
+  /// Union/PEP-604 form that includes None). The compare path
+  /// uses this to mark parameter symbols as nullable so the
+  /// 'concrete struct vs None sentinel = false' fast-path
+  /// doesn't lie.
+  bool annotation_includes_none(const jsont &annotation);
 
   /// Check whether a value's type violates a recorded Union
   /// annotation for `sym_id`. Returns true if the symbol has
