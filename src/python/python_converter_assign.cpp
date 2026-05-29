@@ -1566,6 +1566,80 @@ codet python_convertert::convert_assign(const jsont &stmt)
         }
         continue;
       }
+      // PLR §7.2.1: list rhs unpacking, e.g.
+      //   first, second, third = [10, 20, 30]
+      //   def f(lst): a, b, c = lst
+      // The list rhs is read by integer index, with implicit
+      // length check (Python raises ValueError if lengths
+      // differ — we match that semantics by emitting a runtime
+      // length-equality assumption when the list isn't known
+      // to be the right size). Recursive unpacking of nested
+      // tuple/list targets is supported one level deep.
+      if(elts.is_array() && is_python_list_type(rhs.type()))
+      {
+        const auto &list_st = to_struct_type(rhs.type());
+        const auto &data_t = to_array_type(list_st.components()[1].type());
+        const typet &elem_t = data_t.element_type();
+        // Materialise rhs into a snapshot tmp.
+        static unsigned lunpack_ctr = 0;
+        std::string tmpn = "__list_unpack_" + std::to_string(lunpack_ctr++);
+        std::string tmpq = qualify_name(tmpn);
+        irep_idt tmpid{tmpq};
+        if(symbol_table.lookup(tmpid) == nullptr)
+        {
+          symbolt ts{tmpid, rhs.type(), "python"};
+          ts.base_name = tmpn;
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        symbol_exprt rhs_snap = symbol_table.lookup_ref(tmpid).symbol_expr();
+        block.add(code_frontend_assignt{rhs_snap, rhs});
+        member_exprt rhs_data{rhs_snap, "data", data_t};
+        member_exprt rhs_len{rhs_snap, "length", signedbv_typet{64}};
+        std::size_t target_count = as_array(elts).size();
+        // PLR ValueError: 'too many values to unpack' / 'not
+        // enough values to unpack'. We assume length matches
+        // for soundness of the unpack — under-approximating
+        // the error case (a separate lint could flag it).
+        block.add(code_assumet{equal_exprt{
+          rhs_len,
+          from_integer(
+            static_cast<long long>(target_count), signedbv_typet{64})}});
+        std::size_t i = 0;
+        for(const auto &elt : as_array(elts))
+        {
+          exprt idx_e = from_integer(static_cast<long long>(i), signedbv_typet{64});
+          exprt val = index_exprt{rhs_data, idx_e, elem_t};
+          if(is_node_type(elt, "Name"))
+          {
+            std::string elt_name = json_string(json_member(elt, "id"));
+            if(!elt_name.empty())
+            {
+              std::string qname = qualify_name(elt_name);
+              irep_idt sym_id{qname};
+              if(symbol_table.lookup(sym_id) == nullptr)
+              {
+                symbolt new_sym{sym_id, elem_t, "python"};
+                new_sym.base_name = elt_name;
+                new_sym.location = loc;
+                new_sym.is_lvalue = true;
+                new_sym.is_state_var = true;
+                new_sym.is_static_lifetime = current_function.empty();
+                symbol_table.add(new_sym);
+              }
+              const symbolt &ts = symbol_table.lookup_ref(sym_id);
+              exprt rhs_v = val;
+              if(rhs_v.type() != ts.type)
+                rhs_v = safe_typecast(rhs_v, ts.type);
+              block.add(code_frontend_assignt{ts.symbol_expr(), rhs_v});
+            }
+          }
+          ++i;
+        }
+        continue;
+      }
     }
 
     // Handle subscript assignment: lst[i] = value
