@@ -43,8 +43,163 @@ Author: Daniel Kroening, kroening@kroening.com
 #include "lift_clinit_calls.h"
 #include "load_method_by_regex.h"
 
+#include <cctype>
+#include <filesystem>
 #include <fstream>
+#include <set>
+#include <sstream>
 #include <string>
+#include <system_error>
+
+/// Walk a file's content and harvest the simple-method-name part
+/// of every `obj.<name>(` style call we encounter inside JML
+/// payload regions.
+///
+/// `jml_only` controls whether we restrict scanning to inline
+/// JML payloads (`//@ ...` and `/*@ ... */`) — true when feeding
+/// in a Java/Kotlin source file, false when feeding in a `.jml`
+/// sidecar (whose entire content is JML clauses).
+///
+/// This is a deliberate over-approximation: any name that *might*
+/// be referenced from a JML expression is added to the keep-list.
+/// Adding a few unused method ids costs a small amount of bytecode-
+/// to-goto conversion time; missing one would resurface the
+/// `--no-lazy-methods`-required UX wart that this hand-off is
+/// meant to fix.
+static void jml_scan_text(
+  const std::string &text,
+  bool jml_only,
+  std::set<std::string> &out_names)
+{
+  // Identifier characters in Java method names. We deliberately
+  // accept the JVM-internal $ in synthetic getters
+  // (Kotlin lambdas, bridge methods, etc.).
+  auto is_idstart = [](char c) {
+    return std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  };
+  auto is_idcont = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  };
+
+  // Single linear pass; we track whether we are inside a JML
+  // payload window (relevant only when jml_only is true).
+  bool in_block_jml = false;
+  std::size_t i = 0;
+  while(i < text.size())
+  {
+    bool in_jml_window = !jml_only || in_block_jml;
+
+    // Detect entry into a JML payload.
+    if(jml_only && !in_block_jml)
+    {
+      if(
+        i + 2 < text.size() && text[i] == '/' && text[i + 1] == '/' &&
+        text[i + 2] == '@')
+      {
+        // line-form //@ ... \n
+        std::size_t j = i + 3;
+        while(j < text.size() && text[j] != '\n')
+          ++j;
+        jml_scan_text(text.substr(i + 3, j - (i + 3)), false, out_names);
+        i = j;
+        continue;
+      }
+      if(
+        i + 2 < text.size() && text[i] == '/' && text[i + 1] == '*' &&
+        text[i + 2] == '@')
+      {
+        in_block_jml = true;
+        i += 3;
+        continue;
+      }
+      ++i;
+      continue;
+    }
+
+    // Inside a block JML payload, look for closing `*/`.
+    if(
+      in_block_jml && i + 1 < text.size() && text[i] == '*' &&
+      text[i + 1] == '/')
+    {
+      in_block_jml = false;
+      i += 2;
+      continue;
+    }
+
+    if(
+      in_jml_window && text[i] == '.' && i + 1 < text.size() &&
+      is_idstart(text[i + 1]))
+    {
+      std::size_t j = i + 1;
+      while(j < text.size() && is_idcont(text[j]))
+        ++j;
+      // Skip whitespace before `(`.
+      std::size_t k = j;
+      while(k < text.size() &&
+            std::isspace(static_cast<unsigned char>(text[k])))
+        ++k;
+      if(k < text.size() && text[k] == '(')
+      {
+        const std::string name = text.substr(i + 1, j - (i + 1));
+        // Ignore reserved JML pseudo-names that aren't Java
+        // methods (\old, \result, \forall etc. are filtered by
+        // the leading-dot requirement, but defensively skip
+        // anything that doesn't look like an identifier).
+        if(!name.empty())
+          out_names.insert(name);
+      }
+      i = j;
+      continue;
+    }
+
+    ++i;
+  }
+}
+
+/// Read a file from disk and scan it for JML-referenced method
+/// names. \p jml_only restricts to inline `//@` and `/*@ ... @*/`
+/// payloads, suitable for Java / Kotlin source. Errors opening
+/// the file are silently swallowed: the caller is in a best-
+/// effort UX path, not a hard verification step.
+static void jml_collect_method_names(
+  const std::string &file_path,
+  bool jml_only,
+  std::set<std::string> &out_names)
+{
+  std::ifstream in{file_path};
+  if(!in)
+    return;
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  jml_scan_text(ss.str(), jml_only, out_names);
+}
+
+/// Walk a directory recursively for `*.jml` sidecar files and
+/// collect referenced method names from each.
+static void jml_collect_method_names_in_path(
+  const std::string &dir_path,
+  std::set<std::string> &out_names)
+{
+  std::error_code ec;
+  if(!std::filesystem::exists(dir_path, ec))
+    return;
+  if(std::filesystem::is_regular_file(dir_path, ec))
+  {
+    jml_collect_method_names(dir_path, /*jml_only=*/false, out_names);
+    return;
+  }
+  for(auto it = std::filesystem::recursive_directory_iterator(dir_path, ec);
+      it != std::filesystem::recursive_directory_iterator();
+      it.increment(ec))
+  {
+    if(ec)
+      break;
+    const auto &entry = *it;
+    if(entry.is_regular_file(ec) && entry.path().extension() == ".jml")
+      jml_collect_method_names(
+        entry.path().string(), /*jml_only=*/false, out_names);
+  }
+}
 
 /// Parse options that are java bytecode specific.
 /// \param cmd: Command line
@@ -99,6 +254,19 @@ void parse_java_language_options(const cmdlinet &cmd, optionst &options)
     options.set_option(
       "lazy-methods-extra-entry-point",
       cmd.get_values("lazy-methods-extra-entry-point"));
+  }
+  // JML: forward jml-source / jml-specs-path so set_language_options
+  // can pre-scan for methods called from JML expressions and add
+  // them to the lazy-methods keep set. Without this hand-off, a
+  // method only referenced from a //@ requires obj.getX() clause
+  // is dropped before JML processing ever sees it.
+  if(cmd.isset("jml-source"))
+  {
+    options.set_option("jml-source", cmd.get_values("jml-source"));
+  }
+  if(cmd.isset("jml-specs-path"))
+  {
+    options.set_option("jml-specs-path", cmd.get_values("jml-specs-path"));
   }
   if(cmd.isset("java-cp-include-files"))
   {
@@ -162,11 +330,11 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
     options.get_unsigned_int_option("java-max-vla-length");
 
   if(options.get_bool_option("symex-driven-lazy-loading"))
-    lazy_methods_mode=LAZY_METHODS_MODE_EXTERNAL_DRIVER;
+    lazy_methods_mode = LAZY_METHODS_MODE_EXTERNAL_DRIVER;
   else if(options.get_bool_option("lazy-methods"))
-    lazy_methods_mode=LAZY_METHODS_MODE_CONTEXT_INSENSITIVE;
+    lazy_methods_mode = LAZY_METHODS_MODE_CONTEXT_INSENSITIVE;
   else
-    lazy_methods_mode=LAZY_METHODS_MODE_EAGER;
+    lazy_methods_mode = LAZY_METHODS_MODE_EAGER;
 
   if(throw_runtime_exceptions)
   {
@@ -197,11 +365,40 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
     std::back_inserter(extra_methods),
     build_load_method_by_regex);
 
+  // JML keep-set: methods named in JML expressions (e.g.
+  // //@ requires obj.getX() >= 0;) need to be loaded into the
+  // goto-functions table BEFORE JML processing runs. Lazy methods
+  // would otherwise drop them as unreachable. Scan the JML inputs
+  // for method-name references and register a regex-based extra-
+  // method loader for each.
+  if(options.is_set("jml-source") || options.is_set("jml-specs-path"))
+  {
+    std::set<std::string> jml_method_names;
+    if(options.is_set("jml-source"))
+    {
+      for(const auto &f : options.get_list_option("jml-source"))
+        jml_collect_method_names(f, /*jml_only=*/true, jml_method_names);
+    }
+    if(options.is_set("jml-specs-path"))
+    {
+      for(const auto &p : options.get_list_option("jml-specs-path"))
+        jml_collect_method_names_in_path(p, jml_method_names);
+    }
+    for(const auto &name : jml_method_names)
+    {
+      // build_load_method_by_regex expects a pattern; we want any
+      // method whose simple name matches, in any class. The
+      // builder will append :(.*)\.* if the pattern has no colon
+      // and prepend java:: if missing.
+      extra_methods.push_back(build_load_method_by_regex(".*\\." + name));
+    }
+  }
+
   java_cp_include_files = options.get_option("java-cp-include-files");
   if(!java_cp_include_files.empty())
   {
     // load file list from JSON file
-    if(java_cp_include_files[0]=='@')
+    if(java_cp_include_files[0] == '@')
     {
       jsont json_cp_config;
       if(parse_json(
@@ -212,7 +409,7 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
 
       if(!json_cp_config.is_object())
         throw "the JSON file has a wrong format";
-      jsont include_files=json_cp_config["jar"];
+      jsont include_files = json_cp_config["jar"];
       if(!include_files.is_array())
         throw "the JSON file has a wrong format";
 
@@ -222,13 +419,13 @@ java_bytecode_language_optionst::java_bytecode_language_optionst(
         DATA_INVARIANT(
           file_entry.is_string() && has_suffix(file_entry.value, ".jar"),
           "classpath entry must be jar filename, but '" + file_entry.value +
-          "' found");
+            "' found");
         config.java.classpath.push_back(file_entry.value);
       }
     }
   }
   else
-    java_cp_include_files=".*";
+    java_cp_include_files = ".*";
 
   nondet_static = options.get_bool_option("nondet-static");
   if(options.is_set("static-values"))
@@ -297,7 +494,7 @@ void java_bytecode_languaget::set_language_options(
 
 std::set<std::string> java_bytecode_languaget::extensions() const
 {
-  return { "class", "jar" };
+  return {"class", "jar"};
 }
 
 void java_bytecode_languaget::modules_provided(std::set<std::string> &)
@@ -331,9 +528,8 @@ void java_bytecode_languaget::initialize_class_loader(
   {
     string_preprocess.initialize_known_type_table();
 
-    auto get_string_base_classes = [this](const irep_idt &id) {
-      return string_preprocess.get_string_type_base_classes(id);
-    };
+    auto get_string_base_classes = [this](const irep_idt &id)
+    { return string_preprocess.get_string_type_base_classes(id); };
 
     java_class_loader.set_extra_class_refs_function(get_string_base_classes);
   }
@@ -478,7 +674,7 @@ bool java_bytecode_languaget::parse(
       }
     }
     else
-      main_class=config.java.main_class;
+      main_class = config.java.main_class;
 
     // do we have one now?
     if(main_class.empty())
@@ -518,7 +714,7 @@ static void infer_opaque_type_fields(
   for(const auto &method : parse_tree.parsed_class.methods)
   {
     for(const java_bytecode_parse_treet::instructiont &instruction :
-          method.instructions)
+        method.instructions)
     {
       const std::string statement =
         bytecode_info[instruction.bytecode].mnemonic;
@@ -582,8 +778,7 @@ static symbol_exprt get_or_create_class_literal_symbol(
 {
   struct_tag_typet java_lang_Class("java::java.lang.Class");
   symbol_exprt symbol_expr(
-    id2string(class_id) + JAVA_CLASS_MODEL_SUFFIX,
-    java_lang_Class);
+    id2string(class_id) + JAVA_CLASS_MODEL_SUFFIX, java_lang_Class);
   if(!symbol_table.has_symbol(symbol_expr.identifier()))
   {
     symbolt new_class_symbol{
@@ -591,8 +786,7 @@ static symbol_exprt get_or_create_class_literal_symbol(
     INVARIANT(
       new_class_symbol.name.starts_with("java::"),
       "class identifier should have 'java::' prefix");
-    new_class_symbol.base_name =
-      id2string(new_class_symbol.name).substr(6);
+    new_class_symbol.base_name = id2string(new_class_symbol.name).substr(6);
     new_class_symbol.is_lvalue = true;
     new_class_symbol.is_state_var = true;
     new_class_symbol.is_static_lifetime = true;
@@ -625,9 +819,8 @@ static exprt get_ldc_result(
   if(ldc_arg0.id() == ID_type)
   {
     const irep_idt &class_id = ldc_arg0.type().get(ID_identifier);
-    return
-      address_of_exprt(
-        get_or_create_class_literal_symbol(class_id, symbol_table));
+    return address_of_exprt(
+      get_or_create_class_literal_symbol(class_id, symbol_table));
   }
   else if(
     const auto &literal =
@@ -662,7 +855,7 @@ static void generate_constant_global_variables(
   for(auto &method : parse_tree.parsed_class.methods)
   {
     for(java_bytecode_parse_treet::instructiont &instruction :
-          method.instructions)
+        method.instructions)
     {
       // ldc* instructions are Java bytecode "load constant" ops, which can
       // retrieve a numeric constant, String literal, or Class literal.
@@ -678,11 +871,8 @@ static void generate_constant_global_variables(
         INVARIANT(
           instruction.args.size() != 0,
           "ldc instructions should have an argument");
-        instruction.args[0] =
-          get_ldc_result(
-            instruction.args[0],
-            symbol_table,
-            string_refinement_enabled);
+        instruction.args[0] = get_ldc_result(
+          instruction.args[0], symbol_table, string_refinement_enabled);
       }
     }
   }
@@ -792,7 +982,7 @@ static void create_stub_global_symbols(
   for(const auto &method : parse_tree.parsed_class.methods)
   {
     for(const java_bytecode_parse_treet::instructiont &instruction :
-          method.instructions)
+        method.instructions)
     {
       const std::string statement =
         bytecode_info[instruction.bytecode].mnemonic;
@@ -1152,7 +1342,8 @@ bool java_bytecode_languaget::generate_support_functions(
     object_factory_parameters,
     get_pointer_type_selector(),
     language_options->string_refinement_enabled,
-    [&](const symbolt &function, symbol_table_baset &symbol_table) {
+    [&](const symbolt &function, symbol_table_baset &symbol_table)
+    {
       return java_build_arguments(
         function,
         symbol_table,
@@ -1186,15 +1377,15 @@ bool java_bytecode_languaget::do_ci_lazy_method_conversion(
 
   const method_convertert method_converter =
     [this, &symbol_table_builder, &class_to_declared_symbols, &message_handler](
-      const irep_idt &function_id,
-      ci_lazy_methods_neededt lazy_methods_needed) {
-      return convert_single_method(
-        function_id,
-        symbol_table_builder,
-        std::move(lazy_methods_needed),
-        class_to_declared_symbols,
-        message_handler);
-    };
+      const irep_idt &function_id, ci_lazy_methods_neededt lazy_methods_needed)
+  {
+    return convert_single_method(
+      function_id,
+      symbol_table_builder,
+      std::move(lazy_methods_needed),
+      class_to_declared_symbols,
+      message_handler);
+  };
 
   ci_lazy_methodst method_gather(
     symbol_table,
@@ -1211,9 +1402,9 @@ bool java_bytecode_languaget::do_ci_lazy_method_conversion(
 }
 
 const select_pointer_typet &
-  java_bytecode_languaget::get_pointer_type_selector() const
+java_bytecode_languaget::get_pointer_type_selector() const
 {
-  PRECONDITION(pointer_type_selector.get()!=nullptr);
+  PRECONDITION(pointer_type_selector.get() != nullptr);
   return *pointer_type_selector;
 }
 
@@ -1256,7 +1447,7 @@ void java_bytecode_languaget::convert_lazy_method(
   if(symbol.value.is_not_nil())
     return;
 
-  journalling_symbol_tablet symbol_table=
+  journalling_symbol_tablet symbol_table =
     journalling_symbol_tablet::wrap(symtab);
 
   lazy_class_to_declared_symbols_mapt class_to_declared_symbols;
@@ -1586,8 +1777,8 @@ void java_bytecode_languaget::show_parse(
   {
     out << "\n\nClass has the following overlays:\n\n";
     for(auto parse_tree_it = std::next(parse_trees.begin());
-      parse_tree_it != parse_trees.end();
-      ++parse_tree_it)
+        parse_tree_it != parse_trees.end();
+        ++parse_tree_it)
     {
       parse_tree_it->output(out);
     }
@@ -1605,7 +1796,7 @@ bool java_bytecode_languaget::from_expr(
   std::string &code,
   const namespacet &ns)
 {
-  code=expr2java(expr, ns);
+  code = expr2java(expr, ns);
   return false;
 }
 
@@ -1614,7 +1805,7 @@ bool java_bytecode_languaget::from_type(
   std::string &code,
   const namespacet &ns)
 {
-  code=type2java(type, ns);
+  code = type2java(type, ns);
   return false;
 }
 

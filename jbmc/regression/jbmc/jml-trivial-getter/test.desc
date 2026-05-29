@@ -1,6 +1,6 @@
 CORE
 JmlTrivialGetter
---function "JmlTrivialGetter.echo:()I" --jml-source src/main/java/JmlTrivialGetter.java --no-lazy-methods --unwind 5 -cp target/classes
+--function "JmlTrivialGetter.echo:()I" --jml-source src/main/java/JmlTrivialGetter.java --unwind 5 -cp target/classes
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
@@ -32,10 +32,8 @@ receiver. Verification proves that the precondition's getX()
 and the postcondition's getX() resolve to the same backing
 field, so `\result == this.getX()` holds.
 
-`--no-lazy-methods` is needed so JBMC loads the getter
-bodies into the goto-functions table; lazy loading would
-otherwise discard unreachable methods (the getters aren't
-called from the verified entry point) and the recogniser
-wouldn't see them. A future improvement: have the JML
-processing pass force-load methods referenced by JML
-expressions before lazy loading runs.
+`set_language_options` runs a JML pre-scan that harvests
+method names referenced in the JML source, registering them
+as lazy-methods extra entry points. The trivial getter
+bodies are therefore loaded into the goto-functions table
+before JML processing runs.

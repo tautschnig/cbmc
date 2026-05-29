@@ -1,6 +1,6 @@
 CORE
 JmlTrivialGetterKotlin
---function "experiment.JmlTrivialGetterKotlin.validate:(Lexperiment/ColumnAttributes;)V" --jml-source src/main/kotlin/JmlTrivialGetterKotlin.kt --no-lazy-methods --unwind 5 -cp target/classes
+--function "experiment.JmlTrivialGetterKotlin.validate:(Lexperiment/ColumnAttributes;)V" --jml-source src/main/kotlin/JmlTrivialGetterKotlin.kt --unwind 5 -cp target/classes
 ^EXIT=0$
 ^SIGNAL=0$
 ^VERIFICATION SUCCESSFUL$
