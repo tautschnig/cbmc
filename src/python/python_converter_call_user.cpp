@@ -818,6 +818,75 @@ exprt python_convertert::convert_user_call(
         arguments[i].type().id() == ID_struct &&
         to_pointer_type(params[i].type()).base_type().id() == ID_struct)
       {
+        // P3: bare 'list' annotation widens to list[Any]
+        // (python_value-element). When the caller's list has a
+        // different element type (list[int], list[str], ...),
+        // a plain pointer reinterpret would mis-read the
+        // elements: python_string and python_value structs are
+        // different sizes / shapes. Build a new list where each
+        // element is wrap_value(orig_elem) so the callee sees
+        // tagged values it can dispatch on (isinstance(x, str),
+        // etc.).
+        const typet &param_pointee =
+          to_pointer_type(params[i].type()).base_type();
+        if(
+          is_python_list_type(param_pointee) &&
+          is_python_list_type(arguments[i].type()) &&
+          arguments[i].type() != param_pointee &&
+          is_python_value_type(
+            to_array_type(to_struct_type(param_pointee).components()[1].type())
+              .element_type()))
+        {
+          const auto &src_st = to_struct_type(arguments[i].type());
+          const auto &src_data_t =
+            to_array_type(src_st.components()[1].type());
+          const auto &dst_st = to_struct_type(param_pointee);
+          const auto &dst_data_t =
+            to_array_type(dst_st.components()[1].type());
+          // Materialise the source so we can index into it.
+          exprt src_struct = arguments[i];
+          if(src_struct.id() != ID_symbol)
+          {
+            static unsigned src_mat_ctr = 0;
+            std::string tn =
+              "__list_promote_src_" + std::to_string(src_mat_ctr++);
+            std::string tq = qualify_name(tn);
+            irep_idt ti{tq};
+            if(symbol_table.lookup(ti) == nullptr)
+            {
+              symbolt ts{ti, src_struct.type(), "python"};
+              ts.base_name = tn;
+              ts.is_lvalue = true;
+              ts.is_state_var = true;
+              ts.is_static_lifetime = current_function.empty();
+              symbol_table.add(ts);
+            }
+            symbol_exprt s_sym = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(
+              code_frontend_assignt{s_sym, src_struct});
+            src_struct = s_sym;
+          }
+          member_exprt src_len{src_struct, "length", signedbv_typet{64}};
+          member_exprt src_data{src_struct, "data", src_data_t};
+          // Build the promoted list element-wise.
+          exprt::operandst promoted_elems;
+          std::size_t max_len =
+            static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
+          for(std::size_t k = 0; k < max_len; k++)
+          {
+            exprt idx = from_integer(k, signedbv_typet{64});
+            exprt orig = index_exprt{src_data, idx};
+            // wrap_value lifts numerics / strings / etc. into
+            // python_value tagged form. For elements at indices
+            // beyond src_len the value is undefined but we
+            // never read it (callee guards with i < length).
+            promoted_elems.push_back(wrap_value(orig));
+          }
+          exprt promoted = struct_exprt{
+            {src_len, array_exprt{std::move(promoted_elems), dst_data_t}},
+            param_pointee};
+          arguments[i] = std::move(promoted);
+        }
         exprt addressable = arguments[i];
         if(addressable.id() != ID_symbol)
         {
