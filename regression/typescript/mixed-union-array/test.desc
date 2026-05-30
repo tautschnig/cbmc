@@ -1,0 +1,14 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+Mixed-element-type array literal — verifies that the program
+parses, converts, and verifies without crashing the simplifier or
+value-set analysis. The result is a nondet over-approximation
+(see typescript-known-limitations §2.8); the test only checks the
+no-crash property.

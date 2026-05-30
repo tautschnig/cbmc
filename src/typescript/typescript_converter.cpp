@@ -128,8 +128,7 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
     {
       if(key.find("__gen_") != 0)
         continue;
-      const auto &arr_t =
-        to_array_type(val.get_component("__values").type());
+      const auto &arr_t = to_array_type(val.get_component("__values").type());
       mp_integer size_v{0};
       if(arr_t.size().is_constant())
         to_integer(to_constant_expr(arr_t.size()), size_v);
@@ -1538,34 +1537,6 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   // ES2024 sec-array-initializer
   if(kind == "ArrayLiteralExpression")
   {
-    // Workaround: mixed-union-type arrays like (number | number[])[]
-    // crash the simplifier. Detect and emit nondet with a warning.
-    std::string arr_type_ann = json_string(json_member(node, "_type"));
-    if(
-      arr_type_ann.find("| ") != std::string::npos &&
-      arr_type_ann.find("[]") != std::string::npos &&
-      arr_type_ann.find("(") != std::string::npos)
-    {
-      log.warning() << "Mixed-union-type array (" << arr_type_ann
-                    << ") is not fully supported; using nondet. "
-                    << "Consider using a uniform element type."
-                    << messaget::eom;
-      // Return a nondet array with the correct length.
-      const jsont &elts = json_member(node, "elements");
-      std::size_t len = elts.is_array() ? to_json_array(elts).size() : 0;
-      std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
-      typet elem_type = double_type();
-      array_typet arr_type{
-        elem_type, from_integer(max_len, signedbv_typet{64})};
-      struct_typet list_type = make_array_struct_type(arr_type);
-      exprt::operandst data;
-      while(data.size() < max_len)
-        data.push_back(side_effect_expr_nondett{elem_type, source_locationt{}});
-      return struct_exprt{
-        {from_integer(len, signedbv_typet{64}),
-         array_exprt{std::move(data), arr_type}},
-        list_type};
-    }
     const jsont &elts = json_member(node, "elements");
     if(!elts.is_array())
       return nil_exprt{};
@@ -1688,6 +1659,43 @@ exprt typescript_convertert::convert_expression(const jsont &node)
             "_" + std::to_string(i), elements[i].type()});
         tuple_st.set_tag("typescript_tuple");
         return struct_exprt{std::move(elements), tuple_st};
+      }
+      // Heterogeneous mixed-union array — e.g., (number | number[])[].
+      // We can't pick a single uniform element type that fits both
+      // primitives and structs, and writing an ill-typed array
+      // literal trips downstream invariants (value_set::assign,
+      // simplify_index postcondition, etc.). Fall back to a nondet
+      // array of the correct apparent length. Sound but imprecise;
+      // see typescript-known-limitations §2.8.
+      //
+      // The detection here is operand-type-based rather than the
+      // earlier brittle `_type` string heuristic, so cases like
+      // (string | number)[] (where one operand happens to be
+      // typecast-compatible) are still recognised, while ordinary
+      // homogeneous arrays whose declared type happens to mention
+      // a `|` (e.g., `let x: (number)[] | string[] = [1,2]`) are
+      // NOT misclassified.
+      if(heterogeneous)
+      {
+        log.warning() << "Mixed-element-type array literal (" << elements.size()
+                      << " elements with "
+                      << "heterogeneous types) is not fully supported;"
+                      << " using nondet. See typescript-known-limitations"
+                      << " §2.8." << messaget::eom;
+        std::size_t actual_len_local = elements.size();
+        std::size_t max_len = TYPESCRIPT_MAX_ARRAY_LENGTH;
+        typet fallback_elt = double_type();
+        array_typet arr_type{
+          fallback_elt, from_integer(max_len, signedbv_typet{64})};
+        struct_typet list_type = make_array_struct_type(arr_type);
+        exprt::operandst nondet_data;
+        while(nondet_data.size() < max_len)
+          nondet_data.push_back(
+            side_effect_expr_nondett{fallback_elt, source_locationt{}});
+        return struct_exprt{
+          {from_integer(actual_len_local, signedbv_typet{64}),
+           array_exprt{std::move(nondet_data), arr_type}},
+          list_type};
       }
     }
     // Build list struct { length, data[] }

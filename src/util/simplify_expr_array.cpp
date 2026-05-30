@@ -67,7 +67,7 @@ simplify_exprt::simplify_index(const index_exprt &expr)
       return changed(simplify_rec(tmp));
     }
   }
-  else if(array.id()==ID_with)
+  else if(array.id() == ID_with)
   {
     // we have (a WITH [i:=e])[j]
 
@@ -120,11 +120,21 @@ simplify_exprt::simplify_index(const index_exprt &expr)
     }
     else
     {
-      // ok
-      return array.operands()[numeric_cast_v<std::size_t>(*i)];
+      // ok — but only if the chosen operand's type matches the
+      // indexed-element type. If the array literal was constructed
+      // with mismatched operand types (e.g., a TypeScript
+      // `(number | number[])[]` array where some operands are
+      // doubles and others are typescript_array structs), returning
+      // the raw operand would produce an ill-typed expression and
+      // violate simplify_rec's postcondition. Treat such cases as
+      // not-simplifiable; the original index expression remains.
+      const exprt &chosen = array.operands()[numeric_cast_v<std::size_t>(*i)];
+      if(chosen.type() == expr.type())
+        return chosen;
+      // Type mismatch: skip simplification.
     }
   }
-  else if(array.id()==ID_string_constant)
+  else if(array.id() == ID_string_constant)
   {
     const auto i = numeric_cast<mp_integer>(index);
 
@@ -145,25 +155,26 @@ simplify_exprt::simplify_index(const index_exprt &expr)
       return from_integer(v, new_expr.type());
     }
   }
-  else if(array.id()==ID_array_of)
+  else if(array.id() == ID_array_of)
   {
     return to_array_of_expr(array).what();
   }
   else if(array.id() == ID_array_list)
   {
     // These are index/value pairs, alternating.
-    for(size_t i=0; i<array.operands().size()/2; i++)
+    for(size_t i = 0; i < array.operands().size() / 2; i++)
     {
       exprt tmp_index = typecast_exprt(array.operands()[i * 2], index.type());
       simplify(tmp_index);
-      if(tmp_index==index)
+      if(tmp_index == index)
       {
         return array.operands()[i * 2 + 1];
       }
     }
   }
-  else if(array.id()==ID_byte_extract_little_endian ||
-          array.id()==ID_byte_extract_big_endian)
+  else if(
+    array.id() == ID_byte_extract_little_endian ||
+    array.id() == ID_byte_extract_big_endian)
   {
     const auto &byte_extract_expr = to_byte_extract_expr(array);
 

@@ -340,3 +340,47 @@ the `Class.prototype` access doesn't trigger a spurious
 
 **Regression guard**: `regression/typescript/object-create/` (CORE)
 covers the static-class case and the null-safe-map case.
+
+### `mixed-union-array` — defensive guard in `simplify_index` + frontend bailout (2026-05-30)
+
+**Was**: `(number | number[])[]` and similar heterogeneous array
+literals crashed `simplify_index`'s postcondition (the previous
+workaround in commit `5c06761f7e` mis-attributed the crash to
+`simplify_member`).
+
+**Resolution** (two parts):
+
+  - Core: `src/util/simplify_expr_array.cpp` `simplify_index` now
+    type-checks the chosen operand before returning it. If the
+    operand's type doesn't match the indexed element type — which
+    can happen for ill-typed-but-not-our-fault array literals
+    where the frontend stored heterogeneous operands in a
+    nominally-homogeneous array — return unchanged rather than
+    producing a result that violates `simplify_rec`'s
+    postcondition. This is a defensive guard; well-formed array
+    literals are unaffected.
+
+  - Frontend: `src/typescript/typescript_converter.cpp` for
+    `ArrayLiteralExpression` no longer relies on the brittle
+    `_type` string heuristic. Instead, after converting all
+    operands, it inspects their actual types: if heterogeneous AND
+    the literal is not a tuple, it bails to a nondet array of the
+    apparent length (sound over-approximation). The old workaround
+    only matched on `_type` strings containing `(`, `|`, and `[]`;
+    the new check is type-system-driven and so won't be misled by
+    e.g. `(number)[] | string[]` annotations on a homogeneous
+    literal.
+
+**Limitation that remains** (still §2.8):
+
+After the bailout, member access on an element of a mixed-union
+array (`(arr[i] as Pt).x`) sees only nondet, since we discarded
+the per-operand structural information. Removing that ceiling
+needs a proper union encoding for array elements, which would
+also have to satisfy `value_sett::assign`'s strict
+type-equality invariant
+(`src/pointer-analysis/value_set.cpp:1595`).
+
+**Regression guard**: `regression/typescript/mixed-union-array/`
+(CORE) — covers the no-crash property; verification result on
+narrowed access is nondet (sound).

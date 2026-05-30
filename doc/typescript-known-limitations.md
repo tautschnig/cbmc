@@ -355,16 +355,38 @@ the Proxy's trap behavior, the pragmatic model is sound.
 [typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
 item 12.
 
-### 2.8 Mixed-union-type arrays
+### 2.8 Mixed-element-type array literals (partially resolved 2026-05-30)
 
-**What**: `(number | number[])[]` previously crashed
-`simplify_member`. Workaround in place: detected at conversion time,
-emits warning and uses nondet (sound but imprecise).
+**What**: TypeScript array literals with heterogeneous element
+types — most commonly `(T1 | T2)[]` — used to crash in
+`simplify_index`'s postcondition (the workaround commit
+`5c06761f7e` mistakenly attributed the crash to `simplify_member`).
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 6 (workaround landed in commit `5c06761f7e`; full core fix
-deferred).
+**Resolution**:
+
+  1. Core defensive guard in `simplify_expr_array.cpp`'s
+     `simplify_index`: when the chosen operand's type doesn't match
+     the indexed element type, return unchanged rather than
+     producing an ill-typed result. This benefits any frontend that
+     happens to construct such literals.
+  2. Frontend bailout (`typescript_converter.cpp`): when an array
+     literal has heterogeneous operand types AND we're not
+     building a tuple, fall back to a nondet array of the apparent
+     length. Replaces the old brittle `_type` string match with an
+     operand-type-based check.
+
+**What still doesn't work**:
+
+  - Member access on a mixed-union element after narrowing
+    (`(arr[i] as Pt).x`) still resolves only against the nondet
+    fallback, so the model has no information about the struct's
+    contents. This is a ceiling of the bailout approach; resolving
+    it would require a true union encoding for array elements
+    (deferred — see `value_set::assign` invariant in
+    `src/pointer-analysis/value_set.cpp:1595`).
+
+**Regression**: `regression/typescript/mixed-union-array/` (CORE)
+— exercises the no-crash property.
 
 ### 2.9 `for..of` over method-call result with index-map writes inside (resolved 2026-05-29)
 
