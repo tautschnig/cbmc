@@ -246,10 +246,115 @@ _OWNERSHIP_FN_PREFIXES = (
     "abort_",
 )
 _OWNERSHIP_FN_SUFFIXES = (
-    "_put", "_release", "_free", "_exit", "_destroy",
-    "_cleanup", "_unlink", "_delete", "_del", "_abort",
-    "_dec_and_test",
+    "_put", "_release", "_free", "_fini", "_deinit",
+    "_exit", "_destroy", "_cleanup", "_unlink", "_delete",
+    "_del", "_abort", "_dec_and_test", "_remove",
+    "_disconnect", "_unregister", "_uninit",
 )
+
+
+def _detect_param_consumed_by_callee(
+        body: str, param_names: list[str]) -> FilterVerdict | None:
+    """Match the pattern where a pointer-typed parameter is
+    passed to another function and never directly
+    dereferenced in this function's body.  Common in
+    network-stack 'forward' functions:
+        int uld_send(struct adapter *adap, struct sk_buff *skb, ...) {
+            ...
+            return ctrl_xmit(&adap->sge.ctrlq[idx], skb);
+        }
+    The skb is consumed by ctrl_xmit (or kfree_skb on the
+    error path); this function transfers ownership but never
+    derefs skb itself.  The use_after_free_generic
+    instrumentation may then assert on the next deref site
+    in a hypothetical caller and fire falsely.
+
+    Heuristic: a parameter `p` is "consumed" when:
+      * `p->fld`, `*p`, and `p[i]` are all absent, AND
+      * `p` appears as an argument inside a function call.
+    """
+    if not param_names:
+        return None
+    for p in param_names:
+        esc = re.escape(p)
+        if re.search(r"(?<![\w])" + esc + r"\s*->", body):
+            continue
+        if re.search(
+                r"(?<![\w&])\*\s*" + esc + r"(?![\w])", body):
+            continue
+        if re.search(r"(?<![\w])" + esc + r"\s*\[", body):
+            continue
+        passed = re.search(
+            r"\b[A-Za-z_]\w*\s*\([^()]*\b" + esc + r"\b[^()]*\)",
+            body)
+        if passed:
+            return FilterVerdict(
+                "param_consumed_by_callee",
+                f"parameter `{p}` is passed to another "
+                "function and never directly dereferenced "
+                "here — ownership transfers to the callee",
+                "medium",
+            )
+    return None
+
+
+def _function_param_names_pointer_typed(
+        source: str, fn_name: str) -> list[str]:
+    """Return bare parameter names of pointer-typed parameters
+    of the given function, parsed from the signature in source."""
+    pat = re.compile(
+        r"(?:^|\n)\s*"
+        r"(?:[\w\s\*\(\)]+?\s+)?"
+        + re.escape(fn_name) + r"\s*\("
+        r"(?P<params>[^)]*)\)"
+    )
+    m = pat.search(source)
+    if not m:
+        return []
+    params = m.group("params")
+    out: list[str] = []
+    for p in params.split(","):
+        p = p.strip()
+        if not p or p == "void":
+            continue
+        if "*" not in p:
+            continue
+        name_match = re.search(r"(\w+)\s*(?:\[\s*\])?\s*$", p)
+        if name_match:
+            out.append(name_match.group(1))
+    return out
+
+
+def _detect_alloc_into_param_field(body: str
+                                   ) -> FilterVerdict | None:
+    """Match the pattern `<param>-><field> = alloc(...)` where
+    the alloc result is written directly into a struct field
+    of a parameter.  Common in kernel constructors that
+    decorate a passed-in object: e.g.
+        void input_alloc_absinfo(struct input_dev *dev) {
+            dev->absinfo = kcalloc(...);
+        }
+        int btt_freelist_init(struct arena_info *arena) {
+            arena->freelist = kcalloc(...);
+        }
+    The alloc result transfers ownership to the caller-owned
+    struct, so the per-function leak check naturally fires
+    despite no leak existing.
+    """
+    pat = re.compile(
+        r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*=\s*"
+        r"(?:" + ALLOC_APIS + r")\s*\("
+    )
+    m = pat.search(body)
+    if not m:
+        return None
+    return FilterVerdict(
+        "escape_via_store",
+        "allocation result is written directly into a "
+        "parameter struct field — ownership transfers to the "
+        "caller (per-function leak check fires falsely)",
+        "high",
+    )
 
 
 def _detect_constructor_with_out_pointer(
@@ -344,6 +449,21 @@ def _detect_ownership_handler(fn_name: str) -> FilterVerdict | None:
                 "are caller-ensured (out of harness scope)",
                 "high",
             )
+    # Infix matches: `<prefix>_free_<rest>`, `<prefix>_release_<rest>`,
+    # `<prefix>_destroy_<rest>`, etc.  Captures kernel naming
+    # styles like 'qlcnic_82xx_free_mac_list' that the
+    # prefix/suffix rules miss.
+    for tok in ("_free_", "_release_", "_destroy_",
+                "_cleanup_", "_remove_", "_disconnect_",
+                "_unregister_", "_unbind_"):
+        if tok in fn_name:
+            return FilterVerdict(
+                "ownership_handler",
+                f"function name '{fn_name}' contains "
+                f"'{tok.strip('_')}' indicating cleanup; "
+                "preconditions are caller-ensured",
+                "medium",
+            )
     return None
 
 
@@ -394,6 +514,17 @@ def classify(kernel_file: str | Path, fn_name: str,
     v_name = _detect_ownership_handler(fn_name)
     if v_name is not None:
         return v_name
+    # Body-only check: alloc result stored directly into
+    # a parameter struct field (no local intermediate var).
+    v_field = _detect_alloc_into_param_field(body)
+    if v_field is not None:
+        return v_field
+    # Body+signature check: any pointer-typed parameter that's
+    # passed to another function and never derefed here.
+    pn = _function_param_names_pointer_typed(source, fn_name)
+    v_consumed = _detect_param_consumed_by_callee(body, pn)
+    if v_consumed is not None:
+        return v_consumed
 
     # Build a list of candidate variables to test.
     candidates: list[str] = []

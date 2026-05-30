@@ -227,8 +227,27 @@ def _run_scan(c: FpCase, modules: list[str],
             # other = cbmc rc passed through
             rc = r.returncode
             if rc == 10:
+                # Run the triage filter to downgrade
+                # known-FP shapes (ownership_handler,
+                # escape_via_store, put_only_on_error)
+                # before reporting as candidate.  This
+                # mirrors what cve_validate.py does on its
+                # own rc==10 path.
                 v = "candidate"
                 note = f"module={mod} contract violation"
+                try:
+                    sys.path.insert(0, str(SCAN_DIR))
+                    from triage_filter import classify  # type: ignore
+                    tv = classify(
+                        f"{c.kernel_tree}/{c.file_path}",
+                        c.function,
+                    )
+                    if tv.shape:
+                        v = "fp-filtered"
+                        note = (f"module={mod} filtered: "
+                                f"{tv.shape} ({tv.reason})")
+                except Exception as e:
+                    pass
             elif rc == 14:
                 v = "low-confidence-candidate"
                 note = (f"module={mod} contract violation "
