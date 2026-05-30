@@ -1,0 +1,48 @@
+CORE
+JmlMapKeyOps
+--function "JmlMapKeyOps.getExisting:(Ljava/util/HashMap;I)Ljava/lang/Object;" --jml-source src/main/java/JmlMapKeyOps.java --classpath target/classes:../../../../lib/java-models-library/target/core-models.jar --java-load-class java.lang.Integer --axiomatic-collections --no-unwinding-assertions --unwind 5
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for int-key autobox-aware HashMap pack_index.
+
+The previous behaviour: JBMC's pack_index used pointer-
+identity packing for boxed-Integer keys at the body's
+HashMap.put / get site, while my JML resolver value-
+semantically packed primitive int keys. The two didn't
+agree, so a JML
+
+  //@ requires m.containsKey(k);    where k is int
+
+stored a non-null sentinel at one _kv slot, but the body's
+m.get(k) read from a different slot, and the resulting
+ensures \result != null assertion fired.
+
+The fix in java_bytecode_axiomatic.cpp's
+extract_boxed_primitive_value extends the pattern matcher
+to also recognise the simpler shape
+
+    cast(<sym>, Object*)        where <sym> has type Integer*
+
+(in addition to the older
+
+    cast(address_of(*<sym>.@java.lang.Number.@java.lang.Object), Object*)
+
+shape). After the extension, both the body's HashMap.put /
+get and the JML resolver's pack_index agree on
+value-semantic packing of the underlying int.
+
+The match is gated by a symbol-table lookup: we only fire
+if the boxed-class struct definition carries a literal
+`value` component. This requires core-models.jar on the
+classpath plus --java-load-class java.lang.Integer (etc.)
+to populate the struct definition.
+
+Test method `getExisting` exercises the round-trip
+explicitly: requires m.containsKey(k); body returns m.get(k);
+ensures \\result != null. Verification SUCCESSFUL.

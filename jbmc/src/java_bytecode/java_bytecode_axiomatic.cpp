@@ -169,12 +169,83 @@ exprt ptr_to_int32(const exprt &p)
 /// Also recognises the analogous patterns for boxed Long,
 /// Short, Byte, Character (whose value field is also called
 /// `value`).
-std::optional<exprt> extract_boxed_primitive_value(const exprt &key)
+std::optional<exprt> extract_boxed_primitive_value(
+  const exprt &key,
+  const symbol_tablet *symbol_table_for_validation = nullptr)
 {
   // Strip the outer cast to Object*.
   exprt e = key;
   while(e.id() == ID_typecast)
     e = to_typecast_expr(e).op();
+
+  // Direct boxed-pointer shape: the key is an expression of
+  // pointer-to-boxed-primitive type. JBMC produces this at
+  // the call site of HashMap.put / get when the key was
+  // autoboxed from a primitive (Integer.valueOf etc.) and
+  // the boxed result was stored in a local before being
+  // passed.
+  //
+  // Recognised before the older address_of-of-member shape
+  // below; the two are alternatives, and the simpler one
+  // matches more call sites in practice.
+  //
+  // The match is gated by `symbol_table_for_validation`:
+  // when supplied, we only fire if the struct definition
+  // carries a literal `value` component. This guards
+  // against stubbed-class shapes that lack the field; the
+  // older callers that don't supply a symbol table get the
+  // unconditional behaviour for backward compatibility.
+  if(e.type().id() == ID_pointer)
+  {
+    const typet &base = to_pointer_type(e.type()).base_type();
+    if(base.id() == ID_struct_tag)
+    {
+      const irep_idt cls = to_struct_tag_type(base).get_identifier();
+      typet value_type;
+      if(cls == "java::java.lang.Integer")
+        value_type = java_int_type();
+      else if(cls == "java::java.lang.Long")
+        value_type = java_long_type();
+      else if(cls == "java::java.lang.Short")
+        value_type = java_short_type();
+      else if(cls == "java::java.lang.Byte")
+        value_type = java_byte_type();
+      else if(cls == "java::java.lang.Character")
+        value_type = java_char_type();
+      else if(cls == "java::java.lang.Boolean")
+        value_type = java_boolean_type();
+
+      if(!value_type.is_nil())
+      {
+        bool has_value_field = true;
+        if(symbol_table_for_validation != nullptr)
+        {
+          has_value_field = false;
+          if(const auto *cs = symbol_table_for_validation->lookup(cls))
+          {
+            if(cs->type.id() == ID_struct)
+            {
+              for(const auto &c : to_struct_type(cs->type).components())
+              {
+                if(c.get_name() == "value")
+                {
+                  has_value_field = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        if(has_value_field)
+        {
+          dereference_exprt boxed_struct{e};
+          member_exprt value_field{boxed_struct, "value", value_type};
+          return value_field;
+        }
+      }
+    }
+  }
+
   if(e.id() != ID_address_of)
     return std::nullopt;
 
@@ -245,7 +316,10 @@ std::optional<exprt> extract_boxed_primitive_value(const exprt &key)
 /// matching of value-semantic boxed-primitive keys is unsound
 /// because JBMC's Integer.valueOf returns a fresh allocation
 /// each call.
-exprt pack_index(const exprt &receiver, const exprt &key)
+exprt pack_index(
+  const exprt &receiver,
+  const exprt &key,
+  const symbol_tablet *symbol_table_for_validation = nullptr)
 {
   const typet u64 = packed_index_type();
   exprt r32 = ptr_to_int32(receiver);
@@ -253,7 +327,9 @@ exprt pack_index(const exprt &receiver, const exprt &key)
   exprt shifted = shl_exprt(r64, from_integer(32, u64));
 
   exprt k64;
-  if(auto value = extract_boxed_primitive_value(key))
+  if(
+    auto value =
+      extract_boxed_primitive_value(key, symbol_table_for_validation))
   {
     // Value-semantic packing: use the unboxed int / long /
     // ... value as the low 32 bits.
@@ -439,7 +515,7 @@ bool lower_one_call(
     const exprt key = coerce(args[1], object_ptr_type());
     const symbolt &kv = ensure_global_array(
       symbol_table, AXIOMATIC_KV_SYM, kv_array_type(), object_null());
-    exprt idx = pack_index(receiver, key);
+    exprt idx = pack_index(receiver, key, &symbol_table);
     exprt val = index_exprt(kv.symbol_expr(), idx);
     exprt result;
     if(op == axiomatic_op::HM_GET)
@@ -466,7 +542,7 @@ bool lower_one_call(
       AXIOMATIC_SZ_SYM,
       sz_array_type(),
       from_integer(0, java_int_type()));
-    exprt idx = pack_index(receiver, key);
+    exprt idx = pack_index(receiver, key, &symbol_table);
     exprt rkey = pack_receiver_only(receiver);
     exprt old_v = index_exprt(kv.symbol_expr(), idx);
     with_exprt new_kv{kv.symbol_expr(), idx, value};
@@ -533,7 +609,7 @@ bool lower_one_call(
       AXIOMATIC_SZ_SYM,
       sz_array_type(),
       from_integer(0, java_int_type()));
-    exprt idx = pack_index(receiver, elem);
+    exprt idx = pack_index(receiver, elem, &symbol_table);
     exprt rkey = pack_receiver_only(receiver);
     exprt was_present = index_exprt(set.symbol_expr(), idx);
     with_exprt new_set{set.symbol_expr(), idx, true_exprt{}};
@@ -570,7 +646,7 @@ bool lower_one_call(
     const exprt elem = coerce(args[1], object_ptr_type());
     const symbolt &set = ensure_global_array(
       symbol_table, AXIOMATIC_SET_SYM, set_array_type(), false_exprt{});
-    exprt idx = pack_index(receiver, elem);
+    exprt idx = pack_index(receiver, elem, &symbol_table);
     exprt is_present = index_exprt(set.symbol_expr(), idx);
     if(!patch_return_value(body, it, cf_id, is_present))
       return false;
