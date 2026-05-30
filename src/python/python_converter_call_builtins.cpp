@@ -1028,8 +1028,66 @@ std::optional<exprt> python_convertert::try_builtin_call(
     struct_typet complex_type{comps};
     complex_type.set_tag("python_complex");
 
+    // Helper: turn an argument expression into a (real, imag)
+    // pair of double exprts, consistent with PLR §6.10.1's
+    // complex constructor semantics:
+    //   - complex c → (c.real, c.imag)
+    //   - bool / int / float / unwrapped numeric → (value, 0)
+    //   - constant string "1+2j" → parsed (real, imag); only
+    //     valid as the sole positional arg per CPython, but
+    //     we accept it here too for the keyword-form
+    //     'complex(real="...")'.
+    auto to_complex_parts = [&](
+                              const exprt &arg) -> std::pair<exprt, exprt>
+    {
+      // python_complex struct → unpack fields directly.
+      if(
+        arg.type().id() == ID_struct &&
+        to_struct_type(arg.type()).get_tag() == "python_complex")
+      {
+        return {
+          member_exprt{arg, "real", double_type()},
+          member_exprt{arg, "imag", double_type()}};
+      }
+      // Float: (value, 0).
+      if(arg.type().id() == ID_floatbv)
+        return {arg, safe_zero(double_type())};
+      // Bool / int / unwrapped numeric: try_eval_double then
+      // fall back to constant typecast.
+      auto ev = try_eval_double(arg);
+      ieee_floatt fv{
+        ieee_float_spect::double_precision(),
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      if(ev.has_value())
+      {
+        fv.from_double(ev.value());
+        return {fv.to_expr(), safe_zero(double_type())};
+      }
+      if(arg.is_constant())
+      {
+        mp_integer iv;
+        if(!to_integer(to_constant_expr(arg), iv))
+        {
+          fv.from_integer(iv);
+          return {fv.to_expr(), safe_zero(double_type())};
+        }
+      }
+      // Symbolic numeric: typecast to double for the real part.
+      if(
+        arg.type().id() == ID_signedbv ||
+        arg.type().id() == ID_unsignedbv || arg.type().id() == ID_bool ||
+        arg.type().id() == ID_integer)
+      {
+        return {
+          safe_typecast(arg, double_type()), safe_zero(double_type())};
+      }
+      // Fallback: zero.
+      return {safe_zero(double_type()), safe_zero(double_type())};
+    };
+
     exprt real_val = safe_zero(double_type());
     exprt imag_val = safe_zero(double_type());
+    bool imag_is_complex = false;
     if(args.is_array())
     {
       auto it = as_array(args).begin();
@@ -1038,8 +1096,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         exprt arg = convert_expression(*it);
         // PLR §6.10.1: complex(str) parses a string like
         // "1+2j" / "(1-2j)" into the python_complex struct.
-        // String args go through this path; numeric args
-        // through the float/int path below.
+        // Only valid as the sole positional arg.
         if(is_python_string_type(arg.type()) && is_node_type(*it, "Constant"))
         {
           const jsont &cv = json_member(*it, "value");
@@ -1065,52 +1122,44 @@ std::optional<exprt> python_convertert::try_builtin_call(
             return side_effect_expr_nondett{complex_type, get_location(expr)};
           }
         }
-        if(arg.type().id() == ID_floatbv)
-          real_val = arg;
-        else
-        {
-          // PLR §3.2: bool/int are subtypes of complex's real/
-          // imag inputs. Promote via try_eval_double so
-          // expressions like complex(-1, -2) and
-          // complex(True, False) (which arrive as UnaryOp /
-          // bool constants, not is_constant() raw integers)
-          // get the right value.
-          auto ev = try_eval_double(arg);
-          ieee_floatt fv{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          if(ev.has_value())
-            fv.from_double(ev.value());
-          else if(arg.is_constant())
-          {
-            mp_integer iv;
-            if(!to_integer(to_constant_expr(arg), iv))
-              fv.from_integer(iv);
-          }
-          real_val = fv.to_expr();
-        }
+        auto parts = to_complex_parts(arg);
+        // Default contribution to result: real += parts.real,
+        // imag += parts.imag (initial). Combined below with
+        // the second arg.
+        real_val = parts.first;
+        imag_val = parts.second;
         ++it;
       }
       if(it != as_array(args).end())
       {
         exprt arg = convert_expression(*it);
-        if(arg.type().id() == ID_floatbv)
-          imag_val = arg;
+        if(
+          arg.type().id() == ID_struct &&
+          to_struct_type(arg.type()).get_tag() == "python_complex")
+        {
+          imag_is_complex = true;
+        }
+        auto parts = to_complex_parts(arg);
+        // PLR §6.10.1: result = real_arg + imag_arg * j.
+        // For real_arg = a + bj (complex) and imag_arg = c + dj
+        // (complex): result = a + bj + (c + dj)*j = (a - d) +
+        // (b + c)j.
+        // For non-complex imag_arg = c (d=0): result = a + (b+c)j.
+        // For complex imag_arg only: result.real -= imag.imag,
+        // result.imag += imag.real.
+        // For non-complex imag_arg: result.imag += imag.real.
+        if(imag_is_complex)
+        {
+          // real -= imag.imag
+          real_val = minus_exprt{real_val, parts.second};
+          // imag += imag.real
+          imag_val = plus_exprt{imag_val, parts.first};
+        }
         else
         {
-          auto ev = try_eval_double(arg);
-          ieee_floatt fv{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          if(ev.has_value())
-            fv.from_double(ev.value());
-          else if(arg.is_constant())
-          {
-            mp_integer iv;
-            if(!to_integer(to_constant_expr(arg), iv))
-              fv.from_integer(iv);
-          }
-          imag_val = fv.to_expr();
+          // imag += imag (which is parts.first, the real part of
+          // the second arg's number).
+          imag_val = plus_exprt{imag_val, parts.first};
         }
       }
     }
@@ -1123,48 +1172,80 @@ std::optional<exprt> python_convertert::try_builtin_call(
       const jsont &kws = json_member(expr, "keywords");
       if(kws.is_array())
       {
+        bool kw_imag_is_complex = false;
+        std::pair<exprt, exprt> kw_real_parts{
+          safe_zero(double_type()), safe_zero(double_type())};
+        std::pair<exprt, exprt> kw_imag_parts{
+          safe_zero(double_type()), safe_zero(double_type())};
+        bool have_kw_real = false;
+        bool have_kw_imag = false;
         for(const auto &kw : as_array(kws))
         {
           std::string kn = json_string(json_member(kw, "arg"));
           if(kn != "real" && kn != "imag")
             continue;
-          exprt kv = convert_expression(json_member(kw, "value"));
-          ieee_floatt fv{
-            ieee_float_spect::double_precision(),
-            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
-          exprt fv_expr;
-          if(kv.type().id() == ID_floatbv)
-            fv_expr = kv;
+          const jsont &kw_val_node = json_member(kw, "value");
+          // String 'real="1+2j"' — parse like the positional
+          // string-arg path.
+          if(kn == "real" && is_node_type(kw_val_node, "Constant"))
+          {
+            const jsont &cv = json_member(kw_val_node, "value");
+            if(cv.is_string())
+            {
+              if(auto cv_pair = parse_python_complex_string(cv.value);
+                 cv_pair.has_value())
+              {
+                ieee_floatt real_f{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                real_f.from_double(cv_pair->first);
+                ieee_floatt imag_f{
+                  ieee_float_spect::double_precision(),
+                  ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+                imag_f.from_double(cv_pair->second);
+                kw_real_parts = {real_f.to_expr(), imag_f.to_expr()};
+                have_kw_real = true;
+                continue;
+              }
+            }
+          }
+          exprt kv = convert_expression(kw_val_node);
+          bool kv_is_complex = (kv.type().id() == ID_struct &&
+                                to_struct_type(kv.type()).get_tag() ==
+                                  "python_complex");
+          auto parts = to_complex_parts(kv);
+          if(kn == "real")
+          {
+            kw_real_parts = parts;
+            have_kw_real = true;
+          }
           else
           {
-            auto ev = try_eval_double(kv);
-            if(ev.has_value())
+            kw_imag_parts = parts;
+            kw_imag_is_complex = kv_is_complex;
+            have_kw_imag = true;
+          }
+        }
+        if(have_kw_real || have_kw_imag)
+        {
+          // Restart the computation with kw values overriding
+          // any positional defaults that came before.
+          real_val = have_kw_real ? kw_real_parts.first
+                                  : safe_zero(double_type());
+          imag_val = have_kw_real ? kw_real_parts.second
+                                  : safe_zero(double_type());
+          if(have_kw_imag)
+          {
+            if(kw_imag_is_complex)
             {
-              fv.from_double(ev.value());
-              fv_expr = fv.to_expr();
-            }
-            else if(kv.is_constant())
-            {
-              mp_integer iv;
-              if(!to_integer(to_constant_expr(kv), iv))
-              {
-                fv.from_integer(iv);
-                fv_expr = fv.to_expr();
-              }
-              else
-                fv_expr = kv;
+              real_val = minus_exprt{real_val, kw_imag_parts.second};
+              imag_val = plus_exprt{imag_val, kw_imag_parts.first};
             }
             else
-              fv_expr = kv;
+            {
+              imag_val = plus_exprt{imag_val, kw_imag_parts.first};
+            }
           }
-          if(kn == "real")
-            real_val = fv_expr.type() != double_type()
-                         ? safe_typecast(fv_expr, double_type())
-                         : fv_expr;
-          else
-            imag_val = fv_expr.type() != double_type()
-                         ? safe_typecast(fv_expr, double_type())
-                         : fv_expr;
         }
       }
     }
