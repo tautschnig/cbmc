@@ -45,6 +45,13 @@ sys.path.insert(0, str(SCAN_DIR))
 
 import cve_validate  # type: ignore
 import synthesise_harness  # type: ignore
+import scan_cache  # type: ignore
+
+
+# Increase this when scanner internals change in a way that
+# invalidates cached results (cocci rules, contracts,
+# adapters, harness synth).
+SCANNER_VERSION = "1"
 
 
 # Function-definition regex: matches `<type-words> name(`
@@ -179,10 +186,14 @@ def _sample_pairs(tree: Path,
 
 
 def _run_scan(c: FpCase, modules: list[str],
-              timeout_s: int, kernel_tree: str
+              timeout_s: int, kernel_tree: str,
+              cache: scan_cache.ScanCache | None = None
               ) -> None:
     """Run scan-per-file once per module, record best
-    verdict on the case."""
+    verdict on the case.  When `cache` is provided and
+    enabled, look up each (file_hash, function, module,
+    instrument) tuple before invoking the subprocess and
+    short-circuit on hit."""
     BEST_ORDER = ["candidate", "fp-filtered", "noise",
                   "low-confidence-candidate",
                   "successful", "vacuous", "timeout",
@@ -202,77 +213,91 @@ def _run_scan(c: FpCase, modules: list[str],
                 and not env.get("INSTRUMENT")):
             env["INSTRUMENT"] = mod
         env["UNWIND"] = env.get("UNWIND", "2")
+        instr_key = env.get("INSTRUMENT")
         cmd = [
             str(SCAN_DIR / "scan-per-file.sh"),
             mod, c.file_path, c.function,
         ]
-        try:
-            r = subprocess.run(
-                cmd, env=env, timeout=timeout_s,
-                cwd=str(ROOT),
-                capture_output=True, text=True,
-            )
-        except subprocess.TimeoutExpired:
+        # Cache lookup short-circuits the subprocess call
+        # when the (file_hash, function, module, instrument)
+        # tuple was previously scanned with the same scanner
+        # version.
+        rc: int = -1
+        stdout = ""
+        stderr = ""
+        runtime_s_one = 0.0
+        cached = (cache.get(kernel_tree, c.file_path,
+                            c.function, mod, instr_key)
+                  if cache and cache.enabled else None)
+        if cached is not None:
+            rc = cached.rc
+            stdout = cached.stdout
+            stderr = cached.stderr
+            runtime_s_one = cached.runtime_s
+        else:
+            sub_t0 = time.time()
+            try:
+                r = subprocess.run(
+                    cmd, env=env, timeout=timeout_s,
+                    cwd=str(ROOT),
+                    capture_output=True, text=True,
+                )
+            except subprocess.TimeoutExpired:
+                rc = 124
+                runtime_s_one = float(timeout_s)
+            else:
+                rc = r.returncode
+                stdout = r.stdout or ""
+                stderr = r.stderr or ""
+                runtime_s_one = time.time() - sub_t0
+                if cache and cache.enabled:
+                    cache.put(kernel_tree, c.file_path,
+                              c.function, mod, instr_key,
+                              rc, stdout, stderr,
+                              runtime_s_one)
+        # Exit-code → verdict mapping (same as before; see
+        # scan-per-file.sh for code definitions).
+        if rc == 124:
             v = "timeout"
             note = f"module={mod} timeout"
+        elif rc == 10:
+            v = "candidate"
+            note = f"module={mod} contract violation"
+            try:
+                sys.path.insert(0, str(SCAN_DIR))
+                from triage_filter import classify  # type: ignore
+                tv = classify(
+                    f"{c.kernel_tree}/{c.file_path}",
+                    c.function,
+                )
+                if tv.shape:
+                    v = "fp-filtered"
+                    note = (f"module={mod} filtered: "
+                            f"{tv.shape} ({tv.reason})")
+            except Exception:
+                pass
+        elif rc == 14:
+            v = "low-confidence-candidate"
+            note = (f"module={mod} contract violation "
+                    f"with empty-ghost-bootstrap")
+        elif rc == 0:
+            v = "successful"
+            note = f"module={mod} clean"
+        elif rc == 11:
+            v = "noise"
+            note = f"module={mod} builtin failure"
+        elif rc == 12:
+            v = "vacuous"
+            note = f"module={mod} no contract clauses"
+        elif rc == 13:
+            v = "skipped"
+            note = f"module={mod} skipped"
+        elif rc == 3 or rc == 2:
+            v = "error"
+            note = f"module={mod} compile rc={rc}"
         else:
-            # Exit codes from scan-per-file.sh:
-            #  10 = CONTRACT VIOLATION (candidate)
-            #   0 = VERIFICATION SUCCESSFUL (clean)
-            #  11 = NOISE (built-in checks fired)
-            #  12 = VACUOUS (no contract clauses)
-            #  13 = SKIPPED
-            #   2 = setup/arg error
-            #   3 = compile/link/instrument failure
-            # other = cbmc rc passed through
-            rc = r.returncode
-            if rc == 10:
-                # Run the triage filter to downgrade
-                # known-FP shapes (ownership_handler,
-                # escape_via_store, put_only_on_error)
-                # before reporting as candidate.  This
-                # mirrors what cve_validate.py does on its
-                # own rc==10 path.
-                v = "candidate"
-                note = f"module={mod} contract violation"
-                try:
-                    sys.path.insert(0, str(SCAN_DIR))
-                    from triage_filter import classify  # type: ignore
-                    tv = classify(
-                        f"{c.kernel_tree}/{c.file_path}",
-                        c.function,
-                    )
-                    if tv.shape:
-                        v = "fp-filtered"
-                        note = (f"module={mod} filtered: "
-                                f"{tv.shape} ({tv.reason})")
-                except Exception as e:
-                    pass
-            elif rc == 14:
-                v = "low-confidence-candidate"
-                note = (f"module={mod} contract violation "
-                        f"with empty-ghost-bootstrap")
-            elif rc == 0:
-                v = "successful"
-                note = f"module={mod} clean"
-            elif rc == 11:
-                v = "noise"
-                note = f"module={mod} builtin failure"
-            elif rc == 12:
-                v = "vacuous"
-                note = f"module={mod} no contract clauses"
-            elif rc == 13:
-                v = "skipped"
-                note = f"module={mod} skipped"
-            elif rc == 124:
-                v = "timeout"
-                note = f"module={mod} timeout"
-            elif rc == 3 or rc == 2:
-                v = "error"
-                note = f"module={mod} compile rc={rc}"
-            else:
-                v = "error"
-                note = f"module={mod} rc={rc}"
+            v = "error"
+            note = f"module={mod} rc={rc}"
         if rank.get(v, 99) < rank.get(best_verdict, 99):
             best_verdict = v
             best_module = mod
@@ -296,7 +321,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out-csv", type=Path, required=True)
     ap.add_argument("--out-md", type=Path, required=True)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument(
+        "--cache-dir", type=Path, default=None,
+        help="if set, cache per-(file_hash, function, "
+             "module, instrument) scan results under this "
+             "directory.  Re-runs become near-free for "
+             "unchanged cases.  Use SCAN_CACHE_DIR env var "
+             "as an alternative.")
     args = ap.parse_args(argv)
+
+    cache_dir = args.cache_dir or (
+        Path(os.environ["SCAN_CACHE_DIR"])
+        if os.environ.get("SCAN_CACHE_DIR") else None)
+    cache = scan_cache.ScanCache(
+        cache_dir, scanner_version=SCANNER_VERSION)
+    if cache.enabled:
+        print(f"scan cache: {cache_dir} "
+              f"(scanner_version={SCANNER_VERSION})",
+              flush=True)
 
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
     cve_funcs = pickle.loads(args.cve_funcs.read_bytes())
@@ -332,7 +374,7 @@ def main(argv: list[str] | None = None) -> int:
         mods = c.module.split(",")
         print(f"[{i}/{len(cases)}] {c.file_path}:{c.function} "
               f"mods={mods}", flush=True)
-        _run_scan(c, mods, args.timeout, c.kernel_tree)
+        _run_scan(c, mods, args.timeout, c.kernel_tree, cache)
         print(f"    verdict={c.verdict} ({c.runtime_s:.1f}s) "
               f"{c.note[:80]}", flush=True)
 
