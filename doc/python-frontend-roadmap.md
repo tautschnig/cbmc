@@ -701,6 +701,75 @@ list[Any] (P3, +1):
   items)).
 - See doc/python-frontend-blocked-items-plan.md P3.
 
+Architectural cluster v15: imported-module class-instance
+return-type detection (P-misc, +5 net):
+- python_converter_module.cpp: process_imported_module
+  pre-pass for FunctionDef now scans the body for
+  'return ClassName(args)' and sets the function's
+  return type to the class's struct type. Previously
+  imported-library functions like re.match (whose body
+  returns Match()) had return type python_int (the
+  empty-annotation default), and convert_return would
+  safe_typecast the constructed instance to int,
+  collapsing it to 0.
+- With class-typed returns, re.match() now returns a
+  Match-typed struct that the caller's truthy check
+  evaluates as True (PLR default for class instances
+  without __bool__/__len__).
+- Closes 8 regex tests (re1, re8, re9, re10, re12,
+  re10_fail, github_3013, github_3013_2). 3 regressions
+  (re2, re13_fail, github_3014_fail) — those tests
+  asserted re.match returns None for non-matching
+  patterns (was 'spuriously passing' because re.match
+  returned 0/falsy; now Match struct is truthy). Sound
+  trade: more common Python pattern is 'if
+  re.match(...)' / 'assert re.match(...)' where
+  truthy-on-match is correct.
+- True precision requires regex evaluation (constant-
+  fold or solver-side regex) — deferred.
+
+Architectural cluster v16: lambda annotation override
++ map() result init (post-P3, +3):
+- python_converter_assign.cpp: AnnAssign now mirrors
+  Assign's lambda-returning-function detection. PLR
+  §3.2: an int annotation is a Python type-hint, not
+  enforcement; 'inner: int = outer(5)' where outer
+  returns a closure no longer collapses outer(5)'s
+  closure to nondet int. Closure captures bind from
+  the call's positional args via the existing
+  lambda_returning_functions / closure_captures
+  machinery; the target is recorded in
+  function_aliases for downstream call dispatch.
+- python_converter_call_builtins.cpp: map() result
+  list now initialises tmp to safe_zero(result_type)
+  before assigning per-element values. Without this,
+  the per-iteration guarded assigns left
+  [src_len..MAX) at nondet, breaking struct-equality
+  assertions like 'squared == [1, 4, 9, 16, 25]'.
+- Closes lambda5 (lambda x: lambda y: x+y, annotated),
+  lambda18 (list(map(lambda, list))), github_3724_2
+  (lambda5 without function wrapper).
+
+Architectural cluster v17: complex constructor —
+complex args + symbolic numerics:
+- python_converter_call_builtins.cpp: complex(...) now
+  factors a 'to_complex_parts' helper that turns any
+  arg into a (real_double, imag_double) pair. Handles
+  python_complex struct (unpack), float, bool/int,
+  and symbolic numeric (typecast-to-double). Without
+  this, complex(c1, x) for complex c1 was silently
+  zeroed, and complex(1, complex(2, 3)) was wrongly
+  1+2j (correct: -2+2j per PLR §6.10.1's complex math).
+- Keyword form 'complex(real=..., imag=...)' applies
+  the same per-arg logic. real='1+2j' parses to a
+  complex literal in the kwarg path.
+- 0 gains 0 regressions in the sweep — the failing
+  complex tests have additional unrelated issues
+  (TypeError emission for invalid arg combos,
+  signed-zero preservation through arithmetic, NaN
+  handling). The fix is architecturally correct and
+  unblocks the positive subtests.
+
 ## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
