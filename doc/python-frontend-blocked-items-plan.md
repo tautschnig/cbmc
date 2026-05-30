@@ -455,6 +455,39 @@ didn't dig into the cause.
 - `match-sequence-mapping` and possibly other match-pattern tests.
 - Lower priority than P0–P2.
 
+### P3 status (2026-05-30)
+
+P3 landed. PASS 2861 → 2862 (+1):
+- `github_3433` (`def check(items: list) -> bool: return all(
+  isinstance(x, str) for x in items)` called with `["a", "b"]`).
+
+Implementation summary:
+- `python_converter.cpp`: bare `list` annotation maps to
+  `python_list_type(python_value_type())` (was: list[int]).
+- `python_converter_assign.cpp`: at AnnAssign, when sym.type is
+  list[python_value] and rhs is list[T] with T != python_value,
+  wrap each element via `wrap_value()` before assigning.
+  Preserves the symbol's declared list[Any] type instead of
+  letting the type-widening branch override it back to list[T].
+- `python_converter_call_user.cpp`: at the call boundary, when
+  the parameter is pointer-to-list[python_value] and the
+  argument is list[T] with T != python_value, build a promoted
+  list with each element wrapped via `wrap_value()` before
+  byref'ing.
+
+Aliasing semantics preserved: the call-site wrap fires only when
+types DIFFER. Once the AnnAssign wrap has already produced a
+list[Any]-typed symbol on the caller side, the call-site sees
+matching types and uses the existing `address_of(a)` path —
+keeping the pointer alias intact through function returns
+(`test_soundness_return_alias` continues to detect the unsoundness
+correctly).
+
+Match-sequence-mapping with bare list also works under list[Any]:
+the match patterns bind sub-patterns to python_value-typed
+variables, and the int returns wrap-back via the existing
+typecast-at-return path.
+
 ---
 
 ## Suggested execution order
@@ -497,8 +530,9 @@ to it.
 
 ---
 
-**Last updated:** 2026-05-30 (PASS 2861 cumulative wave 41 +260).
+**Last updated:** 2026-05-30 (PASS 2862 cumulative wave 41 +261).
 P0 phases 0.A–0.F substantially complete; P1.B + P1.D landed
 (symbolic string subscript and forward slicing via
 `cprover_string_substring`); P2.B landed (symbolic-string genexp
-iteration with byte-OR fast-path).
+iteration with byte-OR fast-path); P3 landed (bare `list`
+annotation as list[Any]).

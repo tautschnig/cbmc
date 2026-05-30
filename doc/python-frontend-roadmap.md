@@ -672,6 +672,35 @@ iteration (P2, +2):
   ('all(c in valid_chars for c in color_code)').
 - See doc/python-frontend-blocked-items-plan.md P2.
 
+Architectural cluster v14: bare list annotation as
+list[Any] (P3, +1):
+- python_converter.cpp: bare 'list'/'List' annotation
+  maps to python_list_type(python_value_type()) (was:
+  list[int]). PLR §3.2: bare list means list[Any] —
+  heterogeneous element type.
+- AnnAssign element wrap: when sym.type is list[Any]
+  and rhs is list[T] with T != python_value, each
+  element is wrapped via wrap_value() before
+  assignment. Preserves the symbol's declared
+  list[Any] type instead of letting the type-widening
+  branch override it back to list[T].
+- Call boundary element wrap: when the parameter is
+  pointer-to-list[Any] and the argument is list[T]
+  (T != python_value), build a promoted list with
+  each element wrapped via wrap_value() before
+  byref'ing. Without this, the pointer reinterpret
+  would mis-read the elements (different sizes).
+- Aliasing semantics preserved: the call-site wrap
+  only fires when types differ. Once the AnnAssign
+  wrap has produced a list[Any]-typed symbol on the
+  caller side, the call-site sees matching types and
+  uses the existing address_of(a) path — keeping the
+  pointer alias intact through function returns.
+- Closes github_3433 (def check(items: list) ->
+  bool: return all(isinstance(x, str) for x in
+  items)).
+- See doc/python-frontend-blocked-items-plan.md P3.
+
 ## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
