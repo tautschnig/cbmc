@@ -309,17 +309,16 @@ def _detect_constructor_with_out_pointer(
             "ownership to the caller",
             "high",
         )
-    # Also detect the two-step form: `X = alloc(); ... *out = X;`
-    # which our body-extractor sees as separate statements.
-    if (re.search(r"=\s*k[zv]?(?:alloc|malloc|calloc)\s*\(",
-                  body)
-            and re.search(r"\*\s*\w+\s*=\s*\w+", body)):
-        return FilterVerdict(
-            "ownership_handler",
-            f"function `{fn_name}` is a constructor: "
-            "alloc-then-store-via-out-pointer pattern",
-            "medium",
-        )
+    # The earlier 'medium-confidence' two-step form
+    # (`X = alloc(); ... *out = X;`) was removed because the
+    # `\*\s*\w+\s*=\s*\w+` pattern matched declarations like
+    # `struct foo *mapping = expr;` that are NOT ownership
+    # transfers.  When two real candidates moved between
+    # buckets in n=200 v9 (CVE-2024-35829 lima_heap_alloc was
+    # fp-filtered as a false-positive of this rule), the
+    # medium-confidence detector was retired.  We accept some
+    # missed constructor-FPs in exchange for not mis-filtering
+    # real bugs.
     return None
 
 
