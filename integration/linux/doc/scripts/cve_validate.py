@@ -891,6 +891,13 @@ def main() -> int:
     ap.add_argument("--modules-per-cve", type=int, default=1,
                     help="try the top-N most-relevant "
                          "per-file modules per CVE (default 1)")
+    ap.add_argument(
+        "--multi-lts", action="store_true",
+        help="for each sampled CVE, scan against EVERY LTS "
+             "tree where the file exists (rather than only "
+             "the first one).  Each tree produces its own row "
+             "in the output CSV and Markdown table; the "
+             "kernel_tree column distinguishes them.")
     ap.add_argument("--out-csv", default="/tmp/cve-validate-results.csv")
     ap.add_argument("--out-md", default="/tmp/cve-validate-results.md")
     ap.add_argument(
@@ -1003,14 +1010,26 @@ def main() -> int:
                     fp, fn, kt, max_modules=args.modules_per_cve)
                 if not mods:
                     continue
-                for mod in mods:
-                    sampled.append(CveCase(
-                        cve=cve, category=cat,
-                        summary=r.get("summary", "")[:120],
-                        file_path=fp, function=fn,
-                        module=mod, kernel_tree=kt,
-                        fix_hash=fh,
-                    ))
+                # Multi-LTS expansion: each accepted CVE
+                # produces one CveCase per LTS tree where
+                # the file exists (rather than just one
+                # case for the primary tree).  When invert
+                # mode is on, the per-tree state still
+                # gets re-detected inside _run_scan.
+                if args.multi_lts and not args.invert:
+                    trees_for_case = _find_files_in_trees(
+                        fp, kernel_trees)
+                else:
+                    trees_for_case = [kt]
+                for tree in trees_for_case:
+                    for mod in mods:
+                        sampled.append(CveCase(
+                            cve=cve, category=cat,
+                            summary=r.get("summary", "")[:120],
+                            file_path=fp, function=fn,
+                            module=mod, kernel_tree=tree,
+                            fix_hash=fh,
+                        ))
                 accepted += 1
     rng.shuffle(sampled)
     sampled = sampled[:args.n * max(1, args.modules_per_cve)]
@@ -1133,15 +1152,56 @@ def main() -> int:
     with open(args.out_md, "w") as f:
         f.write("# CVE validation results\n\n")
         f.write("| CVE | category | module | verdict | "
-                "file:fn | note |\n")
+                "tree | file:fn | note |\n")
         f.write("|-----|----------|--------|---------|"
-                "----------|------|\n")
+                "------|----------|------|\n")
         for c in cases:
+            tree = (Path(c.kernel_tree).name
+                    if c.kernel_tree else "—")
             f.write(f"| {c.cve} | {c.category} | "
                     f"{c.module or '—'} | {c.verdict} | "
+                    f"{tree} | "
                     f"`{c.file_path or '—'}:{c.function or '—'}` | "
                     f"{c.note} |\n")
     print(f"\nMarkdown table: {args.out_md}")
+
+    # Multi-LTS per-tree summary: how many CVEs the catalog
+    # detected on each tree.  Helpful when comparing recall
+    # across LTS branches.
+    if args.multi_lts:
+        print("\n=== Per-tree detection summary "
+              "(rows scanned, each tree separately) ===")
+        by_tree: dict[str, dict[str, int]] = {}
+        for c in cases:
+            tree = (Path(c.kernel_tree).name
+                    if c.kernel_tree else "?")
+            d = by_tree.setdefault(tree, {})
+            d[c.verdict] = d.get(c.verdict, 0) + 1
+        print(f"  {'tree':<14} {'cand':>5} {'fp':>5} "
+              f"{'succ':>5} {'vac':>5} {'noise':>5} "
+              f"{'err':>5} {'skip':>5}")
+        for tree in sorted(by_tree):
+            d = by_tree[tree]
+            print(
+                f"  {tree:<14} {d.get('candidate',0):5d} "
+                f"{d.get('fp-filtered',0):5d} "
+                f"{d.get('successful',0):5d} "
+                f"{d.get('vacuous',0):5d} "
+                f"{d.get('noise',0):5d} "
+                f"{d.get('error',0):5d} "
+                f"{d.get('skipped',0)+d.get('timeout',0):5d}")
+        # Trees-vulnerable cross-tabulation: for each CVE,
+        # which trees yielded a 'candidate' verdict?
+        print("\n=== Trees with 'candidate' verdict per CVE ===")
+        per_cve_trees: dict[str, list[str]] = {}
+        for c in cases:
+            if c.verdict == "candidate":
+                tree = (Path(c.kernel_tree).name
+                        if c.kernel_tree else "?")
+                per_cve_trees.setdefault(c.cve, []).append(tree)
+        for cve in sorted(per_cve_trees):
+            trees = sorted(set(per_cve_trees[cve]))
+            print(f"  {cve}: {','.join(trees)}")
 
     # Merge per-CVE SARIF documents into a single multi-run
     # SARIF file.  Each CveCase's sarif_path was set in
