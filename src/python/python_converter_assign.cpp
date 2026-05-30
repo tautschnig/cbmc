@@ -397,6 +397,83 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   }
   bool rhs_struct_like =
     rhs.type().id() == ID_struct || rhs.type().id() == ID_struct_tag;
+  // P3: bare 'list' annotation (= list[Any], with python_value
+  // elements) — when the rhs is a typed list[T] with T !=
+  // python_value, wrap each element via wrap_value() so the
+  // symbol carries python_value-tagged elements rather than
+  // the raw T values. Without this, the type-widening below
+  // would override the symbol's declared list[Any] type back
+  // to list[T], and `for x in name` / `name[i]` reads would
+  // produce typed-T values that miss isinstance() dispatch.
+  if(
+    sym.type != rhs.type() && is_python_list_type(sym.type) &&
+    is_python_list_type(rhs.type()) &&
+    is_python_value_type(
+      to_array_type(to_struct_type(sym.type).components()[1].type())
+        .element_type()) &&
+    !is_python_value_type(
+      to_array_type(to_struct_type(rhs.type()).components()[1].type())
+        .element_type()))
+  {
+    const auto &sym_st = to_struct_type(sym.type);
+    const auto &dst_data_t =
+      to_array_type(sym_st.components()[1].type());
+    const auto &src_st = to_struct_type(rhs.type());
+    const auto &src_data_t =
+      to_array_type(src_st.components()[1].type());
+    // For struct literals from `[a, b, c]`, peel directly.
+    if(
+      rhs.id() == ID_struct && rhs.operands().size() >= 2 &&
+      rhs.operands()[1].id() == ID_array)
+    {
+      exprt::operandst promoted;
+      const auto &src_arr = rhs.operands()[1];
+      std::size_t max_len =
+        static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
+      for(std::size_t k = 0; k < max_len; k++)
+      {
+        if(k < src_arr.operands().size())
+          promoted.push_back(wrap_value(src_arr.operands()[k]));
+        else
+          promoted.push_back(safe_zero(dst_data_t.element_type()));
+      }
+      rhs = struct_exprt{
+        {rhs.operands()[0], array_exprt{std::move(promoted), dst_data_t}},
+        sym.type};
+    }
+    else
+    {
+      // Materialise rhs into a temp and read elements via index.
+      static unsigned src_mat_ctr2 = 0;
+      std::string tn =
+        "__list_assign_src_" + std::to_string(src_mat_ctr2++);
+      std::string tq = qualify_name(tn);
+      irep_idt ti{tq};
+      if(symbol_table.lookup(ti) == nullptr)
+      {
+        symbolt ts{ti, rhs.type(), "python"};
+        ts.base_name = tn;
+        ts.is_lvalue = true;
+        ts.is_state_var = true;
+        ts.is_static_lifetime = current_function.empty();
+        symbol_table.add(ts);
+      }
+      symbol_exprt s_sym = symbol_table.lookup_ref(ti).symbol_expr();
+      pending_checks.push_back(code_frontend_assignt{s_sym, rhs});
+      member_exprt src_len{s_sym, "length", signedbv_typet{64}};
+      member_exprt src_data{s_sym, "data", src_data_t};
+      exprt::operandst promoted;
+      std::size_t max_len =
+        static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
+      for(std::size_t k = 0; k < max_len; k++)
+      {
+        exprt idx = from_integer(k, signedbv_typet{64});
+        promoted.push_back(wrap_value(index_exprt{src_data, idx}));
+      }
+      rhs = struct_exprt{
+        {src_len, array_exprt{std::move(promoted), dst_data_t}}, sym.type};
+    }
+  }
   if(
     !python_check_annotations && sym.type != rhs.type() && rhs_struct_like &&
     !is_python_value_type(rhs.type()) &&
