@@ -645,6 +645,33 @@ cprover_string_substring (P1, +7):
   doc/python-frontend-blocked-items-plan.md P1 for the
   full plan (phases 1.A and 1.C not needed).
 
+Architectural cluster v13: symbolic-string genexp
+iteration (P2, +2):
+- Added a python_string-iter branch to the all/any
+  generator-expression unroller:
+  - Constant-string: when the iterable's content is
+    statically known (extract_string_value /
+    string_constants), unroll the genexp at the AST
+    level by binding string_constants[iter_sym_id] =
+    "<char>" per iteration and re-converting elt
+    fresh. Lets c.lower(), c.isalpha(), etc.
+    constant-fold per character.
+  - Variable-content: 16-iteration unroll over
+    s.data[i] with each iteration binding c to a
+    single-char struct {1, address_of(arr[byte_i])}.
+    Hits the existing byte-OR fast-paths in compare
+    (c in const_string, c == const_char) — no
+    cprover_string_contains_func call, no SAT-loop.
+- 1-char-struct byte-level lower()/upper(): when obj is
+  a single-char python_string struct, transform the
+  byte directly via if_exprt instead of routing
+  through cprover_string_to_*_case_func. Avoids one
+  solver call per genexp iteration.
+- Closes github_3036 ('all(not ("a" <= c.lower() <=
+  "z") for c in price)') and github_3036_6
+  ('all(c in valid_chars for c in color_code)').
+- See doc/python-frontend-blocked-items-plan.md P2.
+
 ## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |
