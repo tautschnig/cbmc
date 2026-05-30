@@ -1,0 +1,13 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §20.1.2.2: Object.create(proto). Verifies the static-class
+case (Object.create(Class.prototype) acts as a constructor-less
+allocator) and the safe-map case (Object.create(null) gives an
+empty struct).

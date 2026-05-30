@@ -178,6 +178,14 @@ enforces; if it's broken at any sink, the harness fails.
 (static chain works); `integration-lodash-cve-ghsa-f23m/`
 (precondition-style detection works).
 
+
+**Partial resolution (2026-05-30)**:
+`Object.create(Class.prototype)` now allocates a fresh struct of
+that class (no constructor call). `Object.create(null)` returns an
+empty struct (the "safe map" idiom). `Object.create(someInstance)`
+clones the struct value. Runtime prototype-chain walking remains
+NOT modelled. See `regression/typescript/object-create/`.
+
 ### 1.7 Null/undefined preservation in reference and array element types
 
 **What**: For value-typed unions (`number | null`, `boolean | undefined`),

@@ -138,12 +138,12 @@ this repo. After coordinated disclosure of the 14 findings completes:
 
 ### P3 — Low impact or high risk
 
-| # | Item | Estimate | Risk |
-|---|------|----------|------|
-| P3.1 | `Object.create` (single-prototype case) | 1 day | medium |
-| P3.2 | `Object.setPrototypeOf` runtime chain | 2–3 days | high |
-| P3.3 | Proxy handler traps | 5–7 days | high |
-| P3.4 | Mixed-union arrays — proper core fix in `simplify_member` (workaround already landed) | 1–2 days | medium |
+| # | Item | Estimate | Risk | Status |
+|---|------|----------|------|--------|
+| P3.1 | `Object.create` (single-prototype case) | 1 day | medium | done (this commit) |
+| P3.2 | `Object.setPrototypeOf` runtime chain | 2–3 days | high | pending |
+| P3.3 | Proxy handler traps | 5–7 days | high | pending |
+| P3.4 | Mixed-union arrays — proper core fix in `simplify_member` (workaround already landed) | 1–2 days | medium | pending |
 
 ### P4 — Long-term / external dependency
 

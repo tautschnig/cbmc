@@ -308,3 +308,35 @@ not threaded into the outer generator's `__values` list.
 
 **Regression guard**:
 `regression/typescript/yield-star-delegation/` (CORE).
+
+### `object-create` — `Object.create(proto)` for static-class case (2026-05-30)
+
+**Was**: `Object.create(...)` returned a nondet double regardless
+of argument.
+
+**Resolution**: `typescript_converter_call.cpp`'s `Object` block
+now intercepts `Object.create` BEFORE converting arguments and
+dispatches on the AST shape:
+
+  - `Object.create(Class.prototype)` where `Class` is a known
+    class → fresh struct of `Class` type (no constructor call).
+    Equivalent to `new Class()` for property-access purposes.
+  - `Object.create(null)` → empty struct (the "safe map" idiom).
+  - `Object.create(someInstance)` where the instance has a
+    statically-known struct type → returns the source value
+    (sound, since we don't model runtime prototype chains).
+  - Anything else → falls through to nondet (unchanged).
+
+The shape check happens before `convert_expression(args[0])` so
+the `Class.prototype` access doesn't trigger a spurious
+"Unknown identifier" warning.
+
+**Limitations carried forward** (see §1.6):
+
+- The result of `Object.create(parentInstance)` does NOT inherit
+  parent's own properties through a runtime chain — only
+  statically-declared (class-hierarchy) inheritance is modelled.
+- `Object.setPrototypeOf` (P3.2) still no-ops at runtime.
+
+**Regression guard**: `regression/typescript/object-create/` (CORE)
+covers the static-class case and the null-safe-map case.

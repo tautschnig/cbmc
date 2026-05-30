@@ -703,6 +703,90 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
     // ES2024 sec-object.keys, sec-object.values
     if(obj == "Object")
     {
+      // ES2024 §20.1.2.2: Object.create(proto[, descriptors]).
+      // Pragmatic model — we don't carry a runtime prototype chain
+      // (see typescript-known-limitations §1.6 on static-class-only
+      // inheritance), so handle the cases that matter in practice:
+      //
+      //  (a) Object.create(SomeClass.prototype)
+      //      → fresh instance of SomeClass with default-init fields
+      //        (no constructor call). Equivalent to `new SomeClass()`
+      //        for property-access purposes.
+      //  (b) Object.create(null)
+      //      → fresh empty object. Used as the "safe map" idiom to
+      //        opt out of prototype pollution.
+      //  (c) Object.create(someInstance)
+      //      → copy of the instance's struct (best we can do
+      //        without a runtime chain).
+      //  (d) anything else
+      //      → nondet (existing behaviour).
+      //
+      // Done BEFORE converting all arguments, so the cls.prototype
+      // PropertyAccessExpression doesn't trip the `Unknown
+      // identifier: cls` warning.
+      if(method == "create" && args.is_array() &&
+         !to_json_array(args).empty())
+      {
+        const jsont &raw_arg = *to_json_array(args).begin();
+        const std::string raw_kind =
+          json_string(json_member(raw_arg, "_kind"));
+        // Case (a): the argument is a PropertyAccessExpression of
+        // the form Class.prototype where Class is a known class.
+        if(raw_kind == "PropertyAccessExpression" &&
+           json_string(json_member(json_member(raw_arg, "name"), "text")) ==
+             "prototype")
+        {
+          const jsont &cls_node = json_member(raw_arg, "expression");
+          if(json_string(json_member(cls_node, "_kind")) == "Identifier")
+          {
+            std::string cls_name = json_string(json_member(cls_node, "text"));
+            auto cit = class_types.find(cls_name);
+            if(cit != class_types.end())
+            {
+              static unsigned ocreate_ctr = 0;
+              std::string tmp_name = "__object_create_" + cls_name + "_" +
+                                     std::to_string(ocreate_ctr++);
+              std::string tmp_qname =
+                "typescript::" +
+                (current_function.empty() ? "" : current_function + "::") +
+                tmp_name;
+              irep_idt tmp_id{tmp_qname};
+              if(symbol_table.lookup(tmp_id) == nullptr)
+              {
+                symbolt ts{tmp_id, cit->second, "typescript"};
+                ts.base_name = tmp_name;
+                ts.is_lvalue = true;
+                ts.is_state_var = true;
+                symbol_table.add(ts);
+              }
+              return symbol_table.lookup_ref(tmp_id).symbol_expr();
+            }
+          }
+        }
+        // Case (b): the argument is the literal null.
+        if(raw_kind == "NullKeyword")
+        {
+          struct_typet empty_st;
+          empty_st.set_tag("typescript_object_create_null");
+          return struct_exprt{exprt::operandst{}, empty_st};
+        }
+        // Case (c): convert and clone the value if it has a
+        // statically-known struct type.
+        {
+          exprt src = convert_expression(raw_arg);
+          if(src.id() == ID_symbol)
+          {
+            const symbolt *s =
+              symbol_table.lookup(to_symbol_expr(src).get_identifier());
+            if(s && s->type.id() == ID_struct)
+              return src;
+          }
+          if(src.type().id() == ID_struct)
+            return src;
+        }
+        // Case (d): give up.
+        return side_effect_expr_nondett{double_type(), get_location(node)};
+      }
       exprt::operandst call_args;
       if(args.is_array())
         for(const auto &a : to_json_array(args))
