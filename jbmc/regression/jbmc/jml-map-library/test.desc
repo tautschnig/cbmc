@@ -1,0 +1,48 @@
+CORE
+JmlMapLibrary
+--function "JmlMapLibrary.useIt:()I" --jml-source src/main/java/JmlMapLibrary.java --axiomatic-collections --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML library-call recognition: `m.size()`
+and `m.isEmpty()` for HashMap / Map / Set receivers
+inside JML clauses.
+
+Pipeline
+--------
+  1. Source extractor parses the parameter list with proper
+     `<>` nesting (so HashMap<Integer, Integer> m extracts
+     a single param named `m`, not two malformed pieces).
+
+  2. resolve_jml_expr's library-call branch (added on this
+     feature branch) sees `jml_method_call(size, [m])` or
+     `jml_method_call(isEmpty, [m])` with a Map-shaped
+     receiver, looks up the global `_sz` symbol installed
+     by the --axiomatic-collections lowering pass, and
+     emits the equivalent inline expression
+       index_exprt(_sz, pack_receiver(m))
+     for `size()`, or `index == 0` for `isEmpty()`.
+
+  3. Library-call recognition runs BEFORE trivial-getter
+     rewrite so collection method calls don't fall through
+     to the "non-trivial method call" warning.
+
+The test exercises the call-graph case: `useIt()` allocates
+a fresh HashMap (which the axiomatic <init> sets
+`_sz[handle] := 0`), then calls `sizeOfEmpty` whose
+precondition `m.isEmpty()` resolves to `_sz[handle] == 0`,
+which holds. Verification SUCCESSFUL.
+
+What this does NOT yet cover (deferred to follow-up):
+  * Map.containsKey, Map.get — need per-receiver/per-key
+    indexing; designed but not implemented.
+  * Set.contains — same dependency as containsKey.
+  * Map<K, V>.size on the abstract Map interface (works for
+    HashMap concrete; abstract is a follow-up if needed).
+  * List.size, List.isEmpty — JBMC does not yet axiomatically
+    model ArrayList/LinkedList. Would need parallel work.

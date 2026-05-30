@@ -114,8 +114,9 @@ irep_idt find_method(
   for(const auto &entry : symbol_table.symbols)
   {
     const std::string id_str = id2string(entry.first);
-    if(id_str.substr(0, prefix.size()) == prefix &&
-       entry.second.type.id() == ID_code)
+    if(
+      id_str.substr(0, prefix.size()) == prefix &&
+      entry.second.type.id() == ID_code)
       return entry.first;
   }
   return irep_idt();
@@ -172,9 +173,10 @@ jml_contract_mapt jml_extract_from_source(
     // Package. Java syntax requires a trailing semicolon
     // (`package com.example;`); Kotlin omits it
     // (`package com.example`). Accept both.
-    if(trimmed.substr(0, 7) == "package" &&
-       (trimmed.size() == 7 || std::isspace(
-                                static_cast<unsigned char>(trimmed[7]))))
+    if(
+      trimmed.substr(0, 7) == "package" &&
+      (trimmed.size() == 7 ||
+       std::isspace(static_cast<unsigned char>(trimmed[7]))))
     {
       auto semi = trimmed.find(';');
       const auto end = (semi == std::string::npos) ? trimmed.size() : semi;
@@ -228,8 +230,7 @@ jml_contract_mapt jml_extract_from_source(
       std::string method_name = extract_method_name(trimmed);
       if(!method_name.empty() && !class_name.empty())
       {
-        irep_idt method_id =
-          find_method(class_name, method_name, symbol_table);
+        irep_idt method_id = find_method(class_name, method_name, symbol_table);
         if(!method_id.empty())
         {
           const irep_idt cid = "java::" + class_name;
@@ -245,12 +246,35 @@ jml_contract_mapt jml_extract_from_source(
           {
             std::string params_str =
               trimmed.substr(paren_start + 1, paren_end - paren_start - 1);
-            // Split by comma, extract last word of each param
-            std::istringstream pss(params_str);
-            std::string param;
-            while(std::getline(pss, param, ','))
+            // Split by top-level commas: a comma inside generic
+            // angle brackets (`HashMap<Integer, Integer>`) is
+            // part of the parameter type, not a separator.
+            std::vector<std::string> param_pieces;
             {
-              param = trim(param);
+              std::string current;
+              int depth = 0;
+              for(char c : params_str)
+              {
+                if(c == '<')
+                  ++depth;
+                else if(c == '>')
+                  --depth;
+                if(c == ',' && depth == 0)
+                {
+                  param_pieces.push_back(current);
+                  current.clear();
+                }
+                else
+                {
+                  current.push_back(c);
+                }
+              }
+              if(!current.empty())
+                param_pieces.push_back(current);
+            }
+            for(const auto &raw_param : param_pieces)
+            {
+              std::string param = trim(raw_param);
               if(param.empty())
                 continue;
               // Java syntax: `int x` — the last whitespace-separated
@@ -261,9 +285,8 @@ jml_contract_mapt jml_extract_from_source(
               // before any equals sign.
               auto colon = param.find(':');
               auto eq = param.find('=');
-              const bool is_kotlin =
-                colon != std::string::npos &&
-                (eq == std::string::npos || colon < eq);
+              const bool is_kotlin = colon != std::string::npos &&
+                                     (eq == std::string::npos || colon < eq);
               if(is_kotlin)
               {
                 std::string name = trim(param.substr(0, colon));
@@ -290,8 +313,8 @@ jml_contract_mapt jml_extract_from_source(
 
           for(const auto &jml_line : pending_jml)
           {
-            auto clause = jml_parse_clause(
-              jml_line, method_id, cid, symbol_table);
+            auto clause =
+              jml_parse_clause(jml_line, method_id, cid, symbol_table);
             if(clause.kind != jml_clauset::kindt::UNKNOWN)
               spec.clauses.push_back(std::move(clause));
           }

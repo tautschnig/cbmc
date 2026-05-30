@@ -514,6 +514,76 @@ exprt resolve_jml_expr(
   if(e.id() == jml_ids::jml_method_call && e.operands().size() >= 1)
   {
     const irep_idt method_name{e.get("method_name")};
+
+    // Library-call recognition for known-pure Java
+    // collection methods. We accept Map.size, Set.size,
+    // Map.isEmpty, Set.isEmpty as the simplest, no-argument,
+    // value-producing reads. The JML resolver inlines them
+    // to the same expression the axiomatic-collections pass
+    // produces for normal-code CALL sites — an index_exprt
+    // into the global `_sz` array keyed by the receiver's
+    // pointer-bit-pattern. The lookup is interface-stable
+    // (works whether the user wrote Map, HashMap,
+    // LinkedHashMap, etc.) since the runtime type doesn't
+    // affect the JML-side reading of the size invariant.
+    //
+    // Restriction: the global `_sz` symbol must already
+    // exist in the symbol table. The axiomatic-collections
+    // lowering pass installs it on first use; if the
+    // verified function and its callees never touch a
+    // collection through normal code, the symbol is absent
+    // and the recogniser falls through (the call resolves
+    // via the trivial-getter path or remains as a "non-
+    // trivial method call" warning).
+    if(
+      e.operands().size() == 1 &&
+      (id2string(method_name) == "size" || id2string(method_name) == "isEmpty"))
+    {
+      const auto *sz_sym = ns.get_symbol_table().lookup("java::axiomatic::_sz");
+      if(sz_sym != nullptr)
+      {
+        // Resolve receiver via the same path the trivial-
+        // getter branch uses. After resolution, the
+        // receiver type tells us whether this is a
+        // collection.
+        exprt receiver = resolve_jml_expr(
+          e.operands()[0],
+          method_id,
+          class_id,
+          ns,
+          param_names,
+          trivial_getters);
+
+        exprt recv_for_class = receiver;
+        if(recv_for_class.type().id() == ID_pointer)
+          recv_for_class = dereference_exprt(recv_for_class);
+        if(recv_for_class.type().id() == ID_struct_tag)
+        {
+          const std::string cls = id2string(
+            to_struct_tag_type(recv_for_class.type()).get_identifier());
+          const bool is_collection_shape =
+            cls.find("java.util.Map") != std::string::npos ||
+            cls.find("java.util.HashMap") != std::string::npos ||
+            cls.find("java.util.LinkedHashMap") != std::string::npos ||
+            cls.find("java.util.Set") != std::string::npos ||
+            cls.find("java.util.HashSet") != std::string::npos ||
+            cls.find("java.util.Collection") != std::string::npos;
+          if(is_collection_shape)
+          {
+            // Build pack_receiver_only(receiver) inline:
+            //   typecast(typecast(receiver, uint32), uint64).
+            const exprt sz_expr = sz_sym->symbol_expr();
+            exprt r32 = typecast_exprt(receiver, unsignedbv_typet(32));
+            exprt rkey = typecast_exprt(r32, unsignedbv_typet(64));
+            const exprt indexed = index_exprt(sz_expr, rkey);
+            if(id2string(method_name) == "size")
+              return indexed;
+            return equal_exprt(indexed, from_integer(0, java_int_type()));
+          }
+        }
+      }
+    }
+
     exprt receiver = resolve_jml_expr(
       e.operands()[0], method_id, class_id, ns, param_names, trivial_getters);
 
