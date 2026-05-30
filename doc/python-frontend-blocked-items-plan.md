@@ -350,6 +350,56 @@ variable symbol.
 - Refined-string solver crash if the body audit misses an operation.
 - Unrolling 16 iterations × heavy body could bloat SAT.
 
+### P2 status (2026-05-30)
+
+P2.B (and an unplanned constant-string AST-unroll variant) landed.
+PASS 2859 → 2861 (+2 net):
+- `github_3036_6` (constant `color = "1A2b3C"` passed to a function
+  that does `all(c in valid_chars for c in color_code)`).
+- `github_3036` (constant `price = "123"` with
+  `all(not ('a' <= c.lower() <= 'z') for c in price)`).
+
+Implementation:
+- `python_converter_call_builtins.cpp` adds a python_string-iter
+  branch to the all/any genexp unroller. Two strategies:
+  - Constant-string: when the iterable's content is statically
+    known (`extract_string_value` or `string_constants`), unroll
+    the genexp at the AST level by binding
+    `string_constants[iter_sym_id] = "<char>"` per iteration and
+    re-converting `elt` fresh. Lets `c.lower()`, `c.isalpha()`,
+    etc. constant-fold per character.
+  - Variable-content: 16-iteration unroll over `s.data[i]` with
+    each iteration binding `c` to a single-char struct
+    `{1, address_of(arr[byte_i])}`. Hits the existing byte-OR
+    fast-paths in compare (`c in const_string`,
+    `c == const_char`) — no `cprover_string_contains_func` call,
+    no SAT-loop.
+- `python_converter_call_string_methods.cpp` adds byte-level
+  `lower()` / `upper()` for 1-char structs (via if_exprt over the
+  byte) so `c.lower()` per genexp iteration doesn't emit
+  `cprover_string_to_lower_case_func`.
+- `python_converter_control.cpp` (P2.B-related): `for c in s` in a
+  regular for-loop now mirrors the convert_subscript two-strategy
+  split — substring intrinsic for symbolic sources, byte-array
+  wrap for known-byte sources. Defensive change; current tests
+  don't exercise the symbolic-source path.
+
+Phase 2.A folded into the variable-content strategy: the loop
+binds `c` directly to a struct that already matches the byte-OR
+fast-path's recognised shape. No view-tracking map needed.
+
+Phase 2.C (static body audit) not needed: the byte-OR path
+naturally avoids `cprover_string_*` calls; the constant-string
+unroll path constant-folds methods so they don't reach the
+solver.
+
+Still open: `type-inference-for-len` — multi-call site with
+distinct constant args makes `string_constants` tainted, so the
+function body sees `parens` as symbolic. Default unwinding is
+unbounded; with `--unwind 10` the test does FAIL but expects
+SUCCESSFUL. Needs separate per-call-site specialisation or
+bounded default unwind for symbolic-string for-loops.
+
 ---
 
 ## P3 — Bare `list` annotation as `list[Any]`
@@ -447,7 +497,8 @@ to it.
 
 ---
 
-**Last updated:** 2026-05-29 (PASS 2859 cumulative wave 41 +258).
-P0 phases 0.A–0.F substantially complete; P1.B and P1.D landed
+**Last updated:** 2026-05-30 (PASS 2861 cumulative wave 41 +260).
+P0 phases 0.A–0.F substantially complete; P1.B + P1.D landed
 (symbolic string subscript and forward slicing via
-`cprover_string_substring`).
+`cprover_string_substring`); P2.B landed (symbolic-string genexp
+iteration with byte-OR fast-path).
