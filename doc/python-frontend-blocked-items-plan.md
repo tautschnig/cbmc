@@ -530,9 +530,13 @@ to it.
 
 ---
 
-**Last updated:** 2026-05-30 (PASS 2862 cumulative wave 41 +261).
+**Last updated:** 2026-05-30 (PASS 2870 cumulative wave 41 +269).
 P0 phases 0.A–0.F substantially complete; P1.B + P1.D landed
 (symbolic string subscript and forward slicing via
 `cprover_string_substring`); P2.B landed (symbolic-string genexp
 iteration with byte-OR fast-path); P3 landed (bare `list`
-annotation as list[Any]).
+annotation as list[Any]); cluster v15 imported-module
+class-instance return-type detection (+5); cluster v16 lambda
+annotation override + map() result init (+3); cluster v17
+complex constructor refactor (architectural; 0 net but unblocks
+positive subtests).
