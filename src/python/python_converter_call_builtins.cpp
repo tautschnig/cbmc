@@ -2705,6 +2705,142 @@ std::optional<exprt> python_convertert::try_builtin_call(
               }
               return result;
             }
+
+            // Variable iterable: iterate over string bytes
+            // (P2.B). Unrolls up to MAX_UNROLL=16 iterations,
+            // each binding the loop variable to a single-char
+            // python_string struct backed by a fresh local
+            // 1-byte array containing *(s.data + i).
+            //
+            // This produces struct literals where the byte-OR
+            // fast-paths in compare ('c in const_string',
+            // 'c == const_char') already fire — no
+            // cprover_string_contains_func calls per iteration,
+            // avoiding the SAT-loop crash that the previous
+            // attempt hit on github_3036_6.
+            if(!iterable.is_nil() && is_python_string_type(iterable.type()))
+            {
+              member_exprt str_length{
+                iterable, "length", signedbv_typet{64}};
+              member_exprt data_ptr{
+                iterable, "data", pointer_typet(unsignedbv_typet{8}, 64)};
+
+              std::string qname = qualify_name(iter_var);
+              irep_idt iter_sym_id{qname};
+              if(symbol_table.lookup(iter_sym_id) == nullptr)
+              {
+                symbolt sym{iter_sym_id, python_string_type(), "python"};
+                sym.base_name = iter_var;
+                sym.is_lvalue = true;
+                sym.is_state_var = true;
+                symbol_table.add(sym);
+              }
+              else if(
+                symbol_table.lookup_ref(iter_sym_id).type !=
+                python_string_type())
+              {
+                symbol_table.get_writeable_ref(iter_sym_id).type =
+                  python_string_type();
+              }
+
+              constexpr std::size_t MAX_STR_GENEXP_UNROLL = 16;
+              exprt result = (func_name == "all") ? exprt{true_exprt{}}
+                                                  : exprt{false_exprt{}};
+              for(std::size_t i = 0; i < MAX_STR_GENEXP_UNROLL; i++)
+              {
+                exprt idx = from_integer(i, signedbv_typet{64});
+                exprt in_range = binary_relation_exprt{
+                  idx, ID_lt, str_length};
+
+                // Build the per-iteration char struct
+                // {1, address_of(arr[0])} where arr[0] = byte_i.
+                // The byte-OR fast-paths in compare detect this
+                // shape and bypass the refined-string solver.
+                dereference_exprt byte_i{plus_exprt{data_ptr, idx}};
+                exprt::operandst chars;
+                chars.push_back(byte_i);
+                array_typet at{
+                  unsignedbv_typet{8},
+                  from_integer(1, signedbv_typet{64})};
+                array_exprt arr{std::move(chars), at};
+                exprt ptr = address_of_exprt{index_exprt{
+                  arr,
+                  from_integer(0, signedbv_typet{64}),
+                  unsignedbv_typet{8}}};
+                exprt len_one = from_integer(1, signedbv_typet{64});
+                exprt char_struct = struct_exprt{
+                  {len_one, ptr}, python_string_type()};
+
+                std::size_t pc_before = pending_checks.size();
+                exprt elt_expr = convert_expression(elt);
+                std::function<void(exprt &)> subst = [&](exprt &e)
+                {
+                  if(
+                    e.id() == ID_symbol &&
+                    to_symbol_expr(e).get_identifier() == iter_sym_id)
+                    e = char_struct;
+                  else
+                    for(auto &op : e.operands())
+                      subst(op);
+                };
+                subst(elt_expr);
+                // Guard pending checks emitted while converting
+                // elt by `i < length`.
+                for(std::size_t pi = pc_before; pi < pending_checks.size();
+                    pi++)
+                {
+                  codet &pc = pending_checks[pi];
+                  std::function<void(exprt &)> esubst = [&](exprt &e)
+                  {
+                    if(
+                      e.id() == ID_symbol &&
+                      to_symbol_expr(e).get_identifier() == iter_sym_id)
+                      e = char_struct;
+                    else
+                      for(auto &op : e.operands())
+                        esubst(op);
+                  };
+                  for(auto &op : pc.operands())
+                    esubst(op);
+                  pc = code_ifthenelset{in_range, std::move(pc)};
+                }
+
+                if(elt_expr.type() != bool_typet{})
+                  elt_expr = safe_typecast(elt_expr, bool_typet{});
+
+                // Apply optional 'if' filter clauses.
+                exprt filter_pred = true_exprt{};
+                if(gen_ifs.is_array())
+                {
+                  for(const auto &if_node : as_array(gen_ifs))
+                  {
+                    exprt fp = convert_expression(if_node);
+                    std::function<void(exprt &)> fsubst = [&](exprt &e)
+                    {
+                      if(
+                        e.id() == ID_symbol &&
+                        to_symbol_expr(e).get_identifier() == iter_sym_id)
+                        e = char_struct;
+                      else
+                        for(auto &op : e.operands())
+                          fsubst(op);
+                    };
+                    fsubst(fp);
+                    if(fp.type() != bool_typet{})
+                      fp = safe_typecast(fp, bool_typet{});
+                    filter_pred = and_exprt{filter_pred, fp};
+                  }
+                }
+                exprt eff_in_range = and_exprt{in_range, filter_pred};
+
+                if(func_name == "all")
+                  result = and_exprt{
+                    result, or_exprt{not_exprt{eff_in_range}, elt_expr}};
+                else
+                  result = or_exprt{result, and_exprt{eff_in_range, elt_expr}};
+              }
+              return result;
+            }
           }
         }
       }
