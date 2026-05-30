@@ -340,6 +340,67 @@ void python_convertert::process_imported_module(
           }
         }
 
+        // PLR §3.2: detect `return ClassName(args)` so functions
+        // in imported library modules (e.g. re.match returning a
+        // Match instance) carry the right return type. Without
+        // this, the convert_return path inside the body would
+        // safe_typecast the constructed instance to python_int
+        // (the empty-annotation default), collapsing it to 0.
+        if(returns.is_null())
+        {
+          const jsont &fbody = json_member(stmt, "body");
+          if(fbody.is_array())
+          {
+            std::function<void(const jsont &)> scan_class_returns =
+              [&](const jsont &nodes)
+            {
+              if(!nodes.is_array())
+                return;
+              for(const auto &bs : as_array(nodes))
+              {
+                if(is_node_type(bs, "Return"))
+                {
+                  const jsont &rv = json_member(bs, "value");
+                  if(
+                    is_node_type(rv, "Call") &&
+                    is_node_type(json_member(rv, "func"), "Name"))
+                  {
+                    std::string call_name =
+                      json_string(json_member(json_member(rv, "func"), "id"));
+                    auto cit = class_types.find(call_name);
+                    if(cit != class_types.end())
+                    {
+                      const typet &this_type = cit->second;
+                      if(ret_type == python_int_type())
+                        ret_type = this_type;
+                      else if(ret_type != this_type)
+                        ret_type = python_value_type();
+                    }
+                  }
+                }
+                // Recurse into common nested-control bodies.
+                for(const char *key : {"body", "orelse", "finalbody"})
+                {
+                  const jsont &child = json_member(bs, key);
+                  if(child.is_array())
+                    scan_class_returns(child);
+                }
+                const jsont &handlers = json_member(bs, "handlers");
+                if(handlers.is_array())
+                {
+                  for(const auto &h : as_array(handlers))
+                  {
+                    const jsont &hb = json_member(h, "body");
+                    if(hb.is_array())
+                      scan_class_returns(hb);
+                  }
+                }
+              }
+            };
+            scan_class_returns(fbody);
+          }
+        }
+
         // Parse parameters
         code_typet::parameterst params;
         const jsont &args_node = json_member(stmt, "args");
