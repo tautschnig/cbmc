@@ -1,0 +1,12 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §27.5: yield* delegation (constant case). Tests two-level
+delegation (deep → outer → inner) where both delegates have
+constant yields known at conversion time.

@@ -119,6 +119,7 @@ function makeN2j(sourceFile, checker) {
         break;
       case ts.SyntaxKind.YieldExpression:
         if(node.expression) r.expression = n2j(node.expression);
+        if(node.asteriskToken) r.isDelegated = true;
         break;
       case ts.SyntaxKind.StringLiteral:
       case ts.SyntaxKind.NoSubstitutionTemplateLiteral:

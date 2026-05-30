@@ -111,16 +111,36 @@ typet typescript_convertert::convert_type(const std::string &ts_type) const
   // ES2024 §6.1.5: Symbol type — modelled as signedbv[64]
   if(ts_type == "symbol")
     return signedbv_typet{64};
-  // ES2024 §27.5: Generator<T> — return the generator struct if
-  // we've seen the function, otherwise use a generic placeholder.
+  // ES2024 §27.5: Generator<T> — variables typed as Generator<T>
+  // are bound to a particular function's generator struct only at
+  // the call site. At type-conversion time we don't know which
+  // function will return into this variable, so we pick a
+  // placeholder large enough for any registered generator.
   if(ts_type.find("Generator<") == 0 || ts_type.find("Generator") == 0)
   {
-    // Try to find a registered generator type.
+    // Find the LARGEST registered generator array size and re-use
+    // its element type. (Picking the first-registered would
+    // truncate when a different generator with more yields is
+    // assigned in.)
+    struct_typet largest;
+    mp_integer max_size{0};
     for(const auto &[key, val] : class_types)
     {
-      if(key.find("__gen_") == 0)
-        return val;
+      if(key.find("__gen_") != 0)
+        continue;
+      const auto &arr_t =
+        to_array_type(val.get_component("__values").type());
+      mp_integer size_v{0};
+      if(arr_t.size().is_constant())
+        to_integer(to_constant_expr(arr_t.size()), size_v);
+      if(size_v > max_size)
+      {
+        max_size = size_v;
+        largest = val;
+      }
     }
+    if(max_size > 0)
+      return largest;
     // Fallback: generic generator struct with double values.
     struct_typet gen_type;
     gen_type.components().push_back(

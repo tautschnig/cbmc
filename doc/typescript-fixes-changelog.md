@@ -266,3 +266,45 @@ to be syntactically valid TypeScript.
 **Regression guard**: `regression/typescript/syntax-error-reporting/`
 (CORE) — feeds a syntactically-malformed TS file and asserts that
 the diagnostic line and PARSING ERROR are emitted.
+
+### `yield-star-delegation` — `yield*` delegation, constant case (2026-05-29)
+
+**Was**: `yield* otherGen()` was treated as a single yield with
+unknown value (nondet). The delegate's actual yield sequence was
+not threaded into the outer generator's `__values` list.
+
+**Resolution**:
+
+1. Both parsers (inline and daemon) now capture the
+   `asteriskToken` of `YieldExpression` as `r.isDelegated = true`.
+
+2. `typescript_converter.h` adds a `generator_yields` map from
+   generator function name to its captured yield expressions.
+
+3. `typescript_converter_func.cpp`'s yield scanner records each
+   generator's yields in `generator_yields[func_name]` after
+   processing the body.
+
+4. When the scanner encounters a `YieldExpression` with
+   `isDelegated = true` whose expression is a CallExpression to a
+   known generator function, it appends the delegate's recorded
+   yields to the current generator's `yield_values`. Unknown
+   delegates fall back to a single nondet yield (sound
+   over-approximation).
+
+5. `typescript_converter.cpp` `convert_type` for `Generator<T>`
+   now picks the LARGEST registered generator's struct (rather
+   than the first), so a variable typed as `Generator<T>` can
+   hold any function's generator return.
+
+**Caveats** (documented as a known limitation, §2.4):
+
+- Two-level delegation (`A` calls `yield* B()`, and `B` calls
+  `yield* C()`) inflates the array sizes enough to hit
+  `boolbv_map`'s literal-count limit (§3.1) on default settings.
+  Single-level delegation works.
+- Dynamic delegates (`yield* (cond ? a() : b())`) are not
+  inlined — the AST shape doesn't match the constant case.
+
+**Regression guard**:
+`regression/typescript/yield-star-delegation/` (CORE).

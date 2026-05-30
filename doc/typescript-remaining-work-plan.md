@@ -128,7 +128,7 @@ this repo. After coordinated disclosure of the 14 findings completes:
 | # | Item | Estimate | Status |
 |---|------|----------|--------|
 | P2.1 | Generator `next(value)` parameter | 1–2 days | deferred (deeper than estimate; needs state-machine refactor) |
-| P2.2 | `yield*` delegation (constant case) | half day | pending |
+| P2.2 | `yield*` delegation (constant case) | half day | done (this commit) |
 | P2.3 | Well-known Symbols (`Symbol.iterator` etc., as named special properties) | 1 day | done (17c007d28f) |
 | P2.5 | Dynamic `import()` resolution via existing module infrastructure | half day | done (24e8048a9d) |
 | P2.6 | AST server error message improvements | 1 day | done (this commit) |

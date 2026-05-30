@@ -85,6 +85,10 @@ private:
   };
   std::map<irep_idt, closure_bindingt> closure_bindings;
   std::map<std::string, struct_typet> class_types;
+  // Generator function name -> list of yield value expressions
+  // (constants captured at conversion time). Used by `yield*`
+  // delegation in another generator's body.
+  std::map<std::string, std::vector<exprt>> generator_yields;
   // Private fields: class_name → set of private field names
   std::map<std::string, std::set<std::string>> private_fields;
   std::vector<codet> pending_stmts;

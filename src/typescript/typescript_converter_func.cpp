@@ -70,6 +70,39 @@ void typescript_convertert::convert_function_declaration_with_name(
       if(nk == "YieldExpression")
       {
         const jsont &expr = json_member(n, "expression");
+        bool delegated = json_member(n, "isDelegated").is_true();
+        if(delegated && expr.is_object())
+        {
+          // ES2024 §27.5: `yield* otherGen()` — delegate to another
+          // generator. Constant case: when `otherGen` is a known
+          // generator function we registered earlier and the call
+          // has no arguments, inline its yield values into the
+          // current generator's value list.
+          //
+          // For symbolic / unknown delegates, fall through to the
+          // generic nondet behaviour (single nondet yield).
+          if(json_string(json_member(expr, "_kind")) == "CallExpression")
+          {
+            const jsont &delegate_callee = json_member(expr, "expression");
+            if(json_string(json_member(delegate_callee, "_kind")) == "Identifier")
+            {
+              std::string callee_name =
+                json_string(json_member(delegate_callee, "text"));
+              auto it = generator_yields.find(callee_name);
+              if(it != generator_yields.end())
+              {
+                for(const auto &v : it->second)
+                  yield_values.push_back(v);
+                return;
+              }
+            }
+          }
+          // Unknown delegate: emit a single nondet yield as a
+          // sound over-approximation.
+          yield_values.push_back(
+            ts_nan_with_payload(TS_NAN_PAYLOAD_UNDEFINED));
+          return;
+        }
         if(expr.is_object())
           yield_values.push_back(convert_expression(expr));
         else
@@ -133,6 +166,9 @@ void typescript_convertert::convert_function_declaration_with_name(
     }
     // Store the generator type for next() dispatch.
     class_types["__gen_" + func_name] = gen_type;
+    // Store the yield values so `yield* func_name()` in another
+    // generator can inline them.
+    generator_yields[func_name] = yield_values;
     return;
   }
 

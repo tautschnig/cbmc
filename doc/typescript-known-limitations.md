@@ -299,13 +299,23 @@ inside the generator does not receive the sent value.
 [typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
 item 8.
 
-### 2.4 yield* delegation
+### 2.4 yield* delegation (constant case resolved 2026-05-29)
 
-**What**: `yield* otherGen()` not supported.
+**What still works as before**: `yield* otherGen()` where `otherGen`
+is itself a generator with constant yields known at conversion time
+inlines the delegate's yields into the outer generator's value
+sequence.
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 7.
+**What does not work yet**: `yield* expr()` where `expr` is dynamic
+(returns a runtime-determined generator) or where the delegate's
+own yields are not constants. These fall back to a single nondet
+yield.
+
+**Resolution**: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)" → `yield-star-delegation`.
+Regression guard: `regression/typescript/yield-star-delegation/`
+(CORE).
 
 ### 2.5 Symbol-keyed properties
 
