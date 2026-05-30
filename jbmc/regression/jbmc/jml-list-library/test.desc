@@ -1,0 +1,52 @@
+CORE
+JmlListLibrary
+--function "JmlListLibrary.useAdd:()I" --axiomatic-collections --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for axiomatic List models: ArrayList /
+LinkedList / AbstractList for <init>, size, isEmpty, add,
+get.
+
+Lowering pipeline mirrors HashMap / HashSet:
+
+  * LIST_INIT (ArrayList<init>, LinkedList<init>) →
+    _sz[receiver] := 0.
+  * LIST_SIZE / LIST_IS_EMPTY → _sz[receiver] (or
+    `_sz[receiver] == 0`).
+  * LIST_GET(i) → _list[(receiver << 32) | uint32(i)].
+  * LIST_ADD(o) → _list[(receiver << 32) | uint32(_sz[receiver])] := o;
+                  _sz[receiver]++; return true.
+
+Element storage uses a separate `java::axiomatic::_list`
+global, distinct from HashMap's `_kv` to avoid index
+collisions when the same receiver pointer is reinterpreted
+across collection types. The size array `_sz` is shared
+across HashMap, HashSet, and List — its key is the
+receiver's pointer-bit-pattern, which is unique per
+allocation.
+
+The test method `useAdd` allocates a fresh ArrayList, adds
+"hello", and reads back size() == 1. With the model in
+place this verifies under --axiomatic-collections.
+
+JML resolver hookup
+-------------------
+The library-call branch in resolve_jml_expr already
+recognises the size, isEmpty, contains, get, containsKey
+method names; the receiver-shape predicate is widened in
+parallel to also accept java.util.List, java.util.ArrayList,
+java.util.LinkedList, java.util.AbstractList. With those,
+JML clauses like `requires l.size() > 0;` resolve the same
+way they do for HashMap and HashSet.
+
+What this does NOT yet handle:
+  * List.contains(Object) — needs an existential
+    quantifier over [0, _sz[receiver]). Skipped for now.
+  * List.remove, List.clear, List.set, indexOf, lastIndexOf.
+  * Iterator.hasNext / next — separate work.

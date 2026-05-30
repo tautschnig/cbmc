@@ -662,6 +662,10 @@ exprt resolve_jml_expr(
             cls.find("java.util.LinkedHashMap") != std::string::npos ||
             cls.find("java.util.Set") != std::string::npos ||
             cls.find("java.util.HashSet") != std::string::npos ||
+            cls.find("java.util.List") != std::string::npos ||
+            cls.find("java.util.ArrayList") != std::string::npos ||
+            cls.find("java.util.LinkedList") != std::string::npos ||
+            cls.find("java.util.AbstractList") != std::string::npos ||
             cls.find("java.util.Collection") != std::string::npos;
           if(is_collection_shape)
           {

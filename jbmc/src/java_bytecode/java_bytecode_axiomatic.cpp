@@ -54,6 +54,10 @@ namespace
 const std::string AXIOMATIC_KV_SYM = "java::axiomatic::_kv";
 const std::string AXIOMATIC_SET_SYM = "java::axiomatic::_set";
 const std::string AXIOMATIC_SZ_SYM = "java::axiomatic::_sz";
+// List element storage. Indexed by `(receiver << 32) | uint32(index)`.
+// Element type is Object*. The receiver bits in the high 32 keep the
+// array disjoint from HashMap _kv state for the same receiver pointer.
+const std::string AXIOMATIC_LIST_SYM = "java::axiomatic::_list";
 
 /// 64-bit unsigned int — the array's index type.
 typet packed_index_type()
@@ -371,6 +375,15 @@ enum class axiomatic_op
   HS_CONTAINS,
   HS_SIZE,
   HS_IS_EMPTY,
+  // List operations.
+  // The receiver-keyed _sz array is shared with HashMap /
+  // HashSet. Element storage is a separate global
+  // _list_kv array indexed by (receiver << 32 | uint32(index)).
+  LIST_INIT,
+  LIST_SIZE,
+  LIST_IS_EMPTY,
+  LIST_ADD,
+  LIST_GET,
 };
 
 axiomatic_op classify_call(const std::string &id)
@@ -411,6 +424,41 @@ axiomatic_op classify_call(const std::string &id)
     return axiomatic_op::HS_SIZE;
   if(id == "java::java.util.HashSet.isEmpty:()Z")
     return axiomatic_op::HS_IS_EMPTY;
+
+  // List operations: ArrayList and LinkedList implementations
+  // share the same axiomatic semantics. We accept their
+  // constructors and the four basic operations. The
+  // implementations of size, isEmpty, add, get from
+  // AbstractList / AbstractCollection are also accepted, so
+  // virtual dispatch through the abstract-class methods
+  // hits the model.
+  if(
+    id == "java::java.util.ArrayList.<init>:()V" ||
+    id == "java::java.util.ArrayList.<init>:(I)V" ||
+    id == "java::java.util.LinkedList.<init>:()V")
+    return axiomatic_op::LIST_INIT;
+  if(
+    id == "java::java.util.ArrayList.size:()I" ||
+    id == "java::java.util.LinkedList.size:()I" ||
+    id == "java::java.util.AbstractList.size:()I" ||
+    id == "java::java.util.AbstractCollection.size:()I")
+    return axiomatic_op::LIST_SIZE;
+  if(
+    id == "java::java.util.ArrayList.isEmpty:()Z" ||
+    id == "java::java.util.LinkedList.isEmpty:()Z" ||
+    id == "java::java.util.AbstractCollection.isEmpty:()Z")
+    return axiomatic_op::LIST_IS_EMPTY;
+  if(
+    id == "java::java.util.ArrayList.add:(Ljava/lang/Object;)Z" ||
+    id == "java::java.util.LinkedList.add:(Ljava/lang/Object;)Z" ||
+    id == "java::java.util.AbstractList.add:(Ljava/lang/Object;)Z" ||
+    id == "java::java.util.AbstractCollection.add:(Ljava/lang/Object;)Z")
+    return axiomatic_op::LIST_ADD;
+  if(
+    id == "java::java.util.ArrayList.get:(I)Ljava/lang/Object;" ||
+    id == "java::java.util.LinkedList.get:(I)Ljava/lang/Object;" ||
+    id == "java::java.util.AbstractList.get:(I)Ljava/lang/Object;")
+    return axiomatic_op::LIST_GET;
 
   return axiomatic_op::NONE;
 }
@@ -577,6 +625,8 @@ bool lower_one_call(
   case axiomatic_op::HM_IS_EMPTY:
   case axiomatic_op::HS_SIZE:
   case axiomatic_op::HS_IS_EMPTY:
+  case axiomatic_op::LIST_SIZE:
+  case axiomatic_op::LIST_IS_EMPTY:
   {
     const symbolt &sz = ensure_global_array(
       symbol_table,
@@ -586,12 +636,90 @@ bool lower_one_call(
     exprt rkey = pack_receiver_only(receiver);
     exprt cur_sz = index_exprt(sz.symbol_expr(), rkey);
     exprt result;
-    if(op == axiomatic_op::HM_SIZE || op == axiomatic_op::HS_SIZE)
+    if(
+      op == axiomatic_op::HM_SIZE || op == axiomatic_op::HS_SIZE ||
+      op == axiomatic_op::LIST_SIZE)
       result = cur_sz;
     else
       result = equal_exprt(cur_sz, from_integer(0, java_int_type()));
     if(!patch_return_value(body, it, cf_id, result))
       return false;
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
+    return true;
+  }
+
+  case axiomatic_op::LIST_INIT:
+  {
+    // Reset this receiver's list size to 0. Element storage
+    // is left as-is — fresh receivers haven't written
+    // _list[handle, *] so reads return the default null.
+    const symbolt &sz = ensure_global_array(
+      symbol_table,
+      AXIOMATIC_SZ_SYM,
+      sz_array_type(),
+      from_integer(0, java_int_type()));
+    exprt rkey = pack_receiver_only(receiver);
+    with_exprt new_sz{sz.symbol_expr(), rkey, from_integer(0, java_int_type())};
+    auto next_it = std::next(it);
+    body.insert_before(
+      next_it,
+      goto_programt::make_assignment(
+        code_assignt(sz.symbol_expr(), new_sz), loc));
+    it->turn_into_skip();
+    return true;
+  }
+
+  case axiomatic_op::LIST_GET:
+  {
+    if(args.size() < 2)
+      return false;
+    const exprt index = args[1];
+    const symbolt &list = ensure_global_array(
+      symbol_table, AXIOMATIC_LIST_SYM, kv_array_type(), object_null());
+    // pack_index uses pointer-identity for receivers and
+    // value-semantic for primitive int (which is what an int
+    // index is). Reuse it.
+    const exprt idx = pack_index(receiver, index, &symbol_table);
+    const exprt val = index_exprt(list.symbol_expr(), idx);
+    if(!patch_return_value(body, it, cf_id, val))
+      return false;
+    orig_call_it->turn_into_skip();
+    it = orig_call_it;
+    return true;
+  }
+
+  case axiomatic_op::LIST_ADD:
+  {
+    if(args.size() < 2)
+      return false;
+    const exprt elem = coerce(args[1], object_ptr_type());
+    const symbolt &list = ensure_global_array(
+      symbol_table, AXIOMATIC_LIST_SYM, kv_array_type(), object_null());
+    const symbolt &sz = ensure_global_array(
+      symbol_table,
+      AXIOMATIC_SZ_SYM,
+      sz_array_type(),
+      from_integer(0, java_int_type()));
+    exprt rkey = pack_receiver_only(receiver);
+    exprt cur_sz = index_exprt(sz.symbol_expr(), rkey);
+    // Index for the new element: pack(receiver, cur_sz).
+    const exprt idx = pack_index(receiver, cur_sz, &symbol_table);
+    with_exprt new_list{list.symbol_expr(), idx, elem};
+    plus_exprt incremented{cur_sz, from_integer(1, java_int_type())};
+    with_exprt new_sz{sz.symbol_expr(), rkey, incremented};
+    // patch_return_value on the bool result first, then
+    // insert the assigns. add() always returns true.
+    patch_return_value(body, it, cf_id, true_exprt{});
+    auto next_it = std::next(orig_call_it);
+    body.insert_before(
+      next_it,
+      goto_programt::make_assignment(
+        code_assignt(sz.symbol_expr(), new_sz), loc));
+    body.insert_before(
+      next_it,
+      goto_programt::make_assignment(
+        code_assignt(list.symbol_expr(), new_list), loc));
     orig_call_it->turn_into_skip();
     it = orig_call_it;
     return true;
