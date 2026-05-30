@@ -9,6 +9,7 @@ Author: Kiro (AI agent)
 #include "jml_lowering.h"
 
 #include <util/arith_tools.h>
+#include <util/bitvector_expr.h>
 #include <util/c_types.h>
 #include <util/cprover_prefix.h>
 #include <util/fresh_symbol.h>
@@ -579,6 +580,102 @@ exprt resolve_jml_expr(
             if(id2string(method_name) == "size")
               return indexed;
             return equal_exprt(indexed, from_integer(0, java_int_type()));
+          }
+        }
+      }
+    }
+
+    // Two-operand library calls: containsKey(k) on a
+    // HashMap/Map and contains(o) on a HashSet/Set. Emits
+    // the same _kv- and _set-based inline expression that
+    // axiomatic-collections produces for normal-code calls,
+    // so JML predicates like
+    //   //@ requires m.containsKey(absN);
+    // resolve to a direct array read with no method call
+    // surviving in the goto.
+    if(
+      e.operands().size() == 2 &&
+      (id2string(method_name) == "containsKey" ||
+       id2string(method_name) == "get" || id2string(method_name) == "contains"))
+    {
+      const auto *kv_sym = ns.get_symbol_table().lookup("java::axiomatic::_kv");
+      const auto *set_sym =
+        ns.get_symbol_table().lookup("java::axiomatic::_set");
+      const bool is_set_op = id2string(method_name) == "contains";
+      const auto *array_sym = is_set_op ? set_sym : kv_sym;
+      if(array_sym != nullptr)
+      {
+        // Resolve receiver and key.
+        exprt receiver = resolve_jml_expr(
+          e.operands()[0],
+          method_id,
+          class_id,
+          ns,
+          param_names,
+          trivial_getters);
+        exprt key = resolve_jml_expr(
+          e.operands()[1],
+          method_id,
+          class_id,
+          ns,
+          param_names,
+          trivial_getters);
+
+        exprt recv_for_class = receiver;
+        if(recv_for_class.type().id() == ID_pointer)
+          recv_for_class = dereference_exprt(recv_for_class);
+        if(recv_for_class.type().id() == ID_struct_tag)
+        {
+          const std::string cls = id2string(
+            to_struct_tag_type(recv_for_class.type()).get_identifier());
+          const bool ok_for_op =
+            is_set_op
+              ? (cls.find("java.util.Set") != std::string::npos ||
+                 cls.find("java.util.HashSet") != std::string::npos)
+              : (cls.find("java.util.Map") != std::string::npos ||
+                 cls.find("java.util.HashMap") != std::string::npos ||
+                 cls.find("java.util.LinkedHashMap") != std::string::npos);
+          if(ok_for_op)
+          {
+            // Build pack_index(receiver, key) inline. The
+            // receiver bits go in the high 32, the key bits
+            // in the low 32. For value-semantic keys
+            // (primitive int or boxed-primitive) we use the
+            // unboxed int; otherwise pointer-identity.
+            const typet u64 = unsignedbv_typet(64);
+            const exprt r32 = typecast_exprt(receiver, unsignedbv_typet(32));
+            const exprt r64 = typecast_exprt(r32, u64);
+            const exprt shifted = shl_exprt(r64, from_integer(32, u64));
+
+            exprt k64;
+            if(
+              key.type().id() == ID_signedbv ||
+              key.type().id() == ID_unsignedbv)
+            {
+              // Primitive int — value-semantic packing.
+              k64 = typecast_exprt(key, u64);
+            }
+            else
+            {
+              // Pointer or other — pointer-identity packing.
+              const exprt k32 = typecast_exprt(key, unsignedbv_typet(32));
+              k64 = typecast_exprt(k32, u64);
+            }
+            const exprt idx = bitor_exprt(shifted, k64);
+            const exprt val = index_exprt(array_sym->symbol_expr(), idx);
+            if(id2string(method_name) == "get")
+              return val;
+            // containsKey / contains: val != null (Map) or
+            // val == true (Set).
+            if(is_set_op)
+            {
+              // _set's element type is bool — direct read.
+              return val;
+            }
+            // Map: val != null.
+            const pointer_typet jlo_ptr =
+              pointer_type(struct_tag_typet("java::java.lang.Object"));
+            return notequal_exprt(val, null_pointer_exprt(jlo_ptr));
           }
         }
       }

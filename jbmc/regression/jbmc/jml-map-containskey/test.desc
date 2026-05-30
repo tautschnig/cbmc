@@ -1,0 +1,50 @@
+CORE
+JmlMapStringKey
+--function "JmlMapStringKey.useIt:()Ljava/lang/Object;" --jml-source src/main/java/JmlMapStringKey.java --axiomatic-collections --unwind 5 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for JML library-call recognition of
+Map.containsKey(k) and Map.get(k).
+
+Pipeline
+--------
+The two-operand library-call branch in resolve_jml_expr
+detects jml_method_call(containsKey, [m, k]) and
+jml_method_call(get, [m, k]) on Map / HashMap / Set /
+HashSet receivers, then emits the equivalent inline
+expression that --axiomatic-collections produces for
+normal-code calls:
+
+  pack_index(m, k) =
+    bitor(shl(receiver_int, 32), key_int)
+
+  containsKey(k) → _kv[pack_index(m, k)] != null
+  get(k)         → _kv[pack_index(m, k)]
+  contains(o)    → _set[pack_index(s, o)]
+
+The receiver bits are the pointer's bottom 32 bits cast to
+uint32 then up-extended; the key bits use value-semantic
+packing for primitive int keys and pointer-identity for
+reference-typed keys.
+
+This regression uses String keys (reference-typed). The
+resolver builds the same pointer-identity packing the
+normal-code lowering uses, so the JML's
+  //@ requires m.containsKey(k);
+clause assumes the same _kv slot the body's m.get(k) reads,
+and the ensures \result != null follows.
+
+Known limitation: int-key Maps need a different packing
+strategy because JBMC's autobox pattern detection at the
+PUT/GET site uses pointer-identity on the boxed Integer,
+while a JML int key would naturally pack value-semantically.
+The two don't match and the assertion fires. Workaround
+is to use a Map keyed on a reference type. Closing the
+int-key gap is a separate piece of work in
+java_bytecode_axiomatic.cpp.
