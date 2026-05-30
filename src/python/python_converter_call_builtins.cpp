@@ -2720,6 +2720,80 @@ std::optional<exprt> python_convertert::try_builtin_call(
             // attempt hit on github_3036_6.
             if(!iterable.is_nil() && is_python_string_type(iterable.type()))
             {
+              // Constant-string fast-path: when the iterable's
+              // content is statically known (constant struct
+              // literal or string_constants-tracked symbol),
+              // unroll the genexp at the AST level with
+              // string_constants[iter_sym_id] = "<char>" per
+              // iteration. This lets the elt expression (e.g.
+              // c.lower(), c.isalpha()) fold per character
+              // instead of routing through the refined-string
+              // solver — required for github_3036-style
+              // `'a' <= c.lower() <= 'z'`.
+              {
+                std::optional<std::string> sv =
+                  extract_string_value(iterable);
+                if(!sv.has_value() && iterable.id() == ID_symbol)
+                {
+                  auto sit = string_constants.find(
+                    to_symbol_expr(iterable).get_identifier());
+                  if(sit != string_constants.end())
+                    sv = sit->second;
+                }
+                if(sv.has_value())
+                {
+                  std::string qname = qualify_name(iter_var);
+                  irep_idt iter_sym_id_const{qname};
+                  if(symbol_table.lookup(iter_sym_id_const) == nullptr)
+                  {
+                    symbolt sym{
+                      iter_sym_id_const, python_string_type(), "python"};
+                    sym.base_name = iter_var;
+                    sym.is_lvalue = true;
+                    sym.is_state_var = true;
+                    symbol_table.add(sym);
+                  }
+                  else if(
+                    symbol_table.lookup_ref(iter_sym_id_const).type !=
+                    python_string_type())
+                  {
+                    symbol_table.get_writeable_ref(iter_sym_id_const).type =
+                      python_string_type();
+                  }
+                  exprt result = (func_name == "all")
+                                   ? exprt{true_exprt{}}
+                                   : exprt{false_exprt{}};
+                  for(char ch : sv.value())
+                  {
+                    std::string ch_str(1, ch);
+                    string_constants[iter_sym_id_const] = ch_str;
+                    exprt elt_expr = convert_expression(elt);
+                    if(elt_expr.type() != bool_typet{})
+                      elt_expr = safe_typecast(elt_expr, bool_typet{});
+                    exprt filter_pred = true_exprt{};
+                    if(gen_ifs.is_array())
+                    {
+                      for(const auto &if_node : as_array(gen_ifs))
+                      {
+                        exprt fp = convert_expression(if_node);
+                        if(fp.type() != bool_typet{})
+                          fp = safe_typecast(fp, bool_typet{});
+                        filter_pred = and_exprt{filter_pred, fp};
+                      }
+                    }
+                    if(func_name == "all")
+                      result = and_exprt{
+                        result,
+                        or_exprt{not_exprt{filter_pred}, elt_expr}};
+                    else
+                      result = or_exprt{
+                        result, and_exprt{filter_pred, elt_expr}};
+                  }
+                  string_constants.erase(iter_sym_id_const);
+                  return result;
+                }
+              }
+
               member_exprt str_length{
                 iterable, "length", signedbv_typet{64}};
               member_exprt data_ptr{

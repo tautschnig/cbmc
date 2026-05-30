@@ -346,6 +346,81 @@ std::optional<exprt> python_convertert::try_string_method(
         c = (method_name == "upper") ? toupper(c) : tolower(c);
       return python_string_literal(result);
     }
+    // 1-char struct fast-path: when obj is a single-char
+    // struct {1, address_of(arr[0])} (e.g. from the symbolic-
+    // string genexp unroll where each loop iteration binds
+    // c to such a struct), transform the byte directly via
+    // an if_exprt instead of routing through the refined-
+    // string solver. This unblocks
+    // 'all(c.lower() == ... for c in s)' patterns
+    // (e.g. github_3036) that would otherwise emit one
+    // cprover_string_to_lower_case_func call per iteration —
+    // those cumulate into the SAT-loop crash territory.
+    if(
+      obj.id() == ID_struct && obj.operands().size() == 2 &&
+      obj.operands()[0].is_constant())
+    {
+      mp_integer slen;
+      if(
+        !to_integer(to_constant_expr(obj.operands()[0]), slen) && slen == 1)
+      {
+        const exprt &data_op = obj.operands()[1];
+        const exprt *byte = nullptr;
+        if(
+          data_op.id() == ID_address_of && data_op.operands().size() == 1 &&
+          data_op.operands()[0].id() == ID_index &&
+          data_op.operands()[0].operands().size() == 2 &&
+          data_op.operands()[0].operands()[0].id() == ID_array &&
+          data_op.operands()[0].operands()[0].operands().size() == 1)
+        {
+          byte = &data_op.operands()[0].operands()[0].operands()[0];
+        }
+        if(byte != nullptr && byte->type().id() == ID_unsignedbv)
+        {
+          // ASCII-only byte transform. Non-ASCII (>= 0x80)
+          // passes through unchanged — Unicode case folding
+          // would need cprover_string_to_*_case_func.
+          exprt new_byte;
+          if(method_name == "lower")
+          {
+            // 'A' (0x41) <= b <= 'Z' (0x5A)  ->  b + 32
+            exprt is_upper = and_exprt{
+              binary_relation_exprt{
+                *byte, ID_ge, from_integer('A', byte->type())},
+              binary_relation_exprt{
+                *byte, ID_le, from_integer('Z', byte->type())}};
+            new_byte = if_exprt{
+              is_upper,
+              plus_exprt{*byte, from_integer(32, byte->type())},
+              *byte};
+          }
+          else
+          {
+            // 'a' (0x61) <= b <= 'z' (0x7A)  ->  b - 32
+            exprt is_lower = and_exprt{
+              binary_relation_exprt{
+                *byte, ID_ge, from_integer('a', byte->type())},
+              binary_relation_exprt{
+                *byte, ID_le, from_integer('z', byte->type())}};
+            new_byte = if_exprt{
+              is_lower,
+              minus_exprt{*byte, from_integer(32, byte->type())},
+              *byte};
+          }
+          exprt::operandst chars;
+          chars.push_back(new_byte);
+          array_typet at(
+            unsignedbv_typet{8}, from_integer(1, signedbv_typet{64}));
+          array_exprt new_arr(std::move(chars), at);
+          exprt ptr = address_of_exprt(index_exprt(
+            new_arr,
+            from_integer(0, signedbv_typet{64}),
+            unsignedbv_typet{8}));
+          exprt len_one = from_integer(1, signedbv_typet{64});
+          return struct_exprt({len_one, ptr}, python_string_type());
+        }
+      }
+    }
     // Use string solver for non-constant upper/lower
     {
       // Decompose obj into struct for the solver
