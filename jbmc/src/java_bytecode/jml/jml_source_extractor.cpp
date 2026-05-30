@@ -137,6 +137,12 @@ jml_contract_mapt jml_extract_from_source(
   std::string class_name;
   std::vector<std::string> pending_jml;
   bool in_block_comment = false;
+  // When a method-declaration line opens a `(` but doesn't
+  // close it on the same line (multi-line signatures), we
+  // accumulate subsequent lines into `partial_decl` until
+  // we see the closing `)`. The joined string is then
+  // processed as if it had appeared on a single line.
+  std::string partial_decl;
 
   std::string line;
   while(std::getline(in, line))
@@ -224,7 +230,33 @@ jml_contract_mapt jml_extract_from_source(
       continue;
     }
 
-    // Method declaration — associate pending JML
+    // Method declaration — associate pending JML.
+    //
+    // Multi-line signature support: if a previous iteration
+    // saw `(` without a matching `)`, `partial_decl` holds
+    // the accumulated text. Continue accumulating until we
+    // see the matching close paren, then process the joined
+    // string as the method's signature.
+    if(!partial_decl.empty())
+    {
+      // Append the current line to the accumulated buffer
+      // (with a separating space so identifiers don't fuse).
+      partial_decl += " ";
+      partial_decl += trimmed;
+      if(partial_decl.find(')') == std::string::npos)
+        continue;
+      trimmed = partial_decl;
+      partial_decl.clear();
+    }
+    else if(
+      !pending_jml.empty() && trimmed.find('(') != std::string::npos &&
+      trimmed.find(')') == std::string::npos)
+    {
+      // Open paren without close — start accumulating.
+      partial_decl = trimmed;
+      continue;
+    }
+
     if(!pending_jml.empty() && trimmed.find('(') != std::string::npos)
     {
       std::string method_name = extract_method_name(trimmed);

@@ -96,6 +96,34 @@ recognise_trivial_getter(const irep_idt &method_id, const goto_programt &body)
         continue;
       return std::nullopt;
     }
+    if(ins.is_function_call())
+    {
+      // Allow Kotlin's null-check intrinsic calls. The
+      // bytecode for `return this.field!!` (Kotlin non-
+      // null assertion) is
+      //   getfield this.field;
+      //   dup;
+      //   invokestatic Intrinsics.checkNotNull(Object);
+      //   areturn
+      // After JBMC's lowering this leaves a CALL to
+      // kotlin.jvm.internal.Intrinsics.checkNotNull (one-
+      // and two-arg variants). The call has no observable
+      // effect on a non-null path, and on the null path it
+      // throws — which by the time we treat the method as
+      // "trivial" we are already conditioning on a non-null
+      // return. Skip these calls; they don't disqualify
+      // the method from being a trivial getter.
+      const auto &fn = ins.call_function();
+      if(fn.id() == ID_symbol)
+      {
+        const std::string fid = id2string(to_symbol_expr(fn).get_identifier());
+        if(
+          fid.find("kotlin.jvm.internal.Intrinsics.checkNotNull") !=
+          std::string::npos)
+          continue;
+      }
+      return std::nullopt;
+    }
     if(!ins.is_assign())
       return std::nullopt;
     if(found.has_value())
@@ -104,12 +132,78 @@ recognise_trivial_getter(const irep_idt &method_id, const goto_programt &body)
     const auto &lhs = ins.assign_lhs();
     if(lhs.id() != ID_symbol)
       return std::nullopt;
-    if(id2string(to_symbol_expr(lhs).get_identifier()) != rv_id)
+    const std::string lhs_id = id2string(to_symbol_expr(lhs).get_identifier());
+    if(lhs_id != rv_id)
+    {
+      // Tolerate the Kotlin `!!` shape:
+      //   ASSIGN tmp := *this.field
+      //   CALL checkNotNull(tmp)        // skipped above
+      //   ASSIGN #return_value := tmp
+      // Record the local-to-field mapping in a side map and
+      // continue. We don't set `found` yet — the meaningful
+      // assignment is the one that writes #return_value.
+      const exprt &raw = ins.assign_rhs();
+      const exprt &core_local = strip_typecasts(raw);
+      if(core_local.id() == ID_member)
+      {
+        // Walk to the dereferenced root and check it's `this`.
+        const auto &mem = to_member_expr(core_local);
+        const exprt *root = &mem.compound();
+        while(root->id() == ID_member)
+          root = &to_member_expr(*root).compound();
+        if(
+          root->id() == ID_dereference &&
+          to_dereference_expr(*root).op().id() == ID_symbol &&
+          id2string(
+            to_symbol_expr(to_dereference_expr(*root).op()).get_identifier()) ==
+            id2string(method_id) + "::this")
+        {
+          // Record `lhs_id -> field info` for a later return
+          // ASSIGN to consume.
+          if(!found.has_value())
+          {
+            trivial_gettert g;
+            g.field_name = mem.get_component_name();
+            g.field_type = mem.type();
+            g.returns_cast = (raw.id() == ID_typecast);
+            g.return_type = lhs.type();
+            // Use the optional as a placeholder; subsequent
+            // return-value ASSIGN will validate that we read
+            // from this same local.
+            found = g;
+            continue;
+          }
+        }
+      }
+      // Some other ASSIGN on a local that isn't a clear
+      // field-load — disqualify.
       return std::nullopt;
+    }
 
-    // Strip outer casts; expect member_exprt(deref(this), field).
+    // lhs is #return_value. If `found` is set already (from
+    // a prior tmp = field load), require the rhs to read
+    // back the same local. Otherwise (direct `return this.f`
+    // shape) require rhs to be member_exprt.
     const exprt &raw_rhs = ins.assign_rhs();
     const exprt &core = strip_typecasts(raw_rhs);
+
+    if(found.has_value())
+    {
+      // Tmp-load-then-return shape. The rhs should read a
+      // local symbol — we don't bind to a specific one;
+      // accept any symbol_exprt or symbol-through-cast.
+      if(core.id() == ID_symbol)
+      {
+        // Refresh return-type info from this final ASSIGN
+        // (which carries the user-visible type).
+        found->return_type = lhs.type();
+        found->returns_cast =
+          found->returns_cast || (raw_rhs.id() == ID_typecast);
+        continue;
+      }
+      // The rhs is not a local symbol; fall through to the
+      // "direct member_exprt" case below for compatibility.
+    }
     if(core.id() != ID_member)
       return std::nullopt;
     const auto &mem = to_member_expr(core);
