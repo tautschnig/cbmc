@@ -249,4 +249,23 @@ void bpf_jit_fill_hole_with_zero(void *area, unsigned int size)
 #define check_sub_overflow(a, b, d) ({ *(d) = (a) - (b); 0; })
 
 
+/* LIM-019 workaround.  6.12+ on x86_64 with
+ * CONFIG_USE_X86_SEG_SUPPORT=y (the defconfig default) defines
+ * __seg_gs as __attribute__((address_space(__seg_gs))).
+ * goto-cc's parser does not understand the named-address-space
+ * form `address_space(__seg_gs)` (it expects an integer literal
+ * as in OpenCL), and aborts the compile.
+ *
+ * Override before any kernel header gets to define it.  Soundness:
+ * the per-CPU segment-relative storage is a microarchitectural
+ * detail; for our verification we treat per-CPU pointers as
+ * ordinary kernel addresses, so dropping the address-space
+ * annotation is sound — all we lose is some compile-time aliasing
+ * inference, which the symex layer does not consume. */
+#define __seg_gs
+#define __seg_fs
+#undef __percpu_seg_override
+#define __percpu_seg_override
+
+
 #endif /* INTEGRATION_LINUX_SCAN_FRAGMENTS_SCAN_COMPAT_H */

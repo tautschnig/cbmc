@@ -1049,3 +1049,57 @@ Regression test: `regression/cbmc/incomplete_extern_array1/`.
     documents the fix.
 
 
+
+
+## LIM-019 — goto-cc parser rejects `__attribute__((address_space(__seg_gs)))` — **MITIGATED via scan-compat.h**
+
+**Symptom.**
+On Linux 6.12 with the defconfig kernel, several drivers fail
+to compile through `scan/compile_file.sh` with:
+
+```
+./arch/x86/include/asm/current.h:41:1: error: syntax error before '__seg_gs'
+```
+
+**Root cause.**
+The kernel uses GCC's named-address-space extension to put per-CPU
+storage in a non-zero address space:
+
+```c
+# define __seg_gs              __attribute__((address_space(__seg_gs)))
+# define __percpu_seg_override __seg_gs
+```
+
+This expansion is gated on `CONFIG_USE_X86_SEG_SUPPORT`, which is
+enabled by default in the 6.12 defconfig but disabled in 5.10 / 6.1 /
+6.6.  CBMC's goto-cc parser only accepts the OpenCL form
+`address_space(N)` where N is an integer literal; it does not accept
+the GCC form `address_space(<identifier>)`.
+
+**Mitigation.**
+`scan/fragments/scan-compat.h` is `-include`d after the kernel's own
+`-include` headers and before the source file gets parsed.  We
+neutralise the offending macros there:
+
+```c
+#define __seg_gs
+#define __seg_fs
+#undef __percpu_seg_override
+#define __percpu_seg_override
+```
+
+This drops the address-space annotation from per-CPU pointer types.
+
+**Soundness argument.**
+Per-CPU segment-relative storage is a microarchitectural detail; the
+address-space annotation is consumed by GCC's aliasing inference and
+by hardware-specific code-generation, neither of which CBMC consumes.
+For our verification we treat per-CPU pointers as ordinary kernel
+addresses, so dropping the annotation does not change the program's
+visible semantics from the symex viewpoint.
+
+**Upstream fix candidate.**
+`src/ansi-c/parser.y` could be extended to accept identifier-named
+address spaces (and either translate them to a pre-allocated integer
+slot, or treat them as the default address space 0).  Outside the
+scope of this integration project; mitigation suffices.
