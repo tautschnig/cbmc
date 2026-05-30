@@ -88,6 +88,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
           to_struct_type(result_list_type).components()[1].type());
         member_exprt dst_data{tmp, "data", res_data_type};
 
+        // PLR §6.1: initialise the result list to all zeros first
+        // so out-of-range slots (>= src_len) compare equal to a
+        // literal list with trailing zeros (`squared == [1, 4, 9,
+        // 16, 25]`). Without this, the per-iteration guarded
+        // assigns leave [src_len..MAX) at nondet, breaking
+        // struct-equality assertions.
+        pending_checks.push_back(
+          code_frontend_assignt{tmp, safe_zero(result_list_type)});
+
         pending_checks.push_back(code_frontend_assignt{
           member_exprt{tmp, "length", signedbv_typet{64}}, src_len});
 

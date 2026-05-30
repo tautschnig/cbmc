@@ -204,6 +204,91 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     return code_skipt{};
   }
 
+  // PLR §3.2: AnnAssign with rhs a call returning a closure.
+  // For 'inner: int = outer(5)' where outer is a lambda-returning
+  // function, the int annotation is a Python type-hint that must
+  // not erase the actual closure value. Mirror the Assign-path
+  // detection that records the alias and binds the closure
+  // captures from the call's arguments. Without this, the value
+  // is collapsed to nondet int and 'inner(10)' fails with
+  // 'no body for callee'.
+  if(rhs.id() == ID_side_effect)
+  {
+    const auto &se = to_side_effect_expr(rhs);
+    if(se.get_statement() == ID_function_call && !se.operands().empty())
+    {
+      const exprt &func_op = se.operands()[0];
+      if(func_op.id() == ID_symbol)
+      {
+        std::string called =
+          id2string(to_symbol_expr(func_op).get_identifier());
+        if(called.substr(0, 8) == "python::")
+          called = called.substr(8);
+        auto lr_it = lambda_returning_functions.find(called);
+        if(lr_it != lambda_returning_functions.end())
+        {
+          code_blockt lam_block;
+          // Bind call arguments to the inner lambda's closure
+          // captures. The closure_captures map is keyed by the
+          // OUTER lambda symbol; each entry is (outer_id,
+          // capture_name, type) for a capture parameter slot
+          // that needs to hold the call-site argument.
+          const jsont &call_args = json_member(value, "args");
+          if(call_args.is_array())
+          {
+            irep_idt fid{"python::" + called};
+            const symbolt *fsym = symbol_table.lookup(fid);
+            if(fsym != nullptr && fsym->type.id() == ID_code)
+            {
+              const auto &fp = to_code_type(fsym->type).parameters();
+              auto ai = as_array(call_args).begin();
+              for(std::size_t i = 0;
+                  i < fp.size() && ai != as_array(call_args).end();
+                  i++, ++ai)
+              {
+                exprt av = convert_expression(*ai);
+                std::string pid = id2string(fp[i].get_identifier());
+                auto ci = closure_captures.find(id2string(lr_it->second));
+                if(ci != closure_captures.end())
+                {
+                  for(auto &cap : ci->second)
+                  {
+                    if(std::get<0>(cap) == pid)
+                    {
+                      static unsigned ann_lb = 0;
+                      std::string tn =
+                        "__ann_lam_bind_" + std::to_string(ann_lb++);
+                      std::string tq = qualify_name(tn);
+                      irep_idt ti{tq};
+                      if(symbol_table.lookup(ti) == nullptr)
+                      {
+                        symbolt ts{ti, av.type(), "python"};
+                        ts.base_name = tn;
+                        ts.is_lvalue = true;
+                        ts.is_state_var = true;
+                        ts.is_static_lifetime = true;
+                        symbol_table.add(ts);
+                      }
+                      lam_block.add(code_frontend_assignt{
+                        symbol_table.lookup_ref(ti).symbol_expr(), av});
+                      std::get<0>(cap) = id2string(ti);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          // Record the alias so subsequent calls 'name(args)'
+          // dispatch to the inner lambda symbol.
+          function_aliases[qualified_name] = lr_it->second;
+          if(lam_block.statements().empty())
+            return code_skipt{};
+          return std::move(lam_block);
+        }
+      }
+    }
+  }
+
   // PLR §3.1 — list / dict aliasing. When the RHS is another list/dict
   // variable (or a chain of dereferences ending in one), the LHS must
   // bind to the SAME object, not a fresh copy. Without this, code like
