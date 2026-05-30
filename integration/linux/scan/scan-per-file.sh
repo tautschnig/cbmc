@@ -479,12 +479,20 @@ cp "$cur" "$INSTR_GB"
 echo "[7/7] running cbmc on ${TARGET_FUNC}_per_file_harness..."
 CBMC=${CBMC:-$REPO_ROOT/build/bin/cbmc}
 entry="${TARGET_FUNC}_per_file_harness"
+# Optional: emit per-run SARIF to $SARIF_OUT (or to the temp
+# dir, which is otherwise discarded on EXIT).  Callers that
+# want to retain SARIF artifacts (e.g. cve_validate.py) set
+# SARIF_OUT to an absolute path; we write CBMC's --sarif-result
+# directly there.
+SARIF_LOCAL="$tmp/${stem}.sarif"
+SARIF_TARGET="${SARIF_OUT:-$SARIF_LOCAL}"
 set +e
 "$CBMC" \
   --function "$entry" \
   --unwind "${UNWIND:-3}" \
   --unwinding-assertions \
   --no-standard-checks \
+  --sarif-result "$SARIF_TARGET" \
   "$INSTR_GB" > "$tmp/cbmc.log" 2>&1
 rc=$?
 set -e

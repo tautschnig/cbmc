@@ -209,6 +209,10 @@ class CveCase:
     # Set when running in --invert mode and the inverse-
     # patch application succeeded.  None otherwise.
     inverted_file: str | None = None
+    # When the underlying scan-per-file.sh emitted a SARIF
+    # result, the absolute path is recorded here.  cve_validate
+    # collects these into a per-run merged SARIF document.
+    sarif_path: str | None = None
 
 
 def _parse_patch(cve: str) -> tuple[str | None, str | None,
@@ -747,6 +751,17 @@ def _run_scan(case: CveCase, timeout: int = 240,
     env = os.environ.copy()
     env["LINUX_TREE"] = case.kernel_tree
     env["UNWIND"] = env.get("UNWIND", "2")
+    # Direct scan-per-file.sh to emit SARIF for this case.
+    # SARIF_OUTPUT_DIR is the parent dir; the per-CVE filename
+    # is mangled from the case identifier.
+    sarif_dir = os.environ.get("SARIF_OUTPUT_DIR")
+    if sarif_dir:
+        from pathlib import Path as _P
+        sarif_path = (_P(sarif_dir)
+                      / f"{case.cve}_{case.module}.sarif")
+        sarif_path.parent.mkdir(parents=True, exist_ok=True)
+        env["SARIF_OUT"] = str(sarif_path)
+        case.sarif_path = str(sarif_path)
     # If the module relies on cocci-inserted bootstrap (the
     # synthetic-checkpoint family — resource_leak_on_error_path,
     # null_after_alloc, use_after_free_generic), turn on
@@ -878,12 +893,25 @@ def main() -> int:
                          "per-file modules per CVE (default 1)")
     ap.add_argument("--out-csv", default="/tmp/cve-validate-results.csv")
     ap.add_argument("--out-md", default="/tmp/cve-validate-results.md")
+    ap.add_argument(
+        "--sarif-out-dir", default=None,
+        help="if set, scan-per-file.sh emits per-CVE SARIF "
+             "documents into this directory and we merge them "
+             "into a single <dir>/cve-validate.sarif at the end")
     ap.add_argument("--kernel-trees", default=(
         "/home/ubuntu/linux_5_10,"
         "/home/ubuntu/linux_6_1,"
         "/home/ubuntu/linux_6_6,"
         "/home/ubuntu/linux_6_12"))
     args = ap.parse_args()
+
+    # Propagate --sarif-out-dir to the per-case _run_scan via
+    # an environment variable.  cve_validate is a thin wrapper
+    # around scan-per-file.sh, which in turn reads SARIF_OUT.
+    if args.sarif_out_dir:
+        sarif_dir = Path(args.sarif_out_dir)
+        sarif_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["SARIF_OUTPUT_DIR"] = str(sarif_dir)
 
     kernel_trees = args.kernel_trees.split(",")
     upstream_repo = (Path(args.upstream_repo)
@@ -1115,8 +1143,54 @@ def main() -> int:
                     f"{c.note} |\n")
     print(f"\nMarkdown table: {args.out_md}")
 
+    # Merge per-CVE SARIF documents into a single multi-run
+    # SARIF file.  Each CveCase's sarif_path was set in
+    # _run_scan; we collect the runs[] arrays and emit one
+    # combined document.  Compatible with GitHub Code Scanning
+    # SARIF intake, which accepts a top-level document with
+    # multiple runs.
+    if args.sarif_out_dir:
+        merged_path = Path(args.sarif_out_dir) / "cve-validate.sarif"
+        _merge_sarif(cases, merged_path)
+        print(f"Merged SARIF: {merged_path}")
+
     return 0
 
+
+def _merge_sarif(cases: list[CveCase], out: Path) -> None:
+    """Combine per-CVE SARIF documents into one multi-run
+    document at `out`.  Each CveCase whose sarif_path was set
+    contributes one run to the output.  Runs are tagged with
+    the CVE id so downstream consumers (e.g. GitHub Code
+    Scanning) can attribute findings to the originating CVE.
+    """
+    import json
+    runs: list[dict] = []
+    for c in cases:
+        if not c.sarif_path:
+            continue
+        p = Path(c.sarif_path)
+        if not p.is_file() or p.stat().st_size == 0:
+            continue
+        try:
+            doc = json.loads(p.read_text(errors="replace"))
+        except json.JSONDecodeError:
+            continue
+        for run in doc.get("runs", []):
+            tool = run.setdefault("tool", {}).setdefault(
+                "driver", {})
+            tool.setdefault("name", "cbmc")
+            run.setdefault("properties", {})["cve"] = c.cve
+            run["properties"]["module"] = c.module or ""
+            run["properties"]["verdict"] = c.verdict
+            run["properties"]["file"] = c.file_path or ""
+            run["properties"]["function"] = c.function or ""
+            runs.append(run)
+    out.write_text(json.dumps({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": runs,
+    }, indent=2))
 
 if __name__ == "__main__":
     sys.exit(main())
