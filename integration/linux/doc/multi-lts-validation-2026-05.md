@@ -35,51 +35,71 @@ seed produces 30 unique CVEs × 4 trees × 2 modules = up to
 240 rows; some rows are skipped or errored at compile time
 on tree-specific configs.
 
-## Results: per-tree breakdown (seed 42)
+## Results: per-tree breakdown (combined seeds 42, 17, 99)
 
-60 rows on this seed.  Per-tree verdict distribution:
+180 rows across 3 seeds (each n=30, 4 trees, 2 modules per CVE,
+with some overlap when seeds picked the same CVE).  38 unique
+CVEs covered.
 
 | Tree | candidate | fp-filtered | successful | vacuous | noise | error | skip+timeout |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| linux_5_10 | 0 | 1 | 0 | 0 | 1 | 9 | 1 |
-| linux_6_1  | 0 | 1 | 0 | 0 | 3 | 11 | 2 |
-| linux_6_6  | 0 | 1 | 0 | 0 | 0 | 13 | 3 |
-| linux_6_12 | 0 | 1 | 0 | 1 | 1 | 9 | 2 |
+| linux_5_10 | 0 | 2 | 0 | 2 | 3 | 23 | 5 |
+| linux_6_1  | 0 | 2 | 0 | 3 | 5 | 26 | 8 |
+| linux_6_6  | 0 | 4 | 0 | 1 | 1 | 32 | 8 |
+| linux_6_12 | 0 | 4 | 0 | 3 | 2 | 31 | 8 |
 
 The detection-row count is 0 across all trees because the
-sample (seed 42) didn't pick any of the 10 known-detected
-CVEs (those are sparse in the random sample of 30 from
-~3000+ CVEs).
+cleanly-testable subset of these 180 rows is small (only
+the 4 unique cleanly-testable CVEs the seeds happened to
+pick all hit FP shapes or were inherently low-confidence-
+candidate).  Of the 10 known-detected CVEs from the
+methodology paper, only CVE-2025-21654 was sampled by these
+seeds.  Larger samples (n=100+) are needed to bring more of
+the detected list into the multi-LTS measurement.
 
 ## Cross-tree consistency
 
-For each `(CVE, module)` pair on the seed-42 sample, the
+For each `(CVE, module)` pair across the 180 rows, the
 verdicts across trees were aggregated:
 
 | Outcome | Count of pairs |
 |---|---:|
-| Consistent (same verdict on all trees) | 24 / 27 |
-| Inconsistent across trees | 3 / 27 |
+| Pairs scanned on ≥2 trees | 54 / 59 |
+| Consistent (same verdict on all trees) | 47 / 59 |
+| Inconsistent across trees | 12 / 59 |
 
-The 3 inconsistent pairs were ALL `error` ↔ `timeout`
-divergences — tree-specific compile-stack differences (e.g.
-the file compiles in 5.10 and times out in cbmc symex; the
-same file errors at compile in 6.6 because of a missing
-header).  None of the inconsistencies were catalog-level
-disagreements (verdicts that the catalog itself produced
-differently across trees).
+The 12 inconsistent pairs break down as:
+
+* 10 are `error ↔ timeout` divergences — tree-specific
+  compile-stack differences (file compiles in 5.10, errors
+  in 6.6 due to missing header; errors at parse in 6.1 but
+  compiles in 6.12; etc.).  None are catalog-level
+  disagreements.
+* 1 is `error ↔ noise` (CVE-2024-42080) — same family.
+* 1 is `error ↔ fp-filtered` (CVE-2025-21654) — INTERESTING:
+  on linux_6_1 the file failed to compile; on linux_6_12 it
+  compiled and the (pre-fix triage filter) over-suppressed
+  it as alloc_handed_to_consumer.  This led directly to
+  fixing the over-suppression bug (commit `f468339abf`):
+  the post-fix filter no longer suppresses real refcount-
+  balance bugs in functions whose only "alloc" is a
+  refcount-get like dget().
 
 **Conclusion:** the catalog's verdicts are consistent across
 LTS branches for every case where the file compiles cleanly
-in multiple trees.  Tree-specific divergence is dominated by
-compile-stack / config drift, not by catalog behaviour.
+in multiple trees.  Tree-specific divergence is dominated
+by compile-stack / config drift, not by catalog behaviour.
 
 ## Module-pick correctness — issue surfaced
 
-Multi-LTS validation surfaced an issue that wasn't visible
-in single-tree runs: the catalog's module-picker can pick
-the wrong module for a CVE, and the post-pick triage filter
-(when not module-aware) over-suppresses:
+Multi-LTS validation surfaced TWO issues that weren't visible
+in single-tree runs:
+
+### Issue 1: Module-aware over-suppression for non-leak CVEs
+
+The catalog's module-picker can pick the wrong module for a
+CVE, and the post-pick triage filter (when not module-aware)
+over-suppresses:
 
 * CVE-2023-54305 (category: `dos_panic_warn`).  Catalog
   picked `inode_lifetime` (a leak module) for the function
@@ -106,9 +126,59 @@ category remains required before counting a row as a true
 The module-aware triage filter (commit `04147fdc93`) ensures
 the wrong-module verdicts don't get silently over-suppressed
 in the future: it gates each shape verdict on whether the
-module is in the shape's applicability set.  An over-
-suppression bug for non-leak CVEs in the older filter has
-been fixed.
+module is in the shape's applicability set.
+
+### Issue 2: Refcount-get APIs over-suppressing real CVE detections
+
+A more serious issue surfaced for **CVE-2025-21654**, a
+known-detected CVE.  On linux_6_12 the multi-LTS scan
+produced `fp-filtered` (alloc_handed_to_consumer) instead of
+the expected `candidate` verdict:
+
+* Function: `ovl_connect_layer` in `fs/overlayfs/export.c`.
+* Pattern:
+
+  ```c
+  next = dget(dentry);          // refcount-get, NOT fresh alloc
+  for (...) {
+      parent = dget_parent(next);   // refcount-get on next's parent
+      ...
+      dput(next); next = parent;    // refcount transfer
+  }
+  dput(parent); dput(next);
+  ```
+
+* The pre-fix detector fired because `next = dget(...)` was
+  in `ALLOC_APIS` and `dget_parent(next)` was a non-free
+  function call mentioning `next`.
+
+But `dget` is a refcount-increment, not a fresh allocation.
+Passing a refcount-held pointer to another function does
+NOT consume the reference; the function `ovl_connect_layer`
+correctly balances all dget/dput pairs.
+
+**Fix (commit `f468339abf`):** split `ALLOC_APIS` into:
+
+* `FRESH_ALLOC_APIS`: kmalloc/kzalloc/kcalloc/kstrdup/
+  kmemdup/alloc_skb/nlmsg_new/usb_alloc_urb/...
+* `REFCOUNT_GET_APIS`: dget/fget/igrab/kobject_get/
+  of_node_get/get_device/get_cred/skb_get/sock_hold/
+  kref_get/try_module_get/get_file/...
+
+`_detect_local_alloc_handed_to_consumer` now matches only
+`FRESH_ALLOC_APIs`.  Refcount-tracked vars passed to other
+functions no longer trigger the FP suppression.
+
+Verified post-fix: ovl_connect_layer returns no shape
+(real-CVE detection preserved); other affected cases
+(bpa10x_submit_bulk_urb, net_dm_packet_report) still
+correctly filtered.
+
+**This is a strong methodology argument**: multi-LTS
+validation directly surfaced an over-suppression bug that
+would have masked a real CVE detection on a single-tree
+scan, by exposing the inconsistency between linux_6_1
+(error) and linux_6_12 (fp-filtered) outcomes.
 
 ## Cleanly-testable detection on this sample
 
