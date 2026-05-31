@@ -1579,6 +1579,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
             and_exprt{in_bounds, not_exprt{found}}, std::move(add_block)});
         }
 
+        // PLR §3.2: tag the resulting symbol as set-semantic so
+        // equality comparison treats it as a multiset.
+        set_semantic_symbols.insert(tmp_id);
         return std::move(tmp);
       }
     }

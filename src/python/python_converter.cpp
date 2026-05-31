@@ -3480,13 +3480,25 @@ exprt python_convertert::convert_expression(const jsont &expr)
             ops.push_back(p.first);
           while(ops.size() < PYTHON_MAX_LIST_LENGTH)
             ops.push_back(safe_zero(str_t));
-          result = struct_exprt{
+          struct_exprt se{
             {from_integer((long)unique_elts.size(), signedbv_typet{64}),
              array_exprt{std::move(ops), data_t}},
             list_t};
+          // PLR §3.2: tag this expression as set-semantic so
+          // comparison treats it as a multiset (order-insensitive).
+          se.set("#python_set_semantic", "1");
+          result = std::move(se);
         }
         else
+        {
           result = convert_list(expr);
+          // Tag the synthesised list as set-semantic. PLR §3.2:
+          // the literal `{a, b, c}` is a set, so equality
+          // comparison must be order-insensitive even when the
+          // backing storage is a list.
+          if(result.id() == ID_struct)
+            result.set("#python_set_semantic", "1");
+        }
       }
     }
   }

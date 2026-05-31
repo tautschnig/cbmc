@@ -745,6 +745,99 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Eq")
     {
+      // PLR §3.2: set equality is order-independent. If either
+      // operand carries set-semantic provenance (came from a
+      // `set(...)` call → its symbol id is in
+      // set_semantic_symbols, OR from a Set literal which
+      // tagged its struct_exprt with `#python_set_semantic`),
+      // compare as multisets: lengths must match AND each
+      // element of L must appear at some index of R (and vice
+      // versa via the length-match shortcut, since elements are
+      // unique within either operand by construction).
+      auto is_set_semantic = [&](const exprt &e) -> bool
+      {
+        if(e.id() == ID_symbol)
+        {
+          auto sid = to_symbol_expr(e).get_identifier();
+          if(set_semantic_symbols.count(sid))
+            return true;
+        }
+        if(e.get_bool("#python_set_semantic"))
+          return true;
+        return false;
+      };
+      if(
+        is_python_list_type(current_left.type()) &&
+        is_python_list_type(right.type()) &&
+        (is_set_semantic(current_left) || is_set_semantic(right)))
+      {
+        const auto &lt = to_struct_type(current_left.type());
+        const auto &rt = to_struct_type(right.type());
+        const auto &ldata = to_array_type(lt.components()[1].type());
+        const auto &rdata = to_array_type(rt.components()[1].type());
+        member_exprt llen{current_left, "length", signedbv_typet{64}};
+        member_exprt rlen{right, "length", signedbv_typet{64}};
+        member_exprt lda{current_left, "data", ldata};
+        member_exprt rda{right, "data", rdata};
+        // Element-equality for set-element types we care about:
+        // strings (use cprover_string_equal), tuples / structs
+        // (structural equal), numbers (signedbv/floatbv eq).
+        auto element_eq = [&](exprt a, exprt b) -> exprt
+        {
+          if(is_python_string_type(a.type()) && is_python_string_type(b.type()))
+          {
+            exprt s = emit_string_bool_function(
+              ID_cprover_string_equal_func, a, b, symbol_table, pending_checks);
+            if(s.type() != bool_typet{})
+              s = typecast_exprt{std::move(s), bool_typet{}};
+            return s;
+          }
+          if(a.type() != b.type())
+            b = safe_typecast(b, a.type());
+          return equal_exprt{std::move(a), std::move(b)};
+        };
+        // Performance: bound the loop by the smaller statically-
+        // known length when either operand is a struct literal.
+        // The default cap is PYTHON_MAX_LIST_LENGTH; literal sets
+        // are typically very short.
+        auto static_len = [](const exprt &e) -> int
+        {
+          if(
+            e.id() == ID_struct && !e.operands().empty() &&
+            e.operands()[0].is_constant())
+          {
+            mp_integer iv;
+            if(!to_integer(to_constant_expr(e.operands()[0]), iv))
+              return iv.to_long();
+          }
+          return -1;
+        };
+        int llen_static = static_len(current_left);
+        int rlen_static = static_len(right);
+        int i_max = llen_static >= 0 ? llen_static : PYTHON_MAX_LIST_LENGTH;
+        int j_max = rlen_static >= 0 ? rlen_static : PYTHON_MAX_LIST_LENGTH;
+        // Build: lengths match AND for each i<llen, exists j<rlen
+        // such that L[i] == R[j].
+        exprt all_match = equal_exprt{llen, rlen};
+        for(int i = 0; i < i_max; i++)
+        {
+          exprt idx_i = from_integer(i, signedbv_typet{64});
+          exprt i_in = binary_relation_exprt{idx_i, ID_lt, llen};
+          exprt l_el = index_exprt{lda, idx_i, ldata.element_type()};
+          exprt found = false_exprt{};
+          for(int j = 0; j < j_max; j++)
+          {
+            exprt idx_j = from_integer(j, signedbv_typet{64});
+            exprt j_in = binary_relation_exprt{idx_j, ID_lt, rlen};
+            exprt r_el = index_exprt{rda, idx_j, rdata.element_type()};
+            exprt e = element_eq(l_el, r_el);
+            found = or_exprt{found, and_exprt{j_in, e}};
+          }
+          all_match = and_exprt{all_match, or_exprt{not_exprt{i_in}, found}};
+        }
+        cmp = all_match;
+        goto done_cmp;
+      }
       // PLR §6.10.1 + §3.2: x == None reduces to identity check
       // for None: equal to itself, never equal to any non-None
       // value of any type. Same dispatch as 'is None'.
