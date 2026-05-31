@@ -2006,20 +2006,15 @@ codet python_convertert::convert_return(const jsont &stmt)
           // Same struct tag (e.g., both python_list) but different
           // component types — treat as compatible (Python is dynamically typed)
         }
-        else if(is_python_value_type(ret_type))
-        {
-          // PLR §6.10.2: wrapping into the tagged-union return.
-          // safe_typecast(int → struct) produces nondet (the
-          // struct fields aren't deterministically populated),
-          // which makes 'r.__int_val' read garbage at the call
-          // site. wrap_value() builds a struct_exprt with the
-          // appropriate tag and slot populated, so downstream
-          // accesses through __int_val / __float_val / __str_ptr
-          // see the correct value.
-          ret_val = wrap_value(ret_val);
-        }
         else
+        {
+          // PLR §3.2 boundary: route through coerce_return_value,
+          // which delegates to safe_typecast and (for
+          // python_value targets) wrap_value. Centralises the
+          // wrap-vs-coerce decision so any future PLR rule
+          // change applies once at coerce_to_typed_slot.
           ret_val = coerce_return_value(ret_val, ret_type);
+        }
       }
     }
   }
