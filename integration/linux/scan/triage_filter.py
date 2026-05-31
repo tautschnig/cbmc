@@ -260,13 +260,14 @@ def _detect_put_only_on_error(body: str, var: str) -> FilterVerdict | None:
 # unsatisfied.
 _OWNERSHIP_FN_PREFIXES = (
     "put_", "release_", "free_", "exit_", "destroy_",
-    "cleanup_", "commit_", "unlink_", "delete_", "del_",
-    "abort_",
+    "cleanup_", "clean_", "commit_", "unlink_", "delete_",
+    "del_", "abort_", "remove_", "disconnect_",
+    "unregister_", "deinit_",
 )
 _OWNERSHIP_FN_SUFFIXES = (
     "_put", "_release", "_free", "_fini", "_deinit",
-    "_exit", "_destroy", "_cleanup", "_unlink", "_delete",
-    "_del", "_abort", "_dec_and_test", "_remove",
+    "_exit", "_destroy", "_cleanup", "_clean", "_unlink",
+    "_delete", "_del", "_abort", "_dec_and_test", "_remove",
     "_disconnect", "_unregister", "_uninit",
 )
 
