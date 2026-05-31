@@ -330,6 +330,63 @@ def _function_param_names_pointer_typed(
     return out
 
 
+def _detect_netlink_caller_validated(
+        source: str, fn_name: str, body: str
+        ) -> FilterVerdict | None:
+    """Match netlink reader functions whose attributes were
+    validated by the caller (via `nla_parse_nested(...,
+    policy)`).  The function is purely a reader: takes an
+    `nlattr **` / `nlattr *[]` parameter, calls `nla_get_*`
+    on indexed entries (typically guarded by `if (attrs[idx])`),
+    does no allocation or freeing of its own.
+
+    Concrete shapes caught:
+        cfhsi_netlink_parms(struct nlattr *data[], ...)
+        set_allowedip(struct wg_peer *, struct nlattr **attrs)
+        ip_tun_from_nlattr(const struct nlattr *attr, ...)
+        gtp_find_pdp_by_link(struct net *, struct nlattr *nla[])
+
+    The cocci's per-function netlink_attr_validation
+    instrumentation can't see the caller's validation pass;
+    these functions fire CONTRACT VIOLATION by default at
+    every nla_get_* call.
+    """
+    # Signature must declare an nlattr parameter.
+    sig_re = re.compile(
+        r"\b" + re.escape(fn_name) + r"\s*\("
+        r"(?P<params>[^)]*)\)"
+    )
+    sigs = list(sig_re.finditer(source))
+    has_nla = False
+    for m in sigs:
+        params = m.group("params")
+        if re.search(r"struct\s+nlattr\s*\*", params):
+            has_nla = True
+            break
+    if not has_nla:
+        return None
+    # Body must call nla_get_*; that's the actual reader pattern.
+    if not re.search(r"\bnla_get_\w+\s*\(", body):
+        return None
+    # Body must NOT allocate or free anything (this would be
+    # a more general function with side-effects).
+    if ALLOC_RE.search(body):
+        return None
+    if PUT_RE.search(body):
+        return None
+    if re.search(r"\b(?:kfree|kvfree|kfree_skb|nlmsg_free|"
+                 r"sk_free)\s*\(", body):
+        return None
+    return FilterVerdict(
+        "netlink_caller_validated",
+        "function reads netlink attributes but does not "
+        "allocate/free; caller validated via "
+        "nla_parse_nested(..., policy) — per-function check "
+        "cannot see caller's validation",
+        "high",
+    )
+
+
 def _detect_unmatched_unlock(body: str) -> FilterVerdict | None:
     """Match the pattern where the function calls mutex_unlock /
     spin_unlock / read_unlock / write_unlock without a matching
@@ -673,6 +730,8 @@ def classify(kernel_file: str | Path, fn_name: str,
     }
     LOCK_SHAPES = {"caller_holds_lock"}
     LOCK_MODULES = {"lock_state", "rcu_read"}
+    NETLINK_SHAPES = {"netlink_caller_validated"}
+    NETLINK_MODULES = {"netlink_attr_validation"}
 
     def shape_applies(shape: str) -> bool:
         """Return True if the FP shape applies to this module
@@ -683,6 +742,8 @@ def classify(kernel_file: str | Path, fn_name: str,
             return module in LEAK_MODULES
         if shape in LOCK_SHAPES:
             return module in LOCK_MODULES
+        if shape in NETLINK_SHAPES:
+            return module in NETLINK_MODULES
         return True
 
     def gate(v: FilterVerdict | None) -> FilterVerdict | None:
@@ -746,6 +807,13 @@ def classify(kernel_file: str | Path, fn_name: str,
     v_unlock = gate(_detect_unmatched_unlock(body))
     if v_unlock is not None:
         return v_unlock
+    # Body+signature check: function reads netlink attrs but
+    # doesn't allocate/free; caller validated via
+    # nla_parse_nested.
+    v_nla = gate(_detect_netlink_caller_validated(
+        source, fn_name, body))
+    if v_nla is not None:
+        return v_nla
 
     # Build a list of candidate variables to test.
     candidates: list[str] = []
