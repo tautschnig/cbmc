@@ -468,26 +468,8 @@ exprt python_convertert::convert_call(const jsont &expr)
           i < init_args.size() && i < init_type.parameters().size();
           i++)
       {
-        // PLR §3.2: 'ClassName(None)' for a python_string-typed
-        // param binds as the {0, NULL} length-0 marker rather
-        // than going through unwrap_value's NULL-deref path.
-        // Mirrors the user-call-site fix and the defaults-loop
-        // frozen-None handling. The marker is recognised by
-        // the length-0 Optional[str] fast-path at compare sites.
-        if(
-          is_python_none_constant(init_args[i]) &&
-          is_python_string_type(init_type.parameters()[i].type()))
-        {
-          pointer_typet ptr_t{unsignedbv_typet{8}, 64};
-          init_args[i] = struct_exprt{
-            {from_integer(0, signedbv_typet{64}),
-             null_pointer_exprt{ptr_t}},
-            python_string_type()};
-          continue;
-        }
-        if(init_args[i].type() != init_type.parameters()[i].type())
-          init_args[i] =
-            safe_typecast(init_args[i], init_type.parameters()[i].type());
+        init_args[i] =
+          coerce_call_argument(init_args[i], init_type.parameters()[i].type());
       }
 
       side_effect_expr_function_callt call{

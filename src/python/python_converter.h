@@ -1220,6 +1220,41 @@ private:
   /// cases that would crash with a raw typecast_exprt.
   exprt safe_typecast(const exprt &e, const typet &target);
 
+  /// Coerce a single call argument to a declared parameter type.
+  ///
+  /// Centralised home for PLR-defined call-boundary adaptations
+  /// that would otherwise produce undefined-behaviour goto code
+  /// through the generic safe_typecast / unwrap_value path:
+  ///   - PLR §3.2: a python_value{NONE} argument bound to a
+  ///     python_string-typed parameter (`f(None)` for
+  ///     `def f(s: str)`) is rewritten to the canonical
+  ///     {0, NULL} length-0 marker. This is recognised by the
+  ///     length-0 Optional[str] fast-path at compare sites
+  ///     (cluster v9), so `s is None` correctly returns True
+  ///     inside the callee. Without this rewrite, the generic
+  ///     unwrap_value path emits `*(python_value{NONE}.__str_ptr)`
+  ///     which is a NULL deref the symex would otherwise treat
+  ///     as nondet — sound by accident and a frequent source of
+  ///     verification surprises.
+  ///
+  /// All call-boundary code paths in the frontend (user-call
+  /// dispatch, class-constructor calls in convert_call /
+  /// convert_assign / convert_for / convert_with, and super()
+  /// dispatch in convert_call_method) should funnel single-arg
+  /// coercion through this helper so the same PLR-defined
+  /// adaptations are applied uniformly.
+  ///
+  /// Falls through to safe_typecast for general type coercion.
+  exprt coerce_call_argument(const exprt &arg, const typet &param_type);
+
+  /// Coerce all arguments in `args` to the parameter types
+  /// declared in `params`. Out-of-range entries on either side
+  /// are left untouched (callers are responsible for padding
+  /// missing arguments with defaults beforehand).
+  void coerce_call_arguments(
+    exprt::operandst &args,
+    const code_typet::parameterst &params);
+
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.
   exprt safe_zero(const typet &type) const;

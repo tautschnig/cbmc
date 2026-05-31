@@ -361,8 +361,7 @@ codet python_convertert::convert_with(const jsont &stmt)
             for(std::size_t ai = 0; ai < args.size() && ai < init_params.size();
                 ai++)
             {
-              if(args[ai].type() != init_params[ai].type())
-                args[ai] = safe_typecast(args[ai], init_params[ai].type());
+              args[ai] = coerce_call_argument(args[ai], init_params[ai].type());
             }
             side_effect_expr_function_callt call{
               init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
