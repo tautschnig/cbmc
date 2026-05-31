@@ -2489,6 +2489,40 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
   return side_effect_expr_nondett{target, source_locationt{}};
 }
 
+exprt python_convertert::coerce_call_argument(
+  const exprt &arg,
+  const typet &param_type)
+{
+  // PLR §3.2: 'f(None)' for a python_string-typed parameter
+  // binds as the canonical {0, NULL} length-0 marker rather
+  // than going through unwrap_value's NULL-deref path
+  // (`*(python_value{NONE}.__str_ptr)`). The marker is
+  // recognised by the length-0 Optional[str] fast-path at
+  // compare sites (cluster v9). Mirrors the defaults-loop
+  // frozen-None handling for `Optional[str] = None`.
+  if(is_python_none_constant(arg) && is_python_string_type(param_type))
+  {
+    pointer_typet ptr_t{unsignedbv_typet{8}, 64};
+    return struct_exprt{
+      {from_integer(0, signedbv_typet{64}), null_pointer_exprt{ptr_t}},
+      python_string_type()};
+  }
+
+  if(arg.type() == param_type)
+    return arg;
+
+  return safe_typecast(arg, param_type);
+}
+
+void python_convertert::coerce_call_arguments(
+  exprt::operandst &args,
+  const code_typet::parameterst &params)
+{
+  const std::size_t n = std::min(args.size(), params.size());
+  for(std::size_t i = 0; i < n; i++)
+    args[i] = coerce_call_argument(args[i], params[i].type());
+}
+
 long python_convertert::exception_type_hash(const std::string &type_name) const
 {
   // Use class_tag_ids if the exception type is a known class

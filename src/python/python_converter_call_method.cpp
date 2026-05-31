@@ -201,8 +201,7 @@ std::optional<exprt> python_convertert::try_method_call(
                 if(self_sym != nullptr)
                 {
                   exprt self_arg = self_sym->symbol_expr();
-                  if(self_arg.type() != mparams[0].type())
-                    self_arg = safe_typecast(self_arg, mparams[0].type());
+                  self_arg = coerce_call_argument(self_arg, mparams[0].type());
                   arguments.push_back(std::move(self_arg));
                 }
                 else
@@ -224,9 +223,8 @@ std::optional<exprt> python_convertert::try_method_call(
                   ai < arguments.size() && ai < mparams.size();
                   ++ai)
               {
-                if(arguments[ai].type() != mparams[ai].type())
-                  arguments[ai] =
-                    safe_typecast(arguments[ai], mparams[ai].type());
+                arguments[ai] =
+                  coerce_call_argument(arguments[ai], mparams[ai].type());
               }
               return side_effect_expr_function_callt{
                 base_method->symbol_expr(),

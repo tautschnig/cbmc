@@ -456,8 +456,7 @@ exprt python_convertert::convert_user_call(
                   // Typecast spread value to declared param type
                   // (see comment in the method-call branch above).
                   exprt v = vals_arr.operands()[i];
-                  if(v.type() != params[j].type())
-                    v = safe_typecast(v, params[j].type());
+                  v = coerce_call_argument(v, params[j].type());
                   arguments[j] = std::move(v);
                   matched = true;
                   break;
@@ -482,8 +481,7 @@ exprt python_convertert::convert_user_call(
         if(id2string(params[i].get_base_name()) == kw_name)
         {
           exprt v = kw_val;
-          if(v.type() != params[i].type())
-            v = safe_typecast(v, params[i].type());
+          v = coerce_call_argument(v, params[i].type());
           arguments[i] = std::move(v);
           matched = true;
           break;
@@ -1126,25 +1124,7 @@ exprt python_convertert::convert_user_call(
             continue;
           }
         }
-        // PLR §3.2: 'f(None)' for a python_string-typed param
-        // binds as the canonical {0, NULL} length-0 marker
-        // rather than going through unwrap_value's NULL-deref
-        // path. Mirrors the defaults-loop frozen-None handling
-        // for Optional[str] = None. The marker is recognised
-        // by the length-0 Optional[str] fast-path at compare
-        // sites (cluster v9).
-        if(
-          is_python_none_constant(arguments[i]) &&
-          is_python_string_type(params[i].type()))
-        {
-          pointer_typet ptr_t{unsignedbv_typet{8}, 64};
-          arguments[i] = struct_exprt{
-            {from_integer(0, signedbv_typet{64}),
-             null_pointer_exprt{ptr_t}},
-            python_string_type()};
-          continue;
-        }
-        arguments[i] = safe_typecast(arguments[i], params[i].type());
+        arguments[i] = coerce_call_argument(arguments[i], params[i].type());
       }
     }
   }
