@@ -314,6 +314,33 @@ std::optional<exprt> python_convertert::try_builtin_call(
       exprt arg = convert_expression(*as_array(args).begin());
       if(!arg.is_nil())
       {
+        // PLR §6.10: len(None) raises TypeError. Set
+        // __exception_active=True with TypeError tag and emit
+        // a nondet result so downstream code doesn't dereference
+        // a NULL or read garbage. Mirrors the iter-None /
+        // ordering-with-None TypeError emission shape.
+        bool none_arg = is_python_none(arg, symbol_table);
+        if(none_arg)
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+          {
+            pending_checks.push_back(
+              code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+            if(exc_type_sym != nullptr)
+            {
+              long h = exception_type_hash("TypeError");
+              pending_checks.push_back(code_frontend_assignt{
+                exc_type_sym->symbol_expr(),
+                from_integer(h, exc_type_sym->type)});
+            }
+          }
+          return side_effect_expr_nondett{
+            python_int_type(), get_location(expr)};
+        }
         // Python string: route through the refinement intrinsic
         // so the back-end (refine-strings or future SMT strings)
         // controls the semantics.
@@ -1037,8 +1064,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
     //     valid as the sole positional arg per CPython, but
     //     we accept it here too for the keyword-form
     //     'complex(real="...")'.
-    auto to_complex_parts = [&](
-                              const exprt &arg) -> std::pair<exprt, exprt>
+    auto to_complex_parts = [&](const exprt &arg) -> std::pair<exprt, exprt>
     {
       // python_complex struct → unpack fields directly.
       if(
@@ -1074,12 +1100,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
       }
       // Symbolic numeric: typecast to double for the real part.
       if(
-        arg.type().id() == ID_signedbv ||
-        arg.type().id() == ID_unsignedbv || arg.type().id() == ID_bool ||
-        arg.type().id() == ID_integer)
+        arg.type().id() == ID_signedbv || arg.type().id() == ID_unsignedbv ||
+        arg.type().id() == ID_bool || arg.type().id() == ID_integer)
       {
-        return {
-          safe_typecast(arg, double_type()), safe_zero(double_type())};
+        return {safe_typecast(arg, double_type()), safe_zero(double_type())};
       }
       // Fallback: zero.
       return {safe_zero(double_type()), safe_zero(double_type())};
@@ -1210,9 +1234,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
             }
           }
           exprt kv = convert_expression(kw_val_node);
-          bool kv_is_complex = (kv.type().id() == ID_struct &&
-                                to_struct_type(kv.type()).get_tag() ==
-                                  "python_complex");
+          bool kv_is_complex =
+            (kv.type().id() == ID_struct &&
+             to_struct_type(kv.type()).get_tag() == "python_complex");
           auto parts = to_complex_parts(kv);
           if(kn == "real")
           {
@@ -1230,10 +1254,10 @@ std::optional<exprt> python_convertert::try_builtin_call(
         {
           // Restart the computation with kw values overriding
           // any positional defaults that came before.
-          real_val = have_kw_real ? kw_real_parts.first
-                                  : safe_zero(double_type());
-          imag_val = have_kw_real ? kw_real_parts.second
-                                  : safe_zero(double_type());
+          real_val =
+            have_kw_real ? kw_real_parts.first : safe_zero(double_type());
+          imag_val =
+            have_kw_real ? kw_real_parts.second : safe_zero(double_type());
           if(have_kw_imag)
           {
             if(kw_imag_is_complex)
@@ -2821,8 +2845,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
               // solver — required for github_3036-style
               // `'a' <= c.lower() <= 'z'`.
               {
-                std::optional<std::string> sv =
-                  extract_string_value(iterable);
+                std::optional<std::string> sv = extract_string_value(iterable);
                 if(!sv.has_value() && iterable.id() == ID_symbol)
                 {
                   auto sit = string_constants.find(
@@ -2850,9 +2873,8 @@ std::optional<exprt> python_convertert::try_builtin_call(
                     symbol_table.get_writeable_ref(iter_sym_id_const).type =
                       python_string_type();
                   }
-                  exprt result = (func_name == "all")
-                                   ? exprt{true_exprt{}}
-                                   : exprt{false_exprt{}};
+                  exprt result = (func_name == "all") ? exprt{true_exprt{}}
+                                                      : exprt{false_exprt{}};
                   for(char ch : sv.value())
                   {
                     std::string ch_str(1, ch);
@@ -2873,19 +2895,17 @@ std::optional<exprt> python_convertert::try_builtin_call(
                     }
                     if(func_name == "all")
                       result = and_exprt{
-                        result,
-                        or_exprt{not_exprt{filter_pred}, elt_expr}};
+                        result, or_exprt{not_exprt{filter_pred}, elt_expr}};
                     else
-                      result = or_exprt{
-                        result, and_exprt{filter_pred, elt_expr}};
+                      result =
+                        or_exprt{result, and_exprt{filter_pred, elt_expr}};
                   }
                   string_constants.erase(iter_sym_id_const);
                   return result;
                 }
               }
 
-              member_exprt str_length{
-                iterable, "length", signedbv_typet{64}};
+              member_exprt str_length{iterable, "length", signedbv_typet{64}};
               member_exprt data_ptr{
                 iterable, "data", pointer_typet(unsignedbv_typet{8}, 64)};
 
@@ -2913,8 +2933,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
               for(std::size_t i = 0; i < MAX_STR_GENEXP_UNROLL; i++)
               {
                 exprt idx = from_integer(i, signedbv_typet{64});
-                exprt in_range = binary_relation_exprt{
-                  idx, ID_lt, str_length};
+                exprt in_range = binary_relation_exprt{idx, ID_lt, str_length};
 
                 // Build the per-iteration char struct
                 // {1, address_of(arr[0])} where arr[0] = byte_i.
@@ -2924,16 +2943,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 exprt::operandst chars;
                 chars.push_back(byte_i);
                 array_typet at{
-                  unsignedbv_typet{8},
-                  from_integer(1, signedbv_typet{64})};
+                  unsignedbv_typet{8}, from_integer(1, signedbv_typet{64})};
                 array_exprt arr{std::move(chars), at};
                 exprt ptr = address_of_exprt{index_exprt{
                   arr,
                   from_integer(0, signedbv_typet{64}),
                   unsignedbv_typet{8}}};
                 exprt len_one = from_integer(1, signedbv_typet{64});
-                exprt char_struct = struct_exprt{
-                  {len_one, ptr}, python_string_type()};
+                exprt char_struct =
+                  struct_exprt{{len_one, ptr}, python_string_type()};
 
                 std::size_t pc_before = pending_checks.size();
                 exprt elt_expr = convert_expression(elt);
@@ -3343,8 +3361,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
               python_value_is(obj, python_type_tagt::INT),
               equal_exprt{
                 python_value_int(obj),
-                from_integer(
-                  python_none_sentinel_int(), signedbv_typet{64})}};
+                from_integer(python_none_sentinel_int(), signedbv_typet{64})}};
             return or_exprt{std::move(is_none_tag), std::move(is_int_sentinel)};
           }
           if(obj.type().id() == ID_signedbv)

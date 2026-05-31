@@ -51,6 +51,49 @@ exprt python_convertert::convert_call(const jsont &expr)
   const jsont &func = json_member(expr, "func");
   const jsont &args = json_member(expr, "args");
 
+  // PLR §6.10: 'TypeError: 'NoneType' object is not callable'.
+  // Calling None as a function raises TypeError. Detect both
+  // the literal-None callee (Constant(value=None)) and the
+  // Name-bound-to-None case (Name resolving to a symbol whose
+  // stored value is python_value{NONE}).
+  bool callee_is_none = false;
+  if(is_node_type(func, "Constant"))
+  {
+    const jsont &v = json_member(func, "value");
+    if(v.is_null())
+      callee_is_none = true;
+  }
+  else if(is_node_type(func, "Name"))
+  {
+    std::string nm = json_string(json_member(func, "id"));
+    if(nm == "None")
+      callee_is_none = true;
+    else
+    {
+      const symbolt *s = symbol_table.lookup(irep_idt{"python::" + nm});
+      if(s != nullptr && is_python_none_constant(s->value))
+        callee_is_none = true;
+    }
+  }
+  if(callee_is_none)
+  {
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    const symbolt *exc_type_sym =
+      symbol_table.lookup("python::__exception_type");
+    if(exc_sym != nullptr)
+    {
+      pending_checks.push_back(
+        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long h = exception_type_hash("TypeError");
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
+      }
+    }
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+  }
+
   // Stage 1 of the re-precision plan: detect user-visible
   // regex call patterns whose pattern is a constant non-ε
   // accepting regex AND whose subject is statically the empty
