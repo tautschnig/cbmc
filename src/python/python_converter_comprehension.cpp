@@ -5,8 +5,6 @@
 /// All logic and class-member state remains unchanged — this file is
 /// a pure source-split.
 
-#include "python_converter.h"
-
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
@@ -15,6 +13,7 @@
 #include <util/std_expr.h>
 #include <util/symbol.h>
 
+#include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
 #include "python_value_type.h"
@@ -379,8 +378,10 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     // a side effect that the element-equal comparison can't see
     // through.)
     auto try_fold_str_call =
-      [&](const jsont &call_ast,
-          const std::vector<std::pair<irep_idt, exprt>> &binds) -> exprt {
+      [&](
+        const jsont &call_ast,
+        const std::vector<std::pair<irep_idt, exprt>> &binds) -> exprt
+    {
       if(!is_node_type(call_ast, "Call"))
         return nil_exprt{};
       const jsont &func = json_member(call_ast, "func");
@@ -449,8 +450,7 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   exprt::operandst data_elems;
   for(auto &e : elements)
   {
-    if(e.type() != elem_type)
-      e = typecast_exprt{e, elem_type};
+    e = coerce_element(e, elem_type);
     data_elems.push_back(e);
   }
   while(data_elems.size() < PYTHON_MAX_LIST_LENGTH)
@@ -670,10 +670,11 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
     // refers to the constant. To recover the constant fold, when
     // the key was the AST `str(<iter-var>)` we re-convert it with
     // the iteration variable replaced by its concrete constant.
-    auto try_constant_fold_call = [&](
-                                    const jsont &call_ast,
-                                    const std::vector<std::pair<irep_idt, exprt>>
-                                      &binds) -> exprt {
+    auto try_constant_fold_call =
+      [&](
+        const jsont &call_ast,
+        const std::vector<std::pair<irep_idt, exprt>> &binds) -> exprt
+    {
       if(!is_node_type(call_ast, "Call"))
         return nil_exprt{};
       const jsont &func = json_member(call_ast, "func");
@@ -733,10 +734,8 @@ exprt python_convertert::convert_dict_comp(const jsont &expr)
   exprt::operandst key_elems, val_elems;
   for(auto &p : pairs)
   {
-    if(p.first.type() != key_type)
-      p.first = safe_typecast(p.first, key_type);
-    if(p.second.type() != val_type)
-      p.second = safe_typecast(p.second, val_type);
+    p.first = coerce_element(p.first, key_type);
+    p.second = coerce_element(p.second, val_type);
     key_elems.push_back(p.first);
     val_elems.push_back(p.second);
   }

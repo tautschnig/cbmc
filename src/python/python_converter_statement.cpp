@@ -349,8 +349,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
             // length, which equals the OLD length-1, i.e. the first
             // out-of-bounds slot.
             del_block.add(code_frontend_assignt{
-              index_exprt{data, length},
-              safe_zero(data_type.element_type())});
+              index_exprt{data, length}, safe_zero(data_type.element_type())});
           }
           // PLR §7.5: del d["key"] on dict — scan, shift, decrement
           else if(!obj.is_nil() && is_python_dict_type(obj.type()))
@@ -445,6 +444,39 @@ codet python_convertert::convert_statement(const jsont &stmt)
                 }
               }
             }
+          }
+        }
+        // PLR §7.4: 'del x' on a Name target removes the
+        // binding. We can't model Python's NameError-on-
+        // subsequent-read precisely without name-binding
+        // tracking, so the converter approximates by
+        // resetting the slot to the per-target-type None
+        // marker via coerce_to_typed_slot. Subsequent reads
+        // see the marker and `x is None` correctly returns
+        // True. This is sound for the common idiom
+        //
+        //   del x
+        //   if x is None: ...   # True after del
+        //
+        // and an over-approximation when later code expects
+        // a NameError (we'd say "x is None" rather than
+        // "x is unbound"). Acceptable since NameError on
+        // dead-name use is a runtime check Python users
+        // would catch with linters, not verifier-level
+        // properties.
+        else if(is_node_type(target, "Name"))
+        {
+          std::string nm = json_string(json_member(target, "id"));
+          irep_idt sid{qualify_name(nm)};
+          const symbolt *s = symbol_table.lookup(sid);
+          if(s != nullptr)
+          {
+            exprt none_marker =
+              coerce_to_typed_slot(python_none_value(), s->type);
+            if(none_marker.type() != s->type)
+              none_marker = safe_typecast(none_marker, s->type);
+            del_block.add(
+              code_frontend_assignt{s->symbol_expr(), std::move(none_marker)});
           }
         }
       }
