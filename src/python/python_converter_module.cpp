@@ -70,6 +70,19 @@ code_blockt python_convertert::convert_module_body(const jsont &body)
               ts.is_lvalue = true;
               ts.is_state_var = true;
               ts.is_static_lifetime = true;
+              // Stash the literal value as the symbol's static
+              // initial value too. The runtime
+              // code_frontend_assignt below populates the
+              // symbol's actual storage at __CPROVER_initialize
+              // time, but PLR §3.2 boundary helpers (and the
+              // is_python_none recognizer) inspect the symbol
+              // table's `value` field to identify defaults that
+              // were `None` in source — without this, frozen
+              // None defaults would look like an arbitrary
+              // python_value-typed expression and the
+              // None-marker rewrites for non-string targets
+              // (Optional[int] = None, etc.) would not fire.
+              ts.value = val;
               symbol_table.add(ts);
             }
             symbol_exprt frozen = symbol_table.lookup_ref(ti).symbol_expr();

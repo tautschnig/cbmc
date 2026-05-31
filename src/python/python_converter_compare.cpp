@@ -773,7 +773,35 @@ exprt python_convertert::convert_compare(const jsont &expr)
             from_integer(python_none_sentinel_int(), current_left.type())};
           goto done_cmp;
         }
-        // Other types (struct, string, list, dict): never equal to None.
+        if(current_left.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(current_left.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp = ieee_float_equal_exprt{current_left, none_f.to_expr()};
+          goto done_cmp;
+        }
+        // PLR §6.13: 'x is None' for a typed-string slot
+        // recognises the canonical {0, NULL} marker that
+        // coerce_to_typed_slot emits at boundaries — distinct
+        // from `""` which has length=0 but a non-NULL data
+        // pointer (an interned empty-buffer literal).
+        if(is_python_string_type(current_left.type()))
+        {
+          cmp = equal_exprt{
+            member_exprt{
+              current_left, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        // typed-list / typed-dict: no canonical None marker
+        // distinct from empty list/dict — Python source uses
+        // `not arg` / `len(arg) == 0` for those tests rather
+        // than `arg is None`. See coerce_to_typed_slot for
+        // why we don't emit a length-0 marker recogniser here.
+        // Class instances and other unrecognised struct types:
+        // never equal to None (no None-marker convention).
         cmp = false_exprt{};
         goto done_cmp;
       }
@@ -784,13 +812,26 @@ exprt python_convertert::convert_compare(const jsont &expr)
           cmp = python_value_is(right, python_type_tagt::NONE);
           goto done_cmp;
         }
-        if(
-          right.type().id() == ID_signedbv ||
-          right.type().id() == ID_integer)
+        if(right.type().id() == ID_signedbv || right.type().id() == ID_integer)
         {
           cmp = equal_exprt{
-            right,
-            from_integer(python_none_sentinel_int(), right.type())};
+            right, from_integer(python_none_sentinel_int(), right.type())};
+          goto done_cmp;
+        }
+        if(right.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(right.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp = ieee_float_equal_exprt{right, none_f.to_expr()};
+          goto done_cmp;
+        }
+        if(is_python_string_type(right.type()))
+        {
+          cmp = equal_exprt{
+            member_exprt{right, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
           goto done_cmp;
         }
         cmp = false_exprt{};
@@ -1051,8 +1092,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
                   // The s[i] path leaves s.operands()[1] as a
                   // pointer (s.data + i) or address_of(arr[0]).
                   if(
-                    sd.id() == ID_address_of &&
-                    sd.operands().size() == 1 &&
+                    sd.id() == ID_address_of && sd.operands().size() == 1 &&
                     sd.operands()[0].id() == ID_index)
                     return sd.operands()[0];
                   if(sd.type().id() == ID_pointer)
@@ -1167,6 +1207,27 @@ exprt python_convertert::convert_compare(const jsont &expr)
             from_integer(python_none_sentinel_int(), current_left.type())};
           goto done_cmp;
         }
+        if(current_left.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(current_left.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp =
+            not_exprt{ieee_float_equal_exprt{current_left, none_f.to_expr()}};
+          goto done_cmp;
+        }
+        if(is_python_string_type(current_left.type()))
+        {
+          cmp = notequal_exprt{
+            member_exprt{
+              current_left, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        // typed-list / typed-dict / class instances: see Eq
+        // arm above for why we don't recognise length-0 as
+        // None here. Default: structurally never None.
         cmp = true_exprt{};
         goto done_cmp;
       }
@@ -1177,13 +1238,26 @@ exprt python_convertert::convert_compare(const jsont &expr)
           cmp = not_exprt{python_value_is(right, python_type_tagt::NONE)};
           goto done_cmp;
         }
-        if(
-          right.type().id() == ID_signedbv ||
-          right.type().id() == ID_integer)
+        if(right.type().id() == ID_signedbv || right.type().id() == ID_integer)
         {
           cmp = notequal_exprt{
-            right,
-            from_integer(python_none_sentinel_int(), right.type())};
+            right, from_integer(python_none_sentinel_int(), right.type())};
+          goto done_cmp;
+        }
+        if(right.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(right.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp = not_exprt{ieee_float_equal_exprt{right, none_f.to_expr()}};
+          goto done_cmp;
+        }
+        if(is_python_string_type(right.type()))
+        {
+          cmp = notequal_exprt{
+            member_exprt{right, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
           goto done_cmp;
         }
         cmp = true_exprt{};
@@ -2000,66 +2074,84 @@ exprt python_convertert::convert_compare(const jsont &expr)
         cmp = python_value_is(right, python_type_tagt::NONE);
         goto done_cmp;
       }
-      // Concrete struct instance compared with None sentinel is
-      // always false — the struct is never the None value.
-      // Match struct (literal-typed) and struct_tag (named
-      // struct types like python_list, python_dict, class
-      // instances). For python_string, only fast-path when
-      // current_left isn't an Optional[str] parameter (which
-      // can hold the None sentinel via default-argument
-      // binding).
-      auto is_optional_sym = [this](const exprt &e)
+      // PLR §6.13: 'x is None' for typed-numeric / typed-string /
+      // typed-list / typed-dict slots recognises the per-target-
+      // type None marker that coerce_to_typed_slot emits at
+      // call/assign/return boundaries. See coerce_to_typed_slot
+      // for the marker conventions.
+      if(is_python_none_constant(right))
       {
-        if(e.id() == ID_symbol)
-          return optional_params.count(to_symbol_expr(e).get_identifier()) > 0;
         if(
-          e.id() == ID_dereference && e.operands().size() == 1 &&
-          e.operands()[0].id() == ID_symbol)
-          return optional_params.count(
-                   to_symbol_expr(e.operands()[0]).get_identifier()) > 0;
-        return false;
-      };
-      if(
-        (current_left.type().id() == ID_struct ||
-         current_left.type().id() == ID_struct_tag) &&
-        !is_python_value_type(current_left.type()) &&
-        !is_optional_sym(current_left) && is_python_none_constant(right))
-      {
-        cmp = false_exprt{};
-        goto done_cmp;
+          current_left.type().id() == ID_signedbv ||
+          current_left.type().id() == ID_integer)
+        {
+          cmp = equal_exprt{
+            current_left,
+            from_integer(python_none_sentinel_int(), current_left.type())};
+          goto done_cmp;
+        }
+        if(current_left.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(current_left.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp = ieee_float_equal_exprt{current_left, none_f.to_expr()};
+          goto done_cmp;
+        }
+        if(is_python_string_type(current_left.type()))
+        {
+          cmp = equal_exprt{
+            member_exprt{
+              current_left, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        if(
+          is_python_list_type(current_left.type()) ||
+          is_python_dict_type(current_left.type()) ||
+          current_left.type().id() == ID_struct ||
+          current_left.type().id() == ID_struct_tag)
+        {
+          // typed-list / typed-dict / class instances: see Eq
+          // arm above for why we don't recognise length-0 as
+          // None here.
+          cmp = false_exprt{};
+          goto done_cmp;
+        }
       }
-      // Optional[str]: 'y is None' for an Optional[str] param
-      // bound to its default-None becomes length==0 (the marker
-      // we emit at the call site for None-default-binding).
-      // Otherwise structurally None can never equal a non-empty
-      // string, so the assertion 'y is None' is satisfiable
-      // exactly when y was bound to None at the call site.
-      if(
-        is_optional_sym(current_left) &&
-        is_python_string_type(current_left.type()) &&
-        is_python_none_constant(right))
+      if(is_python_none_constant(current_left))
       {
-        member_exprt llen{current_left, "length", signedbv_typet{64}};
-        cmp = equal_exprt{llen, from_integer(0, signedbv_typet{64})};
-        goto done_cmp;
-      }
-      // Same for the reversed orientation.
-      if(
-        (right.type().id() == ID_struct ||
-         right.type().id() == ID_struct_tag) &&
-        !is_python_value_type(right.type()) && !is_optional_sym(right) &&
-        is_python_none_constant(current_left))
-      {
-        cmp = false_exprt{};
-        goto done_cmp;
-      }
-      if(
-        is_optional_sym(right) && is_python_string_type(right.type()) &&
-        is_python_none_constant(current_left))
-      {
-        member_exprt rlen{right, "length", signedbv_typet{64}};
-        cmp = equal_exprt{rlen, from_integer(0, signedbv_typet{64})};
-        goto done_cmp;
+        if(right.type().id() == ID_signedbv || right.type().id() == ID_integer)
+        {
+          cmp = equal_exprt{
+            right, from_integer(python_none_sentinel_int(), right.type())};
+          goto done_cmp;
+        }
+        if(right.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(right.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp = ieee_float_equal_exprt{right, none_f.to_expr()};
+          goto done_cmp;
+        }
+        if(is_python_string_type(right.type()))
+        {
+          cmp = equal_exprt{
+            member_exprt{right, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        if(
+          is_python_list_type(right.type()) ||
+          is_python_dict_type(right.type()) || right.type().id() == ID_struct ||
+          right.type().id() == ID_struct_tag)
+        {
+          cmp = false_exprt{};
+          goto done_cmp;
+        }
       }
       // PLR §6.10.3: lists, dicts, sets, and class instances are
       // distinct heap objects per construction. Two list/dict
@@ -2122,48 +2214,94 @@ exprt python_convertert::convert_compare(const jsont &expr)
         is_python_value_type(current_left.type()) &&
         is_python_none_constant(right))
       {
-        cmp =
-          not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
+        cmp = not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
         goto done_cmp;
       }
-      // A concrete class-instance (struct) compared against None is
-      // always non-None — typecasting the None-sentinel int to a
-      // struct type produces nondet and would allow the solver to
-      // pick a value that looks like None. Simplify to true.
-      // Match struct (literal-typed) and struct_tag (named
-      // struct types like python_list, python_dict, class
-      // instances). Skip Optional[T]-annotated parameters
-      // (current_left is a symbol marked in optional_params)
-      // since they can still hold the None sentinel.
-      auto is_opt_sym2 = [this](const exprt &e)
-      {
-        if(e.id() == ID_symbol)
-          return optional_params.count(to_symbol_expr(e).get_identifier()) > 0;
-        if(
-          e.id() == ID_dereference && e.operands().size() == 1 &&
-          e.operands()[0].id() == ID_symbol)
-          return optional_params.count(
-                   to_symbol_expr(e.operands()[0]).get_identifier()) > 0;
-        return false;
-      };
       if(
-        (current_left.type().id() == ID_struct ||
-         current_left.type().id() == ID_struct_tag) &&
-        !is_python_value_type(current_left.type()) &&
-        !is_opt_sym2(current_left) && is_python_none_constant(right))
-      {
-        cmp = true_exprt{};
-        goto done_cmp;
-      }
-      // Same for reversed orientation.
-      if(
-        (right.type().id() == ID_struct ||
-         right.type().id() == ID_struct_tag) &&
-        !is_python_value_type(right.type()) && !is_opt_sym2(right) &&
+        is_python_value_type(right.type()) &&
         is_python_none_constant(current_left))
       {
-        cmp = true_exprt{};
+        cmp = not_exprt{python_value_is(right, python_type_tagt::NONE)};
         goto done_cmp;
+      }
+      // PLR §6.13: 'x is not None' for typed-numeric / typed-
+      // string / typed-list / typed-dict slots — negation of
+      // the typed-slot None-marker recognition. See
+      // coerce_to_typed_slot for marker conventions.
+      if(is_python_none_constant(right))
+      {
+        if(
+          current_left.type().id() == ID_signedbv ||
+          current_left.type().id() == ID_integer)
+        {
+          cmp = notequal_exprt{
+            current_left,
+            from_integer(python_none_sentinel_int(), current_left.type())};
+          goto done_cmp;
+        }
+        if(current_left.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(current_left.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp =
+            not_exprt{ieee_float_equal_exprt{current_left, none_f.to_expr()}};
+          goto done_cmp;
+        }
+        if(is_python_string_type(current_left.type()))
+        {
+          cmp = notequal_exprt{
+            member_exprt{
+              current_left, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        if(
+          is_python_list_type(current_left.type()) ||
+          is_python_dict_type(current_left.type()) ||
+          current_left.type().id() == ID_struct ||
+          current_left.type().id() == ID_struct_tag)
+        {
+          // typed-list / typed-dict / class instances: see Eq
+          // arm above for why we don't recognise length-0 as
+          // None here.
+          cmp = true_exprt{};
+          goto done_cmp;
+        }
+      }
+      if(is_python_none_constant(current_left))
+      {
+        if(right.type().id() == ID_signedbv || right.type().id() == ID_integer)
+        {
+          cmp = notequal_exprt{
+            right, from_integer(python_none_sentinel_int(), right.type())};
+          goto done_cmp;
+        }
+        if(right.type().id() == ID_floatbv)
+        {
+          ieee_floatt none_f{
+            ieee_float_spect{to_floatbv_type(right.type())},
+            ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+          none_f.from_integer(python_none_sentinel_int());
+          cmp = not_exprt{ieee_float_equal_exprt{right, none_f.to_expr()}};
+          goto done_cmp;
+        }
+        if(is_python_string_type(right.type()))
+        {
+          cmp = notequal_exprt{
+            member_exprt{right, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+            null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+          goto done_cmp;
+        }
+        if(
+          is_python_list_type(right.type()) ||
+          is_python_dict_type(right.type()) || right.type().id() == ID_struct ||
+          right.type().id() == ID_struct_tag)
+        {
+          cmp = true_exprt{};
+          goto done_cmp;
+        }
       }
       // PLR §6.10.3: list/dict 'x is not y' — same logic as 'is'
       // but inverted. Different-symbol or literal-on-either-side

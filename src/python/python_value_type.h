@@ -25,6 +25,7 @@
 #include <util/pointer_expr.h>
 #include <util/std_expr.h>
 #include <util/std_types.h>
+#include <util/symbol_table_base.h>
 
 #include "python_types.h"
 
@@ -96,8 +97,8 @@ inline struct_typet python_value_struct_def()
   // Opaque class-instance pointer. Used when CLASS tag is set;
   // the concrete struct type is not carried here — callers must
   // cast back to the specific class type at use site.
-  components.push_back(struct_typet::componentt{
-    "__class_ptr", pointer_typet{empty_typet{}, 64}});
+  components.push_back(
+    struct_typet::componentt{"__class_ptr", pointer_typet{empty_typet{}, 64}});
 
   struct_typet result{components};
   result.set_tag("python_value");
@@ -127,11 +128,9 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
       ieee_floatt::rounding_modet::ROUND_TO_EVEN}
       .to_expr();
   exprt bool_val = from_integer(0, signedbv_typet{32});
-  exprt str_ptr = null_pointer_exprt{
-    pointer_typet{python_string_type(), 64}};
+  exprt str_ptr = null_pointer_exprt{pointer_typet{python_string_type(), 64}};
   exprt list_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
-  exprt class_ptr = null_pointer_exprt{
-    pointer_typet{empty_typet{}, 64}};
+  exprt class_ptr = null_pointer_exprt{pointer_typet{empty_typet{}, 64}};
 
   switch(tag)
   {
@@ -149,9 +148,7 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                  : value;
     break;
   case python_type_tagt::STR:
-    str_ptr = value.type().id() == ID_pointer
-                ? value
-                : address_of_exprt{value};
+    str_ptr = value.type().id() == ID_pointer ? value : address_of_exprt{value};
     break;
   case python_type_tagt::LIST:
     list_ptr = value.type().id() == ID_pointer
@@ -160,11 +157,11 @@ inline struct_exprt make_python_value(python_type_tagt tag, const exprt &value)
                      address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
   case python_type_tagt::CLASS:
-    class_ptr = value.type().id() == ID_pointer
-                  ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
-                  : typecast_exprt{
-                      address_of_exprt{value},
-                      pointer_typet{empty_typet{}, 64}};
+    class_ptr =
+      value.type().id() == ID_pointer
+        ? typecast_exprt{value, pointer_typet{empty_typet{}, 64}}
+        : typecast_exprt{
+            address_of_exprt{value}, pointer_typet{empty_typet{}, 64}};
     break;
   case python_type_tagt::DICT:
     // Dicts use the class_ptr slot to store the dict-struct
@@ -245,8 +242,7 @@ inline dereference_exprt python_value_list(const exprt &value)
 /// specific class struct type.
 inline member_exprt python_value_class_ptr(const exprt &value)
 {
-  return member_exprt{
-    value, "__class_ptr", pointer_typet{empty_typet{}, 64}};
+  return member_exprt{value, "__class_ptr", pointer_typet{empty_typet{}, 64}};
 }
 
 /// Check if a tagged-union value has a specific tag.
@@ -307,6 +303,37 @@ inline bool is_python_none_constant(const exprt &e)
         t == mp_integer{static_cast<int>(python_type_tagt::NONE)})
         return true;
     }
+  }
+  return false;
+}
+
+/// Broader None recognizer: in addition to the literal forms
+/// matched by `is_python_none_constant`, also recognises a
+/// symbol-expression whose stored value is python_value{NONE}.
+///
+/// Imported-module pre-pass freezes per-FunctionDef defaults at
+/// module level into static `__def_<func>_<idx>` symbols (see
+/// python_converter_module.cpp). For default-bound `None` the
+/// symbol's stored value is a python_value{NONE} struct
+/// literal, but the expression we see at the boundary is the
+/// symbol_expr — `is_python_none_constant` would miss it.
+///
+/// Use this predicate at any site that needs to recognise None
+/// regardless of whether it was inlined as a literal or bound
+/// through the defaults loop. Use the narrower
+/// `is_python_none_constant` at sites that explicitly want
+/// only the literal form (e.g. inside `unwrap_value`'s early-
+/// exit, where recursive symbol lookup could be expensive).
+inline bool
+is_python_none(const exprt &e, const symbol_table_baset &symbol_table)
+{
+  if(is_python_none_constant(e))
+    return true;
+  if(e.id() == ID_symbol)
+  {
+    const symbolt *s = symbol_table.lookup(to_symbol_expr(e).get_identifier());
+    if(s != nullptr && is_python_none_constant(s->value))
+      return true;
   }
   return false;
 }
