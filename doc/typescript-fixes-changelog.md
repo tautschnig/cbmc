@@ -384,3 +384,39 @@ type-equality invariant
 **Regression guard**: `regression/typescript/mixed-union-array/`
 (CORE) — covers the no-crash property; verification result on
 narrowed access is nondet (sound).
+
+### `object-set-prototype-of` — recognise common setPrototypeOf idioms (2026-05-31)
+
+**Was**: `Object.setPrototypeOf(target, ClassName.prototype)`
+silently no-op'd, but the `ClassName.prototype` argument fell
+through to the generic identifier resolver and emitted
+`Unknown identifier: 'ClassName'` because a class name isn't a
+value. This noise hid actual missing-import warnings.
+
+**Resolution**: `typescript_converter_call.cpp` now recognises the
+two common practical patterns at the AST level (before converting
+arguments), so `ClassName.prototype` doesn't trip the identifier
+resolver:
+
+  - Pattern (a): `Object.setPrototypeOf(target, ClassName.prototype)`
+    where `target`'s static type matches `ClassName`'s registered
+    struct → silent no-op (the Error-subclass workaround).
+  - Pattern (b): `Object.setPrototypeOf(obj, null)` → silent no-op
+    (defensive freeze; we don't carry chain-inheritance into struct
+    fields, so the defended-against attack can't reach our objects
+    either).
+  - Genuine rebinding (proto is a class but target's type doesn't
+    match) → explicit warning at the call site and proceed as
+    no-op.
+  - `Reflect.setPrototypeOf` follows the same logic, returning
+    `true` (the boolean success result).
+
+**Limitation that remains** (still §1.6):
+
+Truly dynamic prototype-chain mutation isn't modelled. The full
+runtime-chain implementation (`__proto` pointer per struct, walk
+on every property access) was deferred — see P3.2 in the work
+plan.
+
+**Regression guard**:
+`regression/typescript/object-set-prototype-of/` (CORE).

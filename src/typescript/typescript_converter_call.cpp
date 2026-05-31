@@ -724,17 +724,16 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
       // Done BEFORE converting all arguments, so the cls.prototype
       // PropertyAccessExpression doesn't trip the `Unknown
       // identifier: cls` warning.
-      if(method == "create" && args.is_array() &&
-         !to_json_array(args).empty())
+      if(method == "create" && args.is_array() && !to_json_array(args).empty())
       {
         const jsont &raw_arg = *to_json_array(args).begin();
-        const std::string raw_kind =
-          json_string(json_member(raw_arg, "_kind"));
+        const std::string raw_kind = json_string(json_member(raw_arg, "_kind"));
         // Case (a): the argument is a PropertyAccessExpression of
         // the form Class.prototype where Class is a known class.
-        if(raw_kind == "PropertyAccessExpression" &&
-           json_string(json_member(json_member(raw_arg, "name"), "text")) ==
-             "prototype")
+        if(
+          raw_kind == "PropertyAccessExpression" &&
+          json_string(json_member(json_member(raw_arg, "name"), "text")) ==
+            "prototype")
         {
           const jsont &cls_node = json_member(raw_arg, "expression");
           if(json_string(json_member(cls_node, "_kind")) == "Identifier")
@@ -786,6 +785,86 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         }
         // Case (d): give up.
         return side_effect_expr_nondett{double_type(), get_location(node)};
+      }
+      // ES2024 §20.1.2.21: Object.setPrototypeOf(target, proto).
+      // Pragmatic model — we don't carry a runtime prototype chain
+      // (see §1.6). The common practical patterns where the source
+      // calls setPrototypeOf are no-ops in our model:
+      //
+      //   (a) Object.setPrototypeOf(this, ClassName.prototype) inside
+      //       a method of ClassName — restoring the prototype after
+      //       super(). Already correct: `this` was created by
+      //       `new ClassName` so its struct type is ClassName.
+      //   (b) Object.setPrototypeOf(obj, null) — the "freeze
+      //       prototype" defensive idiom against prototype pollution.
+      //       Already correct: we never carry prototype-chain
+      //       inheritance into struct fields, so the defended-against
+      //       attack can't reach our objects either.
+      //
+      // Anything else is a runtime chain rebinding we cannot model;
+      // emit a one-line warning at conversion time so the user knows
+      // their setPrototypeOf call is being ignored. The call's
+      // expression type is `void`, so we return nil.
+      //
+      // Recognised at the AST level so that `ClassName.prototype`
+      // does NOT trip the `Unknown identifier: ClassName` warning.
+      if(
+        method == "setPrototypeOf" && args.is_array() &&
+        to_json_array(args).size() >= 2)
+      {
+        const auto &arg_arr = to_json_array(args);
+        const jsont &target_arg = *arg_arr.begin();
+        const jsont &proto_arg = *std::next(arg_arr.begin());
+        const std::string proto_kind =
+          json_string(json_member(proto_arg, "_kind"));
+        // Pattern (b): proto = null — always a no-op in our model.
+        if(proto_kind == "NullKeyword")
+          return nil_exprt{};
+        // Pattern (a): proto = ClassName.prototype where target's
+        // STATIC TYPE already has the same class tag.
+        if(
+          proto_kind == "PropertyAccessExpression" &&
+          json_string(json_member(json_member(proto_arg, "name"), "text")) ==
+            "prototype")
+        {
+          const jsont &cls_node = json_member(proto_arg, "expression");
+          if(json_string(json_member(cls_node, "_kind")) == "Identifier")
+          {
+            std::string cls_name = json_string(json_member(cls_node, "text"));
+            auto cit = class_types.find(cls_name);
+            if(cit != class_types.end())
+            {
+              // Resolve the target's static type.
+              exprt target_expr = convert_expression(target_arg);
+              typet target_type = target_expr.type();
+              if(target_expr.id() == ID_symbol)
+              {
+                const symbolt *s = symbol_table.lookup(
+                  to_symbol_expr(target_expr).get_identifier());
+                if(s)
+                  target_type = s->type;
+              }
+              if(target_type == cit->second)
+                return nil_exprt{}; // (a) — no-op, types match
+              // Class prototype but target type differs: this is a
+              // genuine rebind we can't model.
+              log.warning()
+                << get_location(node).as_string()
+                << ": Object.setPrototypeOf(target, " << cls_name
+                << ".prototype) where target's static type does not match "
+                << cls_name << "; the call is ignored. See "
+                << "typescript-known-limitations §1.6." << messaget::eom;
+              return nil_exprt{};
+            }
+          }
+        }
+        // Anything else (dynamic prototype, nested expressions, …)
+        log.warning() << get_location(node).as_string()
+                      << ": Object.setPrototypeOf with a non-class, non-null "
+                         "prototype argument is ignored. See "
+                         "typescript-known-limitations §1.6."
+                      << messaget::eom;
+        return nil_exprt{};
       }
       exprt::operandst call_args;
       if(args.is_array())
@@ -1105,6 +1184,64 @@ exprt typescript_convertert::convert_call_expression(const jsont &node)
         return side_effect_expr_nondett{bool_typet{}, get_location(node)};
       }
       return side_effect_expr_nondett{double_type(), get_location(node)};
+    }
+    // ES2024 §28.1: Reflect — for the prototype-chain methods we
+    // care about (setPrototypeOf, getPrototypeOf), the semantics
+    // are equivalent to the Object.* counterpart with a boolean
+    // result (true on success). Route them through the same logic
+    // by re-dispatching with `obj == "Object"` semantics.
+    if(
+      obj == "Reflect" && method == "setPrototypeOf" && args.is_array() &&
+      to_json_array(args).size() >= 2)
+    {
+      const auto &arg_arr = to_json_array(args);
+      const jsont &target_arg = *arg_arr.begin();
+      const jsont &proto_arg = *std::next(arg_arr.begin());
+      const std::string proto_kind =
+        json_string(json_member(proto_arg, "_kind"));
+      // Reuse the Object.setPrototypeOf logic. Reflect.* returns a
+      // boolean; in our model we always succeed.
+      if(proto_kind == "NullKeyword")
+        return true_exprt{};
+      if(
+        proto_kind == "PropertyAccessExpression" &&
+        json_string(json_member(json_member(proto_arg, "name"), "text")) ==
+          "prototype")
+      {
+        const jsont &cls_node = json_member(proto_arg, "expression");
+        if(json_string(json_member(cls_node, "_kind")) == "Identifier")
+        {
+          std::string cls_name = json_string(json_member(cls_node, "text"));
+          auto cit = class_types.find(cls_name);
+          if(cit != class_types.end())
+          {
+            exprt target_expr = convert_expression(target_arg);
+            typet target_type = target_expr.type();
+            if(target_expr.id() == ID_symbol)
+            {
+              const symbolt *s = symbol_table.lookup(
+                to_symbol_expr(target_expr).get_identifier());
+              if(s)
+                target_type = s->type;
+            }
+            if(target_type == cit->second)
+              return true_exprt{};
+            log.warning()
+              << get_location(node).as_string()
+              << ": Reflect.setPrototypeOf(target, " << cls_name
+              << ".prototype) where target's static type does not match "
+              << cls_name << "; the call is ignored. See "
+              << "typescript-known-limitations §1.6." << messaget::eom;
+            return true_exprt{};
+          }
+        }
+      }
+      log.warning() << get_location(node).as_string()
+                    << ": Reflect.setPrototypeOf with a non-class, non-null "
+                       "prototype argument is ignored. See "
+                       "typescript-known-limitations §1.6."
+                    << messaget::eom;
+      return true_exprt{};
     }
     // ES2024 sec-promise.resolve, sec-promise.reject
     if(obj == "Promise")

@@ -1,0 +1,14 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §20.1.2.21: Object.setPrototypeOf — verifies that the
+common patterns (Error-subclass workaround, defensive freeze,
+Reflect.setPrototypeOf) are recognised as no-ops in our static
+prototype model and don't trip "Unknown identifier" warnings on
+the prototype expression.
