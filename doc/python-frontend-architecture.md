@@ -521,12 +521,24 @@ NULL-deref or wrong-field-extraction:
 
 | Target type | Marker | Recognised at compare site by |
 |---|---|---|
-| `python_string` | `{length=0, data=NULL}` | length-0 fast-path (cluster v9) |
+| `python_string` | `{length=0, data=NULL}` | data-pointer == NULL (distinguishes None from `""`) |
 | `python_int` (signedbv, integer) | `python_none_sentinel_int()` cast to target | `(x == sentinel)` |
 | `python_float` (floatbv) | sentinel cast to IEEE double via `ieee_floatt::from_integer` | `(x == sentinel_f)` |
-| `python_list` | TODO — currently NULL deref | TODO |
-| `python_dict` | TODO — currently NULL deref | TODO |
-| `python_value` | leave as-is (the slot is already tagged-union) | tag check |
+| `python_list` / `python_dict` / `python_set` / `python_tuple` | `safe_zero(target)` (length-0 marker) | n/a — `Optional[container]` lowers to `python_value` at the typing layer (see below) |
+| `python_value` | leave as-is (the slot is already tagged-union) | tag check (`__tag == NONE`) |
+
+`Optional[list]`, `Optional[dict]`, `Optional[set]`,
+`Optional[tuple]`, `Union[T, None]` for any container T, and
+`T | None` for any container T, all lower to `python_value`
+at the typing layer in `convert_type_annotation`. This is the
+PLR-clean encoding because the empty-container marker
+`safe_zero(...)` is structurally indistinguishable from `[]`,
+`{}`, `()`, or `set()` at compare sites — only the tagged-
+union form has a discriminator. Container-typed `coerce_to_typed_slot`
+still emits `safe_zero` markers as a defensive fall-back for
+any non-Optional container slot that somehow receives a None
+value, but in well-formed PLR-typed code the boundary helpers
+route those through `python_value` instead.
 
 The recognizer accepts BOTH the literal struct form
 (`is_python_none_constant(arg)`) and a symbol-expression whose
@@ -553,10 +565,14 @@ Centralising boundary adaptations into named helpers means:
 1. **Each PLR rule has one home.** `is None` semantics for
    typed slots, `Optional[T] = None` defaults binding, return-
    value None-marker — all in `coerce_to_typed_slot`.
-2. **Future PLR adaptations land in one place.** Adding
-   `Optional[list] = None` → empty-list marker means changing
-   `coerce_to_typed_slot`, and every caller (call args, assign
-   RHS, return value) gets the fix simultaneously.
+2. **Future PLR adaptations land in one place.** Adding a new
+   target-type None marker means changing `coerce_to_typed_slot`,
+   and every caller (call args, assign RHS, return value,
+   container element) gets the fix simultaneously. The
+   `Optional[container] → python_value` lowering at the typing
+   layer is the architectural escape hatch for cases where the
+   natural-type marker is ambiguous (`list/dict/set/tuple`
+   None markers conflate with empty literals).
 3. **Boundary-specific rules can diverge cleanly.** If PLR ever
    specifies different semantics per boundary, the named
    wrappers diverge while the shared body stays the same.
