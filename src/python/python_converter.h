@@ -1236,16 +1236,37 @@ private:
   ///     which is a NULL deref the symex would otherwise treat
   ///     as nondet — sound by accident and a frequent source of
   ///     verification surprises.
+  ///   - Same shape applies to int (sentinel), float (sentinel-
+  ///     cast double), and (TODO) list/dict.
   ///
   /// All call-boundary code paths in the frontend (user-call
   /// dispatch, class-constructor calls in convert_call /
   /// convert_assign / convert_for / convert_with, and super()
   /// dispatch in convert_call_method) should funnel single-arg
   /// coercion through this helper so the same PLR-defined
-  /// adaptations are applied uniformly.
-  ///
-  /// Falls through to safe_typecast for general type coercion.
+  /// adaptations are applied uniformly. Implemented as a thin
+  /// wrapper over `coerce_to_typed_slot` (the same rule applies
+  /// to assignment-RHS and return-value boundaries via
+  /// `coerce_assign_rhs` and `coerce_return_value`).
   exprt coerce_call_argument(const exprt &arg, const typet &param_type);
+
+  /// Coerce a value being assigned to a variable of a declared
+  /// type. Same PLR adaptations as `coerce_call_argument`
+  /// (None markers per target type) — the assignment boundary
+  /// is just another typed slot in PLR's terms.
+  ///
+  /// Use at every site that emits `code_frontend_assignt` whose
+  /// LHS has a declared natural type that differs from the RHS.
+  exprt coerce_assign_rhs(const exprt &rhs, const typet &lhs_type);
+
+  /// Coerce a return-value expression to the function's
+  /// declared return type. Same PLR adaptations as
+  /// `coerce_call_argument`.
+  ///
+  /// Use at every site that emits `code_frontend_returnt`
+  /// whose value has a different type than the function's
+  /// declared return.
+  exprt coerce_return_value(const exprt &ret_val, const typet &return_type);
 
   /// Coerce all arguments in `args` to the parameter types
   /// declared in `params`. Out-of-range entries on either side
@@ -1255,6 +1276,18 @@ private:
     exprt::operandst &args,
     const code_typet::parameterst &params);
 
+private:
+  /// Internal: shared body of `coerce_call_argument`,
+  /// `coerce_assign_rhs`, and `coerce_return_value`.
+  ///
+  /// PLR §3.2 None-marker binding rules are uniform across
+  /// every typed-slot boundary in Python's gradual type system,
+  /// so all three public boundary helpers share this
+  /// implementation. The boundary-specific public helpers exist
+  /// solely to make each PLR call-site grep-able by intent.
+  exprt coerce_to_typed_slot(const exprt &expr, const typet &target_type);
+
+public:
   /// Look up the `__init__` symbol for `class_name`, walking
   /// the C3 MRO if the class doesn't define `__init__` itself.
   ///

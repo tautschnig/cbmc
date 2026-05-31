@@ -2489,14 +2489,17 @@ exprt python_convertert::safe_typecast(const exprt &e, const typet &target)
   return side_effect_expr_nondett{target, source_locationt{}};
 }
 
-exprt python_convertert::coerce_call_argument(
-  const exprt &arg,
-  const typet &param_type)
+exprt python_convertert::coerce_to_typed_slot(
+  const exprt &expr,
+  const typet &target_type)
 {
-  // PLR §3.2: 'f(None)' for a typed parameter binds as the
-  // canonical None marker for the target type rather than going
-  // through unwrap_value's NULL-deref or zero-field-extraction
-  // path. Each natural-type slot has its own marker convention:
+  // PLR §3.2 None-marker binding for typed slots.
+  //
+  // A python_value{NONE} value binds to a typed parameter,
+  // assignment target, or return slot as the canonical None
+  // marker for that target type rather than going through
+  // unwrap_value's NULL-deref or zero-field-extraction path.
+  // Each natural-type slot has its own marker convention:
   //   - python_string:  {length=0, data=NULL} (cluster v9, the
   //                     length-0 Optional[str] fast-path).
   //   - python_int:     python_none_sentinel_int() cast to the
@@ -2522,17 +2525,17 @@ exprt python_convertert::coerce_call_argument(
   // python_converter_module.cpp). Without the symbol-form path
   // the defaults loop would bind `__def_foo_N.__int_val` (= 0,
   // not the None sentinel) for `Optional[int] = None`.
-  bool arg_is_none = is_python_none_constant(arg);
-  if(!arg_is_none && arg.id() == ID_symbol)
+  bool expr_is_none = is_python_none_constant(expr);
+  if(!expr_is_none && expr.id() == ID_symbol)
   {
     const symbolt *s =
-      symbol_table.lookup(to_symbol_expr(arg).get_identifier());
+      symbol_table.lookup(to_symbol_expr(expr).get_identifier());
     if(s != nullptr && is_python_none_constant(s->value))
-      arg_is_none = true;
+      expr_is_none = true;
   }
-  if(arg_is_none)
+  if(expr_is_none)
   {
-    if(is_python_string_type(param_type))
+    if(is_python_string_type(target_type))
     {
       pointer_typet ptr_t{unsignedbv_typet{8}, 64};
       return struct_exprt{
@@ -2540,25 +2543,46 @@ exprt python_convertert::coerce_call_argument(
         python_string_type()};
     }
     if(
-      param_type.id() == ID_signedbv || param_type.id() == ID_integer ||
-      param_type == python_int_type())
+      target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
+      target_type == python_int_type())
     {
-      return from_integer(python_none_sentinel_int(), param_type);
+      return from_integer(python_none_sentinel_int(), target_type);
     }
-    if(param_type.id() == ID_floatbv)
+    if(target_type.id() == ID_floatbv)
     {
       ieee_floatt v{
-        ieee_float_spect{to_floatbv_type(param_type)},
+        ieee_float_spect{to_floatbv_type(target_type)},
         ieee_floatt::rounding_modet::ROUND_TO_EVEN};
       v.from_integer(python_none_sentinel_int());
       return v.to_expr();
     }
   }
 
-  if(arg.type() == param_type)
-    return arg;
+  if(expr.type() == target_type)
+    return expr;
 
-  return safe_typecast(arg, param_type);
+  return safe_typecast(expr, target_type);
+}
+
+exprt python_convertert::coerce_call_argument(
+  const exprt &arg,
+  const typet &param_type)
+{
+  return coerce_to_typed_slot(arg, param_type);
+}
+
+exprt python_convertert::coerce_assign_rhs(
+  const exprt &rhs,
+  const typet &lhs_type)
+{
+  return coerce_to_typed_slot(rhs, lhs_type);
+}
+
+exprt python_convertert::coerce_return_value(
+  const exprt &ret_val,
+  const typet &return_type)
+{
+  return coerce_to_typed_slot(ret_val, return_type);
 }
 
 void python_convertert::coerce_call_arguments(

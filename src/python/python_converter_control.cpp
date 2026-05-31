@@ -1769,8 +1769,7 @@ codet python_convertert::convert_return(const jsont &stmt)
       if(func_sym != nullptr && func_sym->type.id() == ID_code)
       {
         typet ret_type = to_code_type(func_sym->type).return_type();
-        if(ret_expr.type() != ret_type)
-          ret_expr = safe_typecast(ret_expr, ret_type);
+        ret_expr = coerce_return_value(ret_expr, ret_type);
       }
       block.add(code_frontend_returnt{ret_expr});
       return std::move(block);
@@ -2020,7 +2019,7 @@ codet python_convertert::convert_return(const jsont &stmt)
           ret_val = wrap_value(ret_val);
         }
         else
-          ret_val = safe_typecast(ret_val, ret_type);
+          ret_val = coerce_return_value(ret_val, ret_type);
       }
     }
   }
