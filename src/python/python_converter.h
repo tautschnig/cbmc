@@ -391,6 +391,26 @@ private:
   /// starting with the class itself. Populated on ClassDef by
   /// compute_c3_mro().
   std::map<std::string, std::vector<std::string>> class_mro;
+  /// Per-class set of attribute names that are class-level
+  /// (defined at class body via AnnAssign or Assign, NOT via
+  /// `self.X = ...` inside __init__). Class-level attrs need
+  /// special read semantics: `obj.x` falls back to `Class.x`
+  /// when the instance has not shadowed the attribute via an
+  /// explicit `obj.x = v` write.
+  ///
+  /// To track shadow status per instance, the class struct
+  /// includes a synthetic `__shadow_<attr>` boolean field for
+  /// each class-level attr. Instance creation initialises it
+  /// to False; instance writes (`obj.x = v`, `self.x = v`)
+  /// set it to True; `del obj.x` resets it. Attribute reads
+  /// then emit a ternary:
+  ///   `obj.__shadow_<attr> ? obj.<attr> : Class.<attr>`.
+  ///
+  /// Without this distinction, instance and class storage
+  /// diverge after `Class.<attr> = v` — instances that
+  /// haven't shadowed still see their stale init-time copy
+  /// rather than the updated class storage.
+  std::map<std::string, std::set<std::string>> class_level_attrs;
   /// Per-class set of method names that are declared with
   /// @property. Attribute reads of these names call the method
   /// with self as the single argument (PLR §3.3.2).
@@ -1382,6 +1402,22 @@ public:
     const exprt &self_lvalue,
     const jsont &call_node,
     const source_locationt &loc);
+
+  /// PLR §9.4: emit `obj.__shadow_<attr> = True` if `attr` is
+  /// a class-level attribute of the class identified by
+  /// `obj`'s struct tag AND `obj` is not the class object
+  /// itself. Returns std::nullopt if no shadow update is
+  /// needed (attr is instance-level, or struct doesn't have
+  /// the shadow field, or obj IS the class object). On
+  /// success, returns the assignment statement so the caller
+  /// can splice it into its block alongside the value write.
+  ///
+  /// `obj` should be the lvalue receiver (already dereferenced
+  /// if it was a pointer). Pass the underlying struct lvalue
+  /// expression — this helper reads its struct tag and looks
+  /// up class_level_attrs.
+  std::optional<code_frontend_assignt>
+  maybe_shadow_assign(const exprt &obj_lvalue, const std::string &attr);
 
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.

@@ -1414,8 +1414,42 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     {
       const auto &st = to_struct_type(base);
       if(st.has_component(attr))
+      {
+        // PLR §9.4: instance attribute read on a class
+        // instance. If the attribute is a class-level
+        // attribute (defined at class body, not via
+        // self.X = in __init__), emit a shadow-fallback
+        // ternary: read from instance if the synthetic
+        // __shadow_<attr> flag is set, else fall back to
+        // the class object's storage so updates to
+        // Class.<attr> propagate to instances that have
+        // not shadowed the field.
+        std::string tag = id2string(st.get_tag());
+        std::string cls_name =
+          tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+        auto cla_it = class_level_attrs.find(cls_name);
+        std::string shadow_name = "__shadow_" + attr;
+        if(
+          cla_it != class_level_attrs.end() && cla_it->second.count(attr) > 0 &&
+          st.has_component(shadow_name))
+        {
+          irep_idt class_obj_id{"python::" + cls_name};
+          const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+          if(class_obj != nullptr)
+          {
+            dereference_exprt deref{value};
+            member_exprt instance_v{deref, attr, st.get_component(attr).type()};
+            member_exprt shadow_raw{deref, shadow_name, c_bool_typet{8}};
+            typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
+            member_exprt class_v{
+              class_obj->symbol_expr(), attr, st.get_component(attr).type()};
+            return if_exprt{
+              shadow_flag, std::move(instance_v), std::move(class_v)};
+          }
+        }
         return member_exprt{
           dereference_exprt{value}, attr, st.get_component(attr).type()};
+      }
     }
   }
 
@@ -1467,7 +1501,47 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       }
     }
     if(st.has_component(attr))
+    {
+      // PLR §9.4: same shadow-fallback as the pointer-base
+      // path above. `obj.x` on a struct-typed value: if x is
+      // a class-level attribute and obj is not the class
+      // object itself, route through the ternary so reads
+      // see updated class storage when the instance hasn't
+      // shadowed the attribute. The `obj is the class object`
+      // case is detected by comparing the symbol identifier
+      // to `python::<class_name>` — class-object Name reads
+      // resolve to that symbol and want direct access.
+      std::string tag = id2string(st.get_tag());
+      std::string cls_name =
+        tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+      auto cla_it = class_level_attrs.find(cls_name);
+      std::string shadow_name = "__shadow_" + attr;
+      bool is_class_object = false;
+      if(value.id() == ID_symbol)
+      {
+        std::string sid = id2string(to_symbol_expr(value).get_identifier());
+        if(sid == "python::" + cls_name)
+          is_class_object = true;
+      }
+      if(
+        !is_class_object && cla_it != class_level_attrs.end() &&
+        cla_it->second.count(attr) > 0 && st.has_component(shadow_name))
+      {
+        irep_idt class_obj_id{"python::" + cls_name};
+        const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+        if(class_obj != nullptr)
+        {
+          member_exprt instance_v{value, attr, st.get_component(attr).type()};
+          member_exprt shadow_raw{value, shadow_name, c_bool_typet{8}};
+          typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
+          member_exprt class_v{
+            class_obj->symbol_expr(), attr, st.get_component(attr).type()};
+          return if_exprt{
+            shadow_flag, std::move(instance_v), std::move(class_v)};
+        }
+      }
       return member_exprt{value, attr, st.get_component(attr).type()};
+    }
   }
 
   // Attribute accesses on an already-opaque tagged python_value
@@ -1497,6 +1571,28 @@ exprt python_convertert::convert_attribute(const jsont &expr)
       pointer_typet cls_ptr_type{cls_type, 64};
       dereference_exprt deref{
         typecast_exprt{class_ptr, cls_ptr_type}, cls_type};
+      // PLR §9.4: shadow-fallback also through the tagged-
+      // union read path so `o.x` for `o: python_value` bound
+      // to a class instance sees updated class storage when
+      // the instance hasn't shadowed.
+      auto cla_it = class_level_attrs.find(cls_name);
+      std::string shadow_name = "__shadow_" + attr;
+      if(
+        cla_it != class_level_attrs.end() && cla_it->second.count(attr) > 0 &&
+        cls_type.has_component(shadow_name))
+      {
+        irep_idt class_obj_id{"python::" + cls_name};
+        const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+        if(class_obj != nullptr)
+        {
+          member_exprt instance_v{deref, attr, field_type};
+          member_exprt shadow_raw{deref, shadow_name, c_bool_typet{8}};
+          typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
+          member_exprt class_v{class_obj->symbol_expr(), attr, field_type};
+          return if_exprt{
+            shadow_flag, std::move(instance_v), std::move(class_v)};
+        }
+      }
       return member_exprt{std::move(deref), attr, field_type};
     }
     log_overapprox("attribute '" + attr + "': using nondet over-approximation");

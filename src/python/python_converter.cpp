@@ -493,9 +493,8 @@ std::optional<double> python_convertert::try_eval_double(const exprt &e) const
   // but for compile-time constant-folding purposes we can substitute
   // the return value.
   if(
-    ce->id() == ID_side_effect &&
-    ce->get(ID_statement) == ID_function_call && !ce->operands().empty() &&
-    ce->operands()[0].id() == ID_symbol)
+    ce->id() == ID_side_effect && ce->get(ID_statement) == ID_function_call &&
+    !ce->operands().empty() && ce->operands()[0].id() == ID_symbol)
   {
     irep_idt fn_id = to_symbol_expr(ce->operands()[0]).get_identifier();
     auto it = function_return_constants.find(fn_id);
@@ -666,9 +665,9 @@ python_convertert::extract_string_value(const exprt &e) const
       // New format: operands()[1] is address_of(index(array, 0))
       const exprt &data_op = e.operands()[1];
       const exprt *arr = nullptr;
-      if(data_op.id() == ID_address_of &&
-         data_op.operands().size() == 1 &&
-         data_op.operands()[0].id() == ID_index)
+      if(
+        data_op.id() == ID_address_of && data_op.operands().size() == 1 &&
+        data_op.operands()[0].id() == ID_index)
         arr = &data_op.operands()[0].operands()[0];
       // Legacy format: operands()[1] is array directly
       if(data_op.id() == ID_array)
@@ -1956,8 +1955,7 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     {
       pointer_typet cls_ptr_type{target_type, 64};
       return dereference_exprt{
-        typecast_exprt{python_value_class_ptr(e), cls_ptr_type},
-        target_type};
+        typecast_exprt{python_value_class_ptr(e), cls_ptr_type}, target_type};
     }
     // python_complex unwrap: dereference __class_ptr as a
     // python_complex struct. Used when an annotated assignment
@@ -2327,7 +2325,8 @@ exprt python_convertert::wrap_value(const exprt &e)
     // into a static-lifetime symbol so address_of yields a valid
     // pointer across statement boundaries.
     static unsigned class_wrap_counter = 0;
-    std::string tmp_name = "__class_val_" + std::to_string(class_wrap_counter++);
+    std::string tmp_name =
+      "__class_val_" + std::to_string(class_wrap_counter++);
     std::string tmp_qname = qualify_name(tmp_name);
     irep_idt tmp_id{tmp_qname};
     if(symbol_table.lookup(tmp_id) == nullptr)
@@ -2720,6 +2719,54 @@ python_convertert::lookup_init_via_mro(const std::string &class_name) const
   return {irep_idt{}, nullptr};
 }
 
+std::optional<code_frontend_assignt> python_convertert::maybe_shadow_assign(
+  const exprt &obj_lvalue,
+  const std::string &attr)
+{
+  // Determine the class name from the struct tag. Both
+  // ID_struct (literal-typed struct exprt) and ID_struct_tag
+  // (struct_tag_typet referencing a named struct) shapes can
+  // appear here.
+  std::string tag;
+  if(obj_lvalue.type().id() == ID_struct)
+    tag = id2string(to_struct_type(obj_lvalue.type()).get_tag());
+  else if(obj_lvalue.type().id() == ID_struct_tag)
+    tag = id2string(to_struct_tag_type(obj_lvalue.type()).get_identifier());
+  else
+    return std::nullopt;
+  std::string cls_name =
+    tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+  auto cla_it = class_level_attrs.find(cls_name);
+  if(cla_it == class_level_attrs.end() || cla_it->second.count(attr) == 0)
+    return std::nullopt;
+  std::string shadow_name = "__shadow_" + attr;
+  // Resolve the struct components — we need to know the shadow
+  // field exists.
+  const struct_typet *st = nullptr;
+  if(obj_lvalue.type().id() == ID_struct)
+    st = &to_struct_type(obj_lvalue.type());
+  else
+  {
+    auto cls_it = class_types.find(cls_name);
+    if(cls_it != class_types.end())
+      st = &cls_it->second;
+  }
+  if(st == nullptr || !st->has_component(shadow_name))
+    return std::nullopt;
+  // Skip if obj is the class object itself (writing
+  // `Class.attr` should NOT set a shadow flag — Class.attr is
+  // the canonical class-level storage).
+  if(obj_lvalue.id() == ID_symbol)
+  {
+    std::string sid = id2string(to_symbol_expr(obj_lvalue).get_identifier());
+    if(sid == "python::" + cls_name)
+      return std::nullopt;
+  }
+  return code_frontend_assignt{
+    member_exprt{obj_lvalue, shadow_name, c_bool_typet{8}},
+    from_integer(1, c_bool_typet{8})};
+}
+
 std::optional<side_effect_expr_function_callt>
 python_convertert::build_class_init_call(
   const std::string &class_name,
@@ -3036,8 +3083,9 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       // already returns python_value.
       return python_value_type();
     }
-    else if(base == "Set" || base == "FrozenSet" || base == "set" ||
-            base == "frozenset")
+    else if(
+      base == "Set" || base == "FrozenSet" || base == "set" ||
+      base == "frozenset")
     {
       // The set element type isn't currently used by our set
       // model (sets are backed by python_set_type), but
@@ -3463,7 +3511,9 @@ exprt python_convertert::convert_expression(const jsont &expr)
 
     // Build result by concatenating all parts
     typet str_type = python_string_type();
-    const auto &data_type = array_typet(unsignedbv_typet{8}, from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
+    const auto &data_type = array_typet(
+      unsignedbv_typet{8},
+      from_integer(PYTHON_MAX_STRING_LENGTH, signedbv_typet{64}));
 
     // Collect all bytes from constant parts; use nondet for formatted values
     std::string all_bytes;
@@ -3632,21 +3682,18 @@ exprt python_convertert::convert_expression(const jsont &expr)
               ts.is_lvalue = true;
               ts.is_state_var = true;
               symbol_table.add(ts);
-              }
-              symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
-              pending_checks.push_back(code_frontend_assignt{
-                tv,
-                side_effect_expr_nondett{
-                  python_string_type(), get_location(expr)}});
-              exprt len_intr = emit_string_int_function(
-                ID_cprover_string_length_func,
-                tv,
-                symbol_table,
-                pending_checks);
-              pending_checks.push_back(code_assumet{equal_exprt{
-                len_intr, from_integer(width, signedbv_typet{64})}});
-              parts.push_back(std::move(tv));
-              handled_by_pad_spec = true;
+            }
+            symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+            pending_checks.push_back(code_frontend_assignt{
+              tv,
+              side_effect_expr_nondett{
+                python_string_type(), get_location(expr)}});
+            exprt len_intr = emit_string_int_function(
+              ID_cprover_string_length_func, tv, symbol_table, pending_checks);
+            pending_checks.push_back(code_assumet{
+              equal_exprt{len_intr, from_integer(width, signedbv_typet{64})}});
+            parts.push_back(std::move(tv));
+            handled_by_pad_spec = true;
           }
         }
         if(handled_by_pad_spec)
@@ -3659,18 +3706,18 @@ exprt python_convertert::convert_expression(const jsont &expr)
           auto cv = try_eval_double(inner_v);
           if(cv.has_value())
           {
-              double d = cv.value();
-              std::string formatted;
-              bool ok = true;
-              if(spec_str == "d" || spec_str == "n")
-              {
+            double d = cv.value();
+            std::string formatted;
+            bool ok = true;
+            if(spec_str == "d" || spec_str == "n")
+            {
               if(d == std::floor(d) && std::abs(d) < 1e15)
                 formatted = std::to_string(static_cast<long long>(d));
               else
                 ok = false;
-              }
-              else if(!spec_str.empty() && spec_str[0] == '.')
-              {
+            }
+            else if(!spec_str.empty() && spec_str[0] == '.')
+            {
               // .Nf or .N
               std::size_t i = 1;
               while(i < spec_str.size() &&
@@ -3691,14 +3738,14 @@ exprt python_convertert::convert_expression(const jsont &expr)
               }
               else
                 ok = false;
-              }
-              else
+            }
+            else
               ok = false;
-              if(ok)
-              {
+            if(ok)
+            {
               parts.push_back(python_string_literal(formatted));
               continue;
-              }
+            }
           }
         }
         if(!(no_spec && no_conv))
@@ -3713,16 +3760,16 @@ exprt python_convertert::convert_expression(const jsont &expr)
         if(inner.type().id() == ID_bool || inner.type().id() == ID_c_bool)
         {
           if(inner.is_true())
-              parts.push_back(python_string_literal("True"));
+            parts.push_back(python_string_literal("True"));
           else if(inner.is_false())
-              parts.push_back(python_string_literal("False"));
+            parts.push_back(python_string_literal("False"));
           else
           {
-              // Symbolic bool: choose at runtime via if-then-else.
-              parts.push_back(if_exprt{
-                inner,
-                python_string_literal("True"),
-                python_string_literal("False")});
+            // Symbolic bool: choose at runtime via if-then-else.
+            parts.push_back(if_exprt{
+              inner,
+              python_string_literal("True"),
+              python_string_literal("False")});
           }
           continue;
         }
