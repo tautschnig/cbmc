@@ -630,17 +630,68 @@ def _detect_ownership_handler(fn_name: str) -> FilterVerdict | None:
 # ---------------------------------------------------------------------------
 
 def classify(kernel_file: str | Path, fn_name: str,
-             var_hint: str | None = None) -> FilterVerdict:
+             var_hint: str | None = None,
+             module: str | None = None) -> FilterVerdict:
     """Classify a `failed` verdict on (kernel_file, fn_name).
 
     If `var_hint` is None we enumerate plausible candidate
     variables (allocs, locals, parameters) and run both
     detectors on each.  The first match wins.
 
-    Returns FilterVerdict with shape=None (no FP signature
-    detected; verdict stays as a real candidate) or one of
-    the known FP shapes.
+    `module` is the bug-class module being checked (e.g.
+    'resource_leak_on_error_path', 'use_after_free_generic',
+    'lock_state').  When supplied, detectors that only
+    explain FPs for specific modules are skipped for other
+    modules.  This prevents over-suppression: e.g. an
+    integer-overflow bug in a function that allocates and
+    transfers a buffer should NOT be filtered as 'leak FP',
+    because the bug is the integer overflow, not the leak.
+
+    Without `module`, all detectors run (legacy behaviour).
     """
+    # Module-to-shape applicability map.  Only suppress the
+    # listed shapes for the listed modules.  Shapes not in
+    # the map are universal (e.g. ownership_handler is a
+    # naming-convention signal that works across all modules).
+    LEAK_MODULES = {
+        "resource_leak_on_error_path",
+        "skb_lifetime", "fput_lifetime",
+        "cred_lifetime", "refcount_lifetime",
+        "kobject_lifetime", "device_lifetime",
+        "of_node_lifetime", "inode_lifetime",
+        "dentry_lifetime", "sock_lifetime",
+        "module_lifetime", "kref_lifetime",
+        "pipe_buffer", "aead",
+    }
+    LEAK_SHAPES = {
+        "escape_via_store",
+        "alloc_handed_to_consumer",
+        "put_only_on_error",
+        # Note: ownership_handler is universal — it's a name
+        # pattern that signals caller-precondition for any
+        # bug-class.  Not module-restricted.
+    }
+    LOCK_SHAPES = {"caller_holds_lock"}
+    LOCK_MODULES = {"lock_state", "rcu_read"}
+
+    def shape_applies(shape: str) -> bool:
+        """Return True if the FP shape applies to this module
+        check.  When module is None, all shapes apply."""
+        if module is None:
+            return True
+        if shape in LEAK_SHAPES:
+            return module in LEAK_MODULES
+        if shape in LOCK_SHAPES:
+            return module in LOCK_MODULES
+        return True
+
+    def gate(v: FilterVerdict | None) -> FilterVerdict | None:
+        """Return the verdict only if its shape applies to
+        the current module."""
+        if v is None or v.shape is None:
+            return v
+        return v if shape_applies(v.shape) else None
+
     kp = Path(kernel_file)
     if not kp.exists():
         return FilterVerdict(None, "source not found", "high")
@@ -653,11 +704,11 @@ def classify(kernel_file: str | Path, fn_name: str,
         # Try name-based detectors when source-extraction
         # fails — both constructor and ownership-handler
         # patterns are detectable from the name alone.
-        v_constructor = _detect_constructor_with_out_pointer(
-            fn_name, None)
+        v_constructor = gate(
+            _detect_constructor_with_out_pointer(fn_name, None))
         if v_constructor is not None:
             return v_constructor
-        v_name = _detect_ownership_handler(fn_name)
+        v_name = gate(_detect_ownership_handler(fn_name))
         if v_name is not None:
             return v_name
         return FilterVerdict(None, f"function `{fn_name}` not "
@@ -665,34 +716,34 @@ def classify(kernel_file: str | Path, fn_name: str,
 
     # Constructor / ownership-handler name-and-body checks
     # run before per-variable body detectors.
-    v_constructor = _detect_constructor_with_out_pointer(
-        fn_name, body)
+    v_constructor = gate(_detect_constructor_with_out_pointer(
+        fn_name, body))
     if v_constructor is not None:
         return v_constructor
-    v_name = _detect_ownership_handler(fn_name)
+    v_name = gate(_detect_ownership_handler(fn_name))
     if v_name is not None:
         return v_name
     # Body-only check: alloc result stored directly into
     # a parameter struct field (no local intermediate var).
-    v_field = _detect_alloc_into_param_field(body)
+    v_field = gate(_detect_alloc_into_param_field(body))
     if v_field is not None:
         return v_field
     # Body+signature check: any pointer-typed parameter that's
     # passed to another function and never derefed here.
     pn = _function_param_names_pointer_typed(source, fn_name)
-    v_consumed = _detect_param_consumed_by_callee(body, pn)
+    v_consumed = gate(_detect_param_consumed_by_callee(body, pn))
     if v_consumed is not None:
         return v_consumed
     # Body-only check: a local alloc'd var is passed to a
     # consumer-API and never freed locally (msg → genlmsg_multicast,
     # buf → usb_fill_bulk_urb, tag → cache->tag, etc.)
-    v_handed = _detect_local_alloc_handed_to_consumer(body)
+    v_handed = gate(_detect_local_alloc_handed_to_consumer(body))
     if v_handed is not None:
         return v_handed
     # Body-only check: function unlocks a lock without a
     # matching lock in the same body — caller-holds-lock
     # precondition shape.
-    v_unlock = _detect_unmatched_unlock(body)
+    v_unlock = gate(_detect_unmatched_unlock(body))
     if v_unlock is not None:
         return v_unlock
 
@@ -733,16 +784,19 @@ def classify(kernel_file: str | Path, fn_name: str,
                                    "found", "low")
 
     # Run detectors against each candidate.  The first
-    # high-confidence match wins.
+    # high-confidence match wins.  Module-gate the verdicts
+    # so we don't suppress real candidates in modules where
+    # leak-shaped FPs aren't applicable (e.g. integer-overflow
+    # bug in an alloc-and-return function).
     best: FilterVerdict | None = None
     for var in candidates:
-        v = _detect_escape_via_store(body, var)
+        v = gate(_detect_escape_via_store(body, var))
         if v is not None:
             if v.confidence == "high":
                 return v
             if best is None or best.confidence == "low":
                 best = v
-        v = _detect_put_only_on_error(body, var)
+        v = gate(_detect_put_only_on_error(body, var))
         if v is not None:
             if best is None or best.confidence == "low":
                 best = v

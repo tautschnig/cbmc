@@ -822,6 +822,7 @@ def _run_scan(case: CveCase, timeout: int = 240,
             v = classify(
                 f"{case.kernel_tree}/{case.file_path}",
                 case.function,
+                module=case.module,
             )
             if v.shape:
                 case.verdict = "fp-filtered"
@@ -865,6 +866,7 @@ def _run_scan(case: CveCase, timeout: int = 240,
             v = classify(
                 f"{case.kernel_tree}/{case.file_path}",
                 case.function,
+                module=case.module,
             )
             if v.shape:
                 case.verdict = "fp-filtered"
@@ -1033,9 +1035,11 @@ def main() -> int:
                 # produces one CveCase per LTS tree where
                 # the file exists (rather than just one
                 # case for the primary tree).  When invert
-                # mode is on, the per-tree state still
-                # gets re-detected inside _run_scan.
-                if args.multi_lts and not args.invert:
+                # mode is on, _run_scan still does its own
+                # per-tree state detection inside each
+                # CveCase via _detect_state_and_apply, so
+                # it's safe to expand under --invert too.
+                if args.multi_lts:
                     trees_for_case = _find_files_in_trees(
                         fp, kernel_trees)
                 else:

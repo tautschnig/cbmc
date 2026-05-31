@@ -287,6 +287,7 @@ def _run_scan(c: FpCase, modules: list[str],
                 tv = classify(
                     f"{c.kernel_tree}/{c.file_path}",
                     c.function,
+                    module=mod,
                 )
                 if tv.shape:
                     v = "fp-filtered"
@@ -310,6 +311,7 @@ def _run_scan(c: FpCase, modules: list[str],
                 tv = classify(
                     f"{c.kernel_tree}/{c.file_path}",
                     c.function,
+                    module=mod,
                 )
                 if tv.shape:
                     v = "fp-filtered"
