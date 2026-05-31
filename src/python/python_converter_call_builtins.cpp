@@ -1689,8 +1689,15 @@ std::optional<exprt> python_convertert::try_builtin_call(
     {
       exprt arg = convert_expression(*as_array(args).begin());
       // PLR builtins: sorted(iterable, /, *, key=None, reverse=False).
-      // Pick up the reverse=... keyword; key= is not yet supported.
+      // Pick up the reverse=... keyword; key= is supported for
+      // a narrow but common shape: key=lambda x: x[N] where N
+      // is a constant integer. For each element (assumed to
+      // be a tuple-like struct or a constant list/dict
+      // entry), the key is element[N], evaluated as a member
+      // access.
       bool sorted_reverse = false;
+      // -1 means "no key" (identity).
+      long long sorted_key_index = -1;
       // key=lambda is not yet modelled — the lambda body
       // would need per-element evaluation. We accept the
       // argument silently but ignore it. The caller gets
@@ -1709,6 +1716,36 @@ std::optional<exprt> python_convertert::try_builtin_call(
             exprt kv = convert_expression(json_member(k, "value"));
             if(kv.is_true())
               sorted_reverse = true;
+          }
+          else if(kn == "key")
+          {
+            // Detect `lambda x: x[N]`. AST shape:
+            //   Lambda(args=arguments(args=[arg('x')]),
+            //          body=Subscript(Name('x'),
+            //                         Constant(N)))
+            const jsont &kv_node = json_member(k, "value");
+            if(is_node_type(kv_node, "Lambda"))
+            {
+              const jsont &body = json_member(kv_node, "body");
+              if(is_node_type(body, "Subscript"))
+              {
+                const jsont &slice = json_member(body, "slice");
+                if(is_node_type(slice, "Constant"))
+                {
+                  const jsont &v = json_member(slice, "value");
+                  if(v.is_number())
+                  {
+                    try
+                    {
+                      sorted_key_index = std::stoll(v.value);
+                    }
+                    catch(...)
+                    {
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1747,7 +1784,20 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 all_const_str = false;
                 break;
               }
-              const exprt &e = data_arr.operands()[idx];
+              const exprt &raw_e = data_arr.operands()[idx];
+              // PLR §4.4.4 sorted(key=...): with a key=lambda
+              // x: x[N], extract the Nth tuple field as the
+              // sort key. The element itself stays unchanged
+              // for the result list.
+              exprt sort_key_e = raw_e;
+              if(sorted_key_index >= 0 && raw_e.id() == ID_struct)
+              {
+                const auto &est = to_struct_type(raw_e.type());
+                std::size_t fi = static_cast<std::size_t>(sorted_key_index);
+                if(fi < est.components().size() && fi < raw_e.operands().size())
+                  sort_key_e = raw_e.operands()[fi];
+              }
+              const exprt &e = sort_key_e;
               if(all_const_int)
               {
                 if(!e.is_constant() || e.type().id() != ID_signedbv)
@@ -1760,7 +1810,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
                   if(to_integer(to_constant_expr(e), val))
                     all_const_int = false;
                   else
-                    int_pairs.emplace_back(val, e);
+                    int_pairs.emplace_back(val, raw_e);
                 }
               }
               if(all_const_str)
@@ -1769,7 +1819,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
                 if(!sv.has_value())
                   all_const_str = false;
                 else
-                  str_pairs.emplace_back(sv.value(), e);
+                  str_pairs.emplace_back(sv.value(), raw_e);
               }
             }
             if(all_const_int && !int_pairs.empty())
