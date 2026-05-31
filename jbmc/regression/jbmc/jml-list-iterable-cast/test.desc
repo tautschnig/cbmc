@@ -1,0 +1,40 @@
+CORE
+JmlListIterableCheckcast
+--function "JmlListIterableCheckcast.useIt:()Ljava/lang/Iterable;" --axiomatic-collections --unwind 3 -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+^CONVERSION ERROR
+^.*FAILURE$
+--
+Regression for the JDK-known-subtype augmentation in
+remove_instanceof.cpp::subtype_expr.
+
+Background
+----------
+JBMC lowers a Java `instanceof T` expression to a
+disjunction of `@class_identifier == "java::C"` checks over
+every loaded subclass of T. The list comes from
+class_hierarchyt::get_children_trans(target).
+
+When the JDK's collection types are loaded as bare stubs
+(no `.class` body parsed — only the type's name is in the
+symbol table, with `struct C { @java.lang.Object; }`), the
+stub doesn't declare its super-interfaces. So the class
+hierarchy doesn't see `java.util.List` as a child of
+`java.lang.Iterable`, and an `(Iterable)someList` checkcast
+fails the disjunction.
+
+Fix
+---
+add_jdk_known_subtypes() in remove_instanceof.cpp augments
+the children list with a hardcoded set of well-known JDK
+collection edges (List ⊆ Collection ⊆ Iterable, etc.).
+The list is conservative — only public-API
+relationships that don't vary across JDK versions.
+
+Without the fix this test fails with a Dynamic cast check
+on the `return l;` statement (an implicit (Iterable)
+upcast). With the fix it passes cleanly.

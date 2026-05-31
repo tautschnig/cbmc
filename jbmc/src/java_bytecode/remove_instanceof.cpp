@@ -11,13 +11,13 @@ Author: Chris Smowton, chris.smowton@diffblue.com
 
 #include "remove_instanceof.h"
 
+#include <util/arith_tools.h>
+
 #include <goto-programs/class_hierarchy.h>
 #include <goto-programs/class_identifier.h>
 #include <goto-programs/goto_model.h>
 
 #include <java_bytecode/java_types.h>
-
-#include <util/arith_tools.h>
 
 class remove_instanceoft
 {
@@ -58,6 +58,85 @@ protected:
 /// Produce an expression of the form
 /// `classid_field == "A" || classid_field == "B" || ...`
 /// where A, B, ... are the possible subtypes of \p target_type.
+/// JDK collection / functional-interface types whose super-
+/// interface relationship is fixed by the standard library
+/// but is missing from JBMC's loaded class hierarchy when
+/// any of them appears only as a stub (i.e. JBMC reads a
+/// reference to the type but no `.class` file is on the
+/// classpath, or the file is on the classpath but never
+/// fully parsed because it's only mentioned as an
+/// argument-type sentinel).
+///
+/// The list is deliberately conservative: we only add edges
+/// that are part of the public Java SE Collections Framework
+/// contract and whose inheritance relationships cannot vary
+/// across JDK versions. New entries belong here only when a
+/// concrete failing instanceof check has motivated them.
+static const std::vector<std::pair<irep_idt, irep_idt>> &
+known_jdk_subtype_edges()
+{
+  // Each pair is (child, parent). The list is closed under
+  // `parent` — every parent that appears as a parent appears
+  // as a child somewhere too if it has further parents (so
+  // the closure walk below saturates correctly).
+  static const std::vector<std::pair<irep_idt, irep_idt>> edges = {
+    // Iterable -> Collection -> List
+    {"java::java.util.Collection", "java::java.lang.Iterable"},
+    {"java::java.util.List", "java::java.util.Collection"},
+    {"java::java.util.AbstractCollection", "java::java.util.Collection"},
+    {"java::java.util.AbstractList", "java::java.util.List"},
+    {"java::java.util.AbstractList", "java::java.util.AbstractCollection"},
+    {"java::java.util.ArrayList", "java::java.util.AbstractList"},
+    {"java::java.util.ArrayList", "java::java.util.List"},
+    {"java::java.util.LinkedList", "java::java.util.AbstractList"},
+    {"java::java.util.LinkedList", "java::java.util.List"},
+    // Iterable -> Collection -> Set
+    {"java::java.util.Set", "java::java.util.Collection"},
+    {"java::java.util.AbstractSet", "java::java.util.Set"},
+    {"java::java.util.AbstractSet", "java::java.util.AbstractCollection"},
+    {"java::java.util.HashSet", "java::java.util.AbstractSet"},
+    {"java::java.util.HashSet", "java::java.util.Set"},
+    {"java::java.util.LinkedHashSet", "java::java.util.HashSet"},
+    {"java::java.util.TreeSet", "java::java.util.AbstractSet"},
+    {"java::java.util.TreeSet", "java::java.util.Set"},
+    // Map (parallel hierarchy, doesn't extend Iterable but
+    // shares many idioms; included so instanceof Map works)
+    {"java::java.util.AbstractMap", "java::java.util.Map"},
+    {"java::java.util.HashMap", "java::java.util.AbstractMap"},
+    {"java::java.util.HashMap", "java::java.util.Map"},
+    {"java::java.util.LinkedHashMap", "java::java.util.HashMap"},
+    {"java::java.util.TreeMap", "java::java.util.AbstractMap"},
+    {"java::java.util.TreeMap", "java::java.util.Map"},
+  };
+  return edges;
+}
+
+/// Augment a list of children with JDK-known transitive
+/// subtypes of `target`. Used by `subtype_expr` to repair
+/// the missing super-interface edges that JBMC's class
+/// loader doesn't populate when the JDK class is loaded as
+/// a bare stub.
+static void
+add_jdk_known_subtypes(const irep_idt &target, std::vector<irep_idt> &children)
+{
+  std::set<irep_idt> have(children.begin(), children.end());
+  have.insert(target);
+  bool changed = true;
+  while(changed)
+  {
+    changed = false;
+    for(const auto &[child, parent] : known_jdk_subtype_edges())
+    {
+      if(have.count(parent) && !have.count(child))
+      {
+        children.push_back(child);
+        have.insert(child);
+        changed = true;
+      }
+    }
+  }
+}
+
 /// \param classid_field: field to compare, usually a `@class_identifier` field
 ///   denoting an object's runtime type
 /// \param target_type: the type all of whose subtypes (including itself) should
@@ -72,12 +151,25 @@ static exprt subtype_expr(
   std::vector<irep_idt> children =
     class_hierarchy.get_children_trans(target_type);
   children.push_back(target_type);
+
+  // Augment with JDK-known subtype relationships that may
+  // be missing from the loaded class hierarchy when JDK
+  // collection types are loaded as bare stubs (no class
+  // body parsed). Without this, an instanceof Iterable
+  // check on a `java.util.List` value fails the
+  // disjunction because List's stub doesn't declare
+  // Iterable as a base.
+  add_jdk_known_subtypes(target_type, children);
+
   // Sort alphabetically to make order of generated disjuncts
   // independent of class loading order
   std::sort(
-    children.begin(), children.end(), [](const irep_idt &a, const irep_idt &b) {
-      return a.compare(b) < 0;
-    });
+    children.begin(),
+    children.end(),
+    [](const irep_idt &a, const irep_idt &b) { return a.compare(b) < 0; });
+  // De-duplicate (the augmentation may overlap with the
+  // existing children).
+  children.erase(std::unique(children.begin(), children.end()), children.end());
 
   exprt::operandst or_ops;
   for(const auto &class_name : children)
@@ -104,7 +196,7 @@ bool remove_instanceoft::lower_instanceof(
   goto_programt &goto_program,
   goto_programt::targett this_inst)
 {
-  if(expr.id()!=ID_java_instanceof)
+  if(expr.id() != ID_java_instanceof)
   {
     bool changed = false;
     Forall_operands(it, expr)
@@ -114,18 +206,16 @@ bool remove_instanceoft::lower_instanceof(
   }
 
   INVARIANT(
-    expr.operands().size()==2,
-    "java_instanceof should have two operands");
+    expr.operands().size() == 2, "java_instanceof should have two operands");
 
   const exprt &check_ptr = to_binary_expr(expr).op0();
   INVARIANT(
-    check_ptr.type().id()==ID_pointer,
+    check_ptr.type().id() == ID_pointer,
     "instanceof first operand should be a pointer");
 
   const exprt &target_arg = to_binary_expr(expr).op1();
   INVARIANT(
-    target_arg.id()==ID_type,
-    "instanceof second operand should be a type");
+    target_arg.id() == ID_type, "instanceof second operand should be a type");
 
   INVARIANT(
     target_arg.type().id() == ID_struct_tag,
@@ -279,11 +369,11 @@ bool remove_instanceoft::lower_instanceof(
   const irep_idt &function_identifier,
   goto_programt &goto_program)
 {
-  bool changed=false;
-  for(goto_programt::instructionst::iterator target=
-      goto_program.instructions.begin();
-    target!=goto_program.instructions.end();
-    ++target)
+  bool changed = false;
+  for(goto_programt::instructionst::iterator target =
+        goto_program.instructions.begin();
+      target != goto_program.instructions.end();
+      ++target)
   {
     changed =
       lower_instanceof(function_identifier, goto_program, target) || changed;
@@ -348,7 +438,7 @@ void remove_instanceof(
   message_handlert &message_handler)
 {
   remove_instanceoft rem(symbol_table, class_hierarchy, message_handler);
-  bool changed=false;
+  bool changed = false;
   for(auto &f : goto_functions.function_map)
     changed = rem.lower_instanceof(f.first, f.second.body) || changed;
   if(changed)
