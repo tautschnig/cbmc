@@ -1415,6 +1415,49 @@ exprt python_convertert::convert_compare(const jsont &expr)
     }
     else if(op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE")
     {
+      // PLR §6.10.1: ordering operators raise
+      // 'TypeError: <not supported between instances of X and NoneType>'
+      // when either operand is None. Mirrors the complex
+      // ordering check below in shape: set
+      // __exception_active=True with TypeError tag, then emit
+      // a structural false_exprt result.
+      auto is_none_operand = [this](const exprt &e)
+      {
+        if(is_python_none_constant(e))
+          return true;
+        if(is_python_value_type(e.type()))
+        {
+          // Symbolic — could be NONE-tagged at runtime.
+          // Conservatively don't raise here; we only raise
+          // on syntactically-evident None operands. Symbolic
+          // detection would require a guarded property
+          // assertion under a flag (similar to
+          // --python-check-iter-none).
+          return false;
+        }
+        return false;
+      };
+      if(is_none_operand(current_left) || is_none_operand(right))
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          pending_checks.push_back(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(h, exc_type_sym->type)});
+          }
+        }
+        cmp = false_exprt{};
+        goto done_cmp;
+      }
       // PLR §6.10.1: ordering is undefined on complex.
       // 'a < b' on python_complex raises TypeError.
       auto is_complex = [](const exprt &e)
@@ -1669,8 +1712,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           if(is_python_none_constant(current_left))
           {
             if(
-              elem.type().id() == ID_signedbv ||
-              elem.type().id() == ID_integer)
+              elem.type().id() == ID_signedbv || elem.type().id() == ID_integer)
             {
               match = equal_exprt{
                 elem, from_integer(python_none_sentinel_int(), elem.type())};
