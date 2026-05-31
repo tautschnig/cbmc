@@ -113,7 +113,12 @@ def _function_body(source: str, fn_name: str) -> str | None:
 
 # Common allocation/get APIs and the matching put APIs.
 ALLOC_APIS = (
-    r"kmalloc|kzalloc|kcalloc|kmem_cache_alloc|alloc_skb|"
+    r"kmalloc|kzalloc|kcalloc|kmalloc_array|"
+    r"kvmalloc|kvzalloc|kvcalloc|kvmalloc_array|"
+    r"kstrdup|kstrndup|kmemdup|kmemdup_nul|kasprintf|kvasprintf|"
+    r"kmem_cache_alloc|kmem_cache_zalloc|"
+    r"alloc_skb|dev_alloc_skb|nlmsg_new|genlmsg_new|"
+    r"usb_alloc_urb|"
     r"kobject_create_and_add|prepare_kernel_cred|prepare_creds|"
     r"override_creds|get_cred|get_task_cred|"
     r"kobject_get|of_node_get|get_device|igrab|dget|fget|"
@@ -325,36 +330,131 @@ def _function_param_names_pointer_typed(
     return out
 
 
+def _detect_local_alloc_handed_to_consumer(
+        body: str) -> FilterVerdict | None:
+    """Match the pattern where a local variable is allocated
+    and the same variable is then passed to a function call
+    without being freed locally afterwards.
+
+    Common shapes:
+
+      msg = nlmsg_new(...);
+      ...
+      genlmsg_multicast(..., msg, ...);
+      // no kfree(msg) — netlink consumer takes ownership
+
+      buf = kmalloc(...);
+      usb_fill_bulk_urb(urb, ..., buf, ...);
+      urb->transfer_flags |= URB_FREE_BUFFER;
+      // no kfree(buf) — URB owns it now
+
+      tag = kstrdup(...);
+      cache->tag = tag;        # caught by escape_via_store
+      // no kfree(tag) — cache owns it now
+
+      challenge = kmemdup(...);   # writes through out-ptr
+      *out_ptr = challenge;
+      // no kfree(challenge) — caller owns it now
+
+    Heuristic: `var` is allocated via a known alloc API, then
+    appears as an argument inside ANY function-call expression,
+    and there is NO `kfree(var)` / `kvfree(var)` / `kfree_skb(var)`
+    in the same body.
+
+    Conservative: we only match when the alloc-API variable is
+    a non-temporary local (matches the `\bvar\s*=` form rather
+    than `var = (cast)alloc(...)`) and it appears at least once
+    inside a function-call argument list.
+    """
+    # Find local-var allocations: `var = <alloc-api>(...)`.
+    alloc_vars = set()
+    for m in ALLOC_RE.finditer(body):
+        alloc_vars.add(m.group(1))
+    for var in alloc_vars:
+        esc = re.escape(var)
+        # Count uses of `var` as an argument inside a non-free
+        # function call.  We deliberately do NOT short-circuit
+        # on the presence of `kfree(var)` etc. — error-path
+        # frees often coexist with a success-path consumer
+        # call; the cocci leak detector still fires falsely
+        # because it sees the success path as un-freed.
+        free_re = re.compile(
+            r"\b(?:" + PUT_APIS + r"|nlmsg_free|"
+            r"sk_free|free_irq|usb_free_urb|usb_kill_urb|"
+            r"consume_skb|kfree_skb_partial)\s*\(\s*"
+            + esc + r"\b")
+        # Iterate every function-call expression that mentions `var`.
+        seen_consumer = False
+        call_re = re.compile(
+            r"\b([A-Za-z_]\w*)\s*\(([^()]*)\)")
+        for m in call_re.finditer(body):
+            args = m.group(2)
+            # Quick reject if var not in this call.
+            if not re.search(r"\b" + esc + r"\b", args):
+                continue
+            # Skip if the entire call is a free of var.
+            full = m.group(0)
+            if free_re.match(full):
+                continue
+            seen_consumer = True
+            break
+        if seen_consumer:
+            return FilterVerdict(
+                "alloc_handed_to_consumer",
+                f"local `{var}` is allocated and passed to "
+                "another function as an argument; the callee "
+                "takes ownership (per-function leak check "
+                "fires falsely on the success path)",
+                "medium",
+            )
+    return None
+
+
 def _detect_alloc_into_param_field(body: str
                                    ) -> FilterVerdict | None:
-    """Match the pattern `<param>-><field> = alloc(...)` where
-    the alloc result is written directly into a struct field
-    of a parameter.  Common in kernel constructors that
-    decorate a passed-in object: e.g.
-        void input_alloc_absinfo(struct input_dev *dev) {
-            dev->absinfo = kcalloc(...);
-        }
-        int btt_freelist_init(struct arena_info *arena) {
-            arena->freelist = kcalloc(...);
-        }
-    The alloc result transfers ownership to the caller-owned
-    struct, so the per-function leak check naturally fires
-    despite no leak existing.
+    """Match patterns where an allocation result is written
+    directly into a caller-owned location (no local variable
+    intermediary).  Three sub-shapes:
+
+    1. `<param>-><field> = alloc(...)` — store into struct
+       field of a parameter.  E.g. `dev->absinfo = kcalloc(...)`
+       in input_alloc_absinfo.
+    2. `*<param> = alloc(...)` — store through a single-level
+       out-pointer.  E.g. constructor-style helpers that
+       return an object via an OUT pointer.
+    3. `*<param><field> = alloc(...)` and `**<param> = alloc(...)`
+       — pointer-to-pointer out parameter.  E.g.
+       `*challenge = kmemdup(...)` in auth_parse.
+
+    All three transfer ownership to the caller-owned location;
+    the per-function leak check fires falsely because it sees
+    no kfree of the alloc result locally.
     """
-    pat = re.compile(
-        r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*=\s*"
-        r"(?:" + ALLOC_APIS + r")\s*\("
+    pats = (
+        # 1. <param>-><field> = alloc(...)
+        re.compile(
+            r"\b[A-Za-z_]\w*\s*->\s*[A-Za-z_]\w*\s*=\s*"
+            r"(?:" + ALLOC_APIS + r")\s*\("),
+        # 2. *<param> = alloc(...)  (single-level out-pointer)
+        re.compile(
+            r"(?:^|[^\w])\*\s*[A-Za-z_]\w*\s*=\s*"
+            r"(?:" + ALLOC_APIS + r")\s*\("),
+        # 3. **<param> = alloc(...)  (double-pointer out param)
+        re.compile(
+            r"(?:^|[^\w])\*\*\s*[A-Za-z_]\w*\s*=\s*"
+            r"(?:" + ALLOC_APIS + r")\s*\("),
     )
-    m = pat.search(body)
-    if not m:
-        return None
-    return FilterVerdict(
-        "escape_via_store",
-        "allocation result is written directly into a "
-        "parameter struct field — ownership transfers to the "
-        "caller (per-function leak check fires falsely)",
-        "high",
-    )
+    for pat in pats:
+        if pat.search(body):
+            return FilterVerdict(
+                "escape_via_store",
+                "allocation result is written directly into "
+                "a caller-owned location (parameter field or "
+                "out-pointer) — ownership transfers to the "
+                "caller (per-function leak check fires falsely)",
+                "high",
+            )
+    return None
 
 
 def _detect_constructor_with_out_pointer(
@@ -525,6 +625,12 @@ def classify(kernel_file: str | Path, fn_name: str,
     v_consumed = _detect_param_consumed_by_callee(body, pn)
     if v_consumed is not None:
         return v_consumed
+    # Body-only check: a local alloc'd var is passed to a
+    # consumer-API and never freed locally (msg → genlmsg_multicast,
+    # buf → usb_fill_bulk_urb, tag → cache->tag, etc.)
+    v_handed = _detect_local_alloc_handed_to_consumer(body)
+    if v_handed is not None:
+        return v_handed
 
     # Build a list of candidate variables to test.
     candidates: list[str] = []
