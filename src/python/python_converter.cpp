@@ -2580,6 +2580,48 @@ exprt python_convertert::coerce_to_typed_slot(
       return safe_zero(target_type);
   }
 
+  // PLR §3.1: object identity is preserved across boundaries.
+  // When binding a class-instance Name (symbol of a
+  // python_class_<C> struct type) to a python_value tagged-
+  // union slot, pass the address of the caller's storage
+  // rather than wrapping a fresh copy. Otherwise mutations
+  // the callee performs through the parameter (`p.attr = X`)
+  // would hit a copy and be invisible to the caller.
+  //
+  // Restricted to symbol-typed argument expressions (i.e.
+  // plain Names) so that expression results from method
+  // returns continue to materialise their own backing storage.
+  // The class_tag is set on the caller's storage as a side
+  // effect (via pending_checks) so isinstance dispatches
+  // correctly inside the callee.
+  //
+  // Previously open-coded only in python_converter_call_user.cpp
+  // (call-argument boundary). Centralised here so the same
+  // identity-preservation rule applies to assign-RHS and
+  // return-value boundaries too.
+  if(
+    expr.id() == ID_symbol && is_python_value_type(target_type) &&
+    (expr.type().id() == ID_struct || expr.type().id() == ID_struct_tag))
+  {
+    std::string atag;
+    if(expr.type().id() == ID_struct)
+      atag = id2string(to_struct_type(expr.type()).get_tag());
+    else
+      atag = id2string(to_struct_tag_type(expr.type()).get_identifier());
+    if(atag.compare(0, 13, "python_class_") == 0)
+    {
+      std::string cname = atag.substr(13);
+      auto ti = class_tag_ids.find(cname);
+      if(ti != class_tag_ids.end())
+      {
+        pending_checks.push_back(code_frontend_assignt{
+          member_exprt{expr, "__class_tag", signedbv_typet{32}},
+          from_integer(ti->second, signedbv_typet{32})});
+      }
+      return make_python_value(python_type_tagt::CLASS, address_of_exprt{expr});
+    }
+  }
+
   if(expr.type() == target_type)
     return expr;
 
