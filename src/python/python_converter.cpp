@@ -2581,6 +2581,13 @@ exprt python_convertert::coerce_return_value(
   return coerce_to_typed_slot(ret_val, return_type);
 }
 
+exprt python_convertert::coerce_element(
+  const exprt &elem,
+  const typet &element_type)
+{
+  return coerce_to_typed_slot(elem, element_type);
+}
+
 void python_convertert::coerce_call_arguments(
   exprt::operandst &args,
   const code_typet::parameterst &params)

@@ -1320,7 +1320,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
         exprt kval = convert_expression(json_member(kw, "value"));
         keys.push_back(python_string_literal(kname));
         if(kval.type() != vals_arr_type.element_type())
-          kval = safe_typecast(kval, vals_arr_type.element_type());
+          kval = coerce_element(kval, vals_arr_type.element_type());
         vals.push_back(kval);
       }
       while(keys.size() < PYTHON_MAX_DICT_SIZE)
@@ -1860,7 +1860,7 @@ std::optional<exprt> python_convertert::try_builtin_call(
           exprt val = plus_exprt{
             off, from_integer(static_cast<long long>(bit), signedbv_typet{64})};
           if(val.type() != sdata_type.element_type())
-            val = safe_typecast(val, sdata_type.element_type());
+            val = coerce_element(val, sdata_type.element_type());
           code_blockt append;
           append.add(code_frontend_assignt{index_exprt{sdata, slength}, val});
           append.add(code_frontend_assignt{

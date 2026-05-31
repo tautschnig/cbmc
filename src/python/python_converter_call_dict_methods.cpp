@@ -54,7 +54,7 @@ std::optional<exprt> python_convertert::try_dict_method(
       member_exprt vals{obj, "values", vals_type};
 
       if(key_expr.type() != keys_type.element_type())
-        key_expr = safe_typecast(key_expr, keys_type.element_type());
+        key_expr = coerce_element(key_expr, keys_type.element_type());
 
       // Default value: None if not specified, else second arg.
       // The Python-int "None sentinel" is only representable in an
@@ -78,7 +78,7 @@ std::optional<exprt> python_convertert::try_dict_method(
       ++arg_it;
       if(arg_it != as_array(args).end())
         default_val =
-          safe_typecast(convert_expression(*arg_it), vals_type.element_type());
+          coerce_element(convert_expression(*arg_it), vals_type.element_type());
 
       // Constant-key fast path: same logic as subscript read.
       // When the dict value is a literal struct or a tracked
@@ -381,9 +381,9 @@ std::optional<exprt> python_convertert::try_dict_method(
             exprt k = src_keys.operands()[idx];
             exprt v = src_vals.operands()[idx];
             if(k.type() != keys_type.element_type())
-              k = safe_typecast(k, keys_type.element_type());
+              k = coerce_element(k, keys_type.element_type());
             if(v.type() != vals_type.element_type())
-              v = safe_typecast(v, vals_type.element_type());
+              v = coerce_element(v, vals_type.element_type());
             // Scan existing keys, replace or append.
             // Matches the Assign-to-subscript handler
             // pattern used for d[k] = v statements.
@@ -455,7 +455,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     auto arg_it = as_array(args).begin();
     exprt key_expr = convert_expression(*arg_it);
     if(key_expr.type() != keys_type.element_type())
-      key_expr = safe_typecast(key_expr, keys_type.element_type());
+      key_expr = coerce_element(key_expr, keys_type.element_type());
     exprt default_val;
     {
       const typet &elem_t = vals_type.element_type();
@@ -471,7 +471,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     {
       default_val = convert_expression(*arg_it);
       if(default_val.type() != vals_type.element_type())
-        default_val = safe_typecast(default_val, vals_type.element_type());
+        default_val = coerce_element(default_val, vals_type.element_type());
     }
 
     // Allocate found flag + result temp.
@@ -556,7 +556,7 @@ std::optional<exprt> python_convertert::try_dict_method(
     auto arg_it = as_array(args).begin();
     exprt key_expr = convert_expression(*arg_it);
     if(key_expr.type() != keys_type.element_type())
-      key_expr = safe_typecast(key_expr, keys_type.element_type());
+      key_expr = coerce_element(key_expr, keys_type.element_type());
     bool has_default = false;
     exprt default_val = safe_zero(vals_type.element_type());
     ++arg_it;
@@ -565,7 +565,7 @@ std::optional<exprt> python_convertert::try_dict_method(
       has_default = true;
       default_val = convert_expression(*arg_it);
       if(default_val.type() != vals_type.element_type())
-        default_val = safe_typecast(default_val, vals_type.element_type());
+        default_val = coerce_element(default_val, vals_type.element_type());
     }
 
     static unsigned pop_ctr = 0;

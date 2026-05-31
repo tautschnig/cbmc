@@ -385,7 +385,7 @@ std::optional<exprt> python_convertert::try_list_method(
     {
       exprt search = convert_expression(*as_array(args).begin());
       if(search.type() != data_type.element_type())
-        search = safe_typecast(search, data_type.element_type());
+        search = coerce_element(search, data_type.element_type());
       // Build if-then-else chain: check from end to start
       exprt result = from_integer(-1, python_int_type()); // not found
       for(int i = PYTHON_MAX_LIST_LENGTH - 1; i >= 0; i--)
@@ -443,7 +443,7 @@ std::optional<exprt> python_convertert::try_list_method(
             exprt dst = plus_exprt{length, from_integer(i, signedbv_typet{64})};
             exprt ch_str = python_string_literal(std::string(1, sv.value()[i]));
             if(ch_str.type() != data_type.element_type())
-              ch_str = safe_typecast(ch_str, data_type.element_type());
+              ch_str = coerce_element(ch_str, data_type.element_type());
             pending_checks.push_back(
               code_frontend_assignt{index_exprt{data, dst}, ch_str});
           }
@@ -467,7 +467,7 @@ std::optional<exprt> python_convertert::try_list_method(
     {
       exprt val = convert_expression(*as_array(args).begin());
       if(val.type() != data_type.element_type())
-        val = safe_typecast(val, data_type.element_type());
+        val = coerce_element(val, data_type.element_type());
       // Find first occurrence and shift left
       // Use a found flag to track if we've found the element
       static unsigned rm_counter = 0;

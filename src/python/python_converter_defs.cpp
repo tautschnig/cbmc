@@ -3546,7 +3546,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                   exprt typed_req_key = python_string_literal(req_key);
                   if(typed_req_key.type() != keys_type.element_type())
                     typed_req_key =
-                      safe_typecast(typed_req_key, keys_type.element_type());
+                      coerce_element(typed_req_key, keys_type.element_type());
                   exprt found = false_exprt{};
                   for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
                   {
@@ -3847,7 +3847,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
       // data[length] = val
       exprt typed_val = val;
       if(typed_val.type() != data_type.element_type())
-        typed_val = safe_typecast(typed_val, data_type.element_type());
+        typed_val = coerce_element(typed_val, data_type.element_type());
       block.add(code_frontend_assignt{index_exprt{data, length}, typed_val});
       // length += 1
       block.add(code_frontend_assignt{
@@ -3892,7 +3892,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
         exprt idx = from_integer(i, signedbv_typet{64});
         exprt elem = index_exprt{src_data, idx};
         if(elem.type() != dst_data_type.element_type())
-          elem = safe_typecast(elem, dst_data_type.element_type());
+          elem = coerce_element(elem, dst_data_type.element_type());
         code_blockt append;
         append.add(
           code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
@@ -3997,7 +3997,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
           if(idx_expr.type() != python_int_type())
             idx_expr = safe_typecast(idx_expr, python_int_type());
           if(val.type() != data_type.element_type())
-            val = safe_typecast(val, data_type.element_type());
+            val = coerce_element(val, data_type.element_type());
           // PLR §4.6.3: list.insert(i, x) clamps i to
           // [0, len(list)]. Index past the end appends; very
           // negative index inserts at front (idx + len <= 0 → 0,
