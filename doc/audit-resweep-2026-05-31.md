@@ -41,6 +41,37 @@ gaps:
 - 1 × Q1 (`awsts/in-allowlist-bypass`): could not parse the Q1
   pattern in `dynamodb-data-mapper-js`.
 
+### Update — gap-fill re-triage
+
+The triage-script gaps were filled after the initial re-sweep
+(see `~/codeql-tools/retriage_skipped.py`). Re-running just the
+SKIPPED items against the **current** `triage.py` (which has had
+the Q3 generator and the bracket-expression Q1 parser since
+2026-05-29 14:43 — *after* the original sweep ran at 09:01)
+reclassified **all 8 SKIPPED → TRUE_POSITIVE**:
+
+| Repo | Query | Source | Result |
+|------|-------|--------|--------|
+| amplify-cli | Q3 | `auth-questions.ts:547` | TP |
+| amplify-cli | Q3 | `dynamoDb-walkthrough.ts:679` | TP |
+| amplify-cli | Q3 | `upload-appsync-files.js:98` | TP |
+| aws-durable-execution-sdk-js | Q3 | `serdes.ts:166` | TP |
+| aws-durable-execution-sdk-js | Q3 | `serdes.ts:246` | TP |
+| aws-solutions-constructs | Q3 | `index.ts:182` | TP |
+| aws-solutions-constructs | Q3 | `index.ts:183` | TP |
+| dynamodb-data-mapper-js | Q1 | `SchemaType.ts:103` | TP |
+
+Two of these (the `aws-durable-execution-sdk-js` cases) initially
+failed because that repo wasn't present in `/tmp/audit-batch/`.
+The repo's source is shipped inside its CodeQL DB
+(`/home/ubuntu/codeql-tools/dbs/aws-durable-execution-sdk-js/src.zip`),
+so extracting that into `/tmp/audit-batch/aws-durable-execution-sdk-js/`
+unblocks them.
+
+**Adjusted aggregate**: 75 TP / 0 FP / 0 SKIPPED / 0 UND, up
+from 67 TP / 8 SKIPPED. The audit corpus is now fully
+classified.
+
 ## Interpretation
 
 ### Why no verdict changes despite 7 substantial frontend landings
@@ -120,3 +151,12 @@ the verifiable surface (new patterns now work) but don't change
 behaviour on the existing prototype-pollution-shaped corpus,
 which is consistent with the per-feature scopes documented in
 `typescript-fixes-changelog.md`.
+
+The companion gap-fill re-triage (using the existing Q3 generator
+and the bracket-expression Q1 parser, both added 2026-05-29 14:43
+after the original sweep) plus extracting the missing
+`aws-durable-execution-sdk-js` source from its CodeQL DB lifted
+**all 8 previously-SKIPPED findings to TRUE_POSITIVE**, raising
+the audit's verifiable coverage from **67 TP / 8 SKIPPED** to
+**75 TP / 0 SKIPPED**. The corpus is now 100% classified with
+zero false positives.
