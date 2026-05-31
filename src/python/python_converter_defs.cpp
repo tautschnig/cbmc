@@ -1899,6 +1899,16 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             declared_fields.insert(fname);
             components.push_back(comp);
           }
+          // Inherit class-level-attribute tracking from base —
+          // a class-level attr in the parent stays class-level
+          // in the child, even if the child overrides its
+          // value. The child can still shadow it on instances.
+          auto base_it = class_level_attrs.find(base_name);
+          if(base_it != class_level_attrs.end())
+          {
+            for(const auto &a : base_it->second)
+              class_level_attrs[class_name].insert(a);
+          }
         }
       }
     }
@@ -1921,6 +1931,18 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               convert_type_annotation(json_member(item, "annotation"));
             components.push_back(
               struct_typet::componentt{attr_name, attr_type});
+            // PLR §9.4: track this as a class-level attribute
+            // so attribute reads can dispatch via the
+            // shadow-fallback ternary.
+            class_level_attrs[class_name].insert(attr_name);
+            // Add the synthetic shadow flag immediately after
+            // the value field so the struct layout is
+            // deterministic. The flag is False by default
+            // (zero-initialised); instance writes set it to
+            // True so subsequent reads return the instance
+            // value rather than falling back to class storage.
+            components.push_back(struct_typet::componentt{
+              "__shadow_" + attr_name, c_bool_typet{8}});
           }
         }
       }
@@ -1949,6 +1971,10 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               }
               components.push_back(
                 struct_typet::componentt{attr_name, attr_type});
+              // PLR §9.4: same shadow tracking as AnnAssign above.
+              class_level_attrs[class_name].insert(attr_name);
+              components.push_back(struct_typet::componentt{
+                "__shadow_" + attr_name, c_bool_typet{8}});
             }
           }
         }

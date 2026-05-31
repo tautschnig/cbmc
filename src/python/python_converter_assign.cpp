@@ -57,12 +57,21 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         const auto &st = to_struct_type(base);
         if(st.has_component(attr))
         {
-          member_exprt lhs{
-            dereference_exprt{obj}, attr, st.get_component(attr).type()};
+          dereference_exprt deref{obj};
+          member_exprt lhs{deref, attr, st.get_component(attr).type()};
           rhs = coerce_assign_rhs(rhs, lhs.type());
+          code_blockt result;
           code_frontend_assignt assign{lhs, rhs};
           assign.add_source_location() = loc;
-          return std::move(assign);
+          result.add(std::move(assign));
+          if(auto shadow = maybe_shadow_assign(deref, attr))
+          {
+            shadow->add_source_location() = loc;
+            result.add(std::move(*shadow));
+          }
+          if(result.statements().size() == 1)
+            return std::move(result.statements().front());
+          return std::move(result);
         }
       }
     }
@@ -321,7 +330,8 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   {
     irep_idt rhs_id = to_symbol_expr(rhs).get_identifier();
     auto chain = alias_targets.find(rhs_id);
-    irep_idt target_id = (chain != alias_targets.end()) ? chain->second : rhs_id;
+    irep_idt target_id =
+      (chain != alias_targets.end()) ? chain->second : rhs_id;
     const symbolt *target_sym = symbol_table.lookup(target_id);
     if(target_sym != nullptr)
     {
@@ -347,11 +357,12 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   }
   if(
     rhs_is_direct_name && rhs.id() == ID_dereference &&
-    rhs.operands().size() == 1 &&
-    rhs.operands()[0].id() == ID_symbol &&
+    rhs.operands().size() == 1 && rhs.operands()[0].id() == ID_symbol &&
     rhs.operands()[0].type().id() == ID_pointer &&
-    (is_python_list_type(to_pointer_type(rhs.operands()[0].type()).base_type()) ||
-     is_python_dict_type(to_pointer_type(rhs.operands()[0].type()).base_type())))
+    (is_python_list_type(
+       to_pointer_type(rhs.operands()[0].type()).base_type()) ||
+     is_python_dict_type(
+       to_pointer_type(rhs.operands()[0].type()).base_type())))
   {
     // Pointer-copy from another already-promoted symbol or parameter.
     const exprt &inner_sym = rhs.operands()[0];
@@ -500,11 +511,9 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         .element_type()))
   {
     const auto &sym_st = to_struct_type(sym.type);
-    const auto &dst_data_t =
-      to_array_type(sym_st.components()[1].type());
+    const auto &dst_data_t = to_array_type(sym_st.components()[1].type());
     const auto &src_st = to_struct_type(rhs.type());
-    const auto &src_data_t =
-      to_array_type(src_st.components()[1].type());
+    const auto &src_data_t = to_array_type(src_st.components()[1].type());
     // For struct literals from `[a, b, c]`, peel directly.
     if(
       rhs.id() == ID_struct && rhs.operands().size() >= 2 &&
@@ -512,8 +521,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     {
       exprt::operandst promoted;
       const auto &src_arr = rhs.operands()[1];
-      std::size_t max_len =
-        static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
+      std::size_t max_len = static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
       for(std::size_t k = 0; k < max_len; k++)
       {
         if(k < src_arr.operands().size())
@@ -529,8 +537,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
     {
       // Materialise rhs into a temp and read elements via index.
       static unsigned src_mat_ctr2 = 0;
-      std::string tn =
-        "__list_assign_src_" + std::to_string(src_mat_ctr2++);
+      std::string tn = "__list_assign_src_" + std::to_string(src_mat_ctr2++);
       std::string tq = qualify_name(tn);
       irep_idt ti{tq};
       if(symbol_table.lookup(ti) == nullptr)
@@ -547,8 +554,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       member_exprt src_len{s_sym, "length", signedbv_typet{64}};
       member_exprt src_data{s_sym, "data", src_data_t};
       exprt::operandst promoted;
-      std::size_t max_len =
-        static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
+      std::size_t max_len = static_cast<std::size_t>(PYTHON_MAX_LIST_LENGTH);
       for(std::size_t k = 0; k < max_len; k++)
       {
         exprt idx = from_integer(k, signedbv_typet{64});
@@ -1298,8 +1304,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 std::string var_name = json_string(json_member(target, "id"));
                 std::string qname = qualify_name(var_name);
                 function_aliases[qname] = method_id;
-                bound_methods[qname] = {
-                  method_id, address_of_exprt{obj_expr}};
+                bound_methods[qname] = {method_id, address_of_exprt{obj_expr}};
               }
             }
             return code_skipt{};
@@ -1413,8 +1418,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
           // Starred element: build a list from source[star_idx ..
           // length - n_trailing - 1].
           {
-            const jsont &starred =
-              *std::next(as_array(elts).begin(), star_idx);
+            const jsont &starred = *std::next(as_array(elts).begin(), star_idx);
             const jsont &inner = json_member(starred, "value");
             std::string sn;
             if(is_node_type(inner, "Name"))
@@ -1446,30 +1450,24 @@ codet python_convertert::convert_assign(const jsont &stmt)
                   static_cast<long long>(n_trailing + star_idx),
                   signedbv_typet{64})};
               exprt zero64 = from_integer(0LL, signedbv_typet{64});
-              exprt len_clamped =
-                if_exprt{binary_relation_exprt{new_len, ID_lt, zero64},
-                         zero64,
-                         new_len};
+              exprt len_clamped = if_exprt{
+                binary_relation_exprt{new_len, ID_lt, zero64}, zero64, new_len};
               // Build elems: rhs_data[star_idx + i] if i < length_rest
               exprt::operandst elems;
               for(int k = 0; k < PYTHON_MAX_LIST_LENGTH; ++k)
               {
                 exprt k_e = from_integer(k, signedbv_typet{64});
-                exprt src_idx =
-                  plus_exprt{from_integer(
-                               static_cast<long long>(star_idx),
-                               signedbv_typet{64}),
-                             k_e};
+                exprt src_idx = plus_exprt{
+                  from_integer(
+                    static_cast<long long>(star_idx), signedbv_typet{64}),
+                  k_e};
                 exprt val = index_exprt{rhs_data, src_idx, elem_t};
-                exprt in_range =
-                  binary_relation_exprt{k_e, ID_lt, len_clamped};
-                exprt el =
-                  if_exprt{in_range, val, safe_zero(elem_t)};
+                exprt in_range = binary_relation_exprt{k_e, ID_lt, len_clamped};
+                exprt el = if_exprt{in_range, val, safe_zero(elem_t)};
                 elems.push_back(std::move(el));
               }
               exprt rest_val = struct_exprt{
-                {len_clamped,
-                 array_exprt{std::move(elems), rest_data_t}},
+                {len_clamped, array_exprt{std::move(elems), rest_data_t}},
                 rest_list_t};
               block.add(code_frontend_assignt{rsym.symbol_expr(), rest_val});
             }
@@ -1646,7 +1644,8 @@ codet python_convertert::convert_assign(const jsont &stmt)
         std::size_t i = 0;
         for(const auto &elt : as_array(elts))
         {
-          exprt idx_e = from_integer(static_cast<long long>(i), signedbv_typet{64});
+          exprt idx_e =
+            from_integer(static_cast<long long>(i), signedbv_typet{64});
           exprt val = index_exprt{rhs_data, idx_e, elem_t};
           if(is_node_type(elt, "Name"))
           {
@@ -2238,14 +2237,19 @@ codet python_convertert::convert_assign(const jsont &stmt)
             const auto &st = to_struct_type(base);
             if(st.has_component(attr))
             {
-              member_exprt lhs{
-                dereference_exprt{obj}, attr, st.get_component(attr).type()};
+              dereference_exprt deref{obj};
+              member_exprt lhs{deref, attr, st.get_component(attr).type()};
               exprt typed_rhs = rhs;
               if(typed_rhs.type() != lhs.type())
                 typed_rhs = safe_typecast(typed_rhs, lhs.type());
               code_frontend_assignt assign{lhs, typed_rhs};
               assign.add_source_location() = loc;
               block.add(std::move(assign));
+              if(auto shadow = maybe_shadow_assign(deref, attr))
+              {
+                shadow->add_source_location() = loc;
+                block.add(std::move(*shadow));
+              }
               continue;
             }
           }
@@ -2262,6 +2266,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
             code_frontend_assignt assign{lhs, typed_rhs};
             assign.add_source_location() = loc;
             block.add(std::move(assign));
+            if(auto shadow = maybe_shadow_assign(obj, attr))
+            {
+              shadow->add_source_location() = loc;
+              block.add(std::move(*shadow));
+            }
             continue;
           }
         }
@@ -2282,13 +2291,23 @@ codet python_convertert::convert_assign(const jsont &stmt)
             pointer_typet cls_ptr_type{cls_type, 64};
             dereference_exprt deref{
               typecast_exprt{class_ptr, cls_ptr_type}, cls_type};
-            member_exprt lhs{std::move(deref), attr, field_type};
+            member_exprt lhs{deref, attr, field_type};
             exprt typed_rhs = rhs;
             if(typed_rhs.type() != lhs.type())
               typed_rhs = safe_typecast(typed_rhs, lhs.type());
             code_frontend_assignt assign{lhs, typed_rhs};
             assign.add_source_location() = loc;
             block.add(std::move(assign));
+            // PLR §9.4: also set the shadow flag through the
+            // tagged-union path so subsequent reads on the
+            // same underlying class instance see the
+            // instance value rather than falling back to
+            // class storage.
+            if(auto shadow = maybe_shadow_assign(deref, attr))
+            {
+              shadow->add_source_location() = loc;
+              block.add(std::move(*shadow));
+            }
             done = true;
             break;
           }
@@ -3572,9 +3591,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       exprt has_remainder =
         notequal_exprt{remainder, from_integer(0, arith_lhs.type())};
       exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{arith_lhs, rhs},
-        ID_lt,
-        from_integer(0, arith_lhs.type())};
+        bitxor_exprt{arith_lhs, rhs}, ID_lt, from_integer(0, arith_lhs.type())};
       new_rhs = minus_exprt{
         quotient,
         if_exprt{
@@ -3653,9 +3670,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       exprt has_remainder =
         notequal_exprt{remainder, from_integer(0, arith_lhs.type())};
       exprt diff_sign = binary_relation_exprt{
-        bitxor_exprt{arith_lhs, rhs},
-        ID_lt,
-        from_integer(0, arith_lhs.type())};
+        bitxor_exprt{arith_lhs, rhs}, ID_lt, from_integer(0, arith_lhs.type())};
       new_rhs = plus_exprt{
         remainder,
         if_exprt{
