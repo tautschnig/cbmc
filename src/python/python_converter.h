@@ -319,6 +319,18 @@ private:
   /// and consulted at call sites when
   /// `python_check_any_arg_attrs` is on.
   std::map<irep_idt, std::set<std::string>> function_param_attr_uses;
+  /// Per-(param-id, attr-name) set of class names that gate the
+  /// attribute access via `if isinstance(param, ClassName):`.
+  /// An entry whose set contains the special marker `""`
+  /// indicates the attribute is also accessed UNGATED (so the
+  /// caller's any-arg-attr check should never skip it).  When
+  /// every recorded gate is a class name, the call-site check
+  /// can skip when the argument's class is NOT in the set, since
+  /// the attribute access only fires when the isinstance gate
+  /// holds at runtime.
+  /// PLR §3.3.5: isinstance-narrowing inside the function body.
+  std::map<irep_idt, std::map<std::string, std::set<std::string>>>
+    function_param_attr_gates;
   /// Emit a message about a front-end over-approximation. In the
   /// default mode the message goes to log.debug() so it is only
   /// visible at high verbosity; when --python-strict-warnings is

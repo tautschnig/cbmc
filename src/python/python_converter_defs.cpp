@@ -999,12 +999,20 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     if(!param_names.empty())
     {
       std::map<std::string, std::set<std::string>> per_param;
+      std::map<std::string, std::map<std::string, std::set<std::string>>>
+        per_param_gates;
       const jsont &body_for_scan = json_member(stmt, "body");
-      collect_param_attribute_uses(body_for_scan, param_names, per_param);
+      collect_param_attribute_uses(
+        body_for_scan, param_names, per_param, &per_param_gates);
       for(const auto &kv : per_param)
       {
         irep_idt key{"python::" + qualified_func_name + "::" + kv.first};
         function_param_attr_uses[key] = kv.second;
+      }
+      for(const auto &kv : per_param_gates)
+      {
+        irep_idt key{"python::" + qualified_func_name + "::" + kv.first};
+        function_param_attr_gates[key] = kv.second;
       }
     }
   }

@@ -176,7 +176,9 @@ collect_param_names(const jsont &func_def)
 [[maybe_unused]] static inline void collect_param_attribute_uses(
   const jsont &node,
   const std::set<std::string> &param_names,
-  std::map<std::string, std::set<std::string>> &out)
+  std::map<std::string, std::set<std::string>> &out,
+  std::map<std::string, std::map<std::string, std::set<std::string>>> *gates =
+    nullptr)
 {
   if(node.is_null())
     return;
@@ -235,6 +237,59 @@ collect_param_names(const jsont &func_def)
 
   // Second pass: walk and record attribute uses for both the
   // original parameters and any aliases we discovered.
+  // PLR §3.3.5: track active isinstance gates so the caller
+  // can skip attribute-error checks when the arg's class
+  // doesn't match the gate (the attribute access wouldn't
+  // fire at runtime).
+  // active_gates[param_name] = stack of gate classes currently
+  // surrounding the access. We record the SHALLOWEST gate (the
+  // outermost), since deeper gates only further restrict.
+  std::map<std::string, std::vector<std::string>> active_gates;
+
+  // Helper: try to decode an If-test of the form
+  //   isinstance(<paramOrAlias>, <ClassName>)
+  // into a (canonical_param, gate_class) pair. Returns nullopt
+  // on shape mismatch.
+  auto decode_isinstance_gate =
+    [&](const jsont &test) -> std::optional<std::pair<std::string, std::string>>
+  {
+    if(!test.is_object())
+      return std::nullopt;
+    if(test["_type"].value != "Call")
+      return std::nullopt;
+    const jsont &fn = test["func"];
+    if(!fn.is_object() || fn["_type"].value != "Name" ||
+       fn["id"].value != "isinstance")
+      return std::nullopt;
+    const jsont &args = test["args"];
+    if(!args.is_array() || to_json_array(args).size() < 2)
+      return std::nullopt;
+    auto it = to_json_array(args).begin();
+    const jsont &arg0 = *it;
+    ++it;
+    const jsont &arg1 = *it;
+    if(!arg0.is_object() || arg0["_type"].value != "Name")
+      return std::nullopt;
+    if(!arg1.is_object() || arg1["_type"].value != "Name")
+      return std::nullopt;
+    std::string name = arg0["id"].value;
+    std::string canonical;
+    if(param_names.count(name) > 0)
+      canonical = name;
+    else
+    {
+      auto ai = alias_to_param.find(name);
+      if(ai != alias_to_param.end())
+        canonical = ai->second;
+    }
+    if(canonical.empty())
+      return std::nullopt;
+    std::string gate_class = arg1["id"].value;
+    if(gate_class.empty())
+      return std::nullopt;
+    return std::make_pair(canonical, gate_class);
+  };
+
   std::function<void(const jsont &)> attr_pass = [&](const jsont &n)
   {
     if(n.is_null())
@@ -245,6 +300,25 @@ collect_param_names(const jsont &func_def)
       if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
          type == "Lambda")
         return;
+
+      // Recognise an isinstance gate on an If statement and
+      // narrow the active_gates while walking the body. The
+      // orelse branch sees the COMPLEMENT of the gate (no
+      // narrowing recorded — accesses there are ungated).
+      if(type == "If")
+      {
+        const jsont &test = n["test"];
+        auto decoded = decode_isinstance_gate(test);
+        if(decoded.has_value() && gates != nullptr)
+        {
+          active_gates[decoded->first].push_back(decoded->second);
+          attr_pass(n["body"]);
+          active_gates[decoded->first].pop_back();
+          attr_pass(n["orelse"]);
+          // Don't fall through to the generic walk.
+          return;
+        }
+      }
 
       if(type == "Attribute")
       {
@@ -268,7 +342,25 @@ collect_param_names(const jsont &func_def)
           {
             const std::string &attr = n["attr"].value;
             if(!attr.empty())
+            {
               out[canonical].insert(attr);
+              if(gates != nullptr)
+              {
+                auto gi = active_gates.find(canonical);
+                if(gi != active_gates.end() && !gi->second.empty())
+                {
+                  // Record the OUTERMOST gate class — that's
+                  // the most permissive narrowing in scope.
+                  (*gates)[canonical][attr].insert(gi->second.front());
+                }
+                else
+                {
+                  // Ungated access — record the empty marker so
+                  // the call-site check can never skip this attr.
+                  (*gates)[canonical][attr].insert(std::string{});
+                }
+              }
+            }
           }
         }
       }
