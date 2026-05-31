@@ -740,8 +740,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
       // tagged union's tag.
       return_type = python_value_type();
     }
-    else if(
-      has_value_return && has_none_return && return_type.id() == ID_empty)
+    else if(has_value_return && has_none_return && return_type.id() == ID_empty)
     {
       // PLR §3.2: heterogeneous-return function with at least
       // one 'return None' and at least one value-returning path
@@ -1439,10 +1438,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         // function scope; we're past current_function = saved here so
         // any reference to a parameter would mis-resolve. Restrict to
         // pure-constant shapes.
-        bool is_const =
-          is_node_type(val, "Constant") ||
-          (is_node_type(val, "UnaryOp") &&
-           is_node_type(json_member(val, "operand"), "Constant"));
+        bool is_const = is_node_type(val, "Constant") ||
+                        (is_node_type(val, "UnaryOp") &&
+                         is_node_type(json_member(val, "operand"), "Constant"));
         if(is_const)
         {
           exprt val_expr = convert_expression(val);
@@ -1553,8 +1551,9 @@ codet python_convertert::convert_function_def(const jsont &stmt)
         // not just the module body.
         std::function<const jsont *(const jsont &, const std::string &)>
           find_func_def =
-            [&](const jsont &scope_body,
-                const std::string &name) -> const jsont * {
+            [&](
+              const jsont &scope_body, const std::string &name) -> const jsont *
+        {
           if(!scope_body.is_array())
             return nullptr;
           for(const auto &s : as_array(scope_body))
@@ -1573,8 +1572,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
             }
             // Recurse into if/for/while/try bodies too, in case
             // the decorator is defined inside a control-flow block.
-            for(const std::string &fld :
-                std::vector<std::string>{
+            for(const std::string &fld : std::vector<std::string>{
                   "body", "orelse", "finalbody", "handlers"})
             {
               const jsont &fb = json_member(s, fld);
@@ -1655,9 +1653,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
           // RECURSIVELY through the parse tree so decorators
           // defined inside another function are also handled.
           std::function<const jsont *(const jsont &, const std::string &)>
-            find_decorator_ast =
-              [&](const jsont &scope_body,
-                  const std::string &name) -> const jsont * {
+            find_decorator_ast = [&](
+                                   const jsont &scope_body,
+                                   const std::string &name) -> const jsont *
+          {
             if(!scope_body.is_array())
               return nullptr;
             for(const auto &s : as_array(scope_body))
@@ -1672,8 +1671,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
                 if(const jsont *r = find_decorator_ast(b, name))
                   return r;
               }
-              for(const std::string &fld :
-                  std::vector<std::string>{
+              for(const std::string &fld : std::vector<std::string>{
                     "body", "orelse", "finalbody", "handlers"})
               {
                 const jsont &fb = json_member(s, fld);
@@ -3830,8 +3828,8 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     generator_functions.count(current_function))
   {
     const jsont &yield_val = json_member(value, "value");
-    exprt val = yield_val.is_null() ? from_integer(0, python_int_type())
-                                    : convert_expression(yield_val);
+    exprt val =
+      yield_val.is_null() ? python_none_value() : convert_expression(yield_val);
 
     std::string grn = "__gen_result_" + current_function;
     std::string grq = qualify_name(grn);
@@ -3872,8 +3870,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
     std::string grq = qualify_name(grn);
     irep_idt gri{grq};
     const symbolt *grs = symbol_table.lookup(gri);
-    if(
-      !src.is_nil() && is_python_list_type(src.type()) && grs != nullptr)
+    if(!src.is_nil() && is_python_list_type(src.type()) && grs != nullptr)
     {
       const auto &dst_list_st = to_struct_type(grs->type);
       const auto &dst_data_type =
@@ -3894,8 +3891,7 @@ codet python_convertert::convert_expr_stmt(const jsont &stmt)
         if(elem.type() != dst_data_type.element_type())
           elem = coerce_element(elem, dst_data_type.element_type());
         code_blockt append;
-        append.add(
-          code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
+        append.add(code_frontend_assignt{index_exprt{dst_data, dst_len}, elem});
         append.add(code_frontend_assignt{
           dst_len, plus_exprt{dst_len, from_integer(1, signedbv_typet{64})}});
         block.add(code_ifthenelset{
