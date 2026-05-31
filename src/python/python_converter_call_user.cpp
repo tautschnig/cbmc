@@ -1020,6 +1020,29 @@ exprt python_convertert::convert_user_call(
             {
               if(boto3_base_methods.count(attr_name) > 0)
                 continue;
+              // PLR §3.3.5: isinstance-narrowing gate. If
+              // every recorded access of this attribute is
+              // gated by `if isinstance(param, GateClass):`
+              // and the caller's argument class is NOT in
+              // any of the gates, the access is unreachable
+              // at runtime and we should not flag it.
+              auto gates_it = function_param_attr_gates.find(param_id);
+              if(gates_it != function_param_attr_gates.end())
+              {
+                auto attr_gates = gates_it->second.find(attr_name);
+                if(attr_gates != gates_it->second.end())
+                {
+                  const auto &gset = attr_gates->second;
+                  // Only narrow when the gate set is non-empty
+                  // AND doesn't contain the empty-string
+                  // ungated marker.
+                  if(!gset.empty() && gset.count(std::string{}) == 0)
+                  {
+                    if(gset.count(class_name) == 0)
+                      continue; // gate excludes this arg class
+                  }
+                }
+              }
               bool found = false;
               if(
                 cdm != class_declared_methods.end() &&
