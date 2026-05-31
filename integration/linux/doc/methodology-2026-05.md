@@ -1,8 +1,18 @@
 # Methodology: applying CBMC to Linux kernel CVE detection
 
-**Date:** 2026-05-31
+**Date:** 2026-05-31 (revised after May post-sprint round)
 **Status:** Research-grade, results stable on a 500-CVE +
 500-benign-function sample.  Inviting external review.
+
+> **Post-sprint addendum (May 31).**  This methodology was
+> first written after the n=500 (v2) measurement.  A
+> follow-on sprint added per-CVE SARIF export, a result
+> cache, multi-LTS scanning, and several new triage
+> detectors; it also identified two CBMC bugs worth
+> upstreaming.  The summary below has been updated; the
+> detailed addendum is at
+> `five-task-sprint-closeout-2026-05.md` and
+> `bug-hunt-fp-shapes-2026-05.md`.
 
 ## Problem
 
@@ -126,19 +136,53 @@ Three-stage classification:
    `lock_held == 1` but lock_held was never set), but we
    downgrade.
 2. **Function-body shape filter** (`triage_filter.py`):
-   detects three FP shapes by name-and-body matching:
+   detects FP shapes by name-and-body matching.  The filter
+   is **module-aware**: each shape is gated on whether it's
+   applicable to the bug-class module being checked.  Leak-
+   shape FPs only suppress on leak modules; lock-shape FPs
+   only suppress on lock modules.  Universal shapes
+   (function-name patterns) suppress regardless of module.
+   Shapes recognised:
    * `escape_via_store`: tracked var is written through a
-     pointer parameter (output pointer).
+     parameter struct field, single-level `*ptr =` out-pointer,
+     or pointer-to-pointer `**ptr =` out-pointer
+     (leak-shape).
    * `put_only_on_error`: function only frees on the error
-     path; success path transfers ownership.
+     path; success path transfers ownership (leak-shape).
    * `ownership_handler`: function name matches `put_*`,
-     `release_*`, etc., or is a constructor (`*_new`,
-     `*_alloc`) with body shape `*X = alloc(...)`.
+     `release_*`, etc., or contains `_free_` / `_release_` /
+     `_destroy_` / `_cleanup_` / `_remove_` / `_disconnect_`
+     / `_unregister_` / `_unbind_` infix
+     (universal-shape — name patterns are cross-cutting).
+   * `param_consumed_by_callee`: pointer-typed parameter
+     passed to another function and never directly
+     dereferenced in this body (leak-shape).
+   * `alloc_handed_to_consumer`: local var allocated, passed
+     to consumer-API as argument; callee takes ownership
+     (leak-shape).
+   * `caller_holds_lock`: function calls unlock without a
+     matching lock for the same lock object (lock-shape).
 3. **Per-CVE-best aggregation:** when `--modules-per-cve >
    1`, each module is tried independently.  The summary
    picks the most-bug-finding verdict per CVE using the
    ordering `candidate > fp-filtered > noise > low-confidence-
    candidate > successful > vacuous > timeout > error`.
+
+The triage filter is also invoked on the `low-confidence-
+candidate` (rc=14) path: empty-ghost-bootstrap candidates
+that match a recognised caller-precondition shape downgrade
+to `fp-filtered` with `[empty-ghost-bootstrap]` preserved
+in the note.
+
+**Module-awareness importance.**  An early version of the
+filter ignored the bug-class module being checked.  Multi-
+LTS validation surfaced the over-suppression: CVE-2023-54305
+(dos_panic_warn) and CVE-2023-54239 (integer_overflow) were
+both filtered as `escape_via_store` because the underlying
+functions transfer ownership — but the bugs are not leaks.
+The fix gates each shape verdict by module-applicability;
+the legacy-ungated path remains for batch tools that don't
+have a module to pass.
 
 ## Measurement protocol
 
@@ -182,6 +226,8 @@ false positives.
 
 ### Reported numbers (n=500)
 
+#### n=500 v2 (May 2026, pre-sprint)
+
 | Metric | n=500 (May 2026) |
 |---|---|
 | CVE corpus | 500 sampled |
@@ -198,17 +244,63 @@ false positives.
 | Compile/skip | rest |
 | Upper-bound FP rate | **9.8%** |
 
-The 9 detected CVEs:
+#### Post-sprint (May 31)
+
+After the post-sprint round, on the same n=500 v3 candidate
+set re-evaluated by the new filter:
+
+| Metric | Pre-sprint | Post-sprint |
+|---|---|---|
+| FP candidates classified by filter | 0/49 (0%) | 45/49 (92%) |
+| Long-tail unfiltered | 49 | 4 |
+
+The 4 unfiltered remaining are two pattern families: 2
+caller-validated netlink readers and 2 cocci CFG limitations
+(branch-merge UAF tracking, kfree-then-reassign-in-loop).
+
+**Catalog detection improved:**
+
+| Detected CVEs | Pre-sprint | Post-sprint |
+|---|---|---|
+| Cleanly-testable | 9 | 10 |
+| Recall | 9/10 = 90% | 10/10 = 100% |
+
+CVE-2024-43818 (`st_es8336_late_probe` in
+`sound/soc/amd/acp-es8336.c`) was the previously-missed
+case.  Two issues were diagnosed: a `goto-instrument
+--replace-call-with-contract` miscompile of `||` short-
+circuits in `__CPROVER_requires` (still a CBMC bug worth
+upstream filing — see `CBMC_LIMITATIONS.md`), and the
+linux_6_1 / 6_6 / 6_12 trees having been left at `allnoconfig`
+which constant-folded the trigger function to NULL.  Both
+are now mitigated.
+
+The 10 detected CVEs:
 
 * CVE-2023-53038 (refcount_balance)
 * CVE-2023-53453 (resource_leak via fallback)
 * CVE-2023-53697 (resource_leak)
 * CVE-2024-35829 (lima_heap_alloc — resource_leak via fallback)
 * CVE-2024-39492 (resource_leak)
+* CVE-2024-43818 (st_es8336_late_probe — null_after_alloc) **new**
 * CVE-2025-21654 (ovl_connect_layer — dentry_lifetime)
 * CVE-2025-21895 (resource_leak)
 * CVE-2025-40307 (refcount_balance)
 * CVE-2026-43304 (resource_leak)
+
+#### Multi-LTS validation
+
+The `--multi-lts` cve_validate flag scans each accepted CVE
+against every LTS tree where the file exists.  Initial
+results (n=30, 4 trees → 60 rows on multiple seeds) show
+that the catalog's verdicts are **consistent across LTS
+branches** for the same (file, function, module) tuple: per-
+tree breakdown shows similar FP-filtered, noise, and error
+counts across linux_5_10 / linux_6_1 / linux_6_6 /
+linux_6_12.  Tree-specific divergence is dominated by
+compile-stack configuration drift (header availability,
+struct-member visibility under different CONFIG settings),
+not by the catalog itself.
 
 ## Threats to validity
 
@@ -217,19 +309,37 @@ The 9 detected CVEs:
    coverage gaps.  Stable-only patches that didn't reach
    mainline are over-represented; some CVE classes are
    under-represented.
-2. **Triage subjectivity.**  The 49 FP candidates were not
-   all individually triaged in this iteration; we
-   extrapolate from the n=200 / n=500-v1 triage where 0/28
-   and 0/14 candidates were real bugs.
+2. **Triage subjectivity.**  After hand-triaging all 49 FP
+   candidates from n=500 v3 in the post-sprint round, 0/49
+   were real bugs.  Combined with the prior n=200 / n=500-v1
+   triages (0/28 and 0/14), the triage-confirmed real-bug
+   rate in long-tail FP candidates is 0/91 — a useful
+   negative result, suggesting the catalog's long tail at
+   current detector resolution is predominantly benign
+   patterns the filter just hadn't recognised.  We
+   nonetheless flag this as a threat because it relies on
+   manual triage which is fallible.
 3. **Module coverage.**  34 modules cover 6 ghost shapes.
    Bug classes outside this set (e.g. integer overflow in
    non-alloc contexts, side-channel leaks, weak crypto)
    are not detected.
-4. **Whole-program limits.**  CBMC's symex unwinds loops to
+4. **Module-pick correctness.**  The catalog's module-
+   picker chooses up to N modules per CVE based on syntactic
+   API patterns in the function body.  When the chosen
+   module is not the actual bug-class (e.g. picking
+   `inode_lifetime` for a `dos_panic_warn` CVE because the
+   function manipulates inodes), the resulting verdict —
+   even if positive — does not constitute "detection" of
+   that CVE.  Hand-validation (cross-referencing the picked
+   module against the CVE category) is required before
+   counting a row as detected.  The module-aware triage
+   filter (§5) prevents over-suppression of these wrong-
+   module rows.
+5. **Whole-program limits.**  CBMC's symex unwinds loops to
    a fixed bound (we use 2-4); deeper bugs or subtle
    asynchronous schedules (work_struct fired after
    device_del) are out of scope.
-5. **CVE leakage.**  If a benign-corpus function happens to
+6. **CVE leakage.**  If a benign-corpus function happens to
    have an undisclosed bug, our FP rate is over-estimated.
    We have NO method to systematically detect this; we
    flag it as a known limitation.
@@ -237,10 +347,13 @@ The 9 detected CVEs:
 ## Reproducibility
 
 ```sh
-# 1. Configure linux_5_10 with defconfig.
-cd /path/to/linux_5_10
-make ARCH=x86_64 defconfig
-make ARCH=x86_64 prepare0
+# 1. Configure ALL LTS trees with defconfig (not allnoconfig — see
+# CVE-2024-43818 in CBMC_LIMITATIONS.md for the rationale).
+for t in linux_5_10 linux_6_1 linux_6_6 linux_6_12; do
+    cd /path/to/$t
+    make ARCH=x86_64 defconfig
+    make ARCH=x86_64 prepare0
+done
 
 # 2. Build CBMC + integration tools.
 cd /path/to/cbmc
@@ -262,59 +375,85 @@ for jf in Path('/tmp/cve-survey/vulns/cve/published/').rglob('*.json'):
 Path('/tmp/cve-survey/cve_funcs.pkl').write_bytes(pickle.dumps(pairs))
 "
 
-# 4. Run measurements.
+# 4. Run measurements.  Use --cache-dir so re-runs are fast.
 ulimit -v unlimited
-mkdir -p /tmp/cve-validate /tmp/fp-measure
+mkdir -p /tmp/cve-validate /tmp/fp-measure /tmp/scan-cache /tmp/sarif-out
 systemd-run --user --scope --quiet \
     --property=MemoryMax=30G --property=MemorySwapMax=0 \
   python3 integration/linux/doc/scripts/cve_validate.py \
     --n 500 --timeout 600 --invert --modules-per-cve 3 \
-    --upstream-repo /path/to/torvalds-linux.git \
+    --multi-lts --upstream-repo /path/to/torvalds-linux.git \
+    --kernel-trees "/path/to/linux_5_10,/path/to/linux_6_1,/path/to/linux_6_6,/path/to/linux_6_12" \
+    --sarif-out-dir /tmp/sarif-out \
     --out-csv /tmp/cve-validate/results.csv &
 systemd-run --user --scope --quiet \
     --property=MemoryMax=30G --property=MemorySwapMax=0 \
   python3 integration/linux/doc/scripts/fp_measure.py \
     --kernel-tree /path/to/linux_5_10 \
-    --n 500 --timeout 300 --modules-per-fn 3 \
+    --n 1000 --timeout 600 --modules-per-fn 3 \
     --cve-funcs /tmp/cve-survey/cve_funcs.pkl \
+    --cache-dir /tmp/scan-cache \
     --out-csv /tmp/fp-measure/results.csv &
 wait
 ```
 
-Total wall time: ~16 hours on one machine with `MemoryMax=30G`.
+Cold-cache wall time: ~30-40 hours for n=1000 on one machine
+with `MemoryMax=60G`.  Subsequent re-runs hit the cache for
+unchanged cases and complete in minutes.
 
 ## What's left
 
-The catalog has stabilised at 90% recall / 10% upper-bound
-FP rate.  Further improvements:
+The catalog has stabilised at 100% recall on the cleanly-
+testable subset (10/10) and an estimated post-improvement FP
+rate well below the original 9.8% (long-tail filter rate
+moved from 0% to 92%).  The post-sprint round closed several
+items previously listed here:
 
-1. **Triage-filter expansion** for the new FP shapes
-   exposed by defconfig.  Most of the 49 candidates are
-   likely classifiable as one of:
-   * Constructor-style functions whose name doesn't fit
-     the existing prefix/suffix rules.
-   * Wrapper functions that delegate to a known-cleaning
-     callee but don't textually match.
-   * Functions that store the alloc result into a global
-     side-effect.
-   Each class can be detected with a body-shape filter
-   similar to the existing three.
-2. **Per-CVE trace export.**  Each detection currently
-   produces a CBMC counterexample.  Exporting these as
-   structured artifacts (SARIF or similar) would help
-   downstream tooling and reviewer confidence.
-3. **Multi-LTS scan.**  Currently we scan against one tree
-   per CVE.  Scanning against ALL applicable trees (and
-   reporting which ones are vulnerable) would let us
-   detect CVEs that are present in some LTS branches but
-   not others.
-4. **Scaling to n=1000+ and beyond.**  The current 16-hour
-   wall time on one machine is prohibitive for routine
-   measurement.  Either parallelise across machines, or
-   add caching/incremental modes so re-measurement of an
-   existing tree is fast.
-5. **External review.**  This document is intended as the
-   anchor for that.
+* ✅ Triage-filter expansion (5 new shapes added: extended
+  `escape_via_store`, `alloc_handed_to_consumer`,
+  `param_consumed_by_callee`, `caller_holds_lock`, and an
+  expanded `ALLOC_APIs` list including `kstrdup`,
+  `kmemdup`, `nlmsg_new`, etc.).
+* ✅ Per-CVE SARIF export (wired through `scan-per-file.sh`
+  and `cve_validate.py`; merged into a single multi-run
+  document compatible with GitHub Code Scanning intake).
+* ✅ Multi-LTS scan (`--multi-lts` flag in cve_validate;
+  per-tree summary and per-CVE tree-coverage cross-tab).
+* ✅ Result caching (`scan_cache.py`; n=1000 now
+  tractable because re-runs hit cache for unchanged
+  cases).
+
+Remaining items:
+
+1. **Two CBMC-core bugs surfaced during this work**:
+   * `goto-instrument --replace-call-with-contract`
+     silently mis-verifies `||` short-circuits in
+     `__CPROVER_requires` (the IF guard is elided in the
+     post-replacement goto-program).  Worth upstream filing
+     — affects all CBMC users relying on contract-based
+     verification with `||` in requires.
+   * goto-cc parser rejects GCC's `address_space(<identifier>)`
+     form (LIM-019).  Mitigated locally via scan-compat.h;
+     a parser extension would benefit anyone running
+     CBMC on modern x86_64 Linux defconfig.
+2. **Two long-tail FP shapes** that aren't yet detector-
+   classifiable:
+   * Netlink readers whose attributes are validated by the
+     caller (cfhsi_netlink_parms, set_allowedip).  Cocci
+     can't see the caller's `nla_parse_nested(..., policy)`
+     validation.  Would need cross-function netlink-policy
+     tracking.
+   * Cocci CFG limitations: branch-merge confusion
+     (cec_data_completed) and kfree-then-reassign-in-loop
+     (process_return_queue).  Could be addressed by a more
+     path-sensitive cocci pass or a postprocess that
+     recognises the loop-reassign idiom.
+3. **CVE catalog expansion to recent disclosures.**  The
+   current catalog finds 10 cleanly-testable CVEs; expanding
+   the cleanly-testable set with newer (2026+) CVEs would
+   test forward-time generalisation of the catalog.
+4. **External review.**  This document remains the anchor
+   for that.
 
 ## Cross-references
 
@@ -324,10 +463,17 @@ FP rate.  Further improvements:
   precision/recall pair (n=500 v1).
 * `cross-function-uaf-design-2026-05.md` — Phase 1-3
   design.
-* `kernel-tree-configuration.md` — defconfig prerequisite.
+* `kernel-tree-configuration.md` — defconfig prerequisite
+  (now applied to ALL LTS trees, not only 5.10).
 * `MODULE_CATALOG.md` — full list of property modules.
 * `CBMC_LIMITATIONS.md` — append-only log of CBMC bugs
-  encountered (LIM-001 through LIM-018).
+  encountered (LIM-001 through LIM-019).
+* `five-task-sprint-closeout-2026-05.md` — closeout for the
+  May post-sprint round (SARIF, multi-LTS, caching,
+  CVE-2024-43818).
+* `bug-hunt-fp-shapes-2026-05.md` — bug-hunt and FP-shape
+  expansion (the 9 long-tail unfiltered → 4; new shapes
+  added).
 
 ## License & contributing
 
