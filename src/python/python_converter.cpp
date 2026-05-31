@@ -1805,17 +1805,43 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
   if(!is_python_value_type(e.type()))
     return e; // already concrete
 
-  // PLR §3.2: when unwrapping a NONE-tagged python_value to a typed
-  // numeric slot, produce the legacy sentinel value so existing
-  // typed-numeric 'is None' fast-paths and Optional[int] default
-  // bindings keep working during gradual migration to the tagged
-  // encoding everywhere. See doc/python-frontend-blocked-items-plan.md
-  // (P0 phase 0.C).
-  if(
-    is_python_none_constant(e) &&
-    (target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
-     target_type == python_int_type()))
-    return from_integer(python_none_sentinel_int(), target_type);
+  // PLR §3.2: when unwrapping a NONE-tagged python_value to a
+  // typed natural-slot, produce the canonical None marker for
+  // that slot rather than reading the wrong field (e.g.
+  // __int_val = 0 for an Optional[int] None default) or
+  // dereferencing NULL (e.g. *e.__str_ptr for a NONE-tagged
+  // value reaching a typed-string target). The recognizer
+  // matches both the literal struct form and a symbol-
+  // expression whose stored value is python_value{NONE} (see
+  // is_python_none); the latter handles imported-module-frozen
+  // None defaults bound through __def_<func>_<idx> symbols.
+  //
+  // The same per-target marker conventions as
+  // coerce_to_typed_slot — see its comment for the rationale.
+  if(is_python_none(e, symbol_table))
+  {
+    if(
+      target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
+      target_type == python_int_type())
+      return from_integer(python_none_sentinel_int(), target_type);
+    if(target_type.id() == ID_floatbv)
+    {
+      ieee_floatt v{
+        ieee_float_spect{to_floatbv_type(target_type)},
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      v.from_integer(python_none_sentinel_int());
+      return v.to_expr();
+    }
+    if(is_python_string_type(target_type))
+      return safe_zero(target_type);
+    if(is_python_list_type(target_type) || is_python_dict_type(target_type))
+      return safe_zero(target_type);
+    // bool target: fall through to the truthiness builder
+    // below — it already evaluates to False for NONE-tagged
+    // input via the disjunction-of-tag-checks.
+    // python_value target: fall through to the default
+    // identity (caller wraps if needed).
+  }
 
   // Extract the appropriate field based on target type
   if(
