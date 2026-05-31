@@ -2502,6 +2502,9 @@ exprt python_convertert::coerce_to_typed_slot(
   // Each natural-type slot has its own marker convention:
   //   - python_string:  {length=0, data=NULL} (cluster v9, the
   //                     length-0 Optional[str] fast-path).
+  //                     Distinguishable from `""` (which has
+  //                     length=0 but data ≠ NULL) via a
+  //                     data-pointer check at compare sites.
   //   - python_int:     python_none_sentinel_int() cast to the
   //                     target integer type (matches the
   //                     existing 'is None' typed-int compare).
@@ -2510,38 +2513,29 @@ exprt python_convertert::coerce_to_typed_slot(
   //                     from any plausible computation result
   //                     and is exactly representable as IEEE
   //                     double).
-  //   - python_list /
-  //     python_dict:    no canonical marker yet — TODO.
-  //                     Currently falls through to safe_typecast
-  //                     (NULL deref, sound only by symex
-  //                     coincidence). See cluster v19 in
-  //                     doc/python-frontend-roadmap.md.
+  //   - python_list:    {length=0, data=zero-filled-array}
+  //                     (via safe_zero). Conflates with `[]`
+  //                     (empty list literal) at compare sites
+  //                     — `arg is None` for typed-list slots
+  //                     uses `length == 0` which is also true
+  //                     for `[]`. The architecturally clean
+  //                     answer for typed-list None is to lower
+  //                     `Optional[list]` annotations to
+  //                     python_value (tagged-union) at the
+  //                     typing layer rather than via the typed
+  //                     marker — out of scope here.
+  //   - python_dict:    {length=0, keys=[], values=[]} (via
+  //                     safe_zero). Same conflation caveat.
   //
-  // The recognizer accepts BOTH the literal struct form (matched
-  // by `is_python_none_constant`) and a symbol-expression whose
-  // stored value is python_value{NONE} (this is how the
-  // imported-module pre-pass freezes per-FunctionDef defaults at
-  // module-level into static symbols — see
-  // python_converter_module.cpp). Without the symbol-form path
-  // the defaults loop would bind `__def_foo_N.__int_val` (= 0,
+  // The recognizer accepts BOTH the literal struct form and a
+  // symbol-expression whose stored value is python_value{NONE}
+  // — see `is_python_none`. Without the symbol-form path the
+  // defaults loop would bind `__def_foo_N.__int_val` (= 0,
   // not the None sentinel) for `Optional[int] = None`.
-  bool expr_is_none = is_python_none_constant(expr);
-  if(!expr_is_none && expr.id() == ID_symbol)
-  {
-    const symbolt *s =
-      symbol_table.lookup(to_symbol_expr(expr).get_identifier());
-    if(s != nullptr && is_python_none_constant(s->value))
-      expr_is_none = true;
-  }
-  if(expr_is_none)
+  if(is_python_none(expr, symbol_table))
   {
     if(is_python_string_type(target_type))
-    {
-      pointer_typet ptr_t{unsignedbv_typet{8}, 64};
-      return struct_exprt{
-        {from_integer(0, signedbv_typet{64}), null_pointer_exprt{ptr_t}},
-        python_string_type()};
-    }
+      return safe_zero(target_type);
     if(
       target_type.id() == ID_signedbv || target_type.id() == ID_integer ||
       target_type == python_int_type())
@@ -2556,6 +2550,8 @@ exprt python_convertert::coerce_to_typed_slot(
       v.from_integer(python_none_sentinel_int());
       return v.to_expr();
     }
+    if(is_python_list_type(target_type) || is_python_dict_type(target_type))
+      return safe_zero(target_type);
   }
 
   if(expr.type() == target_type)
