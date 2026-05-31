@@ -112,7 +112,17 @@ def _function_body(source: str, fn_name: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 # Common allocation/get APIs and the matching put APIs.
-ALLOC_APIS = (
+#
+# We split into FRESH_ALLOC_APIS (return a brand-new object,
+# initial refcount 1) and REFCOUNT_GET_APIS (increment a
+# refcount on an existing object).  Several detectors only
+# apply to the FRESH set: a `var = dget(x); dget_parent(var);
+# dput(var)` pattern is a perfectly balanced refcount, NOT
+# an ownership transfer to dget_parent — the alloc_handed_to_
+# consumer detector should not fire.  We also keep the union
+# `ALLOC_APIS` as the broad regex for general candidate
+# enumeration.
+FRESH_ALLOC_APIS = (
     r"kmalloc|kzalloc|kcalloc|kmalloc_array|"
     r"kvmalloc|kvzalloc|kvcalloc|kvmalloc_array|"
     r"kstrdup|kstrndup|kmemdup|kmemdup_nul|kasprintf|kvasprintf|"
@@ -120,11 +130,14 @@ ALLOC_APIS = (
     r"alloc_skb|dev_alloc_skb|nlmsg_new|genlmsg_new|"
     r"usb_alloc_urb|"
     r"kobject_create_and_add|prepare_kernel_cred|prepare_creds|"
+    r"d_alloc|new_inode"
+)
+REFCOUNT_GET_APIS = (
     r"override_creds|get_cred|get_task_cred|"
     r"kobject_get|of_node_get|get_device|igrab|dget|fget|"
-    r"sock_hold|skb_get|kref_get|try_module_get|"
-    r"d_alloc|new_inode|get_file"
+    r"sock_hold|skb_get|kref_get|try_module_get|get_file"
 )
+ALLOC_APIS = FRESH_ALLOC_APIS + r"|" + REFCOUNT_GET_APIS
 
 PUT_APIS = (
     r"kfree|kvfree|kfree_skb|kmem_cache_free|kobject_put|"
@@ -481,9 +494,19 @@ def _detect_local_alloc_handed_to_consumer(
     than `var = (cast)alloc(...)`) and it appears at least once
     inside a function-call argument list.
     """
-    # Find local-var allocations: `var = <alloc-api>(...)`.
+    # Find local-var FRESH-allocations: `var = <fresh-alloc-api>(...)`.
+    # Refcount-get APIs (dget, kref_get, kobject_get, ...) are
+    # excluded: a `var = dget(x); dget_parent(var); dput(var)`
+    # pattern is balanced refcount, NOT ownership transfer to
+    # dget_parent.  Firing alloc_handed_to_consumer on those
+    # would suppress real refcount-balance bug detections (e.g.
+    # CVE-2025-21654 in ovl_connect_layer).
+    fresh_alloc_re = re.compile(
+        r"(\b(?:[A-Za-z_][A-Za-z_0-9]*)\b)\s*=\s*"
+        r"(?:" + FRESH_ALLOC_APIS + r")\s*\(",
+    )
     alloc_vars = set()
-    for m in ALLOC_RE.finditer(body):
+    for m in fresh_alloc_re.finditer(body):
         alloc_vars.add(m.group(1))
     for var in alloc_vars:
         esc = re.escape(var)
