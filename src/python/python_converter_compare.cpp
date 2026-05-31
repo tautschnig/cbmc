@@ -1658,24 +1658,69 @@ exprt python_convertert::convert_compare(const jsont &expr)
         {
           exprt idx = from_integer(i, signedbv_typet{64});
           exprt elem = index_exprt{data, idx};
-          // Ensure types match for equality comparison
-          if(current_left.type() != elem.type())
-            elem = safe_typecast(elem, current_left.type());
           exprt match;
-          if(list_of_strings)
+          // PLR §6.13: 'None in xs' for typed-element xs
+          // recognises the per-element-type None marker
+          // emitted by coerce_element. Without this, the
+          // generic equal_exprt below would compare the typed
+          // element to a python_value{NONE} struct via
+          // safe_typecast/wrap_value and always evaluate to
+          // False even when the element IS the None marker.
+          if(is_python_none_constant(current_left))
           {
-            match = emit_string_bool_function(
-              ID_cprover_string_equal_func,
-              elem,
-              current_left,
-              symbol_table,
-              pending_checks);
-            if(match.type() != bool_typet{})
-              match = typecast_exprt{std::move(match), bool_typet{}};
+            if(
+              elem.type().id() == ID_signedbv ||
+              elem.type().id() == ID_integer)
+            {
+              match = equal_exprt{
+                elem, from_integer(python_none_sentinel_int(), elem.type())};
+            }
+            else if(elem.type().id() == ID_floatbv)
+            {
+              ieee_floatt none_f{
+                ieee_float_spect{to_floatbv_type(elem.type())},
+                ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+              none_f.from_integer(python_none_sentinel_int());
+              match = ieee_float_equal_exprt{elem, none_f.to_expr()};
+            }
+            else if(is_python_string_type(elem.type()))
+            {
+              match = equal_exprt{
+                member_exprt{
+                  elem, "data", pointer_typet{unsignedbv_typet{8}, 64}},
+                null_pointer_exprt{pointer_typet{unsignedbv_typet{8}, 64}}};
+            }
+            else
+            {
+              // python_value or other: fall through to the
+              // generic equal_exprt path so structural
+              // equality with None_constant resolves via the
+              // tag check.
+              if(current_left.type() != elem.type())
+                elem = safe_typecast(elem, current_left.type());
+              match = equal_exprt{current_left, elem};
+            }
           }
           else
           {
-            match = equal_exprt{current_left, elem};
+            // Ensure types match for equality comparison
+            if(current_left.type() != elem.type())
+              elem = safe_typecast(elem, current_left.type());
+            if(list_of_strings)
+            {
+              match = emit_string_bool_function(
+                ID_cprover_string_equal_func,
+                elem,
+                current_left,
+                symbol_table,
+                pending_checks);
+              if(match.type() != bool_typet{})
+                match = typecast_exprt{std::move(match), bool_typet{}};
+            }
+            else
+            {
+              match = equal_exprt{current_left, elem};
+            }
           }
           exprt in_range = binary_relation_exprt{idx, ID_lt, length};
           in_expr = or_exprt{in_expr, and_exprt{in_range, match}};
