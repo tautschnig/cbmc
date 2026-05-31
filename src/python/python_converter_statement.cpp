@@ -377,7 +377,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
               member_exprt vals_arr{obj, "values", vals_type};
 
               if(key.type() != keys_type.element_type())
-                key = safe_typecast(key, keys_type.element_type());
+                key = coerce_element(key, keys_type.element_type());
 
               // Find key, shift remaining left, decrement length
               static unsigned del_dict_ctr = 0;
@@ -816,7 +816,7 @@ codet python_convertert::convert_statement(const jsont &stmt)
             continue;
           }
           if(key_expr.type() != keys_type.element_type())
-            key_expr = safe_typecast(key_expr, keys_type.element_type());
+            key_expr = coerce_element(key_expr, keys_type.element_type());
           // Search for the key in dict.keys. Build condition
           // "key is present AND its value matches pattern".
           exprt key_found = false_exprt{};

@@ -382,7 +382,7 @@ exprt python_convertert::convert_user_call(
           if(arg.is_nil())
             continue;
           if(arg.type() != data_type.element_type())
-            arg = safe_typecast(arg, data_type.element_type());
+            arg = coerce_element(arg, data_type.element_type());
           elems.push_back(arg);
         }
         std::size_t n_packed = elems.size();
@@ -509,7 +509,8 @@ exprt python_convertert::convert_user_call(
         if(is_python_value_type(vals_arr_type.element_type()))
           val_elems.push_back(wrap_value(val));
         else
-          val_elems.push_back(safe_typecast(val, vals_arr_type.element_type()));
+          val_elems.push_back(
+            coerce_element(val, vals_arr_type.element_type()));
       }
       while(key_elems.size() < PYTHON_MAX_DICT_SIZE)
       {
@@ -745,7 +746,7 @@ exprt python_convertert::convert_user_call(
         {
           exprt arg = arguments[i];
           if(arg.type() != data_type.element_type())
-            arg = safe_typecast(arg, data_type.element_type());
+            arg = coerce_element(arg, data_type.element_type());
           elems.push_back(arg);
         }
         std::size_t n_packed = elems.size();

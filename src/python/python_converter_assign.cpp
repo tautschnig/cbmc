@@ -1774,7 +1774,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
               member_exprt data{tmp_sym, "data", data_type};
               exprt typed_rhs = rhs;
               if(typed_rhs.type() != data_type.element_type())
-                typed_rhs = safe_typecast(typed_rhs, data_type.element_type());
+                typed_rhs = coerce_element(typed_rhs, data_type.element_type());
               block.add(code_frontend_assignt{
                 index_exprt{data, key}, std::move(typed_rhs)});
             }
@@ -1790,10 +1790,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
               member_exprt vals_arr{tmp_sym, "values", vals_type};
               exprt typed_key = key;
               if(typed_key.type() != keys_type.element_type())
-                typed_key = safe_typecast(typed_key, keys_type.element_type());
+                typed_key = coerce_element(typed_key, keys_type.element_type());
               exprt typed_rhs = rhs;
               if(typed_rhs.type() != vals_type.element_type())
-                typed_rhs = safe_typecast(typed_rhs, vals_type.element_type());
+                typed_rhs = coerce_element(typed_rhs, vals_type.element_type());
               // scan-replace-or-append (mirrors the existing
               // dict-subscript-assign path).
               static unsigned ns_fnd = 0;
@@ -1871,10 +1871,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
             exprt outer_typed_key = outer_key;
             if(outer_typed_key.type() != keys_type.element_type())
               outer_typed_key =
-                safe_typecast(outer_typed_key, keys_type.element_type());
+                coerce_element(outer_typed_key, keys_type.element_type());
             exprt outer_rhs = tmp_sym;
             if(outer_rhs.type() != vals_type.element_type())
-              outer_rhs = safe_typecast(outer_rhs, vals_type.element_type());
+              outer_rhs = coerce_element(outer_rhs, vals_type.element_type());
             for(std::size_t i = 0; i < PYTHON_MAX_DICT_SIZE; i++)
             {
               exprt idx = from_integer(i, signedbv_typet{64});
@@ -1896,7 +1896,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
             member_exprt data{outer_base, "data", data_type};
             exprt outer_rhs = tmp_sym;
             if(outer_rhs.type() != data_type.element_type())
-              outer_rhs = safe_typecast(outer_rhs, data_type.element_type());
+              outer_rhs = coerce_element(outer_rhs, data_type.element_type());
             block.add(code_frontend_assignt{
               index_exprt{data, outer_key}, std::move(outer_rhs)});
           }
@@ -2002,10 +2002,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
           member_exprt vals_arr{obj, "values", vals_type};
           exprt typed_key = key;
           if(typed_key.type() != keys_type.element_type())
-            typed_key = safe_typecast(typed_key, keys_type.element_type());
+            typed_key = coerce_element(typed_key, keys_type.element_type());
           exprt typed_val = rhs;
           if(typed_val.type() != vals_type.element_type())
-            typed_val = safe_typecast(typed_val, vals_type.element_type());
+            typed_val = coerce_element(typed_val, vals_type.element_type());
           static unsigned dict_assign_ctr = 0;
           std::string fn = "__dict_found_" + std::to_string(dict_assign_ctr++);
           std::string fq = qualify_name(fn);
@@ -2187,7 +2187,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
           member_exprt vals_arr{dict_val, "values", vals_type};
           exprt typed_key = slice_probe;
           if(typed_key.type() != keys_type.element_type())
-            typed_key = safe_typecast(typed_key, keys_type.element_type());
+            typed_key = coerce_element(typed_key, keys_type.element_type());
           exprt typed_val = rhs;
           if(typed_val.type() != vals_type.element_type())
             typed_val = wrap_value(typed_val);
@@ -3029,7 +3029,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
       member_exprt vals_arr{container_check, "values", vals_type};
       exprt key_expr = convert_expression(json_member(target, "slice"));
       if(key_expr.type() != keys_type.element_type())
-        key_expr = safe_typecast(key_expr, keys_type.element_type());
+        key_expr = coerce_element(key_expr, keys_type.element_type());
       exprt result = safe_zero(vals_type.element_type());
       for(int i = PYTHON_MAX_DICT_SIZE - 1; i >= 0; i--)
       {
@@ -3827,7 +3827,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     }
     exprt typed_new_val = new_rhs;
     if(typed_new_val.type() != vals_type.element_type())
-      typed_new_val = safe_typecast(typed_new_val, vals_type.element_type());
+      typed_new_val = coerce_element(typed_new_val, vals_type.element_type());
 
     static unsigned dict_aug_ctr = 0;
     std::string fn = "__dict_aug_found_" + std::to_string(dict_aug_ctr++);

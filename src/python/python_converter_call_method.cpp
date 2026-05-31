@@ -3072,7 +3072,7 @@ std::optional<exprt> python_convertert::try_method_call(
                 if(is_python_value_type(vat.element_type()))
                   vs.push_back(wrap_value(v));
                 else
-                  vs.push_back(safe_typecast(v, vat.element_type()));
+                  vs.push_back(coerce_element(v, vat.element_type()));
               }
               while(ks.size() < PYTHON_MAX_DICT_SIZE)
               {

@@ -1268,6 +1268,20 @@ private:
   /// declared return.
   exprt coerce_return_value(const exprt &ret_val, const typet &return_type);
 
+  /// Coerce a container element to the container's declared
+  /// element type. Same PLR adaptations as
+  /// `coerce_call_argument` — the element-binding boundary in
+  /// PLR's gradual type system is just another typed slot.
+  ///
+  /// Use at every site that constructs or appends an element
+  /// to a typed list / dict / set / tuple field whose
+  /// element type differs from the source value's type.
+  /// Centralises the "list[None, 'abc']" pattern (mixed
+  /// element types) where None binds as the element-type's
+  /// canonical None marker rather than going through the
+  /// generic safe_typecast / unwrap_value NULL-deref path.
+  exprt coerce_element(const exprt &elem, const typet &element_type);
+
   /// Coerce all arguments in `args` to the parameter types
   /// declared in `params`. Out-of-range entries on either side
   /// are left untouched (callers are responsible for padding
