@@ -2240,6 +2240,20 @@ codet python_convertert::convert_assign(const jsont &stmt)
               dereference_exprt deref{obj};
               member_exprt lhs{deref, attr, st.get_component(attr).type()};
               exprt typed_rhs = rhs;
+              // PLR §3.1: list[python_value] LHS receiving a
+              // list with a more specific element type — rebuild
+              // RHS so element types match (list_extend / append
+              // cprover_string_equal etc. all assume matching
+              // element types between LHS and RHS).
+              if(
+                is_python_list_type(lhs.type()) &&
+                is_python_list_type(typed_rhs.type()))
+              {
+                const auto &lhs_data = to_array_type(
+                  to_struct_type(lhs.type()).components()[1].type());
+                if(is_python_value_type(lhs_data.element_type()))
+                  typed_rhs = rebuild_list_as_pv(typed_rhs);
+              }
               if(typed_rhs.type() != lhs.type())
                 typed_rhs = safe_typecast(typed_rhs, lhs.type());
               code_frontend_assignt assign{lhs, typed_rhs};
@@ -2261,6 +2275,17 @@ codet python_convertert::convert_assign(const jsont &stmt)
           {
             member_exprt lhs{obj, attr, st.get_component(attr).type()};
             exprt typed_rhs = rhs;
+            // PLR §3.1: same list[python_value] element rebuild
+            // as the pointer-base path above.
+            if(
+              is_python_list_type(lhs.type()) &&
+              is_python_list_type(typed_rhs.type()))
+            {
+              const auto &lhs_data = to_array_type(
+                to_struct_type(lhs.type()).components()[1].type());
+              if(is_python_value_type(lhs_data.element_type()))
+                typed_rhs = rebuild_list_as_pv(typed_rhs);
+            }
             if(typed_rhs.type() != lhs.type())
               typed_rhs = safe_typecast(typed_rhs, lhs.type());
             code_frontend_assignt assign{lhs, typed_rhs};
