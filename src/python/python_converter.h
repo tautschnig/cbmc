@@ -1255,6 +1255,20 @@ private:
     exprt::operandst &args,
     const code_typet::parameterst &params);
 
+  /// Look up the `__init__` symbol for `class_name`, walking
+  /// the C3 MRO if the class doesn't define `__init__` itself.
+  ///
+  /// Without the MRO walk, subclasses that rely on the parent's
+  /// `__init__` (a common pattern) would silently skip
+  /// initialisation, leaving instance fields zero.
+  ///
+  /// Returns the resolved `(init_id, init_sym)` pair: `init_sym`
+  /// is non-null on success and points to the symbol-table
+  /// entry; `init_id` is its qualified name. Both fields are
+  /// empty / nullptr if no `__init__` could be found in the MRO.
+  std::pair<irep_idt, const symbolt *>
+  lookup_init_via_mro(const std::string &class_name) const;
+
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.
   exprt safe_zero(const typet &type) const;

@@ -1040,28 +1040,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
             const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
             code_blockt result;
 
-            irep_idt init_id{"python::" + call_name + "::__init__"};
-            const symbolt *init_sym = symbol_table.lookup(init_id);
-            // Inheritance fallback: walk MRO if class doesn't
-            // define __init__ itself.
-            if(init_sym == nullptr)
-            {
-              auto mro_it = class_mro.find(call_name);
-              if(mro_it != class_mro.end())
-              {
-                for(std::size_t i = 1; i < mro_it->second.size(); ++i)
-                {
-                  irep_idt aid{"python::" + mro_it->second[i] + "::__init__"};
-                  const symbolt *as = symbol_table.lookup(aid);
-                  if(as != nullptr)
-                  {
-                    init_id = aid;
-                    init_sym = as;
-                    break;
-                  }
-                }
-              }
-            }
+            irep_idt init_id;
+            const symbolt *init_sym;
+            std::tie(init_id, init_sym) = lookup_init_via_mro(call_name);
             if(init_sym != nullptr)
             {
               exprt::operandst init_args;
@@ -1161,28 +1142,9 @@ codet python_convertert::convert_assign(const jsont &stmt)
         }
 
         // Call __init__(&var, args...)
-        irep_idt init_id{"python::" + call_name + "::__init__"};
-        const symbolt *init_sym = symbol_table.lookup(init_id);
-        // Inheritance fallback: walk MRO if class doesn't
-        // define __init__ itself.
-        if(init_sym == nullptr)
-        {
-          auto mro_it = class_mro.find(call_name);
-          if(mro_it != class_mro.end())
-          {
-            for(std::size_t i = 1; i < mro_it->second.size(); ++i)
-            {
-              irep_idt aid{"python::" + mro_it->second[i] + "::__init__"};
-              const symbolt *as = symbol_table.lookup(aid);
-              if(as != nullptr)
-              {
-                init_id = aid;
-                init_sym = as;
-                break;
-              }
-            }
-          }
-        }
+        irep_idt init_id;
+        const symbolt *init_sym;
+        std::tie(init_id, init_sym) = lookup_init_via_mro(call_name);
         if(init_sym != nullptr)
         {
           exprt::operandst arguments;
