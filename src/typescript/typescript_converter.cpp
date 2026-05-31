@@ -699,6 +699,50 @@ exprt typescript_convertert::convert_expression(const jsont &node)
   // ES2024 sec-property-accessors
   if(kind == "PropertyAccessExpression")
   {
+    // Proxy dispatch: if the receiver is an Identifier registered
+    // as a proxy with a `get` trap, redirect the access through
+    // the trap. See P3.3 in typescript-remaining-work-plan.md.
+    {
+      const jsont &recv_node = json_member(node, "expression");
+      if(json_string(json_member(recv_node, "_kind")) == "Identifier")
+      {
+        std::string recv_name = json_string(json_member(recv_node, "text"));
+        auto pit = proxy_registry.find(recv_name);
+        if(
+          pit != proxy_registry.end() && !pit->second.get_function_name.empty())
+        {
+          std::string prop =
+            json_string(json_member(json_member(node, "name"), "text"));
+          irep_idt trap_id{"typescript::" + pit->second.get_function_name};
+          const symbolt *trap_sym = symbol_table.lookup(trap_id);
+          if(trap_sym != nullptr)
+          {
+            const auto &cty = to_code_type(trap_sym->type);
+            exprt::operandst call_ops;
+            // Argument 1: the target value.
+            exprt target = convert_expression(pit->second.target_node);
+            if(
+              !cty.parameters().empty() &&
+              target.type() != cty.parameters()[0].type())
+              target = typecast_exprt{target, cty.parameters()[0].type()};
+            call_ops.push_back(target);
+            // Argument 2: the property key as a string literal.
+            if(cty.parameters().size() >= 2)
+            {
+              exprt key = convert_string_literal_from_text(prop);
+              if(key.type() != cty.parameters()[1].type())
+                key = typecast_exprt{key, cty.parameters()[1].type()};
+              call_ops.push_back(key);
+            }
+            return side_effect_expr_function_callt{
+              trap_sym->symbol_expr(),
+              std::move(call_ops),
+              cty.return_type(),
+              get_location(node)};
+          }
+        }
+      }
+    }
     exprt obj = convert_expression(json_member(node, "expression"));
     std::string prop =
       json_string(json_member(json_member(node, "name"), "text"));

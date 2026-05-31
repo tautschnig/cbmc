@@ -1,0 +1,13 @@
+CORE
+main.ts
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invariant check failed$
+--
+ES2024 §28.2: Proxy get/set trap dispatch (inline-handler scope).
+Verifies that property reads on a registered Proxy route through
+the handler's get trap and writes route through the set trap,
+including the variable-handler case.

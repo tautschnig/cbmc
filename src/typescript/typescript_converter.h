@@ -89,6 +89,22 @@ private:
   // (constants captured at conversion time). Used by `yield*`
   // delegation in another generator's body.
   std::map<std::string, std::vector<exprt>> generator_yields;
+  // Proxies declared via `const v = new Proxy(target, handler)`
+  // where `handler` is an inline ObjectLiteralExpression with
+  // recognisable trap definitions. Property accesses on `v`
+  // dispatch through the registered trap function. See
+  // typescript-known-limitations §2.7.
+  struct proxy_info_t
+  {
+    jsont target_node;             // raw AST node of `target` arg
+    std::string get_function_name; // empty if no get trap
+    std::string set_function_name; // empty if no set trap
+  };
+  std::map<std::string, proxy_info_t> proxy_registry;
+  // Variables initialised with object literals — short-name keyed.
+  // Used to resolve handler identifiers in `new Proxy(target, h)`
+  // back to their inline literal.
+  std::map<std::string, jsont> object_literal_inits;
   // Private fields: class_name → set of private field names
   std::map<std::string, std::set<std::string>> private_fields;
   std::vector<codet> pending_stmts;

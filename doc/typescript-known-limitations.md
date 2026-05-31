@@ -343,17 +343,37 @@ declarations) only; runtime prototype manipulation not supported.
 [typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
 items 10, 11.
 
-### 2.7 Proxy handler traps
+### 2.7 Proxy handler traps (partially resolved 2026-05-31)
 
-**What**: `new Proxy(target, handler)` returns `target` unchanged;
-handler traps (`get`, `set`, `apply`, etc.) are ignored.
+**What now works**: `new Proxy(target, handler)` where `handler`
+is an inline `ObjectLiteralExpression` (or an `Identifier` whose
+initialiser is one) registers per-variable trap dispatch:
 
-**Workaround**: For programs whose correctness does not depend on
-the Proxy's trap behavior, the pragmatic model is sound.
+  - `proxy.foo` reads route through `handler.get(target, "foo")`.
+  - `proxy.foo = v` writes route through
+    `handler.set(target, "foo", v)`.
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 12.
+The trap method body executes during conversion, so any assertion
+or precondition inside it fires on each access. The trap's return
+value is the result of the access.
+
+**What still uses the pragmatic identity model**:
+
+  - Other traps (`has`, `deleteProperty`, `apply`, `construct`,
+    `getOwnPropertyDescriptor`, `defineProperty`, `ownKeys`,
+    `getPrototypeOf`, `setPrototypeOf`, `isExtensible`,
+    `preventExtensions`).
+  - Element access (`proxy[expr]`) — still falls through to the
+    target.
+  - Proxies whose handler is constructed dynamically (function
+    return, conditional, etc.).
+
+**Resolution**: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)" → `proxy-handler-traps`.
+
+**Regression guard**:
+`regression/typescript/proxy-handler-traps/` (CORE).
 
 ### 2.8 Mixed-element-type array literals (partially resolved 2026-05-30)
 

@@ -142,7 +142,7 @@ this repo. After coordinated disclosure of the 14 findings completes:
 |---|------|----------|------|--------|
 | P3.1 | `Object.create` (single-prototype case) | 1 day | medium | done (this commit) |
 | P3.2 | `Object.setPrototypeOf` for common idioms (Error-subclass, defensive null, Reflect) | 0.5 day | low | done (this commit) |
-| P3.3 | Proxy handler traps | 5–7 days | high | pending |
+| P3.3 | Proxy get/set trap dispatch (inline-handler scope) | 1 day | medium | done (this commit) |
 | P3.4 | Mixed-union arrays — defensive guard in `simplify_index` + smarter frontend fallback | 1–2 days | medium | done (this commit) |
 
 ### P4 — Long-term / external dependency

@@ -1407,6 +1407,116 @@ codet typescript_convertert::convert_variable_statement(const jsont &node)
   {
     const jsont &name_node = json_member(decl, "name");
     std::string name_kind = json_string(json_member(name_node, "_kind"));
+    // Track object-literal variable initialisers so we can resolve
+    // handler identifiers in `new Proxy(target, handlerVar)`. Also
+    // used by the proxy registration block below.
+    if(name_kind == "Identifier")
+    {
+      std::string var_name = json_string(json_member(name_node, "text"));
+      const jsont &init_n = json_member(decl, "initializer");
+      if(
+        init_n.is_object() &&
+        json_string(json_member(init_n, "_kind")) == "ObjectLiteralExpression")
+      {
+        object_literal_inits[var_name] = init_n;
+      }
+    }
+    // ES2024 §28.2: Proxy with inline-literal handler.
+    // Recognise `const|let var = new Proxy(target, { get(t,k){...},
+    // set(t,k,v){...} })`. Lift the inline handler methods to
+    // synthetic top-level functions and register the variable in
+    // proxy_registry so subsequent property-access expressions can
+    // dispatch through the trap. See P3.3 in
+    // typescript-remaining-work-plan.md.
+    //
+    // We process this BEFORE the destructuring/value-conversion
+    // path: even though `new Proxy(target, handler)` returns target
+    // (the existing pragmatic identity model), we additionally want
+    // a per-variable record so reads on that variable can route
+    // through handler.get.
+    if(name_kind == "Identifier")
+    {
+      std::string var_name = json_string(json_member(name_node, "text"));
+      const jsont &init = json_member(decl, "initializer");
+      if(
+        init.is_object() &&
+        json_string(json_member(init, "_kind")) == "NewExpression" &&
+        json_string(json_member(json_member(init, "expression"), "text")) ==
+          "Proxy")
+      {
+        const jsont &call_args = json_member(init, "arguments");
+        if(call_args.is_array() && to_json_array(call_args).size() >= 2)
+        {
+          const auto &arg_arr = to_json_array(call_args);
+          const jsont &target_node = *arg_arr.begin();
+          const jsont &handler_arg = *std::next(arg_arr.begin());
+          // Resolve handler identifier to its inline initialiser if
+          // we tracked one above.
+          jsont handler_node = handler_arg;
+          if(
+            handler_arg.is_object() &&
+            json_string(json_member(handler_arg, "_kind")) == "Identifier")
+          {
+            std::string h_name = json_string(json_member(handler_arg, "text"));
+            auto oit = object_literal_inits.find(h_name);
+            if(oit != object_literal_inits.end())
+              handler_node = oit->second;
+          }
+          if(
+            handler_node.is_object() &&
+            json_string(json_member(handler_node, "_kind")) ==
+              "ObjectLiteralExpression")
+          {
+            proxy_info_t info;
+            info.target_node = target_node;
+            const jsont &props = json_member(handler_node, "properties");
+            if(props.is_array())
+            {
+              static unsigned proxy_ctr = 0;
+              for(const auto &prop : to_json_array(props))
+              {
+                std::string prop_kind = json_string(json_member(prop, "_kind"));
+                std::string trap_name;
+                jsont function_node;
+                if(prop_kind == "MethodDeclaration")
+                {
+                  trap_name =
+                    json_string(json_member(json_member(prop, "name"), "text"));
+                  function_node = prop;
+                }
+                else if(prop_kind == "PropertyAssignment")
+                {
+                  trap_name =
+                    json_string(json_member(json_member(prop, "name"), "text"));
+                  const jsont &init_v = json_member(prop, "initializer");
+                  std::string init_kind =
+                    json_string(json_member(init_v, "_kind"));
+                  if(
+                    init_kind == "ArrowFunction" ||
+                    init_kind == "FunctionExpression")
+                    function_node = init_v;
+                }
+                if(trap_name.empty() || !function_node.is_object())
+                  continue;
+                if(trap_name != "get" && trap_name != "set")
+                  continue; // only get/set in this scope
+                std::string fn_name = "__proxy_" + var_name + "_" + trap_name +
+                                      "_" + std::to_string(proxy_ctr++);
+                convert_function_declaration_with_name(function_node, fn_name);
+                if(trap_name == "get")
+                  info.get_function_name = fn_name;
+                else // "set"
+                  info.set_function_name = fn_name;
+              }
+            }
+            if(
+              !info.get_function_name.empty() ||
+              !info.set_function_name.empty())
+              proxy_registry[var_name] = info;
+          }
+        }
+      }
+    }
     // Handle destructuring: const { x, y } = point
     if(name_kind == "ObjectBindingPattern")
     {
@@ -2889,6 +2999,57 @@ codet typescript_convertert::convert_expression_statement(const jsont &node)
     {
       // Check if LHS is a setter property access
       const jsont &lhs_node = json_member(expr_node, "left");
+      // Proxy dispatch for `proxy.foo = v` — when the receiver is
+      // a registered Proxy variable with a `set` trap, route the
+      // write through the trap. See P3.3.
+      if(is_kind(lhs_node, "PropertyAccessExpression"))
+      {
+        const jsont &recv_node = json_member(lhs_node, "expression");
+        if(json_string(json_member(recv_node, "_kind")) == "Identifier")
+        {
+          std::string recv_name = json_string(json_member(recv_node, "text"));
+          auto pit = proxy_registry.find(recv_name);
+          if(
+            pit != proxy_registry.end() &&
+            !pit->second.set_function_name.empty())
+          {
+            std::string prop =
+              json_string(json_member(json_member(lhs_node, "name"), "text"));
+            irep_idt trap_id{"typescript::" + pit->second.set_function_name};
+            const symbolt *trap_sym = symbol_table.lookup(trap_id);
+            if(trap_sym != nullptr)
+            {
+              const auto &cty = to_code_type(trap_sym->type);
+              exprt::operandst call_ops;
+              exprt target = convert_expression(pit->second.target_node);
+              if(
+                !cty.parameters().empty() &&
+                target.type() != cty.parameters()[0].type())
+                target = typecast_exprt{target, cty.parameters()[0].type()};
+              call_ops.push_back(target);
+              if(cty.parameters().size() >= 2)
+              {
+                exprt key = convert_string_literal_from_text(prop);
+                if(key.type() != cty.parameters()[1].type())
+                  key = typecast_exprt{key, cty.parameters()[1].type()};
+                call_ops.push_back(key);
+              }
+              if(cty.parameters().size() >= 3)
+              {
+                exprt val = convert_expression(json_member(expr_node, "right"));
+                if(val.type() != cty.parameters()[2].type())
+                  val = typecast_exprt{val, cty.parameters()[2].type()};
+                call_ops.push_back(val);
+              }
+              return code_expressiont{side_effect_expr_function_callt{
+                trap_sym->symbol_expr(),
+                std::move(call_ops),
+                cty.return_type(),
+                get_location(expr_node)}};
+            }
+          }
+        }
+      }
       // ES2024 §20.1.2.7: If LHS is a property of a frozen object,
       // the assignment is silently ignored (non-strict mode). We
       // convert it to a no-op.

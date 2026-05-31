@@ -420,3 +420,65 @@ plan.
 
 **Regression guard**:
 `regression/typescript/object-set-prototype-of/` (CORE).
+
+### `proxy-handler-traps` — get/set dispatch for inline-literal handlers (2026-05-31)
+
+**Was**: `new Proxy(target, handler)` returned `target` unchanged
+under the pragmatic identity model — handler traps NEVER ran.
+Programs that used Proxy as a security boundary (filtering reads
+or writes via `get`/`set` traps) silently bypassed their own
+checks in the model.
+
+**Resolution** (P3.3, scoped pragmatically):
+
+  1. New per-variable proxy registry in
+     `typescript_converter.h`:
+     `std::map<std::string, proxy_info_t> proxy_registry`,
+     storing the target AST node and the lifted trap function
+     names.
+
+  2. New `object_literal_inits` map tracks variables initialised
+     to inline `ObjectLiteralExpression`s, so `new Proxy(target,
+     handlerVar)` can resolve `handlerVar` to its underlying
+     literal.
+
+  3. `convert_variable_statement` recognises
+     `const|let var = new Proxy(target, handler)` where `handler`
+     is an inline literal (or resolves to one). For each
+     `MethodDeclaration` or `PropertyAssignment` with name `get`
+     or `set`, the trap's function body is lifted to a synthetic
+     top-level function `__proxy_<var>_<trap>_<N>` via
+     `convert_function_declaration_with_name`. The variable is
+     then registered.
+
+  4. `convert_expression` for `PropertyAccessExpression` checks
+     whether the receiver is a registered proxy with a `get`
+     trap. If so, it builds a function call
+     `__proxy_<var>_get_<N>(target_value, "<prop>")` and returns
+     the trap's result instead of falling through to a struct
+     member access on the target.
+
+  5. `convert_variable_statement`'s assignment path checks
+     whether `proxy.foo = v` writes to a registered proxy with a
+     `set` trap. If so, it routes the write through
+     `__proxy_<var>_set_<N>(target_value, "<prop>", value)`.
+
+**Scope (carried in §2.7)**:
+
+  - Only `get` and `set` traps. Other traps (`has`,
+    `deleteProperty`, `apply`, `construct`, etc.) still use the
+    pragmatic identity model.
+  - Only inline-literal handlers (or single-hop variable
+    handlers). Dynamic-handler patterns aren't tracked.
+  - `proxy[expr]` element access still falls through to the
+    target — only `proxy.foo` is intercepted.
+
+**Side effect**: any assertion inside a registered trap method
+body now fires per-access during verification, so security checks
+encoded as `console.assert(key !== DANGEROUS)` style guards
+inside the trap actually run. Verified by the regression test
+which has the trap assert `key === "v"` and confirms it succeeds
+when accessed as `p.v`.
+
+**Regression guard**:
+`regression/typescript/proxy-handler-traps/` (CORE).
