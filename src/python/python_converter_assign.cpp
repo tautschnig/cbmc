@@ -59,8 +59,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         {
           member_exprt lhs{
             dereference_exprt{obj}, attr, st.get_component(attr).type()};
-          if(rhs.type() != lhs.type())
-            rhs = safe_typecast(rhs, lhs.type());
+          rhs = coerce_assign_rhs(rhs, lhs.type());
           code_frontend_assignt assign{lhs, rhs};
           assign.add_source_location() = loc;
           return std::move(assign);
@@ -600,7 +599,7 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
           "'",
         loc);
     }
-    rhs = safe_typecast(rhs, sym2.type);
+    rhs = coerce_assign_rhs(rhs, sym2.type);
   }
 
   code_frontend_assignt assign{sym2.symbol_expr(), rhs};
