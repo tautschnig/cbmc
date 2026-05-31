@@ -812,6 +812,48 @@ marker at call sites (P-misc, +1):
   detect the unsoundness correctly thanks to the
   marker being distinguishable from all other strings.
 
+Architectural cluster v20: PLR §3.2 boundary
+helpers + class-constructor sequencing (refactor;
+0 net):
+- python_converter.h/.cpp: introduced
+  coerce_call_argument, coerce_assign_rhs,
+  coerce_return_value as the canonical entry
+  points for PLR §3.2 typed-slot adaptations
+  (None-marker rewrites for str / int / float at
+  call, assign, and return boundaries). All three
+  delegate to the private coerce_to_typed_slot
+  body so future PLR adaptations land in one
+  place. Recognises both the literal struct form
+  and symbol-expression form of python_value{NONE}
+  (the latter handles imported-module-frozen
+  defaults).
+- lookup_init_via_mro: extracted the C3 MRO walk
+  for `__init__` resolution that was open-coded
+  across 5 sites.
+- build_class_init_call: extracted the full
+  PLR §9.3 class-constructor sequence (MRO walk →
+  arg conversion → kwarg matching → default
+  padding → boundary coercion → emit
+  side_effect_expr_function_callt) into one
+  helper. Three sites that previously didn't do
+  kwargs / defaults padding (convert_assign
+  Attribute target, convert_for class init,
+  convert_with context-manager init) now do them
+  for free.
+- python_converter_call.cpp /
+  python_converter_call_user.cpp /
+  python_converter_call_method.cpp /
+  python_converter_assign.cpp /
+  python_converter_control.cpp /
+  python_converter_except.cpp: migrated to the
+  new helpers. Net ~280 lines deleted across 6
+  files.
+- doc/python-frontend-architecture.md: new
+  "Type-coercion at boundaries" section
+  documenting the canonical helpers and the
+  "soundness via NULL-deref" anti-pattern to
+  watch for when adding new boundary sites.
+
 ## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |

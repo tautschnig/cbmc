@@ -480,6 +480,137 @@ substantially slower.
 | `--python-lazy-stubs` | off | Skip method bodies in imported stubs; signatures-only |
 | `--python-smt-strings` | off | Use the SMT string theory backend instead of refinement-strings |
 
+## Type-coercion at boundaries (PLR §3.2)
+
+Python is gradually typed: a value of one type can be passed
+through a "typed slot" — a function argument with an annotation,
+a return slot with an annotation, an annotated assignment
+target — and the converter must adapt the value to fit the slot.
+PLR §3.2 specifies what's legal; the frontend implements the
+adaptations through a family of `coerce_*` helpers.
+
+### Boundary helpers
+
+The converter has four boundary contexts where typed-slot
+coercion happens. Each has a dedicated public helper on
+`python_convertert`:
+
+| Boundary | Helper | Used at |
+|---|---|---|
+| Call argument | `coerce_call_argument(arg, param_type)` | every site emitting a `side_effect_expr_function_callt` for a Python user-call (see `coerce_call_arguments` for the batch form) |
+| Assignment RHS | `coerce_assign_rhs(rhs, lhs_type)` | every site emitting `code_frontend_assignt` whose LHS has a declared natural type |
+| Return value | `coerce_return_value(val, return_type)` | every site emitting `code_frontend_returnt` whose value has a different type than the function's declared return |
+| Container element | (no dedicated helper yet — uses `safe_typecast`) | list / dict / set element coercion in builders and builtins |
+
+All four are thin wrappers over the private
+`coerce_to_typed_slot` (`src/python/python_converter.cpp`),
+which hosts the shared PLR rules. The boundary-named helpers
+exist solely so that every PLR call-site is grep-able by intent
+("what kind of boundary is this?"). When PLR ever specifies
+divergent rules per boundary, only the relevant public helper
+changes.
+
+### None marker convention
+
+PLR §3.2 says `None` is the single value of `NoneType` and may
+flow through any typed slot via the gradual type system. When
+a `python_value{NONE}` value reaches a typed slot, the converter
+rewrites it to a per-target-type marker rather than letting the
+generic `safe_typecast` / `unwrap_value` path produce a
+NULL-deref or wrong-field-extraction:
+
+| Target type | Marker | Recognised at compare site by |
+|---|---|---|
+| `python_string` | `{length=0, data=NULL}` | length-0 fast-path (cluster v9) |
+| `python_int` (signedbv, integer) | `python_none_sentinel_int()` cast to target | `(x == sentinel)` |
+| `python_float` (floatbv) | sentinel cast to IEEE double via `ieee_floatt::from_integer` | `(x == sentinel_f)` |
+| `python_list` | TODO — currently NULL deref | TODO |
+| `python_dict` | TODO — currently NULL deref | TODO |
+| `python_value` | leave as-is (the slot is already tagged-union) | tag check |
+
+The recognizer accepts BOTH the literal struct form
+(`is_python_none_constant(arg)`) and a symbol-expression whose
+stored value is `python_value{NONE}` — this is how the
+imported-module pre-pass freezes per-`FunctionDef` defaults at
+module scope into static `__def_<func>_<idx>` symbols (see
+`python_converter_module.cpp`). Without the symbol-form path
+the defaults loop would bind the wrong field for
+`Optional[T] = None` cases.
+
+### Why have a separate "boundary" abstraction?
+
+The first version of the frontend used `safe_typecast`
+everywhere, which doesn't know about boundary semantics. The
+generic path emits goto code that's "sound by accident" —
+NULL-deref of `__str_ptr` produces nondet which CBMC sometimes
+treats as nondet (correct for verification, wrong for "is
+None") and sometimes as undefined behaviour (sound but
+fragile). A test would pass or fail depending on which
+counter-example the solver happened to find first.
+
+Centralising boundary adaptations into named helpers means:
+
+1. **Each PLR rule has one home.** `is None` semantics for
+   typed slots, `Optional[T] = None` defaults binding, return-
+   value None-marker — all in `coerce_to_typed_slot`.
+2. **Future PLR adaptations land in one place.** Adding
+   `Optional[list] = None` → empty-list marker means changing
+   `coerce_to_typed_slot`, and every caller (call args, assign
+   RHS, return value) gets the fix simultaneously.
+3. **Boundary-specific rules can diverge cleanly.** If PLR ever
+   specifies different semantics per boundary, the named
+   wrappers diverge while the shared body stays the same.
+
+### Class-constructor sequence
+
+A related architectural pattern: every place that needs to emit
+a `ClassName(args)` call goes through one helper:
+
+```cpp
+auto init_call = build_class_init_call(class_name, self_lvalue, call_node, loc);
+if(init_call)
+  block.add(code_expressiont{*init_call});
+```
+
+`build_class_init_call` in `python_converter.cpp` does the full
+PLR §9.3 sequence in one place: MRO walk for `__init__`
+(`lookup_init_via_mro`) → `address_of(self_lvalue)` as first
+arg → positional + keyword arg conversion → default padding →
+`coerce_call_arguments` for boundary adaptations → emit
+`side_effect_expr_function_callt`. Currently used by
+`convert_call`, `convert_assign` (Attribute and Name targets),
+`convert_for` class init in convert_control, and the with-stmt
+context-manager init in `convert_except`.
+
+### "Soundness via NULL-deref" anti-pattern to avoid
+
+Whenever you add a new typed slot or a new boundary site, watch
+for code shape like:
+
+```cpp
+arg = safe_typecast(arg, param_type);
+```
+
+…where `arg` could be `python_value{NONE}` and `param_type` is
+a natural type (str, int, float, list, dict). The generic
+`safe_typecast` will route through `unwrap_value`, which for
+non-int targets emits a NULL deref (`*((typed *)NULL)`) or
+reads the wrong field (`__int_val` = 0 instead of sentinel).
+The symex may treat this as nondet, masking the bug.
+
+The fix is to use the appropriate boundary helper instead:
+
+```cpp
+arg = coerce_call_argument(arg, param_type);   // call boundary
+arg = coerce_assign_rhs(arg, target_type);     // assignment boundary
+arg = coerce_return_value(arg, return_type);   // return boundary
+```
+
+`safe_typecast` is still the right tool for non-PLR contexts:
+intermediate type-coercion inside an expression, internal
+representation conversions, etc. — anywhere there is no typed
+slot semantics involved.
+
 ## Where to make changes
 
 | Want to add... | Touch | Why |
@@ -490,6 +621,9 @@ substantially slower.
 | New library stub (e.g. `random`, `datetime`, `collections`) | `src/python/library/<name>.py` | Pure Python; the converter ingests it just like user code |
 | New language flag | `python_language.{h,cpp}` (declare + parse) + `set_python_*` setter on `python_convertert` | The flag needs to be threaded from CLI to the converter |
 | New checker property | `add_check(cond, kind, message, loc)` from any converter file | Properties register with the frontend's `pending_checks` and surface in CBMC output |
+| New boundary call site (call / assign / return) | Use `coerce_call_argument`, `coerce_assign_rhs`, or `coerce_return_value` instead of `safe_typecast` | The boundary helpers apply PLR §3.2 None-marker adaptations; raw `safe_typecast` would emit NULL-deref for typed-None — see the "Type-coercion at boundaries" section above |
+| New class-constructor call site | Call `build_class_init_call(class_name, self_lvalue, call_ast, loc)` and wrap the result in `code_expressiont` | Centralises MRO walk + arg conversion + kwarg matching + default padding + boundary coercion in one place |
+| New PLR adaptation for typed slots (e.g. `Optional[list]` marker) | `coerce_to_typed_slot` in `python_converter.cpp` | All four boundary helpers (call/assign/return/element) delegate here, so the rule applies everywhere uniformly |
 
 ## Tips for new contributors
 
