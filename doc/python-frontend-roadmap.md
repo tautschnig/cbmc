@@ -770,6 +770,48 @@ complex args + symbolic numerics:
   handling). The fix is architecturally correct and
   unblocks the positive subtests.
 
+Architectural cluster v18: --python-check-any-arg-attrs
+narrows on isinstance gates (P-misc, +3):
+- python_converter_helpers.h
+  collect_param_attribute_uses: extended to also record
+  per-(param, attr) gate classes from
+  'if isinstance(param, GateClass):' blocks. The empty-
+  string marker '' indicates an UNGATED access (always
+  check); otherwise the set holds the gate classes.
+- python_converter_call_user.cpp: at the call site,
+  when the caller's argument class is NOT in any of
+  the gates for the attr, the access is unreachable
+  at runtime — skip the attribute-error property.
+- Closes github_3313_2 / github_3313_3 / github_3305_2
+  ('def f(x: str | datetime): if isinstance(x,
+  datetime): x.year ...; f("foo")').
+- PLR §3.3.5: isinstance() narrows the type within
+  an if-branch.
+
+Architectural cluster v19: None→str arg uses {0,NULL}
+marker at call sites (P-misc, +1):
+- python_converter_call.cpp / python_converter_call_user.cpp
+  / python_converter_assign.cpp (3 paths): when a
+  python_value{NONE} argument is passed to a
+  python_string-typed parameter, bind as the
+  canonical {0, NULL} length-0 marker rather than
+  going through unwrap_value's NULL-deref path
+  (`*(python_value{NONE}.__str_ptr)` was being treated
+  as nondet via the NULL deref).
+- python_converter_defs.cpp: class-field type
+  inference now recognises BoolOp ('y or "foo"') when
+  both operands have agreed type — so 'self.y' is
+  python_string rather than python_value, matching
+  the RHS's actual runtime type.
+- The marker is recognised by the length-0
+  Optional[str] fast-path at compare sites
+  (cluster v9).
+- Closes github_2992_logic ('Bar(None)' where
+  '__init__' does 'self.y = y or "foo"').
+- The optional3_fail soundness test continues to
+  detect the unsoundness correctly thanks to the
+  marker being distinguishable from all other strings.
+
 ## Status snapshot (wave 41 mid-, 2026-05-27)
 
 | Metric | Wave 21 baseline | Wave 40 (prior) | Current | Δ vs wave 40 |

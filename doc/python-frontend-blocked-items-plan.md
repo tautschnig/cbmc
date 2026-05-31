@@ -530,7 +530,7 @@ to it.
 
 ---
 
-**Last updated:** 2026-05-30 (PASS 2870 cumulative wave 41 +269).
+**Last updated:** 2026-05-31 (PASS 2874 cumulative wave 41 +273).
 P0 phases 0.A–0.F substantially complete; P1.B + P1.D landed
 (symbolic string subscript and forward slicing via
 `cprover_string_substring`); P2.B landed (symbolic-string genexp
@@ -539,4 +539,7 @@ annotation as list[Any]); cluster v15 imported-module
 class-instance return-type detection (+5); cluster v16 lambda
 annotation override + map() result init (+3); cluster v17
 complex constructor refactor (architectural; 0 net but unblocks
-positive subtests).
+positive subtests); cluster v18 isinstance gate narrowing for
+--python-check-any-arg-attrs (+3); cluster v19 None→str arg
+{0,NULL} marker (+1, includes BoolOp class-field type
+inference).
