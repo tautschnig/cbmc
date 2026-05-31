@@ -344,8 +344,9 @@ codet python_convertert::convert_with(const jsont &stmt)
           }
 
           // Call __init__ on manager
-          irep_idt init_id{"python::" + cls_name + "::__init__"};
-          const symbolt *init_sym = symbol_table.lookup(init_id);
+          irep_idt init_id;
+          const symbolt *init_sym;
+          std::tie(init_id, init_sym) = lookup_init_via_mro(cls_name);
           if(init_sym != nullptr)
           {
             exprt::operandst args;

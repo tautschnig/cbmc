@@ -2570,6 +2570,30 @@ void python_convertert::coerce_call_arguments(
     args[i] = coerce_call_argument(args[i], params[i].type());
 }
 
+std::pair<irep_idt, const symbolt *>
+python_convertert::lookup_init_via_mro(const std::string &class_name) const
+{
+  irep_idt init_id{"python::" + class_name + "::__init__"};
+  const symbolt *init_sym = symbol_table.lookup(init_id);
+  if(init_sym != nullptr)
+    return {init_id, init_sym};
+
+  // Inheritance fallback: walk the C3 MRO and return the first
+  // ancestor that defines `__init__`.
+  auto mro_it = class_mro.find(class_name);
+  if(mro_it == class_mro.end())
+    return {irep_idt{}, nullptr};
+
+  for(std::size_t i = 1; i < mro_it->second.size(); ++i)
+  {
+    irep_idt ancestor_init_id{"python::" + mro_it->second[i] + "::__init__"};
+    const symbolt *ancestor_sym = symbol_table.lookup(ancestor_init_id);
+    if(ancestor_sym != nullptr)
+      return {ancestor_init_id, ancestor_sym};
+  }
+  return {irep_idt{}, nullptr};
+}
+
 long python_convertert::exception_type_hash(const std::string &type_name) const
 {
   // Use class_tag_ids if the exception type is a known class
