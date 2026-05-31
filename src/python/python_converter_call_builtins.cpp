@@ -214,7 +214,34 @@ std::optional<exprt> python_convertert::try_builtin_call(
   else if(func_name == "iter")
   {
     if(args.is_array() && !as_array(args).empty())
-      return convert_expression(*as_array(args).begin());
+    {
+      // PLR §6.10: 'TypeError: 'NoneType' object is not
+      // iterable'. iter(None) raises TypeError. Mirrors the
+      // None-callable / None-subscript / len(None) shape.
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(!arg.is_nil() && is_python_none(arg, symbol_table))
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          pending_checks.push_back(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(h, exc_type_sym->type)});
+          }
+        }
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
+      return arg;
+    }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
   else if(func_name == "next")
@@ -223,6 +250,30 @@ std::optional<exprt> python_convertert::try_builtin_call(
     {
       const jsont &arg_ast = *as_array(args).begin();
       exprt arg = convert_expression(arg_ast);
+      // PLR §6.10: 'TypeError: 'NoneType' object is not an
+      // iterator'. next(None) raises TypeError. Same shape as
+      // iter(None) above.
+      if(!arg.is_nil() && is_python_none(arg, symbol_table))
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          pending_checks.push_back(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("TypeError");
+            pending_checks.push_back(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(h, exc_type_sym->type)});
+          }
+        }
+        return side_effect_expr_nondett{
+          python_value_type(), get_location(expr)};
+      }
       if(!arg.is_nil() && is_python_list_type(arg.type()))
       {
         const auto &data_type =
