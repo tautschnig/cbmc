@@ -402,57 +402,12 @@ exprt python_convertert::convert_call(const jsont &expr)
         code_frontend_assignt{tmp_sym.symbol_expr(), class_obj->symbol_expr()});
     }
 
-    auto [init_id, init_sym] = lookup_init_via_mro(func_name);
-    if(init_sym != nullptr)
+    auto init_call = build_class_init_call(
+      func_name, tmp_sym.symbol_expr(), expr, get_location(expr));
+    if(init_call)
     {
-      exprt::operandst init_args;
-      init_args.push_back(address_of_exprt{tmp_sym.symbol_expr()});
-      if(args.is_array())
-      {
-        for(const auto &arg : as_array(args))
-          init_args.push_back(convert_expression(arg));
-      }
-      // Handle keyword arguments
-      const code_typet &init_type = to_code_type(init_sym->type);
-      const jsont &keywords = json_member(expr, "keywords");
-      if(keywords.is_array())
-      {
-        for(const auto &kw : as_array(keywords))
-        {
-          std::string kw_name = json_string(json_member(kw, "arg"));
-          exprt kw_val = convert_expression(json_member(kw, "value"));
-          // Find the parameter index for this keyword
-          for(std::size_t pi = 0; pi < init_type.parameters().size(); pi++)
-          {
-            if(id2string(init_type.parameters()[pi].get_base_name()) == kw_name)
-            {
-              while(init_args.size() <= pi)
-                init_args.push_back(nil_exprt{});
-              init_args[pi] = kw_val;
-              break;
-            }
-          }
-        }
-      }
-      // Pad missing args with defaults
-      while(init_args.size() < init_type.parameters().size())
-        init_args.push_back(
-          safe_zero(init_type.parameters()[init_args.size()].type()));
-      for(std::size_t i = 0;
-          i < init_args.size() && i < init_type.parameters().size();
-          i++)
-      {
-        init_args[i] =
-          coerce_call_argument(init_args[i], init_type.parameters()[i].type());
-      }
-
-      side_effect_expr_function_callt call{
-        init_sym->symbol_expr(),
-        std::move(init_args),
-        empty_typet{},
-        get_location(expr)};
       // Inject the __init__ call before the current statement
-      pending_checks.push_back(code_expressiont{call});
+      pending_checks.push_back(code_expressiont{*init_call});
     }
 
     return tmp_sym.symbol_expr();

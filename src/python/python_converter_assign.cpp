@@ -1040,36 +1040,10 @@ codet python_convertert::convert_assign(const jsont &stmt)
             const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
             code_blockt result;
 
-            irep_idt init_id;
-            const symbolt *init_sym;
-            std::tie(init_id, init_sym) = lookup_init_via_mro(call_name);
-            if(init_sym != nullptr)
-            {
-              exprt::operandst init_args;
-              init_args.push_back(address_of_exprt{tmp_sym.symbol_expr()});
-              const jsont &call_args = json_member(value, "args");
-              if(call_args.is_array())
-              {
-                for(const auto &a : as_array(call_args))
-                  init_args.push_back(convert_expression(a));
-              }
-              // Match argument types to parameter types
-              const auto &init_params =
-                to_code_type(init_sym->type).parameters();
-              for(std::size_t ai = 0;
-                  ai < init_args.size() && ai < init_params.size();
-                  ai++)
-              {
-                init_args[ai] =
-                  coerce_call_argument(init_args[ai], init_params[ai].type());
-              }
-              side_effect_expr_function_callt call{
-                init_sym->symbol_expr(),
-                std::move(init_args),
-                empty_typet{},
-                loc};
-              result.add(code_expressiont{call});
-            }
+            auto init_call = build_class_init_call(
+              call_name, tmp_sym.symbol_expr(), value, loc);
+            if(init_call)
+              result.add(code_expressiont{*init_call});
 
             result.add(code_frontend_assignt{lhs, tmp_sym.symbol_expr()});
             return std::move(result);
@@ -1142,70 +1116,11 @@ codet python_convertert::convert_assign(const jsont &stmt)
         }
 
         // Call __init__(&var, args...)
-        irep_idt init_id;
-        const symbolt *init_sym;
-        std::tie(init_id, init_sym) = lookup_init_via_mro(call_name);
-        if(init_sym != nullptr)
+        auto init_call =
+          build_class_init_call(call_name, var_sym.symbol_expr(), value, loc);
+        if(init_call)
         {
-          exprt::operandst arguments;
-          arguments.push_back(address_of_exprt{var_sym.symbol_expr()});
-
-          const jsont &call_args = json_member(value, "args");
-          if(call_args.is_array())
-          {
-            for(const auto &arg : as_array(call_args))
-              arguments.push_back(convert_expression(arg));
-          }
-
-          // Handle keyword arguments
-          const code_typet &init_type = to_code_type(init_sym->type);
-          const jsont &kw_args = json_member(value, "keywords");
-          if(kw_args.is_array())
-          {
-            for(const auto &kw : as_array(kw_args))
-            {
-              std::string kw_name = json_string(json_member(kw, "arg"));
-              exprt kw_val = convert_expression(json_member(kw, "value"));
-              for(std::size_t pi = 0; pi < init_type.parameters().size(); pi++)
-              {
-                if(
-                  id2string(init_type.parameters()[pi].get_base_name()) ==
-                  kw_name)
-                {
-                  while(arguments.size() <= pi)
-                    arguments.push_back(nil_exprt{});
-                  arguments[pi] = kw_val;
-                  break;
-                }
-              }
-            }
-          }
-
-          // Pad missing arguments with defaults (safe_zero for each param type)
-          while(arguments.size() < init_type.parameters().size())
-          {
-            std::size_t idx = arguments.size();
-            arguments.push_back(safe_zero(init_type.parameters()[idx].type()));
-          }
-          // Replace nil entries (gaps from keyword matching) with defaults
-          for(std::size_t i = 0; i < arguments.size(); i++)
-          {
-            if(arguments[i].is_nil() && i < init_type.parameters().size())
-              arguments[i] = safe_zero(init_type.parameters()[i].type());
-          }
-
-          // Typecast arguments to match parameter types
-          for(std::size_t i = 0;
-              i < arguments.size() && i < init_type.parameters().size();
-              i++)
-          {
-            arguments[i] = coerce_call_argument(
-              arguments[i], init_type.parameters()[i].type());
-          }
-
-          side_effect_expr_function_callt call{
-            init_sym->symbol_expr(), std::move(arguments), empty_typet{}, loc};
-          code_expressiont call_stmt{call};
+          code_expressiont call_stmt{*init_call};
           call_stmt.add_source_location() = loc;
           result.add(std::move(call_stmt));
         }

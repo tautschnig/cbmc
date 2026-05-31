@@ -2594,6 +2594,73 @@ python_convertert::lookup_init_via_mro(const std::string &class_name) const
   return {irep_idt{}, nullptr};
 }
 
+std::optional<side_effect_expr_function_callt>
+python_convertert::build_class_init_call(
+  const std::string &class_name,
+  const exprt &self_lvalue,
+  const jsont &call_node,
+  const source_locationt &loc)
+{
+  auto [init_id, init_sym] = lookup_init_via_mro(class_name);
+  if(init_sym == nullptr)
+    return std::nullopt;
+
+  const code_typet &init_type = to_code_type(init_sym->type);
+  const auto &params = init_type.parameters();
+
+  exprt::operandst init_args;
+  init_args.push_back(address_of_exprt{self_lvalue});
+
+  // Positional arguments from the Call AST.
+  const jsont &call_args = json_member(call_node, "args");
+  if(call_args.is_array())
+  {
+    for(const auto &a : as_array(call_args))
+      init_args.push_back(convert_expression(a));
+  }
+
+  // Keyword arguments — match by parameter base-name; fill any
+  // index gaps with `nil_exprt` so the default-padding pass below
+  // can replace them with `safe_zero` of the param type.
+  const jsont &keywords = json_member(call_node, "keywords");
+  if(keywords.is_array())
+  {
+    for(const auto &kw : as_array(keywords))
+    {
+      std::string kw_name = json_string(json_member(kw, "arg"));
+      exprt kw_val = convert_expression(json_member(kw, "value"));
+      for(std::size_t pi = 0; pi < params.size(); pi++)
+      {
+        if(id2string(params[pi].get_base_name()) == kw_name)
+        {
+          while(init_args.size() <= pi)
+            init_args.push_back(nil_exprt{});
+          init_args[pi] = std::move(kw_val);
+          break;
+        }
+      }
+    }
+  }
+
+  // Pad any unprovided positional with safe_zero(param_type).
+  while(init_args.size() < params.size())
+    init_args.push_back(safe_zero(params[init_args.size()].type()));
+
+  // Replace nil entries (left as gaps by keyword matching) with
+  // the same safe_zero default.
+  for(std::size_t i = 0; i < init_args.size() && i < params.size(); i++)
+  {
+    if(init_args[i].is_nil())
+      init_args[i] = safe_zero(params[i].type());
+  }
+
+  // Apply PLR §3.2 call-boundary adaptations (None markers, etc.).
+  coerce_call_arguments(init_args, params);
+
+  return side_effect_expr_function_callt{
+    init_sym->symbol_expr(), std::move(init_args), empty_typet{}, loc};
+}
+
 long python_convertert::exception_type_hash(const std::string &type_name) const
 {
   // Use class_tag_ids if the exception type is a known class

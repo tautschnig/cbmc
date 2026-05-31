@@ -344,30 +344,10 @@ codet python_convertert::convert_with(const jsont &stmt)
           }
 
           // Call __init__ on manager
-          irep_idt init_id;
-          const symbolt *init_sym;
-          std::tie(init_id, init_sym) = lookup_init_via_mro(cls_name);
-          if(init_sym != nullptr)
-          {
-            exprt::operandst args;
-            args.push_back(address_of_exprt{mgr.symbol_expr()});
-            const jsont &call_args = json_member(ctx_expr, "args");
-            if(call_args.is_array())
-            {
-              for(const auto &a : as_array(call_args))
-                args.push_back(convert_expression(a));
-            }
-            const auto &init_params =
-              to_code_type(init_sym->type).parameters();
-            for(std::size_t ai = 0; ai < args.size() && ai < init_params.size();
-                ai++)
-            {
-              args[ai] = coerce_call_argument(args[ai], init_params[ai].type());
-            }
-            side_effect_expr_function_callt call{
-              init_sym->symbol_expr(), std::move(args), empty_typet{}, loc};
-            block.add(code_expressiont{call});
-          }
+          auto init_call =
+            build_class_init_call(cls_name, mgr.symbol_expr(), ctx_expr, loc);
+          if(init_call)
+            block.add(code_expressiont{*init_call});
 
           // Call __enter__ and bind result to v.
           if(enter_sym != nullptr)
