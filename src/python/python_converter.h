@@ -509,6 +509,14 @@ private:
   /// the int default. Without this the typecast at append
   /// time zeros struct-typed elements (e.g. strings).
   std::map<irep_idt, typet> empty_list_inferred_types;
+  /// PLR §3.2: symbol IDs whose value has set-semantics —
+  /// created by `set(iterable)` builtin or by a Set literal
+  /// (a list-typed storage but logically order-independent).
+  /// Equality compare uses multiset semantics whenever either
+  /// operand is in this set. The flag is propagated through
+  /// Name→Name assignments so `y = set(...); y == {...}`
+  /// works after one alias hop.
+  std::set<irep_idt> set_semantic_symbols;
   /// Symbol identifiers whose declared annotation was
   /// `Optional[T]` (or any union including `None`). The
   /// declared type collapses to T (since None is encoded as
