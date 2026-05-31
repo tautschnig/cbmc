@@ -2725,9 +2725,33 @@ std::optional<exprt> python_convertert::try_method_call(
             if(obj.type().id() == ID_pointer)
               arguments.push_back(obj);
             else if(obj.id() == ID_side_effect)
-              arguments.push_back(side_effect_expr_nondett{
-                pointer_typet{obj.type(), config.ansi_c.pointer_width},
-                get_location(expr)});
+            {
+              // PLR §6.3.2 chained method call: `a.f().g()` —
+              // f() returns a class instance, .g() is called
+              // on that instance. We need the address of the
+              // returned struct. Materialise the call result
+              // into a fresh temp symbol so `&temp` is a
+              // valid lvalue address; without this we'd push a
+              // nondet pointer and the callee would see
+              // garbage for self.
+              static unsigned chain_tmp_ctr = 0;
+              std::string tmp_name =
+                "__chain_tmp_" + std::to_string(chain_tmp_ctr++);
+              std::string tmp_qname = qualify_name(tmp_name);
+              irep_idt tmp_id{tmp_qname};
+              if(symbol_table.lookup(tmp_id) == nullptr)
+              {
+                symbolt tmp_sym{tmp_id, obj.type(), "python"};
+                tmp_sym.base_name = tmp_name;
+                tmp_sym.is_lvalue = true;
+                tmp_sym.is_state_var = true;
+                symbol_table.add(tmp_sym);
+              }
+              const symbolt &tmp_sym = symbol_table.lookup_ref(tmp_id);
+              pending_checks.push_back(
+                code_frontend_assignt{tmp_sym.symbol_expr(), obj});
+              arguments.push_back(address_of_exprt{tmp_sym.symbol_expr()});
+            }
             else
               arguments.push_back(address_of_exprt{obj});
           }
