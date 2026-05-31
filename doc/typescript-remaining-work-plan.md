@@ -1,4 +1,4 @@
-# TypeScript Frontend — Remaining Work Plan (2026-05-29)
+# TypeScript Frontend — Remaining Work Plan (2026-05-31)
 
 For the consolidated tracker of limitations, architectural debt, and
 external dependencies, see
@@ -6,144 +6,82 @@ external dependencies, see
 This document is the prioritised roadmap of planned future work; it
 is the answer to "what should we do next?"
 
-Replaces the 2026-05-16 plan; reprioritised after the security-audit
-work surfaced new high-leverage items (§4.3 cross-procedural triage,
-public CodeQL pack release) and confirmed several smaller items as
-lower priority than originally estimated.
-
 ## Current state
 
-- 735 CORE tests, 1 KNOWNBUG (`async-race-undetected`, opt-in design choice).
-- Frontend invariant violations observed across 301 real-world AWS
-  TypeScript harnesses: 1 class, now resolved (§2.9). See
+- 770+ CORE tests, 1 KNOWNBUG (`async-race-undetected`, opt-in design choice).
+- Frontend invariant violations observed across the 35-repo, 75-finding
+  audit run: 1 class, now resolved (§2.9 in the limitations doc). See
   [typescript-known-limitations.md §7](typescript-known-limitations.md)
   for the audit-driven validation evidence.
-
-## Recently resolved (since 2026-05-16)
-
-| Plan item | Status | Commit |
-|-----------|--------|--------|
-| 2.8 mixed-union arrays workaround | done | 5c06761f7e |
-| 3.1 object-bits auto-detect warning | done | 5c06761f7e |
-| 9. WeakRef.deref() | done | 5c06761f7e |
-| 2.9 for-of/split member_exprt invariant | done | 1dda2c44f6 |
-| 3.4 taint analysis precision (value-typed) | done | (see changelog) |
-| P1.1 RegExp Phase 2 (NFA-based metacharacters) | done | 7d98efe271 |
-| P1.2 Date calendar getters | done | (this commit) |
+- All P2 and P3 items from the 2026-05-29 plan have been resolved
+  (see Completed appendix below).
 
 ---
 
-## Priority bands
+## Active items (priority order)
 
-Priority is `(impact × feasibility) / risk`, weighted by signal from
-the 35-repo, 301-harness audit run. P0 = soundness-relevant or
-cheap-and-clear; P1 = high impact, well-bounded; P2 = medium impact;
-P3 = low impact or high risk; P4 = long-term / external dependency.
-
-### P0 — Soundness-relevant, ≤ 2 days
+### P0 — Soundness-relevant
 
 | # | Item | Estimate | Status |
 |---|------|----------|--------|
-| **P0.3** | Upstream the 4 solver-side fixes accumulated on this branch | 1–2 days + review cycle | Pending |
-| **P0.4-light** | Document the value-typed-proxy null-safety pattern for §1.7 with a worked example regression test | 2 hours | Pending |
+| **P0.3** | Upstream the 4 solver-side fixes accumulated on this branch | 1–2 days + review cycle | Pending push permission |
 
-P0.1 (mixed-union workaround), P0.2 (object-bits warning), and the
-original "P0.4 full nullable wrapper" have been moved out of P0:
-the first two are done; the full P0.4 is reprioritised down because
-the 35-repo audit did not encounter a single reference-type-null
-issue that the current value-typed proxy pattern could not handle.
-A primitive (`__CPROVER_nondet_nullable_ref<T>()`) can be added later
-if a real user need surfaces.
+The four commits live on `~/upstream-prep-cbmc-strings/` ready to
+push. They benefit any frontend (not just TypeScript) and are
+unblocked once permission is granted.
 
-### P1 — High user-facing impact, well-bounded effort
+### P1 — High user-facing impact
 
 | # | Item | Estimate | Status |
 |---|------|----------|--------|
-| **P1.1** | RegExp Phase 2 (metacharacters via NFA: `.` `*` `+` `?` `[]` `^` `$` `\d` `\w` `\s`) | 2–3 days | done |
-| **P1.1b** | RegExp Phase 2b: `\|` alternation, `(...)` grouping, `{n,m}` quantifiers | 2 days | pending |
-| **P1.2** | Date calendar getters (getMonth, getDate, getDay, getHours, getMinutes, getSeconds, getMilliseconds) | 1 day | done |
-| **P1.3** | Integrate CodeQL `DataFlow::Global` into triage queries (Q1, Q2, Q4) | 3–4 days | done |
-| **P1.4** | Public release skeleton for the CodeQL pack (waits on coordinated-disclosure completion) | 2–3 days | pending |
+| **P1.1b** | RegExp Phase 2b: `\|` alternation, `(...)` grouping, `{n,m}` quantifiers | 2 days | Held by user request |
+| **P1.4** | Public release skeleton for the CodeQL pack | 2–3 days | Blocked on coordinated-disclosure window |
 
-#### P1.1 — RegExp Phase 2 plan
+#### P1.1b — RegExp Phase 2b plan
 
-- Build a small NFA from the regex pattern at conversion time (Thompson construction).
-- For constant input strings: simulate the NFA and return true/false.
-- For symbolic input: return nondet (Phase 3 with SMT `str.in_re` would handle this).
-- Supported metacharacters: `.` (any char), `*` (zero+), `+` (one+), `?` (optional), `[abc]` / `[^abc]` (char class), `^` / `$` (anchors), `\d` / `\w` / `\s` (shorthand classes), `|` (alternation), `()` (grouping, no captures).
-- Unsupported (defer): backreferences, lookahead/lookbehind, named groups, Unicode property escapes.
+Extend the NFA built in Phase 2 (commit `7d98efe271`) to handle
+alternation, grouping, and bounded quantifiers. The NFA construction
+already supports the underlying structure; this is mostly parser
+work plus a few simulation extensions.
 
-**Risk**: Medium (NFA construction is well-understood; regex edge cases are numerous but bounded by the supported subset).
-**Dependencies**: None for Phase 2. Phase 3 depends on SMT-string integration (P4.1).
+**Risk**: Medium (regex edge cases are numerous; new test coverage
+needed for backtracking-prone patterns).
 
-#### P1.2 — Date getters plan
-
-Implement ES2024 §21.4.1 algorithms:
-- `getMonth`: extract month from days-since-epoch (needs leap-year table).
-- `getDate`: day-of-month from days-since-epoch.
-- `getDay`: `(days + 4) % 7` (Jan 1 1970 was Thursday = 4).
-- `getHours/Minutes/Seconds/Milliseconds`: modular arithmetic on the time value.
-
-The hours/minutes/seconds/milliseconds are simple
-(`Math.floor(time / 3600000) % 24`, etc.). Month and day-of-month
-need the cumulative-days-per-month table with leap-year handling.
-
-**Risk**: Low (pure arithmetic, well-specified).
-
-#### P1.3 — CodeQL DataFlow::Global integration
-
-The auto-triage pipeline currently relies on syntactic CodeQL matches
-plus a manual cross-procedural pass implemented in `triage.py` (grep
-callers + classify args). Replacing this with CodeQL's
-`DataFlow::Global` API for each query would:
-
-- Move call-graph reasoning into the query itself (more precise, less
-  brittle than grep-based caller analysis).
-- Remove the `triage.py` cross-proc heuristic entirely.
-- Enable cross-module data flow that the grep approach cannot follow.
-
-**Plan**:
-1. Convert each Q1–Q6 query to expose a `Configuration` extending `DataFlow::Global`.
-2. Sources: function-parameter access where the function is a public export.
-3. Sinks: the dangerous-pattern locations matched today.
-4. Sanitisers: known-safe library calls (e.g., `Object.hasOwn`, regex `.test`) modelled in CodeQL.
-5. Re-run the audit on a representative subset (5 repos) and compare TP/FP rates against the current pipeline.
-
-**Risk**: Medium — DataFlow::Global has its own learning curve; some queries may need re-modelled sanitisers.
+**Dependencies**: None for Phase 2b. Phase 3 (symbolic input
+matching via SMT `str.in_re`) depends on SMT-string integration
+(P4.1).
 
 #### P1.4 — Public release of the CodeQL pack
 
-Currently the `aws-ts-anti-patterns/` pack and `triage.py` live outside
-this repo. After coordinated disclosure of the 14 findings completes:
+After coordinated disclosure of the 14 findings completes:
 
-1. Move the pack to its own GitHub repo.
-2. Add a `README.md` walking through how to add a new database, run the queries, and triage hits.
-3. Add a GitHub Actions workflow that runs the pack on a TypeScript repo and posts results as a SARIF upload.
-4. Cross-reference from this doc and from `typescript-known-limitations.md §7`.
+1. Move the `aws-ts-anti-patterns/` pack to its own GitHub repo.
+2. Add a `README.md` walking through database creation, query
+   running, and triage.
+3. Add a GitHub Actions workflow that runs the pack on a TypeScript
+   repo and posts results as a SARIF upload.
+4. Cross-reference from this doc and from
+   `typescript-known-limitations.md §7`.
 
-**Blocked on**: coordinated disclosure window. Skeleton work (the README and Action) can start now.
+Skeleton work (the README and Action) can start now; the public
+push is held until the disclosure window opens.
 
-### P2 — Medium impact, low risk
+### P2 — Medium impact (deferred)
 
 | # | Item | Estimate | Status |
 |---|------|----------|--------|
-| P2.1 | Generator `next(value)` parameter | 1–2 days | deferred (deeper than estimate; needs state-machine refactor) |
-| P2.2 | `yield*` delegation (constant case) | half day | done (this commit) |
-| P2.3 | Well-known Symbols (`Symbol.iterator` etc., as named special properties) | 1 day | done (17c007d28f) |
-| P2.5 | Dynamic `import()` resolution via existing module infrastructure | half day | done (24e8048a9d) |
-| P2.6 | AST server error message improvements | 1 day | done (this commit) |
-| P2.7 | Harness template library — 4 templates (recursion-DoS, allowlist-injection, prototype-key-injection, path-traversal) with vulnerable+defensive pairs | 2–3 days | done (this commit) |
+| P2.1 | Generator `next(value)` parameter | 2–3 days | Deferred — needs state-machine refactor; audit doesn't exercise it |
 
-(P2.4 WeakRef.deref() landed in 5c06761f7e and is no longer in this list.)
+### P3 — Lower impact / harder upgrades (deferred)
 
-### P3 — Low impact or high risk
+The "pragmatic" implementations for P3.1–P3.4 cover the audit-relevant
+cases. The full versions remain documented as future work but no
+real harness has blocked on them:
 
-| # | Item | Estimate | Risk | Status |
-|---|------|----------|------|--------|
-| P3.1 | `Object.create` (single-prototype case) | 1 day | medium | done (this commit) |
-| P3.2 | `Object.setPrototypeOf` for common idioms (Error-subclass, defensive null, Reflect) | 0.5 day | low | done (this commit) |
-| P3.3 | Proxy get/set trap dispatch (inline-handler scope) | 1 day | medium | done (this commit) |
-| P3.4 | Mixed-union arrays — defensive guard in `simplify_index` + smarter frontend fallback | 1–2 days | medium | done (this commit) |
+| # | Full-version item | Estimate | Why deferred |
+|---|-------------------|----------|--------------|
+| P3.2-full | Runtime prototype-chain walking (every property access dispatches through `__proto`) | 2–3 days, high risk | Audit doesn't exercise; common idioms covered by current model |
+| P3.3-full | All 13 Proxy traps + element access + dynamic-handler patterns | 5–7 days, high risk | get/set dispatch covers the security-boundary use cases |
 
 ### P4 — Long-term / external dependency
 
@@ -154,25 +92,57 @@ this repo. After coordinated disclosure of the 14 findings completes:
 
 ---
 
-## Suggested two-week execution order
+## Suggested execution order
 
-**Week 1** — P0 backlog and the highest-impact P1 item:
+With most pending items either gated on external decisions or
+deliberately deferred, the natural next steps are:
 
-| Day | Tasks |
-|-----|-------|
-| 1 | P0.4-light: regression test + doc update for §1.7 workaround. Update work plan (this file) to reflect resolved items. |
-| 2–3 | P0.3: review the four solver-side commits, prepare them as standalone upstream-able patches; file as a draft against the public CBMC repo for upstream review. |
-| 3–5 | P1.1: RegExp Phase 2 — NFA construction + simulation for constant input; update the `string-regex-test-*` regression family. |
+1. **P0.3 push** when permission is granted.
+2. **P1.4 skeleton work** (README + GitHub Action) in parallel
+   with the disclosure window.
+3. **P1.1b** when the user lifts the hold on RegExp work.
+4. Watch the upstream `tautschnig/py` branch for SMT-string
+   landing; **P4.1 follow-up** is 1–2 weeks of migration work
+   when it lands.
 
-**Week 2** — Remaining P1 items and Phase 1.4 prep:
+P2.1 and the P3.x full-version upgrades are picked up only if a
+real harness blocks on them.
 
-| Day | Tasks |
-|-----|-------|
-| 1 | P1.2: Date calendar getters with leap-year table. |
-| 2–4 | P1.3: CodeQL DataFlow::Global integration for Q1, Q2, Q4 (the queries that produced the most cross-procedural FPs). |
-| 5 | P1.4 prep: README skeleton, GitHub Action draft, repo layout. Public push held until disclosure window opens. |
+---
 
-P2 items can be picked up opportunistically as user needs surface.
+## Completed (chronological appendix)
+
+Items resolved in earlier work, kept here for traceability. See
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) for
+the full narrative on each.
+
+### Since 2026-05-29
+
+| Item | Commit |
+|------|--------|
+| P3.3 Proxy get/set trap dispatch (inline-handler scope) | `06338955e3` |
+| P3.2 setPrototypeOf common-idiom recognition | `cc199cab3a` |
+| P3.4 Mixed-element-type array literals — defensive simplifier guard + frontend bailout | `0ca776b136` |
+| P3.1 `Object.create` static-prototype case | `3bd37894a6` |
+| P2.2 `yield*` delegation (constant case) | `834be36883` |
+| P2.6 Surface TypeScript syntax errors with file:line:col | `139eea8858` |
+| P2.7 Harness template library (recursion-DoS, allowlist-injection, prototype-key-injection, path-traversal) | `d45a286d88` |
+| P2.3 Well-known Symbols as `@@<name>` special property names | `17c007d28f` |
+| P2.5 Dynamic `import()` resolution | `24e8048a9d` |
+| P1.3 CodeQL `DataFlow::Global` integration (Q1, Q2, Q4) | `27e19b1795` |
+| P1.2 Date calendar getters | `532a56424c` |
+| P1.1 RegExp Phase 2 (NFA-based metacharacters) | `7d98efe271` |
+
+### 2026-05-16 to 2026-05-28
+
+| Item | Commit |
+|------|--------|
+| 2.8 mixed-union arrays workaround | `5c06761f7e` |
+| 3.1 object-bits auto-detect warning | `5c06761f7e` |
+| 9. WeakRef.deref() | `5c06761f7e` |
+| 2.9 for-of/split member_exprt invariant | `1dda2c44f6` |
+| 3.4 Taint analysis precision (value-typed) | (see changelog) |
+| Spec cross-referencing fixes (~30 small bug classes) | (see changelog top section) |
 
 ---
 

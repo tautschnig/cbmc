@@ -40,6 +40,38 @@ Entries that have been fully resolved should be moved to
 
 ---
 
+## 0. Resolved limitations (chronological)
+
+This block tracks limitations that are *no longer active*. It is
+the place to look first when wondering "is this still a problem?"
+For full narrative on each, see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+"Larger fixes (with narrative)".
+
+| Was § | Resolved | Topic | Tag |
+|-------|----------|-------|-----|
+| 2.7 | 2026-05-31 | Proxy `get`/`set` trap dispatch (inline-handler scope) | `proxy-handler-traps` |
+| 1.6, 2.6 | 2026-05-31 | `Object.setPrototypeOf` common-idiom recognition (Error-subclass, freeze, Reflect) | `object-set-prototype-of` |
+| 2.8 | 2026-05-30 | Mixed-element-type array literals — defensive `simplify_index` guard + frontend bailout | `mixed-union-array` |
+| 1.6, 2.6 | 2026-05-30 | `Object.create(Class.prototype)` static-class allocator + null safe-map | `object-create` |
+| 2.4 | 2026-05-29 | `yield*` delegation, constant-case inlining | `yield-star-delegation` |
+| 4.1 | 2026-05-29 | TypeScript syntax errors surface with file:line:col | `syntax-error-reporting` |
+| 2.2 | 2026-05-29 | Date calendar getters (`getMonth/Date/Day/Hours/Minutes/Seconds/Milliseconds`) | `date-calendar-getters` |
+| 2.1 | 2026-05-29 | RegExp Phase 2 — NFA-based metacharacter support | `regexp-*` |
+| 2.9 | 2026-05-29 | `for..of` over method-call result with index-map writes inside (`member_exprt` invariant on `String.split`) | `for-of-method-call-map-write` |
+| 2.5 | 2026-05-29 | Symbol-keyed properties as `@@<name>` special property names | (P2.3 commit `17c007d28f`) |
+| 3.4 | 2026-05-28 | Taint analysis precision (value-typed sources/sanitisers) | `flow-no-source` / `flow-sanitized` |
+
+Active *partial* resolutions (where the section below carries the
+remaining caveats): §2.7 (only get/set traps), §2.8 (only no-crash
+property), §1.6 (only static + common-idiom recognition).
+
+Sections preserved with one-line "Resolved: see changelog"
+redirects to keep stable cross-references: §2.1, §2.2, §2.4, §2.9,
+§3.4, §4.1.
+
+---
+
 ## 1. Architectural / model limitations
 
 These are limitations of the model itself — choices that were made for
@@ -303,9 +335,11 @@ and `regression/typescript/date-getters-symbolic/` (both CORE).
 **What**: `gen.next(42)` ignores the argument; the `yield` expression
 inside the generator does not receive the sent value.
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 8.
+**Why deferred**: Implementing this requires a real state machine
+per generator (the current model is an indexed array of
+pre-computed values). The audit doesn't exercise this case; deferred
+until a real harness blocks on it. Tracked as P2.1 in
+[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md).
 
 ### 2.4 yield* delegation (constant case resolved 2026-05-29)
 
@@ -319,29 +353,48 @@ sequence.
 own yields are not constants. These fall back to a single nondet
 yield.
 
-**Resolution**: see
+Resolved: see
 [typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
 "Larger fixes (with narrative)" → `yield-star-delegation`.
 Regression guard: `regression/typescript/yield-star-delegation/`
 (CORE).
 
-### 2.5 Symbol-keyed properties
+### 2.5 Symbol-keyed properties (resolved 2026-05-29)
 
-**What**: `obj[Symbol.iterator]` and other symbol keys can't be used
-because struct fields use string names.
+`obj[Symbol.iterator]` and other well-known Symbols are now stored
+as struct fields named `@@iterator`, `@@asyncIterator`, etc. See
+P2.3 in the work plan; commit `17c007d28f`.
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-item 9.
+### 2.6 Object.create / Object.setPrototypeOf (partially resolved 2026-05-30/31)
 
-### 2.6 Object.create / Object.setPrototypeOf
+**What now works**:
 
-**What**: Static prototype chain (resolved at conversion from class
-declarations) only; runtime prototype manipulation not supported.
+- `Object.create(Class.prototype)` allocates a fresh struct of that
+  class without calling its constructor.
+- `Object.create(null)` returns an empty struct (the "safe map"
+  idiom against prototype pollution).
+- `Object.create(someInstance)` clones the struct value.
+- `Object.setPrototypeOf(this, ClassName.prototype)` inside a
+  method whose `this` is already a `ClassName` (the Error-subclass
+  workaround) — silent no-op.
+- `Object.setPrototypeOf(obj, null)` (defensive freeze) — silent
+  no-op (sound: we don't carry chain-inheritance into struct
+  fields anyway).
+- `Reflect.setPrototypeOf` mirrors the above and returns boolean
+  `true`.
+- Genuine runtime rebindings (target's static type doesn't match
+  the proto's class) emit a warning at the call site and proceed
+  as no-op.
 
-**Tracking**: see
-[typescript-remaining-work-plan.md](typescript-remaining-work-plan.md)
-items 10, 11.
+**What still doesn't work**: full runtime prototype-chain walking
+(every property access dispatches through a `__proto` pointer per
+struct). See P3.2-full in the work plan; deferred indefinitely.
+
+Resolved entries: see
+[typescript-fixes-changelog.md](typescript-fixes-changelog.md) →
+`object-create`, `object-set-prototype-of`. Regression guards:
+`regression/typescript/object-create/`,
+`regression/typescript/object-set-prototype-of/` (both CORE).
 
 ### 2.7 Proxy handler traps (partially resolved 2026-05-31)
 

@@ -67,6 +67,26 @@ catches it.
 
 ## Larger fixes (with narrative)
 
+These are larger fixes that warrant their own narrative entry: a
+description of what was wrong, what changed, and what limitations
+(if any) remain. Each entry is tagged so it can be cross-referenced
+from `typescript-known-limitations.md`.
+
+**Index** (most recent first):
+
+| Tag | Date | Topic |
+|-----|------|-------|
+| `proxy-handler-traps` | 2026-05-31 | Proxy get/set trap dispatch for inline-literal handlers |
+| `object-set-prototype-of` | 2026-05-31 | Recognise common setPrototypeOf idioms (Error-subclass, freeze, Reflect) |
+| `mixed-union-array` | 2026-05-30 | Defensive guard in `simplify_index` + frontend bailout for heterogeneous array literals |
+| `object-create` | 2026-05-30 | `Object.create(Class.prototype)` static-class allocator + null safe-map |
+| `yield-star-delegation` | 2026-05-29 | `yield*` delegation, constant-case inlining |
+| `syntax-error-reporting` | 2026-05-29 | TypeScript syntax errors surface with file:line:col |
+| `date-calendar-getters` | 2026-05-29 | `getMonth/Date/Day/Hours/Minutes/Seconds/Milliseconds` |
+| `regexp-*` | 2026-05-29 | RegExp Phase 2 — NFA-based metacharacter support |
+| `for-of-method-call-map-write` | 2026-05-29 | `member_exprt` invariant on `String.split` inside `for..of` |
+| `flow-no-source` / `flow-sanitized` | 2026-05-28 | Taint analysis precision (value-typed sources/sanitisers) |
+
 The fixes below are richer than a single table line — each was a model
 or analysis-pass change with non-trivial reasoning. They are recorded
 in full here so the limitations document can stay focused on
