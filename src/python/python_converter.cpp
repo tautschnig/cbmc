@@ -2058,7 +2058,17 @@ exprt python_convertert::python_truthiness(const exprt &e)
   {
     // PLR §4.4: 0.0 (and -0.0) are falsy; NaN is truthy.
     // IEEE: 0.0 == -0.0, so a single != 0.0 covers both.
-    return notequal_exprt{e, safe_zero(t)};
+    // Also exclude the None sentinel (used to encode None
+    // when bound to a typed-float slot via
+    // coerce_to_typed_slot) so `if x:` for `x = None` bound
+    // to a typed-float param correctly returns False.
+    ieee_floatt none_f{
+      ieee_float_spect{to_floatbv_type(t)},
+      ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+    none_f.from_integer(none_sentinel);
+    return and_exprt{
+      not_exprt{ieee_float_equal_exprt{e, safe_zero(t)}},
+      not_exprt{ieee_float_equal_exprt{e, none_f.to_expr()}}};
   }
 
   // Python tagged union: dispatch on the __tag field.
