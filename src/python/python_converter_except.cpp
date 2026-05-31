@@ -280,6 +280,55 @@ codet python_convertert::convert_with(const jsont &stmt)
     for(const auto &item : as_array(items))
     {
       const jsont &optional_vars = json_member(item, "optional_vars");
+      const jsont &ctx_expr_pre = json_member(item, "context_expr");
+
+      // PLR §8.5: 'with EXPR as v:' calls EXPR.__enter__().
+      // If EXPR evaluates to None, the attribute lookup
+      // for __enter__ raises AttributeError ('NoneType'
+      // object has no attribute '__enter__'). Detect both
+      // the literal-None form and any expression whose
+      // value the recognizer identifies as None, and emit
+      // the AttributeError property up front.
+      bool ctx_is_none = false;
+      if(is_node_type(ctx_expr_pre, "Constant"))
+      {
+        const jsont &v = json_member(ctx_expr_pre, "value");
+        if(v.is_null())
+          ctx_is_none = true;
+      }
+      else if(is_node_type(ctx_expr_pre, "Name"))
+      {
+        std::string nm = json_string(json_member(ctx_expr_pre, "id"));
+        if(nm == "None")
+          ctx_is_none = true;
+        else
+        {
+          const symbolt *s = symbol_table.lookup(irep_idt{"python::" + nm});
+          if(s != nullptr && is_python_none_constant(s->value))
+            ctx_is_none = true;
+        }
+      }
+      if(ctx_is_none)
+      {
+        const symbolt *exc_sym =
+          symbol_table.lookup("python::__exception_active");
+        const symbolt *exc_type_sym =
+          symbol_table.lookup("python::__exception_type");
+        if(exc_sym != nullptr)
+        {
+          block.add(
+            code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+          if(exc_type_sym != nullptr)
+          {
+            long h = exception_type_hash("AttributeError");
+            block.add(code_frontend_assignt{
+              exc_type_sym->symbol_expr(),
+              from_integer(h, exc_type_sym->type)});
+          }
+        }
+        continue;
+      }
+
       if(!optional_vars.is_null() && is_node_type(optional_vars, "Name"))
       {
         std::string var_name = json_string(json_member(optional_vars, "id"));
@@ -319,8 +368,7 @@ codet python_convertert::convert_with(const jsont &stmt)
 
           // Manager temp (the context manager instance).
           static unsigned with_mgr_ctr = 0;
-          std::string mgr_name =
-            "__with_mgr_" + std::to_string(with_mgr_ctr++);
+          std::string mgr_name = "__with_mgr_" + std::to_string(with_mgr_ctr++);
           std::string mgr_qname = qualify_name(mgr_name);
           irep_idt mgr_id{mgr_qname};
           if(symbol_table.lookup(mgr_id) == nullptr)
@@ -360,10 +408,7 @@ codet python_convertert::convert_with(const jsont &stmt)
             {
               // void __enter__: just call it, no binding.
               side_effect_expr_function_callt call{
-                enter_sym->symbol_expr(),
-                std::move(eargs),
-                empty_typet{},
-                loc};
+                enter_sym->symbol_expr(), std::move(eargs), empty_typet{}, loc};
               block.add(code_expressiont{call});
             }
             else
@@ -401,15 +446,14 @@ codet python_convertert::convert_with(const jsont &stmt)
             typet ctx_class_type = ctx.type();
             if(ctx.type().id() == ID_struct)
             {
-              std::string tag =
-                id2string(to_struct_type(ctx.type()).get_tag());
+              std::string tag = id2string(to_struct_type(ctx.type()).get_tag());
               cls_name =
                 tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
             }
             else if(ctx.type().id() == ID_struct_tag)
             {
-              std::string tag = id2string(
-                to_struct_tag_type(ctx.type()).get_identifier());
+              std::string tag =
+                id2string(to_struct_tag_type(ctx.type()).get_identifier());
               if(tag.substr(0, 17) == "tag-python_class_")
                 cls_name = tag.substr(17);
               else if(tag.substr(0, 4) == "tag-")
