@@ -429,6 +429,17 @@ private:
   /// instances) but NOT in `class_owned_attrs` (so reads
   /// walk MRO to find the owner).
   std::map<std::string, std::set<std::string>> class_owned_attrs;
+  /// PLR §6.3.1: instance attributes can be created from any
+  /// function that has access to the instance, not only from
+  /// methods of the class. A free function `def f(x: A): x.v
+  /// = 1` introduces attribute `v` on every A instance the
+  /// function operates on. Since CBMC's GOTO uses static
+  /// structs, we must declare such attrs at class-definition
+  /// time. This map collects them by scanning module-level
+  /// (and nested) function bodies during a pre-pass; the
+  /// class def picks the discovered names up alongside the
+  /// method-body scan.
+  std::map<std::string, std::set<std::string>> dynamic_class_attrs;
   /// Per-class set of method names that are declared with
   /// @property. Attribute reads of these names call the method
   /// with self as the single argument (PLR §3.3.2).

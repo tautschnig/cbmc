@@ -6,8 +6,6 @@
 /// All logic and class-member state remains unchanged — this file is
 /// a pure source-split.
 
-#include "python_converter.h"
-
 #include <util/arith_tools.h>
 #include <util/bitvector_types.h>
 #include <util/c_types.h>
@@ -19,6 +17,7 @@
 #include <util/std_types.h>
 #include <util/symbol.h>
 
+#include "python_converter.h"
 #include "python_converter_helpers.h"
 #include "python_types.h"
 #include "python_value_type.h"
@@ -951,6 +950,92 @@ bool python_convertert::convert()
           }
         }
       }
+    }
+  }
+
+  // Pass 0.27: PLR 6.3.1 dynamic-attribute discovery from free
+  // functions. A function `def f(x: A): x.v = 1` introduces
+  // attribute `v` on the class A even though it's not declared
+  // in any of A's methods. Since GOTO structs are static, we
+  // collect such attrs here so convert_class_def can declare
+  // them at class-definition time.
+  if(body.is_array())
+  {
+    std::function<void(const jsont &)> scan_func_for_dyn_attrs =
+      [&](const jsont &fn_node)
+    {
+      const jsont &args_node = json_member(fn_node, "args");
+      const jsont &params = json_member(args_node, "args");
+      std::map<std::string, std::string> param_to_class;
+      if(params.is_array())
+      {
+        for(const auto &p : as_array(params))
+        {
+          const jsont &ann = json_member(p, "annotation");
+          std::string pname = json_string(json_member(p, "arg"));
+          if(is_node_type(ann, "Name"))
+          {
+            std::string ann_name = json_string(json_member(ann, "id"));
+            if(class_types.count(ann_name))
+              param_to_class[pname] = ann_name;
+          }
+        }
+      }
+      if(param_to_class.empty())
+        return;
+      std::function<void(const jsont &)> scan_body = [&](const jsont &b)
+      {
+        if(!b.is_array())
+          return;
+        for(const auto &s : as_array(b))
+        {
+          auto record_target = [&](const jsont &target)
+          {
+            if(!is_node_type(target, "Attribute"))
+              return;
+            const jsont &tv = json_member(target, "value");
+            if(!is_node_type(tv, "Name"))
+              return;
+            std::string base = json_string(json_member(tv, "id"));
+            auto it = param_to_class.find(base);
+            if(it == param_to_class.end())
+              return;
+            std::string attr = json_string(json_member(target, "attr"));
+            dynamic_class_attrs[it->second].insert(attr);
+          };
+          if(is_node_type(s, "Assign"))
+          {
+            const jsont &targets = json_member(s, "targets");
+            if(targets.is_array())
+              for(const auto &t : as_array(targets))
+                record_target(t);
+          }
+          else if(is_node_type(s, "AnnAssign"))
+            record_target(json_member(s, "target"));
+          // Recurse into nested control-flow blocks.
+          if(
+            is_node_type(s, "If") || is_node_type(s, "While") ||
+            is_node_type(s, "For") || is_node_type(s, "With") ||
+            is_node_type(s, "Try"))
+          {
+            scan_body(json_member(s, "body"));
+            scan_body(json_member(s, "orelse"));
+            scan_body(json_member(s, "finalbody"));
+            const jsont &handlers = json_member(s, "handlers");
+            if(handlers.is_array())
+              for(const auto &h : as_array(handlers))
+                scan_body(json_member(h, "body"));
+          }
+        }
+      };
+      scan_body(json_member(fn_node, "body"));
+    };
+    for(const auto &stmt : as_array(body))
+    {
+      if(
+        is_node_type(stmt, "FunctionDef") ||
+        is_node_type(stmt, "AsyncFunctionDef"))
+        scan_func_for_dyn_attrs(stmt);
     }
   }
 
