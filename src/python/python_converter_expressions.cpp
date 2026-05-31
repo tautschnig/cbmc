@@ -93,8 +93,7 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
   // possible at runtime in Python).
   if(body.type() != orelse.type())
   {
-    log_overapprox(
-      "IfExp branches have incompatible types — returning nondet");
+    log_overapprox("IfExp branches have incompatible types — returning nondet");
     return side_effect_expr_nondett{body.type(), get_location(expr)};
   }
 
@@ -109,6 +108,30 @@ exprt python_convertert::convert_subscript(const jsont &expr)
 
   if(value.is_nil())
     return nil_exprt{};
+
+  // PLR §6.10: 'TypeError: 'NoneType' object is not
+  // subscriptable'. Subscripting None raises TypeError. Set
+  // __exception_active=True with TypeError tag and emit a
+  // nondet python_value result. Mirrors len(None), iter-None,
+  // None.attr, None() shapes.
+  if(is_python_none(value, symbol_table))
+  {
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    const symbolt *exc_type_sym =
+      symbol_table.lookup("python::__exception_type");
+    if(exc_sym != nullptr)
+    {
+      pending_checks.push_back(
+        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long h = exception_type_hash("TypeError");
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
+      }
+    }
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+  }
 
   // PLR §3.3.1: custom __getitem__ dunder on class
   // instances. 'obj[key]' dispatches to
@@ -672,10 +695,9 @@ exprt python_convertert::convert_subscript(const jsont &expr)
     // here: nondet a sound python_string and emit a TypeError
     // property if the slice's static type is concretely not
     // an integer.
-    bool slice_is_int = slice.type().id() == ID_signedbv ||
-                        slice.type().id() == ID_unsignedbv ||
-                        slice.type().id() == ID_integer ||
-                        slice.type().id() == ID_bool;
+    bool slice_is_int =
+      slice.type().id() == ID_signedbv || slice.type().id() == ID_unsignedbv ||
+      slice.type().id() == ID_integer || slice.type().id() == ID_bool;
     if(!slice_is_int)
     {
       log_overapprox(
@@ -876,8 +898,7 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       exprt start64 = adjusted_idx;
       if(start64.type() != signedbv_typet{64})
         start64 = safe_typecast(start64, signedbv_typet{64});
-      exprt end64 = plus_exprt{
-        start64, from_integer(1, signedbv_typet{64})};
+      exprt end64 = plus_exprt{start64, from_integer(1, signedbv_typet{64})};
       return emit_string_function(
         ID_cprover_string_substring_func,
         {src_struct, start64, end64},
@@ -1359,6 +1380,31 @@ exprt python_convertert::convert_attribute(const jsont &expr)
 
   if(value.is_nil())
     return nil_exprt{};
+
+  // PLR §6.10: 'AttributeError: 'NoneType' object has no
+  // attribute X'. Reading any attribute on None raises
+  // AttributeError. Set __exception_active=True with
+  // AttributeError tag and emit a nondet python_value result so
+  // the rest of the conversion has something to bind. Mirrors
+  // the iter-None / ordering-with-None / len(None) shape.
+  if(is_python_none(value, symbol_table))
+  {
+    const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+    const symbolt *exc_type_sym =
+      symbol_table.lookup("python::__exception_type");
+    if(exc_sym != nullptr)
+    {
+      pending_checks.push_back(
+        code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+      if(exc_type_sym != nullptr)
+      {
+        long h = exception_type_hash("AttributeError");
+        pending_checks.push_back(code_frontend_assignt{
+          exc_type_sym->symbol_expr(), from_integer(h, exc_type_sym->type)});
+      }
+    }
+    return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+  }
 
   // If value is a pointer (self in a method), dereference first
   if(value.type().id() == ID_pointer)
