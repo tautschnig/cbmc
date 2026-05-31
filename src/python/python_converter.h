@@ -1269,6 +1269,48 @@ private:
   std::pair<irep_idt, const symbolt *>
   lookup_init_via_mro(const std::string &class_name) const;
 
+  /// Build the side-effect function-call expression that
+  /// represents `ClassName(args...)` constructor invocation.
+  ///
+  /// Performs the full PLR §9.3 class-constructor sequence in
+  /// one place:
+  ///   1. Resolves `__init__` via the C3 MRO
+  ///      (`lookup_init_via_mro`) — returns `std::nullopt` if no
+  ///      matching constructor exists.
+  ///   2. Inserts `address_of(self_lvalue)` as the first
+  ///      positional argument (the implicit `self`).
+  ///   3. Converts each positional argument from `call_node`'s
+  ///      `args` array via `convert_expression`.
+  ///   4. Matches each keyword in `call_node`'s `keywords` array
+  ///      to the corresponding parameter by base-name and stores
+  ///      it at the matched index, leaving gaps as `nil_exprt`.
+  ///   5. Pads any unprovided positional argument with
+  ///      `safe_zero(param_type)` and replaces nil-gap entries
+  ///      with the same.
+  ///   6. Coerces every argument through `coerce_call_argument`
+  ///      so PLR §3.2 None-marker rewrites apply.
+  ///
+  /// The returned expression carries its own source location
+  /// (`loc`) and an empty return type (constructor calls have
+  /// no return value — `self_lvalue` is mutated in-place).
+  /// Callers wrap it in a `code_expressiont` and push to their
+  /// enclosing block.
+  ///
+  /// `call_node` must be a Python AST `Call` node so the helper
+  /// can inspect its `args` and `keywords` members. Pass the
+  /// raw JSON node from the AST; do not pre-convert.
+  ///
+  /// Centralises the constructor sequence that was previously
+  /// open-coded across `convert_call`, `convert_assign`
+  /// (Attribute target and Name target), `convert_for` /
+  /// statement-level class init in convert_control, and the
+  /// with-stmt context-manager init in `convert_except`.
+  std::optional<side_effect_expr_function_callt> build_class_init_call(
+    const std::string &class_name,
+    const exprt &self_lvalue,
+    const jsont &call_node,
+    const source_locationt &loc);
+
   /// Safe zero: returns from_integer(0, type) for numeric types,
   /// or a nondet value for struct/other types.
   exprt safe_zero(const typet &type) const;
