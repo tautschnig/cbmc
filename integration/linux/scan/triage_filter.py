@@ -330,6 +330,64 @@ def _function_param_names_pointer_typed(
     return out
 
 
+def _detect_unmatched_unlock(body: str) -> FilterVerdict | None:
+    """Match the pattern where the function calls mutex_unlock /
+    spin_unlock / read_unlock / write_unlock without a matching
+    *_lock for the same lock object inside the body.
+
+    Common shape:
+
+        static int rcar_gen3_phy_usb2_power_off(struct phy *p) {
+            ...
+            mutex_unlock(&channel->lock);
+            ...
+        }
+
+    The caller is expected to hold the lock.  The cocci
+    lock_state instrumentation models lock state as ghost; with
+    an empty-ghost-bootstrap the contract fires on the unlock
+    site by default.  This is a caller-precondition shape that
+    the per-function harness cannot validate.
+    """
+    # Find unlock calls and their argument.
+    unlock_re = re.compile(
+        r"\b(?:mutex_unlock|spin_unlock(?:_irqrestore|_bh|_irq)?|"
+        r"read_unlock(?:_irqrestore|_bh|_irq)?|"
+        r"write_unlock(?:_irqrestore|_bh|_irq)?|"
+        r"raw_spin_unlock(?:_irqrestore|_bh|_irq)?)\s*\(\s*"
+        r"&?([A-Za-z_][\w.\->]*)")
+    lock_re = re.compile(
+        r"\b(?:mutex_lock(?:_interruptible|_killable|_nested)?|"
+        r"spin_lock(?:_irqsave|_bh|_irq)?|"
+        r"read_lock(?:_irqsave|_bh|_irq)?|"
+        r"write_lock(?:_irqsave|_bh|_irq)?|"
+        r"raw_spin_lock(?:_irqsave|_bh|_irq)?)\s*\(\s*"
+        r"&?([A-Za-z_][\w.\->]*)")
+    unlocks = unlock_re.findall(body)
+    if not unlocks:
+        return None
+    locks = set(lock_re.findall(body))
+    # Note: arguments may be normalised differently (foo->bar
+    # vs &foo->bar), so compare by the trailing identifier.
+    def tail(s: str) -> str:
+        for sep in ("->", ".", "&"):
+            if sep in s:
+                s = s.rsplit(sep, 1)[-1]
+        return s
+    locked_tails = {tail(s) for s in locks}
+    for unlock_arg in unlocks:
+        if tail(unlock_arg) not in locked_tails:
+            return FilterVerdict(
+                "caller_holds_lock",
+                f"function calls unlock on `{unlock_arg}` "
+                "without a matching lock in this body — "
+                "caller holds the lock (per-function harness "
+                "cannot model the precondition)",
+                "medium",
+            )
+    return None
+
+
 def _detect_local_alloc_handed_to_consumer(
         body: str) -> FilterVerdict | None:
     """Match the pattern where a local variable is allocated
@@ -631,6 +689,12 @@ def classify(kernel_file: str | Path, fn_name: str,
     v_handed = _detect_local_alloc_handed_to_consumer(body)
     if v_handed is not None:
         return v_handed
+    # Body-only check: function unlocks a lock without a
+    # matching lock in the same body — caller-holds-lock
+    # precondition shape.
+    v_unlock = _detect_unmatched_unlock(body)
+    if v_unlock is not None:
+        return v_unlock
 
     # Build a list of candidate variables to test.
     candidates: list[str] = []

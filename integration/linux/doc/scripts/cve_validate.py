@@ -855,6 +855,25 @@ def _run_scan(case: CveCase, timeout: int = 240,
         case.verdict = "low-confidence-candidate"
         case.note = ("empty-ghost-bootstrap (low-confidence)"
                      + state_tag)
+        # Also try the triage filter — most empty-ghost
+        # cases match a recognised caller-precondition shape
+        # (caller_holds_lock, ownership_handler, etc.) and
+        # can be downgraded to fp-filtered.
+        try:
+            sys.path.insert(0, str(SCAN_DIR))
+            from triage_filter import classify
+            v = classify(
+                f"{case.kernel_tree}/{case.file_path}",
+                case.function,
+            )
+            if v.shape:
+                case.verdict = "fp-filtered"
+                case.note = (f"filtered: {v.shape} "
+                             f"({v.reason}) "
+                             f"[empty-ghost-bootstrap]"
+                             + state_tag)
+        except Exception:
+            pass
     elif rc in (2, 3):
         case.verdict = "error"
         # Return the last informative error line.

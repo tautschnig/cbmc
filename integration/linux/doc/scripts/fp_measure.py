@@ -298,6 +298,26 @@ def _run_scan(c: FpCase, modules: list[str],
             v = "low-confidence-candidate"
             note = (f"module={mod} contract violation "
                     f"with empty-ghost-bootstrap")
+            # Also try the triage filter on the
+            # low-confidence path: an empty-ghost-bootstrap
+            # candidate that matches a known FP shape
+            # (caller_holds_lock, ownership_handler,
+            # alloc_handed_to_consumer, etc.) is downgrade-
+            # able to fp-filtered.
+            try:
+                sys.path.insert(0, str(SCAN_DIR))
+                from triage_filter import classify  # type: ignore
+                tv = classify(
+                    f"{c.kernel_tree}/{c.file_path}",
+                    c.function,
+                )
+                if tv.shape:
+                    v = "fp-filtered"
+                    note = (f"module={mod} filtered: "
+                            f"{tv.shape} ({tv.reason}) "
+                            f"[empty-ghost-bootstrap]")
+            except Exception:
+                pass
         elif rc == 0:
             v = "successful"
             note = f"module={mod} clean"
