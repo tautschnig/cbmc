@@ -2164,6 +2164,23 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
   }
 
+  // PLR §6.3.1: free-function dynamic attribute writes that
+  // were collected during pass 0.27. Add as python_value-typed
+  // fields (the safe default since the writer's RHS type isn't
+  // available without deeper type inference).
+  {
+    auto dyn_it = dynamic_class_attrs.find(class_name);
+    if(dyn_it != dynamic_class_attrs.end())
+    {
+      for(const auto &attr_name : dyn_it->second)
+      {
+        if(declared_fields.insert(attr_name).second)
+          components.push_back(
+            struct_typet::componentt{attr_name, python_value_type()});
+      }
+    }
+  }
+
   // Add __class_tag as first field for dynamic dispatch
   struct_typet::componentst tagged_components;
   tagged_components.push_back(
