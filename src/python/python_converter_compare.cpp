@@ -119,8 +119,8 @@ exprt python_convertert::convert_compare(const jsont &expr)
     };
     if(
       op != "In" && op != "NotIn" && op != "Is" && op != "IsNot" &&
-      !is_python_none_constant(current_left) &&
-      !is_python_none_constant(right) &&
+      !is_python_none(current_left, symbol_table) &&
+      !is_python_none(right, symbol_table) &&
       !((op == "Eq" || op == "NotEq") &&
         is_python_value_type(current_left.type()) &&
         is_python_value_type(right.type())))
@@ -748,14 +748,14 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // PLR §6.10.1 + §3.2: x == None reduces to identity check
       // for None: equal to itself, never equal to any non-None
       // value of any type. Same dispatch as 'is None'.
-      if(is_python_none_constant(right))
+      if(is_python_none(right, symbol_table))
       {
         if(is_python_value_type(current_left.type()))
         {
           cmp = python_value_is(current_left, python_type_tagt::NONE);
           goto done_cmp;
         }
-        if(is_python_none_constant(current_left))
+        if(is_python_none(current_left, symbol_table))
         {
           cmp = true_exprt{};
           goto done_cmp;
@@ -805,7 +805,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
         cmp = false_exprt{};
         goto done_cmp;
       }
-      if(is_python_none_constant(current_left))
+      if(is_python_none(current_left, symbol_table))
       {
         if(is_python_value_type(right.type()))
         {
@@ -1185,7 +1185,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
     else if(op == "NotEq")
     {
       // PLR §6.10.1 + §3.2: x != None — negation of x == None.
-      if(is_python_none_constant(right))
+      if(is_python_none(right, symbol_table))
       {
         if(is_python_value_type(current_left.type()))
         {
@@ -1193,7 +1193,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
             not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
           goto done_cmp;
         }
-        if(is_python_none_constant(current_left))
+        if(is_python_none(current_left, symbol_table))
         {
           cmp = false_exprt{};
           goto done_cmp;
@@ -1231,7 +1231,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
         cmp = true_exprt{};
         goto done_cmp;
       }
-      if(is_python_none_constant(current_left))
+      if(is_python_none(current_left, symbol_table))
       {
         if(is_python_value_type(right.type()))
         {
@@ -1423,7 +1423,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // a structural false_exprt result.
       auto is_none_operand = [this](const exprt &e)
       {
-        if(is_python_none_constant(e))
+        if(is_python_none(e, symbol_table))
           return true;
         if(is_python_value_type(e.type()))
         {
@@ -1709,7 +1709,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           // element to a python_value{NONE} struct via
           // safe_typecast/wrap_value and always evaluate to
           // False even when the element IS the None marker.
-          if(is_python_none_constant(current_left))
+          if(is_python_none(current_left, symbol_table))
           {
             if(
               elem.type().id() == ID_signedbv || elem.type().id() == ID_integer)
@@ -2149,14 +2149,14 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // For tagged unions, "x is None" checks tag == NONE
       if(
         is_python_value_type(current_left.type()) &&
-        is_python_none_constant(right))
+        is_python_none(right, symbol_table))
       {
         cmp = python_value_is(current_left, python_type_tagt::NONE);
         goto done_cmp;
       }
       if(
         is_python_value_type(right.type()) &&
-        is_python_none_constant(current_left))
+        is_python_none(current_left, symbol_table))
       {
         cmp = python_value_is(right, python_type_tagt::NONE);
         goto done_cmp;
@@ -2166,7 +2166,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // type None marker that coerce_to_typed_slot emits at
       // call/assign/return boundaries. See coerce_to_typed_slot
       // for the marker conventions.
-      if(is_python_none_constant(right))
+      if(is_python_none(right, symbol_table))
       {
         if(
           current_left.type().id() == ID_signedbv ||
@@ -2207,7 +2207,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           goto done_cmp;
         }
       }
-      if(is_python_none_constant(current_left))
+      if(is_python_none(current_left, symbol_table))
       {
         if(right.type().id() == ID_signedbv || right.type().id() == ID_integer)
         {
@@ -2299,14 +2299,14 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // PLR §6.10.3: "x is not None" checks tag != NONE
       if(
         is_python_value_type(current_left.type()) &&
-        is_python_none_constant(right))
+        is_python_none(right, symbol_table))
       {
         cmp = not_exprt{python_value_is(current_left, python_type_tagt::NONE)};
         goto done_cmp;
       }
       if(
         is_python_value_type(right.type()) &&
-        is_python_none_constant(current_left))
+        is_python_none(current_left, symbol_table))
       {
         cmp = not_exprt{python_value_is(right, python_type_tagt::NONE)};
         goto done_cmp;
@@ -2315,7 +2315,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // string / typed-list / typed-dict slots — negation of
       // the typed-slot None-marker recognition. See
       // coerce_to_typed_slot for marker conventions.
-      if(is_python_none_constant(right))
+      if(is_python_none(right, symbol_table))
       {
         if(
           current_left.type().id() == ID_signedbv ||
@@ -2357,7 +2357,7 @@ exprt python_convertert::convert_compare(const jsont &expr)
           goto done_cmp;
         }
       }
-      if(is_python_none_constant(current_left))
+      if(is_python_none(current_left, symbol_table))
       {
         if(right.type().id() == ID_signedbv || right.type().id() == ID_integer)
         {
