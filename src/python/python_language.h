@@ -112,6 +112,10 @@ protected:
   /// return type but a path falls off without returning a value.
   /// Off-by-default (opt-in via --python-missing-return-check).
   bool python_missing_return_check = false;
+  /// PLR §6.13 iterating-None TypeError property. When true,
+  /// for-loops and comprehensions emit a check that the
+  /// iterable is not None. Opt-in via --python-check-iter-none.
+  bool python_check_iter_none = false;
   /// Python string back-end selector. Default
   /// 'python_string_kindt::refined' keeps every string as a
   /// refined-string struct {length, data}. When

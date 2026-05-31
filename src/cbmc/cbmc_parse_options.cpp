@@ -191,6 +191,8 @@ void cbmc_parse_optionst::get_command_line_options(optionst &options)
     options.set_option("python-check-any-arg-attrs", true);
   if(cmdline.isset("python-missing-return-check"))
     options.set_option("python-missing-return-check", true);
+  if(cmdline.isset("python-check-iter-none"))
+    options.set_option("python-check-iter-none", true);
 
   // PLR §3.2: Python integers have arbitrary precision — no overflow.
   // Disable signed overflow checks for Python source files.
