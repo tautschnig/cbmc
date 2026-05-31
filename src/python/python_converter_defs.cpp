@@ -2044,6 +2044,81 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             }
           }
         }
+        else if(is_node_type(rhs, "BoolOp"))
+        {
+          // PLR §6.11: 'A and B' / 'A or B' yield the type of
+          // their operands when both are the same type. Walk
+          // the operands looking for a Name that resolves to
+          // a typed parameter, or a Constant whose type we
+          // can identify directly. This is a syntactic best-
+          // effort: when the operands' types disagree the
+          // attr stays python_value_type as the safe default.
+          auto resolve_op_type =
+            [&](const jsont &op_node) -> std::optional<typet>
+          {
+            if(is_node_type(op_node, "Name"))
+            {
+              std::string nm = json_string(json_member(op_node, "id"));
+              const jsont &init_args = json_member(*init_method, "args");
+              const jsont &params = json_member(init_args, "args");
+              if(params.is_array())
+              {
+                for(const auto &p : as_array(params))
+                {
+                  if(json_string(json_member(p, "arg")) == nm)
+                  {
+                    const jsont &ann = json_member(p, "annotation");
+                    if(!ann.is_null())
+                      return convert_type_annotation(ann);
+                    return std::nullopt;
+                  }
+                }
+              }
+            }
+            if(is_node_type(op_node, "Constant"))
+            {
+              const jsont &cv = json_member(op_node, "value");
+              if(cv.is_string())
+                return python_string_type();
+              if(cv.is_number())
+              {
+                std::string vs = cv.value;
+                if(
+                  vs.find('.') != std::string::npos ||
+                  vs.find('e') != std::string::npos)
+                  return double_type();
+                return python_int_type();
+              }
+              if(cv.is_true() || cv.is_false())
+                return bool_typet{};
+            }
+            return std::nullopt;
+          };
+          const jsont &bool_values = json_member(rhs, "values");
+          if(bool_values.is_array() && as_array(bool_values).size() >= 2)
+          {
+            std::optional<typet> agreed;
+            bool conflict = false;
+            for(const auto &op_node : as_array(bool_values))
+            {
+              auto t = resolve_op_type(op_node);
+              if(!t.has_value())
+              {
+                conflict = true;
+                break;
+              }
+              if(!agreed.has_value())
+                agreed = t;
+              else if(*agreed != *t)
+              {
+                conflict = true;
+                break;
+              }
+            }
+            if(!conflict && agreed.has_value())
+              attr_type = *agreed;
+          }
+        }
 
         if(declared_fields.insert(attr_name).second)
           components.push_back(struct_typet::componentt{attr_name, attr_type});
