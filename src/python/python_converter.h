@@ -258,6 +258,23 @@ public:
     python_missing_return_check = v;
   }
 
+  /// PLR §6.13: 'TypeError: 'NoneType' object is not iterable'.
+  /// When true, `for x in iter:` / `[... for x in iter]` /
+  /// `iter*( iter )` (anywhere a converter reads from an
+  /// iterable) emits a property assertion that the iterable
+  /// is not None at runtime. Symbolically, for python_value-
+  /// typed iterables this is `iter.tag != NONE`. For literal-
+  /// None iterables it's `false_exprt` (unconditional
+  /// failure). Off-by-default because the symbolic check
+  /// produces false positives on correctly-typed code where
+  /// the iterable is a function-call result whose return tag
+  /// CBMC can't statically prove non-NONE — opt-in for users
+  /// who want strict TypeError detection.
+  void set_python_check_iter_none(bool v)
+  {
+    python_check_iter_none = v;
+  }
+
 private:
   /// Lazy-stubs mode: imported modules get symbol-table entries
   /// (types, classes, function signatures) but no function
@@ -312,6 +329,14 @@ private:
   /// declaring a non-None return type. Off-by-default
   /// (opt-in via --python-missing-return-check).
   bool python_missing_return_check = false;
+  /// PLR §6.13 iterating-None TypeError property. When true,
+  /// every for-loop and comprehension emits a check that the
+  /// iterable is not None. Off-by-default because the
+  /// symbolic check produces false positives on correctly-
+  /// typed code where the iterable is a function-call result
+  /// (CBMC can't statically prove the returned python_value
+  /// has a non-NONE tag). Opt-in via --python-check-iter-none.
+  bool python_check_iter_none = false;
   /// Map from `python::<func-id>::<param-name>` → set of
   /// attribute names referenced via `param.<name>` (or
   /// `param.<name>(...)`) in the function body. Populated by

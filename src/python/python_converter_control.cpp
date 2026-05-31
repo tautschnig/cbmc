@@ -439,12 +439,24 @@ codet python_convertert::convert_for(const jsont &stmt)
   // RAII-like guard: any early return from convert_for must
   // still pop the break-flag stack. For the non-orelse case
   // this is a no-op.
+  // Also prepends `iter_none_check` (populated after we
+  // convert the iterable) so the PLR §6.13 'iterating None'
+  // TypeError property fires before the loop body, regardless
+  // of which sub-handler builds the loop.
+  code_blockt iter_none_check;
   auto finalize_for = [&](codet &&c) -> codet
   {
-    if(!have_orelse_for)
-      return std::move(c);
-    loop_break_flags.pop_back();
     code_blockt outer;
+    for(auto &s : iter_none_check.statements())
+      outer.add(std::move(s));
+    if(!have_orelse_for)
+    {
+      if(outer.statements().empty())
+        return std::move(c);
+      outer.add(std::move(c));
+      return std::move(outer);
+    }
+    loop_break_flags.pop_back();
     const symbolt &flag_sym = symbol_table.lookup_ref(for_break_flag_id);
     outer.add(code_frontend_assignt{flag_sym.symbol_expr(), false_exprt{}});
     outer.add(std::move(c));
@@ -740,6 +752,43 @@ codet python_convertert::convert_for(const jsont &stmt)
   if(iterable.is_nil())
     return finalize_for(code_skipt{});
 
+  // PLR §6.13: 'TypeError: 'NoneType' object is not iterable'.
+  // Iterating None raises TypeError at runtime. Opt-in via
+  // --python-check-iter-none — off by default because the
+  // symbolic check fires false positives when the iterable
+  // is a function-call result whose tag CBMC cannot prove
+  // statically. Populate iter_none_check (declared up at
+  // finalize_for) so the property is prepended to whatever
+  // for-result the various sub-handlers below build:
+  //   - Literal None: unconditional assertion failure (the
+  //     for-loop body is unreachable).
+  //   - python_value-typed iterable: tag-check assertion
+  //     `iter.tag != NONE` so symex paths where the iterable
+  //     could be None_tagged at runtime are reported.
+  // Concrete typed-natural iterables (str, list, dict, set,
+  // etc.) skip the check — they can't carry None at runtime
+  // for a non-Optional annotation, and Optional[T] = None
+  // defaults already bind to per-type empty markers
+  // (length=0) which iterate to zero iterations naturally.
+  if(python_check_iter_none && is_python_none_constant(iterable))
+  {
+    source_locationt tloc = loc;
+    tloc.set_property_class("type-error");
+    tloc.set_comment("'NoneType' object is not iterable");
+    code_assertt te{false_exprt{}};
+    te.add_source_location() = tloc;
+    iter_none_check.add(std::move(te));
+  }
+  else if(python_check_iter_none && is_python_value_type(iterable.type()))
+  {
+    source_locationt tloc = loc;
+    tloc.set_property_class("type-error");
+    tloc.set_comment("'NoneType' object is not iterable");
+    code_assertt te{
+      not_exprt{python_value_is(iterable, python_type_tagt::NONE)}};
+    te.add_source_location() = tloc;
+    iter_none_check.add(std::move(te));
+  }
   // If the iterable is a complex expression (e.g., enumerate() result),
   // store it in a temp symbol so it doesn't get simplified away.
   code_blockt pre_loop;
@@ -1308,8 +1357,7 @@ skip_string_unroll:;
         new_symbol.is_state_var = true;
         symbol_table.add(new_symbol);
       }
-      symbol_exprt loop_sym =
-        symbol_table.lookup_ref(symbol_id).symbol_expr();
+      symbol_exprt loop_sym = symbol_table.lookup_ref(symbol_id).symbol_expr();
       member_exprt bm{iterable, "bitmap", unsignedbv_typet{64}};
       member_exprt off{iterable, "offset", signedbv_typet{64}};
       const jsont &body = json_member(stmt, "body");
@@ -1322,8 +1370,7 @@ skip_string_unroll:;
             from_integer(1, unsignedbv_typet{64})},
           from_integer(0, unsignedbv_typet{64})};
         // x = k + offset
-        exprt val = plus_exprt{
-          from_integer(k, signedbv_typet{64}), off};
+        exprt val = plus_exprt{from_integer(k, signedbv_typet{64}), off};
         code_blockt iter_body;
         iter_body.add(code_frontend_assignt{loop_sym, val});
         if(body.is_array())
@@ -1365,8 +1412,7 @@ skip_string_unroll:;
         new_symbol.is_state_var = true;
         symbol_table.add(new_symbol);
       }
-      symbol_exprt loop_sym =
-        symbol_table.lookup_ref(symbol_id).symbol_expr();
+      symbol_exprt loop_sym = symbol_table.lookup_ref(symbol_id).symbol_expr();
       // Use a one-shot while loop so any 'continue' or 'break'
       // inside the body has a valid target. We wrap the body
       // in: while(__once && __skip) { body; __once = false; }
@@ -1376,8 +1422,7 @@ skip_string_unroll:;
       // verifier non-deterministically chooses 'loop ran') or
       // not at all (when 'loop did not run').
       static unsigned for_skip_ctr = 0;
-      std::string skip_name =
-        "__for_skip_" + std::to_string(for_skip_ctr);
+      std::string skip_name = "__for_skip_" + std::to_string(for_skip_ctr);
       std::string once_name = "__for_once_" + std::to_string(for_skip_ctr++);
       irep_idt skip_id{qualify_name(skip_name)};
       irep_idt once_id{qualify_name(once_name)};
@@ -1586,8 +1631,8 @@ skip_string_unroll:;
         auto sv = extract_string_value(iterable);
         if(!sv.has_value() && iterable.id() == ID_symbol)
         {
-          auto it = string_constants.find(
-            to_symbol_expr(iterable).get_identifier());
+          auto it =
+            string_constants.find(to_symbol_expr(iterable).get_identifier());
           if(it != string_constants.end())
             sv = it->second;
         }
@@ -1619,15 +1664,12 @@ skip_string_unroll:;
             : exprt(struct_exprt{
                 {member_exprt{iterable, "length", signedbv_typet{64}},
                  member_exprt{
-                   iterable,
-                   "data",
-                   pointer_typet(unsignedbv_typet{8}, 64)}},
+                   iterable, "data", pointer_typet(unsignedbv_typet{8}, 64)}},
                 iterable.type()});
         exprt start64 = idx_var;
         if(start64.type() != signedbv_typet{64})
           start64 = safe_typecast(start64, signedbv_typet{64});
-        exprt end64 = plus_exprt{
-          start64, from_integer(1, signedbv_typet{64})};
+        exprt end64 = plus_exprt{start64, from_integer(1, signedbv_typet{64})};
         // emit_string_function emits its pending checks into the
         // outer pending_checks list. We need them inside the loop
         // body so they run each iteration. Capture-and-flush.
