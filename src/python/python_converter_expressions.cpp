@@ -1433,16 +1433,24 @@ exprt python_convertert::convert_attribute(const jsont &expr)
           cla_it != class_level_attrs.end() && cla_it->second.count(attr) > 0 &&
           st.has_component(shadow_name))
         {
-          irep_idt class_obj_id{"python::" + cls_name};
-          const symbolt *class_obj = symbol_table.lookup(class_obj_id);
-          if(class_obj != nullptr)
+          // PLR §3.3.2: resolve fallback class storage via
+          // MRO walk. If cls_name owns the attr, this returns
+          // its own class object; if cls_name inherits the
+          // attr, this returns the ancestor that owns it. The
+          // distinction matters when the ancestor's class
+          // storage is mutated at runtime (`Parent.attr = X`)
+          // — without MRO walk the subclass's stale init-time
+          // copy is read instead of the parent's updated
+          // storage.
+          auto mro_owner = mro_owner_class_object(cls_name, attr);
+          if(mro_owner)
           {
             dereference_exprt deref{value};
             member_exprt instance_v{deref, attr, st.get_component(attr).type()};
             member_exprt shadow_raw{deref, shadow_name, c_bool_typet{8}};
             typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
             member_exprt class_v{
-              class_obj->symbol_expr(), attr, st.get_component(attr).type()};
+              *mro_owner, attr, st.get_component(attr).type()};
             return if_exprt{
               shadow_flag, std::move(instance_v), std::move(class_v)};
           }
@@ -1527,17 +1535,35 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         !is_class_object && cla_it != class_level_attrs.end() &&
         cla_it->second.count(attr) > 0 && st.has_component(shadow_name))
       {
-        irep_idt class_obj_id{"python::" + cls_name};
-        const symbolt *class_obj = symbol_table.lookup(class_obj_id);
-        if(class_obj != nullptr)
+        // PLR §3.3.2: MRO walk for class-storage fallback.
+        auto mro_owner = mro_owner_class_object(cls_name, attr);
+        if(mro_owner)
         {
           member_exprt instance_v{value, attr, st.get_component(attr).type()};
           member_exprt shadow_raw{value, shadow_name, c_bool_typet{8}};
           typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
-          member_exprt class_v{
-            class_obj->symbol_expr(), attr, st.get_component(attr).type()};
+          member_exprt class_v{*mro_owner, attr, st.get_component(attr).type()};
           return if_exprt{
             shadow_flag, std::move(instance_v), std::move(class_v)};
+        }
+      }
+      // PLR §3.3.2: when value IS the class object itself
+      // (e.g. `Subclass.attr` direct read), redirect to the
+      // owning class via MRO if Subclass doesn't own the
+      // attr. Without this, `Subclass.attr` returns the
+      // stale init-time copy.
+      if(
+        is_class_object && cla_it != class_level_attrs.end() &&
+        cla_it->second.count(attr) > 0)
+      {
+        auto owned_it = class_owned_attrs.find(cls_name);
+        bool owns_here =
+          owned_it != class_owned_attrs.end() && owned_it->second.count(attr);
+        if(!owns_here)
+        {
+          if(auto mro_owner = mro_owner_class_object(cls_name, attr))
+            return member_exprt{
+              *mro_owner, attr, st.get_component(attr).type()};
         }
       }
       return member_exprt{value, attr, st.get_component(attr).type()};
@@ -1581,14 +1607,14 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         cla_it != class_level_attrs.end() && cla_it->second.count(attr) > 0 &&
         cls_type.has_component(shadow_name))
       {
-        irep_idt class_obj_id{"python::" + cls_name};
-        const symbolt *class_obj = symbol_table.lookup(class_obj_id);
-        if(class_obj != nullptr)
+        // PLR §3.3.2: MRO walk for class-storage fallback.
+        auto mro_owner = mro_owner_class_object(cls_name, attr);
+        if(mro_owner)
         {
           member_exprt instance_v{deref, attr, field_type};
           member_exprt shadow_raw{deref, shadow_name, c_bool_typet{8}};
           typecast_exprt shadow_flag{shadow_raw, bool_typet{}};
-          member_exprt class_v{class_obj->symbol_expr(), attr, field_type};
+          member_exprt class_v{*mro_owner, attr, field_type};
           return if_exprt{
             shadow_flag, std::move(instance_v), std::move(class_v)};
         }
