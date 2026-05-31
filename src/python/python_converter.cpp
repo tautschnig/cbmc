@@ -2493,19 +2493,66 @@ exprt python_convertert::coerce_call_argument(
   const exprt &arg,
   const typet &param_type)
 {
-  // PLR §3.2: 'f(None)' for a python_string-typed parameter
-  // binds as the canonical {0, NULL} length-0 marker rather
-  // than going through unwrap_value's NULL-deref path
-  // (`*(python_value{NONE}.__str_ptr)`). The marker is
-  // recognised by the length-0 Optional[str] fast-path at
-  // compare sites (cluster v9). Mirrors the defaults-loop
-  // frozen-None handling for `Optional[str] = None`.
-  if(is_python_none_constant(arg) && is_python_string_type(param_type))
+  // PLR §3.2: 'f(None)' for a typed parameter binds as the
+  // canonical None marker for the target type rather than going
+  // through unwrap_value's NULL-deref or zero-field-extraction
+  // path. Each natural-type slot has its own marker convention:
+  //   - python_string:  {length=0, data=NULL} (cluster v9, the
+  //                     length-0 Optional[str] fast-path).
+  //   - python_int:     python_none_sentinel_int() cast to the
+  //                     target integer type (matches the
+  //                     existing 'is None' typed-int compare).
+  //   - python_float:   python_none_sentinel_int() cast to
+  //                     floatbv (signed sentinel; -2^62 is far
+  //                     from any plausible computation result
+  //                     and is exactly representable as IEEE
+  //                     double).
+  //   - python_list /
+  //     python_dict:    no canonical marker yet — TODO.
+  //                     Currently falls through to safe_typecast
+  //                     (NULL deref, sound only by symex
+  //                     coincidence). See cluster v19 in
+  //                     doc/python-frontend-roadmap.md.
+  //
+  // The recognizer accepts BOTH the literal struct form (matched
+  // by `is_python_none_constant`) and a symbol-expression whose
+  // stored value is python_value{NONE} (this is how the
+  // imported-module pre-pass freezes per-FunctionDef defaults at
+  // module-level into static symbols — see
+  // python_converter_module.cpp). Without the symbol-form path
+  // the defaults loop would bind `__def_foo_N.__int_val` (= 0,
+  // not the None sentinel) for `Optional[int] = None`.
+  bool arg_is_none = is_python_none_constant(arg);
+  if(!arg_is_none && arg.id() == ID_symbol)
   {
-    pointer_typet ptr_t{unsignedbv_typet{8}, 64};
-    return struct_exprt{
-      {from_integer(0, signedbv_typet{64}), null_pointer_exprt{ptr_t}},
-      python_string_type()};
+    const symbolt *s =
+      symbol_table.lookup(to_symbol_expr(arg).get_identifier());
+    if(s != nullptr && is_python_none_constant(s->value))
+      arg_is_none = true;
+  }
+  if(arg_is_none)
+  {
+    if(is_python_string_type(param_type))
+    {
+      pointer_typet ptr_t{unsignedbv_typet{8}, 64};
+      return struct_exprt{
+        {from_integer(0, signedbv_typet{64}), null_pointer_exprt{ptr_t}},
+        python_string_type()};
+    }
+    if(
+      param_type.id() == ID_signedbv || param_type.id() == ID_integer ||
+      param_type == python_int_type())
+    {
+      return from_integer(python_none_sentinel_int(), param_type);
+    }
+    if(param_type.id() == ID_floatbv)
+    {
+      ieee_floatt v{
+        ieee_float_spect{to_floatbv_type(param_type)},
+        ieee_floatt::rounding_modet::ROUND_TO_EVEN};
+      v.from_integer(python_none_sentinel_int());
+      return v.to_expr();
+    }
   }
 
   if(arg.type() == param_type)
