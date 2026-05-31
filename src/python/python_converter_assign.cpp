@@ -1079,6 +1079,21 @@ codet python_convertert::convert_assign(const jsont &stmt)
                   ai < init_args.size() && ai < init_params.size();
                   ai++)
               {
+                // PLR §3.2: 'ClassName(None)' for a
+                // python_string-typed param binds as the
+                // {0, NULL} length-0 marker rather than going
+                // through unwrap_value's NULL-deref path.
+                if(
+                  is_python_none_constant(init_args[ai]) &&
+                  is_python_string_type(init_params[ai].type()))
+                {
+                  pointer_typet ptr_t{unsignedbv_typet{8}, 64};
+                  init_args[ai] = struct_exprt{
+                    {from_integer(0, signedbv_typet{64}),
+                     null_pointer_exprt{ptr_t}},
+                    python_string_type()};
+                  continue;
+                }
                 if(init_args[ai].type() != init_params[ai].type())
                   init_args[ai] =
                     safe_typecast(init_args[ai], init_params[ai].type());
@@ -1238,6 +1253,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
               i < arguments.size() && i < init_type.parameters().size();
               i++)
           {
+            // PLR §3.2: 'ClassName(None)' for a python_string-
+            // typed param binds as the {0, NULL} length-0
+            // marker rather than going through unwrap_value's
+            // NULL-deref path. Mirrors the same fix at the
+            // user-call and convert_call class init paths.
+            if(
+              is_python_none_constant(arguments[i]) &&
+              is_python_string_type(init_type.parameters()[i].type()))
+            {
+              pointer_typet ptr_t{unsignedbv_typet{8}, 64};
+              arguments[i] = struct_exprt{
+                {from_integer(0, signedbv_typet{64}),
+                 null_pointer_exprt{ptr_t}},
+                python_string_type()};
+              continue;
+            }
             if(arguments[i].type() != init_type.parameters()[i].type())
               arguments[i] =
                 safe_typecast(arguments[i], init_type.parameters()[i].type());
