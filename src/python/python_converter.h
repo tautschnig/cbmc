@@ -411,6 +411,24 @@ private:
   /// haven't shadowed still see their stale init-time copy
   /// rather than the updated class storage.
   std::map<std::string, std::set<std::string>> class_level_attrs;
+  /// Per-class set of class-level attributes that were
+  /// declared in THIS class's body (as opposed to inherited
+  /// from a base class). PLR §3.3.2 / §9.4: class attribute
+  /// reads walk the MRO at lookup time. A subclass that
+  /// inherits an attribute (didn't redeclare it in its own
+  /// body) should resolve `Subclass.attr` via the parent
+  /// class's storage so updates to `Parent.attr` are visible
+  /// through `Subclass.attr`. Without this distinction, each
+  /// subclass keeps its own init-time copy and `Parent.attr =
+  /// X` fails to propagate to `Subclass.attr` reads.
+  ///
+  /// Populated by ClassDef when the class body explicitly
+  /// declares the attr via AnnAssign or Assign at class body
+  /// level. Inherited attrs land in `class_level_attrs` (so
+  /// the shadow-fallback machinery still applies on
+  /// instances) but NOT in `class_owned_attrs` (so reads
+  /// walk MRO to find the owner).
+  std::map<std::string, std::set<std::string>> class_owned_attrs;
   /// Per-class set of method names that are declared with
   /// @property. Attribute reads of these names call the method
   /// with self as the single argument (PLR §3.3.2).
@@ -1402,6 +1420,24 @@ public:
     const exprt &self_lvalue,
     const jsont &call_node,
     const source_locationt &loc);
+
+  /// PLR §3.3.2: walk the MRO of `class_name` and return the
+  /// symbol_expr of the class object that OWNS `attr` (the
+  /// first class in the MRO whose body declares `attr`).
+  /// Returns std::nullopt if no class in the MRO owns the
+  /// attr — which means the attr is purely instance-level
+  /// (e.g. assigned only via `self.X = ...` inside __init__)
+  /// and the caller should fall back to the original class's
+  /// struct field directly (no MRO redirection needed).
+  ///
+  /// Use at attribute READ sites where the value being read
+  /// from might be a class object: instance shadow-fallback
+  /// ternary, direct `Class.attr` reads on the class object
+  /// symbol. Instance-level attrs (always class-instance-
+  /// only) bypass this and use the local struct field.
+  std::optional<symbol_exprt> mro_owner_class_object(
+    const std::string &class_name,
+    const std::string &attr) const;
 
   /// PLR §9.4: emit `obj.__shadow_<attr> = True` if `attr` is
   /// a class-level attribute of the class identified by

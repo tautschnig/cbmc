@@ -1925,6 +1925,13 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         if(is_node_type(target, "Name"))
         {
           std::string attr_name = json_string(json_member(target, "id"));
+          // PLR §3.3.2: track ownership independently of the
+          // struct-component dedup. A subclass that
+          // re-declares an inherited attr in its own body
+          // OWNS the attr (overrides the parent's value), so
+          // class_owned_attrs gets the entry even when the
+          // struct already has the field via inheritance.
+          class_owned_attrs[class_name].insert(attr_name);
           if(declared_fields.insert(attr_name).second)
           {
             typet attr_type =
@@ -1956,6 +1963,11 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             if(is_node_type(t, "Name"))
             {
               std::string attr_name = json_string(json_member(t, "id"));
+              // PLR §3.3.2: track ownership independently of
+              // the struct-component dedup so subclass overrides
+              // are recorded even when the struct already has
+              // the inherited field.
+              class_owned_attrs[class_name].insert(attr_name);
               if(!declared_fields.insert(attr_name).second)
                 continue;
               // Infer type from value

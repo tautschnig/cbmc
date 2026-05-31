@@ -479,6 +479,70 @@ codet python_convertert::convert_statement(const jsont &stmt)
               code_frontend_assignt{s->symbol_expr(), std::move(none_marker)});
           }
         }
+        // PLR §7.4 / §9.4: `del obj.attr` on an instance
+        // attribute. For a class-level attr, clear the
+        // shadow flag so subsequent reads fall back to
+        // class storage. For an instance-only attr, no
+        // canonical "missing" representation exists; we
+        // approximate by resetting the slot to the per-type
+        // None marker (matches the `del Name` approximation).
+        else if(is_node_type(target, "Attribute"))
+        {
+          exprt obj = convert_expression(json_member(target, "value"));
+          std::string attr = json_string(json_member(target, "attr"));
+          if(!obj.is_nil())
+          {
+            exprt obj_lvalue = obj;
+            if(obj_lvalue.type().id() == ID_pointer)
+              obj_lvalue = dereference_exprt{obj_lvalue};
+            if(
+              obj_lvalue.type().id() == ID_struct ||
+              obj_lvalue.type().id() == ID_struct_tag)
+            {
+              std::string tag;
+              if(obj_lvalue.type().id() == ID_struct)
+                tag = id2string(to_struct_type(obj_lvalue.type()).get_tag());
+              else
+                tag = id2string(
+                  to_struct_tag_type(obj_lvalue.type()).get_identifier());
+              std::string cls_name =
+                tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+              auto cla_it = class_level_attrs.find(cls_name);
+              std::string shadow_name = "__shadow_" + attr;
+              const struct_typet *st = nullptr;
+              if(obj_lvalue.type().id() == ID_struct)
+                st = &to_struct_type(obj_lvalue.type());
+              else
+              {
+                auto cls_it = class_types.find(cls_name);
+                if(cls_it != class_types.end())
+                  st = &cls_it->second;
+              }
+              if(
+                cla_it != class_level_attrs.end() &&
+                cla_it->second.count(attr) > 0 && st != nullptr &&
+                st->has_component(shadow_name))
+              {
+                del_block.add(code_frontend_assignt{
+                  member_exprt{obj_lvalue, shadow_name, c_bool_typet{8}},
+                  from_integer(0, c_bool_typet{8})});
+              }
+              else if(st != nullptr && st->has_component(attr))
+              {
+                // Instance-only attr: reset to None marker.
+                exprt none_marker = coerce_to_typed_slot(
+                  python_none_value(), st->get_component(attr).type());
+                if(none_marker.type() != st->get_component(attr).type())
+                  none_marker =
+                    safe_typecast(none_marker, st->get_component(attr).type());
+                del_block.add(code_frontend_assignt{
+                  member_exprt{
+                    obj_lvalue, attr, st->get_component(attr).type()},
+                  std::move(none_marker)});
+              }
+            }
+          }
+        }
       }
       result = std::move(del_block);
     }

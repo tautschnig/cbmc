@@ -2695,6 +2695,55 @@ void python_convertert::coerce_call_arguments(
     args[i] = coerce_call_argument(args[i], params[i].type());
 }
 
+std::optional<symbol_exprt> python_convertert::mro_owner_class_object(
+  const std::string &class_name,
+  const std::string &attr) const
+{
+  // Walk the C3 MRO of class_name; return the first class
+  // object that explicitly declares `attr` in its body.
+  // PLR §3.3.2: class attribute lookup walks MRO at access
+  // time, so a subclass that inherits an attr resolves to
+  // the owning ancestor's class object, and updates to that
+  // ancestor's storage are visible through subclass reads.
+  auto try_class = [&](const std::string &cn) -> std::optional<symbol_exprt>
+  {
+    auto it = class_owned_attrs.find(cn);
+    if(it == class_owned_attrs.end() || it->second.count(attr) == 0)
+      return std::nullopt;
+    irep_idt class_obj_id{"python::" + cn};
+    const symbolt *class_obj = symbol_table.lookup(class_obj_id);
+    if(class_obj == nullptr)
+      return std::nullopt;
+    return class_obj->symbol_expr();
+  };
+  // Try the class itself first.
+  if(auto r = try_class(class_name))
+    return r;
+  // Walk the MRO (skipping index 0 which is class_name itself).
+  auto mro_it = class_mro.find(class_name);
+  if(mro_it != class_mro.end())
+  {
+    for(std::size_t i = 1; i < mro_it->second.size(); ++i)
+    {
+      if(auto r = try_class(mro_it->second[i]))
+        return r;
+    }
+  }
+  // Fall back to scanning class_bases (for classes with no
+  // computed MRO, e.g. ones whose ClassDef ran before the C3
+  // step).
+  auto bases_it = class_bases.find(class_name);
+  if(bases_it != class_bases.end())
+  {
+    for(const auto &base : bases_it->second)
+    {
+      if(auto r = mro_owner_class_object(base, attr))
+        return r;
+    }
+  }
+  return std::nullopt;
+}
+
 std::pair<irep_idt, const symbolt *>
 python_convertert::lookup_init_via_mro(const std::string &class_name) const
 {
@@ -2702,7 +2751,6 @@ python_convertert::lookup_init_via_mro(const std::string &class_name) const
   const symbolt *init_sym = symbol_table.lookup(init_id);
   if(init_sym != nullptr)
     return {init_id, init_sym};
-
   // Inheritance fallback: walk the C3 MRO and return the first
   // ancestor that defines `__init__`.
   auto mro_it = class_mro.find(class_name);
