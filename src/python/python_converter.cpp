@@ -1834,7 +1834,9 @@ exprt python_convertert::unwrap_value(const exprt &e, const typet &target_type)
     }
     if(is_python_string_type(target_type))
       return safe_zero(target_type);
-    if(is_python_list_type(target_type) || is_python_dict_type(target_type))
+    if(
+      is_python_list_type(target_type) || is_python_dict_type(target_type) ||
+      is_python_set_type(target_type) || is_python_tuple_type(target_type))
       return safe_zero(target_type);
     // bool target: fall through to the truthiness builder
     // below — it already evaluates to False for NONE-tagged
@@ -2588,6 +2590,25 @@ exprt python_convertert::coerce_to_typed_slot(
     }
     if(is_python_list_type(target_type) || is_python_dict_type(target_type))
       return safe_zero(target_type);
+    if(is_python_set_type(target_type))
+    {
+      // PLR: empty-set marker for typed-set slots —
+      // {bitmap=0, offset=0} (no elements). Same conflation
+      // caveat as list/dict (`set() is None` returns False at
+      // compare side; the None marker is indistinguishable
+      // from a real empty set there) but boundary code is at
+      // least deterministic rather than NULL-deref.
+      return safe_zero(target_type);
+    }
+    if(is_python_tuple_type(target_type))
+    {
+      // PLR: typed-tuple slots binding None get a zeroed
+      // tuple of the declared shape. Tuples are static-arity,
+      // so the marker conflates with literal `(0, 0, ..., 0)`
+      // tuples; rarely meaningful in practice since
+      // Optional[tuple] defaults of None are uncommon.
+      return safe_zero(target_type);
+    }
   }
 
   // PLR §3.1: object identity is preserved across boundaries.
