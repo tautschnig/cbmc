@@ -2996,8 +2996,45 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     }
     else if(base == "Optional")
     {
-      // Optional[T] — for now, treat as T (None handling is future work)
-      return convert_type_annotation(json_member(annotation, "slice"));
+      // PLR §3.2: Optional[T] is shorthand for Union[T, None].
+      // For container types (list, dict, set, tuple) we lower to
+      // python_value (tagged union) at the typing layer rather
+      // than to T's natural type, because:
+      //   - Typed-list/dict/set None markers (length=0) conflate
+      //     with empty literals at compare sites — the
+      //     architecturally clean encoding is the tagged-union
+      //     where the NONE tag is distinguishable from any
+      //     non-NONE tag.
+      //   - Consumer code (subscript, len, iter, comparison,
+      //     truthiness) already handles python_value via tag
+      //     dispatch, so the behavioural change is mostly
+      //     unwrapping at the right places.
+      //
+      // For natural-type T (int, float, str), keep the inner
+      // type and rely on the per-target None marker (sentinel /
+      // {0,NULL}) — those don't have the empty-container
+      // conflation issue and the marker fast-paths in
+      // python_truthiness / compare are already in place.
+      typet inner = convert_type_annotation(json_member(annotation, "slice"));
+      if(
+        is_python_list_type(inner) || is_python_dict_type(inner) ||
+        is_python_set_type(inner) || is_python_tuple_type(inner))
+      {
+        return python_value_type();
+      }
+      return inner;
+    }
+    else if(base == "Union")
+    {
+      // PLR §3.2: Union[T1, T2, ...] is the tagged-union of its
+      // members. If any member is None and any other is a
+      // container type (list/dict/set/tuple), lower to
+      // python_value so the NONE tag is distinguishable. This
+      // mirrors the Optional case above. For Union of
+      // non-container types only, the BinOp path (or a generic
+      // python_value fallback at convert_type_annotation's end)
+      // already returns python_value.
+      return python_value_type();
     }
     else if(base == "Set" || base == "FrozenSet" || base == "set" ||
             base == "frozenset")
