@@ -1848,25 +1848,10 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   if(!icontract_invariant_lambdas.empty())
     class_invariant_lambdas[class_name] = icontract_invariant_lambdas;
 
-  // Analyze __init__ to determine instance attributes
+  // Analyze methods to determine instance attributes (PLR §6.3.1
+  // assignment to attribute reference creates a new attribute).
   struct_typet::componentst components;
   const jsont &body = json_member(stmt, "body");
-
-  const jsont *init_method = nullptr;
-  if(body.is_array())
-  {
-    for(const auto &item : as_array(body))
-    {
-      if(
-        (is_node_type(item, "FunctionDef") ||
-         is_node_type(item, "AsyncFunctionDef")) &&
-        json_string(json_member(item, "name")) == "__init__")
-      {
-        init_method = &item;
-        break;
-      }
-    }
-  }
 
   // PLR §8.9: Inherit fields from base classes (supports multiple inheritance)
   const jsont &bases = json_member(stmt, "bases");
@@ -1994,10 +1979,28 @@ codet python_convertert::convert_class_def(const jsont &stmt)
     }
   }
 
-  // Scan __init__ body for self.attr = ... assignments to determine fields
-  if(init_method != nullptr)
+  // Scan all method bodies for self.attr = ... assignments to
+  // determine fields. Python allows attributes to be created
+  // dynamically by any method (PLR §6.3.1: "An attribute reference
+  // is a primary followed by a period and a name"; assigning to
+  // such a target creates a new attribute when not present). The
+  // converter cannot do this lazily because the struct type must
+  // be fixed at class-definition time, so we collect from every
+  // method body up front.
+  std::vector<const jsont *> methods_to_scan;
+  if(body.is_array())
   {
-    const jsont &init_body = json_member(*init_method, "body");
+    for(const auto &item : as_array(body))
+    {
+      if(
+        is_node_type(item, "FunctionDef") ||
+        is_node_type(item, "AsyncFunctionDef"))
+        methods_to_scan.push_back(&item);
+    }
+  }
+  for(const jsont *method_node : methods_to_scan)
+  {
+    const jsont &init_body = json_member(*method_node, "body");
     if(init_body.is_array())
     {
       for(const auto &s : as_array(init_body))
@@ -2041,8 +2044,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
 
         std::string attr_name = json_string(json_member(target, "attr"));
 
-        // Determine type from the __init__ parameter annotation
-        // Look up the parameter name in __init__'s args
+        // Determine type from the method's parameter annotation.
         const jsont &rhs = json_member(s, "value");
         std::string rhs_name;
         if(is_node_type(rhs, "Name"))
@@ -2062,8 +2064,8 @@ codet python_convertert::convert_class_def(const jsont &stmt)
         }
         else if(!rhs_name.empty())
         {
-          // Find the parameter annotation
-          const jsont &init_args = json_member(*init_method, "args");
+          // Find the parameter annotation in the current method.
+          const jsont &init_args = json_member(*method_node, "args");
           const jsont &params = json_member(init_args, "args");
           if(params.is_array())
           {
@@ -2095,7 +2097,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             if(is_node_type(op_node, "Name"))
             {
               std::string nm = json_string(json_member(op_node, "id"));
-              const jsont &init_args = json_member(*init_method, "args");
+              const jsont &init_args = json_member(*method_node, "args");
               const jsont &params = json_member(init_args, "args");
               if(params.is_array())
               {
