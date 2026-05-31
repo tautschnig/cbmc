@@ -135,6 +135,17 @@ def _enum_files(tree: Path,
     files: list[Path] = []
     skip_top = {"Documentation", "samples", "tools",
                 "scripts", "LICENSES", "include"}
+    # Architecture filter: we compile for x86_64.  Files under
+    # arch/<other> won't link against our scan-compat / include
+    # path setup and produce compile rc=3.  Restrict arch/ to
+    # x86 + cross-arch shared (the latter live outside arch/).
+    skip_arch = {
+        "alpha", "arc", "arm", "arm64", "csky", "h8300",
+        "hexagon", "ia64", "loongarch", "m68k", "microblaze",
+        "mips", "nds32", "nios2", "openrisc", "parisc",
+        "powerpc", "riscv", "s390", "sh", "sparc", "um",
+        "xtensa",
+    }
     if subdirs is None:
         roots = [d for d in tree.iterdir()
                  if d.is_dir() and d.name not in skip_top]
@@ -149,6 +160,13 @@ def _enum_files(tree: Path,
                    ("test", "selftests", "kunit",
                     "generated")):
                 continue
+            # Skip non-x86 architecture files.
+            parts = f.parts
+            if "arch" in parts:
+                idx = parts.index("arch")
+                if idx + 1 < len(parts):
+                    if parts[idx + 1] in skip_arch:
+                        continue
             files.append(f)
     return files
 
