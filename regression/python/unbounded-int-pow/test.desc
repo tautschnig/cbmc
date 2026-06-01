@@ -1,0 +1,15 @@
+CORE
+main.py
+--python-unbounded-ints --unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+** must constant-fold under --python-unbounded-ints, where integer
+constants have type integer_typet rather than signedbv. 10**20 is
+computed exactly via the mp_integer path (the double path would be
+lossy for values past 2**53). Previously ** fell through to nondet
+under this flag and these assertions failed.

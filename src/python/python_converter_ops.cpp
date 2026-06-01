@@ -1311,7 +1311,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     // For negative exponents, return 1.0 / (base ** abs(exp)).
     mp_integer exp_val;
     bool exp_known = false;
-    if(right.is_constant() && right.type().id() == ID_signedbv)
+    if(
+      right.is_constant() &&
+      (right.type().id() == ID_signedbv || right.type().id() == ID_integer))
       exp_known = !to_integer(to_constant_expr(right), exp_val);
     // Handle -N (UnaryOp USub on constant)
     if(
@@ -1359,7 +1361,9 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         return from_integer(1, left.type());
 
       // Constant base and exponent: compute at conversion time
-      if(left.is_constant() && left.type().id() == ID_signedbv)
+      if(
+        left.is_constant() &&
+        (left.type().id() == ID_signedbv || left.type().id() == ID_integer))
       {
         mp_integer base_val;
         if(!to_integer(to_constant_expr(left), base_val))
