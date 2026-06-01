@@ -2438,6 +2438,23 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
+      // PLR §6.10.3: identity on non-None scalars is implementation-
+      // defined (CPython caches small ints, interns some strings), so
+      // equal int/float/str values may or may not be the same object.
+      // We have no per-object model for scalars, so `is` degrades to
+      // value equality here — warn so the result is not silently
+      // trusted as true identity.
+      {
+        const typet &lt = current_left.type();
+        if(
+          lt.id() == ID_signedbv || lt.id() == ID_integer ||
+          lt.id() == ID_floatbv || is_python_string_type(lt))
+          log.warning() << "`is` on non-None scalar operands is modeled as "
+                           "value equality; CPython object identity for equal "
+                           "int/float/str values is implementation-defined and "
+                           "not modeled"
+                        << messaget::eom;
+      }
       cmp = equal_exprt{current_left, right};
     }
     else if(op == "IsNot")
@@ -2574,6 +2591,17 @@ exprt python_convertert::convert_compare(const jsont &expr)
       }
       if(current_left.type() != right.type())
         right = safe_typecast(right, current_left.type());
+      {
+        const typet &lt = current_left.type();
+        if(
+          lt.id() == ID_signedbv || lt.id() == ID_integer ||
+          lt.id() == ID_floatbv || is_python_string_type(lt))
+          log.warning() << "`is not` on non-None scalar operands is modeled "
+                           "as value inequality; CPython object identity for "
+                           "equal int/float/str values is implementation-"
+                           "defined and not modeled"
+                        << messaget::eom;
+      }
       cmp = notequal_exprt{current_left, right};
     }
     else
