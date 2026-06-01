@@ -1,0 +1,12 @@
+CORE
+main.py
+--unwind 12
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Appending 10 elements stays within the list model bound (64), so the
+capacity guard does not fire and verification succeeds.

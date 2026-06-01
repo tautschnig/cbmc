@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 75
+
+^EXIT=10$
+^SIGNAL=0$
+^\[python-model-bound\.\d+\] .*container capacity exceeded.*: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+Appending 70 elements exceeds the verifier's list model bound (64).
+The capacity guard reports this as a python-model-bound property
+violation instead of silently corrupting state past the array. This
+is the sound treatment of the BMC container bound: beyond-capacity
+executions are reported (and cut), never silently trusted.
