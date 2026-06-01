@@ -1153,6 +1153,23 @@ codet python_convertert::convert_statement(const jsont &stmt)
     else
       block.add(std::move(result));
     pending_checks.clear();
+    // PLR §3.1: emit by-ref mutation write-backs after the body.
+    for(auto &pc : pending_post_checks)
+      block.add(std::move(pc));
+    pending_post_checks.clear();
+    return std::move(block);
+  }
+
+  // PLR §3.1: a statement may have produced by-ref write-backs
+  // (mutable-container argument mutated through a promoted copy)
+  // without any pending pre-checks. Emit them after the result.
+  if(!pending_post_checks.empty())
+  {
+    code_blockt block;
+    block.add(std::move(result));
+    for(auto &pc : pending_post_checks)
+      block.add(std::move(pc));
+    pending_post_checks.clear();
     return std::move(block);
   }
 

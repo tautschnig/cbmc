@@ -828,6 +828,28 @@ exprt python_convertert::convert_user_call(
         // etc.).
         const typet &param_pointee =
           to_pointer_type(params[i].type()).base_type();
+        // PLR §3.1 write-back: when the argument is an lvalue
+        // symbol and we are about to build a element-type-promoted
+        // COPY to pass by reference, remember the original storage
+        // and its element type so we can copy the callee's
+        // mutations back after the call.
+        exprt writeback_target = nil_exprt{};
+        typet writeback_elem_t;
+        if(
+          is_python_list_type(param_pointee) &&
+          is_python_list_type(arguments[i].type()) &&
+          arguments[i].type() != param_pointee &&
+          arguments[i].id() == ID_symbol &&
+          is_python_value_type(
+            to_array_type(to_struct_type(param_pointee).components()[1].type())
+              .element_type()))
+        {
+          writeback_target = arguments[i];
+          writeback_elem_t =
+            to_array_type(
+              to_struct_type(arguments[i].type()).components()[1].type())
+              .element_type();
+        }
         if(
           is_python_list_type(param_pointee) &&
           is_python_list_type(arguments[i].type()) &&
@@ -837,11 +859,9 @@ exprt python_convertert::convert_user_call(
               .element_type()))
         {
           const auto &src_st = to_struct_type(arguments[i].type());
-          const auto &src_data_t =
-            to_array_type(src_st.components()[1].type());
+          const auto &src_data_t = to_array_type(src_st.components()[1].type());
           const auto &dst_st = to_struct_type(param_pointee);
-          const auto &dst_data_t =
-            to_array_type(dst_st.components()[1].type());
+          const auto &dst_data_t = to_array_type(dst_st.components()[1].type());
           // Materialise the source so we can index into it.
           exprt src_struct = arguments[i];
           if(src_struct.id() != ID_symbol)
@@ -861,8 +881,7 @@ exprt python_convertert::convert_user_call(
               symbol_table.add(ts);
             }
             symbol_exprt s_sym = symbol_table.lookup_ref(ti).symbol_expr();
-            pending_checks.push_back(
-              code_frontend_assignt{s_sym, src_struct});
+            pending_checks.push_back(code_frontend_assignt{s_sym, src_struct});
             src_struct = s_sym;
           }
           member_exprt src_len{src_struct, "length", signedbv_typet{64}};
@@ -910,6 +929,42 @@ exprt python_convertert::convert_user_call(
         if(addr.type() != params[i].type())
           addr = typecast_exprt{addr, params[i].type()};
         arguments[i] = std::move(addr);
+        // PLR §3.1 write-back: copy the callee's mutations on the
+        // promoted by-ref copy back into the caller's original
+        // storage after the call. `addressable` is the
+        // list[python_value] byref symbol the callee mutates;
+        // `writeback_target` is the caller's original list[T]
+        // lvalue. For each slot k: original.data[k] =
+        // unwrap_value(byref.data[k], T); and original.length =
+        // byref.length. Without this, mutations (append, element
+        // assign) performed through the parameter were invisible
+        // to the caller, producing spurious assertion failures on
+        // correct programs (e.g. `def f(l): l.append(x); f(a);
+        // assert len(a) == ...`).
+        if(
+          writeback_target.id() == ID_symbol && addressable.id() == ID_symbol &&
+          is_python_list_type(addressable.type()))
+        {
+          const auto &by_st = to_struct_type(addressable.type());
+          const auto &by_data_t = to_array_type(by_st.components()[1].type());
+          member_exprt by_data{addressable, "data", by_data_t};
+          member_exprt by_len{addressable, "length", signedbv_typet{64}};
+          const auto &tgt_st = to_struct_type(writeback_target.type());
+          const auto &tgt_data_t = to_array_type(tgt_st.components()[1].type());
+          member_exprt tgt_data{writeback_target, "data", tgt_data_t};
+          member_exprt tgt_len{writeback_target, "length", signedbv_typet{64}};
+          for(std::size_t k = 0; k < PYTHON_MAX_LIST_LENGTH; k++)
+          {
+            exprt idx = from_integer(k, signedbv_typet{64});
+            exprt elem =
+              unwrap_value(index_exprt{by_data, idx}, writeback_elem_t);
+            if(elem.type() != writeback_elem_t)
+              elem = safe_typecast(elem, writeback_elem_t);
+            pending_post_checks.push_back(
+              code_frontend_assignt{index_exprt{tgt_data, idx}, elem});
+          }
+          pending_post_checks.push_back(code_frontend_assignt{tgt_len, by_len});
+        }
         // PLR §3.1: passing a mutable container by reference means
         // the callee may mutate it. Invalidate the literal cache so
         // subsequent reads at the call site don't constant-fold

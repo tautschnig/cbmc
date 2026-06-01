@@ -1008,6 +1008,16 @@ private:
   /// statement converters.
   std::vector<codet> pending_checks;
 
+  /// PLR §3.1: write-back assignments to be emitted AFTER the
+  /// current statement. Populated by convert_user_call when a
+  /// mutable-container argument is passed by reference through a
+  /// promoted (element-type-converted) copy: the callee mutates
+  /// the copy, so after the call returns we must copy the mutated
+  /// values back into the caller's original storage for Python's
+  /// reference semantics to hold. Consumed (appended after the
+  /// statement) by convert_statement's flush block.
+  std::vector<codet> pending_post_checks;
+
   /// PLR §8.2 / §8.3: for-else / while-else support.
   /// Stack of break-flag symbol ids, pushed when entering a
   /// loop whose orelse is non-empty and popped on exit. Each
