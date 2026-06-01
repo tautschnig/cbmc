@@ -1386,6 +1386,22 @@ private:
   /// generic safe_typecast / unwrap_value NULL-deref path.
   exprt coerce_element(const exprt &elem, const typet &element_type);
 
+  /// §1 (BMC container bound): emit assert(length < cap) followed by
+  /// assume(length < cap) into `block` before a container-growth store
+  /// (list append/insert, dict insert, ...). The model holds at most
+  /// `cap` elements; appending at index == cap would write past the
+  /// modelled array and silently corrupt state. The assert reports a
+  /// path that exceeds the verifier's container capacity (property
+  /// class "python-model-bound") rather than mis-modelling it; the
+  /// assume then cuts that path so no corrupt-state execution is
+  /// explored. Sound: a beyond-capacity execution is reported or cut,
+  /// never silently trusted.
+  void emit_capacity_guard(
+    code_blockt &block,
+    const exprt &length,
+    long cap,
+    const source_locationt &loc = source_locationt{});
+
   /// Coerce all arguments in `args` to the parameter types
   /// declared in `params`. Out-of-range entries on either side
   /// are left untouched (callers are responsible for padding

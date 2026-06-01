@@ -2686,6 +2686,25 @@ exprt python_convertert::coerce_element(
   return coerce_to_typed_slot(elem, element_type);
 }
 
+void python_convertert::emit_capacity_guard(
+  code_blockt &block,
+  const exprt &length,
+  long cap,
+  const source_locationt &loc)
+{
+  binary_relation_exprt in_bounds{
+    length, ID_lt, from_integer(cap, length.type())};
+  source_locationt aloc = loc;
+  aloc.set_property_class("python-model-bound");
+  aloc.set_comment("container capacity exceeded (verifier model bound)");
+  code_assertt cap_assert{in_bounds};
+  cap_assert.add_source_location() = aloc;
+  block.add(std::move(cap_assert));
+  code_assumet cap_assume{in_bounds};
+  cap_assume.add_source_location() = loc;
+  block.add(std::move(cap_assume));
+}
+
 void python_convertert::coerce_call_arguments(
   exprt::operandst &args,
   const code_typet::parameterst &params)

@@ -1882,6 +1882,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
                   code_ifthenelset{and_exprt{in_range, match}, std::move(upd)});
               }
               code_blockt append;
+              emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
               append.add(code_frontend_assignt{
                 index_exprt{keys_arr, length}, typed_key});
               append.add(code_frontend_assignt{
@@ -2091,6 +2092,7 @@ codet python_convertert::convert_assign(const jsont &stmt)
               code_ifthenelset{and_exprt{in_range, match}, std::move(update)});
           }
           code_blockt append;
+          emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
           append.add(
             code_frontend_assignt{index_exprt{keys_arr, length}, typed_key});
           append.add(
@@ -4063,6 +4065,7 @@ codet python_convertert::convert_aug_assign(const jsont &stmt)
     }
     // defaultdict semantics: append (key, new_val) when missing.
     code_blockt append;
+    emit_capacity_guard(append, length, PYTHON_MAX_DICT_SIZE);
     append.add(
       code_frontend_assignt{index_exprt{keys_arr, length}, dict_aug_key});
     append.add(
