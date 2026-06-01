@@ -624,6 +624,25 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
   {
     symbol_table.get_writeable_ref(symbol_id).type = rhs.type();
   }
+  // PLR §3.2: a type annotation is documentation, not a runtime
+  // coercion — `x: int = <value>` binds x to the value as-is, it
+  // does NOT convert the value to int. When the RHS is a
+  // tagged-union (python_value) whose runtime tag is not known to
+  // be the scalar annotation, keep the symbol as python_value so
+  // the actual tag is preserved. Otherwise coerce_assign_rhs ->
+  // unwrap_value would read e.g. __int_val unconditionally,
+  // discarding a str/float tag and making a later
+  // `isinstance(x, int)` trivially (and unsoundly) true. Gated on
+  // !python_check_annotations so the explicit annotation-mismatch
+  // property still fires when that mode is enabled.
+  else if(
+    !python_check_annotations && is_python_value_type(rhs.type()) &&
+    !is_python_value_type(sym.type) &&
+    (sym.type.id() == ID_signedbv || sym.type.id() == ID_floatbv ||
+     sym.type.id() == ID_bool || is_python_string_type(sym.type)))
+  {
+    symbol_table.get_writeable_ref(symbol_id).type = python_value_type();
+  }
 
   const symbolt &sym2 = symbol_table.lookup_ref(symbol_id);
 

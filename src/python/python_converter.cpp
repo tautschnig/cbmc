@@ -3252,6 +3252,19 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
     if(val.is_string())
     {
       std::string ref_name = val.value;
+      // PLR §3.2: a string (forward-ref) annotation may itself be
+      // a union, e.g. `"int | str"` or `"Optional[int]"`. Parse
+      // those as the tagged union so the runtime tag is tracked,
+      // matching the BinOp / Union[...] / Optional[...] handling
+      // above. Without this the string form fell through to the
+      // unknown-forward-ref int fallback, erasing the tag.
+      if(
+        ref_name.find('|') != std::string::npos ||
+        ref_name.rfind("Union[", 0) == 0 ||
+        ref_name.rfind("Optional[", 0) == 0 ||
+        ref_name.rfind("typing.Union[", 0) == 0 ||
+        ref_name.rfind("typing.Optional[", 0) == 0)
+        return python_value_type();
       if(class_types.count(ref_name))
         return class_types[ref_name];
       // Try as a built-in type name
