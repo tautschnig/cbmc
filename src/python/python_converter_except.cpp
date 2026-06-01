@@ -216,7 +216,9 @@ codet python_convertert::convert_raise(const jsont &stmt)
   // outside of try blocks. Skipped when --python-no-exception-checks
   // is set: benchmark suites that judge only assertion failures
   // shouldn't see 'raise' as a property violation.
-  if(current_function.empty() && try_depth == 0 && !python_no_exception_checks)
+  if(
+    current_function.empty() && try_depth == 0 && with_cleanup_depth == 0 &&
+    !python_no_exception_checks)
   {
     loc.set_property_class("exception");
     loc.set_comment("raise " + exc_type);
@@ -228,14 +230,14 @@ codet python_convertert::convert_raise(const jsont &stmt)
     assume.add_source_location() = loc;
     block.add(std::move(assume));
   }
-  else if(try_depth > 0)
+  else if(try_depth > 0 || with_cleanup_depth > 0)
   {
-    // PLR §8.4: raise inside a try body. Do NOT return here —
-    // the enclosing convert_try body loop guards each
-    // subsequent statement with !__exception_active so the
-    // raise effectively skips the rest of the try body, and
-    // the except/finally machinery takes over. Emitting a
-    // return here would bypass the handler.
+    // PLR §8.4 / §8.5: raise inside a try body or a `with` body.
+    // Do NOT return here — the enclosing convert_try / convert_with
+    // guards each subsequent statement with !__exception_active so
+    // the raise skips the rest of the body, and the except / finally
+    // / __exit__ machinery takes over (a __exit__ may suppress the
+    // exception). Emitting a return here would bypass that.
   }
   else
   {
@@ -563,23 +565,142 @@ codet python_convertert::convert_with(const jsont &stmt)
           }
         }
       }
+      else
+      {
+        // PLR §8.5: no 'as' variable — `with EXPR:`. Create/evaluate
+        // the manager, call __enter__ (result discarded), and collect
+        // it so __exit__ runs (and may suppress) after the body.
+        const jsont &ctx_expr = json_member(item, "context_expr");
+        std::string cls_name;
+        exprt mgr_expr = nil_exprt{};
+        if(
+          is_node_type(ctx_expr, "Call") &&
+          is_node_type(json_member(ctx_expr, "func"), "Name") &&
+          class_types.count(
+            json_string(json_member(json_member(ctx_expr, "func"), "id"))))
+        {
+          cls_name =
+            json_string(json_member(json_member(ctx_expr, "func"), "id"));
+          static unsigned with_mgr_n = 0;
+          std::string mn = "__with_mgr_n_" + std::to_string(with_mgr_n++);
+          irep_idt mid{qualify_name(mn)};
+          if(symbol_table.lookup(mid) == nullptr)
+          {
+            symbolt ms{mid, class_types[cls_name], "python"};
+            ms.base_name = mn;
+            ms.is_lvalue = true;
+            ms.is_state_var = true;
+            symbol_table.add(ms);
+          }
+          mgr_expr = symbol_table.lookup_ref(mid).symbol_expr();
+          auto init_call =
+            build_class_init_call(cls_name, mgr_expr, ctx_expr, loc);
+          if(init_call)
+            block.add(code_expressiont{*init_call});
+        }
+        else
+        {
+          exprt ctx = convert_expression(ctx_expr);
+          if(ctx.type().id() == ID_struct)
+          {
+            std::string tag = id2string(to_struct_type(ctx.type()).get_tag());
+            cls_name =
+              tag.substr(0, 13) == "python_class_" ? tag.substr(13) : tag;
+          }
+          else if(ctx.type().id() == ID_struct_tag)
+          {
+            std::string tag =
+              id2string(to_struct_tag_type(ctx.type()).get_identifier());
+            if(tag.substr(0, 17) == "tag-python_class_")
+              cls_name = tag.substr(17);
+            else if(tag.substr(0, 4) == "tag-")
+              cls_name = tag.substr(4);
+          }
+          if(!cls_name.empty() && !ctx.is_nil())
+          {
+            static unsigned with_mgr_ne = 0;
+            std::string mn = "__with_mgr_ne_" + std::to_string(with_mgr_ne++);
+            irep_idt mid{qualify_name(mn)};
+            if(symbol_table.lookup(mid) == nullptr)
+            {
+              symbolt ms{mid, ctx.type(), "python"};
+              ms.base_name = mn;
+              ms.is_lvalue = true;
+              ms.is_state_var = true;
+              symbol_table.add(ms);
+            }
+            mgr_expr = symbol_table.lookup_ref(mid).symbol_expr();
+            block.add(code_frontend_assignt{mgr_expr, ctx});
+          }
+        }
+        if(!cls_name.empty() && !mgr_expr.is_nil())
+        {
+          const symbolt *enter_sym =
+            symbol_table.lookup("python::" + cls_name + "::__enter__");
+          if(enter_sym != nullptr)
+          {
+            const code_typet &et = to_code_type(enter_sym->type);
+            side_effect_expr_function_callt call{
+              enter_sym->symbol_expr(),
+              {address_of_exprt{mgr_expr}},
+              et.return_type().id() == ID_empty ? typet{empty_typet{}}
+                                                : et.return_type(),
+              loc};
+            block.add(code_expressiont{std::move(call)});
+          }
+          if(
+            symbol_table.lookup("python::" + cls_name + "::__exit__") !=
+            nullptr)
+            with_managers.push_back({mgr_expr, cls_name});
+        }
+      }
     }
   }
 
-  // Convert the body
+  // Convert the body. When a context manager declares __exit__ the
+  // `with` behaves like try/finally: a raise/return/break/continue
+  // must run __exit__ first (which may suppress an exception). Bump
+  // with_cleanup_depth so a `raise` defers instead of early-returning,
+  // and guard each statement after the first with !__exception_active
+  // so a raise skips the rest of the body (mirrors convert_try).
+  const symbolt *exc_active_sym =
+    symbol_table.lookup("python::__exception_active");
+  const bool has_cleanup = !with_managers.empty() && exc_active_sym != nullptr;
   const jsont &body = json_member(stmt, "body");
+  if(has_cleanup)
+    with_cleanup_depth++;
   if(body.is_array())
   {
+    bool first = true;
     for(const auto &s : as_array(body))
-      block.add(convert_statement(s));
+    {
+      codet sc = convert_statement(s);
+      if(!first && has_cleanup)
+        block.add(code_ifthenelset{
+          not_exprt{exc_active_sym->symbol_expr()}, std::move(sc)});
+      else
+        block.add(std::move(sc));
+      first = false;
+    }
   }
+  if(has_cleanup)
+    with_cleanup_depth--;
 
-  // PLR §8.5: call __exit__(self, None, None, None) at block exit,
-  // in reverse order of entry. This checks any assertion / bug
-  // inside __exit__ (previously never invoked). Exception
-  // suppression (a __exit__ returning True clearing an active
-  // exception) is not yet modeled; the common normal-exit cleanup
-  // path is.
+  // PLR §8.5: build the __exit__(self, exc_type, exc_val, exc_tb)
+  // sequence (reverse order of entry). It (a) checks any assertion /
+  // bug inside __exit__ and (b) models exception suppression: if an
+  // exception is active when __exit__ runs and __exit__ returns a
+  // truthy value, the exception is swallowed ("If the suite was exited
+  // due to an exception ... and the __exit__() return value was false,
+  // the exception is reraised").
+  //
+  // Soundness: the exc-info arguments are nondet (not None), so an
+  // __exit__ whose suppression decision depends on the exception type
+  // explores BOTH the suppress and the propagate branch — the
+  // propagate branch preserves any uncaught-exception failure, so no
+  // bug is missed. A __exit__ that returns a constant (the common
+  // case) is unaffected by the nondet args and modeled exactly.
+  code_blockt exit_code;
   for(auto it = with_managers.rbegin(); it != with_managers.rend(); ++it)
   {
     const exprt &mgr_expr = it->first;
@@ -591,16 +712,114 @@ codet python_convertert::convert_with(const jsont &stmt)
     const code_typet &xt = to_code_type(exit_sym->type);
     exprt::operandst xargs;
     xargs.push_back(address_of_exprt{mgr_expr});
-    // exc_type, exc_val, exc_tb — pass None for normal exit.
-    while(xargs.size() < xt.parameters().size())
-      xargs.push_back(python_none_value());
+    for(std::size_t i = xargs.size(); i < xt.parameters().size(); ++i)
+      xargs.push_back(side_effect_expr_nondett{xt.parameters()[i].type(), loc});
+    const bool has_ret = xt.return_type().id() != ID_empty;
     side_effect_expr_function_callt xcall{
       exit_sym->symbol_expr(),
       std::move(xargs),
-      xt.return_type().id() == ID_empty ? typet{empty_typet{}}
-                                        : xt.return_type(),
+      has_ret ? xt.return_type() : typet{empty_typet{}},
       loc};
-    block.add(code_expressiont{std::move(xcall)});
+    if(has_ret && exc_active_sym != nullptr)
+    {
+      // was_active = __exception_active (snapshot before __exit__);
+      // r = __exit__(...); if(was_active && truthy(r)) clear exception.
+      static unsigned exit_ret_ctr = 0;
+      std::string rn = "__with_exit_ret_" + std::to_string(exit_ret_ctr);
+      std::string wn = "__with_exc_was_" + std::to_string(exit_ret_ctr++);
+      irep_idt rid{qualify_name(rn)};
+      irep_idt wid{qualify_name(wn)};
+      if(symbol_table.lookup(rid) == nullptr)
+      {
+        symbolt rs{rid, xt.return_type(), "python"};
+        rs.base_name = rn;
+        rs.is_lvalue = true;
+        rs.is_state_var = true;
+        symbol_table.add(rs);
+      }
+      if(symbol_table.lookup(wid) == nullptr)
+      {
+        symbolt ws{wid, bool_typet{}, "python"};
+        ws.base_name = wn;
+        ws.is_lvalue = true;
+        ws.is_state_var = true;
+        symbol_table.add(ws);
+      }
+      exprt ret_expr = symbol_table.lookup_ref(rid).symbol_expr();
+      exprt was_expr = symbol_table.lookup_ref(wid).symbol_expr();
+      exit_code.add(
+        code_frontend_assignt{was_expr, exc_active_sym->symbol_expr()});
+      exit_code.add(code_frontend_assignt{ret_expr, xcall});
+      exit_code.add(code_ifthenelset{
+        and_exprt{was_expr, python_truthiness(ret_expr)},
+        code_frontend_assignt{exc_active_sym->symbol_expr(), false_exprt{}}});
+    }
+    else
+      exit_code.add(code_expressiont{std::move(xcall)});
+  }
+
+  // PLR §8.5: __exit__ runs before any control-flow exit from the
+  // body. Inline a copy before each return/break/continue (like the
+  // finally lowering in convert_try), then append for the
+  // normal-fallthrough and raise paths.
+  std::function<void(codet &)> inline_exit = [&](codet &c) -> void
+  {
+    for(auto &op : c.operands())
+    {
+      if(op.id() != ID_code)
+        continue;
+      codet &inner = static_cast<codet &>(op);
+      const irep_idt &st = inner.get_statement();
+      if(st == ID_return || st == ID_break || st == ID_continue)
+      {
+        code_blockt blk;
+        blk.append(exit_code);
+        blk.add(static_cast<const codet &>(inner));
+        op = std::move(blk);
+      }
+      else
+        inline_exit(inner);
+    }
+  };
+  if(!exit_code.statements().empty())
+    inline_exit(block);
+  block.append(exit_code);
+
+  // If the exception was not suppressed and there is no enclosing try,
+  // propagate it past the `with`: early-return inside a function, or
+  // the uncaught-exception assertion at module top level (deferred
+  // from the raise, which skipped it under with_cleanup_depth).
+  if(has_cleanup && try_depth == 0)
+  {
+    code_blockt prop;
+    if(current_function.empty())
+    {
+      if(!python_no_exception_checks)
+      {
+        source_locationt aloc = loc;
+        aloc.set_property_class("exception");
+        aloc.set_comment("uncaught exception");
+        prop.add(code_assertt{false_exprt{}});
+        prop.add(code_assumet{false_exprt{}});
+      }
+    }
+    else
+    {
+      const symbolt *func_sym =
+        symbol_table.lookup("python::" + current_function);
+      if(func_sym != nullptr)
+      {
+        const typet &rt = to_code_type(func_sym->type).return_type();
+        if(rt.id() == ID_empty)
+          prop.add(code_frontend_returnt{});
+        else
+          prop.add(code_frontend_returnt{
+            side_effect_expr_nondett{rt, source_locationt{}}});
+      }
+    }
+    if(!prop.statements().empty())
+      block.add(
+        code_ifthenelset{exc_active_sym->symbol_expr(), std::move(prop)});
   }
 
   return std::move(block);

@@ -87,8 +87,12 @@ class aclosing(AbstractAsyncContextManager):
 
 class suppress(AbstractContextManager):
     """``with suppress(X): ...`` — exceptions of type X are
-    swallowed. We always return True from __exit__ (swallow
-    everything), matching the over-approximation."""
+    swallowed. We cannot match the exact exception type against
+    the runtime exception here, so __exit__ returns a nondet bool:
+    the front-end then explores both the suppress and the propagate
+    path. This is sound (the propagate path preserves any
+    uncaught-exception failure) — an unconditional ``return True``
+    would unsoundly swallow exceptions whose type is NOT in X."""
 
     def __init__(self, *exceptions):
         self._exceptions = exceptions
@@ -97,7 +101,7 @@ class suppress(AbstractContextManager):
         return None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        return True
+        return nondet_bool()
 
 
 class redirect_stdout(AbstractContextManager):
