@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --unwind 5
 
@@ -8,6 +8,9 @@ main.py
 --
 ^warning: ignoring
 --
-unwrap_value (python_converter.cpp) reads the requested python_value field
-unconditionally. Coercing a tagged-union/Any operand to int must emit a tag
-obligation (TypeError when tag != INT) rather than an unconditional read.
+A type annotation is documentation, not a runtime coercion: `x: int =
+<tagged-union value>` keeps the value's runtime tag rather than reading
+__int_val unconditionally. After to_str() makes c.value a str, x retains
+the str tag, so isinstance(x, int) is False and the assertion fails.
+Previously cbmc-py force-unwrapped to int and verified SUCCESSFUL (the
+differential unsoundness witness B). Now detected; promoted to CORE.
