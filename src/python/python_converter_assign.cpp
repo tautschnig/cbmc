@@ -183,6 +183,26 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
       }
     }
   }
+  // PLR §3.2: empty-dict key/value-type inference. When the user
+  // wrote 'name: dict[K, V] = {}' the annotation specifies the
+  // dict's key and value types but convert_dict for the empty
+  // literal {} defaults to dict[str, int] (no key/value pairs to
+  // infer from). The resulting type mismatch leaves the symbol
+  // typed as dict[K, V] but the assigned value structured as
+  // dict[str, int] — subsequent d[k] = v writes then mismatch
+  // on the key type at the keys[i] = k store, leaving the
+  // stored key unconstrained (visible as a `nondet` in the
+  // goto). Rebuild the empty dict literal as a zero-init
+  // struct of var_type so the keys/values arrays carry the
+  // annotation-specified element types.
+  if(
+    is_node_type(value, "Dict") && json_member(value, "keys").is_array() &&
+    as_array(json_member(value, "keys")).empty() &&
+    is_python_dict_type(rhs.type()) && is_python_dict_type(var_type) &&
+    rhs.type() != var_type)
+  {
+    rhs = safe_zero(var_type);
+  }
   // PLR §3.1: storage promotion for escaped mutables.
   // If this name's qualified form is in `escaped_mutables` (i.e. it
   // appears as a Name element of some List/Dict literal elsewhere)
