@@ -2251,8 +2251,29 @@ codet python_convertert::convert_assign(const jsont &stmt)
         member_exprt data{obj, "data", data_type};
         index_exprt lhs{data, idx};
         exprt typed_rhs = rhs;
+        // PLR §3.1: coerce a SCALAR RHS into the list's element
+        // type. For a list[python_value] target (e.g. a bare-
+        // `list` parameter the callee mutates via `lst[i] = v`),
+        // coerce_element wraps the scalar into the tagged union;
+        // a plain typecast would bit-reinterpret the int as a
+        // python_value struct, corrupting the stored value (so a
+        // later read of `.__int_val` saw garbage). Restricted to
+        // scalar RHS: a container RHS (list/dict/struct) keeps the
+        // existing typecast path so the self-referential
+        // value-copy semantics (documented in the soundness
+        // pending suite) are unchanged.
         if(typed_rhs.type() != data_type.element_type())
-          typed_rhs = typecast_exprt{typed_rhs, data_type.element_type()};
+        {
+          const typet &rt = typed_rhs.type();
+          bool scalar_rhs = rt.id() == ID_signedbv ||
+                            rt.id() == ID_unsignedbv || rt.id() == ID_floatbv ||
+                            rt.id() == ID_bool || rt.id() == ID_integer ||
+                            is_python_string_type(rt);
+          if(scalar_rhs && is_python_value_type(data_type.element_type()))
+            typed_rhs = coerce_element(typed_rhs, data_type.element_type());
+          else
+            typed_rhs = typecast_exprt{typed_rhs, data_type.element_type()};
+        }
         code_frontend_assignt assign{lhs, typed_rhs};
         assign.add_source_location() = loc;
         block.add(std::move(assign));
