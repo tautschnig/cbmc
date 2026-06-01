@@ -923,10 +923,46 @@ codet python_convertert::convert_try(const jsont &stmt)
 
   // Execute finally block (always runs)
   const jsont &finalbody = json_member(stmt, "finalbody");
-  if(finalbody.is_array())
+  if(finalbody.is_array() && !as_array(finalbody).empty())
   {
+    // Convert the finally body once into a reusable block.
+    code_blockt finally_code;
     for(const auto &s : as_array(finalbody))
-      block.add(convert_statement(s));
+      finally_code.add(convert_statement(s));
+
+    // PLR §8.4.2: a return / break / continue leaving the try (or
+    // an except handler) must run the finally FIRST, and if the
+    // finally itself performs a return / break / continue that
+    // action REPLACES the pending one. Model this by inlining the
+    // finally body immediately before each such control-flow exit
+    // in the try/handler code built so far: `{ <finally>; return X }`.
+    // If the finally returns, its return executes and the trailing
+    // `return X` is dead — exactly Python's override semantics.
+    // The plain append below still covers the normal-fallthrough
+    // and exception-propagation paths (which the inlined copies do
+    // not reach, since a return/break/continue exits first).
+    std::function<void(codet &)> inline_finally = [&](codet &c) -> void
+    {
+      for(auto &op : c.operands())
+      {
+        if(op.id() != ID_code)
+          continue;
+        codet &inner = static_cast<codet &>(op);
+        const irep_idt &st = inner.get_statement();
+        if(st == ID_return || st == ID_break || st == ID_continue)
+        {
+          code_blockt blk;
+          blk.append(finally_code); // copy
+          blk.add(static_cast<const codet &>(inner));
+          op = std::move(blk);
+        }
+        else
+          inline_finally(inner);
+      }
+    };
+    inline_finally(block);
+
+    block.append(finally_code); // fallthrough / exception path
   }
 
   // Merge arm states: try-success (arm_states[0]) plus each

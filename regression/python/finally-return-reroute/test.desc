@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --unwind 5
 
@@ -8,5 +8,9 @@ main.py
 --
 ^warning: ignoring
 --
-convert_try appends the finally body but does not reroute return/break/
-continue through it. A return-in-finally must replace the pending return.
+convert_try now reroutes return/break/continue through the finally
+block: the finally body is inlined before each such exit in the
+try/handler code, so a return/break/continue inside finally replaces
+the pending one (f() == 2 here). Previously the try's `return 1` fired
+and the appended finally was unreachable (differential unsoundness
+witness 5). Now correct; promoted to CORE.
