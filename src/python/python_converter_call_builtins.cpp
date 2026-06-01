@@ -2725,7 +2725,9 @@ std::optional<exprt> python_convertert::try_builtin_call(
           // together (the common case).
           const jsont &gen_ifs = json_member(gen, "ifs");
 
-          if(is_node_type(gen_iter, "List") || is_node_type(gen_iter, "Name"))
+          if(
+            is_node_type(gen_iter, "List") || is_node_type(gen_iter, "Name") ||
+            is_node_type(gen_iter, "Call"))
           {
             // Get the iterable elements
             exprt iterable = convert_expression(gen_iter);
