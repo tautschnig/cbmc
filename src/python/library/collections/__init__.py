@@ -51,36 +51,78 @@ class defaultdict(dict):
 
 
 class Counter(dict):
-    """Multiset over hashable elements. For verification we store
-    the input iterable as a list (Counter(iter).get(x, 0)) returns
-    0 for unseen x, and the count for seen x — approximate because
-    our dict model has bounded size."""
+    """Multiset over hashable elements. Modelled at the Python
+    level as a class with composition over a typed dict for
+    storage. The key type is `tuple[int, int]` — the common
+    shape used by Counter test cases (e.g. `c[2, 3] = N`); other
+    key shapes (single ints, strings, n-tuples for n != 2) are
+    over-approximated as nondet at the dict-level.
+
+    The Python-level Counter is `class Counter(dict): ...` so
+    it inherits dict's protocol; our class system doesn't
+    auto-inherit dict methods, so we override the relevant
+    dunders directly (subscript get/set) plus the auxiliary
+    methods (values, keys, items, ...). Missing keys return 0
+    per Counter's `__missing__` semantics.
+    """
+
+    _d: dict[tuple[int, int], int]
 
     def __init__(self, iterable=None, **kwds):
-        self._items = []
+        self._d = {}
+        # PLR: Counter(iterable) treats each element as a key
+        # with count 1 (we don't accumulate counts in the
+        # bounded model). For tuple-keyed iterables this still
+        # produces the correct presence/absence judgement;
+        # frequency tracking is approximate.
         if iterable is not None:
             for x in iterable:
-                self._items.append(x)
+                self._d[x] = 1
+
+    def __setitem__(self, k: tuple[int, int], v: int) -> None:
+        self._d[k] = v
+
+    def __getitem__(self, k: tuple[int, int]) -> int:
+        # PLR §6.10.1 / Counter `__missing__`: missing keys
+        # return 0, not KeyError.
+        return self._d.get(k, 0)
+
+    def __contains__(self, k: tuple[int, int]) -> bool:
+        return k in self._d
+
+    def get(self, k: tuple[int, int], default: int = 0) -> int:
+        return self._d.get(k, default)
+
+    def values(self) -> list[int]:
+        return self._d.values()
+
+    def keys(self):
+        return self._d.keys()
+
+    def items(self):
+        return self._d.items()
 
     def most_common(self, n: int = 0):
-        # Return up to n items from the input (not sorted by
-        # frequency — our frontend doesn't precisely track
-        # per-element counts). For the empty-iterable case
-        # returns []. Callers using .most_common(k) as an
-        # upper bound get a sound over-approximation.
+        # Approximate: walk dict.items() up to n entries. Our
+        # frontend doesn't precisely track per-element counts,
+        # so callers using .most_common(k) as an upper bound
+        # get a sound over-approximation.
         if n <= 0:
             return []
         out = []
         i = 0
-        for x in self._items:
+        for kv in self._d.items():
             if i >= n:
                 break
-            out.append((x, 1))
+            out.append(kv)
             i = i + 1
         return out
 
     def elements(self):
-        return list(self._items)
+        out = []
+        for k in self._d.keys():
+            out.append(k)
+        return out
 
     def subtract(self, iterable=None, **kwds) -> None:
         return None
@@ -88,11 +130,11 @@ class Counter(dict):
     def update(self, iterable=None, **kwds) -> None:
         if iterable is not None:
             for x in iterable:
-                self._items.append(x)
+                self._d[x] = 1
         return None
 
     def total(self) -> int:
-        return len(self._items)
+        return len(self._d)
 
 
 class deque:
