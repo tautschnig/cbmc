@@ -293,8 +293,27 @@ def _detect_param_consumed_by_callee(
     Heuristic: a parameter `p` is "consumed" when:
       * `p->fld`, `*p`, and `p[i]` are all absent, AND
       * `p` appears as an argument inside a function call.
+
+    Conservative gate: don't fire when the body contains any
+    fresh local-var allocation.  If the function allocates
+    locally, the cocci leak detector might be flagging a real
+    leak on that local alloc, not a parameter-consumed-by-
+    callee FP.  Without this gate, e.g., CVE-2024-35829
+    (lima_heap_alloc, which has both a kvmalloc_array and a
+    `vm` parameter passed to lima_vm_map_bo) would be over-
+    suppressed.
     """
     if not param_names:
+        return None
+    fresh_alloc_re = re.compile(
+        r"\b[A-Za-z_]\w*\s*=\s*"
+        r"(?:" + FRESH_ALLOC_APIS + r")\s*\(")
+    if fresh_alloc_re.search(body):
+        return None
+    direct_alloc_re = re.compile(
+        r"(?:->\s*\w+|\*\s*\w+|\*\*\s*\w+)\s*=\s*"
+        r"(?:" + FRESH_ALLOC_APIS + r")\s*\(")
+    if direct_alloc_re.search(body):
         return None
     for p in param_names:
         esc = re.escape(p)
@@ -511,6 +530,19 @@ def _detect_local_alloc_handed_to_consumer(
     alloc_vars = set()
     for m in fresh_alloc_re.finditer(body):
         alloc_vars.add(m.group(1))
+    # Conservative gate: only fire when the function has a
+    # SINGLE total allocation site (the local var alloc plus
+    # any direct alloc-into-field).  Multi-alloc functions
+    # have additional alloc sites where the cocci's leak
+    # detector might be flagging a real bug.  See
+    # _detect_alloc_into_param_field for the same rationale.
+    direct_alloc_re = re.compile(
+        r"(?:->\s*\w+|\*\s*\w+|\*\*\s*\w+)\s*=\s*"
+        r"(?:" + ALLOC_APIS + r")\s*\(")
+    total_allocs = (len(list(ALLOC_RE.finditer(body)))
+                    + len(list(direct_alloc_re.finditer(body))))
+    if total_allocs > 1:
+        return None
     for var in alloc_vars:
         esc = re.escape(var)
         # Count uses of `var` as an argument inside a non-free
@@ -570,7 +602,29 @@ def _detect_alloc_into_param_field(body: str
     All three transfer ownership to the caller-owned location;
     the per-function leak check fires falsely because it sees
     no kfree of the alloc result locally.
+
+    Conservative gate: only fire when the function has a
+    SINGLE allocation site.  Multi-alloc functions have
+    additional alloc sites where the cocci's leak detector
+    might be flagging a real bug; the ownership-transfer
+    pattern on ONE alloc doesn't preclude a leak on another.
+    Without this gate, e.g., CVE-2024-35829 (lima_heap_alloc)
+    would be over-suppressed: it has both a `bo->base.pages
+    = kvmalloc_array(...)` (transferred) and a `page =
+    shmem_read_mapping_page(...)` (real leak target).
     """
+    # Count allocation sites in the body.
+    alloc_count = len(list(ALLOC_RE.finditer(body)))
+    # Also count direct alloc-into-field/pointer expressions
+    # (those don't go through ALLOC_RE because they don't
+    # have a local-var assignment).
+    direct_re = re.compile(
+        r"(?:->\s*\w+|\*\s*\w+|\*\*\s*\w+)\s*=\s*"
+        r"(?:" + ALLOC_APIS + r")\s*\(")
+    direct_count = len(list(direct_re.finditer(body)))
+    total_allocs = alloc_count + direct_count
+    if total_allocs > 1:
+        return None
     pats = (
         # 1. <param>-><field> = alloc(...)
         re.compile(
@@ -591,8 +645,9 @@ def _detect_alloc_into_param_field(body: str
                 "escape_via_store",
                 "allocation result is written directly into "
                 "a caller-owned location (parameter field or "
-                "out-pointer) — ownership transfers to the "
-                "caller (per-function leak check fires falsely)",
+                "out-pointer); only one allocation in the "
+                "body, so no other leak candidate — "
+                "ownership transfers to the caller",
                 "high",
             )
     return None
