@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+id() now returns a deterministic identity (address of the object's
+storage cast to int) for addressable operands, so id(x) == id(x)
+holds, an alias y = x shares x's id, and a distinct list has a
+distinct id. Previously id() fell through to a nondet int.

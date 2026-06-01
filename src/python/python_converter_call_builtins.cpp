@@ -357,6 +357,26 @@ std::optional<exprt> python_convertert::try_builtin_call(
     }
     return side_effect_expr_nondett{python_int_type(), get_location(expr)};
   }
+  else if(func_name == "id")
+  {
+    // Built-in id(): return a deterministic identity. For an
+    // addressable object (named variable, attribute, element, or
+    // pointer-promoted alias) the identity is the address of its
+    // storage cast to int — so id(x) == id(x) holds, aliases share an
+    // id, and distinct objects differ. For a literal / temporary (no
+    // stable storage, e.g. id([1,2,3])) fall back to a nondet int:
+    // the identity of an ephemeral object is implementation-defined
+    // and not meaningful to model.
+    if(args.is_array() && !as_array(args).empty())
+    {
+      exprt arg = convert_expression(*as_array(args).begin());
+      if(
+        arg.id() == ID_symbol || arg.id() == ID_member ||
+        arg.id() == ID_index || arg.id() == ID_dereference)
+        return typecast_exprt{address_of_exprt{arg}, python_int_type()};
+    }
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
   else if(func_name == "len")
   {
     // PLib builtins: len(s) returns the length of s
