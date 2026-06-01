@@ -949,6 +949,11 @@ private:
   /// Depth of if/else nesting (>0 means we're inside a branch).
   unsigned if_else_depth = 0;
   unsigned try_depth = 0;
+  /// Depth of enclosing `with` bodies whose context manager declares
+  /// __exit__. Like try_depth, a `raise` here must NOT early-return:
+  /// control has to reach the __exit__ call (which may suppress the
+  /// exception) emitted after the with-body.
+  unsigned with_cleanup_depth = 0;
   /// Depth of enclosing for/while loops at the current AST node.
   /// Used by string-handling helpers to decide whether to havoc
   /// SSA outputs of cprover_string_*_func intrinsics. Outside any

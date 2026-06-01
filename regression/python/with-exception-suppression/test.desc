@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A context manager __exit__ that returns a truthy value suppresses an
+exception raised in the with-body (PLR §8.5), so f() resumes and
+returns 42. Exercises the no-'as' with form, the deferred raise
+(via with_cleanup_depth), and the __exit__ return-value-driven clear
+of __exception_active.
