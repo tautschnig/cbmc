@@ -237,6 +237,70 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
     }
   }
 
+  // PLR §6.7: tag obligation for a tagged-union operand reaching a
+  // numeric binary operation. A python_value can hold a str / None /
+  // list / dict at runtime; combining such a value with a concrete
+  // numeric via +, -, /, //, %, ** raises TypeError under CPython
+  // (e.g. None + 1, "x" + 1). The operand-promotion path below would
+  // instead read __int_val unconditionally and silently produce a
+  // number — a false negative. Emit a CONDITIONAL exception guarded
+  // by the operand's RUNTIME tag: it fires exactly when the tag is
+  // non-numeric, so there is no false positive when the value happens
+  // to be numeric. Mult is excluded (str/list * int is repetition,
+  // so a non-numeric tag is legitimate there). The other operand
+  // must be a concrete numeric (not itself a union or str) so we do
+  // not flag valid str/list concatenation (str-union + str).
+  {
+    bool arith = op == "Add" || op == "Sub" || op == "Div" ||
+                 op == "FloorDiv" || op == "Mod" || op == "Pow";
+    bool l_val = is_python_value_type(left.type());
+    bool r_val = is_python_value_type(right.type());
+    bool l_num = left.type().id() == ID_signedbv ||
+                 left.type().id() == ID_integer ||
+                 left.type().id() == ID_floatbv || left.type().id() == ID_bool;
+    bool r_num =
+      right.type().id() == ID_signedbv || right.type().id() == ID_integer ||
+      right.type().id() == ID_floatbv || right.type().id() == ID_bool;
+    auto tag_is_numeric = [](const exprt &v) -> exprt
+    {
+      return or_exprt{
+        or_exprt{
+          python_value_is(v, python_type_tagt::INT),
+          python_value_is(v, python_type_tagt::FLOAT)},
+        or_exprt{
+          python_value_is(v, python_type_tagt::BOOL),
+          python_value_is(v, python_type_tagt::COMPLEX)}};
+    };
+    exprt non_numeric = nil_exprt{};
+    if(arith && l_val && r_num)
+      non_numeric = not_exprt{tag_is_numeric(left)};
+    else if(arith && r_val && l_num)
+      non_numeric = not_exprt{tag_is_numeric(right)};
+    if(!non_numeric.is_nil())
+    {
+      const symbolt *exc_sym =
+        symbol_table.lookup("python::__exception_active");
+      const symbolt *exc_type_sym =
+        symbol_table.lookup("python::__exception_type");
+      if(exc_sym != nullptr)
+      {
+        pending_checks.push_back(code_frontend_assignt{
+          exc_sym->symbol_expr(),
+          or_exprt{exc_sym->symbol_expr(), non_numeric}});
+        if(exc_type_sym != nullptr)
+        {
+          long h = exception_type_hash("TypeError");
+          pending_checks.push_back(code_frontend_assignt{
+            exc_type_sym->symbol_expr(),
+            if_exprt{
+              non_numeric,
+              from_integer(h, exc_type_sym->type),
+              exc_type_sym->symbol_expr()}});
+        }
+      }
+    }
+  }
+
   // PLib stdtypes: "str" type, §6.7: binary arithmetic
   // String concatenation: s1 + s2 produces a new string containing the
   // PLR §3.2: Complex number arithmetic
@@ -391,7 +455,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
       // to complex above). Without this guard, the frontend
       // silently produces a nondet result and a downstream
       // assertion validates anything, so the bug is invisible.
-      auto is_zero_const = [](const exprt &e) {
+      auto is_zero_const = [](const exprt &e)
+      {
         // Look through trivial typecasts to find a constant.
         const exprt *p = &e;
         while(p->id() == ID_typecast && p->operands().size() == 1)
@@ -416,7 +481,8 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
         }
         return false;
       };
-      auto is_neg_const = [](const exprt &e) {
+      auto is_neg_const = [](const exprt &e)
+      {
         // Look through typecasts to find the underlying value;
         // unary_minus(constant_pos) and direct negative constants
         // both count as "negative".
@@ -461,8 +527,7 @@ exprt python_convertert::convert_bin_op(const jsont &expr)
           v.from_expr(to_constant_expr(*p));
           return v.get_sign() && !v.is_zero() && !v.is_NaN();
         }
-        if(
-          p->type().id() == ID_signedbv || p->type().id() == ID_integer)
+        if(p->type().id() == ID_signedbv || p->type().id() == ID_integer)
         {
           mp_integer v;
           if(!to_integer(to_constant_expr(*p), v))
