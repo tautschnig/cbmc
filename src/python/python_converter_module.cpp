@@ -1407,8 +1407,46 @@ bool python_convertert::convert()
                       var_type = python_list_type(elem_type);
                     }
                     else
-                      continue; // defer to pass 2
-                  }             // end else (non-tuple list)
+                    {
+                      // PLR §3.1: list with at least one non-constant
+                      // element (e.g. `rand1 = [0, n - 1]`). Infer the
+                      // element type from any constant elements that
+                      // are present, falling back to int. Without
+                      // pre-registering, function bodies in pass 1c
+                      // that read this global see Name → nil and
+                      // silently drop the enclosing statement.
+                      typet elem_type = python_int_type();
+                      if(elts.is_array() && !as_array(elts).empty())
+                      {
+                        for(const auto &e : as_array(elts))
+                        {
+                          if(!is_node_type(e, "Constant"))
+                            continue;
+                          const jsont &ev = json_member(e, "value");
+                          if(ev.is_string())
+                          {
+                            elem_type = python_string_type();
+                            break;
+                          }
+                          if(ev.is_number())
+                          {
+                            std::string vs = ev.value;
+                            if(
+                              vs.find('.') != std::string::npos ||
+                              vs.find('e') != std::string::npos)
+                              elem_type = double_type();
+                            break;
+                          }
+                          if(ev.is_true() || ev.is_false())
+                          {
+                            elem_type = bool_typet{};
+                            break;
+                          }
+                        }
+                      }
+                      var_type = python_list_type(elem_type);
+                    } // end else (non-simple list — register with default)
+                  }   // end else (non-tuple list)
                 }
                 else if(is_node_type(val, "Tuple"))
                 {
