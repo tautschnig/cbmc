@@ -1528,7 +1528,12 @@ bool python_convertert::convert()
                   // Without this, function-body conversion in pass
                   // 1c sees the Name lookup return nil and the
                   // entire enclosing if/while/for body silently
-                  // collapses.
+                  // collapses. PLR §3.1: only pre-register for
+                  // calls whose return type we can determine
+                  // confidently — using a wrong placeholder type
+                  // here causes downstream bitvector-encoding
+                  // crashes when the function body uses the
+                  // global in a typed-key dict or comparable.
                   if(is_node_type(val, "Call"))
                   {
                     const jsont &fn = json_member(val, "func");
@@ -1553,6 +1558,46 @@ bool python_convertert::convert()
                       else
                         continue; // defer to pass 2
                     }
+                    else if(is_node_type(fn, "Attribute"))
+                    {
+                      // Attribute calls like `random.randint(0, 100)`,
+                      // `random.uniform(0, 1)`. Pre-register only
+                      // when both the module and the method are in
+                      // our known-typed table; everything else
+                      // defers to pass 2 (since a wrong placeholder
+                      // type breaks function bodies that use the
+                      // global as a typed key / index / arg).
+                      const jsont &av = json_member(fn, "value");
+                      const std::string attr =
+                        json_string(json_member(fn, "attr"));
+                      std::string base;
+                      if(is_node_type(av, "Name"))
+                        base = json_string(json_member(av, "id"));
+                      // random.randint / random.randrange → int
+                      if(
+                        base == "random" &&
+                        (attr == "randint" || attr == "randrange" ||
+                         attr == "getrandbits"))
+                        var_type = python_int_type();
+                      // random.uniform / random.random / random.gauss → float
+                      else if(
+                        base == "random" &&
+                        (attr == "uniform" || attr == "random" ||
+                         attr == "gauss" || attr == "expovariate" ||
+                         attr == "triangular" || attr == "betavariate"))
+                        var_type = double_type();
+                      // math.sqrt / math.log / math.exp / trig → float
+                      else if(
+                        base == "math" &&
+                        (attr == "sqrt" || attr == "log" || attr == "exp" ||
+                         attr == "sin" || attr == "cos" || attr == "tan" ||
+                         attr == "asin" || attr == "acos" || attr == "atan" ||
+                         attr == "atan2" || attr == "ceil" || attr == "floor" ||
+                         attr == "fabs" || attr == "pow"))
+                        var_type = double_type();
+                      else
+                        continue; // defer to pass 2
+                    }
                     else
                     {
                       continue; // defer to pass 2
@@ -1560,8 +1605,8 @@ bool python_convertert::convert()
                   }
                   else
                   {
-                    // Complex RHS — skip pre-registration, let
-                    // pass 2 handle it
+                    // Complex non-Call RHS — skip pre-registration,
+                    // let pass 2 handle it
                     continue;
                   }
                 }
