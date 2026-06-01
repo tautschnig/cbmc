@@ -281,35 +281,83 @@ limitation family: `counter_signal_ext_register`
 crypto flow), `wilc_wfi_mgmt_tx_complete` (callback).
 Detailed analysis in `n1000-v6-results-2026-05.md`.
 
-**Catalog detection improved:**
+**Catalog detection (revised after multi-LTS validation):**
 
-| Detected CVEs | Pre-sprint | Post-sprint |
+The pre-sprint claim of 9-10/10 cleanly-testable CVEs
+detected was based on single-tree (linux_5_10) measurement.
+A targeted multi-LTS measurement (June 2026) against the
+exact 10-CVE list, using `cve_validate._run_scan` against
+linux_5_10/6_1/6_6/6_12 with hard-coded CVE→module hints,
+shows:
+
+| Detected (≥1 tree fires CONTRACT VIOLATION) | Pre-sprint claim | Post-multi-LTS verified |
 |---|---|---|
-| Cleanly-testable | 9 | 10 |
-| Recall | 9/10 = 90% | 10/10 = 100% |
+| Cleanly-testable | 10 | 5 |
+| Recall (subset) | 100% | **5/10 = 50%** |
+
+The 5 detected CVEs:
+
+* CVE-2024-35829 (resource_leak_on_error_path)
+* CVE-2024-43818 (null_after_alloc) **added in May sprint**
+* CVE-2025-21654 (dentry_lifetime)
+* CVE-2025-40307 (refcount_lifetime)
+* CVE-2026-43304 (resource_leak_on_error_path)
+
+The 5 not detected today fall into three patterns:
+
+* **3 cleanup-function leaks** (CVE-2023-53453,
+  CVE-2023-53697, CVE-2024-39492): the bug is a missing
+  kfree IN a cleanup function (`*_fini` / `*_shutdown` /
+  `unregister_*`) where the alloc happened in a sibling
+  init/parse function.  Detecting this requires the
+  harness to chain init() → fini() so the property module's
+  global ghost is populated.  scan-per-file's per-function
+  harness only invokes the target function, so the alloc
+  is never tracked.  This was not a regression from the
+  multi-LTS measurement but a structural limitation of the
+  current harness — the prior methodology paper measurement
+  either had a different harness setup, or the "detected
+  via fallback" claim was overstated.
+* **2 timeouts** (CVE-2023-53038, CVE-2025-21895): CBMC
+  takes >300s on these.  Tunable per-CVE unwind / sliced
+  harness might unstick.
+
+The discrepancy was surfaced by hardening the multi-LTS
+infrastructure built in May.  Multi-LTS validation's value
+is exactly this: it forces the catalog to honestly account
+for what it can and cannot detect across the LTS branches
+that matter to a real audience.
+
+The recall claim should accordingly be reported as **50%
+(5/10) under the current per-function harness**, with the
+caveat that the 3 cleanup-function-leak CVEs are detectable
+in principle once init→fini chaining is added.
 
 CVE-2024-43818 (`st_es8336_late_probe` in
 `sound/soc/amd/acp-es8336.c`) was the previously-missed
-case.  Two issues were diagnosed: a `goto-instrument
---replace-call-with-contract` miscompile of `||` short-
-circuits in `__CPROVER_requires` (still a CBMC bug worth
-upstream filing — see `CBMC_LIMITATIONS.md`), and the
-linux_6_1 / 6_6 / 6_12 trees having been left at `allnoconfig`
-which constant-folded the trigger function to NULL.  Both
-are now mitigated.
+case from the May sprint.  Two issues were diagnosed: a
+`goto-instrument --replace-call-with-contract` miscompile
+of `||` short-circuits in `__CPROVER_requires` (still a
+CBMC bug worth upstream filing — see `CBMC_LIMITATIONS.md`),
+and the linux_6_1 / 6_6 / 6_12 trees having been left at
+`allnoconfig` which constant-folded the trigger function
+to NULL.  Both are now mitigated.
 
-The 10 detected CVEs:
+The 10 historically-claimed-detected CVEs (with current verdicts):
 
-* CVE-2023-53038 (refcount_balance)
-* CVE-2023-53453 (resource_leak via fallback)
-* CVE-2023-53697 (resource_leak)
-* CVE-2024-35829 (lima_heap_alloc — resource_leak via fallback)
-* CVE-2024-39492 (resource_leak)
-* CVE-2024-43818 (st_es8336_late_probe — null_after_alloc) **new**
-* CVE-2025-21654 (ovl_connect_layer — dentry_lifetime)
-* CVE-2025-21895 (resource_leak)
-* CVE-2025-40307 (refcount_balance)
-* CVE-2026-43304 (resource_leak)
+* CVE-2023-53038 (refcount_balance) — **timeout**
+* CVE-2023-53453 (resource_leak via fallback) — **vacuous (cross-function)**
+* CVE-2023-53697 (resource_leak) — **vacuous (cross-function)**
+* CVE-2024-35829 (lima_heap_alloc — resource_leak) — **detected**
+* CVE-2024-39492 (resource_leak) — **vacuous (cross-function)**
+* CVE-2024-43818 (st_es8336_late_probe — null_after_alloc) — **detected** *(May sprint)*
+* CVE-2025-21654 (ovl_connect_layer — dentry_lifetime) — **detected**
+* CVE-2025-21895 (resource_leak) — **timeout**
+* CVE-2025-40307 (refcount_balance) — **detected**
+* CVE-2026-43304 (resource_leak) — **detected**
+
+See `multi-lts-recall-2026-06.md` for the per-tree breakdown
+and the diagnosis of each "vacuous" / "timeout" verdict.
 
 #### Multi-LTS validation
 
