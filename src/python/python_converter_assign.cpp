@@ -59,6 +59,26 @@ codet python_convertert::convert_ann_assign(const jsont &stmt)
         {
           dereference_exprt deref{obj};
           member_exprt lhs{deref, attr, st.get_component(attr).type()};
+          // PLR §3.2: empty-dict rebuild for AnnAssign-on-
+          // attribute. Mirrors the Name-target empty-dict path
+          // below: when the LHS is a typed dict[K, V] and the
+          // RHS is the empty dict literal {} (which convert_dict
+          // builds as dict[str, int] by default), the type
+          // mismatch otherwise falls through to safe_typecast
+          // which only relabels the struct, leaving the
+          // string-shaped keys in place.
+          if(
+            is_python_dict_type(lhs.type()) &&
+            is_python_dict_type(rhs.type()) && rhs.type() != lhs.type() &&
+            rhs.id() == ID_struct && !rhs.operands().empty() &&
+            rhs.operands()[0].is_constant())
+          {
+            mp_integer rhs_len;
+            if(
+              !to_integer(to_constant_expr(rhs.operands()[0]), rhs_len) &&
+              rhs_len == 0)
+              rhs = safe_zero(lhs.type());
+          }
           rhs = coerce_assign_rhs(rhs, lhs.type());
           code_blockt result;
           code_frontend_assignt assign{lhs, rhs};
@@ -2274,6 +2294,28 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 if(is_python_value_type(lhs_data.element_type()))
                   typed_rhs = rebuild_list_as_pv(typed_rhs);
               }
+              // PLR §3.2: empty-dict literal RHS bound to a
+              // typed dict[K, V] LHS — rebuild as zero-init
+              // struct of LHS type so the keys/values arrays
+              // carry the LHS's element types. Without this,
+              // the RHS struct (built with default
+              // dict[str, int] from convert_dict's empty path)
+              // is just bit-cast to the LHS type, leaving the
+              // stored keys as misaligned string-shape values.
+              if(
+                is_python_dict_type(lhs.type()) &&
+                is_python_dict_type(typed_rhs.type()) &&
+                typed_rhs.type() != lhs.type() && typed_rhs.id() == ID_struct &&
+                !typed_rhs.operands().empty() &&
+                typed_rhs.operands()[0].is_constant())
+              {
+                mp_integer rhs_len;
+                if(
+                  !to_integer(
+                    to_constant_expr(typed_rhs.operands()[0]), rhs_len) &&
+                  rhs_len == 0)
+                  typed_rhs = safe_zero(lhs.type());
+              }
               if(typed_rhs.type() != lhs.type())
                 typed_rhs = safe_typecast(typed_rhs, lhs.type());
               code_frontend_assignt assign{lhs, typed_rhs};
@@ -2305,6 +2347,22 @@ codet python_convertert::convert_assign(const jsont &stmt)
                 to_struct_type(lhs.type()).components()[1].type());
               if(is_python_value_type(lhs_data.element_type()))
                 typed_rhs = rebuild_list_as_pv(typed_rhs);
+            }
+            // PLR §3.2: empty-dict rebuild — see comment in
+            // pointer-base branch above.
+            if(
+              is_python_dict_type(lhs.type()) &&
+              is_python_dict_type(typed_rhs.type()) &&
+              typed_rhs.type() != lhs.type() && typed_rhs.id() == ID_struct &&
+              !typed_rhs.operands().empty() &&
+              typed_rhs.operands()[0].is_constant())
+            {
+              mp_integer rhs_len;
+              if(
+                !to_integer(
+                  to_constant_expr(typed_rhs.operands()[0]), rhs_len) &&
+                rhs_len == 0)
+                typed_rhs = safe_zero(lhs.type());
             }
             if(typed_rhs.type() != lhs.type())
               typed_rhs = safe_typecast(typed_rhs, lhs.type());
