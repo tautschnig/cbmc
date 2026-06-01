@@ -1039,6 +1039,214 @@ bool python_convertert::convert()
     }
   }
 
+  // Pass 0.28: PLR §3.1 type inference for unannotated parameters
+  // from concrete call-site argument types.
+  //
+  // For each call `f(a, b, c)` in the AST, if `f` is a known
+  // module-level FunctionDef and one of its parameters has no
+  // type annotation, infer the parameter's type from the
+  // statically-knowable arg AST node (Constant int/string/bool,
+  // List/Dict/Set/Tuple display, or NameConstant for None).
+  // When all callers agree on the same inferred type, the
+  // function body is converted with that type as the
+  // parameter's effective annotation.
+  //
+  // This unlocks idiomatic Python where annotations are
+  // omitted but the call sites are uniform — common for
+  // helper functions that take strings or dicts and use
+  // them through method calls (`s.lower()`, `d.get(k)`).
+  if(body.is_array())
+  {
+    // Collect param annotations to determine which params are
+    // unannotated for each known function.
+    std::map<std::string, std::vector<bool>> func_param_unannotated;
+    for(const auto &stmt : as_array(body))
+    {
+      if(
+        !is_node_type(stmt, "FunctionDef") &&
+        !is_node_type(stmt, "AsyncFunctionDef"))
+        continue;
+      std::string fn_name = json_string(json_member(stmt, "name"));
+      const jsont &fn_args = json_member(stmt, "args");
+      const jsont &params = json_member(fn_args, "args");
+      if(!params.is_array())
+        continue;
+      auto &flags = func_param_unannotated[fn_name];
+      for(const auto &p : as_array(params))
+        flags.push_back(json_member(p, "annotation").is_null());
+    }
+    // Infer arg types per call site.
+    auto infer_arg_type = [&](const jsont &arg) -> typet
+    {
+      if(is_node_type(arg, "Constant"))
+      {
+        const jsont &v = json_member(arg, "value");
+        if(v.is_string())
+          return python_string_type();
+        if(v.is_true() || v.is_false())
+          return bool_typet{};
+        if(v.is_number())
+        {
+          // Distinguish int from float by presence of '.' or 'e'.
+          if(
+            v.value.find('.') != std::string::npos ||
+            v.value.find('e') != std::string::npos)
+            return double_type();
+          return python_int_type();
+        }
+        // None / null
+        if(v.is_null())
+          return python_value_type();
+      }
+      if(is_node_type(arg, "List"))
+        return python_list_type(python_value_type());
+      if(is_node_type(arg, "Dict"))
+        return python_dict_type(python_string_type(), python_value_type());
+      if(is_node_type(arg, "Set"))
+        return python_set_type();
+      if(is_node_type(arg, "JoinedStr"))
+        return python_string_type();
+      if(is_node_type(arg, "FormattedValue"))
+        return python_string_type();
+      // Cannot infer.
+      return typet{};
+    };
+    // Per-function: per-param-index inferred type so far,
+    // and a flag if conflicting types were observed.
+    std::map<std::string, std::map<std::size_t, typet>> agreed;
+    std::map<std::string, std::set<std::size_t>> conflict;
+    auto record_call = [&](const jsont &n)
+    {
+      if(!is_node_type(n, "Call"))
+        return;
+      const jsont &fn = json_member(n, "func");
+      if(!is_node_type(fn, "Name"))
+        return;
+      std::string callee = json_string(json_member(fn, "id"));
+      auto fp_it = func_param_unannotated.find(callee);
+      if(fp_it == func_param_unannotated.end())
+        return;
+      const jsont &cargs = json_member(n, "args");
+      if(!cargs.is_array())
+        return;
+      std::size_t i = 0;
+      for(const auto &a : as_array(cargs))
+      {
+        if(
+          i < fp_it->second.size() && fp_it->second[i] &&
+          conflict[callee].count(i) == 0)
+        {
+          typet inferred = infer_arg_type(a);
+          if(!inferred.id().empty())
+          {
+            auto &m = agreed[callee];
+            auto e = m.find(i);
+            if(e == m.end())
+              m[i] = inferred;
+            else if(e->second != inferred)
+            {
+              conflict[callee].insert(i);
+              m.erase(e);
+            }
+          }
+        }
+        ++i;
+      }
+    };
+    std::function<void(const jsont &)> walk_expr = [&](const jsont &n)
+    {
+      record_call(n);
+      if(is_node_type(n, "Call"))
+      {
+        walk_expr(json_member(n, "func"));
+        const jsont &cargs = json_member(n, "args");
+        if(cargs.is_array())
+          for(const auto &a : as_array(cargs))
+            walk_expr(a);
+      }
+      else if(is_node_type(n, "BinOp"))
+      {
+        walk_expr(json_member(n, "left"));
+        walk_expr(json_member(n, "right"));
+      }
+      else if(is_node_type(n, "BoolOp"))
+      {
+        const jsont &vs = json_member(n, "values");
+        if(vs.is_array())
+          for(const auto &v : as_array(vs))
+            walk_expr(v);
+      }
+      else if(is_node_type(n, "Compare"))
+      {
+        walk_expr(json_member(n, "left"));
+        const jsont &cs = json_member(n, "comparators");
+        if(cs.is_array())
+          for(const auto &c : as_array(cs))
+            walk_expr(c);
+      }
+      else if(is_node_type(n, "UnaryOp"))
+        walk_expr(json_member(n, "operand"));
+      else if(is_node_type(n, "Subscript"))
+      {
+        walk_expr(json_member(n, "value"));
+        walk_expr(json_member(n, "slice"));
+      }
+      else if(is_node_type(n, "Attribute"))
+        walk_expr(json_member(n, "value"));
+      else if(is_node_type(n, "IfExp"))
+      {
+        walk_expr(json_member(n, "test"));
+        walk_expr(json_member(n, "body"));
+        walk_expr(json_member(n, "orelse"));
+      }
+    };
+    std::function<void(const jsont &)> walk_body = [&](const jsont &b)
+    {
+      if(!b.is_array())
+        return;
+      for(const auto &s : as_array(b))
+      {
+        if(is_node_type(s, "Assign"))
+          walk_expr(json_member(s, "value"));
+        else if(is_node_type(s, "AnnAssign"))
+          walk_expr(json_member(s, "value"));
+        else if(is_node_type(s, "AugAssign"))
+          walk_expr(json_member(s, "value"));
+        else if(is_node_type(s, "Return"))
+          walk_expr(json_member(s, "value"));
+        else if(is_node_type(s, "Expr"))
+          walk_expr(json_member(s, "value"));
+        else if(is_node_type(s, "Assert"))
+        {
+          walk_expr(json_member(s, "test"));
+          walk_expr(json_member(s, "msg"));
+        }
+        // Recurse into block-bearing statements.
+        if(
+          is_node_type(s, "If") || is_node_type(s, "While") ||
+          is_node_type(s, "For") || is_node_type(s, "With") ||
+          is_node_type(s, "Try") || is_node_type(s, "FunctionDef") ||
+          is_node_type(s, "AsyncFunctionDef") || is_node_type(s, "ClassDef"))
+        {
+          if(is_node_type(s, "If") || is_node_type(s, "While"))
+            walk_expr(json_member(s, "test"));
+          walk_body(json_member(s, "body"));
+          walk_body(json_member(s, "orelse"));
+          walk_body(json_member(s, "finalbody"));
+          const jsont &handlers = json_member(s, "handlers");
+          if(handlers.is_array())
+            for(const auto &h : as_array(handlers))
+              walk_body(json_member(h, "body"));
+        }
+      }
+    };
+    walk_body(body);
+    // Move agreed inferences into the persistent map.
+    for(auto &[fname, params_map] : agreed)
+      for(auto &[idx, t] : params_map)
+        inferred_param_types[fname][idx] = std::move(t);
+  }
+
   // Pass 0: register top-level annotated variable names as global symbols
   // (so functions can reference them during pass 1).
   // Only AnnAssign (with explicit type) is handled here; plain Assign

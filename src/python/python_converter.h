@@ -509,7 +509,7 @@ private:
   /// the int default. Without this the typecast at append
   /// time zeros struct-typed elements (e.g. strings).
   std::map<irep_idt, typet> empty_list_inferred_types;
-  /// PLR §3.2: symbol IDs whose value has set-semantics —
+  /// PLR §6.3.1: symbol IDs whose value has set-semantics —
   /// created by `set(iterable)` builtin or by a Set literal
   /// (a list-typed storage but logically order-independent).
   /// Equality compare uses multiset semantics whenever either
@@ -517,6 +517,13 @@ private:
   /// Name→Name assignments so `y = set(...); y == {...}`
   /// works after one alias hop.
   std::set<irep_idt> set_semantic_symbols;
+  /// PLR §3.1: type inference for unannotated parameters.
+  /// Maps function name → (param index → inferred type),
+  /// populated by a pre-pass that walks every Call site of
+  /// the function and inspects the arg AST. Used as a
+  /// fallback when the parameter has no annotation, in
+  /// place of the default `python_value_type()`.
+  std::map<std::string, std::map<std::size_t, typet>> inferred_param_types;
   /// Symbol identifiers whose declared annotation was
   /// `Optional[T]` (or any union including `None`). The
   /// declared type collapses to T (since None is encoded as
