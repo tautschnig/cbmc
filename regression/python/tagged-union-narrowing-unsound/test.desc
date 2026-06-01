@@ -1,0 +1,13 @@
+KNOWNBUG
+main.py
+--unwind 5
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+unwrap_value (python_converter.cpp) reads the requested python_value field
+unconditionally. Coercing a tagged-union/Any operand to int must emit a tag
+obligation (TypeError when tag != INT) rather than an unconditional read.

@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+--unwind 5
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+convert_type_annotation lowers Optional[int] to int (None erased), so the
+None argument never reaches a TypeError. Fix: lower Optional[scalar] to the
+python_value tagged union so the NONE tag is representable and arithmetic on
+a NONE-tagged value raises TypeError.

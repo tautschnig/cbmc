@@ -1,0 +1,12 @@
+KNOWNBUG
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+convert_try appends the finally body but does not reroute return/break/
+continue through it. A return-in-finally must replace the pending return.
