@@ -235,7 +235,10 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // These are ordinary parameters from a call-site perspective; we
   // must still bind them so the function body can reference them.
   const jsont &posonlyargs = json_member(args_node, "posonlyargs");
-  auto add_positional = [&](const jsont &param)
+  auto add_positional = [&](
+                          const jsont &param,
+                          std::size_t param_idx_in_args,
+                          bool is_in_args_section)
   {
     std::string param_name = json_string(json_member(param, "arg"));
     const jsont &annotation = json_member(param, "annotation");
@@ -247,6 +250,21 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     typet param_type = annotation.is_null()
                          ? python_value_type()
                          : convert_type_annotation(annotation);
+    // PLR §3.1: when the parameter is unannotated, look up
+    // the type inferred from call-site arguments (Pass 0.28).
+    // A unique inferred type across all callers is treated as
+    // the effective annotation; otherwise the default
+    // python_value_type stays.
+    if(annotation.is_null() && is_in_args_section)
+    {
+      auto fn_it = inferred_param_types.find(func_name);
+      if(fn_it != inferred_param_types.end())
+      {
+        auto p_it = fn_it->second.find(param_idx_in_args);
+        if(p_it != fn_it->second.end())
+          param_type = p_it->second;
+      }
+    }
     // Mark Optional[T] / Union[..., None] / T | None parameters
     // as nullable so the Is/IsNot fast-path doesn't lie.
     if(!annotation.is_null() && annotation_includes_none(annotation))
@@ -313,12 +331,13 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   if(posonlyargs.is_array())
   {
     for(const auto &param : as_array(posonlyargs))
-      add_positional(param);
+      add_positional(param, 0, false);
   }
   if(params.is_array())
   {
+    std::size_t idx = 0;
     for(const auto &param : as_array(params))
-      add_positional(param);
+      add_positional(param, idx++, true);
   }
 
   // PLR §8.7: keyword-only arguments are appended later (after *args),
