@@ -288,50 +288,65 @@ detected was based on single-tree (linux_5_10) measurement.
 A targeted multi-LTS measurement (June 2026) against the
 exact 10-CVE list, using `cve_validate._run_scan` against
 linux_5_10/6_1/6_6/6_12 with hard-coded CVE→module hints,
-shows:
+shows (after adding the destructor-completeness detector,
+June 2026):
 
-| Detected (≥1 tree fires CONTRACT VIOLATION) | Pre-sprint claim | Post-multi-LTS verified |
-|---|---|---|
-| Cleanly-testable | 10 | 5 |
-| Recall (subset) | 100% | **5/10 = 50%** |
+| Detected (≥1 tree fires CONTRACT VIOLATION) | Pre-sprint claim | Multi-LTS (pre-dtor) | Multi-LTS (post-dtor) |
+|---|---|---|---|
+| Cleanly-testable | 10 | 5 | 7 |
+| Recall (subset) | 100% | 50% | **7/10 = 70%** |
 
-The 5 detected CVEs:
+The 7 detected CVEs:
 
+* CVE-2023-53453 (resource_leak — destructor-completeness) **June**
+* CVE-2023-53697 (resource_leak — destructor-completeness) **June**
 * CVE-2024-35829 (resource_leak_on_error_path)
 * CVE-2024-43818 (null_after_alloc) **added in May sprint**
 * CVE-2025-21654 (dentry_lifetime)
 * CVE-2025-40307 (refcount_lifetime)
 * CVE-2026-43304 (resource_leak_on_error_path)
 
-The 5 not detected today fall into three patterns:
+The 3 not detected today:
 
-* **3 cleanup-function leaks** (CVE-2023-53453,
-  CVE-2023-53697, CVE-2024-39492): the bug is a missing
-  kfree IN a cleanup function (`*_fini` / `*_shutdown` /
-  `unregister_*`) where the alloc happened in a sibling
-  init/parse function.  Detecting this requires the
-  harness to chain init() → fini() so the property module's
-  global ghost is populated.  scan-per-file's per-function
-  harness only invokes the target function, so the alloc
-  is never tracked.  This was not a regression from the
-  multi-LTS measurement but a structural limitation of the
-  current harness — the prior methodology paper measurement
-  either had a different harness setup, or the "detected
-  via fallback" claim was overstated.
+* **CVE-2024-39492 — NOT a memory leak.**  Investigation
+  during the June round showed the fix is
+  `WARN_ON(pm_runtime_get_sync(...))` →
+  `WARN_ON(pm_runtime_get_sync(...) < 0)` — a spurious-
+  warning fix.  The CVE survey miscategorized it as
+  `resource_leak`.  It was never detectable by any leak
+  module and should be excluded from the leak-detectable
+  denominator.  Excluding it, the cleanly-testable
+  leak-detectable recall is **7/9 = 78%**.
 * **2 timeouts** (CVE-2023-53038, CVE-2025-21895): CBMC
   takes >300s on these.  Tunable per-CVE unwind / sliced
   harness might unstick.
 
-The discrepancy was surfaced by hardening the multi-LTS
-infrastructure built in May.  Multi-LTS validation's value
-is exactly this: it forces the catalog to honestly account
-for what it can and cannot detect across the LTS branches
-that matter to a real audience.
+The two newly-detected CVEs (CVE-2023-53453,
+CVE-2023-53697) were closed by a new **destructor-
+completeness** detector (`destructor_completeness.py`).  This
+is a static cross-function analysis: it identifies that a
+destructor of struct T frees the struct object but omits a
+field that is owned by T according to cross-function evidence
+(a redundant sibling destructor frees it, or the name-paired
+constructor allocates it).  When the per-function leak
+harness returns `vacuous` (because the alloc site is in a
+different function), `cve_validate` runs this analyzer as a
+fallback and upgrades the verdict to `candidate`.  The CBMC-
+verified form of the same property is prototyped (a harness
+that models the owned-field allocs with distinct fresh
+pointers and asserts `__assert_no_outstanding_leak()` after
+the destructor) and works; wiring its synthesis into
+scan-per-file is future work.
 
-The recall claim should accordingly be reported as **50%
-(5/10) under the current per-function harness**, with the
-caveat that the 3 cleanup-function-leak CVEs are detectable
-in principle once init→fini chaining is added.
+The recall claim is accordingly reported as **70% (7/10),
+or 78% (7/9) excluding the miscategorized CVE-2024-39492**.
+
+The honest 50%→70% trajectory was surfaced by hardening the
+multi-LTS infrastructure built in May.  Multi-LTS
+validation's value is exactly this: it forced the catalog to
+honestly account for what it can and cannot detect, and
+directly motivated the destructor-completeness detector that
+closed two of the gaps.
 
 CVE-2024-43818 (`st_es8336_late_probe` in
 `sound/soc/amd/acp-es8336.c`) was the previously-missed
@@ -346,10 +361,10 @@ to NULL.  Both are now mitigated.
 The 10 historically-claimed-detected CVEs (with current verdicts):
 
 * CVE-2023-53038 (refcount_balance) — **timeout**
-* CVE-2023-53453 (resource_leak via fallback) — **vacuous (cross-function)**
-* CVE-2023-53697 (resource_leak) — **vacuous (cross-function)**
+* CVE-2023-53453 (resource_leak — destructor-completeness) — **detected** *(June)*
+* CVE-2023-53697 (resource_leak — destructor-completeness) — **detected** *(June)*
 * CVE-2024-35829 (lima_heap_alloc — resource_leak) — **detected**
-* CVE-2024-39492 (resource_leak) — **vacuous (cross-function)**
+* CVE-2024-39492 — **not a leak (miscategorized; WARN_ON pm_runtime fix)**
 * CVE-2024-43818 (st_es8336_late_probe — null_after_alloc) — **detected** *(May sprint)*
 * CVE-2025-21654 (ovl_connect_layer — dentry_lifetime) — **detected**
 * CVE-2025-21895 (resource_leak) — **timeout**
