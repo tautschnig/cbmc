@@ -255,8 +255,31 @@ set re-evaluated by the new filter:
 | Long-tail unfiltered | 49 | 4 |
 
 The 4 unfiltered remaining are two pattern families: 2
-caller-validated netlink readers and 2 cocci CFG limitations
-(branch-merge UAF tracking, kfree-then-reassign-in-loop).
+caller-validated netlink readers (later closed by the
+`netlink_caller_validated` detector) and 2 cocci CFG
+limitations (branch-merge UAF tracking, kfree-then-reassign-
+in-loop).
+
+#### n=1000 v6 (May 31, partial)
+
+After all post-sprint filter improvements, an n=1000 fp_measure
+run on linux_5_10 defconfig completed 315/1000 cases within
+its 18h timeout (cache-assisted; raw cold-cache runtime
+estimate ~40h).  Final post-improvement numbers:
+
+| Metric | n=500 v3 (May, pre-sprint) | n=1000 v6 (May 31, post-sprint) |
+|---|---:|---:|
+| Cases scanned | 500 | 315 |
+| Compile errors | 165 (33%) | 78 (25%) |
+| Real candidates raw | 49 (9.8%) | 9 (2.9%) |
+| Candidates after post-triage | (no triage) | 3 |
+| **Upper-bound FP rate after triage** | 9.8% (no triage) | **1.0%** |
+
+The 3 still-unfiltered candidates fit the same cocci-CFG-
+limitation family: `counter_signal_ext_register`
+(loop-allocate-and-register), `cc_cipher_process` (complex
+crypto flow), `wilc_wfi_mgmt_tx_complete` (callback).
+Detailed analysis in `n1000-v6-results-2026-05.md`.
 
 **Catalog detection improved:**
 
