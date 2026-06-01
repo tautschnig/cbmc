@@ -3135,10 +3135,34 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       base == "Set" || base == "FrozenSet" || base == "set" ||
       base == "frozenset")
     {
-      // The set element type isn't currently used by our set
-      // model (sets are backed by python_set_type), but
-      // recognising the parameterised form prevents the
-      // fall-through to int.
+      // PLR §3.2: bitmap-backed `python_set_type()` only models
+      // sets of small non-negative integers. For string / class /
+      // tuple / float element types, use `python_list_type(elem)`
+      // instead — the `set()` builtin and Set-display literal
+      // converters already produce list-backed values for those
+      // element types, and equality / membership operations on
+      // list-typed sets are handled via the multiset-eq path
+      // (PLR §3.2 set order-insensitive equality) and the list
+      // iteration path (`x in lst → ∃i. lst[i] == x`).
+      const jsont &slice = json_member(annotation, "slice");
+      if(is_node_type(slice, "Name"))
+      {
+        std::string elem = json_string(json_member(slice, "id"));
+        // Numeric element types: bitmap is the precise model.
+        if(
+          elem == "int" || elem == "bool" || elem == "float" ||
+          elem == "complex")
+          return python_set_type();
+        // String element type: list-backed.
+        if(elem == "str")
+          return python_list_type(python_string_type());
+        // Class / unrecognised: list-backed with python_value.
+        if(class_types.count(elem))
+          return python_list_type(python_value_type());
+        return python_list_type(python_value_type());
+      }
+      // Bare or non-Name slice: keep python_set_type (the
+      // existing default that prevents fall-through to int).
       return python_set_type();
     }
     // dict[K, V] / Dict[K, V] — extract key and value types.
