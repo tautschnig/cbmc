@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --unwind 5
 
@@ -8,7 +8,8 @@ main.py
 --
 ^warning: ignoring
 --
-convert_type_annotation lowers Optional[int] to int (None erased), so the
-None argument never reaches a TypeError. Fix: lower Optional[scalar] to the
-python_value tagged union so the NONE tag is representable and arithmetic on
-a NONE-tagged value raises TypeError.
+Optional[int] now lowers to the python_value tagged union (NONE tag
+distinguishable from a real int), so calling f(None) and computing
+x + 1 raises TypeError via the numeric-binop tag obligation. Previously
+Optional[T] collapsed to T (None erased) and the TypeError was missed
+(differential unsoundness witness 8). Now detected; promoted to CORE.

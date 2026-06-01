@@ -3117,6 +3117,20 @@ typet python_convertert::convert_type_annotation(const jsont &annotation)
       {
         return python_value_type();
       }
+      // PLR §3.2: for a natural-type T (int/float/bool/str),
+      // Optional[T] also lowers to the tagged union so the NONE
+      // tag is distinguishable from a real T value. This lets the
+      // operation-site tag obligation (numeric binop on a
+      // NONE-tagged value -> TypeError) fire for `None + 1`, which
+      // the int-sentinel encoding silently computed. The tag check
+      // is conditional on the runtime tag, so a real T value still
+      // unwraps and operates normally. (str inner already had a
+      // {0,NULL} None marker, but routing it through the union
+      // unifies the None handling across all scalar T.)
+      if(
+        inner.id() == ID_signedbv || inner.id() == ID_floatbv ||
+        inner.id() == ID_bool || is_python_string_type(inner))
+        return python_value_type();
       return inner;
     }
     else if(base == "Union")
