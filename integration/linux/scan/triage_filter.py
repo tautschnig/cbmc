@@ -806,14 +806,22 @@ def classify(kernel_file: str | Path, fn_name: str,
         "escape_via_store",
         "alloc_handed_to_consumer",
         "put_only_on_error",
-        # Note: ownership_handler is universal — it's a name
-        # pattern that signals caller-precondition for any
-        # bug-class.  Not module-restricted.
+        # Note: ownership_handler is now ALSO restricted: it
+        # suppresses cleanup-function FPs in UAF / lock /
+        # netlink modules, but does NOT suppress them in leak
+        # modules — a cleanup function with a real
+        # missing-kfree bug (e.g. CVE-2023-53453 in
+        # radeon_atombios_fini) needs to be detectable.
     }
     LOCK_SHAPES = {"caller_holds_lock"}
     LOCK_MODULES = {"lock_state", "rcu_read"}
     NETLINK_SHAPES = {"netlink_caller_validated"}
     NETLINK_MODULES = {"netlink_attr_validation"}
+    # Modules where ownership_handler should NOT be applied.
+    # A cleanup function in a leak module can have a real
+    # missing-kfree bug; suppressing as 'name pattern says
+    # caller-precondition' would hide the bug.
+    OWNERSHIP_HANDLER_NEGATIVE_GATE = LEAK_MODULES
 
     def shape_applies(shape: str) -> bool:
         """Return True if the FP shape applies to this module
@@ -826,6 +834,9 @@ def classify(kernel_file: str | Path, fn_name: str,
             return module in LOCK_MODULES
         if shape in NETLINK_SHAPES:
             return module in NETLINK_MODULES
+        if shape == "ownership_handler":
+            # Apply everywhere EXCEPT leak modules.
+            return module not in OWNERSHIP_HANDLER_NEGATIVE_GATE
         return True
 
     def gate(v: FilterVerdict | None) -> FilterVerdict | None:
