@@ -59,6 +59,21 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SCAN_DIR = REPO_ROOT / "integration" / "linux" / "scan"
 SCAN_PER_FILE = SCAN_DIR / "scan-per-file.sh"
 
+# Leak-class modules for which the destructor-completeness
+# cross-function fallback is meaningful.  A 'vacuous' verdict
+# from one of these on a destructor-shaped function triggers
+# the destructor_completeness analyzer.
+_LEAK_MODULES_FOR_DTOR = {
+    "resource_leak_on_error_path",
+    "use_after_free_generic",
+    "refcount_lifetime", "kref_lifetime",
+    "kobject_lifetime", "device_lifetime",
+    "dentry_lifetime", "inode_lifetime",
+    "of_node_lifetime", "sock_lifetime",
+    "skb_lifetime", "fput_lifetime",
+    "cred_lifetime", "module_lifetime",
+}
+
 # Pull CONTRACT_FUNCTIONS from scan.py so we don't duplicate
 # the mapping (and so additions to scan.py automatically
 # propagate here).
@@ -841,6 +856,32 @@ def _run_scan(case: CveCase, timeout: int = 240,
     elif rc == 12:
         case.verdict = "vacuous"
         case.note = "no contract clauses checked"
+        # Cross-function leak fallback: the per-function leak
+        # harness reports 'vacuous' when the allocation site is
+        # in a different function (often a different file), so
+        # the destructor body alone has no tracked alloc to
+        # assert on.  Run the destructor-completeness analyzer,
+        # which compares the destructor's free-set against the
+        # cross-function owned-field set (sibling destructors +
+        # matching constructor).  Only meaningful for leak
+        # modules.
+        if case.module in _LEAK_MODULES_FOR_DTOR:
+            try:
+                sys.path.insert(0, str(SCAN_DIR))
+                from destructor_completeness import analyze as _dca
+                dv = _dca(
+                    f"{case.kernel_tree}/{case.file_path}",
+                    case.function)
+                if dv.missing_fields:
+                    case.verdict = "candidate"
+                    case.note = (
+                        "cross-function leak (destructor-"
+                        f"completeness): `struct {dv.struct_type}` "
+                        f"missing free of "
+                        f"{sorted(dv.missing_fields)}"
+                        + state_tag)
+            except Exception:
+                pass
     elif rc == 13:
         case.verdict = "skipped"
         case.note = "known-unverifiable shape"
