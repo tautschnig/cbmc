@@ -1,4 +1,4 @@
-KNOWNBUG
+CORE
 main.py
 --unwind 5
 
@@ -8,8 +8,9 @@ main.py
 --
 ^warning: ignoring
 --
-convert_with (python_converter_except.cpp) calls __enter__ but never
-emits the __exit__ call. A bug inside __exit__ is never checked and
-exception suppression is not modeled. Fix: after the with-body, emit
-__exit__(mgr, None, None, None); to model suppression, clear
-__exception_active when __exit__ returns True and an exception is active.
+convert_with now emits the __exit__(self, None, None, None) call after
+the with-body (in reverse order of entry), so an assertion/bug inside
+__exit__ is checked. Previously __exit__ was never invoked (differential
+unsoundness witness 4). Now detected; promoted to CORE. (Exception
+suppression -- a __exit__ returning True clearing an active exception --
+is not yet modeled; only the normal-exit cleanup path.)
