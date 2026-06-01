@@ -194,39 +194,6 @@ def _field_paths_freed(body: str, obj_exprs: list[str]) -> set[str]:
     return freed
 
 
-def _owned_fields_of_type(source_files: list[str],
-                          struct_type: str) -> set[str]:
-    """Scan source files for fields of `struct <struct_type> *`
-    variables that are allocated (`V->f = alloc(...)`) or freed
-    (`kfree(V->f)`).  Returns the union of such field paths.
-
-    Variable resolution: find locals/params declared
-    `struct <struct_type> *<var>` per file, then match
-    `<var>->...` field accesses."""
-    owned: set[str] = set()
-    var_decl_re = re.compile(
-        r"struct\s+" + re.escape(struct_type) + r"\s*\*\s*(\w+)")
-    for src in source_files:
-        vars_of_type = set(var_decl_re.findall(src))
-        if not vars_of_type:
-            continue
-        for v in vars_of_type:
-            esc = re.escape(v)
-            # Allocation into a field: V->f = <alloc>(...)
-            for m in re.finditer(
-                    esc + r"\s*->\s*([A-Za-z_][\w.]*?)\s*=\s*"
-                    r"(?:" + _ALLOC_APIS + r")\s*\(", src):
-                fld = re.sub(r"\[[^\]]*\]", "", m.group(1))
-                owned.add(fld)
-            # Free of a field: kfree(V->f)
-            for m in re.finditer(
-                    r"\b(?:" + _FREE_APIS + r")\s*\(\s*" + esc
-                    + r"\s*->\s*([A-Za-z_][\w.]*?)\s*\)", src):
-                fld = re.sub(r"\[[^\]]*\]", "", m.group(1))
-                owned.add(fld)
-    return owned
-
-
 def _local_struct_type(body: str, var: str) -> str | None:
     """Resolve `struct T` for a local variable or parameter
     `var` declared `struct T *var` within the function body or
