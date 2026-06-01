@@ -147,6 +147,7 @@
         <module>exceptions9</module>
         <module>external_getstatic1</module>
         <module>f12-modular</module>
+        <module>f12-modular-package</module>
         <module>f12-bool-post</module>
         <module>f12-old</module>
         <module>f12-old-proof-explanation</module>

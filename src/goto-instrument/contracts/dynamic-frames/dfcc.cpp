@@ -105,17 +105,50 @@ void dfcc(
   for(const auto &cli_flag : to_replace)
     to_replace_map.insert(parse_function_contract_pair(cli_flag));
 
-  dfcct(
+  std::optional<std::pair<irep_idt, irep_idt>> to_check_pair;
+  if(to_check.has_value())
+    to_check_pair = parse_function_contract_pair(to_check.value());
+
+  // Delegate to the pre-parsed overload. Keeping a single
+  // implementation behind the parsed map avoids re-parsing when
+  // additional CLI-shaped wrappers are added later.
+  dfcc(
     options,
     goto_model,
     harness_id,
-    to_check.has_value() ? parse_function_contract_pair(to_check.value())
-                         : std::optional<std::pair<irep_idt, irep_idt>>{},
+    to_check_pair,
+    allow_recursive_calls,
+    to_replace_map,
+    loop_contract_config,
+    to_exclude_from_nondet_static,
+    message_handler);
+}
+
+void dfcc(
+  const optionst &options,
+  goto_modelt &goto_model,
+  const irep_idt &harness_id,
+  const std::optional<std::pair<irep_idt, irep_idt>> &to_check,
+  const bool allow_recursive_calls,
+  const std::map<irep_idt, irep_idt> &to_replace_map,
+  const loop_contract_configt loop_contract_config,
+  const std::set<std::string> &to_exclude_from_nondet_static,
+  message_handlert &message_handler)
+{
+  // The dfcct constructor runs transform_goto_model() itself
+  // (see dfcct::dfcct at the bottom of the constructor body).
+  // Constructing this temporary therefore performs the full
+  // contract transformation; we don't need an explicit call.
+  dfcct{
+    options,
+    goto_model,
+    harness_id,
+    to_check,
     allow_recursive_calls,
     to_replace_map,
     loop_contract_config,
     message_handler,
-    to_exclude_from_nondet_static);
+    to_exclude_from_nondet_static};
 }
 
 dfcct::dfcct(

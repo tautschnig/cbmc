@@ -1,0 +1,31 @@
+CORE
+org.cprover.regression.f12.ModularPackage
+--function org.cprover.regression.f12.ModularPackage.caller --modular -cp target/classes
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^Invalid function-contract mapping
+^warning: ignoring
+^CONVERSION ERROR
+type inconsistency
+--
+Regression for the JBMC parser bug where Java symbol IDs that
+contain '/' (from JVM type descriptors like
+`Lorg/cprover/regression/f12/Box;`) were fed to
+`parse_function_contract_pair` in
+src/goto-instrument/contracts/dynamic-frames/dfcc.cpp,
+which split them on '/' and rejected them with
+"Invalid function-contract mapping".
+
+The trigger is a JML-/JVerify-annotated method whose
+signature includes a reference parameter from a non-default
+package. With the bug present, JBMC aborts before
+verification with EXIT=6 and the error above. With the fix
+in place, modular contract substitution proceeds normally
+and verification succeeds.
+
+The Java sources reuse the standard org.strata.jverify.JVerify
+shape: `precondition`, `postcondition`, `assigns` are no-op
+helper functions JBMC's java_bytecode_contracts pass converts
+into JVerify contract clauses.

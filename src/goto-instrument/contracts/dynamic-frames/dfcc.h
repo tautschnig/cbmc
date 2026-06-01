@@ -111,6 +111,47 @@ void dfcc(
   message_handlert &message_handler);
 
 /// \ingroup dfcc-module
+/// \brief Same as \ref dfcc above but with already-parsed function-contract
+/// pair arguments.
+///
+/// Used by callers that have already resolved their function names from the
+/// goto-model symbol table (rather than receiving them as user-supplied CLI
+/// strings) and where the names may contain characters that the CLI-input
+/// parser (`<function>[/<contract>]`) would split on. In particular, Java
+/// symbol IDs contain `/` as the class-path separator inside JVM type
+/// descriptors (e.g. `java::Foo.bar:(Lcom/example/Bar;)V`); feeding those
+/// to the CLI-shaped overload above would mistakenly interpret the `/`
+/// inside `Lcom/example/Bar;` as a function/contract delimiter.
+///
+/// JML attaches at most one contract per Java method, named under the
+/// method's own symbol ID, so the typical Java caller builds
+/// `to_replace_map` by mapping each annotated function symbol to itself.
+///
+/// \param options CLI options (used to lookup options for language config when
+/// re-defining the model's entry point)
+/// \param goto_model GOTO model to transform
+/// \param harness_id proof harness name, must be the entry point of the model
+/// \param to_check (function, contract) pair for contract checking, already
+/// resolved
+/// \param allow_recursive_calls Allow the checked function to be recursive
+/// \param to_replace_map already-resolved mapping from each
+/// function-to-replace to the contract symbol that holds its captured spec
+/// \param loop_contract_config configuration for applying loop contracts
+/// \param to_exclude_from_nondet_static set of symbols to exclude when havocing
+/// static program symbols.
+/// \param message_handler used for debug/warning/error messages
+void dfcc(
+  const optionst &options,
+  goto_modelt &goto_model,
+  const irep_idt &harness_id,
+  const std::optional<std::pair<irep_idt, irep_idt>> &to_check,
+  const bool allow_recursive_calls,
+  const std::map<irep_idt, irep_idt> &to_replace_map,
+  const loop_contract_configt loop_contract_config,
+  const std::set<std::string> &to_exclude_from_nondet_static,
+  message_handlert &message_handler);
+
+/// \ingroup dfcc-module
 /// \brief Entry point into the contracts transformation
 class dfcct
 {

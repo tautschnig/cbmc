@@ -3828,13 +3828,29 @@ void apply_modular_contract_substitution(
   bool dfcc_succeeded = false;
   try
   {
+    // Build the to_replace map directly from the annotated set.
+    // JML attaches at most one contract per Java method, captured
+    // under the method's own symbol ID, so each function maps to
+    // itself. We must NOT route the symbol IDs through the
+    // CLI-shaped dfcc() overload (which calls
+    // parse_function_contract_pair on each entry) because Java
+    // symbol IDs contain '/' as the class-path separator inside
+    // JVM type descriptors (e.g.
+    // `java::Foo.bar:(Lcom/example/Bar;)V`), and the CLI parser
+    // would interpret the slashes inside `Lcom/example/Bar;` as
+    // function/contract delimiters and reject the symbol with
+    // "Invalid function-contract mapping".
+    std::map<irep_idt, irep_idt> to_replace_map;
+    for(const auto &fn : annotated)
+      to_replace_map.emplace(fn, fn);
+
     dfcc(
       options,
       goto_model,
       harness_id,
-      std::optional<irep_idt>{}, // no enforce-contract function
-      false,                     // no recursive
-      annotated,
+      std::optional<std::pair<irep_idt, irep_idt>>{}, // no enforce-contract
+      false,                                          // no recursive
+      to_replace_map,
       no_loop_contracts,
       nondet_static_exclude,
       mh);
