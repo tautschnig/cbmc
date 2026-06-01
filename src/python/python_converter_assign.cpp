@@ -2249,7 +2249,55 @@ codet python_convertert::convert_assign(const jsont &stmt)
         const auto &list_st = to_struct_type(obj.type());
         const auto &data_type = to_array_type(list_st.components()[1].type());
         member_exprt data{obj, "data", data_type};
-        index_exprt lhs{data, idx};
+        member_exprt length{obj, "length", signedbv_typet{64}};
+        // PLR §6.10.1: list subscript assignment to an
+        // out-of-range index raises IndexError. Python permits
+        // negative indices (counting from the end); adjust before
+        // the bounds check and store. Mirrors the read path in
+        // convert_subscript — without this the write path
+        // silently wrote into the size-64 backing array and
+        // missed the runtime error (a false negative).
+        exprt eff_idx = idx;
+        if(idx.is_constant())
+        {
+          mp_integer iv;
+          if(!to_integer(to_constant_expr(idx), iv) && iv < 0)
+            eff_idx = plus_exprt{length, idx};
+        }
+        else
+        {
+          eff_idx = if_exprt{
+            binary_relation_exprt{idx, ID_lt, safe_zero(idx.type())},
+            plus_exprt{length, idx},
+            idx};
+        }
+        {
+          const symbolt *exc_sym =
+            symbol_table.lookup("python::__exception_active");
+          const symbolt *exc_type_sym =
+            symbol_table.lookup("python::__exception_type");
+          if(exc_sym != nullptr)
+          {
+            exprt in_range = and_exprt{
+              binary_relation_exprt{eff_idx, ID_ge, safe_zero(eff_idx.type())},
+              binary_relation_exprt{eff_idx, ID_lt, length}};
+            exprt out_of_range = not_exprt{in_range};
+            block.add(code_frontend_assignt{
+              exc_sym->symbol_expr(),
+              or_exprt{exc_sym->symbol_expr(), out_of_range}});
+            if(exc_type_sym != nullptr)
+            {
+              long h = exception_type_hash("IndexError");
+              block.add(code_frontend_assignt{
+                exc_type_sym->symbol_expr(),
+                if_exprt{
+                  out_of_range,
+                  from_integer(h, exc_type_sym->type),
+                  exc_type_sym->symbol_expr()}});
+            }
+          }
+        }
+        index_exprt lhs{data, eff_idx};
         exprt typed_rhs = rhs;
         // PLR §3.1: coerce a SCALAR RHS into the list's element
         // type. For a list[python_value] target (e.g. a bare-
