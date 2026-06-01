@@ -170,11 +170,83 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
     }
     else
     {
-      log.warning()
-        << "List comprehension iterable shape not supported (only literal "
-           "list, name-of-tracked-list, or range())"
-        << messaget::eom;
-      return nil_exprt{};
+      // Generic fallback: evaluate the iterable expression and,
+      // if it produces a list struct with a compile-time-constant
+      // length, extract its data values. This covers iterables
+      // that aren't a literal list, a tracked Name, or range() —
+      // most importantly a function call returning a list
+      // (`[g(x) for x in f()]`) and a subscript/attribute that
+      // resolves to a list literal. Without this, such
+      // comprehensions returned nil and the enclosing assignment
+      // was silently dropped (the target Name became nondet).
+      exprt iter_val = convert_expression(gen_iter);
+      bool extracted = false;
+      // When the iterable is a call to a function that returns a
+      // constant list literal, convert_expression yields a
+      // function-call side-effect rather than the literal struct.
+      // Recover the literal from function_returned_literal (the
+      // same single-return-literal cache used by dict/list
+      // propagation in convert_assign).
+      if(
+        (iter_val.is_nil() || iter_val.id() == ID_side_effect) &&
+        is_node_type(gen_iter, "Call") &&
+        is_node_type(json_member(gen_iter, "func"), "Name"))
+      {
+        std::string callee =
+          json_string(json_member(json_member(gen_iter, "func"), "id"));
+        auto fl_it = function_returned_literal.find(callee);
+        auto rc_it = function_return_count.find(callee);
+        if(
+          fl_it != function_returned_literal.end() &&
+          rc_it != function_return_count.end() && rc_it->second == 1 &&
+          is_python_list_type(fl_it->second.type()))
+          iter_val = fl_it->second;
+      }
+      if(
+        !iter_val.is_nil() && is_python_list_type(iter_val.type()) &&
+        iter_val.id() == ID_struct && iter_val.operands().size() >= 2 &&
+        iter_val.operands()[0].is_constant())
+      {
+        // Restrict to scalar element types. When the iterable's
+        // elements are themselves containers (list/dict/tuple/
+        // python_value), binding them to the iteration variable
+        // and evaluating the element expression can exercise
+        // container-valued code paths (e.g. `[1] + r` list
+        // concatenation) whose nondet/exception modelling would
+        // turn a previously-vacuous comprehension into a spurious
+        // failure. The common useful case — a function returning
+        // a list of scalars — is fully covered.
+        const auto &iv_data =
+          to_array_type(to_struct_type(iter_val.type()).components()[1].type());
+        const typet &elem_t = iv_data.element_type();
+        bool scalar_elem =
+          elem_t.id() == ID_signedbv || elem_t.id() == ID_unsignedbv ||
+          elem_t.id() == ID_floatbv || elem_t.id() == ID_bool ||
+          is_python_string_type(elem_t);
+        mp_integer len;
+        if(
+          scalar_elem &&
+          !to_integer(to_constant_expr(iter_val.operands()[0]), len))
+        {
+          const exprt &data_arr = iter_val.operands()[1];
+          for(mp_integer i = 0; i < len; ++i)
+          {
+            auto idx = i.to_ulong();
+            if(idx < data_arr.operands().size())
+              gi.const_values.push_back(data_arr.operands()[idx]);
+          }
+          extracted = true;
+        }
+      }
+      if(!extracted)
+      {
+        log.warning()
+          << "List comprehension iterable shape not supported (only literal "
+             "list, name-of-tracked-list, range(), or a call/expression "
+             "yielding a constant-length list)"
+          << messaget::eom;
+        return nil_exprt{};
+      }
     }
     gens.push_back(std::move(gi));
   }
