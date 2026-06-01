@@ -117,6 +117,59 @@ exprt python_convertert::convert_compare(const jsont &expr)
       // (caller checks via is_python_string_type)
       return python_type_tagt::INT; // fallback; caller decides
     };
+    // PLR §6.10.1: ordered comparison (`<`, `<=`, `>`, `>=`)
+    // of a tagged-union value against a numeric. The runtime
+    // tag may be INT or FLOAT (e.g. the result of `a + b` where
+    // one of a/b is a float — the binop produces a FLOAT-tagged
+    // python_value). Blindly unwrapping to the other side's type
+    // (`__int_val` when comparing against an int literal) reads
+    // the wrong union field — for a FLOAT-tagged value the
+    // `__int_val` slot is 0, so `(int_or_float_sum) <= 19`
+    // collapsed to `0 <= 19` and always held. Extract numerically
+    // with a tag dispatch to float (int values are cast up) and
+    // compare both sides as float.
+    bool ordered_op = (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE");
+    auto to_float_numeric = [&](const exprt &pv) -> exprt
+    {
+      // (pv.__tag == FLOAT ? pv.__float_val
+      //                    : (double)pv.__int_val)
+      return if_exprt{
+        python_value_is(pv, python_type_tagt::FLOAT),
+        python_value_float(pv),
+        typecast_exprt{python_value_int(pv), double_type()}};
+    };
+    auto as_float = [&](const exprt &e) -> exprt
+    {
+      if(e.type().id() == ID_floatbv)
+        return e;
+      return typecast_exprt{e, double_type()};
+    };
+    if(
+      ordered_op && !is_python_none(current_left, symbol_table) &&
+      !is_python_none(right, symbol_table) &&
+      is_python_value_type(current_left.type()) !=
+        is_python_value_type(right.type()))
+    {
+      bool left_is_pv = is_python_value_type(current_left.type());
+      const exprt &other = left_is_pv ? right : current_left;
+      const typet &ot = other.type();
+      bool other_numeric = ot.id() == ID_signedbv || ot.id() == ID_integer ||
+                           ot.id() == ID_floatbv || ot.id() == ID_bool;
+      if(other_numeric)
+      {
+        if(left_is_pv)
+        {
+          current_left = to_float_numeric(current_left);
+          right = as_float(right);
+        }
+        else
+        {
+          right = to_float_numeric(right);
+          current_left = as_float(current_left);
+        }
+      }
+    }
+
     if(
       op != "In" && op != "NotIn" && op != "Is" && op != "IsNot" &&
       !is_python_none(current_left, symbol_table) &&
