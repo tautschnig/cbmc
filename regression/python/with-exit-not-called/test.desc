@@ -1,0 +1,15 @@
+KNOWNBUG
+main.py
+--unwind 5
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+convert_with (python_converter_except.cpp) calls __enter__ but never
+emits the __exit__ call. A bug inside __exit__ is never checked and
+exception suppression is not modeled. Fix: after the with-body, emit
+__exit__(mgr, None, None, None); to model suppression, clear
+__exception_active when __exit__ returns True and an exception is active.
