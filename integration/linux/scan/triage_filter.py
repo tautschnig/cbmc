@@ -693,8 +693,9 @@ def _detect_ownership_handler(fn_name: str) -> FilterVerdict | None:
     # styles like 'qlcnic_82xx_free_mac_list' that the
     # prefix/suffix rules miss.
     for tok in ("_free_", "_release_", "_destroy_",
-                "_cleanup_", "_remove_", "_disconnect_",
-                "_unregister_", "_unbind_"):
+                "_cleanup_", "_clean_", "_remove_", "_del_",
+                "_delete_", "_disconnect_", "_unregister_",
+                "_unbind_", "_deinit_", "_uninit_", "_fini_"):
         if tok in fn_name:
             return FilterVerdict(
                 "ownership_handler",
