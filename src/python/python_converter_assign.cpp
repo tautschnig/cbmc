@@ -1236,16 +1236,47 @@ codet python_convertert::convert_assign(const jsont &stmt)
   // Lambda/function assignment: record alias instead of creating variable
   if(rhs.id() == ID_symbol && rhs.type().id() == ID_code)
   {
+    const irep_idt target_id = to_symbol_expr(rhs).get_identifier();
+    code_blockt block;
     for(const auto &target : as_array(targets))
     {
       if(is_node_type(target, "Name"))
       {
         std::string var_name = json_string(json_member(target, "id"));
-        function_aliases[qualify_name(var_name)] =
-          to_symbol_expr(rhs).get_identifier();
+        std::string q = qualify_name(var_name);
+        function_aliases[q] = target_id;
+        // §10: record this target as a candidate and emit a runtime
+        // tag assignment so a branch-dependent reassignment dispatches
+        // path-sensitively at the call site. The tag is this target's
+        // index in the (accumulating) candidate list.
+        auto &cands = callable_candidates[q];
+        auto cit = std::find(cands.begin(), cands.end(), target_id);
+        long idx;
+        if(cit == cands.end())
+        {
+          idx = static_cast<long>(cands.size());
+          cands.push_back(target_id);
+        }
+        else
+          idx = static_cast<long>(cit - cands.begin());
+        irep_idt tag_id{q + "$callable_tag"};
+        if(symbol_table.lookup(tag_id) == nullptr)
+        {
+          symbolt ts{tag_id, signedbv_typet{64}, "python"};
+          ts.base_name = var_name + "$callable_tag";
+          ts.is_lvalue = true;
+          ts.is_state_var = true;
+          ts.is_static_lifetime = current_function.empty();
+          symbol_table.add(ts);
+        }
+        block.add(code_frontend_assignt{
+          symbol_table.lookup_ref(tag_id).symbol_expr(),
+          from_integer(idx, signedbv_typet{64})});
       }
     }
-    return code_skipt{};
+    if(block.statements().empty())
+      return code_skipt{};
+    return std::move(block);
   }
 
   // Check if RHS is a call to a lambda-returning function

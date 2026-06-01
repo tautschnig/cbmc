@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+A callable bound to different functions across if/else branches now
+dispatches path-sensitively via a runtime tag, so pick(True) calls af
+(==1) and pick(False) calls bf (==2); likewise op with add/sub and
+arguments. Previously the last-processed branch won unconditionally
+(differential §10), making pick(True) == 1 a false alarm and, in
+general, a property depending on the other callable a missed bug.
