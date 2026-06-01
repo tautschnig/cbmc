@@ -1591,6 +1591,78 @@ exprt python_convertert::convert_user_call(
       python_string_type()};
   }
 
+  // §10: path-sensitive dispatch when this name was bound to more than
+  // one callable across branches (`if c: h=f else: h=g; h()`). The
+  // conversion-time function_aliases map kept only the last branch's
+  // target; the runtime tag (set per branch at the assignment site)
+  // selects the correct callee here. Gate strictly on >1 candidate and
+  // a fully-matching signature, so all single-target dispatch is
+  // unchanged; otherwise fall through to the normal (last-target)
+  // build.
+  {
+    auto cand_it = callable_candidates.find(qualify_name(func_name));
+    const symbolt *tag_sym =
+      symbol_table.lookup(irep_idt{qualify_name(func_name) + "$callable_tag"});
+    if(
+      cand_it != callable_candidates.end() && cand_it->second.size() > 1 &&
+      tag_sym != nullptr && func_type.return_type().id() != ID_empty)
+    {
+      const typet &rt = func_type.return_type();
+      bool ok = true;
+      std::vector<const symbolt *> cand_syms;
+      for(const irep_idt &cid : cand_it->second)
+      {
+        const symbolt *cs = symbol_table.lookup(cid);
+        if(cs == nullptr || cs->type.id() != ID_code)
+        {
+          ok = false;
+          break;
+        }
+        const code_typet &ct = to_code_type(cs->type);
+        if(ct.return_type() != rt || ct.parameters().size() != params.size())
+        {
+          ok = false;
+          break;
+        }
+        for(std::size_t k = 0; k < params.size(); k++)
+          if(ct.parameters()[k].type() != params[k].type())
+          {
+            ok = false;
+            break;
+          }
+        if(!ok)
+          break;
+        cand_syms.push_back(cs);
+      }
+      if(ok)
+      {
+        static unsigned disp_ctr = 0;
+        irep_idt rid{
+          qualify_name("__call_dispatch_" + std::to_string(disp_ctr++))};
+        if(symbol_table.lookup(rid) == nullptr)
+        {
+          symbolt rs{rid, rt, "python"};
+          rs.base_name = id2string(rid).substr(8);
+          rs.is_lvalue = true;
+          rs.is_state_var = true;
+          rs.is_static_lifetime = current_function.empty();
+          symbol_table.add(rs);
+        }
+        symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
+        symbol_exprt tag = tag_sym->symbol_expr();
+        for(std::size_t i = 0; i < cand_syms.size(); i++)
+        {
+          side_effect_expr_function_callt c{
+            cand_syms[i]->symbol_expr(), arguments, rt, get_location(expr)};
+          pending_checks.push_back(code_ifthenelset{
+            equal_exprt{tag, from_integer(i, tag.type())},
+            code_frontend_assignt{r, std::move(c)}});
+        }
+        return std::move(r);
+      }
+    }
+  }
+
   side_effect_expr_function_callt call{
     sym->symbol_expr(),
     std::move(arguments),

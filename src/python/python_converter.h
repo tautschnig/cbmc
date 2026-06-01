@@ -459,6 +459,16 @@ private:
 
   /// Map from variable name to function symbol (for lambda assignments)
   std::map<std::string, irep_idt> function_aliases;
+  /// §10 path-sensitive callable dispatch: per qualified name, the
+  /// ordered list of distinct callable targets it has been bound to
+  /// (e.g. `if c: h=f else: h=g` records [f, g]). Unlike
+  /// function_aliases this accumulates across branches (it is NOT
+  /// snapshot/merged), so the call site can see that a name has
+  /// multiple candidates and dispatch on a runtime tag (`name
+  /// $callable_tag`, set per branch at the assignment site) instead of
+  /// picking the last-processed branch. Gated on size() > 1 so
+  /// single-target aliasing is unchanged.
+  std::map<std::string, std::vector<irep_idt>> callable_candidates;
   /// PLR §8.7: index of the *args parameter for each function that
   /// has one. Stored explicitly because closure captures are appended
   /// after *args, so its position isn't always last.
