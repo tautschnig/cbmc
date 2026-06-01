@@ -274,6 +274,12 @@ codet python_convertert::convert_with(const jsont &stmt)
   code_blockt block;
   source_locationt loc = get_location(stmt);
 
+  // PLR §8.5: managers whose class declares __exit__, collected so the
+  // __exit__ call can be emitted after the with-body (in reverse
+  // order). Without this, a bug/assertion inside __exit__ is never
+  // checked.
+  std::vector<std::pair<exprt, std::string>> with_managers;
+
   const jsont &items = json_member(stmt, "items");
   if(items.is_array())
   {
@@ -380,6 +386,12 @@ codet python_convertert::convert_with(const jsont &stmt)
             symbol_table.add(mgr_sym);
           }
           const symbolt &mgr = symbol_table.lookup_ref(mgr_id);
+
+          // Record for the post-body __exit__ call (PLR §8.5).
+          if(
+            symbol_table.lookup("python::" + cls_name + "::__exit__") !=
+            nullptr)
+            with_managers.push_back({mgr.symbol_expr(), cls_name});
 
           // Bound variable v with v_type (= __enter__'s return type).
           if(symbol_table.lookup(sym_id) == nullptr)
@@ -495,6 +507,10 @@ codet python_convertert::convert_with(const jsont &stmt)
               }
               const symbolt &mgr = symbol_table.lookup_ref(mgr_id);
               block.add(code_frontend_assignt{mgr.symbol_expr(), ctx});
+              if(
+                symbol_table.lookup("python::" + cls_name + "::__exit__") !=
+                nullptr)
+                with_managers.push_back({mgr.symbol_expr(), cls_name});
               const symbolt &v_sym = symbol_table.lookup_ref(sym_id);
               if(et.return_type().id() == ID_empty)
               {
@@ -556,6 +572,35 @@ codet python_convertert::convert_with(const jsont &stmt)
   {
     for(const auto &s : as_array(body))
       block.add(convert_statement(s));
+  }
+
+  // PLR §8.5: call __exit__(self, None, None, None) at block exit,
+  // in reverse order of entry. This checks any assertion / bug
+  // inside __exit__ (previously never invoked). Exception
+  // suppression (a __exit__ returning True clearing an active
+  // exception) is not yet modeled; the common normal-exit cleanup
+  // path is.
+  for(auto it = with_managers.rbegin(); it != with_managers.rend(); ++it)
+  {
+    const exprt &mgr_expr = it->first;
+    const std::string &cls_name = it->second;
+    const symbolt *exit_sym =
+      symbol_table.lookup("python::" + cls_name + "::__exit__");
+    if(exit_sym == nullptr)
+      continue;
+    const code_typet &xt = to_code_type(exit_sym->type);
+    exprt::operandst xargs;
+    xargs.push_back(address_of_exprt{mgr_expr});
+    // exc_type, exc_val, exc_tb — pass None for normal exit.
+    while(xargs.size() < xt.parameters().size())
+      xargs.push_back(python_none_value());
+    side_effect_expr_function_callt xcall{
+      exit_sym->symbol_expr(),
+      std::move(xargs),
+      xt.return_type().id() == ID_empty ? typet{empty_typet{}}
+                                        : xt.return_type(),
+      loc};
+    block.add(code_expressiont{std::move(xcall)});
   }
 
   return std::move(block);
