@@ -26,15 +26,42 @@
 
 #include <cmath>
 
+// Guard pending checks appended since `from` by `guard`.
+void python_convertert::guard_pending_checks(
+  std::size_t from,
+  const exprt &guard)
+{
+  if(pending_checks.size() <= from)
+    return;
+  code_blockt block;
+  for(std::size_t i = from; i < pending_checks.size(); ++i)
+    block.add(std::move(pending_checks[i]));
+  pending_checks.erase(pending_checks.begin() + from, pending_checks.end());
+  pending_checks.push_back(code_ifthenelset{guard, std::move(block)});
+}
+
 // PLR §6.13: Conditional expressions
 // "x if C else y — first C is evaluated; if true, x is evaluated; else y."
 exprt python_convertert::convert_if_exp(const jsont &expr)
 {
   exprt test = convert_expression(json_member(expr, "test"));
-  exprt body = convert_expression(json_member(expr, "body"));
-  exprt orelse = convert_expression(json_member(expr, "orelse"));
+  if(test.is_nil())
+    return nil_exprt{};
+  if(test.type() != bool_typet{})
+    test = safe_typecast(test, bool_typet{});
 
-  if(test.is_nil() || body.is_nil() || orelse.is_nil())
+  // PLR §6.13: only the selected branch is evaluated, so a
+  // may-raise sub-expression in a branch must fire its check
+  // only when that branch is taken. Guard each branch's pending
+  // checks by the same condition the value is selected on.
+  std::size_t before_body = pending_checks.size();
+  exprt body = convert_expression(json_member(expr, "body"));
+  guard_pending_checks(before_body, test);
+  std::size_t before_orelse = pending_checks.size();
+  exprt orelse = convert_expression(json_member(expr, "orelse"));
+  guard_pending_checks(before_orelse, not_exprt{test});
+
+  if(body.is_nil() || orelse.is_nil())
     return nil_exprt{};
 
   // PLR §6.13: if branch types differ, the conditional's type
@@ -80,9 +107,6 @@ exprt python_convertert::convert_if_exp(const jsont &expr)
     else
       orelse = safe_typecast(orelse, body.type());
   }
-
-  if(test.type() != bool_typet{})
-    test = safe_typecast(test, bool_typet{});
 
   // PLR §6.13: if safe_typecast could not unify the branches
   // (e.g. list vs int), a raw if_exprt would violate CBMC's

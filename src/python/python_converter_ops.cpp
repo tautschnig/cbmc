@@ -1845,27 +1845,14 @@ exprt python_convertert::convert_bool_op(const jsont &expr)
     // if-then-else guarded by:
     //   for 'and': condition = python_truthiness(result)
     //   for 'or' : condition = NOT(python_truthiness(result))
-    std::vector<codet> saved_pending_before = pending_checks;
+    std::size_t checks_before = pending_checks.size();
     exprt next = convert_expression(*it);
-    if(
-      pending_checks.size() > saved_pending_before.size() &&
-      (op == "And" || op == "Or"))
+    if(op == "And" || op == "Or")
     {
-      // Extract just the new checks added by 'next'.
-      std::vector<codet> new_checks(
-        std::make_move_iterator(
-          pending_checks.begin() + saved_pending_before.size()),
-        std::make_move_iterator(pending_checks.end()));
-      pending_checks.erase(
-        pending_checks.begin() + saved_pending_before.size(),
-        pending_checks.end());
-      // Build a code block of the new checks and a guard.
-      code_blockt block;
-      for(auto &c : new_checks)
-        block.add(std::move(c));
       exprt left_truthy = python_truthiness(result);
-      exprt guard = op == "And" ? left_truthy : exprt{not_exprt{left_truthy}};
-      pending_checks.push_back(code_ifthenelset{guard, block});
+      guard_pending_checks(
+        checks_before,
+        op == "And" ? left_truthy : exprt{not_exprt{left_truthy}});
     }
     // Each successive AND-operand can also enrich the bounds
     // for the operands that follow. (e.g. `len(L) >= 3 and
