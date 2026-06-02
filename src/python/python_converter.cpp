@@ -2907,6 +2907,13 @@ python_convertert::build_class_init_call(
   if(init_sym == nullptr)
     return std::nullopt;
 
+  // PLR §8.7: constructor arity / unexpected-kwarg validation. C(...)
+  // calls __init__(self, ...) with the new instance as the implicit
+  // self. Single chokepoint for every constructor caller (assignment,
+  // expression, with-statement, ...).
+  validate_call_signature(
+    init_id, call_node, json_member(call_node, "args"), 1);
+
   const code_typet &init_type = to_code_type(init_sym->type);
   const auto &params = init_type.parameters();
 

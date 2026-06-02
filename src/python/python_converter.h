@@ -1286,6 +1286,19 @@ private:
   /// ValueError when a search finds nothing).
   void emit_conditional_exception(const exprt &cond, const char *exc_type);
 
+  /// Validate a call against the callee's recorded exact signature
+  /// (PLR §8.7): emit TypeError for too-many positional arguments or
+  /// an unexpected keyword. `implicit_self` is the number of leading
+  /// positional slots filled implicitly (1 for a bound method /
+  /// constructor, 0 for a free function or an unbound Class.method
+  /// call). No-op unless `func_key` is a checkable signature. Shared
+  /// by the free-function, bound-method and constructor call sites.
+  void validate_call_signature(
+    const irep_idt &func_key,
+    const jsont &expr,
+    const jsont &args,
+    std::size_t implicit_self);
+
   /// PLR semantic correctness: detect cases where a value's
   /// statically-known type is incompatible with a declared
   /// annotation. Python doesn't enforce annotations at runtime,

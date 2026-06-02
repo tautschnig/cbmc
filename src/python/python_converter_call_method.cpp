@@ -2583,64 +2583,18 @@ std::optional<exprt> python_convertert::try_method_call(
               }
             }
           }
-          // PLR §8.7: bound-method signature validation. Consumes
-          // the same metadata as the free-function check; the
-          // effective positional count includes the implicit self.
-          // Keyed on the resolved (possibly MRO-inherited) method.
-          if(
-            method_sym != nullptr &&
-            function_signature_checkable.count(method_id))
+          // PLR §8.7: bound-method signature validation via the
+          // shared checker. An unbound call `Class.method(self, ...)`
+          // passes self explicitly (no implicit-self slot); a bound
+          // call obj.m(...) has one. Detect unbound by the receiver
+          // being a known class name.
+          if(method_sym != nullptr)
           {
-            bool starred = false;
-            // An unbound call `Class.method(self, ...)` passes self
-            // explicitly, so it is NOT an implicit-self bound call.
-            // Detect it by the receiver being a known class name.
             const jsont &recv_node = json_member(func, "value");
             bool unbound =
               is_node_type(recv_node, "Name") &&
               class_types.count(json_string(json_member(recv_node, "id"))) > 0;
-            std::size_t n_pos = unbound ? 0 : 1; // implicit self
-            if(args.is_array())
-              for(const auto &a : as_array(args))
-              {
-                if(is_node_type(a, "Starred"))
-                {
-                  starred = true;
-                  break;
-                }
-                ++n_pos;
-              }
-            if(!starred && !function_vararg_index.count(method_id))
-            {
-              auto mp = function_max_positional.find(method_id);
-              if(mp != function_max_positional.end() && n_pos > mp->second)
-                emit_conditional_exception(true_exprt{}, "TypeError");
-            }
-            if(!function_has_kwargs.count(method_id))
-            {
-              const auto &mparams = to_code_type(method_sym->type).parameters();
-              const jsont &kws = json_member(expr, "keywords");
-              if(kws.is_array())
-                for(const auto &kw : as_array(kws))
-                {
-                  const jsont &an = json_member(kw, "arg");
-                  if(an.is_null())
-                    continue; // **spread — cannot enumerate
-                  std::string kn = json_string(an);
-                  bool matched = false;
-                  for(const auto &p : mparams)
-                    if(id2string(p.get_base_name()) == kn)
-                    {
-                      matched = true;
-                      break;
-                    }
-                  if(!matched)
-                  {
-                    emit_conditional_exception(true_exprt{}, "TypeError");
-                    break;
-                  }
-                }
-            }
+            validate_call_signature(method_id, expr, args, unbound ? 0 : 1);
           }
 
           // Strict missing-method detection: if the class is in

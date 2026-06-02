@@ -58,6 +58,73 @@ void python_convertert::emit_conditional_exception(
   pending_checks.push_back(code_ifthenelset{cond, std::move(body)});
 }
 
+// Shared call-site signature validation (PLR §8.7).
+void python_convertert::validate_call_signature(
+  const irep_idt &func_key,
+  const jsont &expr,
+  const jsont &args,
+  std::size_t implicit_self)
+{
+  if(!function_signature_checkable.count(func_key))
+    return;
+  // Too many positional arguments (no *args, no *-unpacking we
+  // cannot count statically).
+  if(!function_vararg_index.count(func_key))
+  {
+    bool starred = false;
+    std::size_t n_pos = implicit_self;
+    if(args.is_array())
+      for(const auto &a : as_array(args))
+      {
+        if(is_node_type(a, "Starred"))
+        {
+          starred = true;
+          break;
+        }
+        ++n_pos;
+      }
+    if(!starred)
+    {
+      auto mp = function_max_positional.find(func_key);
+      if(mp != function_max_positional.end() && n_pos > mp->second)
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return;
+      }
+    }
+  }
+  // Unexpected keyword argument (no **kwargs). Match supplied
+  // keyword names against the callee's parameter base names.
+  if(!function_has_kwargs.count(func_key))
+  {
+    const symbolt *fs = symbol_table.lookup(func_key);
+    if(fs == nullptr || fs->type.id() != ID_code)
+      return;
+    const auto &params = to_code_type(fs->type).parameters();
+    const jsont &kws = json_member(expr, "keywords");
+    if(kws.is_array())
+      for(const auto &kw : as_array(kws))
+      {
+        const jsont &an = json_member(kw, "arg");
+        if(an.is_null())
+          continue; // **spread — cannot enumerate
+        std::string kn = json_string(an);
+        bool matched = false;
+        for(const auto &p : params)
+          if(id2string(p.get_base_name()) == kn)
+          {
+            matched = true;
+            break;
+          }
+        if(!matched)
+        {
+          emit_conditional_exception(true_exprt{}, "TypeError");
+          return;
+        }
+      }
+  }
+}
+
 // PLR §6.13: Conditional expressions
 // "x if C else y — first C is evaluated; if true, x is evaluated; else y."
 exprt python_convertert::convert_if_exp(const jsont &expr)
