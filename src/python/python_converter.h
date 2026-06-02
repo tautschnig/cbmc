@@ -1109,6 +1109,33 @@ private:
   codet convert_return(const jsont &stmt);
   codet convert_function_def(const jsont &stmt);
   codet convert_class_def(const jsont &stmt);
+
+  /// Result of scanning a function/method body for its return type
+  /// (used only when there is no explicit return annotation).
+  struct inferred_returnt
+  {
+    /// The inferred type, or empty_typet{} when no value-returning
+    /// `return` statement was found (the caller applies its own
+    /// fall-through default: implicit None for free functions, the
+    /// int default for methods).
+    typet type = empty_typet{};
+    bool has_value_return = false;
+    bool has_yield = false;
+    typet yield_element_type;
+  };
+
+  /// Shared body scan that both convert_function_def (free functions)
+  /// and convert_class_def (methods) use to infer an un-annotated
+  /// return type. \p qualified_name keys symbol/AnnAssign lookups for
+  /// `return varname` / tuple-element names; \p enclosing_class is ""
+  /// for free functions and the class name for methods (enabling
+  /// `return self`).
+  inferred_returnt infer_return_type_from_body(
+    const jsont &body,
+    const code_typet::parameterst &parameters,
+    const std::string &qualified_name,
+    const std::string &enclosing_class);
+
   codet convert_expr_stmt(const jsont &stmt);
   codet convert_break();
   codet convert_continue();
