@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+Unannotated empty dict with int-key subscript-assigns: the first
+d[k] = v rebuilds the dict with the actual key/value element types so
+distinct int keys aren't lossily coerced to the default str key type.
+(Building such a dict incrementally inside a loop still requires an
+explicit `d: dict[int, int] = {}` annotation — the rebuild only fires
+outside loops.)
