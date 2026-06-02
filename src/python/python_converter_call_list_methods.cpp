@@ -395,6 +395,9 @@ std::optional<exprt> python_convertert::try_list_method(
         exprt match = equal_exprt{index_exprt{data, idx}, search};
         result = if_exprt{and_exprt{in_range, match}, idx, result};
       }
+      // PLR list.index: raise ValueError when the value is absent.
+      emit_conditional_exception(
+        equal_exprt{result, from_integer(-1, result.type())}, "ValueError");
       return result;
     }
   }
@@ -507,6 +510,8 @@ std::optional<exprt> python_convertert::try_list_method(
         code_frontend_assignt{
           member_exprt{obj, "length", signedbv_typet{64}},
           minus_exprt{length, from_integer(1, signedbv_typet{64})}}});
+      // PLR list.remove: raise ValueError when the value is absent.
+      emit_conditional_exception(not_exprt{found}, "ValueError");
     }
     return from_integer(0, python_int_type());
   }

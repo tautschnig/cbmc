@@ -1272,6 +1272,12 @@ private:
   /// under the branch's condition, not unconditionally.
   void guard_pending_checks(std::size_t from, const exprt &guard);
 
+  /// Emit a guarded Python exception into pending_checks: when
+  /// `cond` holds, set __exception_active and the __exception_type
+  /// tag for `exc_type`. For data-conditional raises (e.g.
+  /// ValueError when a search finds nothing).
+  void emit_conditional_exception(const exprt &cond, const char *exc_type);
+
   /// PLR semantic correctness: detect cases where a value's
   /// statically-known type is incompatible with a declared
   /// annotation. Python doesn't enforce annotations at runtime,
