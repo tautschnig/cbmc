@@ -1264,6 +1264,14 @@ private:
     const std::string &comment,
     const source_locationt &loc);
 
+  /// Guard every pending check appended since index `from` by
+  /// `guard`, wrapping them in `if(guard) { ... }`. Used for
+  /// expression-position short-circuit / conditional evaluation
+  /// (PLR §6.11 BoolOp, §6.13 IfExp): a may-raise sub-expression
+  /// evaluated only on a taken branch must fire its check only
+  /// under the branch's condition, not unconditionally.
+  void guard_pending_checks(std::size_t from, const exprt &guard);
+
   /// PLR semantic correctness: detect cases where a value's
   /// statically-known type is incompatible with a declared
   /// annotation. Python doesn't enforce annotations at runtime,
