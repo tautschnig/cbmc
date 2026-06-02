@@ -1,0 +1,16 @@
+CORE
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^`is` on non-None scalar operands is modeled as value equality; CPython object identity for equal int/float/str values is implementation-defined and not modeled$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §3/A (is & small-int interning). Current behaviour: `is`
+on non-None scalars is modeled as value equality and a warning is
+emitted. For a is b with both 256 the value model coincidentally
+agrees with CPython (cached small int), so verification succeeds; the
+warning documents that identity is not modeled. The divergent case is
+intrinsic-is-scalar-knownbug.

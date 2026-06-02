@@ -1,0 +1,14 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §2 (default 64-bit int). PLR: ints are unbounded so
+10**20 > 0 holds. The default signedbv[64] model overflows, so this
+KNOWNBUG regex (the PLR-correct SUCCESSFUL) currently cannot be met.
+intrinsic-int-overflow-unbounded is the same program with
+--python-unbounded-ints, which restores the PLR behaviour.

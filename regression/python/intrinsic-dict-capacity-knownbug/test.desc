@@ -1,0 +1,18 @@
+KNOWNBUG
+main.py
+--unwind 19
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §1 (bounded containers). PLR: a dict storing 17 distinct
+keys has len 17. CBMC models a dict with 16 slots, so the 17th store
+trips the python-model-bound capacity guard and the program reports
+VERIFICATION FAILED instead. The KNOWNBUG regex states the PLR-correct
+outcome (SUCCESSFUL) that the BMC bound currently prevents. Current
+behaviour (write-past-bound -> property FAILURE) is covered by
+list-capacity-bound. Removing this limit needs heap-backed dynamic
+containers rather than fixed-size arrays.
