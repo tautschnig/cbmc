@@ -404,6 +404,14 @@ std::optional<exprt> python_convertert::try_builtin_call(
           return index_exprt{data, safe_idx};
         }
 
+        // PLR §6.10: next() on an exhausted iterator raises
+        // StopIteration. Without a tracked cursor we model the first
+        // read, but an empty iterable is definitively exhausted.
+        emit_conditional_exception(
+          equal_exprt{
+            member_exprt{arg, "length", signedbv_typet{64}},
+            from_integer(0, signedbv_typet{64})},
+          "StopIteration");
         return index_exprt{
           member_exprt{arg, "data", data_type},
           from_integer(0, signedbv_typet{64})};
