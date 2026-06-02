@@ -19,6 +19,45 @@ lands.
 | Hypothesmith --unrestricted failures | 4 | 0 | 0 | 0 |
 | AWS benchmark pass rate | n/a | 86.3% / 94.1% | 86.3% / 94.1% | 0 |
 
+**differential2 follow-up (2026-06-02): §1–§12 soundness items.**
+
+Closed to **CORE** (regression tests in `regression/python/`):
+- §4 `with __exit__`, §5 `finally` reroute, §6 subscript-assign
+  IndexError, §7 exceptions in compound bodies, §8 `Optional[T]`,
+  §9 `dict[K, non-primitive]`, §10 callable reassignment (both
+  function-alias and bound-method halves), B tagged-union tag check.
+- §11 uninitialized-field `AttributeError`, incl. inherited
+  bare-annotation fields and missing `super().__init__()`
+  (`class_all_bare` / `class_ctor_assigned` across the MRO).
+- §11b attribute-lookup protocol: `@property` on all receiver shapes +
+  inherited (MRO `emit_property_get`); `__getattr__` fallback
+  (`emit_getattr_fallback`); custom-descriptor `__get__`
+  (`emit_descriptor_get`, stateless exact).
+- §12b `UnboundLocalError`: straight-line **and** cross-branch
+  (path-sensitive `<name>$bound` flag set at the `convert_statement`
+  assignment chokepoint, keyed on the AST target).
+- §12c comprehension over a runtime/computed iterable → GOTO-loop
+  lowering (`emit_listcomp_loop`); list + set comprehensions.
+
+Intrinsic / by-design, now sound-or-explicit + paired tests
+(`intrinsic-*`): §1 bounded containers (sound capacity guard), §2
+default 64-bit int (`--python-unbounded-ints` escape hatch), §3/A `is`
++ small-int interning (warned; `id()` deterministic).
+
+Remaining residuals (KNOWNBUGs, sound direction — misses /
+over-approximations, never false alarms):
+- §12a closures capture by value not cell (late binding) —
+  `closure-late-binding-knownbug`; design in
+  `doc/python-frontend-closure-cells-plan.md`.
+- §11b non-data-descriptor (method) shadowing
+  (`method-shadow-knownbug`); custom-descriptor `__set__` + stateful
+  `__get__` (need instance-`__dict__`-as-storage / class-object
+  construction).
+- §12c dict comprehension over a runtime iterable
+  (`dictcomp-runtime-knownbug`, sound nondet; needs find-or-insert +
+  dedup store in the loop); comprehension scope isolation (namespace
+  leak, not soundness).
+
 **Wave 41 work (2026-05-27 / 2026-05-28):**
 
 Inheritance fix + cluster passes + COMPLEX tag + math edges
