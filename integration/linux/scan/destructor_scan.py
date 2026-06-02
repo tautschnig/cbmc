@@ -139,6 +139,79 @@ def _build_global_helper_freed(tree: Path,
     return helper_freed
 
 
+# Ops-table fields whose assigned function is a teardown
+# callback invoked indirectly by subsystem core (the dominant
+# whole-kernel FP source: a destructor "leaks" a field that is
+# actually freed in a registered .release/.destroy callback).
+_RELEASE_OPS_RE = re.compile(
+    r"\.\s*(?:release|destroy|free|dtor|remove|cleanup|"
+    r"destroy_cq|dealloc|put|kill_sb|destructor)\s*=\s*"
+    r"&?\s*([A-Za-z_]\w*)")
+
+
+def _build_release_freed(tree: Path,
+                         max_files: int | None) -> dict:
+    """Whole-tree index of fields DISPOSED in registered
+    release/destroy callbacks, keyed by struct type.
+
+    The kernel frees most long-lived objects through callbacks
+    (`.release`/`.destroy`/`.free`/...) invoked by subsystem
+    core via function pointers, which a static call graph
+    cannot follow.  We approximate: collect the set of
+    function names assigned to a release-ops field anywhere,
+    then for each such callback record the struct fields it
+    disposes — either `kfree(v->f)` OR `v->f = NULL` (a
+    disposal marker that also covers frees via an accessor,
+    e.g. powercap release_zone does `kfree(rd); rp->domains =
+    NULL;`).  Keyed by the struct type T of `v`.
+
+    Returns {struct_type: set(field_paths)}."""
+    # Pass 1: collect release-callback function names.
+    callback_names: set = set()
+    texts: list = []
+    done = 0
+    for top in sorted(tree.iterdir()):
+        if not top.is_dir() or top.name in _SKIP_TOP:
+            continue
+        for cf in list(top.rglob("*.c")) + list(top.rglob("*.h")):
+            if any(p in cf.parts for p in
+                   ("selftests", "kunit", "generated")):
+                continue
+            if max_files is not None and done >= max_files:
+                break
+            done += 1
+            try:
+                text = cf.read_text(errors="replace")
+            except OSError:
+                continue
+            for m in _RELEASE_OPS_RE.finditer(text):
+                callback_names.add(m.group(1))
+            texts.append(text)
+    # Pass 2: for each callback function, record disposed
+    # fields keyed by the struct type of the freed var.
+    release_freed: dict[str, set] = defaultdict(set)
+    dispose_re = re.compile(
+        r"(?:\b(?:" + dc._FREE_APIS + r")\s*\(\s*([A-Za-z_]\w*)"
+        r"\s*->\s*([A-Za-z_][\w.]*?)\s*\)"          # kfree(v->f)
+        r"|([A-Za-z_]\w*)\s*->\s*([A-Za-z_][\w.]*?)"
+        r"\s*=\s*NULL)")                            # v->f = NULL
+    for text in texts:
+        for fname, fbody in dc._enum_functions(text):
+            if fname not in callback_names:
+                continue
+            for m in dispose_re.finditer(fbody):
+                var = m.group(1) or m.group(3)
+                fld = m.group(2) or m.group(4)
+                if not var or not fld:
+                    continue
+                tm = re.search(
+                    r"struct\s+(\w+)\s*\*\s*" + re.escape(var)
+                    + r"\b", fbody)
+                if tm:
+                    release_freed[tm.group(1)].add(fld)
+    return release_freed
+
+
 def _build_dir_index(src_cache: dict[str, str]):
     """One pass over all functions in a directory's sources to
     build the maps the per-candidate analysis needs, so we
@@ -203,7 +276,8 @@ def _build_dir_index(src_cache: dict[str, str]):
 def _analyze_fast(fname: str, fbody: str, func_body,
                   func_paramtype, decl_type,
                   sibling_freed,
-                  global_helper_freed=None) -> dc.DtorVerdict:
+                  global_helper_freed=None,
+                  release_freed=None) -> dc.DtorVerdict:
     """Per-candidate analysis using precomputed dir maps."""
     bare = dc._bare_kfree_objects(fbody)
     obj_candidates = [b for b in bare
@@ -292,6 +366,13 @@ def _analyze_fast(fname: str, fbody: str, func_body,
             helper_frees |= global_helper_freed.get(c, set())
         if helper_frees:
             missing = missing - helper_frees
+    # Indirect-free pruning: fields disposed in a registered
+    # release/destroy callback for this struct type are freed
+    # via subsystem-core dispatch the static call graph can't
+    # follow (e.g. rapl_remove_package's rp->domains is freed
+    # in the powercap .release callback release_zone).
+    if missing and release_freed is not None:
+        missing = missing - release_freed.get(struct_type, set())
     return dc.DtorVerdict(True, struct_type, obj, freed, owned,
                           missing)
 
@@ -303,6 +384,10 @@ def scan_tree(tree: Path, max_files: int | None) -> list[dict]:
     global_helper_freed = _build_global_helper_freed(tree, None)
     print(f"  global helper-free index: "
           f"{len(global_helper_freed)} functions", flush=True)
+    print("  building release-callback index ...", flush=True)
+    release_freed = _build_release_freed(tree, None)
+    print(f"  release-callback index: "
+          f"{len(release_freed)} struct types", flush=True)
     for d, cfiles in _enum_dirs(tree):
         src_cache = _dir_sources(d)
         if not src_cache:
@@ -327,7 +412,7 @@ def scan_tree(tree: Path, max_files: int | None) -> list[dict]:
                     v = _analyze_fast(
                         fname, fbody, func_body, func_paramtype,
                         decl_type, sibling_freed,
-                        global_helper_freed)
+                        global_helper_freed, release_freed)
                 except Exception:
                     continue
                 # Skip collision-prone struct types (multiple
