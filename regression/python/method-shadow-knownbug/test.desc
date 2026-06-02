@@ -1,0 +1,16 @@
+KNOWNBUG
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11b residual: non-data-descriptor (method) shadowing.
+PLR: an instance attribute shadows a same-named method, so after
+c.m = 99, c.m == 99. CBMC models methods on the method-call path, not
+as shadowable instance-dict entries, so the instance assignment does
+not override the method read. The KNOWNBUG regex states the
+PLR-correct outcome; faithful modeling needs instance-dict-as-storage.

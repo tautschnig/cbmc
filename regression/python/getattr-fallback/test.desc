@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11b. __getattr__ dispatch for attributes not resolved
+by normal lookup: declared fields still read directly (c.x), unknown
+attributes route to __getattr__ (c.missing), and the hook is found via
+the MRO so an inherited __getattr__ also applies (Sub().anything).
