@@ -210,3 +210,29 @@ is an honest negative result, and it is informative:
    decide whether the rmmod path leaks.
 3. **kmemleak dynamic check** of `nx842` rmmod on a pseries
    target, if one is available, before any upstream report.
+
+## Addendum: indirect-free awareness (release-callback index)
+
+Implemented the top follow-up (#1 above).  `_build_release_freed`
+collects functions assigned to a release-ops field
+(`.release`/`.destroy`/`.free`/`.dtor`/`.remove`/...) anywhere
+in the tree, records the struct fields each disposes
+(`kfree(v->f)` or `v->f = NULL`), and subtracts them from the
+missing set by struct type.
+
+Effect on linux_5_10: candidates **88 → 66** (release-callback
+delegation pruned 22 more FPs, e.g. `rapl_remove_package`).
+The radeon CVE is preserved (its `iio` free is in
+`atom_destroy`, a directly-called helper, not a registered
+callback).
+
+Note this also (correctly per the detector's syntactic model)
+prunes `nx842_pseries_exit`: `counters` IS freed in the
+`.remove` callback `nx842_remove`; the rmmod-ordering bug that
+defeats that free is an interprocedural ordering property
+beyond syntactic field-set analysis.  With the callback index,
+the detector no longer flags it — the honest consequence is
+that this one subtle candidate now requires
+ordering/path-sensitive reasoning (or dynamic kmemleak) to
+surface, which the static detector deliberately does not
+attempt.
