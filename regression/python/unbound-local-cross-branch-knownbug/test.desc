@@ -1,0 +1,18 @@
+KNOWNBUG
+main.py
+--unwind 3
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §12b residual: cross-branch UnboundLocalError. PLR:
+f(False) raises UnboundLocalError because x is assigned only on the
+True branch. The straight-line detection misses it (x's local symbol
+exists from the if-branch conversion), so CBMC reports SUCCESSFUL. The
+KNOWNBUG regex states the PLR-correct VERIFICATION FAILED. A sound
+path-sensitive fix needs a runtime is-bound flag set at every binding
+site; a single-chokepoint flag caused false positives, so this stays a
+documented residual (sound miss, not a false alarm).
