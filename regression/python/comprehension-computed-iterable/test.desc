@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 8
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §12c. The comprehension loop-lowering now covers an
+iterable that is a call/expression yielding a runtime (non-constant-
+length) list, not just a list parameter; set comprehensions share the
+list lowering, so they benefit too. Literal/range/constant-length
+iterables still take the unroll path.

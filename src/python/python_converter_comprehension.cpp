@@ -152,27 +152,50 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
   if(!generators.is_array() || as_array(generators).empty())
     return nil_exprt{};
 
-  // §12c: single generator over a runtime list (a Name bound to a
-  // `list` value whose length is symbolic, e.g. a parameter). The
-  // unroll path below only supports compile-time-enumerable iterables
-  // and otherwise drops the assignment; instead lower this to a real
-  // loop that populates a temporary. Restricted to a Name not tracked
-  // as a literal list (those are unrolled below).
+  // §12c: single generator over a runtime list whose length is
+  // symbolic (a `list` parameter, or a call/expression yielding a
+  // non-constant-length list). The unroll path below only supports
+  // compile-time-enumerable iterables and otherwise drops the
+  // assignment; lower these to a real loop populating a temporary.
+  // Excludes literal-list / range() / a Name tracked as a literal
+  // list, which the unroll path handles without needing --unwind.
   if(as_array(generators).size() == 1)
   {
     const jsont &gen = *as_array(generators).begin();
     const jsont &gen_iter = json_member(gen, "iter");
     const jsont &target = json_member(gen, "target");
-    if(
-      is_node_type(gen_iter, "Name") && is_node_type(target, "Name") &&
+    bool is_range_call =
+      is_node_type(gen_iter, "Call") &&
+      is_node_type(json_member(gen_iter, "func"), "Name") &&
+      json_string(json_member(json_member(gen_iter, "func"), "id")) == "range";
+    bool is_tracked_name =
+      is_node_type(gen_iter, "Name") &&
       list_literals.count(
-        irep_idt{qualify_name(json_string(json_member(gen_iter, "id")))}) == 0)
+        irep_idt{qualify_name(json_string(json_member(gen_iter, "id")))}) > 0;
+    if(
+      is_node_type(target, "Name") && !is_node_type(gen_iter, "List") &&
+      !is_range_call && !is_tracked_name)
     {
+      // Convert the iterable once, capturing its checks so a
+      // fall-through (non-list / constant-length) doesn't leave them
+      // emitted twice; the unroll path re-converts as needed.
+      std::vector<codet> saved;
+      saved.swap(pending_checks);
       exprt iter_val = convert_expression(gen_iter);
+      std::vector<codet> iter_checks;
+      iter_checks.swap(pending_checks);
+      saved.swap(pending_checks);
       if(iter_val.type().id() == ID_pointer)
         iter_val = dereference_exprt{iter_val};
-      if(!iter_val.is_nil() && is_python_list_type(iter_val.type()))
+      bool const_len = iter_val.id() == ID_struct &&
+                       !iter_val.operands().empty() &&
+                       iter_val.operands()[0].is_constant();
+      if(
+        !iter_val.is_nil() && is_python_list_type(iter_val.type()) &&
+        !const_len)
       {
+        for(auto &c : iter_checks)
+          pending_checks.push_back(std::move(c));
         exprt r = emit_listcomp_loop(
           elt,
           json_string(json_member(target, "id")),

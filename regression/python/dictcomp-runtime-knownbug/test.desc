@@ -1,0 +1,16 @@
+KNOWNBUG
+main.py
+--unwind 6
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §12c residual: dict comprehension over a runtime
+iterable. PLR len is 3; CBMC over-approximates the dict comprehension
+to a nondet dict (sound but imprecise), so the KNOWNBUG regex (the
+PLR-correct SUCCESSFUL) cannot be met. List and set comprehensions are
+loop-lowered; the dict case needs a find-or-insert store with
+duplicate-key dedup in the loop body.
