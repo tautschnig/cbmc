@@ -1,0 +1,17 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=10$
+^SIGNAL=0$
+^\[python-attribute-error\.\d+\] .*'Obj' object has no attribute 'x' \(AttributeError\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §11. A bare-annotation field assigned only conditionally
+in __init__ is unbound on the path that skips the assignment; reading
+it raises AttributeError. The per-field shadow flag (False at
+construction, set True on the instance write) is asserted on reads of
+not-definitely-initialized fields, so the flag=False path is detected
+path-sensitively rather than reading a silent zero.

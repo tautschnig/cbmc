@@ -2258,6 +2258,50 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   struct_typet class_type{tagged_components};
   class_type.set_tag("python_class_" + class_name);
   class_types[class_name] = class_type;
+
+  // §11: collect bare class-body annotations (`x: T` with no value)
+  // not unconditionally assigned at __init__ top level. A read of such
+  // a field before the instance assigns it is an AttributeError.
+  {
+    std::set<std::string> bare_ann, definite_init;
+    if(body.is_array())
+      for(const auto &item : as_array(body))
+      {
+        if(
+          is_node_type(item, "AnnAssign") &&
+          is_node_type(json_member(item, "target"), "Name") &&
+          json_member(item, "value").is_null())
+          bare_ann.insert(
+            json_string(json_member(json_member(item, "target"), "id")));
+        else if(
+          is_node_type(item, "FunctionDef") &&
+          json_string(json_member(item, "name")) == "__init__")
+        {
+          const jsont &ib = json_member(item, "body");
+          if(ib.is_array())
+            for(const auto &s : as_array(ib))
+            {
+              const jsont *tgt = nullptr;
+              if(
+                is_node_type(s, "Assign") &&
+                json_member(s, "targets").is_array() &&
+                !as_array(json_member(s, "targets")).empty())
+                tgt = &*as_array(json_member(s, "targets")).begin();
+              else if(is_node_type(s, "AnnAssign"))
+                tgt = &json_member(s, "target");
+              if(
+                tgt != nullptr && is_node_type(*tgt, "Attribute") &&
+                is_node_type(json_member(*tgt, "value"), "Name") &&
+                json_string(json_member(json_member(*tgt, "value"), "id")) ==
+                  "self")
+                definite_init.insert(json_string(json_member(*tgt, "attr")));
+            }
+        }
+      }
+    for(const std::string &f : bare_ann)
+      if(definite_init.count(f) == 0)
+        class_attrerror_fields[class_name].insert(f);
+  }
   if(!class_tag_ids.count(class_name))
     class_tag_ids[class_name] = static_cast<int>(class_tag_ids.size()) + 1;
 

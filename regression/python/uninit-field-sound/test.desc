@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11, no-false-positive guard. A field assigned
+unconditionally in __init__ (x) and a conditionally-assigned field (y)
+read only on the path where it was set must both be considered bound.
+The shadow flag is set on the True path, so the read succeeds.
