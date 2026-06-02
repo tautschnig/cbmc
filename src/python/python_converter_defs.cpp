@@ -2947,11 +2947,14 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             STR,
             LIST,
             DICT,
+            CLASS,
             OTHER
           };
           std::vector<shape_t> shapes;
           typet first_dict_key, first_dict_val;
           typet first_list_elem;
+          typet first_class_type;
+          bool class_consistent = true;
           std::function<void(const jsont &)> walk_returns =
             [&](const jsont &body)
           {
@@ -3053,7 +3056,30 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                   }
                 }
                 else
+                {
+                  // PLR §3.2: 'return ClassName(...)' — infer the
+                  // class-instance return type (mirrors the
+                  // free-function inference in convert_function_def).
+                  // Without this, methods returning an instance
+                  // default to int and the result mis-types.
+                  if(
+                    is_node_type(rv, "Call") &&
+                    is_node_type(json_member(rv, "func"), "Name"))
+                  {
+                    std::string cn =
+                      json_string(json_member(json_member(rv, "func"), "id"));
+                    if(class_types.count(cn))
+                    {
+                      shapes.push_back(shape_t::CLASS);
+                      if(first_class_type.id().empty())
+                        first_class_type = class_types[cn];
+                      else if(first_class_type != class_types[cn])
+                        class_consistent = false;
+                      continue;
+                    }
+                  }
                   shapes.push_back(shape_t::OTHER);
+                }
               }
               walk_returns(json_member(s, "body"));
               walk_returns(json_member(s, "orelse"));
@@ -3070,6 +3096,7 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           // Mixed shapes keep the default int.
           bool all_dict = true, has_dict = false;
           bool all_list = true, has_list = false;
+          bool all_class = true, has_class = false, saw_none = false;
           for(shape_t s : shapes)
           {
             if(s == shape_t::DICT)
@@ -3080,6 +3107,12 @@ codet python_convertert::convert_class_def(const jsont &stmt)
               has_list = true;
             else if(s != shape_t::NONE_LITERAL)
               all_list = false;
+            if(s == shape_t::CLASS)
+              has_class = true;
+            else if(s != shape_t::NONE_LITERAL)
+              all_class = false;
+            if(s == shape_t::NONE_LITERAL)
+              saw_none = true;
           }
           auto is_safe = [](const typet &t)
           {
@@ -3092,6 +3125,16 @@ codet python_convertert::convert_class_def(const jsont &stmt)
             return_type = python_dict_type(first_dict_key, first_dict_val);
           else if(has_list && all_list && !first_list_elem.id_string().empty())
             return_type = python_list_type(first_list_elem);
+          else if(
+            has_class && all_class && class_consistent && !saw_none &&
+            !first_class_type.id().empty())
+            // Every return constructs the same class (no None), so the
+            // concrete struct is the precise return type. A mix with a
+            // None return falls through to the python_value widening
+            // below (Optional[Class] needs the tagged-union NONE tag);
+            // a mix with a non-class return leaves all_class false and
+            // keeps the default int, as before.
+            return_type = first_class_type;
           else
           {
             // PLR §3.2: heterogeneous-return method with at least
