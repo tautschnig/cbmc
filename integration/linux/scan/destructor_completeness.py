@@ -398,10 +398,18 @@ def _sibling_sources(target_file: str) -> list[str]:
     return texts
 
 
-def analyze(target_file: str, fn_name: str) -> DtorVerdict:
+def analyze(target_file: str, fn_name: str,
+            sources: list[str] | None = None) -> DtorVerdict:
     """Analyse (target_file, fn_name) for the incomplete-
-    destructor bug class."""
-    sources = _sibling_sources(target_file)
+    destructor bug class.
+
+    `sources` may be supplied to avoid re-reading the sibling
+    files on every call (used by the batch scanner, which
+    caches sources per directory).  When None, the sibling
+    sources are loaded for `target_file`.  The primary file's
+    text must be `sources[0]`."""
+    if sources is None:
+        sources = _sibling_sources(target_file)
     if not sources:
         return DtorVerdict(False, None, None,
                            reason="source unreadable")
