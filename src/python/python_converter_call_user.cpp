@@ -1650,10 +1650,19 @@ exprt python_convertert::convert_user_call(
         }
         symbol_exprt r = symbol_table.lookup_ref(rid).symbol_expr();
         symbol_exprt tag = tag_sym->symbol_expr();
+        auto recv_it = bound_method_receivers.find(qualify_name(func_name));
         for(std::size_t i = 0; i < cand_syms.size(); i++)
         {
+          // §10: for a bound-method candidate, swap in this branch's
+          // receiver (the self argument prepended earlier is the
+          // last-processed branch's).
+          exprt::operandst args_i = arguments;
+          if(
+            recv_it != bound_method_receivers.end() &&
+            i < recv_it->second.size() && !args_i.empty())
+            args_i[0] = recv_it->second[i];
           side_effect_expr_function_callt c{
-            cand_syms[i]->symbol_expr(), arguments, rt, get_location(expr)};
+            cand_syms[i]->symbol_expr(), args_i, rt, get_location(expr)};
           pending_checks.push_back(code_ifthenelset{
             equal_exprt{tag, from_integer(i, tag.type())},
             code_frontend_assignt{r, std::move(c)}});
