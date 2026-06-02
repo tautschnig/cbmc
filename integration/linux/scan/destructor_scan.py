@@ -215,8 +215,11 @@ def _analyze_fast(fname: str, fbody: str, func_body,
         if m:
             struct_type = m.group(1)
         else:
+            # Only inherit a parameter's type when the freed
+            # object IS that parameter (avoids misattributing
+            # a void* arg to an unrelated struct param).
             pt = func_paramtype.get(fname)
-            struct_type = pt[0] if pt else None
+            struct_type = pt[0] if (pt and pt[1] == obj) else None
     if struct_type is None:
         return dc.DtorVerdict(False, None, obj)
 

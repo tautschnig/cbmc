@@ -461,7 +461,15 @@ def analyze(target_file: str, fn_name: str,
                         + body)
         struct_type = _local_struct_type(sig_and_body, obj)
         if struct_type is None:
-            struct_type, _ = _param_struct_type(primary, fn_name)
+            # Only inherit a parameter's struct type when the
+            # freed object IS that parameter.  Otherwise a
+            # destructor that frees a void* arg (e.g.
+            # ldc_free_exp_dring frees `buf`) would wrongly
+            # inherit the type of an unrelated struct param
+            # (`lp`), pulling in that struct's owned fields.
+            pt, pn = _param_struct_type(primary, fn_name)
+            if pn == obj:
+                struct_type = pt
     if struct_type is None:
         return DtorVerdict(False, None, obj,
                            reason=f"could not resolve struct type "
