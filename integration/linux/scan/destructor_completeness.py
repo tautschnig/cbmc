@@ -57,7 +57,7 @@ _ALLOC_APIS = (
     r"alloc_skb|dev_alloc_skb|"
     r"kmem_cache_(?:alloc|zalloc)"
 )
-_FREE_APIS = r"k(?:free|vfree|free_skb)"
+_FREE_APIS = r"(?:kfree(?:_skb)?|k?vfree)"
 
 
 @dataclass
@@ -174,12 +174,30 @@ def _field_paths_freed(body: str, obj_exprs: list[str]) -> set[str]:
     `kfree(<obj>...->f)` or `kfree(<obj>...->a.b)` appears,
     where <obj> is one of the recognised object base
     expressions.  The field path is the suffix after the
-    object base."""
+    object base.
+
+    Also resolves one level of local aliasing: a destructor
+    that does `local = <obj>->f; ...; kfree(local);` frees the
+    field through the alias (e.g. maple_release_device does
+    `mq = mdev->mq; kfree(mq);`)."""
     freed: set[str] = set()
+    # Build alias map: local -> field, for `local = obj->f;`.
+    alias: dict[str, str] = {}
+    for base in obj_exprs:
+        for am in re.finditer(
+                r"\b([A-Za-z_]\w*)\s*=\s*" + re.escape(base)
+                + r"\s*->\s*([A-Za-z_][\w.]*?)\s*;", body):
+            fld = re.sub(r"\[[^\]]*\]", "", am.group(2))
+            if "(" not in fld:
+                alias[am.group(1)] = fld
     for m in re.finditer(
             r"\b(?:" + _FREE_APIS + r")\s*\(\s*([^;]+?)\s*\)\s*;", body):
         arg = re.sub(r"^\([^)]*\)\s*", "",
                      m.group(1).strip()).strip()
+        # Alias free: kfree(local) where local = obj->f.
+        if arg in alias:
+            freed.add(alias[arg])
+            continue
         for base in obj_exprs:
             if arg.startswith(base) and len(arg) > len(base):
                 rest = arg[len(base):]
