@@ -40,6 +40,24 @@ void python_convertert::guard_pending_checks(
   pending_checks.push_back(code_ifthenelset{guard, std::move(block)});
 }
 
+// Emit a guarded Python exception into pending_checks.
+void python_convertert::emit_conditional_exception(
+  const exprt &cond,
+  const char *exc_type)
+{
+  const symbolt *exc_sym = symbol_table.lookup("python::__exception_active");
+  if(exc_sym == nullptr)
+    return;
+  code_blockt body;
+  body.add(code_frontend_assignt{exc_sym->symbol_expr(), true_exprt{}});
+  const symbolt *exc_type_sym = symbol_table.lookup("python::__exception_type");
+  if(exc_type_sym != nullptr)
+    body.add(code_frontend_assignt{
+      exc_type_sym->symbol_expr(),
+      from_integer(exception_type_hash(exc_type), exc_type_sym->type)});
+  pending_checks.push_back(code_ifthenelset{cond, std::move(body)});
+}
+
 // PLR §6.13: Conditional expressions
 // "x if C else y — first C is evaluated; if true, x is evaluated; else y."
 exprt python_convertert::convert_if_exp(const jsont &expr)
