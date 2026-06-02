@@ -129,6 +129,31 @@ exprt python_convertert::convert_compare(const jsont &expr)
     // with a tag dispatch to float (int values are cast up) and
     // compare both sides as float.
     bool ordered_op = (op == "Lt" || op == "LtE" || op == "Gt" || op == "GtE");
+    // PLR §6.10.1: an ordered comparison (`<` `<=` `>` `>=`) between a
+    // number and a string raises TypeError (unlike `==`, which is
+    // just False). Fire only when both operands are statically
+    // concrete and in different orderable categories; tagged values
+    // and other types are left to the existing paths (sound).
+    if(ordered_op)
+    {
+      auto ord_cat = [this](const typet &t) -> int
+      {
+        if(
+          t.id() == ID_signedbv || t.id() == ID_unsignedbv ||
+          t.id() == ID_integer || t.id() == ID_floatbv || t.id() == ID_bool)
+          return 1; // numeric
+        if(is_python_string_type(t))
+          return 2; // str
+        return 0;   // unknown — skip
+      };
+      int lc = ord_cat(current_left.type());
+      int rc = ord_cat(right.type());
+      if(lc != 0 && rc != 0 && lc != rc)
+      {
+        emit_conditional_exception(true_exprt{}, "TypeError");
+        return side_effect_expr_nondett{bool_typet{}, get_location(expr)};
+      }
+    }
     auto to_float_numeric = [&](const exprt &pv) -> exprt
     {
       // (pv.__tag == FLOAT ? pv.__float_val
