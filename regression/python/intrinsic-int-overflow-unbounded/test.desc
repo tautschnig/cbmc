@@ -1,0 +1,15 @@
+CORE
+main.py
+--python-unbounded-ints
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §2 (default 64-bit int), flag-restored variant. Same
+program as intrinsic-int-overflow-knownbug, but --python-unbounded-ints
+models int as the mathematical integer type, so 10**20 > 0 is
+established and verification succeeds. Demonstrates the sound escape
+hatch for the default-64-bit policy.

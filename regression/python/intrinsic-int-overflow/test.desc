@@ -1,0 +1,15 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §2 (default 64-bit int). Current behaviour: with the
+default signedbv[64] int model, 10**20 overflows and the PLR-true
+property x > 0 fails. The KNOWNBUG counterpart
+(intrinsic-int-overflow-knownbug) states the PLR-correct SUCCESSFUL,
+and intrinsic-int-overflow-unbounded shows --python-unbounded-ints
+restores it.

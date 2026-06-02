@@ -1,0 +1,16 @@
+KNOWNBUG
+main.py
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §3/A (is & small-int interning). PLR: two separate
+int("100000") objects are distinct (100000 is not a cached small int),
+so x is not y holds. CBMC models `is not` as value inequality with no
+identity model, so it computes False and the assertion fails. This
+KNOWNBUG regex states the PLR-correct SUCCESSFUL that the value model
+cannot produce. Faithful modeling would require boxing ints with
+identity, which the value-based model does not do.
