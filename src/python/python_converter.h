@@ -1537,6 +1537,17 @@ public:
     const std::string &class_name,
     const std::string &attr) const;
 
+  /// §11b: dispatch an @property read `obj.attr`. Resolves the getter
+  /// method via the MRO of `class_name` (so inherited properties work)
+  /// and emits the call `getter(self_ptr)` into a fresh temporary,
+  /// returning it. `self_ptr` must be a pointer to the instance.
+  /// Returns nil_exprt if `attr` is not a resolvable property getter.
+  exprt emit_property_get(
+    const std::string &class_name,
+    const std::string &attr,
+    const exprt &self_ptr,
+    const source_locationt &loc);
+
   /// PLR §9.4: emit `obj.__shadow_<attr> = True` if `attr` is
   /// a class-level attribute of the class identified by
   /// `obj`'s struct tag AND `obj` is not the class object

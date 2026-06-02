@@ -1,0 +1,15 @@
+CORE
+main.py
+--unwind 5
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11b. @property reads now dispatch through a pointer
+receiver (a class-typed parameter or self inside a method) and resolve
+the getter via the MRO, so inherited properties work too. Previously
+only the by-value, own-class case dispatched; the others returned a
+field read / nondet.
