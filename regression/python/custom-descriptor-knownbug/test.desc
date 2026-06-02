@@ -1,0 +1,18 @@
+KNOWNBUG
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11b residual: custom data descriptors. PLR: accessing a
+class attribute bound to a descriptor instance calls its __get__, so
+c.d == 42. CBMC does not recognise a class-level descriptor instance
+(it is not typed as the descriptor class) and does not dispatch
+__get__/__set__, so the assertion cannot be established. The KNOWNBUG
+regex states the PLR-correct outcome. @property (the built-in data
+descriptor) is supported; user-defined descriptors need the descriptor
+protocol over instance-dict storage.

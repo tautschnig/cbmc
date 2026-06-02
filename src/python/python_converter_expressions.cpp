@@ -1351,6 +1351,79 @@ exprt python_convertert::emit_property_get(
   return std::move(tv);
 }
 
+// §11b: dispatch __getattr__ when normal attribute lookup fails.
+exprt python_convertert::emit_getattr_fallback(
+  const exprt &value,
+  const std::string &attr,
+  const source_locationt &loc)
+{
+  std::string cls;
+  exprt self_ptr;
+  if(
+    value.type().id() == ID_pointer &&
+    to_pointer_type(value.type()).base_type().id() == ID_struct)
+  {
+    cls = id2string(
+      to_struct_type(to_pointer_type(value.type()).base_type()).get_tag());
+    self_ptr = value;
+  }
+  else if(value.type().id() == ID_struct)
+  {
+    cls = id2string(to_struct_type(value.type()).get_tag());
+    self_ptr = address_of_exprt{value};
+  }
+  else
+    return nil_exprt{};
+  if(cls.substr(0, 13) != "python_class_")
+    return nil_exprt{};
+  cls = cls.substr(13);
+
+  std::vector<std::string> chain;
+  auto mro_it = class_mro.find(cls);
+  if(mro_it != class_mro.end())
+    chain = mro_it->second;
+  if(chain.empty())
+    chain.push_back(cls);
+  const symbolt *msym = nullptr;
+  for(const std::string &anc : chain)
+  {
+    const symbolt *s =
+      symbol_table.lookup(irep_idt{"python::" + anc + "::__getattr__"});
+    if(s != nullptr && s->type.id() == ID_code)
+    {
+      msym = s;
+      break;
+    }
+  }
+  if(msym == nullptr)
+    return nil_exprt{};
+
+  const code_typet &mty = to_code_type(msym->type);
+  static unsigned getattr_ctr = 0;
+  std::string tn = "__getattr_" + std::to_string(getattr_ctr++);
+  irep_idt ti{qualify_name(tn)};
+  if(symbol_table.lookup(ti) == nullptr)
+  {
+    symbolt ts{ti, mty.return_type(), "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    symbol_table.add(ts);
+  }
+  symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+  exprt self = self_ptr;
+  if(!mty.parameters().empty() && self.type() != mty.parameters()[0].type())
+    self = typecast_exprt{self, mty.parameters()[0].type()};
+  pending_checks.push_back(code_frontend_assignt{
+    tv,
+    side_effect_expr_function_callt{
+      msym->symbol_expr(),
+      {self, python_string_literal(attr)},
+      mty.return_type(),
+      loc}});
+  return std::move(tv);
+}
+
 // PLR §6.3.1: Attribute references
 // "An attribute reference is a primary followed by a period and a name."
 exprt python_convertert::convert_attribute(const jsont &expr)
@@ -1688,6 +1761,14 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     }
     log_overapprox("attribute '" + attr + "': using nondet over-approximation");
     return side_effect_expr_nondett{python_int_type(), source_locationt{}};
+  }
+
+  // §11b: CPython calls __getattr__ when normal lookup fails. Try it
+  // before over-approximating an unresolved attribute as nondet.
+  {
+    exprt ga = emit_getattr_fallback(value, attr, get_location(expr));
+    if(!ga.is_nil())
+      return ga;
   }
 
   log_overapprox("attribute '" + attr + "': using nondet over-approximation");

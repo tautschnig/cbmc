@@ -1556,6 +1556,15 @@ public:
     const exprt &self_ptr,
     const source_locationt &loc);
 
+  /// §11b: CPython's __getattr__ hook. When `value.attr` is not found
+  /// by normal lookup and `value`'s class (walked via the MRO) defines
+  /// __getattr__, emit `__getattr__(self, "attr")` into a temporary and
+  /// return it; otherwise return nil_exprt (caller over-approximates).
+  exprt emit_getattr_fallback(
+    const exprt &value,
+    const std::string &attr,
+    const source_locationt &loc);
+
   /// §12c: lower a single-generator list comprehension over a runtime
   /// list (e.g. a `list` parameter, whose length is symbolic) into a
   /// real GOTO while-loop that populates a fresh temporary, instead of
