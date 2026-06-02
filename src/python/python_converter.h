@@ -200,6 +200,12 @@ private:
   /// compilation (cleared when a function body begins).
   std::set<std::string> nonlocal_names;
 
+  /// §12b: names bound by assignment somewhere in the current function
+  /// (Python's "assigned anywhere => local" rule), minus global/
+  /// nonlocal. A read of one of these before its local symbol exists
+  /// is reported as UnboundLocalError. Saved/restored per function.
+  std::set<std::string> current_function_locals;
+
   /// Whether to use mathematical integers instead of int64.
   bool unbounded_ints = false;
   bool processing_import = false;

@@ -256,6 +256,26 @@ exprt python_convertert::convert_name(const jsont &expr)
     irep_idt scoped_id{"python::" + current_function + "::" + id};
     sym = symbol_table.lookup(scoped_id);
   }
+
+  // §12b: UnboundLocalError. `id` is assigned somewhere in this
+  // function, so it is local for the whole function (PLR §4.2.2), but
+  // no local binding exists yet at this read. Report it and stop
+  // falling back to an outer scope — CPython would raise here rather
+  // than read the global/enclosing value.
+  if(
+    sym == nullptr && !current_function.empty() &&
+    current_function_locals.count(id) > 0 && global_names.count(id) == 0 &&
+    nonlocal_names.count(id) == 0)
+  {
+    add_check(
+      false_exprt{},
+      "python-unbound-local",
+      "local variable '" + id +
+        "' referenced before assignment (UnboundLocalError)",
+      get_location(expr));
+    return side_effect_expr_nondett{python_int_type(), get_location(expr)};
+  }
+
   // Fall back to enclosing (parent) function scopes — this makes
   // closure variables resolvable, e.g. 'self' used inside a nested
   // 'def' within a method body.

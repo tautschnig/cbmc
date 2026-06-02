@@ -883,6 +883,21 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   global_names.clear();
   nonlocal_names.clear();
 
+  // §12b: pre-scan the body for locally-assigned names so a read
+  // before the binding can be reported as UnboundLocalError. Drop
+  // parameters (always bound on entry) and global/nonlocal names.
+  auto saved_locals = current_function_locals;
+  {
+    std::set<std::string> assigned, excluded;
+    collect_assigned_locals(json_member(stmt, "body"), assigned, excluded);
+    for(const std::string &p : collect_param_names(stmt))
+      excluded.insert(p);
+    current_function_locals.clear();
+    for(const std::string &a : assigned)
+      if(excluded.count(a) == 0)
+        current_function_locals.insert(a);
+  }
+
   // Phase 4 of the icontract integration plan: create the
   // `result` symbol that lambda bodies can reference to mean
   // the function's return value. Adding the symbol to the
@@ -1342,6 +1357,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
 
   current_function = saved_function;
   global_names = saved_globals;
+  current_function_locals = saved_locals;
   if(
     !enclosing_functions.empty() &&
     enclosing_functions.back() == saved_function)

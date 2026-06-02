@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 2
+
+^EXIT=10$
+^SIGNAL=0$
+^\[python-unbound-local\.\d+\] .*local variable 'x' referenced before assignment \(UnboundLocalError\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §12b. A name assigned anywhere in a function is local
+for the whole function; reading it before the binding is an
+UnboundLocalError. A pre-scan collects locally-assigned names and a
+read before the local symbol exists emits a python-unbound-local
+property instead of silently resolving the module global.

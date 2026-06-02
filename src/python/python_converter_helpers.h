@@ -121,6 +121,87 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
   }
 }
 
+/// §12b: collect names bound by an assignment anywhere in a function
+/// body (Python's "assigned anywhere => local for the whole function"
+/// rule). A read before the first binding is an UnboundLocalError.
+/// Does not descend into nested function/class/lambda scopes. Names
+/// declared `global`/`nonlocal` are placed in `excluded` so the caller
+/// can drop them (they bind an outer scope, not a local).
+[[maybe_unused]] static inline void collect_assigned_locals(
+  const jsont &node,
+  std::set<std::string> &assigned,
+  std::set<std::string> &excluded)
+{
+  if(node.is_array())
+  {
+    for(const auto &elem : to_json_array(node))
+      collect_assigned_locals(elem, assigned, excluded);
+    return;
+  }
+  if(!node.is_object())
+    return;
+  const jsont &type_node = node["_type"];
+  const std::string t = type_node.is_string() ? type_node.value : "";
+  if(
+    t == "FunctionDef" || t == "AsyncFunctionDef" || t == "ClassDef" ||
+    t == "Lambda")
+    return; // separate scope
+
+  std::function<void(const jsont &)> add_targets = [&](const jsont &tgt)
+  {
+    if(tgt.is_array())
+    {
+      for(const auto &e : to_json_array(tgt))
+        add_targets(e);
+      return;
+    }
+    if(!tgt.is_object())
+      return;
+    const jsont &tt_node = tgt["_type"];
+    const std::string tt = tt_node.is_string() ? tt_node.value : "";
+    if(tt == "Name" && tgt["id"].is_string())
+      assigned.insert(tgt["id"].value);
+    else if(tt == "Tuple" || tt == "List")
+      add_targets(tgt["elts"]);
+    else if(tt == "Starred")
+      add_targets(tgt["value"]);
+  };
+
+  if(t == "Assign" || t == "NamedExpr")
+    add_targets(node[t == "Assign" ? "targets" : "target"]);
+  else if(t == "AnnAssign")
+  {
+    if(!node["value"].is_null())
+      add_targets(node["target"]);
+  }
+  else if(t == "AugAssign" || t == "For" || t == "AsyncFor")
+    add_targets(node["target"]);
+  else if(t == "Global" || t == "Nonlocal")
+  {
+    const jsont &names = node["names"];
+    if(names.is_array())
+      for(const auto &n : to_json_array(names))
+        if(n.is_string())
+          excluded.insert(n.value);
+  }
+
+  static const char *fields[] = {
+    "body",
+    "orelse",
+    "handlers",
+    "finalbody",
+    "test",
+    "value",
+    "iter",
+    nullptr};
+  for(const char **f = fields; *f; ++f)
+  {
+    const jsont &child = node[*f];
+    if(!child.is_null())
+      collect_assigned_locals(child, assigned, excluded);
+  }
+}
+
 /// Collect parameter names from a FunctionDef's args.
 [[maybe_unused]] static inline std::set<std::string>
 collect_param_names(const jsont &func_def)
@@ -193,8 +274,8 @@ collect_param_names(const jsont &func_def)
     if(n.is_object())
     {
       const std::string &type = n["_type"].value;
-      if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
-         type == "Lambda")
+      if(
+        type == "FunctionDef" || type == "AsyncFunctionDef" || type == "Lambda")
         return;
       // Recognise direct alias assignments.
       if(type == "Assign")
@@ -202,8 +283,7 @@ collect_param_names(const jsont &func_def)
         const jsont &tgts = n["targets"];
         const jsont &val = n["value"];
         if(
-          tgts.is_array() && val.is_object() &&
-          val["_type"].value == "Name" &&
+          tgts.is_array() && val.is_object() && val["_type"].value == "Name" &&
           param_names.count(val["id"].value) > 0)
         {
           for(const auto &t : to_json_array(tgts))
@@ -258,8 +338,9 @@ collect_param_names(const jsont &func_def)
     if(test["_type"].value != "Call")
       return std::nullopt;
     const jsont &fn = test["func"];
-    if(!fn.is_object() || fn["_type"].value != "Name" ||
-       fn["id"].value != "isinstance")
+    if(
+      !fn.is_object() || fn["_type"].value != "Name" ||
+      fn["id"].value != "isinstance")
       return std::nullopt;
     const jsont &args = test["args"];
     if(!args.is_array() || to_json_array(args).size() < 2)
@@ -297,8 +378,8 @@ collect_param_names(const jsont &func_def)
     if(n.is_object())
     {
       const std::string &type = n["_type"].value;
-      if(type == "FunctionDef" || type == "AsyncFunctionDef" ||
-         type == "Lambda")
+      if(
+        type == "FunctionDef" || type == "AsyncFunctionDef" || type == "Lambda")
         return;
 
       // Recognise an isinstance gate on an If statement and
