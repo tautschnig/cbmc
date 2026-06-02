@@ -472,6 +472,13 @@ exprt python_convertert::convert_subscript(const jsont &expr)
       auto step_d = try_eval_double(step);
       if(step_d.has_value() && *step_d == -1.0)
         is_reverse = true;
+      // PLR §6.3.3: a slice step of 0 raises ValueError.
+      else if(step_d.has_value() && *step_d == 0.0)
+        add_check(
+          false_exprt{},
+          "exception",
+          "ValueError: slice step cannot be zero",
+          get_location(expr));
     }
 
     // Constant-string optimization for slicing

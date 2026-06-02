@@ -391,7 +391,21 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // a NULL or read garbage. Mirrors the iter-None /
         // ordering-with-None TypeError emission shape.
         bool none_arg = is_python_none(arg, symbol_table);
-        if(none_arg)
+        // PLR §6.10: len(x) on a non-sized scalar (None, int,
+        // float, bool) raises TypeError. For the numeric/bool case
+        // key on a *source literal* argument (AST Constant): a
+        // literal len(5) is unconditionally a bug, whereas
+        // len(name)/len(attr) may be a duck-typed value guarded at
+        // runtime (e.g. numpy's `len(shape) if hasattr(...) else
+        // 1`), which an eager expression-position check would
+        // wrongly flag.
+        const irep_idt &len_arg_id = arg.type().id();
+        bool scalar_literal =
+          is_node_type(*as_array(args).begin(), "Constant") &&
+          (len_arg_id == ID_signedbv || len_arg_id == ID_unsignedbv ||
+           len_arg_id == ID_floatbv || len_arg_id == ID_integer ||
+           len_arg_id == ID_bool);
+        if(none_arg || scalar_literal)
         {
           const symbolt *exc_sym =
             symbol_table.lookup("python::__exception_active");
@@ -695,9 +709,14 @@ std::optional<exprt> python_convertert::try_builtin_call(
               fv.from_double(v);
               return fv.to_expr();
             }
-            // Fall through to the nondet path below for malformed
-            // input — Python's float() would raise ValueError, but
-            // detecting that statically is the caller's job.
+            // A constant string float() cannot parse raises
+            // ValueError (mirrors int()'s invalid-literal check).
+            add_check(
+              false_exprt{},
+              "exception",
+              "ValueError: could not convert string to float: '" + *sv + "'",
+              get_location(expr));
+            return side_effect_expr_nondett{double_type(), get_location(expr)};
           }
         }
         // float(<python_value>) — extract the tagged-union's

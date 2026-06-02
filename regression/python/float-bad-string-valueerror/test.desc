@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[exception\.\d+\] .*ValueError: could not convert string to float: 'xyz': FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring

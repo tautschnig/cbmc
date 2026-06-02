@@ -2056,8 +2056,12 @@ codet python_convertert::convert_assign(const jsont &stmt)
       }
       exprt obj = convert_expression(json_member(target, "value"));
 
-      // Tuple assignment → raise TypeError
-      if(!obj.is_nil() && is_python_tuple_type(obj.type()))
+      // Immutable-sequence item assignment → raise TypeError.
+      // PLR §3.2: tuples and strings are immutable sequences, so
+      // `t[i] = v` / `s[i] = v` always raise TypeError.
+      if(
+        !obj.is_nil() &&
+        (is_python_tuple_type(obj.type()) || is_python_string_type(obj.type())))
       {
         code_blockt type_error;
         const symbolt *exc_sym =

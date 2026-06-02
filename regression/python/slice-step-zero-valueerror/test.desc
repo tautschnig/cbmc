@@ -1,0 +1,9 @@
+CORE
+main.py
+
+^EXIT=10$
+^SIGNAL=0$
+^\[exception\.\d+\] .*ValueError: slice step cannot be zero: FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
