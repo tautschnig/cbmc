@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11 inheritance, no-false-positive guard. Sub calls
+super().__init__(), which assigns the inherited x, so neither s.x nor
+s.y raises AttributeError.

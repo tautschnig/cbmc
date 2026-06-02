@@ -2259,11 +2259,17 @@ codet python_convertert::convert_class_def(const jsont &stmt)
   class_type.set_tag("python_class_" + class_name);
   class_types[class_name] = class_type;
 
-  // §11: collect bare class-body annotations (`x: T` with no value)
-  // not unconditionally assigned at __init__ top level. A read of such
-  // a field before the instance assigns it is an AttributeError.
+  // §11: a read of a declared instance field before the instance has
+  // assigned it is an AttributeError. Track, across the inheritance
+  // chain: all bare class-body annotations (`x: T`, no value), and the
+  // fields that constructing this class definitely assigns (own
+  // __init__ top-level self-stores, plus the base chain when
+  // super().__init__() is called -- so a subclass that omits super
+  // leaves inherited fields unassigned). attrerror = all_bare minus
+  // ctor_assigned.
   {
-    std::set<std::string> bare_ann, definite_init;
+    std::set<std::string> own_bare, own_def;
+    bool has_init = false, calls_super = false;
     if(body.is_array())
       for(const auto &item : as_array(body))
       {
@@ -2271,12 +2277,13 @@ codet python_convertert::convert_class_def(const jsont &stmt)
           is_node_type(item, "AnnAssign") &&
           is_node_type(json_member(item, "target"), "Name") &&
           json_member(item, "value").is_null())
-          bare_ann.insert(
+          own_bare.insert(
             json_string(json_member(json_member(item, "target"), "id")));
         else if(
           is_node_type(item, "FunctionDef") &&
           json_string(json_member(item, "name")) == "__init__")
         {
+          has_init = true;
           const jsont &ib = json_member(item, "body");
           if(ib.is_array())
             for(const auto &s : as_array(ib))
@@ -2294,12 +2301,49 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                 is_node_type(json_member(*tgt, "value"), "Name") &&
                 json_string(json_member(json_member(*tgt, "value"), "id")) ==
                   "self")
-                definite_init.insert(json_string(json_member(*tgt, "attr")));
+                own_def.insert(json_string(json_member(*tgt, "attr")));
+              // super().__init__(...) call as an expression statement.
+              const jsont &sv =
+                is_node_type(s, "Expr") ? json_member(s, "value") : s;
+              if(
+                is_node_type(sv, "Call") &&
+                is_node_type(json_member(sv, "func"), "Attribute") &&
+                json_string(json_member(json_member(sv, "func"), "attr")) ==
+                  "__init__")
+              {
+                const jsont &base_of =
+                  json_member(json_member(sv, "func"), "value");
+                if(
+                  is_node_type(base_of, "Call") &&
+                  is_node_type(json_member(base_of, "func"), "Name") &&
+                  json_string(
+                    json_member(json_member(base_of, "func"), "id")) == "super")
+                  calls_super = true;
+              }
             }
         }
       }
-    for(const std::string &f : bare_ann)
-      if(definite_init.count(f) == 0)
+    std::set<std::string> all_bare = own_bare, ctor = own_def;
+    bool inherit_ctor = calls_super || !has_init;
+    if(bases.is_array())
+      for(const auto &base : as_array(bases))
+        if(is_node_type(base, "Name"))
+        {
+          std::string bn = json_string(json_member(base, "id"));
+          auto bb = class_all_bare.find(bn);
+          if(bb != class_all_bare.end())
+            all_bare.insert(bb->second.begin(), bb->second.end());
+          if(inherit_ctor)
+          {
+            auto bc = class_ctor_assigned.find(bn);
+            if(bc != class_ctor_assigned.end())
+              ctor.insert(bc->second.begin(), bc->second.end());
+          }
+        }
+    class_all_bare[class_name] = all_bare;
+    class_ctor_assigned[class_name] = ctor;
+    for(const std::string &f : all_bare)
+      if(ctor.count(f) == 0)
         class_attrerror_fields[class_name].insert(f);
   }
   if(!class_tag_ids.count(class_name))

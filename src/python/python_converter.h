@@ -423,7 +423,15 @@ private:
   /// instance has assigned it is an AttributeError (PLR §6.10);
   /// convert_attribute asserts the field's __shadow_ flag for these.
   std::map<std::string, std::set<std::string>> class_attrerror_fields;
-  /// Per-class set of class-level attributes that were
+  /// §11 inheritance support. class_all_bare[c]: every bare-annotation
+  /// instance field (`x: T`, no value) declared anywhere in c's class
+  /// hierarchy. class_ctor_assigned[c]: every field that constructing
+  /// c() definitely assigns, accounting for the super().__init__()
+  /// chain (so a subclass that omits super leaves inherited fields
+  /// unassigned). attrerror = all_bare - ctor_assigned.
+  std::map<std::string, std::set<std::string>> class_all_bare;
+  std::map<std::string, std::set<std::string>>
+    class_ctor_assigned; /// Per-class set of class-level attributes that were
   /// declared in THIS class's body (as opposed to inherited
   /// from a base class). PLR §3.3.2 / §9.4: class attribute
   /// reads walk the MRO at lookup time. A subclass that
