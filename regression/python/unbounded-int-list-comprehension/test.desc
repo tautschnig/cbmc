@@ -1,0 +1,17 @@
+CORE
+main.py
+--python-unbounded-ints --unwind 12
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+List literals, indexing, and range comprehensions must work under
+--python-unbounded-ints. The list length/array-dimension are always
+signedbv[64] (matching python_list_type), while elements and iteration
+values take the python int type (integer_typet here) so they compose
+with int literals. Range comprehension args are recognised as
+integer_typet. Previously these crashed (SSA type-mismatch) or
+produced a wrong length.
