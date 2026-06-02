@@ -392,20 +392,17 @@ std::optional<exprt> python_convertert::try_builtin_call(
         // ordering-with-None TypeError emission shape.
         bool none_arg = is_python_none(arg, symbol_table);
         // PLR §6.10: len(x) on a non-sized scalar (None, int,
-        // float, bool) raises TypeError. For the numeric/bool case
-        // key on a *source literal* argument (AST Constant): a
-        // literal len(5) is unconditionally a bug, whereas
-        // len(name)/len(attr) may be a duck-typed value guarded at
-        // runtime (e.g. numpy's `len(shape) if hasattr(...) else
-        // 1`), which an eager expression-position check would
-        // wrongly flag.
+        // float, bool) raises TypeError. A duck-typing guard like
+        // `len(x) if hasattr(x, "__len__") else ...` is handled by
+        // the conditional-exception guard plus hasattr's precise
+        // False for scalar protocol dunders, so this check can fire
+        // on any scalar-typed argument.
         const irep_idt &len_arg_id = arg.type().id();
-        bool scalar_literal =
-          is_node_type(*as_array(args).begin(), "Constant") &&
-          (len_arg_id == ID_signedbv || len_arg_id == ID_unsignedbv ||
-           len_arg_id == ID_floatbv || len_arg_id == ID_integer ||
-           len_arg_id == ID_bool);
-        if(none_arg || scalar_literal)
+        bool scalar_arg = len_arg_id == ID_signedbv ||
+                          len_arg_id == ID_unsignedbv ||
+                          len_arg_id == ID_floatbv ||
+                          len_arg_id == ID_integer || len_arg_id == ID_bool;
+        if(none_arg || scalar_arg)
         {
           const symbolt *exc_sym =
             symbol_table.lookup("python::__exception_active");
@@ -3229,6 +3226,40 @@ std::optional<exprt> python_convertert::try_builtin_call(
       }
       if(!attr.empty() && !obj.is_nil())
       {
+        // PLR §3.2/§3.3: int/float/bool/None never define the
+        // container, iterator, callable or context-manager
+        // protocols, so hasattr of any of those names on a numeric
+        // scalar is definitively False (these types genuinely lack
+        // them — sound in both directions). This also lets
+        // duck-typing guards such as `len(x) if hasattr(x,
+        // "__len__") else ...` fold away on the scalar path.
+        const typet &sot = obj.type();
+        bool numeric_scalar = sot.id() == ID_signedbv ||
+                              sot.id() == ID_unsignedbv ||
+                              sot.id() == ID_floatbv ||
+                              sot.id() == ID_integer || sot.id() == ID_bool;
+        static const std::set<std::string> absent_protocol = {
+          "__len__",
+          "__getitem__",
+          "__setitem__",
+          "__delitem__",
+          "__contains__",
+          "__iter__",
+          "__next__",
+          "__reversed__",
+          "__call__",
+          "__enter__",
+          "__exit__",
+          "__aiter__",
+          "__anext__",
+          "__aenter__",
+          "__aexit__",
+          "keys",
+          "values",
+          "items",
+          "append"};
+        if(numeric_scalar && absent_protocol.count(attr))
+          return false_exprt{};
         // Strip pointer wrap to get to the struct.
         typet ot = obj.type();
         if(ot.id() == ID_pointer)
