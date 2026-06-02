@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=10$
+^SIGNAL=0$
+^\[python-attribute-error\.\d+\] .*'Sub' object has no attribute 'x' \(AttributeError\): FAILURE$
+^VERIFICATION FAILED$
+--
+^warning: ignoring
+--
+differential2 §11 inheritance. The AttributeError analysis follows the
+inheritance chain: a bare-annotation field is "definitely assigned"
+for a subclass only if the subclass assigns it or calls
+super().__init__() onto a base that does. Sub omits super().__init__(),
+so the inherited x is unassigned and reading s.x is an AttributeError.
