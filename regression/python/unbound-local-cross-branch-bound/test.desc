@@ -1,0 +1,13 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §12b cross-branch, no-false-positive guard. x assigned on
+both branches is always bound, so the is-bound flag holds on every path
+to the read and no UnboundLocalError is reported.

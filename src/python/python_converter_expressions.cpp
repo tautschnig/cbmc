@@ -1351,6 +1351,91 @@ exprt python_convertert::emit_property_get(
   return std::move(tv);
 }
 
+// §11b: dispatch a custom descriptor's __get__ on attribute read.
+exprt python_convertert::emit_descriptor_get(
+  const std::string &class_name,
+  const std::string &attr,
+  const exprt &obj_ptr,
+  const source_locationt &loc)
+{
+  std::vector<std::string> chain;
+  auto mro_it = class_mro.find(class_name);
+  if(mro_it != class_mro.end())
+    chain = mro_it->second;
+  if(chain.empty())
+    chain.push_back(class_name);
+
+  std::string owner, desc_cls;
+  for(const std::string &anc : chain)
+  {
+    auto dit = class_descriptor_attrs.find(anc);
+    if(dit != class_descriptor_attrs.end())
+    {
+      auto ait = dit->second.find(attr);
+      if(ait != dit->second.end())
+      {
+        owner = anc;
+        desc_cls = ait->second;
+        break;
+      }
+    }
+  }
+  if(desc_cls.empty())
+    return nil_exprt{};
+  const symbolt *msym =
+    symbol_table.lookup(irep_idt{"python::" + desc_cls + "::__get__"});
+  if(msym == nullptr || msym->type.id() != ID_code)
+    return nil_exprt{};
+
+  const code_typet &mty = to_code_type(msym->type);
+  // descriptor instance = the owning class object's storage for attr.
+  exprt self_desc;
+  auto owner_obj = mro_owner_class_object(class_name, attr);
+  auto dc_it = class_types.find(desc_cls);
+  if(owner_obj && dc_it != class_types.end())
+    self_desc = address_of_exprt{member_exprt{*owner_obj, attr, dc_it->second}};
+  else if(!mty.parameters().empty())
+    self_desc = side_effect_expr_nondett{mty.parameters()[0].type(), loc};
+  else
+    return nil_exprt{};
+
+  static unsigned desc_ctr = 0;
+  std::string tn = "__descget_" + std::to_string(desc_ctr++);
+  irep_idt ti{qualify_name(tn)};
+  if(symbol_table.lookup(ti) == nullptr)
+  {
+    symbolt ts{ti, mty.return_type(), "python"};
+    ts.base_name = tn;
+    ts.is_lvalue = true;
+    ts.is_state_var = true;
+    symbol_table.add(ts);
+  }
+  symbol_exprt tv = symbol_table.lookup_ref(ti).symbol_expr();
+  // Args: (descriptor self, obj, objtype=None), padded/typecast to the
+  // getter's signature.
+  exprt::operandst args;
+  if(!mty.parameters().empty())
+    args.push_back(
+      self_desc.type() == mty.parameters()[0].type()
+        ? self_desc
+        : typecast_exprt{self_desc, mty.parameters()[0].type()});
+  if(mty.parameters().size() >= 2)
+  {
+    exprt obj = obj_ptr;
+    if(obj.type() != mty.parameters()[1].type())
+      obj = typecast_exprt{obj, mty.parameters()[1].type()};
+    args.push_back(obj);
+  }
+  if(mty.parameters().size() >= 3)
+    args.push_back(
+      from_integer(python_none_sentinel_int(), mty.parameters()[2].type()));
+  pending_checks.push_back(code_frontend_assignt{
+    tv,
+    side_effect_expr_function_callt{
+      msym->symbol_expr(), args, mty.return_type(), loc}});
+  return std::move(tv);
+}
+
 // §11b: dispatch __getattr__ when normal attribute lookup fails.
 exprt python_convertert::emit_getattr_fallback(
   const exprt &value,
@@ -1558,6 +1643,10 @@ exprt python_convertert::convert_attribute(const jsont &expr)
             emit_property_get(ptag.substr(13), attr, value, get_location(expr));
           if(!pg.is_nil())
             return pg;
+          exprt dg = emit_descriptor_get(
+            ptag.substr(13), attr, value, get_location(expr));
+          if(!dg.is_nil())
+            return dg;
         }
       }
       if(st.has_component(attr))
@@ -1636,6 +1725,10 @@ exprt python_convertert::convert_attribute(const jsont &expr)
         stag.substr(13), attr, address_of_exprt{value}, get_location(expr));
       if(!pg.is_nil())
         return pg;
+      exprt dg = emit_descriptor_get(
+        stag.substr(13), attr, address_of_exprt{value}, get_location(expr));
+      if(!dg.is_nil())
+        return dg;
     }
     if(st.has_component(attr))
     {

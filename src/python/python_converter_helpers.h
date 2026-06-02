@@ -125,17 +125,26 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
 /// body (Python's "assigned anywhere => local for the whole function"
 /// rule). A read before the first binding is an UnboundLocalError.
 /// Does not descend into nested function/class/lambda scopes. Names
-/// declared `global`/`nonlocal` are placed in `excluded` so the caller
-/// can drop them (they bind an outer scope, not a local).
+/// declared `global`/`nonlocal` go in `excluded`. Only simple single-
+/// Name targets of Assign / AnnAssign-with-value / AugAssign go in
+/// `assigned` (tuple/for/with/except/walrus targets are deliberately
+/// omitted -- their symbol-creation timing differs and flagging reads
+/// of them risks false positives; a missed UnboundLocalError there is
+/// sound). `non_plain` is the subset of `assigned` bound by something
+/// other than a plain non-alias `x = ...` Assign (AnnAssign, AugAssign,
+/// or a Lambda/Name-aliased Assign); the caller bit-tracks only the
+/// plain-Assign-only names and uses the conversion-time existence check
+/// for the rest.
 [[maybe_unused]] static inline void collect_assigned_locals(
   const jsont &node,
   std::set<std::string> &assigned,
-  std::set<std::string> &excluded)
+  std::set<std::string> &excluded,
+  std::set<std::string> &non_plain)
 {
   if(node.is_array())
   {
     for(const auto &elem : to_json_array(node))
-      collect_assigned_locals(elem, assigned, excluded);
+      collect_assigned_locals(elem, assigned, excluded, non_plain);
     return;
   }
   if(!node.is_object())
@@ -147,20 +156,26 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
     t == "Lambda")
     return; // separate scope
 
-  // Only plain single-Name binding forms are tracked. Tuple/list
-  // unpacking, for-loop targets, walrus, and with/except targets create
-  // their bindings through paths whose symbol-creation timing differs,
-  // so flagging reads of them risks false positives; they are left out
-  // (a missed UnboundLocalError there is sound, a spurious one is not).
   if(t == "Assign")
   {
+    // A Lambda or bare-Name RHS makes the target a function/value
+    // alias handled by an early-return path in convert_assign (no value
+    // write at the chokepoint), so such targets are not bit-eligible.
+    const jsont &val = node["value"];
+    const std::string vt =
+      val.is_object() && val["_type"].is_string() ? val["_type"].value : "";
+    bool alias_rhs = (vt == "Lambda" || vt == "Name");
     const jsont &tgts = node["targets"];
     if(tgts.is_array())
       for(const auto &tg : to_json_array(tgts))
         if(
           tg.is_object() && tg["_type"].is_string() &&
           tg["_type"].value == "Name" && tg["id"].is_string())
+        {
           assigned.insert(tg["id"].value);
+          if(alias_rhs)
+            non_plain.insert(tg["id"].value);
+        }
   }
   else if(t == "AnnAssign" || t == "AugAssign")
   {
@@ -169,7 +184,10 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
       !(t == "AnnAssign" && node["value"].is_null()) && tg.is_object() &&
       tg["_type"].is_string() && tg["_type"].value == "Name" &&
       tg["id"].is_string())
+    {
       assigned.insert(tg["id"].value);
+      non_plain.insert(tg["id"].value);
+    }
   }
   else if(t == "Global" || t == "Nonlocal")
   {
@@ -193,7 +211,7 @@ collect_name_refs(const jsont &node, std::set<std::string> &names)
   {
     const jsont &child = node[*f];
     if(!child.is_null())
-      collect_assigned_locals(child, assigned, excluded);
+      collect_assigned_locals(child, assigned, excluded, non_plain);
   }
 }
 

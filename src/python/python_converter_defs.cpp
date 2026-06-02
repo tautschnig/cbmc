@@ -887,15 +887,22 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   // before the binding can be reported as UnboundLocalError. Drop
   // parameters (always bound on entry) and global/nonlocal names.
   auto saved_locals = current_function_locals;
+  auto saved_bit_locals = current_function_bit_locals;
   {
-    std::set<std::string> assigned, excluded;
-    collect_assigned_locals(json_member(stmt, "body"), assigned, excluded);
+    std::set<std::string> assigned, excluded, non_plain;
+    collect_assigned_locals(
+      json_member(stmt, "body"), assigned, excluded, non_plain);
     for(const std::string &p : collect_param_names(stmt))
       excluded.insert(p);
     current_function_locals.clear();
+    current_function_bit_locals.clear();
     for(const std::string &a : assigned)
       if(excluded.count(a) == 0)
+      {
         current_function_locals.insert(a);
+        if(non_plain.count(a) == 0)
+          current_function_bit_locals.insert(a);
+      }
   }
 
   // Phase 4 of the icontract integration plan: create the
@@ -1296,6 +1303,25 @@ codet python_convertert::convert_function_def(const jsont &stmt)
     // pointers rather than struct-copying them.
     collect_escaped_mutables(body);
     collect_empty_list_inferred_types(body);
+    // §12b: declare each plain-Assign local's runtime is-bound flag and
+    // initialise it to false at function entry. It is set true after
+    // the binding statement (convert_statement) and asserted at each
+    // read (convert_name), so a read on a path that didn't assign it is
+    // detected as UnboundLocalError.
+    for(const std::string &nm : current_function_bit_locals)
+    {
+      irep_idt bid{qualify_name(nm) + "$bound"};
+      if(symbol_table.lookup(bid) == nullptr)
+      {
+        symbolt bs{bid, bool_typet{}, "python"};
+        bs.base_name = nm + "$bound";
+        bs.is_lvalue = true;
+        bs.is_state_var = true;
+        symbol_table.add(bs);
+      }
+      body_block.add(code_frontend_assignt{
+        symbol_table.lookup_ref(bid).symbol_expr(), false_exprt{}});
+    }
     for(const auto &s : as_array(body))
       body_block.add(convert_statement(s));
   }
@@ -1358,6 +1384,7 @@ codet python_convertert::convert_function_def(const jsont &stmt)
   current_function = saved_function;
   global_names = saved_globals;
   current_function_locals = saved_locals;
+  current_function_bit_locals = saved_bit_locals;
   if(
     !enclosing_functions.empty() &&
     enclosing_functions.back() == saved_function)
@@ -2000,6 +2027,25 @@ codet python_convertert::convert_class_def(const jsont &stmt)
                   attr_type = python_string_type();
                 else if(v.is_true() || v.is_false())
                   attr_type = python_int_type();
+              }
+              // §11b: a class attribute bound to an instance of a class
+              // defining __get__ is a (custom) descriptor. Type the
+              // field as that class and record it so attribute reads
+              // dispatch __get__ rather than returning the instance.
+              if(
+                is_node_type(val, "Call") &&
+                is_node_type(json_member(val, "func"), "Name"))
+              {
+                std::string cn =
+                  json_string(json_member(json_member(val, "func"), "id"));
+                if(
+                  class_types.count(cn) &&
+                  symbol_table.lookup(
+                    irep_idt{"python::" + cn + "::__get__"}) != nullptr)
+                {
+                  attr_type = class_types[cn];
+                  class_descriptor_attrs[class_name][attr_name] = cn;
+                }
               }
               components.push_back(
                 struct_typet::componentt{attr_name, attr_type});

@@ -1,0 +1,17 @@
+CORE
+main.py
+--unwind 4
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §11b: custom data descriptor read. A class attribute
+bound to a descriptor-class instance (one defining __get__) is typed as
+that class, and the attribute read dispatches __get__ (resolved via the
+MRO) rather than returning the stored value. Stateful descriptors whose
+__get__ reads self are over-approximated (the class-object storage is
+not yet constructed), and descriptor __set__ on write is not yet
+modeled.
