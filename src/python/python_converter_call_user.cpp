@@ -355,6 +355,32 @@ exprt python_convertert::convert_user_call(
     }
   }
 
+  // PLR §8.7: too many positional arguments raises TypeError, unless
+  // the function accepts *args. Only for an exact (undecorated)
+  // signature and a call without *-unpacking (which we cannot count
+  // statically). `function_max_positional` counts self for methods,
+  // matching how the receiver is supplied, so this never false-flags.
+  if(
+    function_signature_checkable.count(sym->name) &&
+    !function_vararg_index.count(sym->name) && args.is_array())
+  {
+    bool has_starred = false;
+    std::size_t n_pos = 0;
+    for(const auto &a : as_array(args))
+    {
+      if(is_node_type(a, "Starred"))
+      {
+        has_starred = true;
+        break;
+      }
+      ++n_pos;
+    }
+    auto mp = function_max_positional.find(sym->name);
+    if(
+      !has_starred && mp != function_max_positional.end() && n_pos > mp->second)
+      emit_conditional_exception(true_exprt{}, "TypeError");
+  }
+
   // PLR §8.7: pack *args BEFORE keyword handling. The keyword loop
   // resizes arguments to params.size() and writes kwarg values to
   // their named slots, including kwonly slots after *args. If we
@@ -490,6 +516,14 @@ exprt python_convertert::convert_user_call(
       if(!matched)
         unmatched_kw.push_back({kw_name, kw_val});
     }
+
+    // PLR §8.7: a keyword that matches no parameter raises TypeError
+    // ("unexpected keyword argument") unless the function accepts
+    // **kwargs. Only for an exact (undecorated) signature.
+    if(
+      function_signature_checkable.count(sym->name) &&
+      !function_has_kwargs.count(sym->name) && !unmatched_kw.empty())
+      emit_conditional_exception(true_exprt{}, "TypeError");
 
     // Pack unmatched keywords into a dict for the last param if it's a dict
     if(
