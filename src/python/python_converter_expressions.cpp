@@ -1740,6 +1740,43 @@ exprt python_convertert::convert_attribute(const jsont &expr)
     return side_effect_expr_nondett{python_value_type(), get_location(expr)};
   }
 
+  // PLR §6.10: AttributeError for an attribute a numeric scalar does
+  // not define, e.g. (5).foo. Restricted to a *constant* numeric
+  // receiver (a literal, or a variable folded to one): a non-constant
+  // numeric-typed value may be a non-scalar object the frontend
+  // defaulted to int (e.g. a stub return like datetime.now()), where
+  // flagging would be a false positive. Dunders and known public
+  // attributes are left alone.
+  {
+    const typet &vt = value.type();
+    bool numeric = vt.id() == ID_signedbv || vt.id() == ID_unsignedbv ||
+                   vt.id() == ID_floatbv || vt.id() == ID_integer ||
+                   vt.id() == ID_bool;
+    bool is_dunder = attr.size() >= 4 && attr.compare(0, 2, "__") == 0 &&
+                     attr.compare(attr.size() - 2, 2, "__") == 0;
+    static const std::set<std::string> numeric_attrs = {
+      "bit_length",
+      "bit_count",
+      "to_bytes",
+      "from_bytes",
+      "conjugate",
+      "numerator",
+      "denominator",
+      "real",
+      "imag",
+      "as_integer_ratio",
+      "is_integer",
+      "hex",
+      "fromhex"};
+    if(
+      numeric && value.is_constant() && !is_dunder &&
+      numeric_attrs.count(attr) == 0)
+    {
+      emit_conditional_exception(true_exprt{}, "AttributeError");
+      return side_effect_expr_nondett{python_value_type(), get_location(expr)};
+    }
+  }
+
   // If value is a pointer (self in a method), dereference first
   if(value.type().id() == ID_pointer)
   {
