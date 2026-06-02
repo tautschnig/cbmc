@@ -1,0 +1,14 @@
+CORE
+main.py
+--unwind 3
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §12b, no-false-positive guard. Ordinary local use, a
+read of a module global not assigned locally, and a `global`-declared
+rebind are all correctly bound and must not raise the
+python-unbound-local property.
