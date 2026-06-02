@@ -18,6 +18,130 @@
 #include "python_types.h"
 #include "python_value_type.h"
 
+// §12c: lower `[elt for var in iter_list (if ...)*]` to a GOTO loop.
+exprt python_convertert::emit_listcomp_loop(
+  const jsont &elt,
+  const std::string &var_name,
+  const exprt &iter_list,
+  const jsont &ifs,
+  const source_locationt &loc)
+{
+  const struct_typet &ist = to_struct_type(iter_list.type());
+  const array_typet &idata_t = to_array_type(ist.components()[1].type());
+  typet elem_in_t = idata_t.element_type();
+  typet len_t = signedbv_typet{64};
+
+  // Loop variable symbol (qualified into the enclosing scope, matching
+  // the converter's existing comprehension-variable handling) so the
+  // element expression's references to it resolve.
+  irep_idt var_id{qualify_name(var_name)};
+  if(symbol_table.lookup(var_id) == nullptr)
+  {
+    symbolt vs{var_id, elem_in_t, "python"};
+    vs.base_name = var_name;
+    vs.is_lvalue = true;
+    vs.is_state_var = true;
+    vs.is_static_lifetime = current_function.empty();
+    symbol_table.add(vs);
+  }
+  else
+    symbol_table.get_writeable_ref(var_id).type = elem_in_t;
+  symbol_exprt var = symbol_table.lookup_ref(var_id).symbol_expr();
+
+  // Convert the element expression (and any filter conditions) with the
+  // loop variable in scope, capturing their checks so they land INSIDE
+  // the loop body (guarded by the iteration) rather than at the
+  // comprehension site.
+  std::vector<codet> saved;
+  saved.swap(pending_checks);
+  exprt elt_val = convert_expression(elt);
+  std::vector<codet> elt_checks;
+  elt_checks.swap(pending_checks);
+  exprt cond = true_exprt{};
+  std::vector<codet> cond_checks;
+  if(ifs.is_array())
+    for(const auto &c : as_array(ifs))
+    {
+      exprt cv = convert_expression(c);
+      std::vector<codet> cc;
+      cc.swap(pending_checks);
+      for(auto &s : cc)
+        cond_checks.push_back(std::move(s));
+      if(!cv.is_nil())
+        cond = (cond == true_exprt{})
+                 ? safe_typecast(cv, bool_typet{})
+                 : exprt{and_exprt{cond, safe_typecast(cv, bool_typet{})}};
+    }
+  saved.swap(pending_checks);
+  if(elt_val.is_nil())
+    return nil_exprt{};
+
+  typet et_out = elt_val.type();
+  struct_typet list_type = python_list_type(et_out);
+  const array_typet &rdata_t = to_array_type(list_type.components()[1].type());
+
+  // Result list + source-index + result-count temporaries.
+  static unsigned lc_ctr = 0;
+  auto mk = [&](const std::string &base, const typet &t) -> symbol_exprt
+  {
+    irep_idt id{qualify_name(base + std::to_string(lc_ctr))};
+    if(symbol_table.lookup(id) == nullptr)
+    {
+      symbolt s{id, t, "python"};
+      s.base_name = base + std::to_string(lc_ctr);
+      s.is_lvalue = true;
+      s.is_state_var = true;
+      s.is_static_lifetime = current_function.empty();
+      symbol_table.add(s);
+    }
+    return symbol_table.lookup_ref(id).symbol_expr();
+  };
+  symbol_exprt result = mk("__listcomp_", list_type);
+  symbol_exprt si = mk("__listcomp_i_", len_t);
+  symbol_exprt ni = mk("__listcomp_n_", len_t);
+  lc_ctr++;
+
+  member_exprt iter_len{iter_list, "length", len_t};
+  member_exprt iter_data{iter_list, "data", idata_t};
+  member_exprt res_len{result, "length", len_t};
+  member_exprt res_data{result, "data", rdata_t};
+
+  pending_checks.push_back(code_frontend_assignt{result, safe_zero(list_type)});
+  pending_checks.push_back(code_frontend_assignt{si, from_integer(0, len_t)});
+  pending_checks.push_back(code_frontend_assignt{ni, from_integer(0, len_t)});
+
+  // Loop body: var = iter.data[si]; <elt checks>; if(cond) { guard;
+  // result.data[ni] = elt; ni += 1 } si += 1
+  code_blockt body;
+  {
+    exprt slot = index_exprt{iter_data, si};
+    exprt bound =
+      (slot.type() != elem_in_t) ? safe_typecast(slot, elem_in_t) : slot;
+    body.add(code_frontend_assignt{var, bound});
+    for(auto &s : elt_checks)
+      body.add(std::move(s));
+    for(auto &s : cond_checks)
+      body.add(std::move(s));
+    code_blockt store;
+    emit_capacity_guard(store, ni, PYTHON_MAX_LIST_LENGTH, loc);
+    exprt sval =
+      (elt_val.type() != et_out) ? safe_typecast(elt_val, et_out) : elt_val;
+    store.add(code_frontend_assignt{index_exprt{res_data, ni}, sval});
+    store.add(
+      code_frontend_assignt{ni, plus_exprt{ni, from_integer(1, len_t)}});
+    if(cond == true_exprt{})
+      for(auto &s : store.statements())
+        body.add(std::move(s));
+    else
+      body.add(code_ifthenelset{cond, std::move(store)});
+    body.add(code_frontend_assignt{si, plus_exprt{si, from_integer(1, len_t)}});
+  }
+  pending_checks.push_back(
+    code_whilet{binary_relation_exprt{si, ID_lt, iter_len}, std::move(body)});
+  pending_checks.push_back(code_frontend_assignt{res_len, ni});
+  return std::move(result);
+}
+
 // "A comprehension consists of a single expression followed by at least
 // one for clause and zero or more for or if clauses."
 exprt python_convertert::convert_list_comp(const jsont &expr)
@@ -27,6 +151,39 @@ exprt python_convertert::convert_list_comp(const jsont &expr)
 
   if(!generators.is_array() || as_array(generators).empty())
     return nil_exprt{};
+
+  // §12c: single generator over a runtime list (a Name bound to a
+  // `list` value whose length is symbolic, e.g. a parameter). The
+  // unroll path below only supports compile-time-enumerable iterables
+  // and otherwise drops the assignment; instead lower this to a real
+  // loop that populates a temporary. Restricted to a Name not tracked
+  // as a literal list (those are unrolled below).
+  if(as_array(generators).size() == 1)
+  {
+    const jsont &gen = *as_array(generators).begin();
+    const jsont &gen_iter = json_member(gen, "iter");
+    const jsont &target = json_member(gen, "target");
+    if(
+      is_node_type(gen_iter, "Name") && is_node_type(target, "Name") &&
+      list_literals.count(
+        irep_idt{qualify_name(json_string(json_member(gen_iter, "id")))}) == 0)
+    {
+      exprt iter_val = convert_expression(gen_iter);
+      if(iter_val.type().id() == ID_pointer)
+        iter_val = dereference_exprt{iter_val};
+      if(!iter_val.is_nil() && is_python_list_type(iter_val.type()))
+      {
+        exprt r = emit_listcomp_loop(
+          elt,
+          json_string(json_member(target, "id")),
+          iter_val,
+          json_member(gen, "ifs"),
+          get_location(expr));
+        if(!r.is_nil())
+          return r;
+      }
+    }
+  }
 
   // Collect all generators (support nested for)
   struct gen_info

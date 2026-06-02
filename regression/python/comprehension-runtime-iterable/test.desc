@@ -1,0 +1,16 @@
+CORE
+main.py
+--unwind 8
+
+^EXIT=0$
+^SIGNAL=0$
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring
+--
+differential2 §12c. A list comprehension over a runtime list (a list
+parameter with symbolic length) is lowered to a GOTO while-loop that
+populates a temporary, rather than being dropped. Element computation
+and `if` filters are modeled; the element expression's own checks are
+emitted inside the loop body (guarded by the iteration) so out-of-
+range slots don't raise spurious exceptions.
